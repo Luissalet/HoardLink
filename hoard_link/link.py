@@ -22,13 +22,30 @@ import httpx
 from . import _faustus, _probes
 from ._comfy import ComfyClient
 from ._sync import SyncFacade
-from .config import LinkConfig
+from .config import CapabilityConfig, LinkConfig
 from .errors import BackendError, Unavailable
-from .gpu import gpu_free_mb
+from .gpu import GpuMemory, gpu_free_mb
 from .types import CAPABILITIES, ChatResult, Resolution, Usage
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<think>", re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</think>", re.IGNORECASE)
 _CACHE_TTL_S = 30.0
+TTS_COMMAND_TIMEOUT_S = 120.0
+
+# Endpoint suffixes someone may paste into a URL field; stripped to get
+# back to the server root before appending the path each call needs.
+_ENDPOINT_SUFFIXES = (
+    "/chat/completions",
+    "/completions",
+    "/embeddings",
+    "/api/chat",
+    "/api/generate",
+    "/api/embed",
+    "/api/embeddings",
+)
+
+_LLAMACPP_BACKENDS = {"llamacpp", "llama.cpp", "llama-server", "llama_cpp"}
 
 
 def _host(url: Optional[str]) -> str:
@@ -36,6 +53,38 @@ def _host(url: Optional[str]) -> str:
         return "?"
     parts = urlsplit(url)
     return parts.netloc or url
+
+
+def _strip_endpoint(url: str) -> str:
+    """``http://h:1/v1/chat/completions`` -> ``http://h:1/v1`` (keeps ``/v1``)."""
+    u = url.rstrip("/")
+    for suffix in _ENDPOINT_SUFFIXES:
+        if u.lower().endswith(suffix):
+            return u[: -len(suffix)].rstrip("/")
+    return u
+
+
+def _server_root(url: str) -> str:
+    """``http://h:1/v1/chat/completions`` -> ``http://h:1``."""
+    u = _strip_endpoint(url)
+    if u.lower().endswith("/v1"):
+        u = u[:-3]
+    return u.rstrip("/")
+
+
+def _openai_endpoint(url: str, path: str) -> str:
+    """Accept a base URL, a ``/v1`` URL or a full endpoint URL alike."""
+    u = url.rstrip("/")
+    if u.lower().endswith("/v1" + path):
+        return u
+    base = _strip_endpoint(u)
+    if not base.lower().endswith("/v1"):
+        base += "/v1"
+    return base + path
+
+
+def _ollama_endpoint(url: str, path: str) -> str:
+    return _server_root(url) + path
 
 
 def _strip_think(text: str) -> tuple[str, Optional[str]]:
@@ -49,6 +98,11 @@ def _strip_think(text: str) -> tuple[str, Optional[str]]:
     return cleaned, reasoning
 
 
+def _join_reasoning(*parts: Optional[str]) -> Optional[str]:
+    kept = [p.strip() for p in parts if isinstance(p, str) and p.strip()]
+    return "\n\n".join(kept) if kept else None
+
+
 def _extract_usage(raw: Any, api: Optional[str]) -> Usage:
     if not isinstance(raw, dict):
         return Usage()
@@ -56,10 +110,12 @@ def _extract_usage(raw: Any, api: Optional[str]) -> Usage:
         prompt = raw.get("prompt_eval_count")
         completion = raw.get("eval_count")
         total = None
-        if prompt is not None and completion is not None:
+        if isinstance(prompt, int) and isinstance(completion, int):
             total = prompt + completion
         return Usage(prompt_tokens=prompt, completion_tokens=completion, total_tokens=total)
-    u = raw.get("usage") or {}
+    u = raw.get("usage")
+    if not isinstance(u, dict):
+        return Usage()
     return Usage(
         prompt_tokens=u.get("prompt_tokens"),
         completion_tokens=u.get("completion_tokens"),
@@ -71,14 +127,66 @@ def _b64_image(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
+def _image_mime(data: bytes) -> str:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def _ollama_format(response_format: Optional[dict[str, Any]]) -> Any:
+    """Map an OpenAI ``response_format`` onto Ollama's ``format`` field."""
+    if not isinstance(response_format, dict):
+        return None
+    kind = response_format.get("type")
+    if kind == "json_object":
+        return "json"
+    if kind == "json_schema":
+        schema = (response_format.get("json_schema") or {}).get("schema")
+        return schema if isinstance(schema, dict) else "json"
+    return None
+
+
+def _explicit_api(cc: CapabilityConfig) -> str:
+    if cc.api in ("openai", "ollama"):
+        return cc.api
+    if (cc.provider or "").lower() == "ollama":
+        return "ollama"
+    path = urlsplit(cc.url or "").path
+    if path.startswith("/api/"):
+        return "ollama"
+    return "openai"
+
+
+def _ollama_fits(capability: str, caps: list[str]) -> bool:
+    if capability == "llm":
+        # Empty = an older Ollama that does not report capabilities; accept.
+        # Otherwise an embedding-only model must never be chosen for chat.
+        return not caps or "completion" in caps
+    needed = {"vision": "vision", "embeddings": "embedding"}.get(capability)
+    return needed is None or needed in caps
+
+
+def _prefer(names: list[str], preferred: Optional[str]) -> list[str]:
+    if preferred and preferred in names:
+        return [preferred] + [n for n in names if n != preferred]
+    return names
+
+
 class Link:
     """Resolves and calls the shared model backend for one app."""
 
     def __init__(self, config: LinkConfig, client: Optional[httpx.AsyncClient] = None):
         self.config = config
-        self._client = client or httpx.AsyncClient()
+        # trust_env=False: loopback traffic must never be routed through an
+        # HTTP(S)_PROXY from the environment (a proxy would answer instead
+        # of "connection refused", and nothing here should leave the box).
+        self._client = client or httpx.AsyncClient(trust_env=False)
         self._owns_client = client is None
-        self._cache: dict[str, tuple[float, Any]] = {}
+        self._cache: dict[str, tuple[float, "asyncio.Future[Any]", Any]] = {}
         # Overridable by tests: replace with a fake clock / no-op sleep to
         # test wait_idle() timing without real delays.
         self._now = time.monotonic
@@ -97,23 +205,37 @@ class Link:
         await self.aclose()
 
     # ------------------------------------------------------------------
-    # caching of probes
+    # caching of probes (30 s, single-flight)
     # ------------------------------------------------------------------
 
     async def _cached(self, key: str, factory: Any) -> Any:
+        """Cache a probe for 30 s; concurrent callers share one in-flight probe.
+
+        Without single-flight, ``status()`` resolving eight capabilities in
+        parallel would fire eight identical sweeps of eleven llama.cpp
+        ports at once.
+        """
+        loop = asyncio.get_running_loop()
         now = self._now()
         hit = self._cache.get(key)
-        if hit is not None and now - hit[0] < _CACHE_TTL_S:
-            return hit[1]
-        value = await factory()
-        self._cache[key] = (now, value)
-        return value
+        if hit is None or now - hit[0] >= _CACHE_TTL_S or hit[2] is not loop:
+            hit = (now, asyncio.ensure_future(factory()), loop)
+            self._cache[key] = hit
+        try:
+            return await asyncio.shield(hit[1])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if self._cache.get(key) is hit:
+                del self._cache[key]
+            raise
 
     async def _probe_llamacpp(self) -> list[dict]:
         return await self._cached("llamacpp", lambda: _probes.probe_llamacpp(self._client))
 
-    async def _probe_ollama(self) -> Optional[dict]:
-        return await self._cached("ollama", lambda: _probes.probe_ollama(self._client))
+    async def _probe_ollama(self, base: str = f"http://127.0.0.1:{_probes.OLLAMA_PORT}") -> Optional[dict]:
+        base = base.rstrip("/")
+        return await self._cached(f"ollama:{base}", lambda: _probes.probe_ollama(self._client, base))
 
     async def _probe_openai_compat(self) -> Optional[dict]:
         return await self._cached(
@@ -122,6 +244,10 @@ class Link:
 
     async def _probe_comfy(self, url: str) -> Optional[dict]:
         return await self._cached(f"comfy:{url}", lambda: _probes.probe_comfy(self._client, url))
+
+    async def _gpus(self) -> list[GpuMemory]:
+        # nvidia-smi is a blocking subprocess: keep it off the event loop.
+        return await self._cached("gpu", lambda: asyncio.to_thread(gpu_free_mb))
 
     async def _faustus_url(self) -> Optional[str]:
         return await self._cached(
@@ -132,6 +258,9 @@ class Link:
     # ------------------------------------------------------------------
     # resolution
     # ------------------------------------------------------------------
+
+    def _may_load(self, capability: str) -> bool:
+        return self.config.capability(capability).allow_load or not self.config.only_resident
 
     async def resolve(self, capability: str) -> Resolution:
         if capability not in CAPABILITIES:
@@ -182,7 +311,7 @@ class Link:
                 reason=reason,
                 details={"source": "explicit", "command": cc.command},
             )
-        api = cc.api or "openai"
+        api = _explicit_api(cc)
         provider = cc.provider or "configured"
         model_part = f" ({cc.model})" if cc.model else ""
         reason = f"{capability} -> {provider} at {_host(cc.url)}{model_part}, explicit configuration"
@@ -201,40 +330,33 @@ class Link:
         self, capability: str, faustus_url: str, reasons: list[str]
     ) -> Optional[Resolution]:
         token = self.config.faustus_token
-        headers = _faustus.auth_headers(token) if token else None
+        headers = _faustus.auth_headers(token)
         status, data = await _faustus.get(self._client, f"{faustus_url}/api/models", headers=headers)
 
         if status == 200 and isinstance(data, dict):
-            items = data.get("items") or []
-            item = _faustus.find_model_item(items, capability)
-            if item:
-                api = _faustus.api_for_backend(item.get("backend"))
-                models_list = item.get("models") or []
-                model = models_list[0] if models_list else None
-                url = item.get("url")
-                reason = (
-                    f"{capability} -> {item.get('backend', '?')} at {_host(url)} "
-                    f"({model}), from Faustus registry; resident"
+            matches = _faustus.find_model_items(_faustus.model_items(data), capability)
+            local = [i for i in matches if _faustus.is_local_item(i)]
+            if matches and not local:
+                reasons.append(
+                    f"Faustus registry lists only non-local servers for '{capability}'; "
+                    "skipped to keep data on this machine"
                 )
-                return Resolution(
-                    capability=capability,
-                    provider=item.get("backend"),
-                    url=url,
-                    model=model,
-                    api=api,  # type: ignore[arg-type]
-                    state="resolved",
-                    reason=reason,
-                    details={
-                        "source": "faustus_registry",
-                        "endpoint_id": item.get("endpoint_id"),
-                        "endpoint_name": item.get("endpoint_name"),
-                        "category": item.get("category"),
-                        "resident": True,
-                    },
-                )
-            reasons.append(f"Faustus registry has no server for capability '{capability}'")
+            elif not matches:
+                reasons.append(f"Faustus registry has no server for capability '{capability}'")
+            for item in local:
+                res = await self._resolution_from_registry_item(capability, item, reasons)
+                if res is not None:
+                    return res
         elif status in (401, 403):
-            reasons.append("Faustus reachable but /api/models rejected the token (401/403)")
+            if token:
+                reasons.append(
+                    f"Faustus reachable but /api/models rejected the token (401/403, got HTTP {status})"
+                )
+            else:
+                reasons.append(
+                    f"Faustus reachable but /api/models needs a token (HTTP {status}); "
+                    "set HOARD_FAUSTUS_TOKEN or faustus.token in backend.json"
+                )
         elif status is None:
             reasons.append("Faustus /api/models request failed to connect")
         else:
@@ -266,6 +388,62 @@ class Link:
                 reasons.append(f"Faustus {capability}/capabilities returned HTTP {svc_status}")
 
         return None
+
+    async def _resolution_from_registry_item(
+        self, capability: str, item: dict, reasons: list[str]
+    ) -> Optional[Resolution]:
+        backend = str(item.get("backend") or "?")
+        provider = "llamacpp" if backend.lower() in _LLAMACPP_BACKENDS else backend
+        api = _faustus.api_for_backend(backend.lower())
+        url = item["url"]
+        listed = [m for m in (item.get("models") or []) if isinstance(m, str) and m]
+        preferred = self.config.capability(capability).model
+        resident: Optional[bool]
+
+        if api == "ollama":
+            # The registry lists what Faustus *can* use, not what is loaded:
+            # cross-check with that Ollama's /api/ps before claiming residency.
+            ollama = await self._probe_ollama(_server_root(url))
+            if ollama is None:
+                reasons.append(f"Faustus registry names Ollama at {_host(url)} but it does not answer /api/ps")
+                return None
+            loaded = [m["name"] for m in ollama["resident"]]
+            candidates = _prefer([m for m in listed if m in loaded], preferred)
+            if candidates:
+                model, resident = candidates[0], True
+            elif self._may_load(capability) and listed:
+                model, resident = _prefer(listed, preferred)[0], False
+            else:
+                reasons.append(
+                    f"Faustus registry lists Ollama models for '{capability}' but none is resident "
+                    "(only_resident=True)"
+                )
+                return None
+        else:
+            model = _prefer(listed, preferred)[0] if listed else None
+            # A llama-server serves exactly the model it loaded at start.
+            resident = True if provider == "llamacpp" else None
+
+        tail = {True: "; resident", False: "; would load", None: ""}[resident]
+        reason = (
+            f"{capability} -> {backend} at {_host(url)} ({model}), from Faustus registry{tail}"
+        )
+        return Resolution(
+            capability=capability,
+            provider=provider,
+            url=url,
+            model=model,
+            api=api,  # type: ignore[arg-type]
+            state="resolved",
+            reason=reason,
+            details={
+                "source": "faustus_registry",
+                "endpoint_id": item.get("endpoint_id"),
+                "endpoint_name": item.get("endpoint_name"),
+                "category": item.get("category"),
+                "resident": resident,
+            },
+        )
 
     async def _resolve_from_loopback(
         self, capability: str, reasons: list[str]
@@ -327,13 +505,14 @@ class Link:
     def _llamacpp_model_name(server: dict) -> Optional[str]:
         models_resp = server.get("models")
         if isinstance(models_resp, dict):
-            data = models_resp.get("data") or []
-            if data and data[0].get("id"):
+            data = models_resp.get("data")
+            if isinstance(data, list) and data and isinstance(data[0], dict) and data[0].get("id"):
                 return data[0]["id"]
         props = server.get("props") or {}
         model_path = props.get("model_path")
-        if model_path:
-            return Path(model_path).name
+        if isinstance(model_path, str) and model_path:
+            # Windows paths (C:\models\x.gguf) must work on any host OS.
+            return model_path.replace("\\", "/").rsplit("/", 1)[-1]
         return None
 
     async def _loopback_ollama(self, capability: str, reasons: list[str]) -> Optional[Resolution]:
@@ -342,49 +521,59 @@ class Link:
             reasons.append("Ollama not reachable on 11434")
             return None
 
-        needs_cap = {"vision": "vision", "embeddings": "embedding"}.get(capability)
-        candidates = [dict(m, would_load=False) for m in ollama["resident"]]
-        if not candidates and not self.config.only_resident:
-            tags = ollama.get("tags") or []
-            candidates = [
-                {"name": t.get("name"), "capabilities": [], "would_load": True} for t in tags
+        preferred = self.config.capability(capability).model
+        fitting = {
+            m["name"]: m for m in ollama["resident"] if _ollama_fits(capability, m["capabilities"])
+        }
+        model: Optional[str] = None
+        resident = True
+        names = _prefer(list(fitting), preferred)
+        if names:
+            model = names[0]
+        elif self._may_load(capability):
+            loaded = {m["name"] for m in ollama["resident"]}
+            tag_names = [
+                t.get("name") or t.get("model") for t in ollama.get("tags") or []
             ]
+            tag_names = [n for n in tag_names if isinstance(n, str) and n and n not in loaded]
+            for name in _prefer(tag_names, preferred)[:8]:
+                caps = await _probes.ollama_show_capabilities(self._client, ollama["url"], name)
+                if _ollama_fits(capability, caps):
+                    model, resident = name, False
+                    break
 
-        allow_load = self.config.capability(capability).allow_load
-        for m in candidates:
-            if needs_cap and needs_cap not in (m.get("capabilities") or []):
-                continue
-            if m.get("would_load") and not allow_load:
-                continue
-            model = m["name"]
-            resident = not m.get("would_load")
-            reason = (
-                f"{capability} -> Ollama at {_host(ollama['url'])} ({model}), "
-                f"shared loopback server; {'resident' if resident else 'would load'}"
-            )
-            return Resolution(
-                capability=capability,
-                provider="ollama",
-                url=ollama["url"],
-                model=model,
-                api="ollama",
-                state="resolved",
-                reason=reason,
-                details={"source": "loopback", "resident": resident},
-            )
+        if model is None:
+            if ollama["resident"]:
+                reasons.append(f"Ollama has resident models but none support '{capability}'")
+            elif self._may_load(capability):
+                reasons.append(f"Ollama has no installed model that supports '{capability}'")
+            else:
+                reasons.append("Ollama has no resident models (only_resident=True)")
+            return None
 
-        if ollama["resident"]:
-            reasons.append(f"Ollama has resident models but none support '{capability}'")
-        else:
-            reasons.append("Ollama has no resident models (only_resident=True)")
-        return None
+        reason = (
+            f"{capability} -> Ollama at {_host(ollama['url'])} ({model}), "
+            f"shared loopback server; {'resident' if resident else 'would load'}"
+        )
+        if preferred and preferred != model:
+            reason += f"; preferred '{preferred}' not available"
+        return Resolution(
+            capability=capability,
+            provider="ollama",
+            url=ollama["url"],
+            model=model,
+            api="ollama",
+            state="resolved",
+            reason=reason,
+            details={"source": "loopback", "resident": resident},
+        )
 
     async def _loopback_openai_compat(self, reasons: list[str]) -> Optional[Resolution]:
         compat = await self._probe_openai_compat()
         if not compat:
             reasons.append("no OpenAI-compatible server found on 1234")
             return None
-        model = compat["models"][0]
+        model = _prefer(compat["models"], self.config.capability("llm").model)[0]
         reason = f"llm -> OpenAI-compatible server at {_host(compat['url'])} ({model}), shared loopback server"
         return Resolution(
             capability="llm",
@@ -398,16 +587,16 @@ class Link:
         )
 
     async def _loopback_comfy(self, capability: str, reasons: list[str]) -> Optional[Resolution]:
-        comfy_url = self.config.comfy_url or "http://127.0.0.1:8188"
+        comfy_url = (self.config.comfy_url or "http://127.0.0.1:8188").rstrip("/")
         comfy = await self._probe_comfy(comfy_url)
         if not comfy:
             reasons.append(f"ComfyUI not reachable at {_host(comfy_url)}")
             return None
-        gpus = gpu_free_mb()
-        free_mb = gpus[0].free_mb if gpus else None
+        gpus = await self._gpus()
+        free_mb = max((g.free_mb for g in gpus), default=None)
         reason = f"{capability} -> ComfyUI at {_host(comfy['url'])}, shared loopback server"
         if free_mb is not None:
-            reason += f"; {free_mb} MB VRAM free"
+            reason += f"; {free_mb} MB VRAM free" + (" (best GPU)" if len(gpus) > 1 else "")
         return Resolution(
             capability=capability,
             provider="comfyui",
@@ -420,6 +609,9 @@ class Link:
                 "source": "loopback",
                 "checkpoints": comfy["checkpoints"],
                 "vram_free_mb": free_mb,
+                "gpus": [
+                    {"index": g.index, "total_mb": g.total_mb, "free_mb": g.free_mb} for g in gpus
+                ],
             },
         )
 
