@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hoard-link"
+version = "0.1.0"
+description = "Shared local model backend resolution for agent-controlled apps: pick the already-loaded llama.cpp/Ollama/ComfyUI server for a capability, or Faustus's registry, without ever loading a second copy of a model."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Luis Salet" }]
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27,<1.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[tool.setuptools.packages.find]
+include = ["hoard_link*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
