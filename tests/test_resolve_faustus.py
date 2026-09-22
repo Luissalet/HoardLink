@@ -156,3 +156,23 @@ async def test_faustus_url_lookup_is_cached():
     await link.resolve("llm")
     await link.resolve("vision")
     assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("capability", ["tts", "stt"])
+async def test_faustus_voice_service_switched_off_is_not_resolved(capability):
+    # Shape answered by a real Faustus whose voice services are off.
+    router = Router()
+    router.get(7000, "/api/health", HEALTHY)
+    router.get(7000, "/api/models", EMPTY_REGISTRY)
+    router.get(
+        7000,
+        f"/api/{capability}/capabilities",
+        httpx.Response(200, json={"provider": "disabled", "configured": False, "ready": False}),
+    )
+    cfg = LinkConfig(faustus_token="ody_test")
+    link = make_link(router, config=cfg)
+
+    res = await link.resolve(capability)
+    assert res.state == "unavailable"
+    assert any("switched off" in r for r in res.details["reasons"])

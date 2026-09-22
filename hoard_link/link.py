@@ -400,7 +400,24 @@ class Link:
             svc_status, svc_data = await _faustus.get(
                 self._client, f"{faustus_url}/api/{capability}/capabilities", headers=headers
             )
-            if svc_status == 200:
+            disabled = (
+                svc_status == 200
+                and isinstance(svc_data, dict)
+                and (
+                    svc_data.get("ready") is False
+                    or str(svc_data.get("provider") or "").lower() in ("disabled", "none", "off")
+                )
+            )
+            if disabled:
+                # Seen on a real Faustus: the service answers 200 with
+                # provider "disabled" and ready false. Calling synthesize
+                # there fails, so it must not count as resolved.
+                reasons.append(
+                    f"Faustus {capability.upper()} is switched off "
+                    f"(provider={svc_data.get('provider')!r}, ready={svc_data.get('ready')!r}); "
+                    f"enable it in Faustus Settings -> Voice"
+                )
+            elif svc_status == 200:
                 reason = f"{capability} -> Faustus {capability} service at {_host(faustus_url)}, native Faustus service"
                 return Resolution(
                     capability=capability,
