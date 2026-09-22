@@ -1,6 +1,15 @@
 # Hoard Link
 
-El backend de modelos compartido para aplicaciones controladas por agentes.
+### Una sola respuesta compartida a "¿qué servidor de modelo uso ahora mismo?"
+
+**El backend de modelos compartido para aplicaciones controladas por
+agentes: elige el servidor local que ya está cargado para una capacidad
+en vez de cargar una segunda copia de un modelo.**
+
+[English](README.md) · [Primeros pasos](#instalación-vendorización) ·
+[Uso con Faustus](#por-qué-importa-compartir-en-una-máquina-limitada-por-gpu) ·
+[API](#api) ·
+[Portfolio](https://luissalet.github.io/Portfolio/#projects)
 
 Hoard Link es una librería de Python pequeña — solo librería estándar más
 `httpx`, sin servidor, sin puerto, sin interfaz — que un conjunto de
@@ -286,9 +295,14 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-161 tests, sin conexión (`httpx.MockTransport`), en unos 3 segundos. Los
+163 tests, sin conexión (`httpx.MockTransport`), en unos 3 segundos. Los
 únicos sockets reales están en los tests de la fachada síncrona, que
 arrancan un servidor HTTP mínimo en un puerto efímero de `127.0.0.1`
 para reproducir la reutilización de conexiones entre bucles de eventos;
 los tests del comando TTS usan el propio intérprete de Python como
-"binario de TTS".
+"binario de TTS". Ningún test necesita red ni descargar un modelo, así
+que el flujo de CI de abajo funciona igual sin conexión.
+
+## Licencia
+
+MIT — ver [LICENSE](LICENSE).

@@ -1,6 +1,15 @@
 # Hoard Link
 
-The shared model backend for agent-controlled apps.
+### One shared answer to "which model server do I use right now?"
+
+**The shared model backend for agent-controlled apps: pick the
+already-loaded local server for a capability instead of loading a second
+copy of a model.**
+
+[Español](README.es.md) · [Quick start](#installing-vendoring) ·
+[Use with Faustus](#why-sharing-matters-on-a-gpu-bound-machine) ·
+[API](#api) ·
+[Portfolio](https://luissalet.github.io/Portfolio/#projects)
 
 Hoard Link is a small Python library — standard library plus `httpx`, no
 server, no port, no UI — that a set of local apps can each vendor a copy
@@ -57,7 +66,7 @@ For each capability, in order:
    `HTTP(S)_PROXY`): llama.cpp (`8080`–`8090`, via `/props`,
    `/v1/models`, `/slots`), Ollama (`11434`, via `/api/ps` for **resident**
    models, `/api/tags`, `/api/show` for capabilities), a generic
-   generic OpenAI-compatible chat server on `1234` (`llm` only), and
+   OpenAI-compatible chat server on `1234` (`llm` only), and
    ComfyUI (`8188`, `image`/`video`). A port only counts as a
    llama-server if its `/props` carries llama-server keys. No probe ever
    raises, whatever JSON a port answers with.
@@ -269,8 +278,13 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-161 tests, offline (`httpx.MockTransport`), in about 3 seconds. The only
+163 tests, offline (`httpx.MockTransport`), in about 3 seconds. The only
 real sockets are in the sync-facade tests, which start a tiny HTTP
 server on an ephemeral `127.0.0.1` port to reproduce connection reuse
 across event loops; the TTS-command tests run the current Python
-interpreter as the "TTS binary".
+interpreter as the "TTS binary". No test needs network access or a
+downloaded model, so the CI workflow below runs the same way offline.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
