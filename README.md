@@ -6,9 +6,8 @@
 already-loaded local server for a capability instead of loading a second
 copy of a model.**
 
-[Español](README.es.md) · [Quick start](#installing-vendoring) ·
-[Use with Faustus](#why-sharing-matters-on-a-gpu-bound-machine) ·
-[API](#api) ·
+[Español](README.es.md) · [Quick start](#quick-start) ·
+[Use with Faustus](#use-with-faustus) · [API](#api) ·
 [Portfolio](https://luissalet.github.io/Portfolio/#projects)
 
 Hoard Link is a small Python library — standard library plus `httpx`, no
@@ -20,9 +19,9 @@ which model do I use right now, and why?** — and then to actually call it.
 ## Why sharing matters on a GPU-bound machine
 
 On a machine running **Faustus** (a local AI workspace) plus several
-plugin apps, the GPU is the scarce resource. A typical box here has a
-`llama-server` (llama.cpp) serving a 27B model that alone holds most of a
-60 GB card, sometimes Ollama and ComfyUI as well. If every app that wants
+plugin apps, the GPU is the scarce resource. A realistic setup is one
+`llama-server` (llama.cpp) serving a 27B model that by itself fills most
+of a large GPU, sometimes with Ollama and ComfyUI alongside it. If every app that wants
 an LLM call loaded its *own* model, the machine would run out of VRAM
 after the second app started. Hoard Link's job is to make every app ask
 "is someone already serving what I need?" before it ever asks a server to
@@ -33,9 +32,57 @@ Hoard Link does not run its own model server and does not manage
 lifecycles. It resolves an address, and — for chat/embeddings/tts — makes
 the HTTP call for you against the server it found.
 
+## Quick start
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/Luissalet/HoardLink.git
+cd HoardLink
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+python examples/status.py
+```
+
+Linux / macOS:
+
+```bash
+git clone https://github.com/Luissalet/HoardLink.git
+cd HoardLink
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+python examples/status.py
+```
+
+`examples/status.py` prints one line per capability: what resolved and
+why, or why nothing did. On a machine with no model server running, every
+line reads `unavailable` followed by the reasons, e.g.
+
+```
+hoard-link 0.1.0
+       llm  unavailable  Faustus not reachable on configured/default ports; no llama.cpp server found on ports 8080-8090; Ollama not reachable on 11434; no OpenAI-compatible server found on 1234
+```
+
+Start `llama-server`, Ollama or ComfyUI (or point `HOARD_LLM_URL` at a
+server) and run it again to see that capability resolve. Pass a
+`backend.json` path as the first argument to try your own configuration.
+
 ## Resolution order
 
 For each capability, in order:
+
+```mermaid
+flowchart LR
+    A["resolve(cap)"] --> B{"backend.json /<br/>HOARD_* env"}
+    B -- set --> R["Resolution"]
+    B -- not set --> C{"Faustus on<br/>:7000 / :7001"}
+    C -- local entry --> R
+    C -- no match --> D{"loopback probes<br/>llama.cpp · Ollama ·<br/>OpenAI-compatible · ComfyUI"}
+    D -- found --> R
+    D -- nothing --> U["unavailable + reasons"]
+```
 
 1. **Explicit configuration** — the app's own `backend.json` and
    `HOARD_<CAP>_URL` / `HOARD_<CAP>_MODEL` / `HOARD_FAUSTUS_URL` /
@@ -111,14 +158,18 @@ Hoard Link is meant to be **copied**, not installed as a third-party
 dependency, so each app ships one committed copy of the exact behaviour
 its tests were written against. Copy the whole `hoard_link/` directory
 (every `.py` file, no `__pycache__/`) into your package, never edit the
-copy, and to update, replace the directory wholesale and note the Hoard
-Link commit you copied from:
+copy, and to update, replace the directory wholesale. Record where the
+copy came from in a `VENDORED.txt` next to it:
 
 ```
 <app_pkg>/
   hoard_link/        <- copy of this repo's hoard_link/ directory
+    VENDORED.txt     <- "Vendored from HoardLink (https://github.com/Luissalet/HoardLink), version 0.1.0"
   ...
 ```
+
+Every app that vendors the same version carries a byte-identical copy, so
+a fix lands everywhere by re-copying one release.
 
 ```python
 from .hoard_link import Link, LinkConfig
@@ -166,9 +217,16 @@ Environment overrides (highest priority, layered on top of the file):
   from stdout. It runs without a console window, with a 120 s timeout.
 - The file is read as UTF-8 with or without a BOM (Notepad's default).
 
-## Minting a Faustus token
+## Use with Faustus
 
-From Faustus, mint a token scoped to `chat` (the scope the model registry
+Nothing to configure when Faustus runs on the same machine with auth
+disabled: Hoard Link finds it on `127.0.0.1:7000` or `:7001`, reads its
+model registry and talks to the same local servers Faustus already has
+loaded (see [Resolution order](#resolution-order), step 2). Point
+`faustus.url` in `backend.json` (or `HOARD_FAUSTUS_URL`) at any other
+port.
+
+When Faustus requires auth, mint a token scoped to `chat` (the scope the model registry
 and TTS/STT endpoints accept today) and put it in the app's
 `backend.json` under `faustus.token`, or export it as
 `HOARD_FAUSTUS_TOKEN` for the app's process. Faustus tokens look like
@@ -179,6 +237,7 @@ gitignored `data/` directory).
 ## API
 
 ```python
+import os
 from hoard_link import Link, LinkConfig
 
 link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="argus"))
@@ -249,10 +308,10 @@ link.sync.chat(...)                  # same calls, blocking, for synchronous app
   configuration or a matching Faustus registry entry, never through
   loopback probing.
 - **No websocket progress for ComfyUI.** `ComfyClient.wait()` polls
-  `/history/{id}`; it does not open `/ws` for push progress. The spec
-  allowed this only "if simple" — a poll every second is simple, correct,
-  and testable offline; a websocket client is a second thing to keep
-  alive and reconnect, which wasn't worth it for a job-completion wait.
+  `/history/{id}`; it does not open `/ws` for push progress. A poll every
+  second is simple, correct and testable offline; a websocket client is a
+  second thing to keep alive and reconnect, which isn't worth it for a
+  job-completion wait.
 - **`resolve()` does not verify explicit configuration.** Resolution-order
   source #1 is trusted as given; a stale `backend.json` entry surfaces as
   a `BackendError` with `status == 0` on the first real call rather than
@@ -271,10 +330,10 @@ link.sync.chat(...)                  # same calls, blocking, for synchronous app
 
 ## Tests
 
+With the virtual environment from the [Quick start](#quick-start) active,
+on Windows or Linux:
+
 ```
-python3 -m venv .venv
-. .venv/bin/activate   # .venv\Scripts\activate on Windows
-pip install -e ".[dev]"
 pytest -q
 ```
 
@@ -283,7 +342,8 @@ real sockets are in the sync-facade tests, which start a tiny HTTP
 server on an ephemeral `127.0.0.1` port to reproduce connection reuse
 across event loops; the TTS-command tests run the current Python
 interpreter as the "TTS binary". No test needs network access or a
-downloaded model, so the CI workflow below runs the same way offline.
+downloaded model, so CI (`.github/workflows/ci.yml`: Ubuntu and Windows,
+Python 3.11 to 3.13) runs the same suite with no GPU and no network.
 
 ## License
 

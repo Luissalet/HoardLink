@@ -6,14 +6,13 @@
 agentes: elige el servidor local que ya está cargado para una capacidad
 en vez de cargar una segunda copia de un modelo.**
 
-[English](README.md) · [Primeros pasos](#instalación-vendorización) ·
-[Uso con Faustus](#por-qué-importa-compartir-en-una-máquina-limitada-por-gpu) ·
-[API](#api) ·
+[English](README.md) · [Primeros pasos](#primeros-pasos) ·
+[Uso con Faustus](#uso-con-faustus) · [API](#api) ·
 [Portfolio](https://luissalet.github.io/Portfolio/#projects)
 
 Hoard Link es una librería de Python pequeña — solo librería estándar más
 `httpx`, sin servidor, sin puerto, sin interfaz — que un conjunto de
-aplicaciones locales pueden vendorizar (cada una con su propia copia) para
+aplicaciones locales pueden incluir (cada una con su propia copia) para
 responder a una sola pregunta: **para la capacidad X (`llm`, `vision`,
 `embeddings`, `tts`, `stt`, `image`, `video`, `music`), ¿qué servidor y qué
 modelo uso ahora mismo, y por qué?** — y después hacer la llamada de verdad.
@@ -21,10 +20,10 @@ modelo uso ahora mismo, y por qué?** — y después hacer la llamada de verdad.
 ## Por qué importa compartir en una máquina limitada por GPU
 
 En una máquina que ejecuta **Faustus** (un espacio de trabajo de IA local)
-más varias aplicaciones plugin, la GPU es el recurso escaso. Una máquina
-típica aquí tiene un `llama-server` (llama.cpp) sirviendo un modelo de 27B
-que por sí solo ocupa la mayor parte de una tarjeta de 60 GB, a veces
-también Ollama y ComfyUI. Si cada aplicación que quisiera hacer una
+más varias aplicaciones plugin, la GPU es el recurso escaso. Un caso
+realista es un `llama-server` (llama.cpp) sirviendo un modelo de 27B que
+por sí solo ocupa la mayor parte de una GPU grande, a veces con Ollama y
+ComfyUI al lado. Si cada aplicación que quisiera hacer una
 llamada a un LLM cargara su *propio* modelo, la máquina se quedaría sin
 VRAM al arrancar la segunda aplicación. El trabajo de Hoard Link es hacer
 que cada aplicación pregunte "¿alguien ya está sirviendo lo que
@@ -36,9 +35,59 @@ Hoard Link no ejecuta su propio servidor de modelos ni gestiona ciclos de
 vida. Resuelve una dirección y — para chat/embeddings/tts — hace la
 llamada HTTP por ti contra el servidor que ha encontrado.
 
+## Primeros pasos
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/Luissalet/HoardLink.git
+cd HoardLink
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+python examples/status.py
+```
+
+Linux / macOS:
+
+```bash
+git clone https://github.com/Luissalet/HoardLink.git
+cd HoardLink
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+python examples/status.py
+```
+
+`examples/status.py` imprime una línea por capacidad: qué se ha resuelto
+y por qué, o por qué no se ha resuelto nada. En una máquina sin ningún
+servidor de modelos en marcha todas las líneas dicen `unavailable`
+seguido de los motivos (en inglés, tal como los devuelve la librería):
+
+```
+hoard-link 0.1.0
+       llm  unavailable  Faustus not reachable on configured/default ports; no llama.cpp server found on ports 8080-8090; Ollama not reachable on 11434; no OpenAI-compatible server found on 1234
+```
+
+Arranca `llama-server`, Ollama o ComfyUI (o apunta `HOARD_LLM_URL` a un
+servidor) y vuelve a ejecutarlo para ver cómo se resuelve esa capacidad.
+Pasa la ruta de un `backend.json` como primer argumento para probar tu
+propia configuración.
+
 ## Orden de resolución
 
 Para cada capacidad, en este orden:
+
+```mermaid
+flowchart LR
+    A["resolve(cap)"] --> B{"backend.json /<br/>entorno HOARD_*"}
+    B -- definido --> R["Resolution"]
+    B -- sin definir --> C{"Faustus en<br/>:7000 / :7001"}
+    C -- entrada local --> R
+    C -- sin coincidencia --> D{"sondeo en loopback<br/>llama.cpp · Ollama ·<br/>compatible con OpenAI · ComfyUI"}
+    D -- encontrado --> R
+    D -- nada --> U["unavailable + motivos"]
+```
 
 1. **Configuración explícita** — el `backend.json` propio de la
    aplicación y las variables de entorno `HOARD_<CAP>_URL` /
@@ -66,9 +115,10 @@ Para cada capacidad, en este orden:
    `/api/tts/*`/`/api/stt/*` de Faustus; un 401/403 ahí se registra como
    motivo (una sesión solo de navegador) y la resolución sigue adelante
    en vez de fallar.
-3. **Servidores compartidos en loopback**, sondeados en paralelo con 1s de
-   timeout de reloj por petición y cacheados 30s (sin duplicados: las
-   resoluciones simultáneas comparten un mismo sondeo; el cliente de
+3. **Servidores compartidos en loopback**, sondeados en paralelo con un
+   tiempo límite real de 1 s por petición y guardados en caché 30 s (sin
+   duplicados: las resoluciones simultáneas comparten un mismo sondeo; el
+   cliente de
    sondeo ignora `HTTP(S)_PROXY`): llama.cpp (`8080`–`8090`, vía
    `/props`, `/v1/models`, `/slots`), Ollama (`11434`, vía `/api/ps` para
    modelos **residentes**, `/api/tags`, `/api/show` para capacidades), un
@@ -104,7 +154,7 @@ Para cada capacidad, en este orden:
   para él — documentado aquí en vez de dejarlo a adivinar.
 - **Los trabajos de GPU conocen la VRAM libre antes.** `gpu_free_mb()`
   ejecuta `nvidia-smi --query-gpu=index,memory.total,memory.used
-  --format=csv,noheader,nounits` (best effort — sin GPU NVIDIA o sin
+  --format=csv,noheader,nounits` (en la medida de lo posible: sin GPU NVIDIA o sin
   `nvidia-smi` en el PATH simplemente da `[]`; en Windows se ejecuta con
   `CREATE_NO_WINDOW` y también busca en la carpeta antigua `NVSMI`).
   `resolve("image")` lo ejecuta en un hilo aparte e informa de la GPU con
@@ -115,21 +165,26 @@ Para cada capacidad, en este orden:
   127.0.0.1:8081 (qwen3.8-27b-q8-llamacpp), from Faustus registry;
   resident"`.
 
-## Instalación (vendorización)
+## Instalación (copia en la aplicación)
 
 Hoard Link está pensado para ser **copiado**, no instalado como
-dependencia de terceros, para que cada aplicación lleve una copia
-comprometida en su repositorio del comportamiento exacto contra el que se
-escribieron sus tests. Copia el directorio `hoard_link/` entero (todos
+dependencia de terceros, para que cada aplicación lleve en su propio
+repositorio una copia versionada del comportamiento exacto contra el que
+se escribieron sus tests. Copia el directorio `hoard_link/` entero (todos
 los `.py`, sin `__pycache__/`) dentro de tu paquete, no edites la copia,
-y para actualizar sustituye el directorio completo y anota el commit de
-Hoard Link del que copiaste:
+y para actualizar sustituye el directorio completo. Deja constancia de su
+origen en un `VENDORED.txt` junto a ella:
 
 ```
 <app_pkg>/
   hoard_link/        <- copia del directorio hoard_link/ de este repo
+    VENDORED.txt     <- "Vendored from HoardLink (https://github.com/Luissalet/HoardLink), version 0.1.0"
   ...
 ```
+
+Todas las aplicaciones que usan la misma versión llevan una copia
+idéntica byte a byte, así que un arreglo llega a todas volviendo a copiar
+una sola versión.
 
 ```python
 from .hoard_link import Link, LinkConfig
@@ -175,13 +230,20 @@ Variables de entorno (máxima prioridad, se aplican encima del archivo):
 - `command` es una lista de cadenas. `{text}`, `{voice}` y `{out}` se
   sustituyen literalmente; sin `{text}` el texto se escribe en la stdin
   del comando (así lo lee Piper), sin `{out}` el audio se lee de stdout.
-  Se ejecuta sin ventana de consola y con un timeout de 120 s.
+  Se ejecuta sin ventana de consola y con un tiempo límite de 120 s.
 - El archivo se lee como UTF-8 con o sin BOM (lo que guarda el Bloc de
   notas por defecto).
 
-## Cómo generar un token de Faustus
+## Uso con Faustus
 
-Desde Faustus, genera un token con el scope `chat` (el que aceptan hoy el
+Si Faustus corre en la misma máquina con la autenticación desactivada, no
+hay nada que configurar: Hoard Link lo encuentra en `127.0.0.1:7000` o
+`:7001`, lee su registro de modelos y habla con los mismos servidores
+locales que Faustus ya tiene cargados (ver
+[Orden de resolución](#orden-de-resolución), paso 2). Para cualquier otro
+puerto, pon `faustus.url` en `backend.json` (o `HOARD_FAUSTUS_URL`).
+
+Si Faustus exige autenticación, genera un token con el scope `chat` (el que aceptan hoy el
 registro de modelos y los endpoints de TTS/STT) y ponlo en el
 `backend.json` de la aplicación bajo `faustus.token`, o expórtalo como
 `HOARD_FAUSTUS_TOKEN` para el proceso de la aplicación. Los tokens de
@@ -193,6 +255,7 @@ el `.gitignore`).
 ## API
 
 ```python
+import os
 from hoard_link import Link, LinkConfig
 
 link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="argus"))
@@ -264,11 +327,10 @@ link.sync.chat(...)                  # las mismas llamadas, bloqueantes, para c�
   solo se resuelve mediante configuración explícita o una entrada del
   registro de Faustus que encaje, nunca mediante sondeo en loopback.
 - **Sin progreso por websocket para ComfyUI.** `ComfyClient.wait()`
-  sondea `/history/{id}`; no abre `/ws` para progreso empujado. La
-  especificación lo permitía solo "si era sencillo" — sondear cada
-  segundo es sencillo, correcto y comprobable sin conexión; un cliente de
-  websocket es una cosa más que mantener viva y reconectar, que no
-  compensaba para esperar a que termine un trabajo.
+  sondea `/history/{id}`; no abre `/ws` para recibir el progreso en
+  directo. Sondear cada segundo es sencillo, correcto y comprobable sin
+  conexión; un cliente de websocket es una cosa más que mantener viva y
+  reconectar, y no compensa solo para esperar a que termine un trabajo.
 - **`resolve()` no verifica la configuración explícita.** La fuente 1 del
   orden de resolución se confía tal cual; una entrada caducada en
   `backend.json` aparece como un `BackendError` con `status == 0` en la
@@ -288,10 +350,10 @@ link.sync.chat(...)                  # las mismas llamadas, bloqueantes, para c�
 
 ## Tests
 
+Con el entorno virtual de [Primeros pasos](#primeros-pasos) activado, en
+Windows o en Linux:
+
 ```
-python3 -m venv .venv
-. .venv/bin/activate   # .venv\Scripts\activate en Windows
-pip install -e ".[dev]"
 pytest -q
 ```
 
@@ -301,7 +363,8 @@ arrancan un servidor HTTP mínimo en un puerto efímero de `127.0.0.1`
 para reproducir la reutilización de conexiones entre bucles de eventos;
 los tests del comando TTS usan el propio intérprete de Python como
 "binario de TTS". Ningún test necesita red ni descargar un modelo, así
-que el flujo de CI de abajo funciona igual sin conexión.
+que la CI (`.github/workflows/ci.yml`: Ubuntu y Windows, Python 3.11 a
+3.13) ejecuta la misma batería sin GPU y sin red.
 
 ## Licencia
 
