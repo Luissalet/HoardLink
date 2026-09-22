@@ -65,7 +65,7 @@ servidor de modelos en marcha todas las líneas dicen `unavailable`
 seguido de los motivos (en inglés, tal como los devuelve la librería):
 
 ```
-hoard-link 0.1.0
+hoard-link 0.1.1
        llm  unavailable  Faustus not reachable on configured/default ports; no llama.cpp server found on ports 8080-8090; Ollama not reachable on 11434; no OpenAI-compatible server found on 1234
 ```
 
@@ -178,7 +178,7 @@ origen en un `VENDORED.txt` junto a ella:
 ```
 <app_pkg>/
   hoard_link/        <- copia del directorio hoard_link/ de este repo
-    VENDORED.txt     <- "Vendored from HoardLink (https://github.com/Luissalet/HoardLink), version 0.1.0"
+    VENDORED.txt     <- "Vendored from HoardLink (https://github.com/Luissalet/HoardLink), version 0.1.1"
   ...
 ```
 
