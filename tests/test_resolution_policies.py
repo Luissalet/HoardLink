@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from hoard_link.config import CapabilityConfig, LinkConfig
-from tests.conftest import Router, make_link
+from tests.conftest import FakeClock, Router, make_link
 
 HEALTHY = httpx.Response(200, json={"status": "healthy"})
 
@@ -122,6 +122,32 @@ async def test_faustus_url_with_trailing_slash_still_works():
     cfg = LinkConfig.load(None, env={"HOARD_FAUSTUS_URL": "http://127.0.0.1:7000/"})
     res = await make_link(router, config=cfg).resolve("llm")
     assert res.details["source"] == "faustus_registry"
+
+
+@pytest.mark.asyncio
+async def test_wait_idle_works_for_a_llama_server_from_faustus_registry():
+    router = (
+        Router()
+        .get(7000, "/api/health", HEALTHY)
+        .get(7000, "/api/models", registry(LLAMA_ITEM))
+        .get(8081, "/props", httpx.Response(200, json={"model_path": "m.gguf"}))
+        .get(8081, "/slots", httpx.Response(200, json=[{"is_processing": True}]))
+    )
+    clock = FakeClock()
+    link = make_link(router, fake_clock=clock)
+    assert await link.wait_idle("llm", max_wait_s=3) is False
+    assert sum(clock.sleeps) == pytest.approx(3.0)  # never sleeps past the deadline
+
+
+@pytest.mark.asyncio
+async def test_wait_idle_works_for_explicit_llamacpp_url():
+    router = (
+        Router()
+        .get(8083, "/props", httpx.Response(200, json={"model_path": "m.gguf"}))
+        .get(8083, "/slots", httpx.Response(200, json=[{"is_processing": False}]))
+    )
+    cfg = LinkConfig(capabilities={"llm": CapabilityConfig(url="http://127.0.0.1:8083", provider="llamacpp")})
+    assert await make_link(router, config=cfg).wait_idle("llm", max_wait_s=5) is True
 
 
 @pytest.mark.asyncio

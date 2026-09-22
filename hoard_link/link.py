@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import re
+import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -87,15 +90,46 @@ def _ollama_endpoint(url: str, path: str) -> str:
     return _server_root(url) + path
 
 
-def _strip_think(text: str) -> tuple[str, Optional[str]]:
+def _strip_think(text: Optional[str]) -> tuple[str, Optional[str]]:
+    """Split reasoning out of a reasoning model's answer.
+
+    Handles the three shapes seen in practice:
+
+    - ``<think>...</think>answer`` (one or more closed blocks);
+    - ``...reasoning</think>answer`` — the chat template already opened
+      ``<think>`` inside the prompt, so the output only has the close tag;
+    - ``answer? <think>reasoning`` with no close tag — generation was cut
+      off by ``max_tokens`` mid-thought; everything after the tag is
+      reasoning, never answer.
+    """
     if not text:
-        return text, None
+        return "", None
+    parts: list[str] = []
+    found = False
+
+    first_close = _THINK_CLOSE_RE.search(text)
+    first_open = _THINK_OPEN_RE.search(text)
+    if first_close and (first_open is None or first_close.start() < first_open.start()):
+        parts.append(text[: first_close.start()])
+        text = text[first_close.end():]
+        found = True
+
     blocks = _THINK_RE.findall(text)
-    if not blocks:
+    if blocks:
+        parts.extend(blocks)
+        text = _THINK_RE.sub("", text)
+        found = True
+
+    dangling = _THINK_OPEN_RE.search(text)
+    if dangling:
+        parts.append(text[dangling.end():])
+        text = text[: dangling.start()]
+        found = True
+
+    if not found:
         return text, None
-    cleaned = _THINK_RE.sub("", text).strip()
-    reasoning = "\n\n".join(b.strip() for b in blocks)
-    return cleaned, reasoning
+    reasoning = "\n\n".join(p.strip() for p in parts if p.strip())
+    return text.strip(), reasoning or None
 
 
 def _join_reasoning(*parts: Optional[str]) -> Optional[str]:
@@ -619,6 +653,34 @@ class Link:
     # actions
     # ------------------------------------------------------------------
 
+    async def _post_json(
+        self,
+        provider: Optional[str],
+        url: str,
+        payload: Any,
+        timeout: float,
+        headers: Optional[dict[str, str]] = None,
+    ) -> httpx.Response:
+        """POST that only ever raises :class:`BackendError` for server trouble.
+
+        ``status=0`` means no HTTP response at all (refused, timed out) —
+        typically a stale explicit URL or a server that just went away.
+        """
+        try:
+            resp = await self._client.post(url, json=payload, headers=headers, timeout=timeout)
+        except httpx.HTTPError as exc:
+            raise BackendError(provider, 0, f"{type(exc).__name__} at {_host(url)}: {exc}"[:200]) from exc
+        if resp.status_code >= 400:
+            raise BackendError(provider, resp.status_code, resp.text[:200])
+        return resp
+
+    @staticmethod
+    def _json(provider: Optional[str], resp: httpx.Response) -> Any:
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise BackendError(provider, resp.status_code, f"response is not JSON: {resp.text[:160]}") from exc
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -631,17 +693,21 @@ class Link:
         res = await self.resolve(capability)
         if not res.resolved:
             raise Unavailable(capability, res.details.get("reasons", [res.reason]))
+        if not res.url:
+            raise Unavailable(capability, [f"resolved provider '{res.provider}' has no URL to chat with"])
 
         start = self._now()
         if res.api == "ollama":
-            text, raw = await self._chat_ollama(res, messages, images, max_tokens, temperature)
+            text, extra_reasoning, raw = await self._chat_ollama(
+                res, messages, images, max_tokens, temperature, response_format
+            )
         else:
-            text, raw = await self._chat_openai(
+            text, extra_reasoning, raw = await self._chat_openai(
                 res, messages, images, max_tokens, temperature, response_format
             )
         elapsed_ms = (self._now() - start) * 1000.0
 
-        clean_text, reasoning = _strip_think(text)
+        clean_text, think = _strip_think(text)
         usage = _extract_usage(raw, res.api)
         return ChatResult(
             text=clean_text,
@@ -649,7 +715,7 @@ class Link:
             provider=res.provider,
             usage=usage,
             elapsed_ms=elapsed_ms,
-            reasoning=reasoning,
+            reasoning=_join_reasoning(extra_reasoning, think),
         )
 
     async def _chat_openai(
@@ -660,7 +726,7 @@ class Link:
         max_tokens: Optional[int],
         temperature: Optional[float],
         response_format: Optional[dict[str, Any]],
-    ) -> tuple[str, dict]:
+    ) -> tuple[str, Optional[str], dict]:
         msgs = [dict(m) for m in messages]
         if images:
             content: list[dict[str, Any]] = []
@@ -681,7 +747,7 @@ class Link:
                 content.append(
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{_b64_image(img)}"},
+                        "image_url": {"url": f"data:{_image_mime(img)};base64,{_b64_image(img)}"},
                     }
                 )
             last_user["content"] = content
@@ -694,19 +760,20 @@ class Link:
         if response_format is not None:
             payload["response_format"] = response_format
 
-        resp = await self._client.post(res.url, json=payload, timeout=120.0)
-        if resp.status_code >= 400:
-            raise BackendError(res.provider, resp.status_code, resp.text[:200])
-        data = resp.json()
-        text = data["choices"][0]["message"]["content"]
-        return text, data
-
-    @staticmethod
-    def _ollama_endpoint(base_url: str, path: str) -> str:
-        stripped = base_url.rstrip("/")
-        if stripped.endswith(path):
-            return stripped
-        return f"{stripped}{path}"
+        endpoint = _openai_endpoint(res.url or "", "/chat/completions")
+        resp = await self._post_json(res.provider, endpoint, payload, timeout=120.0)
+        data = self._json(res.provider, resp)
+        try:
+            message = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise BackendError(res.provider, resp.status_code, f"unexpected chat response: {resp.text[:160]}") from exc
+        if not isinstance(message, dict):
+            raise BackendError(res.provider, resp.status_code, f"unexpected chat response: {resp.text[:160]}")
+        text = message.get("content")
+        # llama-server --reasoning-format and several OpenAI-compatible
+        # servers return the thinking out of band rather than in <think>.
+        extra = message.get("reasoning_content") or message.get("reasoning")
+        return (text if isinstance(text, str) else ""), (extra if isinstance(extra, str) else None), data
 
     async def _chat_ollama(
         self,
@@ -715,7 +782,8 @@ class Link:
         images: Optional[list[bytes]],
         max_tokens: Optional[int],
         temperature: Optional[float],
-    ) -> tuple[str, dict]:
+        response_format: Optional[dict[str, Any]] = None,
+    ) -> tuple[str, Optional[str], dict]:
         msgs = [dict(m) for m in messages]
         if images:
             last_user = None
@@ -737,40 +805,50 @@ class Link:
         payload: dict[str, Any] = {"model": res.model, "messages": msgs, "stream": False}
         if options:
             payload["options"] = options
+        fmt = _ollama_format(response_format)
+        if fmt is not None:
+            payload["format"] = fmt
 
-        endpoint = self._ollama_endpoint(res.url, "/api/chat")
-        resp = await self._client.post(endpoint, json=payload, timeout=120.0)
-        if resp.status_code >= 400:
-            raise BackendError(res.provider, resp.status_code, resp.text[:200])
-        data = resp.json()
-        text = (data.get("message") or {}).get("content", "")
-        return text, data
+        endpoint = _ollama_endpoint(res.url or "", "/api/chat")
+        resp = await self._post_json(res.provider, endpoint, payload, timeout=120.0)
+        data = self._json(res.provider, resp)
+        message = data.get("message") if isinstance(data, dict) else None
+        if not isinstance(message, dict):
+            raise BackendError(res.provider, resp.status_code, f"unexpected chat response: {resp.text[:160]}")
+        text = message.get("content")
+        extra = message.get("thinking")
+        return (text if isinstance(text, str) else ""), (extra if isinstance(extra, str) else None), data
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         res = await self.resolve("embeddings")
         if not res.resolved:
             raise Unavailable("embeddings", res.details.get("reasons", [res.reason]))
+        if not res.url:
+            raise Unavailable("embeddings", [f"resolved provider '{res.provider}' has no URL"])
 
         if res.api == "ollama":
-            endpoint = self._ollama_endpoint(res.url, "/api/embed")
-            resp = await self._client.post(
-                endpoint, json={"model": res.model, "input": texts}, timeout=60.0
+            endpoint = _ollama_endpoint(res.url, "/api/embed")
+            resp = await self._post_json(
+                res.provider, endpoint, {"model": res.model, "input": texts}, timeout=60.0
             )
-            if resp.status_code >= 400:
-                raise BackendError(res.provider, resp.status_code, resp.text[:200])
-            data = resp.json()
+            data = self._json(res.provider, resp)
+            if not isinstance(data, dict):
+                raise BackendError(res.provider, resp.status_code, "unexpected embeddings response")
             vectors = data.get("embeddings")
             if vectors is None and "embedding" in data:
                 vectors = [data["embedding"]]
             return vectors or []
 
-        resp = await self._client.post(
-            res.url, json={"model": res.model, "input": texts}, timeout=60.0
+        endpoint = _openai_endpoint(res.url, "/embeddings")
+        resp = await self._post_json(
+            res.provider, endpoint, {"model": res.model, "input": texts}, timeout=60.0
         )
-        if resp.status_code >= 400:
-            raise BackendError(res.provider, resp.status_code, resp.text[:200])
-        data = resp.json()
-        return [item["embedding"] for item in data.get("data", [])]
+        data = self._json(res.provider, resp)
+        try:
+            items = sorted(data["data"], key=lambda item: item.get("index", 0))
+            return [item["embedding"] for item in items]
+        except (KeyError, TypeError, AttributeError) as exc:
+            raise BackendError(res.provider, resp.status_code, f"unexpected embeddings response: {resp.text[:160]}") from exc
 
     async def tts(self, text: str, voice: Optional[str] = None) -> bytes:
         res = await self.resolve("tts")
@@ -778,26 +856,23 @@ class Link:
             raise Unavailable("tts", res.details.get("reasons", [res.reason]))
 
         if res.provider and res.provider.startswith("faustus_"):
-            token = self.config.faustus_token
-            headers = _faustus.auth_headers(token) if token else None
+            headers = _faustus.auth_headers(self.config.faustus_token)
             payload: dict[str, Any] = {"text": text}
             if voice:
                 payload["voice"] = voice
-            resp = await self._client.post(
-                f"{res.url}/api/tts/synthesize", json=payload, headers=headers, timeout=30.0
+            resp = await self._post_json(
+                res.provider, f"{res.url}/api/tts/synthesize", payload, timeout=30.0, headers=headers
             )
-            if resp.status_code >= 400:
-                raise BackendError(res.provider, resp.status_code, resp.text[:200])
             content_type = resp.headers.get("content-type", "")
             if content_type.startswith("audio/") or content_type == "application/octet-stream":
                 return resp.content
-            data = resp.json()
-            audio_b64 = data.get("audio")
+            data = self._json(res.provider, resp)
+            audio_b64 = data.get("audio") if isinstance(data, dict) else None
             if audio_b64:
                 return base64.b64decode(audio_b64)
             raise BackendError(res.provider, 200, "no audio field in TTS response")
 
-        if res.provider == "configured-command":
+        if res.details.get("command"):
             cc = self.config.capability("tts")
             return await self._tts_via_command(cc.command or [], text, voice)
 
@@ -805,38 +880,64 @@ class Link:
 
     @staticmethod
     async def _tts_via_command(command: list[str], text: str, voice: Optional[str]) -> bytes:
+        """Run a local TTS command (e.g. Piper).
+
+        Placeholders ``{text}``, ``{voice}`` and ``{out}`` are substituted
+        literally (other braces are left alone). Without ``{text}`` the
+        text is written to the command's stdin — which is how Piper reads
+        it — so the process never waits on an inherited console. Without
+        ``{out}`` the audio is read from stdout. Runs through
+        :func:`subprocess.run` in a worker thread, so it works on any event
+        loop (including a Windows SelectorEventLoop) and never opens a
+        console window.
+        """
         if not command:
             raise Unavailable("tts", ["configured TTS command is empty"])
         uses_out_file = any("{out}" in part for part in command)
+        uses_text_arg = any("{text}" in part for part in command)
         out_path: Optional[Path] = None
         try:
             if uses_out_file:
-                fd, name = tempfile.mkstemp(suffix=".wav")
-                Path(name).write_bytes(b"")
-                import os as _os
-
-                _os.close(fd)
+                fd, name = tempfile.mkstemp(prefix="hoard-tts-", suffix=".wav")
+                os.close(fd)
                 out_path = Path(name)
-                argv = [
-                    part.format(text=text, voice=voice or "", out=str(out_path))
-                    for part in command
-                ]
-            else:
-                argv = [part.format(text=text, voice=voice or "") for part in command]
 
-            proc = await asyncio.create_subprocess_exec(
-                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await proc.communicate()
+            def fill(part: str) -> str:
+                part = part.replace("{text}", text).replace("{voice}", voice or "")
+                return part.replace("{out}", str(out_path)) if out_path else part
+
+            argv = [fill(p) for p in command]
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
+            def run() -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    argv,
+                    input=None if uses_text_arg else text.encode("utf-8"),
+                    stdin=subprocess.DEVNULL if uses_text_arg else None,
+                    capture_output=True,
+                    timeout=TTS_COMMAND_TIMEOUT_S,
+                    creationflags=creationflags,
+                )
+
+            try:
+                proc = await asyncio.to_thread(run)
+            except FileNotFoundError as exc:
+                raise BackendError("configured-command", 0, f"TTS command not found: {argv[0]}") from exc
+            except subprocess.TimeoutExpired as exc:
+                raise BackendError(
+                    "configured-command", 0, f"TTS command timed out after {TTS_COMMAND_TIMEOUT_S:.0f}s"
+                ) from exc
+            except OSError as exc:
+                raise BackendError("configured-command", 0, f"TTS command failed to start: {exc}"[:200]) from exc
             if proc.returncode != 0:
                 raise BackendError(
-                    "configured-command", proc.returncode or 1, stderr[:200].decode("utf-8", "replace")
+                    "configured-command", proc.returncode or 1, proc.stderr[:200].decode("utf-8", "replace")
                 )
             if out_path is not None:
                 return out_path.read_bytes()
-            return stdout
+            return proc.stdout
         finally:
-            if out_path is not None and out_path.exists():
+            if out_path is not None:
                 out_path.unlink(missing_ok=True)
 
     async def comfy(self) -> Optional[ComfyClient]:
@@ -850,19 +951,26 @@ class Link:
         return ComfyClient(candidate, client=self._client)
 
     async def wait_idle(self, capability: str, max_wait_s: float = 30.0) -> bool:
+        """Wait until the chosen llama-server has no slot processing.
+
+        Works whether the server came from loopback probing, the Faustus
+        registry or explicit configuration (it is probed by the resolved
+        URL's server root). Ollama exposes no busy signal: returns True.
+        """
         res = await self.resolve(capability)
-        if not res.resolved or res.provider != "llamacpp":
+        if not res.resolved or res.provider != "llamacpp" or not res.url:
             return True
 
-        port = res.details.get("port")
+        base = _server_root(res.url)
         deadline = self._now() + max_wait_s
         while True:
-            server = await _probes.probe_llamacpp_port(self._client, port)
+            server = await _probes.probe_llamacpp_base(self._client, base)
             if server is None or not _probes.llamacpp_busy(server):
                 return True
-            if self._now() >= deadline:
+            remaining = deadline - self._now()
+            if remaining <= 0:
                 return False
-            await self._sleep(2.0)
+            await self._sleep(min(2.0, remaining))
 
     async def status(self) -> dict[str, Any]:
         results = await asyncio.gather(*(self.resolve(cap) for cap in CAPABILITIES))

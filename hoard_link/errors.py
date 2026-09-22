@@ -25,12 +25,20 @@ class Unavailable(HoardLinkError):
 
 
 class BackendError(HoardLinkError):
-    """A resolved server answered, but with a non-2xx status."""
+    """A resolved server failed a real call.
+
+    ``status`` is the HTTP status, or ``0`` when there was no HTTP response
+    at all (connection refused, timeout, a local command that could not
+    start) — e.g. a stale address in explicit configuration.
+    """
 
     def __init__(self, provider: Optional[str], status: int, body_excerpt: str):
         self.provider = provider
         self.status = status
         self.body_excerpt = body_excerpt
-        super().__init__(
-            f"{provider or 'backend'} returned HTTP {status}: {body_excerpt}"
-        )
+        who = provider or "backend"
+        if status == 0:
+            message = f"{who} unreachable: {body_excerpt}"
+        else:
+            message = f"{who} returned HTTP {status}: {body_excerpt}"
+        super().__init__(message)
