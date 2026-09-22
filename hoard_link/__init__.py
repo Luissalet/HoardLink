@@ -7,8 +7,8 @@ and why — favoring servers other local apps (and Faustus) already have
 resident, so a GPU-bound machine is never asked to load a second copy of
 the same kind of model.
 
-See ``README.md`` for the resolution order and policies, and
-``docs/MCP.md``-style usage examples in the vendoring apps.
+See ``README.md`` for the resolution order, the policies and how an app
+vendors this package.
 """
 
 from .config import CapabilityConfig, LinkConfig
