@@ -7,7 +7,7 @@ agentes: elige el servidor local que ya está cargado para una capacidad
 en vez de cargar una segunda copia de un modelo.**
 
 [English](README.md) · [Primeros pasos](#primeros-pasos) ·
-[Uso con Faustus](#uso-con-faustus) · [API](#api) ·
+[Hoard Hub](#hoard-hub-el-lanzador-de-escritorio) · [Uso con Faustus](#uso-con-faustus) · [API](#api) ·
 [Portfolio](https://luissalet.github.io/Portfolio/#projects)
 
 Hoard Link es una librería de Python pequeña — solo librería estándar más
@@ -234,6 +234,66 @@ Variables de entorno (máxima prioridad, se aplican encima del archivo):
 - El archivo se lee como UTF-8 con o sin BOM (lo que guarda el Bloc de
   notas por defecto).
 
+## Hoard Hub: el lanzador de escritorio
+
+![Hoard Hub](docs/hub.png)
+
+El repositorio incluye también **Hoard Hub** (`hoard_link.hub`), la otra
+mitad de la misma idea: la librería responde *qué servidor de modelo uso*,
+el hub responde *cuáles de mis apps están levantadas, y ábreme esa* — sin
+ningún workspace de IA por medio. Es un servidor pequeño en loopback con
+una tarjeta por app y su propia ventana de escritorio.
+
+Cada app de la familia lleva un `faustus-plugin.json` en la raíz de su
+repositorio (id, nombre, propósito, URL, comprobación de salud, cómo
+arrancarla). El hub lee esos manifiestos directamente de las carpetas
+vecinas de este repositorio (o de las raíces que configures) — no hay que
+escribir nada nuevo — y para cada app enseña:
+
+* su **icono**, nombre, propósito, puerto y **estado**: en marcha (la
+  comprobación de salud contesta con el `service` esperado), arrancando
+  (hay un proceso escuchando pero aún no contesta), parada, o *puerto
+  ocupado* (contesta otra cosa; el hub jamás parará ese proceso);
+* el **proceso** detrás del puerto: pid, ejecutable, memoria, tiempo en
+  marcha, hijos (psutil);
+* acciones: **Abrir ventana** (la interfaz de la app como ventana propia
+  de escritorio — una ventana `--app` de Chromium con perfil por app, así
+  tiene su propia entrada en la barra de tareas y se puede localizar y
+  cerrar después), **Navegador**, **Arrancar** (el `launch_hint` del
+  manifiesto, desacoplado, con la salida en `data/logs/<id>.log`),
+  **Parar** (el árbol de procesos, solo cuando la salud confirma que quien
+  escucha es de verdad esa app), **Reiniciar**, **Cerrar ventanas**,
+  **Carpeta**, **Log**;
+* arriba, si Faustus está accesible y qué resuelve Hoard Link ahora mismo
+  para cada capacidad, más la VRAM libre por GPU.
+
+Cerrar la ventana del hub para el hub; las apps que arrancó siguen en
+marcha, a propósito — es un mando a distancia, no un padre.
+
+```powershell
+pip install psutil            # pids, memoria, parar árboles de procesos
+python -m hoard_link.hub      # servidor en 127.0.0.1:8810 + ventana
+python -m hoard_link.hub --no-window   # solo servidor (para un agente)
+```
+
+En Windows, doble clic en `Hoard Hub.cmd`. La configuración vive en
+`data/hub.json` (`roots`, `icon_dirs`, `browser`, `faustus_dir`,
+`faustus_python`, `window_size`, `exit_with_window`, `language`) o en las
+variables de entorno `HOARD_HUB_*`; `pip install "hoard-link[desktop]"`
+añade pywebview para una ventana nativa del hub.
+
+### Controlar el hub desde un agente
+
+El hub habla el mismo contrato que las apps que gestiona:
+`GET /api/agent/tools` y `POST /api/agent/call` con el token bearer de
+`data/mcp-token`, y un puente MCP por stdio (`python -m hoard_link.hub.mcp`)
+que reenvía las llamadas y arranca un hub sin ventana cuando no hay
+ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
+`hub_start_app`, `hub_stop_app`, `hub_restart_app`, `hub_open_app`,
+`hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
+`hub_rescan`. El `faustus-plugin.json` del propio repositorio permite a
+Faustus adoptar el hub como a cualquier otra app.
+
 ## Uso con Faustus
 
 Si Faustus corre en la misma máquina con la autenticación desactivada, no
@@ -258,7 +318,7 @@ el `.gitignore`).
 import os
 from hoard_link import Link, LinkConfig
 
-link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="daguerre"))
+link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="argus"))
 
 res = await link.resolve("vision")   # Resolution(capability, provider, url, model, api, state, reason, details)
 
@@ -357,12 +417,12 @@ Windows o en Linux:
 pytest -q
 ```
 
-163 tests, sin conexión (`httpx.MockTransport`), en unos 3 segundos. Los
-únicos sockets reales están en los tests de la fachada síncrona, que
-arrancan un servidor HTTP mínimo en un puerto efímero de `127.0.0.1`
-para reproducir la reutilización de conexiones entre bucles de eventos;
-los tests del comando TTS usan el propio intérprete de Python como
-"binario de TTS". Ningún test necesita red ni descargar un modelo, así
+184 tests, sin conexión (`httpx.MockTransport`), en unos 10 segundos. Los
+únicos sockets reales están en los tests de la fachada síncrona y en los
+del hub, que arrancan servidores HTTP mínimos en puertos efímeros de
+`127.0.0.1` (una app falsa que contesta a `/api/health` y otra que el hub
+arranca y para de verdad); los tests del comando TTS usan el propio
+intérprete de Python como "binario de TTS". Ningún test necesita red ni descargar un modelo, así
 que la CI (`.github/workflows/ci.yml`: Ubuntu y Windows, Python 3.11 a
 3.13) ejecuta la misma batería sin GPU y sin red.
 

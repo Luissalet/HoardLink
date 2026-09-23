@@ -18,7 +18,7 @@ from .link import Link
 from ._comfy import ComfyClient
 from .types import CAPABILITIES, ChatResult, OutputFile, Resolution, Usage
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
