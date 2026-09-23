@@ -240,7 +240,7 @@ gitignored `data/` directory).
 import os
 from hoard_link import Link, LinkConfig
 
-link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="argus"))
+link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="daguerre"))
 
 res = await link.resolve("vision")   # Resolution(capability, provider, url, model, api, state, reason, details)
 
