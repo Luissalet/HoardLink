@@ -37,7 +37,7 @@ POST /api/plugin-backend/lease
 Authorization: Bearer ody_... (scope models:use)
 {
   "capability": "image",
-  "app": "argus",
+  "app": "daguerre",
   "estimated_vram_mb": 6000,
   "max_wait_s": 30
 }
