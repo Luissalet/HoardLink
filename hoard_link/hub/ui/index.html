@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hoard Hub</title>
+<link rel="icon" href="/ui/hub-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <img src="/ui/hub-icon.svg" alt="" width="36" height="36">
+    <div>
+      <h1>Hoard Hub</h1>
+      <div class="sub" id="counts">…</div>
+    </div>
+  </div>
+  <div class="top-actions">
+    <input id="search" type="search" placeholder="Filter…" autocomplete="off">
+    <button id="btn-start-all" class="ghost" data-i18n="start_all">Start all</button>
+    <button id="btn-stop-all" class="ghost danger" data-i18n="stop_all">Stop all</button>
+    <button id="btn-rescan" class="ghost" data-i18n="rescan" title="Re-read the app folders">Rescan</button>
+    <button id="btn-lang" class="ghost small" title="Idioma / Language">ES</button>
+  </div>
+</header>
+
+<section class="strip" id="strip">
+  <div class="faustus" id="faustus"></div>
+  <div class="backends" id="backends"></div>
+</section>
+
+<main>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" hidden></div>
+</main>
+
+<footer class="foot" id="foot"></footer>
+
+<div id="toasts" class="toasts"></div>
+
+<dialog id="log-dialog">
+  <div class="dialog-head">
+    <strong id="log-title">log</strong>
+    <div>
+      <button id="log-refresh" class="ghost small" data-i18n="refresh">Refresh</button>
+      <button id="log-close" class="ghost small" data-i18n="close">Close</button>
+    </div>
+  </div>
+  <pre id="log-body"></pre>
+</dialog>
+
+<dialog id="detail-dialog">
+  <div class="dialog-head">
+    <strong id="detail-title"></strong>
+    <button id="detail-close" class="ghost small" data-i18n="close">Close</button>
+  </div>
+  <pre id="detail-body"></pre>
+</dialog>
+
+<template id="card-tpl">
+  <article class="card">
+    <div class="card-head">
+      <img class="icon" alt="" width="64" height="64">
+      <div class="title">
+        <h2></h2>
+        <div class="meta"><span class="pill state"></span><span class="port"></span><span class="pid"></span></div>
+      </div>
+    </div>
+    <p class="purpose"></p>
+    <div class="reason" hidden></div>
+    <div class="proc" hidden></div>
+    <div class="actions">
+      <button class="primary act-window" data-i18n="open_window">Open window</button>
+      <button class="act-browser" data-i18n="open_browser">Browser</button>
+      <button class="act-start" data-i18n="start">Start</button>
+      <button class="act-stop danger" data-i18n="stop">Stop</button>
+      <button class="act-restart ghost" data-i18n="restart">Restart</button>
+      <button class="act-close ghost" data-i18n="close_windows">Close windows</button>
+      <button class="act-folder ghost" data-i18n="folder">Folder</button>
+      <button class="act-log ghost" data-i18n="log">Log</button>
+      <button class="act-detail ghost" title="details">⋯</button>
+    </div>
+  </article>
+</template>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>
