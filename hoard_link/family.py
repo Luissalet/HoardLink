@@ -343,6 +343,14 @@ def install_fastapi(app: Any, app_id: str, data_dir: str, *, contract: bool = Tr
 
     app.add_api_route(prefix + "tools", tools_route, methods=["GET"], include_in_schema=False)
     app.add_api_route(prefix + "call", call_route, methods=["POST"], include_in_schema=False)
+    # Routes match in order, and an app that serves a built frontend usually
+    # ends with a catch-all (GET /{path:path} → index.html, or /api/{rest} →
+    # 404). Installed last, ours would never be reached: move them first.
+    routes = getattr(getattr(app, "router", None), "routes", None)
+    if isinstance(routes, list) and len(routes) >= 2:
+        ours = routes[-2:]
+        del routes[-2:]
+        routes[0:0] = ours
     installed["contract"] = True
     return installed
 

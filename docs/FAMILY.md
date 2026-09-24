@@ -109,7 +109,10 @@ in `hub.json`): files stored once by SHA-256 under `objects/`, one
 manifest per snapshot under `snapshots/`. SQLite files are copied through
 the online backup API (consistent while the app writes); `logs/`,
 `profiles/`, caches, `*-wal/-shm`, files over `max_file_mb` (512) and
-`backup.exclude` globs are skipped and listed. `restore` writes one app's
+`backup.exclude` globs are skipped and listed — as is a file the app holds
+exclusively (a DuckDB database while Nightingale runs): it is reported as
+"locked by the app", and the rule template "Backup when an app stops"
+catches it the next time that app is stopped. `restore` writes one app's
 files to a side folder (`data.restored-<stamp>`) or in place when the app
 is stopped (the live folder is moved aside first); `verify` re-hashes;
 `prune` keeps the last N snapshots and drops unreferenced objects. The
