@@ -578,7 +578,7 @@ Windows o en Linux:
 pytest -q
 ```
 
-242 tests, sin conexión (`httpx.MockTransport`), en unos 30 segundos. Los
+243 tests, sin conexión (`httpx.MockTransport`), en unos 30 segundos. Los
 únicos sockets reales están en los tests de la fachada síncrona y en los
 del hub, que arrancan servidores HTTP mínimos en puertos efímeros de
 `127.0.0.1` (una app falsa que contesta a `/api/health`, otra que el hub

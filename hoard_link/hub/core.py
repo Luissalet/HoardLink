@@ -33,6 +33,7 @@ class Hub:
         # ready yet must not be spawned a second time (open() right after a
         # no-wait start, a profile and "start all" at once...).
         self._inflight: dict[str, tuple[int, float]] = {}
+        self._spawned: dict[str, int] = {}   # app id -> pid of the last process the hub spawned for it
         self._start_locks: dict[str, threading.Lock] = {}
         self._backends_cache: tuple[float, dict[str, Any]] = (0.0, {})
         self._faustus_cache: tuple[float, dict[str, Any]] = (0.0, {})
@@ -161,11 +162,28 @@ class Hub:
                                                                        "detail": "already starting"}
             else:
                 res = procs.start_app(app, self.config.logs_dir, wait=wait)
-                if res.get("ok") and res.get("pid") and not res.get("ready"):
+                if res.get("ok") and res.get("pid"):
                     with self._lock:
-                        self._inflight[app_id] = (int(res["pid"]), time.time())
+                        self._spawned[app_id] = int(res["pid"])
+                        if not res.get("ready"):
+                            self._inflight[app_id] = (int(res["pid"]), time.time())
+            if res.get("ok") and not res.get("pid"):
+                # "already running/starting" (e.g. it became healthy while a
+                # slow probe ran): name the process that serves it.
+                res["pid"] = self._running_pid(app)
         res["app"] = app_id
         return res
+
+    def _running_pid(self, app: App) -> Optional[int]:
+        """The pid the hub spawned for ``app`` when it still runs (on Windows a
+        venv python.exe is a launcher whose child listens, so prefer the
+        spawned one), else whoever listens on the app's port, else None."""
+        with self._lock:
+            pid = self._spawned.get(app.id)
+        if pid is not None and procs.pid_running(pid):
+            return pid
+        proc = procs.find_app_process(app)
+        return proc.pid if proc else None
 
     def _pending_start(self, app: App) -> Optional[int]:
         """Pid of a start of ``app`` that is still booting, else None."""

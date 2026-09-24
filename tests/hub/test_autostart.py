@@ -26,7 +26,8 @@ def test_install_status_uninstall(windows):
     text = (windows / "Hoard Hub.cmd").read_bytes().decode("utf-8")
     assert text.startswith("@echo off\r\n") and autostart.MARKER in text   # CRLF for cmd.exe
     assert 'cd /d "C:/apps/Hoard Link"' in text
-    assert 'start "" C:/py/python.exe -m hoard_link.hub --no-window --profile video' in text
+    exe = str(Path("C:/py/python.exe"))                  # C:\py\python.exe on Windows
+    assert f'start "" {exe} -m hoard_link.hub --no-window --profile video\r\n' in text
     st = autostart.status()
     assert st["installed"] and st["ours"] and st["profile"] == "video" and st["window"] is False
     assert "installed, headless, profile video" in autostart.describe(st)
@@ -46,8 +47,10 @@ def test_pythonw_is_preferred(tmp_path):
 
 def test_window_mode_and_quoting(windows):
     autostart.install("my profile", window=True, repo_dir="C:/r", executable="C:/Program Files/Py/python.exe")
-    text = (windows / "Hoard Hub.cmd").read_text(encoding="utf-8")
-    assert 'start "" "C:/Program Files/Py/python.exe" -m hoard_link.hub --stay --profile "my profile"' in text
+    text = (windows / "Hoard Hub.cmd").read_bytes().decode("utf-8")
+    exe = str(Path("C:/Program Files/Py/python.exe"))
+    assert f'start "" "{exe}" -m hoard_link.hub --stay --profile "my profile"\r\n' in text
+    assert "\n" not in text.replace("\r\n", "")          # CRLF only
     st = autostart.status()
     assert st["window"] is True and st["profile"] == "my profile"
 
