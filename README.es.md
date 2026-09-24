@@ -211,17 +211,28 @@ Todas las claves son opcionales; lo que no se fije cae al siguiente paso
       "model": "qwen3.8-27b-q8-llamacpp",
       "api": "openai",
       "provider": "llamacpp",
-      "allow_load": false
+      "allow_load": false,
+      "vram_mb": 20000
     },
     "tts": {"command": ["piper", "--model", "es_ES.onnx", "--output_file", "{out}"]}
-  }
+  },
+  "gpu_lease": {"enabled": true, "hub_url": "http://127.0.0.1:8810", "timeout_s": 300, "vram_mb": 8192}
 }
 ```
 
 Variables de entorno (máxima prioridad, se aplican encima del archivo):
 `HOARD_<CAP>_URL`, `HOARD_<CAP>_MODEL` (p. ej. `HOARD_LLM_URL`,
 `HOARD_VISION_MODEL`), `HOARD_FAUSTUS_URL`, `HOARD_FAUSTUS_TOKEN`,
-`HOARD_COMFY_URL`. Una variable vacía cuenta como no definida.
+`HOARD_COMFY_URL`, `HOARD_GPU_LEASE=0` (sin reservas de GPU),
+`HOARD_HUB_URL` (dónde está el hub). Una variable vacía cuenta como no
+definida.
+
+- `gpu_lease` y `vram_mb` solo cuentan cuando una llamada haría **cargar**
+  un modelo al servidor (`allow_load`, o `only_resident: false`): ver
+  [Reservas de memoria de GPU](#reservas-de-memoria-de-gpu). `vram_mb` en
+  una capacidad es lo que necesita cargar su modelo; sin él se usa el
+  tamaño del fichero del modelo de Ollama más un 20% y 512 MiB, y si no,
+  `gpu_lease.vram_mb`.
 
 - `url` puede ser la raíz del servidor (`http://127.0.0.1:8081`), una base
   `/v1` o un endpoint completo; chat y embeddings añaden cada uno la ruta
@@ -265,7 +276,10 @@ escribir nada nuevo — y para cada app enseña:
   escucha es de verdad esa app), **Reiniciar**, **Cerrar ventanas**,
   **Carpeta**, **Log**;
 * arriba, si Faustus está accesible y qué resuelve Hoard Link ahora mismo
-  para cada capacidad, más la VRAM libre por GPU.
+  para cada capacidad, más la VRAM libre por GPU;
+* un panel **GPU**: por GPU la memoria usada / reservada / disponible, y
+  las [reservas de VRAM](#reservas-de-memoria-de-gpu) concedidas y en
+  cola, cada una con un botón Liberar.
 
 Cerrar la ventana del hub para el hub; las apps que arrancó siguen en
 marcha, a propósito — es un mando a distancia, no un padre.
@@ -282,6 +296,79 @@ En Windows, doble clic en `Hoard Hub.cmd`. La configuración vive en
 variables de entorno `HOARD_HUB_*`; `pip install "hoard-link[desktop]"`
 añade pywebview para una ventana nativa del hub.
 
+### Reservas de memoria de GPU
+
+Varios programas quieren las mismas GPUs a la vez: un llama-server con un
+modelo grande repartido entre GPUs, Ollama cargando otro, varias
+instancias de ComfyUI renderizando vídeo, la transcripción de voz de una
+app y el embebedor de imágenes de otra. Cuando cada uno mira
+`nvidia-smi` por su cuenta, dos pueden ver los mismos gigas libres en el
+mismo instante, cargar los dos, y uno se queda sin memoria. El hub es el
+único proceso local de larga vida al que llegan todas las apps, así que
+lleva una sola cola para toda la máquina:
+
+```python
+from hoard_link import lease
+
+with lease(vram_mb=6000, purpose="whisper large-v3", owner="scribe") as l:
+    modelo = cargar_modelo(device=f"cuda:{l.gpu}" if l.gpu is not None else "cuda")
+    ...                        # se renueva en segundo plano y se libera al salir
+
+async with lease(vram_mb=20000, purpose="render de vídeo", owner="daguerre", priority=1, timeout_s=600) as l:
+    ...
+```
+
+* Una petición se **concede** cuando `vram_mb` cabe en una GPU (la pedida,
+  o la que más sitio tiene), contando a la vez lo que dice `nvidia-smi` y
+  lo que el hub ya ha prometido a otros; si no, queda **en cola**: primero
+  la mayor `priority`, luego por orden de llegada. Una petición en cola que
+  no cabe retiene a las siguientes para esa misma GPU, así un render
+  grande no se queda esperando para siempre detrás de cargas pequeñas.
+* Por GPU: `disponible = total - max(usada, base + reservada) - margen`,
+  donde `reservada` es la suma de las reservas concedidas y `base` lo que
+  usaba la GPU la última vez que no tenía reservas. Dos reservas nunca se
+  solapan antes de que carguen sus modelos, y un modelo ya cargado no se
+  cuenta dos veces (entonces `usada` ya lo incluye). `lease_headroom_mb`
+  en `hub.json` (256 por defecto) queda siempre libre en cada GPU.
+* Una reserva dura `ttl_s` (1800 s por defecto) y el cliente la renueva
+  mientras la tiene. La que no se renueva caduca, y la de un proceso que
+  ha muerto (`pid`, comprobado con psutil) se retira, así que una app que
+  se cae nunca bloquea la cola. Una petición en cola que nadie consulta en
+  90 s sale de la cola. Las reservas se guardan en `data/leases.json` y
+  sobreviven a un reinicio del hub.
+* Entrar espera a la concesión; `timeout_s` acota la espera y lanza
+  `LeaseTimeout` (la petición se retira de la cola). Una petición mayor que
+  cualquier GPU elegible lanza `LeaseError`.
+* **Sin hub no se rompe nada.** Si no contesta ningún hub y no se puede
+  arrancar uno (el mismo arranque sin ventana que usa el puente MCP; se
+  desactiva con `HOARD_HUB_AUTOSTART=0`), la reserva vuelve a la
+  comprobación local de siempre: lee `gpu_free_mb()`, elige una GPU con
+  sitio si la hay, deja un aviso en el log y la app sigue. `l.via` vale
+  `"hub"` o `"local"`.
+* El cliente encuentra el hub por `hub_url=`, `HOARD_HUB_URL`, el fichero
+  `url` de `HOARD_HUB_DATA_DIR` o del `data/` del clon de HoardLink (una
+  copia metida dentro de una app busca una carpeta hermana `HoardLink`), y
+  si no `http://127.0.0.1:8810`.
+* `Link.chat()` y `Link.embed()` piden una reserva solas cuando la llamada
+  haría **cargar** un modelo al servidor (un modelo ya residente no la
+  necesita), la liberan al terminar, y convierten una espera en cola más
+  larga que `gpu_lease.timeout_s` en `Unavailable`. Si el hub rechaza la
+  petición de plano (p. ej. una estimación mayor que una GPU, para un
+  modelo que Ollama repartiría entre varias) se carga sin reserva.
+* Sin GPU NVIDIA (sin `nvidia-smi`) las reservas se conceden sin mirar la
+  memoria, así el mismo código funciona en cualquier máquina.
+
+HTTP (loopback, sin token, con la misma protección cross-site que la
+interfaz): `POST /api/lease/request`
+`{owner, purpose, vram_mb, gpu, priority, ttl_s, wait, pid}` →
+`{lease_id, state, gpu, expires_at, position}` (`wait: true` espera hasta
+25 s; manda `{lease_id, wait: true}` para seguir esperando sin perder el
+sitio), `POST /api/lease/renew` `{lease_id, ttl_s}`,
+`POST /api/lease/release` `{lease_id}`, `GET /api/lease` (GPUs con
+usada/libre/reservada/disponible, reservas y cola), `GET /api/lease/<id>`.
+La ventana del hub tiene un panel **GPU** con lo mismo y un botón Liberar
+por reserva.
+
 ### Controlar el hub desde un agente
 
 El hub habla el mismo contrato que las apps que gestiona:
@@ -291,7 +378,8 @@ que reenvía las llamadas y arranca un hub sin ventana cuando no hay
 ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
 `hub_start_app`, `hub_stop_app`, `hub_restart_app`, `hub_open_app`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
-`hub_rescan`. El `faustus-plugin.json` del propio repositorio permite a
+`hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
+`hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a
 Faustus adoptar el hub como a cualquier otra app.
 
 ## Uso con Faustus
@@ -342,6 +430,11 @@ comfy = await link.comfy()           # ComfyClient, o None si no resuelve nada
 idle = await link.wait_idle("llm", max_wait_s=30)   # True/False, ver Políticas arriba
 
 link.sync.chat(...)                  # las mismas llamadas, bloqueantes, para código de aplicación síncrono
+
+from hoard_link import lease, Lease, LeaseTimeout, LeaseError
+with lease(vram_mb=6000, purpose="whisper", owner="scribe", gpu=None, priority=0,
+           timeout_s=None, hub_url=None) as l:   # también `async with`
+    l.gpu, l.via, l.lease_id          # índice de GPU (o None), "hub" | "local", id en el hub
 ```
 
 - `api` es `"openai"` (`/v1/chat/completions`, imágenes como URLs de datos

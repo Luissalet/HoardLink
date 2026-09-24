@@ -17,6 +17,11 @@
       windows: (n) => `${n} window${n === 1 ? "" : "s"}`, uptime: "up", mem: "mem",
       cannot_start: "Cannot start from here", hub: "hub", browser: "window engine", none: "none (tabs only)",
       psutil_missing: "psutil missing: no pid/stop",
+      gpu_none: "No NVIDIA GPU found (nvidia-smi); leases are granted without a memory check.",
+      gpu_summary: (n, l, q) => `${n} GPU · ${l} lease${l === 1 ? "" : "s"} · ${q} queued`,
+      used: "used", reserved: "reserved", available: "available", release: "Release", released: "lease released",
+      queued: "queued", granted: "granted", no_leases: "No GPU leases.", expires: "expires in", owner: "owner",
+      any_gpu: "any",
     },
     es: {
       start_all: "Arrancar todo", stop_all: "Parar todo", rescan: "Reescanear", refresh: "Actualizar", close: "Cerrar",
@@ -32,6 +37,11 @@
       windows: (n) => `${n} ventana${n === 1 ? "" : "s"}`, uptime: "activa", mem: "mem",
       cannot_start: "No se puede arrancar desde aquí", hub: "hub", browser: "motor de ventanas", none: "ninguno (solo pestañas)",
       psutil_missing: "falta psutil: sin pid ni parar",
+      gpu_none: "No se encontró GPU NVIDIA (nvidia-smi); las reservas se conceden sin comprobar memoria.",
+      gpu_summary: (n, l, q) => `${n} GPU · ${l} reserva${l === 1 ? "" : "s"} · ${q} en cola`,
+      used: "usada", reserved: "reservada", available: "disponible", release: "Liberar", released: "reserva liberada",
+      queued: "en cola", granted: "concedida", no_leases: "Sin reservas de GPU.", expires: "caduca en", owner: "dueño",
+      any_gpu: "cualquiera",
     },
   };
 
@@ -254,6 +264,72 @@
     } catch (e) { /* strip is decorative */ }
   }
 
+  // ---- GPU leases panel ----------------------------------------------------------
+  let leaseData = null;
+  const gb = (mb) => `${(mb / 1024).toFixed(1)} GB`;
+  function renderLeases() {
+    const d = leaseData;
+    if (!d) return;
+    const leases = d.leases || [], queue = d.queue || [];
+    $("#gpu-summary").textContent = t("gpu_summary", (d.gpus || []).length, leases.length, queue.length);
+    const cards = $("#gpu-cards");
+    cards.innerHTML = "";
+    if (!d.inventory) {
+      const p = document.createElement("div"); p.className = "gpu-none"; p.textContent = t("gpu_none"); cards.appendChild(p);
+    }
+    for (const g of d.gpus || []) {
+      const card = document.createElement("div");
+      card.className = "gpu-card";
+      const usedPct = Math.min(100, (g.used_mb / g.total_mb) * 100);
+      const effUsed = g.total_mb - g.available_mb - (d.headroom_mb || 0);
+      const resPct = Math.max(0, Math.min(100 - usedPct, ((effUsed - g.used_mb) / g.total_mb) * 100));
+      card.innerHTML = `<div class="gpu-title"><b></b><span></span></div>
+        <div class="bar"><span class="u"></span><span class="r"></span></div>
+        <div class="gpu-nums"></div>`;
+      $(".gpu-title b", card).textContent = `GPU ${g.index}`;
+      $(".gpu-title span", card).textContent = gb(g.total_mb);
+      $(".bar .u", card).style.width = `${usedPct}%`;
+      $(".bar .r", card).style.width = `${resPct}%`;
+      $(".gpu-nums", card).textContent = `${t("used")} ${gb(g.used_mb)} · ${t("reserved")} ${gb(g.reserved_mb)} · ${t("available")} ${gb(g.available_mb)}`;
+      cards.appendChild(card);
+    }
+    const box = $("#gpu-leases");
+    box.innerHTML = "";
+    const rows = [...leases, ...queue];
+    if (!rows.length) { const p = document.createElement("div"); p.className = "gpu-none"; p.textContent = t("no_leases"); box.appendChild(p); return; }
+    for (const l of rows) {
+      const row = document.createElement("div");
+      row.className = `lease-row ${l.state}`;
+      row.innerHTML = `<span class="pill"></span><b class="who"></b><span class="what"></span><span class="mono amount"></span><span class="mono where"></span><span class="mono ttl"></span><button class="ghost small danger"></button>`;
+      $(".pill", row).textContent = l.state === "queued" ? `${t("queued")} #${l.position}` : t("granted");
+      $(".pill", row).className = `pill ${l.state === "queued" ? "starting" : "running"}`;
+      $(".who", row).textContent = l.owner;
+      $(".what", row).textContent = l.purpose || "";
+      $(".amount", row).textContent = gb(l.vram_mb);
+      $(".where", row).textContent = l.gpu != null ? `GPU ${l.gpu}` : (l.gpu_request === "any" ? t("any_gpu") : `GPU ${l.gpu_request}`);
+      $(".ttl", row).textContent = `${t("expires")} ${fmtUptime(l.expires_in_s)}`;
+      row.title = `${l.lease_id}${l.pid ? " · pid " + l.pid : ""}${l.note ? " · " + l.note : ""}`;
+      const btn = $("button", row);
+      btn.textContent = t("release");
+      btn.onclick = async () => {
+        btn.disabled = true;
+        const r = await api("/api/lease/release", { lease_id: l.lease_id });
+        toast(`${l.owner}: ${r.ok ? t("released") : (r.error || "error")}`, r.ok ? "ok" : "err");
+        await refreshLeases();
+      };
+      box.appendChild(row);
+    }
+  }
+  async function refreshLeases() {
+    try { leaseData = await api("/api/lease"); renderLeases(); } catch (e) { /* panel is best-effort */ }
+  }
+  $("#gpu-toggle").onclick = () => {
+    const body = $("#gpu-body"); body.hidden = !body.hidden;
+    $("#gpu-toggle").setAttribute("aria-expanded", String(!body.hidden));
+    try { localStorage.setItem("hub.gpu.collapsed", body.hidden ? "1" : "0"); } catch (e) { /* ignore */ }
+  };
+  try { if (localStorage.getItem("hub.gpu.collapsed") === "1") { $("#gpu-body").hidden = true; $("#gpu-toggle").setAttribute("aria-expanded", "false"); } } catch (e) { /* ignore */ }
+
   // ---- refresh loop -------------------------------------------------------------
   let refreshing = null;
   function refresh() {
@@ -262,6 +338,7 @@
       try {
         snapshot = await api("/api/apps");
         render();
+        refreshLeases();
       } catch (e) { counts.textContent = String(e); }
       refreshing = null;
     })();
@@ -284,7 +361,7 @@
     clearTimeout(stopAllArmed); stopAllArmed = null; btn.textContent = t("stop_all");
     const r = await api("/api/apps/stop-all", {}); const n = (r.results || []).filter((x) => x.ok && x.pid).length; toast(`${t("stop_all")}: ${n}`, "ok"); await refresh();
   };
-  $("#btn-lang").onclick = () => { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("hub.lang", lang); } catch (e) { /* ignore */ } applyI18n(); render(); refreshBackends(); };
+  $("#btn-lang").onclick = () => { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("hub.lang", lang); } catch (e) { /* ignore */ } applyI18n(); render(); renderLeases(); refreshBackends(); };
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 
   applyI18n();

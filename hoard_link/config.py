@@ -11,13 +11,15 @@ stale).
       "only_resident": true,
       "faustus": {"url": "http://127.0.0.1:7000", "token": "ody_..."},
       "comfy": {"url": "http://127.0.0.1:8188"},
+      "gpu_lease": {"enabled": true, "hub_url": "http://127.0.0.1:8810", "timeout_s": 300, "vram_mb": 8192},
       "capabilities": {
         "llm": {
           "url": "http://127.0.0.1:8081/v1/chat/completions",
           "model": "qwen3.8-27b-q8-llamacpp",
           "api": "openai",
           "provider": "llamacpp",
-          "allow_load": false
+          "allow_load": false,
+          "vram_mb": 20000
         },
         "tts": {"command": ["piper", "--model", "es_ES.onnx", "--output_file", "{out}"]}
       }
@@ -29,6 +31,14 @@ Environment overrides (highest priority, applied on top of the file):
   ``HOARD_LLM_URL``, ``HOARD_VISION_MODEL``.
 - ``HOARD_FAUSTUS_URL``, ``HOARD_FAUSTUS_TOKEN``.
 - ``HOARD_COMFY_URL``.
+- ``HOARD_GPU_LEASE=0`` turns the GPU lease off (``HOARD_HUB_URL`` points
+  the lease client at a hub on another port).
+
+``gpu_lease`` only matters when a call is about to make a server *load* a
+model (``allow_load`` / ``only_resident: false``): :class:`~hoard_link.link.Link`
+then asks the hub for ``vram_mb`` (the capability's own ``vram_mb``, else an
+estimate from the model's size, else ``gpu_lease.vram_mb``) before the call
+and releases it afterwards. Calls to an already-resident model take no lease.
 
 A ``model`` without a ``url`` (in the file or as ``HOARD_<CAP>_MODEL``)
 does not pin a server: it is a *preference* used wherever resolution has a
@@ -53,6 +63,13 @@ def _section(raw: Mapping[str, Any], key: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _int_or_none(value: Any) -> Optional[int]:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _clean_url(url: str) -> str:
     return str(url).strip().rstrip("/")
 
@@ -65,6 +82,7 @@ class CapabilityConfig:
     provider: Optional[str] = None
     allow_load: bool = False
     command: Optional[list[str]] = None
+    vram_mb: Optional[int] = None      # VRAM a load of this capability's model needs (GPU lease)
 
     @property
     def explicit(self) -> bool:
@@ -80,6 +98,10 @@ class LinkConfig:
     faustus_token: Optional[str] = None
     comfy_url: Optional[str] = None
     capabilities: dict[str, CapabilityConfig] = field(default_factory=dict)
+    gpu_lease: bool = True
+    hub_url: Optional[str] = None
+    lease_timeout_s: float = 300.0
+    lease_vram_mb: int = 8192
 
     def capability(self, capability: str) -> CapabilityConfig:
         return self.capabilities.get(capability, CapabilityConfig())
@@ -141,6 +163,7 @@ class LinkConfig:
                 provider=c.get("provider") or None,
                 allow_load=bool(c.get("allow_load", False)),
                 command=command or None,
+                vram_mb=_int_or_none(c.get("vram_mb")),
             )
 
         # --- environment overrides (highest priority) ---
@@ -165,7 +188,19 @@ class LinkConfig:
                     provider=current.provider,
                     allow_load=current.allow_load,
                     command=current.command,
+                    vram_mb=current.vram_mb,
                 )
+
+        lease_raw = _section(raw, "gpu_lease")
+        gpu_lease = bool(lease_raw.get("enabled", True))
+        if (env_value("HOARD_GPU_LEASE") or "").lower() in ("0", "false", "no", "off"):
+            gpu_lease = False
+        hub_url = lease_raw.get("hub_url") or None
+        try:
+            lease_timeout_s = float(lease_raw.get("timeout_s", 300.0))
+        except (TypeError, ValueError):
+            lease_timeout_s = 300.0
+        lease_vram_mb = _int_or_none(lease_raw.get("vram_mb")) or 8192
 
         return cls(
             app=app,
@@ -174,4 +209,8 @@ class LinkConfig:
             faustus_token=faustus_token,
             comfy_url=comfy_url,
             capabilities=caps,
+            gpu_lease=gpu_lease,
+            hub_url=_clean_url(hub_url) if hub_url else None,
+            lease_timeout_s=lease_timeout_s,
+            lease_vram_mb=lease_vram_mb,
         )

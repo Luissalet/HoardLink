@@ -11,10 +11,11 @@ from concurrent.futures import ThreadPoolExecutor
 import secrets
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from . import HUB_VERSION, SERVICE
 from .config import HubConfig
+from .lease import LeaseArbiter
 from .registry import App, scan
 from . import desktop, procs
 
@@ -23,7 +24,7 @@ FAUSTUS_CACHE_S = 6.0
 
 
 class Hub:
-    def __init__(self, config: Optional[HubConfig] = None):
+    def __init__(self, config: Optional[HubConfig] = None, *, gpu_fn: Optional[Callable[[], list[Any]]] = None):
         self.config = config or HubConfig.load()
         self._apps: dict[str, App] = {}
         self._lock = threading.RLock()
@@ -35,6 +36,9 @@ class Hub:
         os.makedirs(self.config.logs_dir, exist_ok=True)
         os.makedirs(self.config.profiles_dir, exist_ok=True)
         self.token = self._load_token()
+        # The GPU/VRAM lease arbiter: one queue for every app on this machine.
+        self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=gpu_fn,
+                                   headroom_mb=int(self.config.lease_headroom_mb or 0))
         procs._protected_pids()  # warm the ancestor list once, off the request path
         self.rescan()
 

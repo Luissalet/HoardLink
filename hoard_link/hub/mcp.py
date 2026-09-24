@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 from typing import Any, Optional
@@ -68,23 +66,9 @@ def _hub_up() -> bool:
 
 
 def _ensure_hub() -> bool:
-    if _hub_up():
-        return True
-    if os.environ.get("HOARD_HUB_AUTOSTART", "1") in ("0", "false", "no"):
-        return False
-    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    kwargs: dict[str, Any] = {"creationflags": flags} if sys.platform.startswith("win") else {"start_new_session": True}
-    try:
-        subprocess.Popen([sys.executable, "-m", "hoard_link.hub", "--no-window"], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True, **kwargs)
-    except Exception:  # noqa: BLE001
-        return False
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        if _hub_up():
-            return True
-        time.sleep(0.5)
-    return False
+    # The same headless auto-start the lease client uses (HOARD_HUB_AUTOSTART=0 turns it off).
+    from hoard_link._hubclient import ensure_hub
+    return ensure_hub(_url())
 
 
 def _text(payload: Any) -> dict[str, Any]:
@@ -100,7 +84,8 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
             "protocolVersion": PROTOCOL, "capabilities": {"tools": {}},
             "serverInfo": {"name": "hoard-hub", "version": HUB_VERSION},
             "instructions": "Local desktop hub for a family of agent-controlled apps: list them, see which are running, "
-                            "start/stop them, open them as windows. Use hub_list_apps first to learn the ids.",
+                            "start/stop them, open them as windows, and arbitrate GPU memory (VRAM leases) between them. "
+                            "Use hub_list_apps first to learn the ids.",
         }}
     if method == "notifications/initialized" or method == "initialized":
         return None
