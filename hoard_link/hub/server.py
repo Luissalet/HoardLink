@@ -361,7 +361,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 res = hub.rules.add(body)
                 return self._json(res, 200 if res.get("ok") else 400)
             if path == "/api/rules/install-defaults":
-                return self._json(hub.rules.install_examples())
+                return self._json(hub.rules.install_examples(refresh=bool(body.get("refresh"))))
             if path == "/api/jobs":
                 res = hub.jobs.add(body)
                 return self._json(res, 200 if res.get("ok") else 400)

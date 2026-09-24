@@ -195,8 +195,9 @@ def catalogue() -> list[dict[str, Any]]:
         {
             "name": "hub_rule_install_defaults",
             "description": "Install the recommended rules: transcript→cards, backup on stop, watch→digest, restart. Keywords: reglas.\n"
-                           "Idempotent: a rule already present (by id) is left as it is. Returns what was installed and the full list.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+                           "Idempotent: a rule already present (by id) is left as it is unless refresh=true, which updates its "
+                           "when/then/note to the current template (enabled, cooldown and counters are kept). Returns what was installed.",
+            "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean", "default": False}}, "additionalProperties": False},
         },
         {
             "name": "hub_rule_update",
@@ -381,7 +382,7 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_app_tools": lambda a: hub.app_tools(str(a.get("app") or "")),
         "hub_rules": lambda _: {"ok": True, "rules": hub.rules.list(), "history": hub.rules.history[-20:]},
         "hub_rule_add": lambda a: hub.rules.add(a),
-        "hub_rule_install_defaults": lambda _: hub.rules.install_examples(),
+        "hub_rule_install_defaults": lambda a: hub.rules.install_examples(refresh=bool(a.get("refresh"))),
         "hub_rule_update": lambda a: hub.rules.update(str(a.get("id") or ""), a),
         "hub_rule_remove": lambda a: hub.rules.remove(str(a.get("id") or "")),
         "hub_rule_run": rule_run,

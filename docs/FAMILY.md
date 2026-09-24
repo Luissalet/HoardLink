@@ -94,7 +94,8 @@ and in their `last` field.
 Four **recommended rules** ship with the hub and are installed together by
 the "Install the recommended rules" button (Rules tab) or
 `hub_rule_install_defaults` (`POST /api/rules/install-defaults`, idempotent
-by rule id): `scribe.transcript.done` → Hypatia `cards_suggest`;
+by rule id; `refresh: true` brings an installed rule's `when`/`then` back to
+the current template without touching what you set — enabled, cooldown): `scribe.transcript.done` → Hypatia `cards_suggest`;
 `hub.app.stopped` → backup of that app; `links.watch.new` → a `digest.item`
 event (what the daily-recap skill reads); `cassandra.incident.opened` with
 `to_state: down` and `service_kind: app` → start the app again (cooldown 5 min).
