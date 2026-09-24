@@ -277,6 +277,8 @@ escribir nada nuevo — y para cada app enseña:
   **Carpeta**, **Log**;
 * arriba, si Faustus está accesible y qué resuelve Hoard Link ahora mismo
   para cada capacidad, más la VRAM libre por GPU;
+* fichas de **perfil** para arrancar o parar de una vez un conjunto de
+  apps (ver [Perfiles](#perfiles));
 * un panel **GPU**: por GPU la memoria usada / reservada / disponible, y
   las [reservas de VRAM](#reservas-de-memoria-de-gpu) concedidas y en
   cola, cada una con un botón Liberar.
@@ -292,9 +294,43 @@ python -m hoard_link.hub --no-window   # solo servidor (para un agente)
 
 En Windows, doble clic en `Hoard Hub.cmd`. La configuración vive en
 `data/hub.json` (`roots`, `icon_dirs`, `browser`, `faustus_dir`,
-`faustus_python`, `window_size`, `exit_with_window`, `language`) o en las
+`faustus_python`, `window_size`, `exit_with_window`, `language`,
+`profiles`, `lease_headroom_mb`) o en las
 variables de entorno `HOARD_HUB_*`; `pip install "hoard-link[desktop]"`
 añade pywebview para una ventana nativa del hub.
+
+### Perfiles
+
+Un perfil es un conjunto con nombre de apps que se arrancan juntas — si
+quieres, con comandos externos (una instancia de ComfyUI por GPU, un
+llama-server, un script) y las apps que se abren como ventanas de
+escritorio —, declarado en `data/hub.json`:
+
+```json
+{
+  "profiles": {
+    "escritura": {"apps": ["borges", "scribe"], "desktop": ["hypatia"]},
+    "video": {
+      "apps": ["daguerre"],
+      "commands": [
+        {"name": "comfy gpu1", "cmd": "python main.py --port 8189", "cwd": "D:/ComfyUI",
+         "health": "http://127.0.0.1:8189/system_stats", "env": {"CUDA_VISIBLE_DEVICES": "1"}}
+      ],
+      "desktop": ["daguerre"]
+    }
+  }
+}
+```
+
+La pantalla principal enseña una ficha por perfil (cuántos miembros están
+en marcha, arrancar ▶, parar ■). Los comandos reciben el mismo trato que
+las apps: su URL de `health` si la tienen y, si no, si sigue vivo el
+proceso que arrancó el hub; su salida va a
+`data/logs/cmd-<perfil>--<nombre>.log`, y el hub solo para un comando que
+haya arrancado él mismo. Por defecto no hay ningún perfil;
+[docs/HUB.md](docs/HUB.md#profiles) trae dos ejemplos completos. HTTP:
+`GET /api/profiles`, `GET /api/profiles/<nombre>`,
+`POST /api/profiles/<nombre>/start|stop`.
 
 ### Reservas de memoria de GPU
 
@@ -379,6 +415,7 @@ ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
 `hub_start_app`, `hub_stop_app`, `hub_restart_app`, `hub_open_app`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
+`hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
 `hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a
 Faustus adoptar el hub como a cualquier otra app.
 

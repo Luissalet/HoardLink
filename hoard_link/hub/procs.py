@@ -236,6 +236,23 @@ def proc_info(pid: int, ports: Optional[list[int]] = None) -> ProcInfo:
     return info
 
 
+def pid_running(pid: int) -> bool:
+    """Is ``pid`` a live (non-zombie) process? Unknown counts as running."""
+    ps = _psutil()
+    if ps is not None:
+        try:
+            return ps.Process(pid).status() != getattr(ps, "STATUS_ZOMBIE", "zombie")
+        except Exception:  # noqa: BLE001  (NoSuchProcess, AccessDenied)
+            return ps.pid_exists(pid)
+    if sys.platform.startswith("win"):
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def find_app_process(app: App, listeners: Optional[dict[int, int]] = None) -> Optional[ProcInfo]:
     port = app.port
     if port is None:

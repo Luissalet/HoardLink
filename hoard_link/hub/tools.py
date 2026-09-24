@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from .core import Hub
 
+_PROFILE = {"type": "string", "description": "Profile name as listed by hub_profile_list."}
 _APP_ID = {"type": "string", "description": "App id as listed by hub_list_apps (e.g. 'ledger', 'babel')."}
 
 
@@ -109,6 +110,26 @@ def catalogue() -> list[dict[str, Any]]:
                             "required": ["lease_id"], "additionalProperties": False},
         },
         {
+            "name": "hub_profile_list",
+            "description": "List app profiles and whether each is running. Keywords: profiles, perfiles, grupos de apps.\n"
+                           "A profile is a named set of apps, external commands (e.g. a ComfyUI instance) and apps to "
+                           "open as windows, started and stopped together. Returns each member's state.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_profile_start",
+            "description": "Start a profile: its apps, commands and windows. Keywords: start profile, arrancar perfil.",
+            "inputSchema": {"type": "object", "properties": {"name": _PROFILE}, "required": ["name"],
+                            "additionalProperties": False},
+        },
+        {
+            "name": "hub_profile_stop",
+            "description": "Stop a profile's apps and the commands the hub started. Keywords: parar perfil, detener.",
+            "inputSchema": {"type": "object", "properties": {"name": _PROFILE}, "required": ["name"],
+                            "additionalProperties": False},
+        },
+        {
             "name": "hub_rescan",
             "description": "Re-read the app folders for new or removed manifests. Keywords: rescan, refresh list, actualizar lista.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -147,10 +168,20 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_stop_all": lambda _: hub.stop_all(),
         "hub_backends": lambda a: hub.backends(force=bool(a.get("force", False))),
         "hub_rescan": lambda _: {"ok": True, "apps": [a.id for a in hub.rescan()]},
+        "hub_profile_list": lambda _: _compact_profiles(hub.profiles_status()),
+        "hub_profile_start": lambda a: hub.profile_start(str(a.get("name") or "")),
+        "hub_profile_stop": lambda a: hub.profile_stop(str(a.get("name") or "")),
         "hub_lease_status": lambda a: hub.leases.status(force=bool(a.get("force", False))),
         "hub_lease_request": lease_request,
         "hub_lease_release": lambda a: _drop_status(hub.leases.release(str(a.get("lease_id") or ""))),
     }
+
+
+def _compact_profiles(st: dict[str, Any]) -> dict[str, Any]:
+    return {"profiles": [{"name": p["name"], "state": p["state"], "running": p["running"], "total": p["total"],
+                          "members": [{k: m.get(k) for k in ("id", "kind", "name", "state")} for m in p["members"]],
+                          "desktop": p["desktop"]} for p in st["profiles"]],
+            "problems": st.get("problems", [])}
 
 
 def _drop_status(res: dict[str, Any]) -> dict[str, Any]:

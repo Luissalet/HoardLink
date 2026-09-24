@@ -22,6 +22,9 @@
       used: "used", reserved: "reserved", available: "available", release: "Release", released: "lease released",
       queued: "queued", granted: "granted", no_leases: "No GPU leases.", expires: "expires in", owner: "owner",
       any_gpu: "any",
+      profiles: "Profiles", profile_started: "profile started", profile_stopped: "profile stopped",
+      pstate: { running: "running", partial: "partly running", stopped: "stopped", empty: "empty" },
+      start_profile: "Start this profile", stop_profile: "Stop this profile",
     },
     es: {
       start_all: "Arrancar todo", stop_all: "Parar todo", rescan: "Reescanear", refresh: "Actualizar", close: "Cerrar",
@@ -42,6 +45,9 @@
       used: "usada", reserved: "reservada", available: "disponible", release: "Liberar", released: "reserva liberada",
       queued: "en cola", granted: "concedida", no_leases: "Sin reservas de GPU.", expires: "caduca en", owner: "dueño",
       any_gpu: "cualquiera",
+      profiles: "Perfiles", profile_started: "perfil arrancado", profile_stopped: "perfil parado",
+      pstate: { running: "en marcha", partial: "en marcha a medias", stopped: "parado", empty: "vacío" },
+      start_profile: "Arrancar este perfil", stop_profile: "Parar este perfil",
     },
   };
 
@@ -116,6 +122,8 @@
     existing.forEach((el) => el.remove());
     order.forEach((el) => grid.appendChild(el));
 
+    renderProfiles();
+
     // Faustus + hub footer
     const f = snapshot.faustus || {};
     $("#faustus").innerHTML = "";
@@ -138,6 +146,46 @@
     ];
     if (h.psutil === false) bits.push("⚠ " + t("psutil_missing"));
     bits.forEach((b) => { const s = document.createElement("span"); s.textContent = b; foot.appendChild(s); });
+  }
+
+  let profileBusy = new Set();
+  function renderProfiles() {
+    const box = $("#profiles");
+    const profiles = snapshot.profiles || [];
+    box.hidden = !profiles.length;
+    box.innerHTML = "";
+    if (!profiles.length) return;
+    const label = document.createElement("span"); label.className = "profiles-label"; label.textContent = t("profiles");
+    box.appendChild(label);
+    for (const p of profiles) {
+      const chip = document.createElement("span");
+      const on = p.state === "running", some = p.state === "partial";
+      chip.className = `chip profile ${on ? "on" : (some ? "some" : "off")}${profileBusy.has(p.name) ? " busy" : ""}`;
+      chip.title = `${t("pstate")[p.state] || p.state}\n` + p.members.map((m) => `${m.state === "running" ? "●" : "○"} ${m.name}${m.kind === "command" ? " (cmd)" : ""}${m.desktop ? " ▣" : ""} — ${t("state")[m.state] || m.state}`).join("\n");
+      chip.innerHTML = `<span class="dot"></span><b></b><span class="pcount"></span>`;
+      $("b", chip).textContent = p.name;
+      $(".pcount", chip).textContent = `${p.running}/${p.total}`;
+      const start = document.createElement("button"); start.className = "ghost small pbtn"; start.textContent = "▶"; start.title = t("start_profile");
+      const stop = document.createElement("button"); stop.className = "ghost small pbtn danger"; stop.textContent = "■"; stop.title = t("stop_profile");
+      start.hidden = on; stop.hidden = p.state === "stopped" || p.state === "empty";
+      start.disabled = stop.disabled = profileBusy.has(p.name);
+      start.onclick = () => runProfile(p.name, "start");
+      stop.onclick = () => runProfile(p.name, "stop");
+      chip.append(start, stop);
+      box.appendChild(chip);
+    }
+  }
+  async function runProfile(name, action) {
+    profileBusy.add(name); renderProfiles();
+    try {
+      const r = await api(`/api/profiles/${encodeURIComponent(name)}/${action}`, {});
+      const msg = action === "start" ? t("profile_started") : t("profile_stopped");
+      const errs = [...(r.apps || []), ...(r.commands || []), ...(r.desktop || [])].filter((x) => !x.ok).map((x) => `${x.app || x.command}: ${x.error}`);
+      toast(`${name}: ${r.ok ? msg : (r.error || "error")}`, r.ok ? "ok" : "err", errs.slice(0, 6).join("\n"));
+    } catch (e) { toast(String(e), "err"); }
+    profileBusy.delete(name);
+    await refresh();
+    if (action === "start") { setTimeout(refresh, 2000); setTimeout(refresh, 7000); }
   }
 
   function updateCard(el, a) {
