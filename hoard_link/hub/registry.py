@@ -72,6 +72,14 @@ class App:
     kind: str = "app"        # app | window-app (an exe that opens its own window)
     token_file: str = ""     # where the app keeps its agent bearer token (data/mcp-token)
     data_dir: str = ""       # the app's own data folder (what backups copy)
+    #: The manifest's ``x-family`` block (extension namespace Faustus skips): ``agent_contract``
+    #: false for an app that has no /api/agent/call at all (the audit stops asking it for one),
+    #: ``stack`` to override the node/python guess, ``events`` false when it will never emit.
+    family: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def agent_contract(self) -> bool:
+        return self.family.get("agent_contract", True) is not False
 
     @property
     def port(self) -> Optional[int]:
@@ -106,6 +114,8 @@ class App:
             "notes": self.notes,
             "token_file": self.token_file,
             "data_dir": self.data_dir,
+            "family": dict(self.family),
+            "agent_contract": self.agent_contract,
         }
 
 
@@ -118,6 +128,16 @@ def _hub_values(folder: str, faustus_dir: Optional[str], faustus_python: Optiona
     if faustus_dir:
         values["FAUSTUS_DIR"] = faustus_dir.rstrip("/\\")
     return values
+
+
+_ENV_REF = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
+
+
+def expand_env(value: str) -> str:
+    """``%APPDATA%`` and ``$HOME`` / ``${HOME}`` from the environment, on every platform
+    (``os.path.expandvars`` only knows ``%X%`` on Windows). Unknown names stay as written."""
+    value = _ENV_REF.sub(lambda m: os.environ.get(m.group(1), m.group(0)), str(value))
+    return os.path.expandvars(value)
 
 
 def resolve_placeholders(
@@ -246,17 +266,20 @@ def read_manifest(
         icon_path=_find_icon(folder, app_id, name, icon_dirs),
         manifest_path=path,
         notes=str(raw.get("notes") or ""),
+        family={str(k): v for k, v in (raw.get("x-family") or raw.get("x_family") or {}).items()} if isinstance(raw.get("x-family") or raw.get("x_family"), dict) else {},
     )
     # The family contract: the agent bearer token lives in the app's data
     # folder. A manifest may say where (defaults.TOKEN_FILE); else data/mcp-token.
+    # ``%APPDATA%``-style environment references are allowed in these two (an
+    # Electron app keeps its token under the user's profile, not its folder).
     token_default = str(defaults.get("TOKEN_FILE") or "").strip()
-    token_file = fill(token_default) if token_default else ""
-    if not token_file or "{" in token_file:
+    token_file = expand_env(fill(token_default)) if token_default else ""
+    if not token_file or "{" in token_file or "%" in token_file:
         token_file = os.path.join(folder, "data", "mcp-token")
     app.token_file = os.path.normpath(token_file)
     data_default = str(defaults.get("DATA_DIR") or "").strip()
-    data_dir = fill(data_default) if data_default else ""
-    if not data_dir or "{" in data_dir:
+    data_dir = expand_env(fill(data_default)) if data_default else ""
+    if not data_dir or "{" in data_dir or "%" in data_dir:
         data_dir = os.path.dirname(app.token_file)
     app.data_dir = os.path.normpath(data_dir)
 

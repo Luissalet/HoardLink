@@ -10,7 +10,7 @@
       f_rules_hint: "When an event matches, run actions. Templates below.",
       f_jobs_hint: "Actions on a clock: every 6h, or daily at 04:00.",
       f_backup_now: "Back up now", f_verify: "Verify latest", f_prune: "Prune (keep 14)", f_audit_run: "Run audit",
-      f_save: "Save", edit: "Edit", run: "Run", remove: "Remove", enable: "Enable", disable: "Disable", use: "Use",
+      f_save: "Save", edit: "Edit", run: "Run", remove: "Remove", enable: "Enable", disable: "Disable", use: "Use", install_defaults: "Install the recommended rules",
       restore: "Restore", verify: "Verify", detail: "Detail",
       no_events: "No events yet. Apps post to /api/events; the hub emits hub.* itself.",
       no_rules: "No rules. A rule runs actions when an event matches.", no_jobs: "No jobs. A job runs actions on a clock.",
@@ -32,7 +32,7 @@
       f_rules_hint: "Cuando llega un evento que encaja, se ejecutan acciones. Plantillas abajo.",
       f_jobs_hint: "Acciones con reloj: cada 6h, o a diario a las 04:00.",
       f_backup_now: "Copiar ahora", f_verify: "Verificar la última", f_prune: "Limpiar (conservar 14)", f_audit_run: "Auditar",
-      f_save: "Guardar", edit: "Editar", run: "Ejecutar", remove: "Quitar", enable: "Activar", disable: "Desactivar", use: "Usar",
+      f_save: "Guardar", edit: "Editar", run: "Ejecutar", remove: "Quitar", enable: "Activar", disable: "Desactivar", use: "Usar", install_defaults: "Instalar las reglas recomendadas",
       restore: "Restaurar", verify: "Verificar", detail: "Detalle",
       no_events: "Aún no hay eventos. Las apps hacen POST a /api/events; el hub emite los hub.* por su cuenta.",
       no_rules: "Sin reglas. Una regla ejecuta acciones cuando un evento encaja.", no_jobs: "Sin tareas. Una tarea ejecuta acciones con reloj.",
@@ -197,6 +197,11 @@
       list.appendChild(card);
     }
     const ex = $(`#${kind}-examples`); ex.innerHTML = "";
+    if (kind === "rules" && (examples || []).some((e) => !items.some((i) => i.id === e.id))) {
+      const all = el("button", "small", t("install_defaults"));
+      all.onclick = async () => { const res = await api("/api/rules/install-defaults", {}); if (res.ok) loaders.rules(); };
+      ex.appendChild(el("div", "ex", "")).appendChild(all);
+    }
     for (const e of examples || []) {
       const row = el("div", "ex");
       row.appendChild(el("span", "", `${e.name}: ${(e.then || []).map(describeAction).join(" ; ")}${e.note ? " — " + e.note : ""}`));
