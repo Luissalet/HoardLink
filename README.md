@@ -269,6 +269,8 @@ on purpose — it is a remote control, not a parent.
 pip install psutil            # pids, memory, process-tree stops
 python -m hoard_link.hub      # server on 127.0.0.1:8810 + desktop window
 python -m hoard_link.hub --no-window   # server only (for an agent)
+python -m hoard_link.hub --profile video       # and start a profile once it is up
+python -m hoard_link.hub --install-autostart   # Windows: start the hub at login
 ```
 
 On Windows, double-click `Hoard Hub.cmd`. Configuration lives in
@@ -277,6 +279,34 @@ On Windows, double-click `Hoard Hub.cmd`. Configuration lives in
 `profiles`, `lease_headroom_mb`) or the
 `HOARD_HUB_*` environment variables; `pip install "hoard-link[desktop]"`
 adds pywebview for a native hub window.
+
+### Start at login (Windows)
+
+```powershell
+python -m hoard_link.hub --install-autostart                  # headless hub at every login
+python -m hoard_link.hub --install-autostart --profile video  # ...and start the "video" profile
+python -m hoard_link.hub --autostart-status
+python -m hoard_link.hub --uninstall-autostart
+```
+
+`--install-autostart` writes `Hoard Hub.cmd` in your Startup folder
+(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`). It changes
+to this repository and launches `pythonw -m hoard_link.hub --no-window
+[--profile <name>]` detached (the `pythonw` next to the interpreter you ran
+the command with, so run it from the venv, or as
+`"Hoard Hub.cmd" --install-autostart`): no console stays open, the hub
+logs to `data/logs/hub.log`, and GPU leases and profiles are available
+from the moment you log in. `--window` opens the hub's window at login
+instead (it keeps serving when you close it); `--port`, `--data-dir` and
+`--roots` given with it are kept. No registry keys and no admin rights;
+`--uninstall-autostart` deletes the file (and refuses to delete a file of
+that name it did not write). On Linux and macOS these commands are a
+no-op that says so and prints the command to put in a systemd user unit or
+a launchd agent.
+
+`--profile <name>` also works on any normal start: the hub starts that
+profile once it is listening, and a second launch while a hub is already
+running asks the running hub to start it.
 
 ### Profiles
 
@@ -518,10 +548,11 @@ on Windows or Linux:
 pytest -q
 ```
 
-184 tests, offline (`httpx.MockTransport`), in about 10 seconds. The only
+242 tests, offline (`httpx.MockTransport`), in about 30 seconds. The only
 real sockets are in the sync-facade tests and the hub tests, which start
 tiny HTTP servers on ephemeral `127.0.0.1` ports (a fake app answering
-`/api/health`, and a launchable one the hub really starts and stops); the
+`/api/health`, a launchable one the hub really starts and stops, profile
+commands, and a hub with fake GPUs for the lease client); the
 TTS-command tests run the current Python interpreter as the "TTS binary". No test needs network access or a
 downloaded model, so CI (`.github/workflows/ci.yml`: Ubuntu and Windows,
 Python 3.11 to 3.13) runs the same suite with no GPU and no network.

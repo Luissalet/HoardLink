@@ -290,6 +290,8 @@ marcha, a propósito — es un mando a distancia, no un padre.
 pip install psutil            # pids, memoria, parar árboles de procesos
 python -m hoard_link.hub      # servidor en 127.0.0.1:8810 + ventana
 python -m hoard_link.hub --no-window   # solo servidor (para un agente)
+python -m hoard_link.hub --profile video       # y arranca un perfil cuando esté listo
+python -m hoard_link.hub --install-autostart   # Windows: arrancar el hub al iniciar sesión
 ```
 
 En Windows, doble clic en `Hoard Hub.cmd`. La configuración vive en
@@ -298,6 +300,35 @@ En Windows, doble clic en `Hoard Hub.cmd`. La configuración vive en
 `profiles`, `lease_headroom_mb`) o en las
 variables de entorno `HOARD_HUB_*`; `pip install "hoard-link[desktop]"`
 añade pywebview para una ventana nativa del hub.
+
+### Arrancar al iniciar sesión (Windows)
+
+```powershell
+python -m hoard_link.hub --install-autostart                  # hub sin ventana en cada inicio de sesión
+python -m hoard_link.hub --install-autostart --profile video  # ...y arranca el perfil "video"
+python -m hoard_link.hub --autostart-status
+python -m hoard_link.hub --uninstall-autostart
+```
+
+`--install-autostart` escribe `Hoard Hub.cmd` en tu carpeta de Inicio
+(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`). Se sitúa en
+este repositorio y lanza `pythonw -m hoard_link.hub --no-window
+[--profile <nombre>]` desacoplado (el `pythonw` que está junto al
+intérprete con el que ejecutaste la orden, así que lánzala desde el venv, o
+como `"Hoard Hub.cmd" --install-autostart`): no queda ninguna consola
+abierta, el hub escribe su log en `data/logs/hub.log`, y las reservas de GPU
+y los perfiles están disponibles desde que inicias sesión. `--window` abre
+la ventana del hub al iniciar sesión (y sigue sirviendo si la cierras);
+`--port`, `--data-dir` y `--roots` dados junto a la orden se conservan. Sin
+claves de registro ni permisos de administrador; `--uninstall-autostart`
+borra el archivo (y se niega a borrar un archivo con ese nombre que no haya
+escrito él). En Linux y macOS estas órdenes no hacen nada, lo dicen, e
+imprimen la orden para ponerla en una unidad de usuario de systemd o en un
+agente de launchd.
+
+`--profile <nombre>` sirve también en un arranque normal: el hub arranca
+ese perfil en cuanto escucha, y un segundo lanzamiento con un hub ya en
+marcha le pide a ese hub que lo arranque.
 
 ### Perfiles
 
@@ -547,11 +578,12 @@ Windows o en Linux:
 pytest -q
 ```
 
-184 tests, sin conexión (`httpx.MockTransport`), en unos 10 segundos. Los
+242 tests, sin conexión (`httpx.MockTransport`), en unos 30 segundos. Los
 únicos sockets reales están en los tests de la fachada síncrona y en los
 del hub, que arrancan servidores HTTP mínimos en puertos efímeros de
-`127.0.0.1` (una app falsa que contesta a `/api/health` y otra que el hub
-arranca y para de verdad); los tests del comando TTS usan el propio
+`127.0.0.1` (una app falsa que contesta a `/api/health`, otra que el hub
+arranca y para de verdad, comandos de perfiles y un hub con GPUs falsas
+para el cliente de reservas); los tests del comando TTS usan el propio
 intérprete de Python como "binario de TTS". Ningún test necesita red ni descargar un modelo, así
 que la CI (`.github/workflows/ci.yml`: Ubuntu y Windows, Python 3.11 a
 3.13) ejecuta la misma batería sin GPU y sin red.

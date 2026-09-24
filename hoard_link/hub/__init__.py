@@ -15,6 +15,11 @@ driven by a person *or* by an agent: the hub exposes the same
 ``/api/agent/tools`` + ``/api/agent/call`` contract as the apps it manages,
 plus a stdio MCP bridge (``python -m hoard_link.hub.mcp``).
 
+It also keeps one GPU memory queue for the whole machine (``lease.py``:
+apps ask for VRAM before loading a model, see ``hoard_link.lease``), starts
+named *profiles* of apps and external commands together (``profiles.py``),
+and can install itself to start at login on Windows (``autostart.py``).
+
 Optional extras: ``psutil`` for pid/memory/uptime and process-tree stops
 (without it the hub still shows health and can open apps, but cannot stop
 them), ``pywebview`` for a native window instead of a Chromium ``--app``

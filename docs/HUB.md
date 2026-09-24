@@ -4,6 +4,43 @@ The overview lives in the [README](../README.md#hoard-hub-the-desktop-launcher)
 ([español](../README.es.md#hoard-hub-el-lanzador-de-escritorio)). This page
 is the reference for the parts that need more than a paragraph.
 
+## Command line
+
+```
+python -m hoard_link.hub [--port N] [--roots "A;B"] [--data-dir DIR]
+                         [--no-window | --browser | --native] [--stay] [--profile NAME] [-v]
+python -m hoard_link.hub --install-autostart [--profile NAME] [--no-window | --window] [--port/--data-dir/--roots]
+python -m hoard_link.hub --uninstall-autostart
+python -m hoard_link.hub --autostart-status
+```
+
+* `--profile NAME` starts that profile once the hub listens (in the
+  background: the window opens right away). When a hub is already running,
+  the new launch asks it to start the profile, opens a window on it and
+  exits.
+* `--install-autostart` (Windows) writes
+  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Hoard Hub.cmd`:
+
+  ```bat
+  @echo off
+  rem hoard-hub autostart (python -m hoard_link.hub --uninstall-autostart removes it)
+  cd /d "<this repository>"
+  start "" "<venv>\Scripts\pythonw.exe" -m hoard_link.hub --no-window --profile video
+  ```
+
+  `pythonw` is taken from next to the interpreter that ran the command
+  (falls back to that interpreter). Headless is the default (`--no-window`);
+  `--window` launches `--stay` instead, which opens the hub's window at
+  login and keeps serving after it is closed. Under `pythonw` the hub logs
+  to `data/logs/hub.log`. Exit code 0 on success, 1 when nothing was
+  installed.
+* `--uninstall-autostart` removes that file, only if it carries the
+  `rem hoard-hub autostart` marker. `--autostart-status` prints whether it
+  is installed, headless or with a window, the profile, and the command.
+* Linux/macOS: the three commands only print a message (install exits 1
+  and prints the command line to put in a systemd user unit or a launchd
+  agent). Nothing is written.
+
 ## Profiles
 
 `data/hub.json` → `profiles`: `{ "<name>": { "apps": [...], "commands": [...], "desktop": [...] } }`.
