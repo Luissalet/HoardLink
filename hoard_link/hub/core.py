@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional
 from . import HUB_VERSION, SERVICE
 from .config import HubConfig
 from .lease import LeaseArbiter
+from .profiles import CommandRunner, Profile, parse as parse_profiles
 from .registry import App, scan
 from . import desktop, procs
 
@@ -28,6 +29,11 @@ class Hub:
         self.config = config or HubConfig.load()
         self._apps: dict[str, App] = {}
         self._lock = threading.RLock()
+        # Starts in flight: app id -> (pid, spawned at). A start that is not
+        # ready yet must not be spawned a second time (open() right after a
+        # no-wait start, a profile and "start all" at once...).
+        self._inflight: dict[str, tuple[int, float]] = {}
+        self._start_locks: dict[str, threading.Lock] = {}
         self._backends_cache: tuple[float, dict[str, Any]] = (0.0, {})
         self._faustus_cache: tuple[float, dict[str, Any]] = (0.0, {})
         self._faustus_refreshing = threading.Event()
@@ -39,6 +45,8 @@ class Hub:
         # The GPU/VRAM lease arbiter: one queue for every app on this machine.
         self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=gpu_fn,
                                    headroom_mb=int(self.config.lease_headroom_mb or 0))
+        # External commands of the profiles (ComfyUI instances, scripts...).
+        self.commands = CommandRunner(os.path.join(self.config.data_dir, "commands.json"), self.config.logs_dir)
         procs._protected_pids()  # warm the ancestor list once, off the request path
         self.rescan()
 
@@ -124,6 +132,7 @@ class Hub:
             windows = fut_windows.result()
             faustus = fut_faustus.result()
             apps = list(pool.map(lambda ah: self.app_status(ah[0], listeners, windows, ah[1]), zip(apps_now, healths)))
+        profiles = self.profiles_status({a["id"]: a["state"] for a in apps})
         running = sum(1 for a in apps if a["state"] == "running")
         return {
             "service": SERVICE,
@@ -133,6 +142,7 @@ class Hub:
                        "windows": sum(len(v) for k, v in windows.items() if not k.startswith("_"))},
             "roots": list(self.config.roots),
             "faustus": faustus,
+            "profiles": profiles["profiles"],
             "hub": {"url": self.config.url, "data_dir": self.config.data_dir, "uptime_s": int(time.time() - self.started_at),
                     "browser": desktop.find_browser(self.config.browser), "psutil": procs._psutil() is not None},
         }
@@ -142,9 +152,51 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
-        res = procs.start_app(app, self.config.logs_dir, wait=wait)
+        with self._lock:
+            lock = self._start_locks.setdefault(app_id, threading.Lock())
+        with lock:  # one start per app at a time
+            pending = self._pending_start(app)
+            if pending is not None:
+                res = self._await_ready(app, pending) if wait else {"ok": True, "already": True, "pid": pending,
+                                                                       "detail": "already starting"}
+            else:
+                res = procs.start_app(app, self.config.logs_dir, wait=wait)
+                if res.get("ok") and res.get("pid") and not res.get("ready"):
+                    with self._lock:
+                        self._inflight[app_id] = (int(res["pid"]), time.time())
         res["app"] = app_id
         return res
+
+    def _pending_start(self, app: App) -> Optional[int]:
+        """Pid of a start of ``app`` that is still booting, else None."""
+        with self._lock:
+            rec = self._inflight.get(app.id)
+        if rec is None:
+            return None
+        pid, t0 = rec
+        timeout = app.launch.readiness_timeout_s if app.launch else 30.0
+        if time.time() - t0 > timeout or not procs.pid_running(pid) or procs.health(app).state == "healthy":
+            with self._lock:
+                self._inflight.pop(app.id, None)
+            return None
+        return pid
+
+    def _await_ready(self, app: App, pid: int) -> dict[str, Any]:
+        timeout = app.launch.readiness_timeout_s if app.launch else 30.0
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            h = procs.health(app)
+            if h.state == "healthy":
+                with self._lock:
+                    self._inflight.pop(app.id, None)
+                return {"ok": True, "pid": pid, "ready": True, "health": h.to_dict(), "detail": "was already starting"}
+            if not procs.pid_running(pid):
+                with self._lock:
+                    self._inflight.pop(app.id, None)
+                return {"ok": False, "pid": pid, "error": "the process that was starting exited",
+                        "log_tail": procs.tail(os.path.join(self.config.logs_dir, f"{app.id}.log"), 30)}
+            time.sleep(0.5)
+        return {"ok": True, "pid": pid, "ready": False, "detail": f"not ready after {timeout:.0f}s (still starting?)"}
 
     def stop(self, app_id: str) -> dict[str, Any]:
         app = self.get(app_id)
@@ -231,6 +283,79 @@ class Hub:
 
     def stop_all(self) -> dict[str, Any]:
         return {"ok": True, "results": [self.stop(a.id) for a in self.apps]}
+
+    # -- profiles -------------------------------------------------------------
+    def profiles(self) -> dict[str, Profile]:
+        return parse_profiles(self.config.profiles)[0]
+
+    def profiles_status(self, app_states: Optional[dict[str, str]] = None) -> dict[str, Any]:
+        """Every profile with the state of each member. ``app_states``
+        (id -> state, from a snapshot) avoids probing the apps twice."""
+        profiles, problems = parse_profiles(self.config.profiles)
+        if app_states is None:
+            wanted = {a for p in profiles.values() for a in p.members}
+            apps = [a for a in self.apps if a.id in wanted]
+            with ThreadPoolExecutor(max_workers=max(2, len(apps))) as pool:
+                healths = list(pool.map(procs.health, apps))
+            app_states = {a.id: ("running" if h.state == "healthy" else h.state) for a, h in zip(apps, healths)}
+        cmds = [c for p in profiles.values() for c in p.commands]
+        with ThreadPoolExecutor(max_workers=max(2, len(cmds))) as pool:
+            cmd_status = dict(zip([c.id for c in cmds], pool.map(self.commands.status, cmds)))
+        out = []
+        for p in profiles.values():
+            members = [{"id": a, "kind": "app", "name": (self.get(a).name if self.get(a) else a),
+                        "state": app_states.get(a, "down") if self.get(a) else "unknown",
+                        "desktop": a in p.desktop} for a in p.members]
+            members += [{"id": c.id, "kind": "command", "name": c.name, "state": cmd_status[c.id]["state"],
+                         "pid": cmd_status[c.id]["pid"], "health": c.health} for c in p.commands]
+            total = len(members)
+            running = sum(1 for m in members if m["state"] == "running")
+            state = "empty" if not total else ("running" if running == total else ("partial" if running else "stopped"))
+            out.append({"name": p.name, "state": state, "running": running, "total": total, "members": members,
+                        "apps": list(p.apps), "desktop": list(p.desktop), "commands": [c.to_dict() for c in p.commands]})
+        return {"ok": True, "profiles": out, "problems": problems}
+
+    def profile_status(self, name: str) -> dict[str, Any]:
+        for p in self.profiles_status()["profiles"]:
+            if p["name"] == name:
+                return dict(p, ok=True)
+        return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
+
+    def profile_start(self, name: str) -> dict[str, Any]:
+        """Start the profile's apps and commands together (not waiting for
+        each), then open its desktop apps as windows (that waits for them)."""
+        p = self.profiles().get(name)
+        if p is None:
+            return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
+        unknown = [a for a in p.members if self.get(a) is None]
+        known = [a for a in p.members if self.get(a) is not None]
+        # A desktop app is started by open() itself (which waits for it to be
+        # ready before opening the window); starting it here too would race.
+        plain = [a for a in known if a not in p.desktop]
+        desktop = [a for a in known if a in p.desktop]
+        n = max(2, len(known) + len(p.commands))
+        with ThreadPoolExecutor(max_workers=n) as pool:
+            fut_apps = [pool.submit(self.start, a, False) for a in plain]
+            fut_cmds = [pool.submit(self.commands.start, c) for c in p.commands]
+            fut_desk = [pool.submit(self.open, a, "window", True) for a in desktop]
+            app_res = [f.result() for f in fut_apps]
+            cmd_res = [f.result() for f in fut_cmds]
+            desk_res = [f.result() for f in fut_desk]
+        results = app_res + cmd_res + desk_res
+        return {"ok": not unknown and all(r.get("ok") for r in results), "profile": name,
+                "apps": app_res, "commands": cmd_res, "desktop": desk_res,
+                "unknown": unknown, **({"error": "unknown apps: " + ", ".join(unknown)} if unknown else {})}
+
+    def profile_stop(self, name: str) -> dict[str, Any]:
+        p = self.profiles().get(name)
+        if p is None:
+            return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
+        cmd_res = [self.commands.stop(c) for c in p.commands]
+        app_res = [self.stop(a) for a in p.members if self.get(a) is not None]
+        results = cmd_res + app_res
+        errors = [r.get("error") for r in results if not r.get("ok")]
+        return {"ok": not errors, "profile": name, "apps": app_res, "commands": cmd_res,
+                **({"error": "; ".join(str(e) for e in errors)} if errors else {})}
 
     # -- surroundings ---------------------------------------------------------
     def faustus_status(self) -> dict[str, Any]:

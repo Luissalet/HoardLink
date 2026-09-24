@@ -25,6 +25,9 @@ GET  /api/lease/<id>           one lease (also keeps a queued one in the queue)
 POST /api/lease/request        {owner, purpose, vram_mb, gpu, priority, ttl_s, wait, pid[, lease_id]}
 POST /api/lease/renew          {lease_id, ttl_s}
 POST /api/lease/release        {lease_id}
+GET  /api/profiles             every profile with the state of its apps and commands
+GET  /api/profiles/<name>      one profile
+POST /api/profiles/<name>/start|stop
 GET  /api/config               the effective configuration
 GET  /api/agent/tools          (bearer) tool catalogue
 POST /api/agent/call           (bearer) {"tool": name, "arguments": {...}}
@@ -40,7 +43,7 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import HUB_VERSION, SERVICE
 from .core import Hub
@@ -184,6 +187,11 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json(hub.leases.status(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path.startswith("/api/lease/"):
                 return self._lease_reply(hub.leases.get(path[len("/api/lease/"):]))
+            if path == "/api/profiles":
+                return self._json(hub.profiles_status())
+            if path.startswith("/api/profiles/"):
+                res = hub.profile_status(unquote(path[len("/api/profiles/"):]))
+                return self._json(res, 200 if res.get("ok") else 404)
             if path == "/api/config":
                 cfg = hub.config.to_dict()
                 cfg["browser_found"] = desktop.find_browser(hub.config.browser)
@@ -240,6 +248,12 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/apps/stop-all":
                 return self._json(hub.stop_all())
             parts = path.split("/")
+            if len(parts) == 5 and parts[1] == "api" and parts[2] == "profiles" and parts[4] in ("start", "stop"):
+                name = unquote(parts[3])
+                if name not in hub.profiles():
+                    return self._json({"ok": False, "error": f"unknown profile: {name}"}, 404)
+                res = hub.profile_start(name) if parts[4] == "start" else hub.profile_stop(name)
+                return self._json(res, 200 if res.get("ok") else 409)
             if len(parts) == 5 and parts[1] == "api" and parts[2] == "apps":
                 app_id, action = parts[3], parts[4]
                 if hub.get(app_id) is None:

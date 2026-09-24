@@ -4,6 +4,69 @@ The overview lives in the [README](../README.md#hoard-hub-the-desktop-launcher)
 ([español](../README.es.md#hoard-hub-el-lanzador-de-escritorio)). This page
 is the reference for the parts that need more than a paragraph.
 
+## Profiles
+
+`data/hub.json` → `profiles`: `{ "<name>": { "apps": [...], "commands": [...], "desktop": [...] } }`.
+
+| Key | Meaning |
+|---|---|
+| `apps` | app ids (as `hub_list_apps` lists them) to start |
+| `desktop` | app ids to open as desktop windows (started first when needed) |
+| `commands` | external processes: `name`, `cmd` (a command line or a list of arguments), `cwd`, `health` (URL; any answer below 500 means running), `env` (extra environment) |
+
+Starting a profile starts its apps and commands in parallel without
+waiting for each, then opens the `desktop` apps (which waits for each of
+them to be ready). Stopping it stops the commands the hub started and
+every app of the profile (an app shared with another profile is stopped
+too: a profile is a shortcut, not an owner). A profile's state is
+`running` (every member up), `partial`, `stopped` or `empty`; an id that
+matches no app is reported as `unknown` and makes a start fail without
+stopping the rest.
+
+Commands: the hub records the pid and creation time of what it started in
+`data/commands.json`, so a restarted hub still reports and can stop them;
+a command that answers its `health` URL but was started elsewhere is shown
+as running and never stopped. Output: `data/logs/cmd-<profile>--<name>.log`.
+
+No profile ships in the default configuration. Two examples to adapt
+(paths and ports are placeholders):
+
+```json
+{
+  "profiles": {
+    "writing": {
+      "apps": ["borges", "scribe", "funes"],
+      "desktop": ["hypatia"]
+    },
+    "video": {
+      "apps": ["daguerre", "scribe"],
+      "commands": [
+        {
+          "name": "comfy gpu1",
+          "cmd": "D:/ComfyUI/venv/Scripts/python.exe main.py --listen 127.0.0.1 --port 8189",
+          "cwd": "D:/ComfyUI",
+          "env": {"CUDA_VISIBLE_DEVICES": "1"},
+          "health": "http://127.0.0.1:8189/system_stats"
+        },
+        {
+          "name": "comfy gpu2",
+          "cmd": "D:/ComfyUI/venv/Scripts/python.exe main.py --listen 127.0.0.1 --port 8190",
+          "cwd": "D:/ComfyUI",
+          "env": {"CUDA_VISIBLE_DEVICES": "2"},
+          "health": "http://127.0.0.1:8190/system_stats"
+        }
+      ],
+      "desktop": ["daguerre"]
+    }
+  }
+}
+```
+
+HTTP: `GET /api/profiles` (every profile with each member's state),
+`GET /api/profiles/<name>`, `POST /api/profiles/<name>/start`,
+`POST /api/profiles/<name>/stop`. Agent tools: `hub_profile_list`
+(read-only), `hub_profile_start {name}`, `hub_profile_stop {name}`.
+
 ## GPU memory leases
 
 One queue for every program on the machine that wants VRAM. The library

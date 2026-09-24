@@ -256,6 +256,8 @@ roots you configure) — nothing new to write — and for each app shows:
   **Close windows**, **Folder**, **Log**;
 * at the top, whether Faustus is reachable and what Hoard Link resolves
   right now for every capability, plus free VRAM per GPU;
+* **profile** chips to start or stop a named set of apps at once (see
+  [Profiles](#profiles));
 * a **GPU** panel: per GPU used / reserved / available, and the
   [GPU memory leases](#gpu-memory-leases) granted and queued, each with a
   Release button.
@@ -271,9 +273,41 @@ python -m hoard_link.hub --no-window   # server only (for an agent)
 
 On Windows, double-click `Hoard Hub.cmd`. Configuration lives in
 `data/hub.json` (`roots`, `icon_dirs`, `browser`, `faustus_dir`,
-`faustus_python`, `window_size`, `exit_with_window`, `language`) or the
+`faustus_python`, `window_size`, `exit_with_window`, `language`,
+`profiles`, `lease_headroom_mb`) or the
 `HOARD_HUB_*` environment variables; `pip install "hoard-link[desktop]"`
 adds pywebview for a native hub window.
+
+### Profiles
+
+A profile is a named set of apps to start together — optionally with
+external commands (a ComfyUI instance per GPU, a llama-server, a script)
+and the apps to open as desktop windows — declared in `data/hub.json`:
+
+```json
+{
+  "profiles": {
+    "writing": {"apps": ["borges", "scribe"], "desktop": ["hypatia"]},
+    "video": {
+      "apps": ["daguerre"],
+      "commands": [
+        {"name": "comfy gpu1", "cmd": "python main.py --port 8189", "cwd": "D:/ComfyUI",
+         "health": "http://127.0.0.1:8189/system_stats", "env": {"CUDA_VISIBLE_DEVICES": "1"}}
+      ],
+      "desktop": ["daguerre"]
+    }
+  }
+}
+```
+
+The main screen shows one chip per profile (running count, start ▶,
+stop ■). Commands get the same running/down treatment as apps: their
+`health` URL when given, else whether the process the hub started is
+alive; their output goes to `data/logs/cmd-<profile>--<name>.log`, and the
+hub only ever stops a command it started itself. No profile is defined by
+default; [docs/HUB.md](docs/HUB.md#profiles) has two complete examples.
+HTTP: `GET /api/profiles`, `GET /api/profiles/<name>`,
+`POST /api/profiles/<name>/start|stop`.
 
 ### GPU memory leases
 
@@ -355,6 +389,7 @@ hub when none is listening. Tools: `hub_list_apps`, `hub_app_status`,
 `hub_start_app`, `hub_stop_app`, `hub_restart_app`, `hub_open_app`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
+`hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
 `hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus
 adopt the hub like any other app.
 

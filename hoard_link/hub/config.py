@@ -41,6 +41,7 @@ class HubConfig:
     exit_with_window: bool = True
     language: str = "auto"         # auto | en | es
     lease_headroom_mb: int = 256   # VRAM kept free on every GPU when granting leases
+    profiles: dict[str, Any] = field(default_factory=dict)   # name -> {apps, commands, desktop}
 
     @property
     def logs_dir(self) -> str:
