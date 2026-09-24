@@ -344,9 +344,12 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     hub.rules.clear_history() if hasattr(hub.rules, "clear_history") else None
     status, body = _http(url + "/api/rules/rule-watch-digest/test", {"type": "links.watch.new"})
     assert body["matches"] and body["matches"][0]["id"] == "rule-watch-digest"
-    status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "down"}})
+    status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "down", "service_kind": "app"}})
     assert body["matches"]
-    status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "slow"}})
+    status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "slow", "service_kind": "app"}})
+    assert not body["matches"]
+    # a model server or Faustus itself going down is not something start_app can fix
+    status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "down", "service_kind": "external"}})
     assert not body["matches"]
     for r in hub.rules.list():
         hub.rules.remove(r["id"])

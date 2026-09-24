@@ -62,7 +62,7 @@ contents (16 KB cap). Conventions:
 | `hub.backup.done` / `failed` / `restored` | hub | `snapshot, apps, files, new_bytes` |
 | `hub.rule.ran` / `hub.job.ran` | hub | `rule|job, ok, ms, results` |
 | `hub.lease.granted` / `released` | hub | `lease_id, owner, gpu, vram_mb` |
-| `cassandra.incident.opened` / `closed` | Cassandra | `incident_id, app, to_state, probable_cause` |
+| `cassandra.incident.opened` / `closed` | Cassandra | `incident_id, app, service_kind (app\|external\|user), to_state, probable_cause` |
 
 Reading: `GET /api/events?since_id=&type=scribe.*&source=&since=&until=&text=&limit=`
 (newest first; `order=asc` with `since_id` to tail), `GET /api/events/stream`
@@ -97,7 +97,7 @@ the "Install the recommended rules" button (Rules tab) or
 by rule id): `scribe.transcript.done` → Hypatia `cards_suggest`;
 `hub.app.stopped` → backup of that app; `links.watch.new` → a `digest.item`
 event (what the daily-recap skill reads); `cassandra.incident.opened` with
-`to_state: down` → start the app again (cooldown 5 min).
+`to_state: down` and `service_kind: app` → start the app again (cooldown 5 min).
 
 Actions: `{kind: tool, app, tool, args}`, `{kind: hub, tool, args}`,
 `{kind: event, type, data}`, `{kind: start_app|stop_app|restart_app, app}`,
