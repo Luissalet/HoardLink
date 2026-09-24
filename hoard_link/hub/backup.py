@@ -243,6 +243,12 @@ class BackupStore:
                         else:
                             sha, size, new = self._store_file(full)
                             kind = "file"
+                    except PermissionError:
+                        # Held exclusively by the app (a DuckDB file, a Windows lock):
+                        # not an error of the backup, a fact about the app. A rule
+                        # "backup when the app stops" catches it later.
+                        entry["skipped"].append({"path": rel.replace(os.sep, "/"), "why": "locked by the app (in use)",
+                                                 "bytes": st.st_size}); continue
                     except Exception as exc:  # noqa: BLE001
                         entry["errors"].append(f"{rel}: {type(exc).__name__}: {exc}"); continue
                     entry["files"].append({"path": rel.replace(os.sep, "/"), "sha": sha, "bytes": size,

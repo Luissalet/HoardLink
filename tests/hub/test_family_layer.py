@@ -505,6 +505,16 @@ def test_install_fastapi_adds_shared_contract(tmp_path, fserved):
     def health():
         return {"service": "test-hoard", "hoard_link": family.health_block()}
 
+    # The SPA catch-alls a built frontend adds, registered BEFORE the family routes.
+    @app.api_route("/api/{rest:path}", methods=["GET", "POST"])
+    def api_not_found(rest: str):
+        from fastapi.responses import JSONResponse as _JR
+        return _JR({"error": "not_found"}, status_code=404)
+
+    @app.get("/{full_path:path}")
+    def spa(full_path: str):
+        return {"index": True}
+
     info = family.install_fastapi(app, "testapp", str(tmp_path / "data"), instructions="Be nice.")
     family.configure("testapp", str(tmp_path / "data"), hub=url)
     assert info["contract"] and (tmp_path / "data" / "mcp-token").is_file()
