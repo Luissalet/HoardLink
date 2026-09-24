@@ -154,8 +154,31 @@ def test_profiles_load_from_hub_json(tmp_path):
 def test_start_while_starting_does_not_spawn_twice(hub):
     first = hub.start("launch", wait=False)
     assert first["ok"] and first["pid"]
+    # Whether the second call still sees it starting or already healthy
+    # (Windows: a closed-port probe takes ~1.5 s), it names the same process.
     again = hub.start("launch", wait=False)
     assert again.get("already") and again["pid"] == first["pid"]
     ready = hub.start("launch", wait=True)
     assert ready["ok"] and ready["pid"] == first["pid"] and ready.get("ready") is not False
-    assert hub.app_status(hub.get("launch"))["process"]["pid"] == first["pid"]
+    listener = hub.app_status(hub.get("launch"))["process"]["pid"]
+    assert listener == first["pid"] or first["pid"] in _ancestors(listener)   # venv launcher on Windows
+
+
+def _ancestors(pid: int) -> list[int]:
+    psutil = pytest.importorskip("psutil")
+    try:
+        return [p.pid for p in psutil.Process(pid).parents()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def test_already_running_without_a_known_spawn_reports_the_listener(hub):
+    import os
+    first = hub.start("launch", wait=True)
+    assert first["ok"] and first.get("ready")
+    hub._spawned.clear()                                  # e.g. started by an earlier hub
+    again = hub.start("launch", wait=False)
+    listener = hub.app_status(hub.get("launch"))["process"]["pid"]
+    assert again.get("already") and again["pid"] == listener
+    # an app nobody spawned, served by this very process
+    assert hub._running_pid(hub.get("fake")) == os.getpid()

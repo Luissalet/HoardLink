@@ -548,7 +548,7 @@ on Windows or Linux:
 pytest -q
 ```
 
-242 tests, offline (`httpx.MockTransport`), in about 30 seconds. The only
+243 tests, offline (`httpx.MockTransport`), in about 30 seconds. The only
 real sockets are in the sync-facade tests and the hub tests, which start
 tiny HTTP servers on ephemeral `127.0.0.1` ports (a fake app answering
 `/api/health`, a launchable one the hub really starts and stops, profile

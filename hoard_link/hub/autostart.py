@@ -97,6 +97,7 @@ def install(profile: Optional[str] = None, window: bool = False, *, extra: Optio
     path = script_path(env)
     if path is None:
         return {"ok": False, "supported": True, "error": "APPDATA is not set: cannot find the Startup folder"}
+    # render() uses CRLF (cmd.exe); written as bytes so no newline translation happens.
     text = render(str(repo_dir or REPO_DIR), python, args)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
