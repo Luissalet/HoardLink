@@ -90,6 +90,24 @@ def fetch_json(url: str, timeout: float = HEALTH_TIMEOUT_S) -> tuple[Optional[in
         return status, None
 
 
+def fetch_json_post(url: str, body: Any, timeout: float = 120.0) -> tuple[Optional[int], Any]:
+    """POST JSON to a loopback URL; same contract as :func:`fetch_json`."""
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": "hoard-hub"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as exc:
+        raw, status = exc.read(), exc.code
+    except Exception:  # noqa: BLE001
+        return None, None
+    try:
+        return status, json.loads(raw.decode("utf-8", "replace")) if raw else None
+    except ValueError:
+        return status, None
+
+
 def health(app: App, listeners: Optional[dict[int, int]] = None) -> Health:
     """``listeners`` (from :func:`listening_pids`) short-circuits the HTTP
     probe when nothing listens on the port at all: on Windows a connection

@@ -103,7 +103,7 @@ def test_queue_is_fifo_within_priority_and_priority_first():
     gpus = FakeGpus((10000, 0))
     arb = make(gpus)
     hold = arb.request(owner="hold", vram_mb=10000)
-    low1 = arb.request(owner="low1", vram_mb=4000)
+    arb.request(owner="low1", vram_mb=4000)
     low2 = arb.request(owner="low2", vram_mb=4000)
     high = arb.request(owner="high", vram_mb=4000, priority=5)
     assert [q["owner"] for q in arb.status()["queue"]] == ["high", "low1", "low2"]
