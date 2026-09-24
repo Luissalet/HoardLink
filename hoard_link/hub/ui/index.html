@@ -40,6 +40,65 @@
   </div>
 </section>
 
+<section class="family-panel" id="family-panel">
+  <div class="family-head">
+    <nav class="tabs" id="family-tabs">
+      <button data-tab="events" class="tab on"><b data-i18n="f_events">Events</b> <span id="events-badge" class="badge"></span></button>
+      <button data-tab="rules" class="tab"><b data-i18n="f_rules">Rules</b> <span id="rules-badge" class="badge"></span></button>
+      <button data-tab="jobs" class="tab"><b data-i18n="f_jobs">Jobs</b> <span id="jobs-badge" class="badge"></span></button>
+      <button data-tab="backups" class="tab"><b data-i18n="f_backups">Backups</b> <span id="backups-badge" class="badge"></span></button>
+      <button data-tab="audit" class="tab"><b data-i18n="f_audit">Audit</b> <span id="audit-badge" class="badge"></span></button>
+    </nav>
+    <button id="family-toggle" class="ghost small" aria-expanded="true">▾</button>
+  </div>
+  <div id="family-body" class="family-body">
+    <div id="tab-events" class="tab-body">
+      <div class="tab-tools">
+        <input id="events-filter" type="search" placeholder="type glob (scribe.*, agent.call)…" autocomplete="off">
+        <input id="events-source" type="search" placeholder="source" autocomplete="off" class="narrow">
+        <button id="events-emit" class="ghost small" data-i18n="f_emit_test">Emit test event</button>
+        <span id="events-live" class="live" title="Server-Sent Events">● live</span>
+      </div>
+      <div id="events-list" class="events-list"></div>
+    </div>
+    <div id="tab-rules" class="tab-body" hidden>
+      <div class="tab-tools">
+        <button id="rule-new" class="primary small" data-i18n="f_new_rule">New rule</button>
+        <span class="hint" data-i18n="f_rules_hint">When an event matches, run actions. Templates below.</span>
+      </div>
+      <div id="rules-list" class="rules-list"></div>
+      <details class="examples"><summary data-i18n="f_templates">Templates</summary><div id="rules-examples"></div></details>
+      <div id="rules-history" class="history"></div>
+    </div>
+    <div id="tab-jobs" class="tab-body" hidden>
+      <div class="tab-tools">
+        <button id="job-new" class="primary small" data-i18n="f_new_job">New job</button>
+        <span class="hint" data-i18n="f_jobs_hint">Actions on a clock: every 6h, or daily at 04:00.</span>
+      </div>
+      <div id="jobs-list" class="rules-list"></div>
+      <details class="examples"><summary data-i18n="f_templates">Templates</summary><div id="jobs-examples"></div></details>
+      <div id="jobs-history" class="history"></div>
+    </div>
+    <div id="tab-backups" class="tab-body" hidden>
+      <div class="tab-tools">
+        <button id="backup-run" class="primary small" data-i18n="f_backup_now">Back up now</button>
+        <button id="backup-verify" class="ghost small" data-i18n="f_verify">Verify latest</button>
+        <button id="backup-prune" class="ghost small" data-i18n="f_prune">Prune (keep 14)</button>
+        <span id="backup-summary" class="hint"></span>
+      </div>
+      <div id="backups-list" class="rules-list"></div>
+    </div>
+    <div id="tab-audit" class="tab-body" hidden>
+      <div class="tab-tools">
+        <button id="audit-run" class="primary small" data-i18n="f_audit_run">Run audit</button>
+        <span id="audit-summary" class="hint"></span>
+      </div>
+      <div id="audit-recs" class="recs"></div>
+      <div id="audit-table" class="audit"></div>
+    </div>
+  </div>
+</section>
+
 <main>
   <div id="profiles" class="profiles" hidden></div>
   <div id="grid" class="grid"></div>
@@ -95,6 +154,20 @@
   </article>
 </template>
 
+<dialog id="edit-dialog">
+  <div class="dialog-head">
+    <strong id="edit-title"></strong>
+    <div>
+      <button id="edit-save" class="primary small" data-i18n="f_save">Save</button>
+      <button id="edit-close" class="ghost small" data-i18n="close">Close</button>
+    </div>
+  </div>
+  <p class="hint" id="edit-hint"></p>
+  <textarea id="edit-body" spellcheck="false"></textarea>
+  <div id="edit-error" class="err"></div>
+</dialog>
+
 <script src="/ui/app.js"></script>
+<script src="/ui/family.js"></script>
 </body>
 </html>

@@ -31,6 +31,18 @@ POST /api/profiles/<name>/start|stop
 GET  /api/config               the effective configuration
 GET  /api/agent/tools          (bearer) tool catalogue
 POST /api/agent/call           (bearer) {"tool": name, "arguments": {...}}
+
+The family layer (0.4): events, calls between apps, rules, jobs, backups
+GET  /api/events               ?since_id&type&source&since&until&text&limit
+GET  /api/events/stream        Server-Sent Events, ?since_id (long-lived)
+GET  /api/events/stats         counts by type/source
+POST /api/events               (family token or the UI) {type, data, source?}
+GET  /api/apps/<id>/tools      the app's own tool catalogue
+POST /api/apps/<id>/call       (family token or the UI) {tool, arguments} → run it with that app's token
+GET  /api/rules | POST /api/rules (add) | POST /api/rules/<id>/update|remove|run|test
+GET  /api/jobs  | POST /api/jobs  (add) | POST /api/jobs/<id>/update|remove|run
+GET  /api/backups | /api/backups/<id> | POST /api/backups/run|prune|verify|restore
+GET  /api/audit                the family audit (?probe=0 for disk-only)
 """
 
 from __future__ import annotations
@@ -40,6 +52,7 @@ import logging
 import mimetypes
 import os
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
@@ -49,6 +62,9 @@ from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools
 from .lease import LeaseError
+from .rules import example_rules
+from .jobs import example_jobs
+from .events import event_types_help
 
 logger = logging.getLogger("hoard_hub")
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
@@ -126,6 +142,53 @@ class _HubHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _bearer(self) -> str:
+        auth = self.headers.get("Authorization") or ""
+        return auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+
+    def _family_caller(self) -> Optional[str]:
+        """Who is calling a family route: an app id (its own token), "hub"
+        (the hub's token), "ui" (the hub's own page, no token), else None."""
+        token = self._bearer()
+        if token:
+            return self.hub.token_owner(token)
+        site = (self.headers.get("Sec-Fetch-Site") or "").lower()
+        if site in ("same-origin", "none") and (self.headers.get("Origin") or "").rstrip("/") in ("", self.hub.config.url):
+            return "ui"
+        if not site and not self.headers.get("Origin") and self.headers.get("User-Agent", "").startswith("hoard-"):
+            return None
+        return None
+
+    def _family_ok(self) -> Optional[str]:
+        who = self._family_caller()
+        if who is None:
+            self._json({"ok": False, "error": "a family bearer token is required: the hub's data/mcp-token or any app's own"}, 401)
+        return who
+
+    def _sse(self, since_id: int) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        last = since_id if since_id else self.hub.events.last_id
+        try:
+            self.wfile.write(f": hoard-hub events from id {last}\n\n".encode("utf-8"))
+            self.wfile.flush()
+            while True:
+                batch = self.hub.events.follow(last, timeout=20.0)
+                if not batch:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    continue
+                for ev in batch:
+                    payload = json.dumps(ev, ensure_ascii=False, default=str)
+                    self.wfile.write(f"id: {ev['id']}\nevent: {ev['type']}\ndata: {payload}\n\n".encode("utf-8"))
+                    last = max(last, int(ev["id"]))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
     def _agent_ok(self) -> bool:
         auth = self.headers.get("Authorization") or ""
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
@@ -192,6 +255,44 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path.startswith("/api/profiles/"):
                 res = hub.profile_status(unquote(path[len("/api/profiles/"):]))
                 return self._json(res, 200 if res.get("ok") else 404)
+            if path == "/api/events":
+                q = lambda k, d=None: query.get(k, [d])[0]  # noqa: E731
+                return self._json({"ok": True, "last_id": hub.events.last_id, "events": hub.events.query(
+                    since_id=int(q("since_id", 0) or 0), type=q("type"), source=q("source"),
+                    since_ts=float(q("since")) if q("since") else None, until_ts=float(q("until")) if q("until") else None,
+                    text=q("text"), limit=int(q("limit", 100) or 100),
+                    newest_first=q("order", "desc") != "asc")})
+            if path == "/api/events/stream":
+                return self._sse(int(query.get("since_id", ["0"])[0] or 0))
+            if path == "/api/events/stats":
+                since = query.get("since", [None])[0]
+                st = hub.events.stats(float(since) if since else None)
+                st["conventions"] = event_types_help()
+                return self._json({"ok": True, **st})
+            if path == "/api/rules":
+                return self._json({"ok": True, "rules": hub.rules.list(), "history": hub.rules.history[-30:],
+                                   "examples": example_rules()})
+            if path == "/api/jobs":
+                return self._json({"ok": True, "jobs": hub.jobs.list(), "history": hub.jobs.history[-30:],
+                                   "examples": example_jobs(), "enabled": hub.config.jobs_enabled})
+            if path == "/api/backups":
+                st = hub.backups.status()
+                st["snapshots"] = hub.backups.list_snapshots()[-50:]
+                st["sources"] = hub.backup_sources()
+                return self._json({"ok": True, **st})
+            if path.startswith("/api/backups/"):
+                sid = unquote(path[len("/api/backups/"):])
+                m = hub.backups.load_snapshot(sid)
+                if m is None:
+                    return self._json({"ok": False, "error": "unknown snapshot"}, 404)
+                full = query.get("full", ["0"])[0] in ("1", "true")
+                if not full:
+                    m = {**m, "apps": {k: {"folder": v.get("folder"), "totals": v.get("totals"), "missing": v.get("missing"),
+                                           "skipped": (v.get("skipped") or [])[:40], "errors": v.get("errors")}
+                                       for k, v in (m.get("apps") or {}).items()}}
+                return self._json({"ok": True, "snapshot": m})
+            if path == "/api/audit":
+                return self._json(hub.family_audit(probe=query.get("probe", ["1"])[0] not in ("0", "false")))
             if path == "/api/config":
                 cfg = hub.config.to_dict()
                 cfg["browser_found"] = desktop.find_browser(hub.config.browser)
@@ -216,6 +317,9 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if sub == "log":
                     n = int(query.get("lines", ["80"])[0])
                     return self._json(hub.log_tail(app.id, max(1, min(n, 2000))))
+                if sub == "tools":
+                    res = hub.app_tools(app.id)
+                    return self._json(res, 200 if res.get("ok") else 502)
             return self._json({"ok": False, "error": "not found"}, 404)
         except Exception as exc:  # noqa: BLE001
             logger.exception("GET %s failed", path)
@@ -241,6 +345,39 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": ok, "tool": name, "result": result}, 200 if ok else 400)
             if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release"):
                 return self._lease_post(path.rsplit("/", 1)[1], body)
+            if path == "/api/events":
+                who = self._family_ok()
+                if who is None:
+                    return None
+                source = str(body.get("source") or who)
+                if who not in ("hub", "ui") and source != who:
+                    source = who  # an app may only speak for itself
+                try:
+                    ev = hub.events.emit(str(body.get("type") or ""), body.get("data") or {}, source=source)
+                except ValueError as exc:
+                    return self._json({"ok": False, "error": str(exc)}, 400)
+                return self._json({"ok": True, "event": ev})
+            if path == "/api/rules":
+                res = hub.rules.add(body)
+                return self._json(res, 200 if res.get("ok") else 400)
+            if path == "/api/jobs":
+                res = hub.jobs.add(body)
+                return self._json(res, 200 if res.get("ok") else 400)
+            if path == "/api/backups/run":
+                apps_arg = body.get("apps")
+                res = hub.backup_run([str(a) for a in apps_arg] if isinstance(apps_arg, list) and apps_arg else None,
+                                     label=str(body.get("label") or ""))
+                return self._json(res, 200 if res.get("ok") or res.get("snapshot") else 409)
+            if path == "/api/backups/prune":
+                res = hub.backups.prune(int(body.get("keep") or (hub.config.backup or {}).get("keep") or 14))
+                return self._json(res, 200 if res.get("ok") else 409)
+            if path == "/api/backups/verify":
+                res = hub.backups.verify(body.get("snapshot"))
+                return self._json(res, 200 if res.get("ok") else 409)
+            if path == "/api/backups/restore":
+                res = hub.backup_restore(str(body.get("snapshot") or ""), str(body.get("app") or ""),
+                                         dest=body.get("dest"), in_place=bool(body.get("in_place", False)))
+                return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/apps/rescan":
                 return self._json({"ok": True, "apps": [a.to_dict() for a in hub.rescan()]})
             if path == "/api/apps/start-all":
@@ -254,10 +391,49 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return self._json({"ok": False, "error": f"unknown profile: {name}"}, 404)
                 res = hub.profile_start(name) if parts[4] == "start" else hub.profile_stop(name)
                 return self._json(res, 200 if res.get("ok") else 409)
+            if len(parts) == 5 and parts[1] == "api" and parts[2] in ("rules", "jobs"):
+                coll = hub.rules if parts[2] == "rules" else hub.jobs
+                rid, action = unquote(parts[3]), parts[4]
+                if coll.get(rid) is None:
+                    return self._json({"ok": False, "error": f"unknown {parts[2][:-1]}: {rid}"}, 404)
+                if action == "update":
+                    res = coll.update(rid, body)
+                elif action == "remove":
+                    res = coll.remove(rid)
+                elif action == "run":
+                    if parts[2] == "jobs":
+                        res = hub.jobs.run_now(rid)
+                    else:
+                        ev = body.get("event") if isinstance(body.get("event"), dict) else None
+                        if ev is None and body.get("event_id"):
+                            ev = hub.events.get(int(body["event_id"]))
+                        if ev is None:
+                            ev = {"id": None, "ts": time.time(), "type": str(body.get("type") or "manual.test"),
+                                  "source": "ui", "data": body.get("data") or {}}
+                        res = hub.rules.run(hub.rules.get(rid), ev, manual=True)
+                elif action == "test" and parts[2] == "rules":
+                    ev = body.get("event") if isinstance(body.get("event"), dict) else {"type": body.get("type", ""), "source": body.get("source"), "data": body.get("data") or {}}
+                    res = {"ok": True, "matches": [m for m in hub.rules.test(ev) if m["id"] == rid]}
+                else:
+                    return self._json({"ok": False, "error": "unknown action"}, 404)
+                return self._json(res, 200 if res.get("ok", True) else 400)
             if len(parts) == 5 and parts[1] == "api" and parts[2] == "apps":
                 app_id, action = parts[3], parts[4]
                 if hub.get(app_id) is None:
                     return self._json({"ok": False, "error": "unknown app"}, 404)
+                if action == "call":
+                    who = self._family_ok()
+                    if who is None:
+                        return None
+                    name = str(body.get("tool") or body.get("name") or "")
+                    args = body.get("arguments") or body.get("args") or {}
+                    try:
+                        timeout = float(body.get("timeout_s") or 120.0)
+                    except (TypeError, ValueError):
+                        timeout = 120.0
+                    res = hub.call_app(app_id, name, args if isinstance(args, dict) else {}, caller=who,
+                                       timeout=max(1.0, min(timeout, 900.0)))
+                    return self._json(res, 200 if res.get("ok") else (int(res.get("status") or 502) if res.get("status") else 502))
                 if action == "start":
                     res = hub.start(app_id, wait=bool(body.get("wait", True)))
                 elif action == "stop":

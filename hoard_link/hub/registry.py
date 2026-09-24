@@ -70,6 +70,8 @@ class App:
     manifest_path: str = ""
     notes: str = ""
     kind: str = "app"        # app | window-app (an exe that opens its own window)
+    token_file: str = ""     # where the app keeps its agent bearer token (data/mcp-token)
+    data_dir: str = ""       # the app's own data folder (what backups copy)
 
     @property
     def port(self) -> Optional[int]:
@@ -102,6 +104,8 @@ class App:
             "launch": self.launch.to_dict() if self.launch else None,
             "kind": self.kind,
             "notes": self.notes,
+            "token_file": self.token_file,
+            "data_dir": self.data_dir,
         }
 
 
@@ -243,6 +247,18 @@ def read_manifest(
         manifest_path=path,
         notes=str(raw.get("notes") or ""),
     )
+    # The family contract: the agent bearer token lives in the app's data
+    # folder. A manifest may say where (defaults.TOKEN_FILE); else data/mcp-token.
+    token_default = str(defaults.get("TOKEN_FILE") or "").strip()
+    token_file = fill(token_default) if token_default else ""
+    if not token_file or "{" in token_file:
+        token_file = os.path.join(folder, "data", "mcp-token")
+    app.token_file = os.path.normpath(token_file)
+    data_default = str(defaults.get("DATA_DIR") or "").strip()
+    data_dir = fill(data_default) if data_default else ""
+    if not data_dir or "{" in data_dir:
+        data_dir = os.path.dirname(app.token_file)
+    app.data_dir = os.path.normpath(data_dir)
 
     hint = app_block.get("launch_hint")
     if not isinstance(hint, dict) or hint.get("kind", "process") != "process":

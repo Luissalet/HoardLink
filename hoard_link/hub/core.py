@@ -18,7 +18,11 @@ from .config import HubConfig
 from .lease import LeaseArbiter
 from .profiles import CommandRunner, Profile, parse as parse_profiles
 from .registry import App, scan
-from . import desktop, procs
+from . import actions as _actions, audit as _audit, contract, desktop, procs
+from .backup import BackupStore
+from .events import EventLog
+from .jobs import Scheduler
+from .rules import RuleEngine
 
 BACKENDS_CACHE_S = 8.0
 FAUSTUS_CACHE_S = 6.0
@@ -48,8 +52,36 @@ class Hub:
                                    headroom_mb=int(self.config.lease_headroom_mb or 0))
         # External commands of the profiles (ComfyUI instances, scripts...).
         self.commands = CommandRunner(os.path.join(self.config.data_dir, "commands.json"), self.config.logs_dir)
+        # The family's nervous system: the event log every app writes to,
+        # rules that react to it, jobs on a clock, and the backup store.
+        self.events = EventLog(self.config.events_file, keep=int(self.config.events_keep or 20000))
+        self.leases.on_event = self._lease_event
+        runner = lambda acts, ctx, caller: _actions.run_all(self, acts, ctx, caller=caller)  # noqa: E731
+        self.rules = RuleEngine(self.config.rules_file, self.events, runner)
+        self.jobs = Scheduler(self.config.jobs_file, runner, events=self.events)
+        bk = self.config.backup or {}
+        self.backups = BackupStore(self.config.backup_dir, exclude=list(bk.get("exclude") or []),
+                                   max_file_mb=float(bk.get("max_file_mb") or 512))
         procs._protected_pids()  # warm the ancestor list once, off the request path
         self.rescan()
+        if self.config.jobs_enabled:
+            self.jobs.start()
+
+    def _lease_event(self, kind: str, lease: dict[str, Any]) -> None:
+        try:
+            self.events.emit("hub.lease." + kind, {k: lease.get(k) for k in ("lease_id", "owner", "purpose", "gpu", "vram_mb")})
+        except Exception:  # noqa: BLE001
+            pass
+
+    def emit(self, type: str, data: Optional[dict[str, Any]] = None, *, source: str = "hub") -> dict[str, Any]:
+        return self.events.emit(type, data, source=source)
+
+    def close(self) -> None:
+        for part in (self.jobs, self.rules, self.events):
+            try:
+                part.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # -- token / files -----------------------------------------------------
     def _load_token(self) -> str:
@@ -145,7 +177,9 @@ class Hub:
             "faustus": faustus,
             "profiles": profiles["profiles"],
             "hub": {"url": self.config.url, "data_dir": self.config.data_dir, "uptime_s": int(time.time() - self.started_at),
-                    "browser": desktop.find_browser(self.config.browser), "psutil": procs._psutil() is not None},
+                    "browser": desktop.find_browser(self.config.browser), "psutil": procs._psutil() is not None,
+                    "events": self.events.last_id, "rules": len(self.rules.rules), "jobs": len(self.jobs.jobs),
+                    "backup_dir": self.backups.root},
         }
 
     # -- actions --------------------------------------------------------------
@@ -172,7 +206,15 @@ class Hub:
                 # slow probe ran): name the process that serves it.
                 res["pid"] = self._running_pid(app)
         res["app"] = app_id
+        if res.get("ok") and not res.get("already"):
+            self._safe_emit("hub.app.started", {"app": app_id, "pid": res.get("pid"), "ready": res.get("ready")})
         return res
+
+    def _safe_emit(self, type: str, data: dict[str, Any]) -> None:
+        try:
+            self.events.emit(type, data)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _running_pid(self, app: App) -> Optional[int]:
         """The pid the hub spawned for ``app`` when it still runs (on Windows a
@@ -238,6 +280,8 @@ class Hub:
         res["pid"] = proc.pid
         # Its windows are pointless without the server behind them.
         desktop.close_windows(app_id, self.config.profiles_dir)
+        if res.get("ok"):
+            self._safe_emit("hub.app.stopped", {"app": app_id, "pid": proc.pid})
         return res
 
     def restart(self, app_id: str) -> dict[str, Any]:
@@ -374,6 +418,59 @@ class Hub:
         errors = [r.get("error") for r in results if not r.get("ok")]
         return {"ok": not errors, "profile": name, "apps": app_res, "commands": cmd_res,
                 **({"error": "; ".join(str(e) for e in errors)} if errors else {})}
+
+    # -- the family: calls between apps, backups, audit -------------------------
+    def call_app(self, app_id: str, tool: str, arguments: Optional[dict[str, Any]] = None, *,
+                 caller: str = "hub", timeout: float = 120.0) -> dict[str, Any]:
+        """Run a tool of one app with that app's own token (the proxy)."""
+        app = self.get(app_id)
+        if app is None:
+            return {"ok": False, "error": f"unknown app: {app_id}", "apps": [a.id for a in self.apps]}
+        res = contract.call_app(app, tool, arguments, timeout=timeout, caller=caller)
+        self._safe_emit("hub.call", {"app": app_id, "tool": tool, "ok": res.get("ok"), "ms": res.get("ms"),
+                                     "caller": caller, "contract": res.get("contract"), "error": res.get("error")})
+        return res
+
+    def app_tools(self, app_id: str) -> dict[str, Any]:
+        app = self.get(app_id)
+        if app is None:
+            return {"ok": False, "error": f"unknown app: {app_id}"}
+        return contract.app_tools(app)
+
+    def token_owner(self, token: str) -> Optional[str]:
+        return contract.token_owner(token, self.apps, self.token)
+
+    def backup_sources(self, only: Optional[list[str]] = None) -> dict[str, str]:
+        wanted = set(only or [])
+        src = {a.id: a.data_dir for a in self.apps if a.data_dir and (not wanted or a.id in wanted)}
+        if not wanted or "hub" in wanted:
+            src["hub"] = self.config.data_dir
+        return src
+
+    def backup_run(self, apps: Optional[list[str]] = None, label: str = "") -> dict[str, Any]:
+        sources = self.backup_sources(apps)
+        unknown = [a for a in (apps or []) if a not in sources]
+        if unknown:
+            return {"ok": False, "error": "unknown apps: " + ", ".join(unknown)}
+        res = self.backups.snapshot(sources, label=label)
+        if res.get("ok") or res.get("snapshot"):
+            self._safe_emit("hub.backup.done" if res.get("ok") else "hub.backup.failed",
+                            {"snapshot": res.get("snapshot"), "apps": sorted(sources), "files": res.get("totals", {}).get("files"),
+                             "new_bytes": res.get("totals", {}).get("new_bytes"), "errors": res.get("totals", {}).get("errors")})
+        return res
+
+    def backup_restore(self, snapshot: str, app_id: str, *, dest: Optional[str] = None, in_place: bool = False) -> dict[str, Any]:
+        running: Optional[bool] = None
+        if in_place:
+            app = self.get(app_id)
+            running = app is not None and procs.health(app).state == "healthy"
+        res = self.backups.restore(snapshot, app_id, dest=dest, in_place=in_place, app_running=running)
+        self._safe_emit("hub.backup.restored" if res.get("ok") else "hub.backup.restore_failed",
+                        {"snapshot": snapshot, "app": app_id, "dest": res.get("dest"), "in_place": in_place, "error": res.get("error")})
+        return res
+
+    def family_audit(self, probe: bool = True) -> dict[str, Any]:
+        return _audit.audit(self.apps, self.config.url, probe=probe)
 
     # -- surroundings ---------------------------------------------------------
     def faustus_status(self) -> dict[str, Any]:

@@ -423,6 +423,47 @@ hub when none is listening. Tools: `hub_list_apps`, `hub_app_status`,
 `hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus
 adopt the hub like any other app.
 
+### The family layer (0.4): events, rules, jobs, backups, the proxy
+
+Since 0.4 the hub is also the family's nervous system — the part that
+turns twenty separate apps into one system without adding a twenty-first:
+
+- **Event bus.** Every app posts events to `POST /api/events` with its
+  own token (`hoard_link.family.emit(...)` in Python, `server/hoard-link.js`
+  in Node): one `agent.call` per tool the assistant ran, its own
+  milestones (`scribe.transcript.done`, `links.watch.new`), and the hub adds
+  `hub.app.started`, `hub.backup.done`, `hub.rule.ran`… Read them with
+  `GET /api/events` (filters, `since_id` to tail), follow them with
+  `GET /api/events/stream` (SSE), count them with `/api/events/stats`.
+  Kept in `data/events.db`; Cassandra's Hoard mirrors them for good.
+- **Calls between apps.** `POST /api/apps/<id>/call` runs a tool of any
+  app with *that app's* token, authenticated with the caller's own — no
+  app needs another's port or token file (`family.call("hypatia", ...)`).
+- **Rules.** *When* an event matches → *then* run actions: a tool of an
+  app, a hub tool, another event, start/stop an app, a profile — with
+  `${event.data.x}` templating, a cooldown and loop guards. Edited in the
+  hub's **Rules** tab or with `hub_rule_add`; templates included
+  ("transcript → flashcard drafts", "service down → restart").
+- **Jobs.** The same actions on a clock: `every: "6h"` or `at: "04:00"`
+  (+ days), missed runs caught up after sleep. **Jobs** tab / `hub_job_add`.
+- **Backups.** Deduplicated snapshots of every app's `data/` folder (SQLite
+  copied consistently while in use), restore to a side folder or in place,
+  verify, prune. **Backups** tab / `hub_backup_*`. The "Nightly backup" job
+  template makes it automatic.
+- **Audit.** `GET /api/audit` / `hub_family_audit`: which apps answer the
+  shared contract, have a token, emit events, vendor an up-to-date library,
+  keep `data/` git-ignored — with recommendations. `scripts/sync_vendored.py`
+  refreshes every vendored copy of the library in the sibling folders.
+
+Tools added: `hub_events`, `hub_event_emit`, `hub_event_stats`,
+`hub_call_app`, `hub_app_tools`, `hub_rules`, `hub_rule_add`,
+`hub_rule_update`, `hub_rule_remove`, `hub_rule_run`, `hub_jobs`,
+`hub_job_add`, `hub_job_update`, `hub_job_remove`, `hub_job_run`,
+`hub_backup_run`, `hub_backup_status`, `hub_backup_restore`,
+`hub_backup_verify`, `hub_backup_prune`, `hub_family_audit`. The whole
+contract — manifest, agent routes, event conventions, actions, vendoring —
+is in [docs/FAMILY.md](docs/FAMILY.md).
+
 ## Use with Faustus
 
 Nothing to configure when Faustus runs on the same machine with auth

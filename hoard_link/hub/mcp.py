@@ -85,7 +85,11 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
             "serverInfo": {"name": "hoard-hub", "version": HUB_VERSION},
             "instructions": "Local desktop hub for a family of agent-controlled apps: list them, see which are running, "
                             "start/stop them, open them as windows, and arbitrate GPU memory (VRAM leases) between them. "
-                            "Use hub_list_apps first to learn the ids.",
+                            "It is also the family's bus: hub_events shows what the apps reported (agent calls, "
+                            "finished transcripts, backups), hub_rule_add automates 'when X then Y' across apps, "
+                            "hub_job_add schedules actions, hub_backup_* keeps deduplicated copies of every app's data, "
+                            "hub_call_app reaches any app's tool and hub_family_audit checks they all speak the same "
+                            "contract. Use hub_list_apps first to learn the ids.",
         }}
     if method == "notifications/initialized" or method == "initialized":
         return None

@@ -164,7 +164,20 @@ class LeaseArbiter:
         self._seq = 0
         self._inv: tuple[float, list[_Gpu]] = (-1e18, [])
         self.reaped: list[dict[str, Any]] = []   # last few reaps, for the UI
+        #: Optional ``(kind, lease_dict)`` callback: "granted" / "released" / "expired".
+        self.on_event: Optional[Callable[[str, dict[str, Any]], None]] = None
         self._load()
+
+    def _notify(self, kind: str, lease: "Lease") -> None:
+        cb = self.on_event
+        if cb is None:
+            return
+        try:
+            d = lease.to_dict(self._now())
+            d.setdefault("lease_id", getattr(lease, "id", None))
+            cb(kind, d)
+        except Exception:  # noqa: BLE001
+            pass
 
     # -- inventory ---------------------------------------------------------
     def inventory(self, force: bool = False) -> list[_Gpu]:
@@ -297,6 +310,7 @@ class LeaseArbiter:
         lease.expires_at = now + lease.ttl_s
         lease.note = note
         self._cond.notify_all()
+        self._notify("granted", lease)
 
     def _tick(self, save: bool = False, force_inventory: bool = False) -> list[_Gpu]:
         changed = self._reap()
@@ -429,6 +443,7 @@ class LeaseArbiter:
             self._tick(save=True, force_inventory=True)
             if lease is None:
                 return {"ok": True, "released": False, "lease_id": lease_id, "detail": "already gone"}
+            self._notify("released", lease)
             return {"ok": True, "released": True, "lease_id": lease.id}
 
     def get(self, lease_id: str) -> dict[str, Any]:

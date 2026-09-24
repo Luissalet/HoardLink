@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hoard-link"
-version = "0.3.0"
+version = "0.4.0"
 description = "Shared local model backend resolution for agent-controlled apps: pick the already-loaded llama.cpp/Ollama/ComfyUI server for a capability, or Faustus's registry, without ever loading a second copy of a model."
 readme = "README.md"
 license = { text = "MIT" }
