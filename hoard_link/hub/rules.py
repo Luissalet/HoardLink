@@ -152,17 +152,24 @@ class RuleEngine:
                     return {"ok": True, "rule": dict(r)}
         return {"ok": False, "error": f"unknown rule: {rule_id}"}
 
-    def install_examples(self) -> dict[str, Any]:
-        """Add every recommended rule not yet present (by id). Idempotent; existing rules are untouched."""
-        installed, present = [], []
+    def install_examples(self, *, refresh: bool = False) -> dict[str, Any]:
+        """Add every recommended rule not yet present (by id). Idempotent; an existing one is left as it is
+        unless ``refresh`` — then its ``when``/``then``/``note`` follow the current template while the user's
+        ``enabled`` and ``cooldown_s`` (and the run counters) are kept."""
+        installed, present, refreshed = [], [], []
         for ex in example_rules():
-            if self.get(ex["id"]) is not None:
+            cur = self.get(ex["id"])
+            if cur is not None:
                 present.append(ex["id"])
+                if refresh and (cur.get("when") != ex["when"] or cur.get("then") != ex["then"] or cur.get("note") != ex.get("note", "")):
+                    res = self.update(ex["id"], {"when": ex["when"], "then": ex["then"], "note": ex.get("note", ""), "name": ex["name"]})
+                    if res.get("ok"):
+                        refreshed.append(ex["id"])
                 continue
             res = self.add(dict(ex))
             if res.get("ok"):
                 installed.append(ex["id"])
-        return {"ok": True, "installed": installed, "already_present": present, "rules": self.list()}
+        return {"ok": True, "installed": installed, "already_present": present, "refreshed": refreshed, "rules": self.list()}
 
     def remove(self, rule_id: str) -> dict[str, Any]:
         with self._lock:

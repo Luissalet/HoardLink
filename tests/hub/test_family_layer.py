@@ -338,8 +338,14 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     ids = {r["id"] for r in body["rules"]}
     assert {"rule-transcript-cards", "rule-backup-on-stop", "rule-watch-digest", "rule-restart-down"} <= ids
     res = tools.call(hub, "hub_rule_install_defaults", {})
-    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 4
+    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 4 and res["refreshed"] == []
     assert len(hub.rules.list()) == 4
+    # a template that moved on: refresh brings when/then back, keeps what the user set
+    hub.rules.update("rule-restart-down", {"when": {"type": "cassandra.incident.opened"}, "enabled": False, "cooldown_s": 42})
+    res = tools.call(hub, "hub_rule_install_defaults", {"refresh": True})
+    assert res["refreshed"] == ["rule-restart-down"]
+    r = hub.rules.get("rule-restart-down")
+    assert r["when"]["where"]["data.service_kind"] == "app" and r["enabled"] is False and r["cooldown_s"] == 42
     # they fire on the events they describe, with the data they promise
     hub.rules.clear_history() if hasattr(hub.rules, "clear_history") else None
     status, body = _http(url + "/api/rules/rule-watch-digest/test", {"type": "links.watch.new"})
