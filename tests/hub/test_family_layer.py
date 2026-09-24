@@ -332,6 +332,24 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     assert status == 404
     status, body = _http(url + f"/api/rules/{rid}/remove", {})
     assert body["ok"]
+    # the recommended rules: installed together, idempotently, every one valid
+    status, body = _http(url + "/api/rules/install-defaults", {})
+    assert status == 200 and body["ok"] and len(body["installed"]) == 4 and body["already_present"] == []
+    ids = {r["id"] for r in body["rules"]}
+    assert {"rule-transcript-cards", "rule-backup-on-stop", "rule-watch-digest", "rule-restart-down"} <= ids
+    res = tools.call(hub, "hub_rule_install_defaults", {})
+    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 4
+    assert len(hub.rules.list()) == 4
+    # they fire on the events they describe, with the data they promise
+    hub.rules.clear_history() if hasattr(hub.rules, "clear_history") else None
+    status, body = _http(url + "/api/rules/rule-watch-digest/test", {"type": "links.watch.new"})
+    assert body["matches"] and body["matches"][0]["id"] == "rule-watch-digest"
+    status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "down"}})
+    assert body["matches"]
+    status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "slow"}})
+    assert not body["matches"]
+    for r in hub.rules.list():
+        hub.rules.remove(r["id"])
     # jobs CRUD via tools
     res = tools.call(hub, "hub_job_add", {"name": "j", "at": "03:00", "then": [{"kind": "hub", "tool": "hub_event_stats", "args": {}}]})
     assert res["ok"], res

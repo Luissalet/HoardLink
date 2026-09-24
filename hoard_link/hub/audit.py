@@ -80,7 +80,8 @@ def audit_app(app: App, hub_url: str = "", *, probe: bool = True) -> dict[str, A
     line["vendored_hoard_link"] = vend
     lib = library_version()
     line["vendored_lags"] = bool(vend and vend["version"] != "?" and _vtuple(vend["version"]) < _vtuple(lib))
-    line["stack"] = "node" if os.path.isfile(os.path.join(app.folder, "server", "index.js")) or os.path.isfile(os.path.join(app.folder, "server", "app.js")) else "python"
+    line["stack"] = str(app.family.get("stack") or ("node" if os.path.isfile(os.path.join(app.folder, "server", "index.js")) or os.path.isfile(os.path.join(app.folder, "server", "app.js")) else "python"))
+    line["agent_contract"] = app.agent_contract
     if not probe:
         return line
     h = procs.health(app)
@@ -89,9 +90,9 @@ def audit_app(app: App, hub_url: str = "", *, probe: bool = True) -> dict[str, A
     fam = body.get("hoard_link") if isinstance(body.get("hoard_link"), dict) else None
     line["health_family_block"] = fam
     line["events"] = bool(fam and fam.get("events"))
-    line["contract"] = "unknown"
+    line["contract"] = "unknown" if app.agent_contract else "none"
     line["tools"] = None
-    if h.state == "healthy":
+    if h.state == "healthy" and app.agent_contract:
         cat = contract.app_tools(app, timeout=4.0)
         line["contract"] = cat.get("contract", "unknown")
         if cat.get("ok"):
@@ -120,10 +121,11 @@ def audit(apps: list[App], hub_url: str = "", *, probe: bool = True) -> dict[str
         "shared_contract": sorted(l["id"] for l in lines if l.get("contract") == "shared"),
         "per_tool_contract": sorted(l["id"] for l in lines if l.get("contract") == "per-tool"),
         "contract_unknown": sorted(l["id"] for l in lines if l.get("contract") == "unknown"),
-        "no_token": sorted(l["id"] for l in lines if not l["token_present"]),
-        "no_events": sorted(l["id"] for l in lines if l.get("state") == "running" and not l.get("events")),
+        "no_contract": sorted(l["id"] for l in lines if not l.get("agent_contract", True)),
+        "no_token": sorted(l["id"] for l in lines if not l["token_present"] and l.get("agent_contract", True)),
+        "no_events": sorted(l["id"] for l in lines if l.get("state") == "running" and not l.get("events") and l.get("agent_contract", True)),
         "vendored_lagging": sorted(l["id"] for l in lines if l.get("vendored_lags")),
-        "not_vendoring": sorted(l["id"] for l in lines if l["stack"] == "python" and not l.get("vendored_hoard_link")),
+        "not_vendoring": sorted(l["id"] for l in lines if l["stack"] == "python" and not l.get("vendored_hoard_link") and l.get("agent_contract", True)),
         "data_not_gitignored": sorted(l["id"] for l in lines if l.get("data_gitignored") is False),
         "data_missing": sorted(l["id"] for l in lines if not l["data_dir_exists"]),
         "tools_long_first_line": {l["id"]: l["tools_long_first_line"] for l in lines if l.get("tools_long_first_line")},

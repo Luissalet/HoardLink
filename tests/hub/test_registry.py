@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import json
 import sys
 from pathlib import Path
@@ -90,3 +91,34 @@ def test_exe_without_argv_is_a_window_app(tmp_path: Path):
     })
     app = read_manifest(folder / "faustus-plugin.json")
     assert app is not None and app.kind == "window-app" and app.launchable
+
+
+def test_x_family_block_marks_an_app_without_the_agent_contract(tmp_path: Path):
+    from hoard_link.hub import audit as auditmod
+    from tests.hub.conftest import write_manifest
+
+    plain = write_manifest(tmp_path / "plain", "plain", 1)
+    legacy = write_manifest(tmp_path / "legacy", "legacy", 2, extra={"x-family": {"agent_contract": False, "stack": "python", "note": "REST only"}})
+    a = read_manifest(plain / "faustus-plugin.json")
+    b = read_manifest(legacy / "faustus-plugin.json")
+    assert a.agent_contract is True and a.family == {} and a.to_dict()["agent_contract"] is True
+    assert b.agent_contract is False and b.family["note"] == "REST only" and b.to_dict()["family"]["stack"] == "python"
+    report = auditmod.audit([a, b], probe=False)
+    s = report["summary"]
+    assert s["no_contract"] == ["legacy"]
+    assert "plain" in s["no_token"] and "legacy" not in s["no_token"]
+    assert "plain" in s["not_vendoring"] and "legacy" not in s["not_vendoring"]
+    line = next(l for l in report["apps"] if l["id"] == "legacy")
+    assert line["agent_contract"] is False and line["stack"] == "python"
+
+
+def test_token_file_may_live_under_an_environment_folder(tmp_path: Path, monkeypatch):
+    from tests.hub.conftest import write_manifest
+
+    monkeypatch.setenv("HOARD_TEST_PROFILE", str(tmp_path / "profile"))
+    folder = write_manifest(tmp_path / "desk", "desk", 3, extra={"defaults": {"APP_URL": "http://127.0.0.1:3", "TOKEN_FILE": "%HOARD_TEST_PROFILE%/desk/token"}})
+    app = read_manifest(folder / "faustus-plugin.json")
+    assert app.token_file == os.path.normpath(str(tmp_path / "profile" / "desk" / "token"))
+    assert app.data_dir == os.path.normpath(str(tmp_path / "profile" / "desk"))
+    unknown = write_manifest(tmp_path / "unk", "unk", 4, extra={"defaults": {"APP_URL": "http://127.0.0.1:4", "TOKEN_FILE": "%NO_SUCH_VAR_HOARD%/token"}})
+    assert read_manifest(unknown / "faustus-plugin.json").token_file == os.path.normpath(str(unknown / "data" / "mcp-token"))

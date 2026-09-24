@@ -152,6 +152,18 @@ class RuleEngine:
                     return {"ok": True, "rule": dict(r)}
         return {"ok": False, "error": f"unknown rule: {rule_id}"}
 
+    def install_examples(self) -> dict[str, Any]:
+        """Add every recommended rule not yet present (by id). Idempotent; existing rules are untouched."""
+        installed, present = [], []
+        for ex in example_rules():
+            if self.get(ex["id"]) is not None:
+                present.append(ex["id"])
+                continue
+            res = self.add(dict(ex))
+            if res.get("ok"):
+                installed.append(ex["id"])
+        return {"ok": True, "installed": installed, "already_present": present, "rules": self.list()}
+
     def remove(self, rule_id: str) -> dict[str, Any]:
         with self._lock:
             before = len(self.rules)
@@ -240,17 +252,25 @@ class RuleEngine:
 
 
 def example_rules() -> list[dict[str, Any]]:
-    """Shown in the UI as templates; none is installed by default."""
+    """The recommended rules: shown in the UI as templates and installed together by
+    :meth:`RuleStore.install_examples` (the "Install the recommended rules" button,
+    ``hub_rule_install_defaults``). Each has a stable ``id`` so installing twice adds nothing."""
     return [
-        {"name": "Transcript → flashcard drafts", "when": {"type": "scribe.transcript.done"},
+        {"id": "rule-transcript-cards", "name": "Transcript → flashcard drafts", "when": {"type": "scribe.transcript.done"},
          "then": [{"kind": "tool", "app": "hypatia", "tool": "cards_suggest",
                    "args": {"session_id": "${event.data.session_id}", "limit": 8}}],
          "note": "Every finished Scribe session becomes Hypatia drafts to accept or discard."},
-        {"name": "Backup when an app stops", "when": {"type": "hub.app.stopped"},
+        {"id": "rule-backup-on-stop", "name": "Backup when an app stops", "when": {"type": "hub.app.stopped"},
          "then": [{"kind": "hub", "tool": "hub_backup_run", "args": {"apps": ["${event.data.app}"]}}],
+         "cooldown_s": 60,
          "note": "A consistent copy of that app's data, taken while it is not writing."},
-        {"name": "New watched item → read-later + note", "when": {"type": "links.watch.new"},
-         "then": [{"kind": "event", "type": "digest.item", "data": {"title": "${event.data.title}", "url": "${event.data.url}"}}]},
-        {"name": "Service down → try a restart", "when": {"type": "cassandra.incident.opened", "where": {"data.kind": "down"}},
-         "then": [{"kind": "start_app", "app": "${event.data.app}"}], "cooldown_s": 300},
+        {"id": "rule-watch-digest", "name": "New watched item → digest note", "when": {"type": "links.watch.new"},
+         "then": [{"kind": "event", "type": "digest.item", "data": {"title": "${event.data.title}", "url": "${event.data.url}",
+                                                                    "watch": "${event.data.watch}"}}],
+         "cooldown_s": 0,
+         "note": "Every new feed/release/page-change entry lands as a digest.item event for the daily recap skill."},
+        {"id": "rule-restart-down", "name": "Service down → try a restart",
+         "when": {"type": "cassandra.incident.opened", "where": {"data.to_state": "down"}},
+         "then": [{"kind": "start_app", "app": "${event.data.app}"}], "cooldown_s": 300,
+         "note": "Cassandra reports an app down: the hub starts it again, at most once every five minutes."},
     ]
