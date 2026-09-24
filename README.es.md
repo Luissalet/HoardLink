@@ -450,6 +450,51 @@ ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
 `hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a
 Faustus adoptar el hub como a cualquier otra app.
 
+### La capa de familia (0.4): eventos, reglas, tareas, copias, el proxy
+
+Desde 0.4 el hub es también el sistema nervioso de la familia: lo que
+convierte veinte apps sueltas en un sistema sin añadir una vigesimoprimera:
+
+- **Bus de eventos.** Cada app publica eventos en `POST /api/events` con
+  su propio token (`hoard_link.family.emit(...)` en Python,
+  `server/hoard-link.js` en Node): un `agent.call` por cada herramienta que
+  ejecuta el asistente, sus propios hitos (`scribe.transcript.done`,
+  `links.watch.new`), y el hub añade `hub.app.started`, `hub.backup.done`,
+  `hub.rule.ran`… Se leen con `GET /api/events` (filtros, `since_id` para
+  seguirlos), se siguen en vivo con `GET /api/events/stream` (SSE), se
+  cuentan con `/api/events/stats`. Viven en `data/events.db`; Cassandra's
+  Hoard los espeja para siempre.
+- **Llamadas entre apps.** `POST /api/apps/<id>/call` ejecuta una
+  herramienta de cualquier app con el token *de esa app*, autenticado con
+  el del que llama: ninguna app necesita ya el puerto ni el fichero de
+  token de otra (`family.call("hypatia", ...)`).
+- **Reglas.** *Cuando* llega un evento que encaja → *entonces* acciones:
+  una herramienta de una app, una del hub, otro evento, arrancar/parar una
+  app, un perfil; con plantillas `${event.data.x}`, enfriamiento y guardas
+  contra bucles. Pestaña **Reglas** del hub o `hub_rule_add`; con plantillas
+  («transcripción → borradores de tarjetas», «servicio caído → reiniciar»).
+- **Tareas.** Las mismas acciones con reloj: `every: "6h"` o `at: "04:00"`
+  (+ días); las perdidas durante una suspensión se recuperan. Pestaña
+  **Tareas** / `hub_job_add`.
+- **Copias.** Instantáneas deduplicadas de la carpeta `data/` de cada app
+  (SQLite copiado de forma consistente mientras se usa), restauración a una
+  carpeta aparte o en el sitio, verificación, limpieza. Pestaña **Copias** /
+  `hub_backup_*`. La plantilla de tarea «Nightly backup» lo hace automático.
+- **Auditoría.** `GET /api/audit` / `hub_family_audit`: qué apps responden
+  al contrato compartido, tienen token, emiten eventos, llevan la librería
+  al día, tienen `data/` en `.gitignore`, con recomendaciones.
+  `scripts/sync_vendored.py` actualiza cada copia de la librería en las
+  carpetas hermanas.
+
+Herramientas nuevas: `hub_events`, `hub_event_emit`, `hub_event_stats`,
+`hub_call_app`, `hub_app_tools`, `hub_rules`, `hub_rule_add`,
+`hub_rule_update`, `hub_rule_remove`, `hub_rule_run`, `hub_jobs`,
+`hub_job_add`, `hub_job_update`, `hub_job_remove`, `hub_job_run`,
+`hub_backup_run`, `hub_backup_status`, `hub_backup_restore`,
+`hub_backup_verify`, `hub_backup_prune`, `hub_family_audit`. El contrato
+completo (manifiesto, rutas del agente, convenciones de eventos, acciones,
+copia de la librería) está en [docs/FAMILY.md](docs/FAMILY.md).
+
 ## Uso con Faustus
 
 Si Faustus corre en la misma máquina con la autenticación desactivada, no

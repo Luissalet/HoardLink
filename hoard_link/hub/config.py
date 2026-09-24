@@ -42,6 +42,9 @@ class HubConfig:
     language: str = "auto"         # auto | en | es
     lease_headroom_mb: int = 256   # VRAM kept free on every GPU when granting leases
     profiles: dict[str, Any] = field(default_factory=dict)   # name -> {apps, commands, desktop}
+    backup: dict[str, Any] = field(default_factory=dict)     # {dir, exclude: [...], max_file_mb, keep, include_hub}
+    events_keep: int = 20000       # rows kept in events.db after a prune
+    jobs_enabled: bool = True      # the scheduler thread (rules always run)
 
     @property
     def logs_dir(self) -> str:
@@ -58,6 +61,23 @@ class HubConfig:
     @property
     def leases_file(self) -> str:
         return os.path.join(self.data_dir, "leases.json")
+
+    @property
+    def events_file(self) -> str:
+        return os.path.join(self.data_dir, "events.db")
+
+    @property
+    def rules_file(self) -> str:
+        return os.path.join(self.data_dir, "rules.json")
+
+    @property
+    def jobs_file(self) -> str:
+        return os.path.join(self.data_dir, "jobs.json")
+
+    @property
+    def backup_dir(self) -> str:
+        raw = str((self.backup or {}).get("dir") or "").strip()
+        return os.path.abspath(os.path.expanduser(raw)) if raw else os.path.join(self.data_dir, "backups")
 
     @property
     def url_file(self) -> str:
@@ -104,6 +124,12 @@ class HubConfig:
             cfg.browser = env["HOARD_HUB_BROWSER"]
         if env.get("HOARD_HUB_LANGUAGE"):
             cfg.language = env["HOARD_HUB_LANGUAGE"]
+        if env.get("HOARD_HUB_BACKUP_DIR"):
+            cfg.backup = {**(cfg.backup or {}), "dir": env["HOARD_HUB_BACKUP_DIR"]}
+        if env.get("HOARD_HUB_JOBS") in ("0", "false", "no", "off"):
+            cfg.jobs_enabled = False
+        if not isinstance(cfg.backup, dict):
+            cfg.backup = {}
         cfg.roots = [os.path.abspath(os.path.expanduser(r)) for r in cfg.roots]
         cfg.icon_dirs = [os.path.abspath(os.path.expanduser(r)) for r in cfg.icon_dirs]
         if not isinstance(cfg.window_size, list) or len(cfg.window_size) != 2:

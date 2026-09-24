@@ -20,6 +20,13 @@ apps ask for VRAM before loading a model, see ``hoard_link.lease``), starts
 named *profiles* of apps and external commands together (``profiles.py``),
 and can install itself to start at login on Windows (``autostart.py``).
 
+Since 0.4 it is also the family's nervous system: an event bus every app
+writes to (``events.py``), rules that run actions when events land
+(``rules.py``), jobs on a clock (``jobs.py``), a proxy that calls any
+app's tool with that app's own token (``contract.py``), deduplicated
+backups of every app's data folder (``backup.py``) and an audit of how
+well each app follows the shared contract (``audit.py``).
+
 Optional extras: ``psutil`` for pid/memory/uptime and process-tree stops
 (without it the hub still shows health and can open apps, but cannot stop
 them), ``pywebview`` for a native window instead of a Chromium ``--app``
@@ -28,7 +35,7 @@ window.
 
 from __future__ import annotations
 
-HUB_VERSION = "0.3.0"
+HUB_VERSION = "0.4.0"
 DEFAULT_PORT = 8810
 SERVICE = "hoard-hub"
 
