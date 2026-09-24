@@ -40,6 +40,7 @@ class HubConfig:
     window_size: list[int] = field(default_factory=lambda: [1280, 860])
     exit_with_window: bool = True
     language: str = "auto"         # auto | en | es
+    lease_headroom_mb: int = 256   # VRAM kept free on every GPU when granting leases
 
     @property
     def logs_dir(self) -> str:
@@ -52,6 +53,10 @@ class HubConfig:
     @property
     def token_file(self) -> str:
         return os.path.join(self.data_dir, "mcp-token")
+
+    @property
+    def leases_file(self) -> str:
+        return os.path.join(self.data_dir, "leases.json")
 
     @property
     def url_file(self) -> str:

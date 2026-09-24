@@ -1,7 +1,10 @@
 # Proposal: a plugin-backend lease API in Faustus
 
 **Status:** design note only — nothing in this document is implemented in
-this repository. Hoard Link works fully today without it, via the
+this repository. (Machine-wide VRAM arbitration between the apps now
+exists without Faustus: the hub's GPU memory leases, see
+[HUB.md](HUB.md#gpu-memory-leases). What follows is about Faustus taking
+part in that decision with its own admission control.) Hoard Link works fully today without it, via the
 loopback fallback described in the main README. This is what a future
 change on the Faustus side would unlock.
 

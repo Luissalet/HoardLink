@@ -67,6 +67,26 @@ input[type=search]:focus { border-color: var(--accent); }
 .backends { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .strip-sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 
+.gpu-panel { padding: 8px 22px 10px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
+.gpu-head { display: flex; align-items: center; gap: 8px; }
+.gpu-head button { color: var(--muted); }
+.gpu-head b { color: var(--text); }
+.gpu-body { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.gpu-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.gpu-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.gpu-title { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); }
+.gpu-title b { color: var(--text); }
+.bar { height: 8px; border-radius: 999px; background: #232838; overflow: hidden; display: flex; }
+.bar .u { background: var(--blue); }
+.bar .r { background: var(--violet); }
+.gpu-nums { font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
+.gpu-none { font-size: 12px; color: var(--muted); }
+.gpu-leases { display: flex; flex-direction: column; gap: 4px; }
+.lease-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 5px 8px; }
+.lease-row .what { color: var(--muted); flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lease-row .mono { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+.lease-row button { margin-left: auto; }
+
 main { flex: 1; padding: 18px 22px 30px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
 .card {
@@ -111,7 +131,7 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 dialog pre { margin: 0; padding: 12px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.45; max-height: 70vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 
 @media (max-width: 640px) {
-  .top, .strip, main, .foot { padding-left: 12px; padding-right: 12px; }
+  .top, .strip, .gpu-panel, main, .foot { padding-left: 12px; padding-right: 12px; }
   .grid { grid-template-columns: 1fr; }
   input[type=search] { min-width: 140px; }
 }

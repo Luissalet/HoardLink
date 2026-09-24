@@ -20,6 +20,11 @@ GET  /api/apps/<id>/log        last lines of its log
 POST /api/apps/<id>/start|stop|restart|open|close-windows|folder
 POST /api/apps/start-all | stop-all | rescan
 GET  /api/backends             what Hoard Link resolves right now
+GET  /api/lease                GPUs (used/free/reserved), granted leases, queue
+GET  /api/lease/<id>           one lease (also keeps a queued one in the queue)
+POST /api/lease/request        {owner, purpose, vram_mb, gpu, priority, ttl_s, wait, pid[, lease_id]}
+POST /api/lease/renew          {lease_id, ttl_s}
+POST /api/lease/release        {lease_id}
 GET  /api/config               the effective configuration
 GET  /api/agent/tools          (bearer) tool catalogue
 POST /api/agent/call           (bearer) {"tool": name, "arguments": {...}}
@@ -40,6 +45,7 @@ from urllib.parse import parse_qs, urlsplit
 from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools
+from .lease import LeaseError
 
 logger = logging.getLogger("hoard_hub")
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
@@ -125,6 +131,29 @@ class _HubHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    # -- leases ---------------------------------------------------------------
+    def _lease_reply(self, res: dict[str, Any]) -> None:
+        status = int(res.pop("status", 0) or 0) if isinstance(res, dict) else 0
+        if not status:
+            status = 200 if res.get("ok", True) else 400
+        return self._json(res, status)
+
+    def _lease_post(self, action: str, body: dict[str, Any]) -> None:
+        arb = self.hub.leases
+        try:
+            if action == "request":
+                res = arb.request(owner=str(body.get("owner") or ""), purpose=str(body.get("purpose") or ""),
+                                  vram_mb=body.get("vram_mb", 0), gpu=body.get("gpu"), priority=body.get("priority", 0),
+                                  ttl_s=body.get("ttl_s"), wait=bool(body.get("wait", False)), pid=body.get("pid"),
+                                  lease_id=body.get("lease_id"), wait_s=body.get("wait_s"))
+            elif action == "renew":
+                res = arb.renew(str(body.get("lease_id") or ""), body.get("ttl_s"))
+            else:
+                res = arb.release(str(body.get("lease_id") or ""))
+        except LeaseError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
+        return self._lease_reply(res)
+
     # -- routing --------------------------------------------------------------
     def do_HEAD(self) -> None:  # noqa: N802
         self.do_GET()
@@ -151,6 +180,10 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json(hub.snapshot())
             if path == "/api/backends":
                 return self._json(hub.backends(force=query.get("force", ["0"])[0] in ("1", "true")))
+            if path == "/api/lease":
+                return self._json(hub.leases.status(force=query.get("force", ["0"])[0] in ("1", "true")))
+            if path.startswith("/api/lease/"):
+                return self._lease_reply(hub.leases.get(path[len("/api/lease/"):]))
             if path == "/api/config":
                 cfg = hub.config.to_dict()
                 cfg["browser_found"] = desktop.find_browser(hub.config.browser)
@@ -198,6 +231,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 result = tools.call(hub, name, args if isinstance(args, dict) else {})
                 ok = not (isinstance(result, dict) and result.get("ok") is False)
                 return self._json({"ok": ok, "tool": name, "result": result}, 200 if ok else 400)
+            if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release"):
+                return self._lease_post(path.rsplit("/", 1)[1], body)
             if path == "/api/apps/rescan":
                 return self._json({"ok": True, "apps": [a.to_dict() for a in hub.rescan()]})
             if path == "/api/apps/start-all":

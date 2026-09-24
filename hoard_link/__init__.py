@@ -14,11 +14,12 @@ vendors this package.
 from .config import CapabilityConfig, LinkConfig
 from .errors import BackendError, HoardLinkError, Unavailable
 from .gpu import GpuMemory, gpu_free_mb
+from .lease import Lease, LeaseError, LeaseTimeout, lease
 from .link import Link
 from ._comfy import ComfyClient
 from .types import CAPABILITIES, ChatResult, OutputFile, Resolution, Usage
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
@@ -35,5 +36,9 @@ __all__ = [
     "HoardLinkError",
     "gpu_free_mb",
     "GpuMemory",
+    "lease",
+    "Lease",
+    "LeaseError",
+    "LeaseTimeout",
     "CAPABILITIES",
 ]

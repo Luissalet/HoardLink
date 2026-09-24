@@ -81,3 +81,12 @@ class Router:
         if callable(entry):
             return entry(request)
         return entry
+
+
+@pytest.fixture(autouse=True)
+def _no_real_hub(monkeypatch):
+    """Never reach (or spawn) a real Hoard Hub from the test suite: the GPU
+    lease client talks to 127.0.0.1:8810, which in these tests is either
+    nothing or a route on a MockTransport."""
+    monkeypatch.setenv("HOARD_HUB_AUTOSTART", "0")
+    monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:8810")

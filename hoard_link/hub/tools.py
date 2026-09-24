@@ -78,6 +78,37 @@ def catalogue() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "hub_lease_status",
+            "description": "GPU VRAM per GPU with active leases and the queue / VRAM libre, reservas y cola de la GPU.\n"
+                           "Per GPU: total, used (nvidia-smi), reserved by granted leases, available. Then the granted "
+                           "leases (owner, purpose, vram_mb, gpu, expires_in_s) and the queue in grant order.",
+            "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "default": False,
+                                                                       "description": "Re-read nvidia-smi now."}},
+                            "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_lease_request",
+            "description": "Reserve GPU memory before loading a model / reservar VRAM antes de cargar un modelo.\n"
+                           "Returns lease_id and state granted (with the gpu to use) or queued (with position). "
+                           "Release it with hub_lease_release when done; it expires after ttl_s otherwise.",
+            "inputSchema": {"type": "object", "properties": {
+                "vram_mb": {"type": "integer", "minimum": 0, "description": "MiB of VRAM needed."},
+                "owner": {"type": "string", "description": "Who holds it (app id or agent name)."},
+                "purpose": {"type": "string", "description": "What for, shown in the hub (e.g. 'whisper large-v3')."},
+                "gpu": {"description": "GPU index, or 'any' (default).", "anyOf": [{"type": "integer"}, {"type": "string"}]},
+                "priority": {"type": "integer", "default": 0, "description": "Higher is served first."},
+                "ttl_s": {"type": "integer", "default": 1800, "description": "Seconds until it expires unless renewed."},
+                "wait": {"type": "boolean", "default": False, "description": "Wait up to 25 s for a grant."},
+            }, "required": ["vram_mb"], "additionalProperties": False},
+        },
+        {
+            "name": "hub_lease_release",
+            "description": "Release a GPU memory lease so the next one can load / liberar una reserva de VRAM de la GPU.",
+            "inputSchema": {"type": "object", "properties": {"lease_id": {"type": "string"}},
+                            "required": ["lease_id"], "additionalProperties": False},
+        },
+        {
             "name": "hub_rescan",
             "description": "Re-read the app folders for new or removed manifests. Keywords: rescan, refresh list, actualizar lista.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -98,6 +129,11 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         d["log_tail"] = hub.log_tail(app.id, int(args.get("log_lines") or 40)).get("lines", [])
         return d
 
+    def lease_request(a: dict[str, Any]) -> Any:
+        return _drop_status(hub.leases.request(
+            owner=str(a.get("owner") or "agent"), purpose=str(a.get("purpose") or ""), vram_mb=a.get("vram_mb", 0),
+            gpu=a.get("gpu"), priority=a.get("priority", 0), ttl_s=a.get("ttl_s"), wait=bool(a.get("wait", False))))
+
     return {
         "hub_list_apps": list_apps,
         "hub_app_status": app_status,
@@ -111,7 +147,15 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_stop_all": lambda _: hub.stop_all(),
         "hub_backends": lambda a: hub.backends(force=bool(a.get("force", False))),
         "hub_rescan": lambda _: {"ok": True, "apps": [a.id for a in hub.rescan()]},
+        "hub_lease_status": lambda a: hub.leases.status(force=bool(a.get("force", False))),
+        "hub_lease_request": lease_request,
+        "hub_lease_release": lambda a: _drop_status(hub.leases.release(str(a.get("lease_id") or ""))),
     }
+
+
+def _drop_status(res: dict[str, Any]) -> dict[str, Any]:
+    res.pop("status", None)
+    return res
 
 
 def _compact(a: dict[str, Any]) -> dict[str, Any]:

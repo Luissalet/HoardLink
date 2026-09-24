@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import re
 import subprocess
@@ -28,12 +29,14 @@ from ._sync import SyncFacade
 from .config import CapabilityConfig, LinkConfig
 from .errors import BackendError, Unavailable
 from .gpu import GpuMemory, gpu_free_mb
+from .lease import Lease, LeaseError, LeaseTimeout
 from .types import CAPABILITIES, ChatResult, Resolution, Usage
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
 _THINK_OPEN_RE = re.compile(r"<think>", re.IGNORECASE)
 _THINK_CLOSE_RE = re.compile(r"</think>", re.IGNORECASE)
 _CACHE_TTL_S = 30.0
+_log = logging.getLogger("hoard_link")
 TTS_COMMAND_TIMEOUT_S = 120.0
 
 # Endpoint suffixes someone may paste into a URL field; stripped to get
@@ -202,6 +205,53 @@ def _ollama_fits(capability: str, caps: list[str]) -> bool:
         return not caps or "completion" in caps
     needed = {"vision": "vision", "embeddings": "embedding"}.get(capability)
     return needed is None or needed in caps
+
+
+def _tag_size_mb(tags: Any, name: Optional[str]) -> Optional[int]:
+    """Size on disk of an installed Ollama model, from ``/api/tags``."""
+    for t in tags or []:
+        if isinstance(t, dict) and name in (t.get("name"), t.get("model")) and isinstance(t.get("size"), (int, float)):
+            return int(t["size"] // (1024 * 1024))
+    return None
+
+
+def _load_vram_mb(size_mb: Any) -> Optional[int]:
+    """Rough VRAM for loading a model file: weights + 20% + 512 MiB of
+    context. Only used when the capability has no ``vram_mb`` configured."""
+    if isinstance(size_mb, (int, float)) and size_mb > 0:
+        return int(size_mb * 1.2) + 512
+    return None
+
+
+class _NoLease:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+
+class _GuardedLease:
+    """A :class:`Lease` whose refusals never break the call: a request the
+    hub rejects outright (e.g. an estimate larger than any single GPU, for a
+    model Ollama would split across several) proceeds without a lease, and a
+    queue wait past ``lease_timeout_s`` surfaces as :class:`Unavailable`."""
+
+    def __init__(self, capability: str, lease: Lease):
+        self.capability = capability
+        self.lease = lease
+
+    async def __aenter__(self) -> Lease:
+        try:
+            return await self.lease.aacquire()
+        except LeaseTimeout as exc:
+            raise Unavailable(self.capability, [f"GPU busy: {exc}"]) from exc
+        except LeaseError as exc:
+            _log.warning("%s; loading without a GPU lease", exc)
+            return self.lease
+
+    async def __aexit__(self, *exc: Any) -> None:
+        await self.lease.arelease()
 
 
 def _prefer(names: list[str], preferred: Optional[str]) -> list[str]:
@@ -450,6 +500,7 @@ class Link:
         listed = [m for m in (item.get("models") or []) if isinstance(m, str) and m]
         preferred = self.config.capability(capability).model
         resident: Optional[bool]
+        size_mb: Optional[int] = None
 
         if api == "ollama":
             # The registry lists what Faustus *can* use, not what is loaded:
@@ -464,6 +515,7 @@ class Link:
                 model, resident = candidates[0], True
             elif self._may_load(capability) and listed:
                 model, resident = _prefer(listed, preferred)[0], False
+                size_mb = _tag_size_mb(ollama.get("tags"), model)
             else:
                 reasons.append(
                     f"Faustus registry lists Ollama models for '{capability}' but none is resident "
@@ -475,6 +527,9 @@ class Link:
             # A llama-server serves exactly the model it loaded at start.
             resident = True if provider == "llamacpp" else None
 
+        details_extra: dict[str, Any] = {}
+        if api == "ollama" and resident is False and size_mb is not None:
+            details_extra["size_mb"] = size_mb
         tail = {True: "; resident", False: "; would load", None: ""}[resident]
         reason = (
             f"{capability} -> {backend} at {_host(url)} ({model}), from Faustus registry{tail}"
@@ -493,6 +548,7 @@ class Link:
                 "endpoint_name": item.get("endpoint_name"),
                 "category": item.get("category"),
                 "resident": resident,
+                **details_extra,
             },
         )
 
@@ -616,7 +672,8 @@ class Link:
             api="ollama",
             state="resolved",
             reason=reason,
-            details={"source": "loopback", "resident": resident},
+            details={"source": "loopback", "resident": resident,
+                     **({"size_mb": _tag_size_mb(ollama.get("tags"), model)} if not resident else {})},
         )
 
     async def _loopback_openai_compat(self, reasons: list[str]) -> Optional[Resolution]:
@@ -670,6 +727,19 @@ class Link:
     # actions
     # ------------------------------------------------------------------
 
+    def _load_lease(self, res: Resolution) -> Any:
+        """``async with`` guard for a call that makes the server LOAD a model
+        (``details["resident"] is False``): hold a GPU lease from the hub for
+        the load and the call. A resident model needs none (no-op)."""
+        if not self.config.gpu_lease or res.details.get("resident") is not False:
+            return _NoLease()
+        cc = self.config.capability(res.capability)
+        vram = cc.vram_mb or _load_vram_mb(res.details.get("size_mb")) or self.config.lease_vram_mb
+        return _GuardedLease(res.capability, Lease(
+            vram, purpose=f"{res.capability}: load {res.model} on {res.provider}", owner=self.config.app,
+            timeout_s=self.config.lease_timeout_s, hub_url=self.config.hub_url, client=self._client,
+        ))
+
     async def _post_json(
         self,
         provider: Optional[str],
@@ -714,14 +784,15 @@ class Link:
             raise Unavailable(capability, [f"resolved provider '{res.provider}' has no URL to chat with"])
 
         start = self._now()
-        if res.api == "ollama":
-            text, extra_reasoning, raw = await self._chat_ollama(
-                res, messages, images, max_tokens, temperature, response_format
-            )
-        else:
-            text, extra_reasoning, raw = await self._chat_openai(
-                res, messages, images, max_tokens, temperature, response_format
-            )
+        async with self._load_lease(res):
+            if res.api == "ollama":
+                text, extra_reasoning, raw = await self._chat_ollama(
+                    res, messages, images, max_tokens, temperature, response_format
+                )
+            else:
+                text, extra_reasoning, raw = await self._chat_openai(
+                    res, messages, images, max_tokens, temperature, response_format
+                )
         elapsed_ms = (self._now() - start) * 1000.0
 
         clean_text, think = _strip_think(text)
@@ -845,9 +916,10 @@ class Link:
 
         if res.api == "ollama":
             endpoint = _ollama_endpoint(res.url, "/api/embed")
-            resp = await self._post_json(
-                res.provider, endpoint, {"model": res.model, "input": texts}, timeout=60.0
-            )
+            async with self._load_lease(res):
+                resp = await self._post_json(
+                    res.provider, endpoint, {"model": res.model, "input": texts}, timeout=60.0
+                )
             data = self._json(res.provider, resp)
             if not isinstance(data, dict):
                 raise BackendError(res.provider, resp.status_code, "unexpected embeddings response")
@@ -857,9 +929,10 @@ class Link:
             return vectors or []
 
         endpoint = _openai_endpoint(res.url, "/embeddings")
-        resp = await self._post_json(
-            res.provider, endpoint, {"model": res.model, "input": texts}, timeout=60.0
-        )
+        async with self._load_lease(res):
+            resp = await self._post_json(
+                res.provider, endpoint, {"model": res.model, "input": texts}, timeout=60.0
+            )
         data = self._json(res.provider, resp)
         try:
             items = sorted(data["data"], key=lambda item: item.get("index", 0))
