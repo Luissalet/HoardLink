@@ -144,11 +144,11 @@ def recommendations(s: dict[str, Any]) -> list[str]:
     out = []
     if s["per_tool_contract"]:
         out.append("per-tool contract (no /api/agent/call): " + ", ".join(s["per_tool_contract"]) +
-                   " — install hoard_link.agent_contract so rules and the proxy reach them with a token.")
+                   " — call hoard_link.family.install_fastapi(app, id, data_dir, mcp_source=...) so rules and the proxy reach them with a token.")
     if s["no_token"]:
         out.append("no data/mcp-token: " + ", ".join(s["no_token"]) + " — the hub cannot call them on behalf of others.")
     if s["no_events"]:
-        out.append("running but not emitting events: " + ", ".join(s["no_events"]) + " — vendor hoard_link ≥ 0.4 and call family.install().")
+        out.append("running but not emitting events: " + ", ".join(s["no_events"]) + " — vendor hoard_link ≥ 0.4, call family.configure() at startup and family.record_call() per agent call.")
     if s["vendored_lagging"]:
         out.append("vendored hoard_link older than the hub's: " + ", ".join(s["vendored_lagging"]) + " — run scripts/sync_vendored.py.")
     if s["not_vendoring"]:

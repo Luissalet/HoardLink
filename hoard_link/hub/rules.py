@@ -270,7 +270,8 @@ def example_rules() -> list[dict[str, Any]]:
          "cooldown_s": 0,
          "note": "Every new feed/release/page-change entry lands as a digest.item event for the daily recap skill."},
         {"id": "rule-restart-down", "name": "Service down → try a restart",
-         "when": {"type": "cassandra.incident.opened", "where": {"data.to_state": "down"}},
+         "when": {"type": "cassandra.incident.opened", "where": {"data.to_state": "down", "data.service_kind": "app"}},
          "then": [{"kind": "start_app", "app": "${event.data.app}"}], "cooldown_s": 300,
-         "note": "Cassandra reports an app down: the hub starts it again, at most once every five minutes."},
+         "note": "Cassandra reports a hub-managed app down: the hub starts it again, at most once every five minutes "
+                 "(external services such as a model server carry service_kind 'external' and are left alone)."},
     ]
