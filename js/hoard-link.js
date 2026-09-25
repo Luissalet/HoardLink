@@ -136,3 +136,67 @@ export function recordAgentRoute(handler) {
     try { return await handler(req, res, next); } catch (e) { return next ? next(e) : undefined; }
   };
 }
+
+// ---------------------------------------------------------------- since
+// Time windows as people and assistants say them, the same words as
+// hoard_link/since.py: an ISO date, an age ("2h", "7d", "hace 3 días",
+// "2 weeks ago"), a word ("hoy", "ayer", "esta mañana", "esta semana",
+// "la semana pasada", "este mes", "última hora" and their English forms)
+// or epoch seconds. Returns an ISO timestamp (a bare YYYY-MM-DD stays as
+// written: it compares correctly with full timestamps), null for an empty
+// value; anything else throws an Error with status 400 naming the forms.
+
+const SINCE_UNIT_MS = {
+  s: 1_000, sec: 1_000, secs: 1_000, second: 1_000, seconds: 1_000, seg: 1_000, segundo: 1_000, segundos: 1_000,
+  m: 60_000, min: 60_000, mins: 60_000, minute: 60_000, minutes: 60_000, minuto: 60_000, minutos: 60_000,
+  h: 3_600_000, hr: 3_600_000, hrs: 3_600_000, hour: 3_600_000, hours: 3_600_000, hora: 3_600_000, horas: 3_600_000,
+  d: 86_400_000, day: 86_400_000, days: 86_400_000, dia: 86_400_000, dias: 86_400_000,
+  w: 604_800_000, week: 604_800_000, weeks: 604_800_000, semana: 604_800_000, semanas: 604_800_000,
+  mo: 2_592_000_000, month: 2_592_000_000, months: 2_592_000_000, mes: 2_592_000_000, meses: 2_592_000_000,
+  y: 31_536_000_000, year: 31_536_000_000, years: 31_536_000_000, ano: 31_536_000_000, anos: 31_536_000_000,
+};
+
+export const SINCE_HELP =
+  'since accepts epoch seconds, an ISO date or time ("2026-09-25", "2026-09-25T10:30"), an age ("30m", "2h", "3d", "2w", "1mo", "hace 2 horas", "2 hours ago"), or a word: hoy/today, ayer/yesterday, esta mañana/this morning, esta semana/this week, la semana pasada/last week, este mes/this month, el mes pasado/last month, última hora/last hour.';
+
+function sinceFold(text) {
+  return String(text).trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");
+}
+
+function sinceMidnight(ms) {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+export function resolveSince(input, nowMs = Date.now()) {
+  if (input === undefined || input === null || String(input).trim() === "") return null;
+  if (typeof input === "number" && Number.isFinite(input)) return new Date(input * 1000).toISOString();
+  const raw = String(input).trim();
+  if (/^\d{9,}(\.\d+)?$/.test(raw)) return new Date(Number(raw) * 1000).toISOString();
+  if (/^\d{4}-\d{2}-\d{2}([T ][\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/i.test(raw)) {
+    if (raw.length === 10) return raw;
+    const t = Date.parse(raw.replace(" ", "T"));
+    if (!Number.isNaN(t)) return new Date(t).toISOString();
+  }
+  const s = sinceFold(raw);
+  const day = sinceMidnight(nowMs);
+  const shift = (ms) => new Date(day.getTime() + ms);
+  const monday = () => { const d = new Date(day); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; };
+  const first = () => { const d = new Date(day); d.setDate(1); return d; };
+  const words = {
+    hoy: () => day, today: () => day,
+    ayer: () => shift(-86_400_000), yesterday: () => shift(-86_400_000),
+    "esta manana": () => shift(6 * 3_600_000), "this morning": () => shift(6 * 3_600_000),
+    "esta semana": monday, "this week": monday,
+    "este mes": first, "this month": first,
+    "la semana pasada": () => new Date(nowMs - 604_800_000), "last week": () => new Date(nowMs - 604_800_000),
+    "el mes pasado": () => new Date(nowMs - 2_592_000_000), "last month": () => new Date(nowMs - 2_592_000_000),
+  };
+  if (words[s]) return words[s]().toISOString();
+  const one = s.match(/^(?:la\s+|el\s+|the\s+)?(?:ultima|ultimo|last|past)\s+([a-z]+)$/);
+  if (one && SINCE_UNIT_MS[one[1]]) return new Date(nowMs - SINCE_UNIT_MS[one[1]]).toISOString();
+  const m = s.match(/^(?:hace\s+|last\s+)?(\d+(?:[.,]\d+)?)\s*([a-z]+)(?:\s+ago)?$/);
+  if (m && SINCE_UNIT_MS[m[2]]) return new Date(nowMs - Number(m[1].replace(",", ".")) * SINCE_UNIT_MS[m[2]]).toISOString();
+  throw Object.assign(new Error(SINCE_HELP), { status: 400 });
+}
