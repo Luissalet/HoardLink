@@ -70,6 +70,7 @@ class App:
     manifest_path: str = ""
     notes: str = ""
     kind: str = "app"        # app | window-app (an exe that opens its own window)
+    launch_source: str = "manifest"  # manifest | override (hub.json launch_overrides)
     token_file: str = ""     # where the app keeps its agent bearer token (data/mcp-token)
     data_dir: str = ""       # the app's own data folder (what backups copy)
     #: The manifest's ``x-family`` block (extension namespace Faustus skips): ``agent_contract``
@@ -110,6 +111,7 @@ class App:
             "launchable": self.launchable,
             "launch_reason": self.launch_reason,
             "launch": self.launch.to_dict() if self.launch else None,
+            "launch_source": self.launch_source,
             "kind": self.kind,
             "notes": self.notes,
             "token_file": self.token_file,
@@ -179,6 +181,57 @@ def _executable_exists(executable: str, cwd: str) -> bool:
     if os.sep in executable or "/" in executable:
         return os.path.isfile(executable) or os.path.isfile(os.path.join(cwd, executable))
     return shutil.which(executable) is not None
+
+
+def _pick_executable(value: Any, fill, cwd: str) -> str:
+    """A launch hint's ``executable`` is one path or a list tried in order: the first that
+    exists wins (an installed copy under ``%LOCALAPPDATA%`` before a build in the repo, say).
+    With none present, the first candidate is kept so the reason names it."""
+    candidates = value if isinstance(value, list) else [value or ""]
+    filled = [expand_env(fill(str(c))) for c in candidates if str(c or "").strip()]
+    for candidate in filled:
+        if _executable_exists(candidate, cwd):
+            return candidate
+    return filled[0] if filled else ""
+
+
+def apply_launch_override(app: "App", override: Any) -> "App":
+    """Replace ``app.launch`` with a per-machine command from ``hub.json``.
+
+    ``override`` is ``{executable, argv, cwd, readiness_url, timeout_s, env, kind}``; ``{APP_DIR}``
+    is the app's folder, ``{APP_URL}`` its URL, ``%VAR%`` comes from the environment. An override
+    that does not resolve to something runnable leaves the app not launchable, with the reason."""
+    if not isinstance(override, dict):
+        return app
+    values = {"APP_DIR": app.folder, "APP_URL": app.url.rstrip("/")}
+
+    def fill(value: Any) -> str:
+        text = _PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), str(value))
+        return expand_env(text)
+
+    cwd = fill(override.get("cwd") or app.folder) or app.folder
+    executable = _pick_executable(override.get("executable"), fill, cwd)
+    argv = [fill(a) for a in (override.get("argv") or [])]
+    readiness = fill(override.get("readiness_url")) if override.get("readiness_url") else app.health_url()
+    try:
+        timeout_s = float(override.get("timeout_s") or (app.launch.readiness_timeout_s if app.launch else 30))
+    except (TypeError, ValueError):
+        timeout_s = 30.0
+    env = {str(k): fill(v) for k, v in (override.get("env") or {}).items()}
+    app.launch = LaunchSpec(executable, argv, cwd, readiness, timeout_s, env)
+    app.launch_source = "override"
+    app.kind = str(override.get("kind") or "app")
+    app.launchable = False
+    if not executable:
+        app.launch_reason = "the launch override has no executable"
+    elif not _executable_exists(executable, cwd):
+        app.launch_reason = f"executable not found: {executable}"
+    elif not os.path.isdir(cwd):
+        app.launch_reason = f"working directory not found: {cwd}"
+    else:
+        app.launch_reason = ""
+        app.launchable = True
+    return app
 
 
 # ---------------------------------------------------------------------------
@@ -288,9 +341,9 @@ def read_manifest(
         app.launch_reason = "the manifest has no process launch hint"
         return app
     missing.clear()
-    executable = fill(hint.get("executable") or "")
+    cwd = expand_env(fill(hint.get("cwd") or folder)) or folder
+    executable = _pick_executable(hint.get("executable"), fill, cwd)
     argv = [fill(a) for a in (hint.get("argv") or [])]
-    cwd = fill(hint.get("cwd") or folder) or folder
     readiness = hint.get("readiness") or {}
     readiness_url = fill(readiness.get("url")) if readiness.get("url") else app.health_url()
     try:
@@ -326,11 +379,13 @@ def scan(
     faustus_python: Optional[str] = None,
     icon_dirs: Iterable[str] = (),
     exclude_ids: Iterable[str] = (),
+    launch_overrides: Optional[dict[str, Any]] = None,
 ) -> list[App]:
     """Every ``<root>/*/faustus-plugin.json`` (one level deep) plus any root
     that is itself an app folder, sorted by name. A duplicate ``id`` keeps
     the first folder found and drops the rest, so two clones of the same
-    app never make two cards."""
+    app never make two cards. ``launch_overrides`` (app id → command, from
+    ``hub.json``) replaces a manifest's launch hint on this machine only."""
     seen: dict[str, App] = {}
     excluded = set(exclude_ids)
     icon_dirs = list(icon_dirs)
@@ -353,5 +408,7 @@ def scan(
             app = read_manifest(path, faustus_dir=faustus_dir, faustus_python=faustus_python, icon_dirs=icon_dirs)
             if app is None or app.id in excluded or app.id in seen:
                 continue
+            if launch_overrides and app.id in launch_overrides:
+                apply_launch_override(app, launch_overrides[app.id])
             seen[app.id] = app
     return sorted(seen.values(), key=lambda a: a.name.lower())

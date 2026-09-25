@@ -276,9 +276,25 @@ python -m hoard_link.hub --install-autostart   # Windows: start the hub at login
 On Windows, double-click `Hoard Hub.cmd`. Configuration lives in
 `data/hub.json` (`roots`, `icon_dirs`, `browser`, `faustus_dir`,
 `faustus_python`, `window_size`, `exit_with_window`, `language`,
-`profiles`, `lease_headroom_mb`) or the
+`profiles`, `lease_headroom_mb`, `launch_overrides`) or the
 `HOARD_HUB_*` environment variables; `pip install "hoard-link[desktop]"`
 adds pywebview for a native hub window.
+
+`launch_overrides` starts an app on this machine differently from how its
+manifest ships it, without touching the manifest — a developer build of a
+desktop app, say, whose library lives in the dev server's origin:
+
+```json
+{ "launch_overrides": { "writer": {
+    "executable": "node", "argv": ["scripts/dev-desktop.mjs"], "cwd": "{APP_DIR}",
+    "readiness_url": "{APP_URL}/api/health", "timeout_s": 120, "kind": "window-app" } } }
+```
+
+`{APP_DIR}` is the app's folder, `{APP_URL}` its URL, `%VAR%` comes from the
+environment; the hub re-reads it on every rescan, and `/api/apps` shows
+`launch_source: override`. A manifest's own `launch_hint.executable` may also
+be a list tried in order (an installed copy under `%LOCALAPPDATA%` first, a
+build in the repository second).
 
 ### Start at login (Windows)
 

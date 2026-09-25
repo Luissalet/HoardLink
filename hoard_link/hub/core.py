@@ -6,6 +6,7 @@ actions; knows nothing about HTTP.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 import secrets
@@ -109,6 +110,20 @@ class Hub:
             pass
 
     # -- apps ---------------------------------------------------------------
+    def _launch_overrides(self) -> Optional[dict[str, Any]]:
+        """``launch_overrides`` from ``hub.json``, re-read on every rescan so an edit takes
+        effect without restarting the hub; the loaded config is the fallback."""
+        path = os.path.join(self.config.data_dir, "hub.json")
+        try:
+            with open(path, "r", encoding="utf-8-sig") as fh:
+                raw = json.load(fh)
+            if isinstance(raw, dict) and isinstance(raw.get("launch_overrides"), dict):
+                self.config.launch_overrides = raw["launch_overrides"]
+        except (OSError, ValueError):
+            pass
+        value = self.config.launch_overrides
+        return value if isinstance(value, dict) and value else None
+
     def rescan(self) -> list[App]:
         apps = scan(
             self.config.roots,
@@ -116,6 +131,7 @@ class Hub:
             faustus_python=self.config.faustus_python,
             icon_dirs=self.config.icon_dirs,
             exclude_ids=self.config.exclude_ids + [SERVICE, "hoardhub"],
+            launch_overrides=self._launch_overrides(),
         )
         with self._lock:
             self._apps = {a.id: a for a in apps}
