@@ -297,9 +297,25 @@ python -m hoard_link.hub --install-autostart   # Windows: arrancar el hub al ini
 En Windows, doble clic en `Hoard Hub.cmd`. La configuración vive en
 `data/hub.json` (`roots`, `icon_dirs`, `browser`, `faustus_dir`,
 `faustus_python`, `window_size`, `exit_with_window`, `language`,
-`profiles`, `lease_headroom_mb`) o en las
+`profiles`, `lease_headroom_mb`, `launch_overrides`) o en las
 variables de entorno `HOARD_HUB_*`; `pip install "hoard-link[desktop]"`
 añade pywebview para una ventana nativa del hub.
+
+`launch_overrides` arranca una app en esta máquina de otra forma que la que
+trae su manifiesto, sin tocarlo: por ejemplo la versión de desarrollo de una
+app de escritorio cuya biblioteca vive en el origen del servidor de desarrollo:
+
+```json
+{ "launch_overrides": { "writer": {
+    "executable": "node", "argv": ["scripts/dev-desktop.mjs"], "cwd": "{APP_DIR}",
+    "readiness_url": "{APP_URL}/api/health", "timeout_s": 120, "kind": "window-app" } } }
+```
+
+`{APP_DIR}` es la carpeta de la app, `{APP_URL}` su URL y `%VAR%` sale del
+entorno; el hub lo relee en cada reescaneo y `/api/apps` enseña
+`launch_source: override`. El `launch_hint.executable` de un manifiesto también
+puede ser una lista que se prueba en orden (primero una copia instalada en
+`%LOCALAPPDATA%`, después una compilación del repositorio).
 
 ### Arrancar al iniciar sesión (Windows)
 

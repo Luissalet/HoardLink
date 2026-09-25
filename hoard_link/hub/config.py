@@ -45,6 +45,11 @@ class HubConfig:
     backup: dict[str, Any] = field(default_factory=dict)     # {dir, exclude: [...], max_file_mb, keep, include_hub}
     events_keep: int = 20000       # rows kept in events.db after a prune
     jobs_enabled: bool = True      # the scheduler thread (rules always run)
+    # Per-machine launch commands that replace a manifest's launch hint, keyed by app id:
+    # {"writer": {"executable": "node", "argv": ["scripts/dev-desktop.mjs"], "cwd": "{APP_DIR}"}}.
+    # For an app this machine runs differently from how it is shipped (a developer build, a
+    # different install folder) without editing the app's own manifest.
+    launch_overrides: dict[str, Any] = field(default_factory=dict)
 
     @property
     def logs_dir(self) -> str:
