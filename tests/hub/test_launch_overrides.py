@@ -77,3 +77,8 @@ def test_rescan_picks_up_an_edited_hub_json(hub):
     hub.rescan()
     app = hub.get(app_id)
     assert app.launch_source == "override" and app.launch.argv == ["-V"]
+
+    # Taking the override out again restores the manifest's launch.
+    path.write_text(json.dumps({}))
+    hub.rescan()
+    assert hub.get(app_id).launch_source == "manifest"

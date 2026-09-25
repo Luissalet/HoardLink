@@ -117,8 +117,11 @@ class Hub:
         try:
             with open(path, "r", encoding="utf-8-sig") as fh:
                 raw = json.load(fh)
-            if isinstance(raw, dict) and isinstance(raw.get("launch_overrides"), dict):
-                self.config.launch_overrides = raw["launch_overrides"]
+            if isinstance(raw, dict):
+                # Removing the key (or the whole entry) must undo the override
+                # too, not leave the last one loaded in memory.
+                overrides = raw.get("launch_overrides")
+                self.config.launch_overrides = overrides if isinstance(overrides, dict) else {}
         except (OSError, ValueError):
             pass
         value = self.config.launch_overrides
