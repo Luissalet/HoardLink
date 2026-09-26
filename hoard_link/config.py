@@ -29,6 +29,10 @@ Environment overrides (highest priority, applied on top of the file):
 
 - ``HOARD_<CAP>_URL`` / ``HOARD_<CAP>_MODEL`` for each capability, e.g.
   ``HOARD_LLM_URL``, ``HOARD_VISION_MODEL``.
+- ``HOARD_<CAP>_EFFORT`` (``off`` / ``low`` / ``medium`` / ``high`` / ``max``):
+  how hard :meth:`Link.chat` asks the model to reason when the caller does not
+  say (``capabilities.<cap>.effort`` in the file). Unset leaves the server's
+  own default.
 - ``HOARD_FAUSTUS_URL``, ``HOARD_FAUSTUS_TOKEN``.
 - ``HOARD_COMFY_URL``.
 - ``HOARD_GPU_LEASE=0`` turns the GPU lease off (``HOARD_HUB_URL`` points
@@ -83,6 +87,7 @@ class CapabilityConfig:
     allow_load: bool = False
     command: Optional[list[str]] = None
     vram_mb: Optional[int] = None      # VRAM a load of this capability's model needs (GPU lease)
+    effort: Optional[str] = None       # default reasoning level for chat (see hoard_link.reasoning)
 
     @property
     def explicit(self) -> bool:
@@ -164,6 +169,7 @@ class LinkConfig:
                 allow_load=bool(c.get("allow_load", False)),
                 command=command or None,
                 vram_mb=_int_or_none(c.get("vram_mb")),
+                effort=(str(c["effort"]).strip() or None) if c.get("effort") else None,
             )
 
         # --- environment overrides (highest priority) ---
@@ -189,6 +195,15 @@ class LinkConfig:
                     allow_load=current.allow_load,
                     command=current.command,
                     vram_mb=current.vram_mb,
+                    effort=current.effort,
+                )
+            env_effort = env_value(f"HOARD_{cap.upper()}_EFFORT")
+            if env_effort:
+                current = caps[cap]
+                caps[cap] = CapabilityConfig(
+                    url=current.url, model=current.model, api=current.api,
+                    provider=current.provider, allow_load=current.allow_load,
+                    command=current.command, vram_mb=current.vram_mb, effort=env_effort,
                 )
 
         lease_raw = _section(raw, "gpu_lease")

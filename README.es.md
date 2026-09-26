@@ -548,7 +548,8 @@ text = await link.chat(
     temperature=0.2,
     capability="vision",
     response_format=None,
-)                                     # -> ChatResult(text, model, provider, usage, elapsed_ms, reasoning)
+    effort=None,                      # off | low | medium | high | max; None = HOARD_LLM_EFFORT, si no el del servidor
+)                                     # -> ChatResult(text, model, provider, usage, elapsed_ms, reasoning, effort)
 
 vecs = await link.embed(["a", "b"])  # cuando resuelve un servidor de embeddings; si no, lanza Unavailable
 
@@ -574,6 +575,19 @@ with lease(vram_mb=6000, purpose="whisper", owner="scribe", gpu=None, priority=0
   `</think>` huérfano (la plantilla de chat abrió la etiqueta en el
   prompt), un `<think>` sin cerrar (cortado por `max_tokens`) y los campos
   aparte (`reasoning_content` de llama-server, `thinking` de Ollama).
+- `effort` fija cuánto razona el modelo antes de responder
+  (`hoard_link/reasoning.py`). Dialecto OpenAI: `chat_template_kwargs.
+  enable_thinking` más el presupuesto como `thinking_budget_tokens` (el
+  nombre que respetan las builds actuales de llama-server) y
+  `reasoning_budget`, y `reasoning_effort`; Ollama: `think`. Presupuestos:
+  low 1k, medium 4k, high 8k, max 16k tokens. Si piensa y hay `max_tokens`,
+  el tope crece en el presupuesto (el razonamiento gasta los mismos tokens y
+  un tope pequeño acababa a mitad de pensamiento sin respuesta); el timeout
+  HTTP crece con él. Un 400 que nombre un campo de razonamiento se reintenta
+  una vez sin ellos. Por defecto por capacidad: `capabilities.<cap>.effort`
+  en `backend.json` o `HOARD_<CAP>_EFFORT`. El trabajo de calidad (corregir,
+  informes, planes) debería pedir `effort="max"`; títulos y etiquetas
+  `effort="off"`.
 - `response_format` se pasa tal cual en el dialecto OpenAI y se traduce al
   `format` de Ollama (`json_object` -> `"json"`, `json_schema` -> el
   esquema). Las imágenes llevan su tipo MIME real (JPEG, PNG, GIF, WebP).
