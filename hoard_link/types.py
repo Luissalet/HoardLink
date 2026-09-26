@@ -74,6 +74,7 @@ class ChatResult:
     usage: Usage
     elapsed_ms: float
     reasoning: Optional[str] = None
+    effort: Optional[str] = None       # reasoning level the call asked for (None: server default)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

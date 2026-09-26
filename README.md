@@ -516,7 +516,8 @@ text = await link.chat(
     temperature=0.2,
     capability="vision",
     response_format=None,
-)                                     # -> ChatResult(text, model, provider, usage, elapsed_ms, reasoning)
+    effort=None,                      # off | low | medium | high | max; None = HOARD_LLM_EFFORT, else server default
+)                                     # -> ChatResult(text, model, provider, usage, elapsed_ms, reasoning, effort)
 
 vecs = await link.embed(["a", "b"])  # when an embeddings server resolves; else raises Unavailable
 
@@ -542,6 +543,18 @@ with lease(vram_mb=6000, purpose="whisper", owner="scribe", gpu=None, priority=0
   `</think>` (the chat template opened the tag in the prompt), an
   unterminated `<think>` (cut off by `max_tokens`), and out-of-band
   fields (`reasoning_content` from llama-server, Ollama's `thinking`).
+- `effort` sets how hard the model reasons before answering
+  (`hoard_link/reasoning.py`). OpenAI dialect: `chat_template_kwargs.
+  enable_thinking` plus the budget as `thinking_budget_tokens` (the name
+  current llama-server builds honour) and `reasoning_budget`, and
+  `reasoning_effort`; Ollama: `think`. Budgets: low 1k, medium 4k, high 8k,
+  max 16k tokens. When thinking and `max_tokens` is set, the cap grows by the
+  budget (reasoning spends the same tokens, and a small cap used to end
+  mid-thought with no answer); the HTTP timeout grows with it. A 400 that
+  names a reasoning field retries once without them. Default per capability:
+  `capabilities.<cap>.effort` in `backend.json` or `HOARD_<CAP>_EFFORT`.
+  Quality work (grading, reports, plans) should pass `effort="max"`; titles
+  and tags `effort="off"`.
 - `response_format` is passed through on the OpenAI dialect and mapped to
   Ollama's `format` (`json_object` -> `"json"`, `json_schema` -> the
   schema). Images get their real MIME type (JPEG, PNG, GIF, WebP).
