@@ -5,7 +5,7 @@ to open as desktop windows) started and stopped together.
 
     "profiles": {
       "video": {
-        "apps": ["daguerre", "scribe"],
+        "apps": ["daguerre", "funes"],
         "commands": [
           {"name": "comfy gpu1", "cmd": "python main.py --port 8189", "cwd": "D:/ComfyUI",
            "health": "http://127.0.0.1:8189/system_stats", "env": {"CUDA_VISIBLE_DEVICES": "1"}}

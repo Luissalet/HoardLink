@@ -1,8 +1,8 @@
 """Automations: *when* an event lands, *then* run actions.
 
 A rule is ``{id, name, when, then, enabled, cooldown_s, note}`` kept in
-``<data>/rules.json``. ``when`` is ``{"type": "scribe.transcript.*",
-"source": "scribe", "where": {"data.kind": "meeting"}}`` — ``type`` is a
+``<data>/rules.json``. ``when`` is ``{"type": "links.watch.*",
+"source": "links", "where": {"data.kind": "page"}}`` — ``type`` is a
 glob (``|`` joins several), ``source`` optional, ``where`` optional exact
 matches on dotted paths of the event (a list value means "any of"). ``then``
 is the action list of ``actions.py``, with ``${event.data.x}`` available.
@@ -68,7 +68,7 @@ def validate_rule(rule: Any) -> list[str]:
     problems: list[str] = []
     when = rule.get("when")
     if not isinstance(when, dict) or not when.get("type"):
-        problems.append("'when' needs a type pattern (e.g. 'scribe.*')")
+        problems.append("'when' needs a type pattern (e.g. 'links.*')")
     problems += actions.validate(rule.get("then"))
     return problems
 
@@ -263,10 +263,6 @@ def example_rules() -> list[dict[str, Any]]:
     :meth:`RuleStore.install_examples` (the "Install the recommended rules" button,
     ``hub_rule_install_defaults``). Each has a stable ``id`` so installing twice adds nothing."""
     return [
-        {"id": "rule-transcript-cards", "name": "Transcript → flashcard drafts", "when": {"type": "scribe.transcript.done"},
-         "then": [{"kind": "tool", "app": "hypatia", "tool": "cards_suggest",
-                   "args": {"session_id": "${event.data.session_id}", "limit": 8}}],
-         "note": "Every finished Scribe session becomes Hypatia drafts to accept or discard."},
         {"id": "rule-backup-on-stop", "name": "Backup when an app stops", "when": {"type": "hub.app.stopped"},
          "then": [{"kind": "hub", "tool": "hub_backup_run", "args": {"apps": ["${event.data.app}"]}}],
          "cooldown_s": 60,

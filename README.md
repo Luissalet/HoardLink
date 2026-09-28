@@ -32,6 +32,12 @@ Hoard Link does not run its own model server and does not manage
 lifecycles. It resolves an address, and — for chat/embeddings/tts — makes
 the HTTP call for you against the server it found.
 
+Hoard Hub scans sibling manifests when refreshed. The local HomeHoard inventory
+bridge and Mercator dashboard appear as separate launchable cards; Scribe has
+been absorbed by Funes and is excluded. The hub uses each app's `app-icon.png`
+for its card. HomeHoard, Mercator and Hypatia also serve their icon as the
+window favicon. The three current recommended rules have no Scribe action.
+
 ## Quick start
 
 Windows (PowerShell):
@@ -333,7 +339,7 @@ and the apps to open as desktop windows — declared in `data/hub.json`:
 ```json
 {
   "profiles": {
-    "writing": {"apps": ["borges", "scribe"], "desktop": ["hypatia"]},
+    "writing": {"apps": ["borges", "funes"], "desktop": ["hypatia"]},
     "video": {
       "apps": ["daguerre"],
       "commands": [
@@ -368,7 +374,7 @@ keeps a single queue for the machine:
 ```python
 from hoard_link import lease
 
-with lease(vram_mb=6000, purpose="whisper large-v3", owner="scribe") as l:
+with lease(vram_mb=6000, purpose="whisper large-v3", owner="funes") as l:
     model = load_model(device=f"cuda:{l.gpu}" if l.gpu is not None else "cuda")
     ...                        # renewed in the background, released on exit
 
@@ -447,7 +453,7 @@ turns twenty separate apps into one system without adding a twenty-first:
 - **Event bus.** Every app posts events to `POST /api/events` with its
   own token (`hoard_link.family.emit(...)` in Python, `server/hoard-link.js`
   in Node): one `agent.call` per tool the assistant ran, its own
-  milestones (`scribe.transcript.done`, `links.watch.new`), and the hub adds
+  milestones (`links.watch.new`), and the hub adds
   `hub.app.started`, `hub.backup.done`, `hub.rule.ran`… Read them with
   `GET /api/events` (filters, `since_id` to tail), follow them with
   `GET /api/events/stream` (SSE), count them with `/api/events/stats`.
@@ -530,7 +536,7 @@ idle = await link.wait_idle("llm", max_wait_s=30)   # True/False, see Policies a
 link.sync.chat(...)                  # same calls, blocking, for synchronous app code
 
 from hoard_link import lease, Lease, LeaseTimeout, LeaseError
-with lease(vram_mb=6000, purpose="whisper", owner="scribe", gpu=None, priority=0,
+with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
            timeout_s=None, hub_url=None) as l:   # also `async with`
     l.gpu, l.via, l.lease_id          # GPU index (or None), "hub" | "local", id on the hub
 ```

@@ -2,7 +2,7 @@
 anyone can read or follow.
 
 An event is ``{id, ts, type, source, data}``. ``type`` is dotted and
-lower-case (``scribe.transcript.done``, ``links.watch.new``,
+lower-case (``links.watch.new``, ``hub.app.started``,
 ``agent.call``), ``source`` is the app id that emitted it (or ``hub``),
 ``data`` is a small JSON object — an id, a title, a path; never a whole
 transcript. The log lives in ``<data>/events.db`` (SQLite, standard
@@ -36,7 +36,7 @@ def normalize_type(raw: Any) -> str:
 
 
 def matches(pattern: str, event_type: str) -> bool:
-    """``scribe.*`` matches ``scribe.transcript.done``; ``*`` matches all;
+    """``links.*`` matches ``links.watch.new``; ``*`` matches all;
     an exact type matches itself. Several patterns may be joined by ``|``."""
     for p in str(pattern or "*").split("|"):
         p = p.strip() or "*"
@@ -73,7 +73,7 @@ class EventLog:
              ts: Optional[float] = None) -> dict[str, Any]:
         etype = normalize_type(type)
         if not etype:
-            raise ValueError("event type is required (e.g. 'scribe.transcript.done')")
+            raise ValueError("event type is required (e.g. 'links.watch.new')")
         if data is not None and not isinstance(data, dict):
             raise ValueError("event data must be an object")
         payload = json.dumps(data or {}, ensure_ascii=False, default=str)
@@ -199,7 +199,7 @@ def event_types_help() -> list[dict[str, str]]:
     """The conventions, for the UI and the docs (not enforced)."""
     return [
         {"type": "agent.call", "who": "every app", "data": "tool, ok, ms, caller — one per /api/agent/call"},
-        {"type": "<app>.<thing>.<verb>", "who": "the app", "data": "ids only: scribe.transcript.done {session_id, title}"},
+        {"type": "<app>.<thing>.<verb>", "who": "the app", "data": "ids only: links.watch.new {watch, title, url}"},
         {"type": "hub.app.started|stopped", "who": "hub", "data": "app, pid"},
         {"type": "hub.backup.done|failed", "who": "hub", "data": "snapshot, apps, files, bytes"},
         {"type": "hub.rule.ran", "who": "hub", "data": "rule, event_id, results"},

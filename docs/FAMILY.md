@@ -48,7 +48,7 @@ English *or* Spanish request would use; read-only tools carry
 ## 3. The bus: events
 
 `POST <hub>/api/events` with the app's own bearer token:
-`{"type": "scribe.transcript.done", "data": {"session_id": 12}}` — the hub
+`{"type": "links.watch.new", "data": {"watch": 12}}` — the hub
 records `source` from the token, so an app can only speak for itself.
 Types are dotted lower-case; `data` carries ids and short titles, never
 contents (16 KB cap). Conventions:
@@ -56,7 +56,7 @@ contents (16 KB cap). Conventions:
 | type | who | data |
 |---|---|---|
 | `agent.call` | every app, one per `/api/agent/call` | `tool, ok, ms, caller, error?` |
-| `<app>.<thing>.<verb>` | the app | ids: `scribe.transcript.done {session_id, title}`, `links.watch.new {watch, title, url, link_id}` |
+| `<app>.<thing>.<verb>` | the app | ids: `links.watch.new {watch, title, url, link_id}` |
 | `hub.app.started` / `stopped` | hub | `app, pid` |
 | `hub.call` | hub, one per proxied call | `app, tool, ok, ms, caller` |
 | `hub.backup.done` / `failed` / `restored` | hub | `snapshot, apps, files, new_bytes` |
@@ -64,7 +64,7 @@ contents (16 KB cap). Conventions:
 | `hub.lease.granted` / `released` | hub | `lease_id, owner, gpu, vram_mb` |
 | `cassandra.incident.opened` / `closed` | Cassandra | `incident_id, app, service_kind (app\|external\|user), to_state, probable_cause` |
 
-Reading: `GET /api/events?since_id=&type=scribe.*&source=&since=&until=&text=&limit=`
+Reading: `GET /api/events?since_id=&type=links.*&source=&since=&until=&text=&limit=`
 (newest first; `order=asc` with `since_id` to tail), `GET /api/events/stream`
 (Server-Sent Events, `since_id`), `GET /api/events/stats`. The hub keeps
 the last 20 000 rows (`events_keep`); Cassandra mirrors them for good.
@@ -91,11 +91,11 @@ clock (`every: "6h"` or `at: "04:00"` + `days`) → `then`. Both live in
 the `hub_rule_*` / `hub_job_*` tools, both record every run as an event
 and in their `last` field.
 
-Four **recommended rules** ship with the hub and are installed together by
+Three **recommended rules** ship with the hub and are installed together by
 the "Install the recommended rules" button (Rules tab) or
 `hub_rule_install_defaults` (`POST /api/rules/install-defaults`, idempotent
 by rule id; `refresh: true` brings an installed rule's `when`/`then` back to
-the current template without touching what you set — enabled, cooldown): `scribe.transcript.done` → Hypatia `cards_suggest`;
+the current template without touching what you set — enabled, cooldown):
 `hub.app.stopped` → backup of that app; `links.watch.new` → a `digest.item`
 event (what the daily-recap skill reads); `cassandra.incident.opened` with
 `to_state: down` and `service_kind: app` → start the app again (cooldown 5 min).
@@ -145,3 +145,24 @@ shape it answers (`shared` / `per-tool` / unknown), token file present,
 hub's, data folder present and git-ignored, size, tool names whose first
 line is too long — and a summary with recommendations. Cassandra's
 `secrets_audit` is the other half (what git tracks).
+
+## 9. References between apps
+
+An artifact keeps its own app as the source of truth. A receiving app records
+`source_ref` (`hoard://<app>/<kind>/<encoded-id>`) and `source_revision`
+(`sha256:<hex>` of the exact exported bytes) beside its local record. It also
+records its own local revision when imported. Repeating the same import with the
+same source revision returns the existing record. When the source revision has
+changed, a receiver offers a comparison or a new proposed version; it must not
+overwrite local edits. References contain no token, file path or private text.
+`hoard_link.artifacts` creates and parses these references and computes the
+revision. For example, a chapter exported from Scheherazade can be linked to a
+Writer manuscript item, then a Prospero asset can point to that item.
+
+`python scripts/story_to_writer.py --world <id> --session <id> --project <id>`
+is a concrete chapter handoff. It pages through the entire Scheherazade export
+and calls Writer's `wh_import_story_session` once. Set `WH_BRIDGE_TOKEN` in
+the process environment and keep both local apps running. Repeating the command
+returns the same writing; a changed source is reported without replacing local
+work. `--refresh` applies a changed source only when Writer's imported text is
+still untouched. The script sends its token only to Writer's loopback API.

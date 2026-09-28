@@ -1,5 +1,9 @@
 # Hoard Link
 
+Hoard Hub descubre HomeHoard y Mercator por sus manifiestos locales y muestra
+sus iconos en las fichas. Scribe se fusionó con Funes y ya no aparece como
+aplicación ni como regla recomendada. Hypatia conserva su icono existente.
+
 ### Una sola respuesta compartida a "¿qué servidor de modelo uso ahora mismo?"
 
 **El backend de modelos compartido para aplicaciones controladas por
@@ -356,7 +360,7 @@ escritorio —, declarado en `data/hub.json`:
 ```json
 {
   "profiles": {
-    "escritura": {"apps": ["borges", "scribe"], "desktop": ["hypatia"]},
+    "escritura": {"apps": ["borges", "funes"], "desktop": ["hypatia"]},
     "video": {
       "apps": ["daguerre"],
       "commands": [
@@ -393,7 +397,7 @@ lleva una sola cola para toda la máquina:
 ```python
 from hoard_link import lease
 
-with lease(vram_mb=6000, purpose="whisper large-v3", owner="scribe") as l:
+with lease(vram_mb=6000, purpose="whisper large-v3", owner="funes") as l:
     modelo = cargar_modelo(device=f"cuda:{l.gpu}" if l.gpu is not None else "cuda")
     ...                        # se renueva en segundo plano y se libera al salir
 
@@ -474,7 +478,7 @@ convierte veinte apps sueltas en un sistema sin añadir una vigesimoprimera:
 - **Bus de eventos.** Cada app publica eventos en `POST /api/events` con
   su propio token (`hoard_link.family.emit(...)` en Python,
   `server/hoard-link.js` en Node): un `agent.call` por cada herramienta que
-  ejecuta el asistente, sus propios hitos (`scribe.transcript.done`,
+  ejecuta el asistente, sus propios hitos (`links.watch.new`,
   `links.watch.new`), y el hub añade `hub.app.started`, `hub.backup.done`,
   `hub.rule.ran`… Se leen con `GET /api/events` (filtros, `since_id` para
   seguirlos), se siguen en vivo con `GET /api/events/stream` (SSE), se
@@ -562,7 +566,7 @@ idle = await link.wait_idle("llm", max_wait_s=30)   # True/False, ver Políticas
 link.sync.chat(...)                  # las mismas llamadas, bloqueantes, para código de aplicación síncrono
 
 from hoard_link import lease, Lease, LeaseTimeout, LeaseError
-with lease(vram_mb=6000, purpose="whisper", owner="scribe", gpu=None, priority=0,
+with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
            timeout_s=None, hub_url=None) as l:   # también `async with`
     l.gpu, l.via, l.lease_id          # índice de GPU (o None), "hub" | "local", id en el hub
 ```

@@ -72,11 +72,11 @@ No profile ships in the default configuration. Two examples to adapt
 {
   "profiles": {
     "writing": {
-      "apps": ["borges", "scribe", "funes"],
+      "apps": ["borges", "funes"],
       "desktop": ["hypatia"]
     },
     "video": {
-      "apps": ["daguerre", "scribe"],
+      "apps": ["daguerre", "funes"],
       "commands": [
         {
           "name": "comfy gpu1",
