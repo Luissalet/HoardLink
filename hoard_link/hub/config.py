@@ -32,7 +32,7 @@ class HubConfig:
     data_dir: str = str(REPO_DIR / "data")
     roots: list[str] = field(default_factory=lambda: [str(REPO_DIR.parent)])
     icon_dirs: list[str] = field(default_factory=lambda: [str(REPO_DIR.parent / "Icons")])
-    exclude_ids: list[str] = field(default_factory=list)
+    exclude_ids: list[str] = field(default_factory=lambda: ["scribe"])
     faustus_dir: Optional[str] = None
     faustus_python: Optional[str] = None
     faustus_urls: list[str] = field(default_factory=lambda: ["http://127.0.0.1:7000", "http://127.0.0.1:7001"])

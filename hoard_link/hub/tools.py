@@ -134,7 +134,7 @@ def catalogue() -> list[dict[str, Any]]:
         {
             "name": "hub_events",
             "description": "Recent events from the app family (what happened, when, who). Keywords: eventos, qué pasó, historial.\n"
-                           "Filter by type glob (scribe.*, agent.call, hub.backup.*), source (app id), since/until (epoch s), "
+                           "Filter by type glob (links.*, agent.call, hub.backup.*), source (app id), since/until (epoch s), "
                            "text. Newest first unless since_id is given.",
             "inputSchema": {"type": "object", "properties": {
                 "type": {"type": "string", "description": "Glob on the event type; | joins several."},

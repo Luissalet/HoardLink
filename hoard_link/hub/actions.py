@@ -7,7 +7,7 @@ Action shapes (JSON objects, ``kind`` picks one):
 * ``{"kind": "hub", "tool": "hub_backup_run", "args": {...}}`` — one of the
   hub's own tools;
 * ``{"kind": "event", "type": "digest.wanted", "data": {...}}`` — emit an event;
-* ``{"kind": "start_app" | "stop_app" | "restart_app", "app": "scribe"}``;
+* ``{"kind": "start_app" | "stop_app" | "restart_app", "app": "funes"}``;
 * ``{"kind": "profile_start" | "profile_stop", "name": "video"}``.
 
 Any string inside ``args`` / ``data`` may carry ``${path}`` placeholders

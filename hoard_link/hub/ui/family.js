@@ -219,7 +219,7 @@
   }
   async function loadRules() { const r = await api("/api/rules"); if (r.ok) renderList("rules", r.rules || [], r.examples, r.history); }
   async function loadJobs() { const r = await api("/api/jobs"); if (r.ok) renderList("jobs", r.jobs || [], r.examples, r.history); }
-  $("#rule-new").onclick = () => editJson(t("f_new_rule"), t("edit_rule_hint"), { name: "", when: { type: "scribe.transcript.done" }, then: [{ kind: "event", type: "example.reaction", data: { from: "${event.type}" } }], cooldown_s: 5, enabled: true }, async (v) => { const res = await api("/api/rules", v); if (res.ok) loadRules(); return res; });
+  $("#rule-new").onclick = () => editJson(t("f_new_rule"), t("edit_rule_hint"), { name: "", when: { type: "links.watch.new" }, then: [{ kind: "event", type: "example.reaction", data: { from: "${event.type}" } }], cooldown_s: 5, enabled: true }, async (v) => { const res = await api("/api/rules", v); if (res.ok) loadRules(); return res; });
   $("#job-new").onclick = () => editJson(t("f_new_job"), t("edit_job_hint"), { name: "", at: "04:00", then: [{ kind: "hub", tool: "hub_backup_run", args: {} }], enabled: true }, async (v) => { const res = await api("/api/jobs", v); if (res.ok) loadJobs(); return res; });
 
   // ---- backups -----------------------------------------------------------------------------------------
