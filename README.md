@@ -633,7 +633,11 @@ running and never stopped. Stdlib only.
 
 `hoard_link.launch.memory(launcher)` says what each GPU holds and which server holds it (the
 models ComfyUI, llama.cpp and Ollama keep loaded; a model server started by hand shows by process
-name and port). A command may declare `stop_argv` (its own stop script): then it can be stopped
+name and port). `hoard_link.launch.host_stats()` gives RAM (and on Windows the committed
+memory, RAM plus page file) and CPU use, stdlib only; `memory()` includes it
+as `host` and each GPU carries its use, temperature and power.
+
+A command may declare `stop_argv` (its own stop script): then it can be stopped
 even when it was started outside the family.
 
 The hub shows these servers under its backends strip with start and stop

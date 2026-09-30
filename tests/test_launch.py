@@ -278,7 +278,9 @@ def test_memory_maps_gpu_processes_to_services(home, monkeypatch):
         {"id": "ollama", "label": "Ollama", "kind": "ollama", "state": "down", "url": "http://127.0.0.1:11434",
          "pid": None, "stoppable": False, "started_by": None}])
     monkeypatch.setattr(launch, "_what_is_loaded", lambda item: {"held_mb": 2000, "models": []})
+    monkeypatch.setattr(launch, "host_stats", lambda: {"ram": {"total_mb": 1, "used_mb": 1, "free_mb": 0}})
     mem = launch.memory(ln)
+    assert mem["host"]["ram"]["total_mb"] == 1
     by = {s["id"]: s for s in mem["services"]}
     assert by["comfyui@8188"]["gpus"] == [1] and by["comfyui@8188"]["held_mb"] == 2000
     assert by["pid:50"]["label"] == "llama-server.exe :8081" and sorted(by["pid:50"]["gpus"]) == [0, 1]
@@ -286,3 +288,9 @@ def test_memory_maps_gpu_processes_to_services(home, monkeypatch):
     g0 = mem["gpus"][0]
     assert "pid:80" not in by  # listens and uses the GPU, but serves no model
     assert g0["services"] == ["pid:50"] and g0["others"] == 2
+
+
+def test_host_stats_reports_ram_and_cpu():
+    st = launch.host_stats()
+    assert st["ram"]["total_mb"] > 0 and 0 <= st["ram"]["used_mb"] <= st["ram"]["total_mb"]
+    assert 0 <= launch.host_stats()["cpu_pct"] <= 100
