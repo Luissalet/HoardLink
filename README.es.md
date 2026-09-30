@@ -619,6 +619,45 @@ with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
   estilos sobre él. Llamar a `link.sync.*` desde ese hilo privado (p. ej.
   dentro de un callback) lanza `RuntimeError` en vez de bloquearse.
 
+## Arrancar los backends sin Faustus (`hoard_link.launch`)
+
+La resolución solo encuentra servidores que ya están en marcha. Cuando
+Faustus no está para haberlos arrancado, una app (o el hub) los arranca ella
+misma:
+
+```python
+from hoard_link.launch import Launcher
+
+ln = Launcher(app="prospero")
+ln.statuses()                              # comfyui@8188, ollama, cmd:<id>: en marcha / parado / no instalado
+ln.start("comfyui@8188", gpu="auto", wait_s=120)
+ln.stop("comfyui@8188")                    # solo si lo arrancó la familia
+```
+
+- **ComfyUI** se busca en `COMFYUI_DIR`, en `comfyui.dir` o en las carpetas
+  de siempre (`~/ComfyUI`, `D:\LocalAI\ComfyUI`, la versión portable...),
+  con el Python de su `venv`, `.venv` o `python_embeded`. Corre en loopback
+  con `--cuda-device` (la GPU con más memoria libre salvo que elijas otra);
+  un servidor en cualquier puerto distinto del 8188 tiene sus propias
+  carpetas de salida, temporales, de usuario y de base de datos en
+  `~/.hoard/backends/comfyui-<puerto>/`. Solo se pasan los flags que conoce
+  el `cli_args.py` de esa instalación.
+- **Ollama** se busca en el `PATH` o en su carpeta de instalación (`ollama serve`).
+- **Cualquier otro** (un servidor de llama.cpp, uno de TTS) es un comando en
+  `~/.hoard/backends.json` con una URL de salud en loopback.
+
+`~/.hoard` (`HOARD_HOME` lo mueve) lo comparten todas las apps y el hub:
+`backends.json` dice dónde está instalado cada cosa, `backends/state.json`
+qué procesos ha arrancado la familia (pid y hora de creación, para no tomar
+nunca por nuestro un pid reciclado) y `backends/logs/` su salida. Un ComfyUI
+arrancado desde el hub aparece en Prospero y se puede parar allí, y al
+revés; uno arrancado a mano o por Faustus se muestra en marcha y nunca se
+para. Solo biblioteca estándar.
+
+El hub muestra estos servidores bajo su franja de backends con botones de
+arrancar y parar, y expone `GET /api/services`, `POST /api/services/start|stop`
+y las herramientas `hub_services`, `hub_service_start` y `hub_service_stop`.
+
 ## Límites (lo que esta librería no hace)
 
 - **Sin generación de música.** El `object_info` de ComfyUI no da una

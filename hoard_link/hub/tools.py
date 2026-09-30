@@ -80,6 +80,32 @@ def catalogue() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "hub_services",
+            "description": "Local backend servers (ComfyUI, Ollama, configured) running or down / servidores locales.\n"
+                           "Each one: state (running, starting, down, unavailable), who started it, whether it can "
+                           "be started or stopped from here, plus free memory per GPU. Keywords: arrancar comfyui, "
+                           "servidores, backend caido.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_service_start",
+            "description": "Start a local backend server without Faustus / arrancar ComfyUI, Ollama o un servidor.\n"
+                           "id from hub_services: 'comfyui@8188' (any port; other ports get their own folders), "
+                           "'ollama' or 'cmd:<id>' from ~/.hoard/backends.json. gpu: 'auto' (most free memory) or an "
+                           "index, ComfyUI only. wait_s waits until it answers (max 300).",
+            "inputSchema": {"type": "object", "properties": {
+                "id": {"type": "string"}, "gpu": {"type": ["string", "integer"], "default": "auto"},
+                "wait_s": {"type": "number", "default": 0}}, "required": ["id"], "additionalProperties": False},
+        },
+        {
+            "name": "hub_service_stop",
+            "description": "Stop a backend server the Hoard family started / parar un servidor local arrancado aqui.\n"
+                           "One started by hand or by Faustus is refused (stop it where it runs).",
+            "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
+                            "required": ["id"], "additionalProperties": False},
+        },
+        {
             "name": "hub_lease_status",
             "description": "GPU VRAM per GPU with active leases and the queue / VRAM libre, reservas y cola de la GPU.\n"
                            "Per GPU: total, used (nvidia-smi), reserved by granted leases, available. Then the granted "
@@ -409,6 +435,10 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_start_all": lambda _: hub.start_all(),
         "hub_stop_all": lambda _: hub.stop_all(),
         "hub_backends": lambda a: hub.backends(force=bool(a.get("force", False))),
+        "hub_services": lambda a: hub.services(),
+        "hub_service_start": lambda a: hub.service_start(str(a.get("id") or ""), gpu=a.get("gpu"),
+                                                         wait_s=float(a.get("wait_s") or 0)),
+        "hub_service_stop": lambda a: hub.service_stop(str(a.get("id") or "")),
         "hub_rescan": lambda _: {"ok": True, "apps": [a.id for a in hub.rescan()]},
         "hub_profile_list": lambda _: _compact_profiles(hub.profiles_status()),
         "hub_profile_start": lambda a: hub.profile_start(str(a.get("name") or "")),
