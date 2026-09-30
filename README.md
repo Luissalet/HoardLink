@@ -36,7 +36,7 @@ Hoard Hub scans sibling manifests when refreshed. The local HomeHoard inventory
 bridge and Mercator dashboard appear as separate launchable cards; Scribe has
 been absorbed by Funes and is excluded. The hub uses each app's `app-icon.png`
 for its card. HomeHoard, Mercator and Hypatia also serve their icon as the
-window favicon. The three current recommended rules have no Scribe action.
+window favicon. The four current recommended rules have no Scribe action.
 
 ## Quick start
 

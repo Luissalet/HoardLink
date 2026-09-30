@@ -272,6 +272,13 @@ def example_rules() -> list[dict[str, Any]]:
                                                                     "watch": "${event.data.watch}"}}],
          "cooldown_s": 0,
          "note": "Every new feed/release/page-change entry lands as a digest.item event for the daily recap skill."},
+        {"id": "rule-watcher-alert-digest", "name": "Product alert → digest note", "when": {"type": "tantalus.alert"},
+         "then": [{"kind": "event", "type": "digest.item", "data": {"title": "${event.data.title}", "url": "${event.data.url}",
+                                                                    "watch": "${event.data.watcher_name}",
+                                                                    "kind": "${event.data.type}"}}],
+         "cooldown_s": 0,
+         "note": "A confirmed restock, price drop, pre-order or new product from the product watcher lands as a digest.item "
+                 "event, next to the watched links, for the daily recap skill."},
         {"id": "rule-restart-down", "name": "Service down → try a restart",
          "when": {"type": "cassandra.incident.opened", "where": {"data.to_state": "down", "data.service_kind": "app"}},
          "then": [{"kind": "start_app", "app": "${event.data.app}"}], "cooldown_s": 300,

@@ -334,12 +334,12 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     assert body["ok"]
     # the recommended rules: installed together, idempotently, every one valid
     status, body = _http(url + "/api/rules/install-defaults", {})
-    assert status == 200 and body["ok"] and len(body["installed"]) == 3 and body["already_present"] == []
+    assert status == 200 and body["ok"] and len(body["installed"]) == 4 and body["already_present"] == []
     ids = {r["id"] for r in body["rules"]}
-    assert {"rule-backup-on-stop", "rule-watch-digest", "rule-restart-down"} <= ids
+    assert {"rule-backup-on-stop", "rule-watch-digest", "rule-watcher-alert-digest", "rule-restart-down"} <= ids
     res = tools.call(hub, "hub_rule_install_defaults", {})
-    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 3 and res["refreshed"] == []
-    assert len(hub.rules.list()) == 3
+    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 4 and res["refreshed"] == []
+    assert len(hub.rules.list()) == 4
     # a template that moved on: refresh brings when/then back, keeps what the user set
     hub.rules.update("rule-restart-down", {"when": {"type": "cassandra.incident.opened"}, "enabled": False, "cooldown_s": 42})
     res = tools.call(hub, "hub_rule_install_defaults", {"refresh": True})
@@ -350,6 +350,15 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     hub.rules.clear_history() if hasattr(hub.rules, "clear_history") else None
     status, body = _http(url + "/api/rules/rule-watch-digest/test", {"type": "links.watch.new"})
     assert body["matches"] and body["matches"][0]["id"] == "rule-watch-digest"
+    status, body = _http(url + "/api/rules/rule-watcher-alert-digest/test", {"type": "tantalus.alert"})
+    assert body["matches"] and body["matches"][0]["id"] == "rule-watcher-alert-digest"
+    alert = {"type": "tantalus.alert", "source": "tantalus", "data": {"title": "Restock: Box", "url": "https://shop.example/box",
+                                                                      "watcher_name": "Boxes", "type": "RESTOCK"}}
+    summary = hub.rules.run(hub.rules.get("rule-watcher-alert-digest"), alert)
+    assert summary["ok"], summary
+    digest = [e for e in hub.events.query(type="digest.item") if e["data"].get("kind") == "RESTOCK"]
+    assert digest and digest[0]["data"] == {"title": "Restock: Box", "url": "https://shop.example/box", "watch": "Boxes", "kind": "RESTOCK",
+                                            "_via_rule": "rule-watcher-alert-digest"}
     status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "down", "service_kind": "app"}})
     assert body["matches"]
     status, body = _http(url + "/api/rules/rule-restart-down/test", {"type": "cassandra.incident.opened", "data": {"to_state": "slow", "service_kind": "app"}})
