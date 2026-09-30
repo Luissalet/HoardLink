@@ -130,7 +130,7 @@ async def test_a_template_that_knows_other_effort_names_gets_the_nearest_one():
 
     link = make_link(_capture(bodies, reply), config=_openai())
     res = await link.chat([{"role": "user", "content": "judge"}], effort="high")
-    assert [b.get("reasoning_effort") for b in bodies] == ["high", "xhigh"]
+    assert [b.get("reasoning_effort") for b in bodies] == ["high", "medium"]
     assert bodies[1]["chat_template_kwargs"]["enable_thinking"] is True
     assert res.text == "ok"
 
@@ -161,6 +161,8 @@ async def test_an_unrelated_500_is_not_retried():
 def test_supported_efforts_and_remap():
     assert reasoning.supported_efforts(_TEMPLATE_500) == ["xhigh", "medium", "low"]
     p = {"reasoning_effort": "high"}
+    assert reasoning.remap_effort(p, ["xhigh", "medium", "low"]) and p["reasoning_effort"] == "medium"
+    p = {"reasoning_effort": "max"}
     assert reasoning.remap_effort(p, ["xhigh", "medium", "low"]) and p["reasoning_effort"] == "xhigh"
     p = {"reasoning_effort": "minimal"}
     assert reasoning.remap_effort(p, ["xhigh", "medium", "low"]) and p["reasoning_effort"] == "low"

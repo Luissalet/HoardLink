@@ -129,8 +129,9 @@ def supported_efforts(text: str) -> list[str]:
 
 
 def remap_effort(payload: dict[str, Any], supported: list[str]) -> bool:
-    """Replace ``reasoning_effort`` by the nearest supported name (same
-    strength or the closest one); True when the payload changed."""
+    """Replace ``reasoning_effort`` by the nearest supported name; between two
+    equally near names the lighter one, so the call still fits the budget and
+    timeout computed for the level that was asked. True when it changed."""
     current = payload.get("reasoning_effort")
     if not supported or not isinstance(current, str) or current in supported:
         return False
@@ -138,7 +139,7 @@ def remap_effort(payload: dict[str, Any], supported: list[str]) -> bool:
     want = rank.get(current)
     if want is None:
         return False
-    best = min(supported, key=lambda s: (abs(rank[s] - want), -rank[s]))
+    best = min(supported, key=lambda s: (abs(rank[s] - want), rank[s]))
     payload["reasoning_effort"] = best
     return True
 
