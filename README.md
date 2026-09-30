@@ -631,9 +631,14 @@ running and never stopped. Stdlib only.
 }
 ```
 
+`hoard_link.launch.memory(launcher)` says what each GPU holds and which server holds it (the
+models ComfyUI, llama.cpp and Ollama keep loaded; a model server started by hand shows by process
+name and port). A command may declare `stop_argv` (its own stop script): then it can be stopped
+even when it was started outside the family.
+
 The hub shows these servers under its backends strip with start and stop
-buttons, and exposes `GET /api/services`, `POST /api/services/start|stop`
-and the tools `hub_services`, `hub_service_start`, `hub_service_stop`.
+buttons, and exposes `GET /api/services`, `POST /api/services/start|stop`,
+`GET /api/memory` and the tools `hub_services`, `hub_service_start`, `hub_service_stop`, `hub_gpu_memory`.
 
 ## Boundaries (what this library does not do)
 

@@ -40,7 +40,9 @@ def _req(url: str, body=None):
 
 def test_services_are_listed_as_tools(hub):
     names = {t["name"] for t in tools.catalogue()}
-    assert {"hub_services", "hub_service_start", "hub_service_stop"} <= names
+    assert {"hub_services", "hub_service_start", "hub_service_stop", "hub_gpu_memory"} <= names
+    mem = tools.call(hub, "hub_gpu_memory", {})
+    assert mem["ok"] and "gpus" in mem and "services" in mem
     ro = {t["name"]: t.get("annotations", {}).get("readOnlyHint") for t in tools.catalogue()}
     assert ro["hub_services"] is True and not ro.get("hub_service_start")
     out = tools.call(hub, "hub_services", {})

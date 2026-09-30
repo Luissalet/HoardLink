@@ -536,6 +536,11 @@ class Hub:
         items = self.launcher.statuses()
         return {"ok": True, "items": items, "gpus": list_gpus(), "config_path": str(self.launcher.config_path)}
 
+    def gpu_memory(self) -> dict[str, Any]:
+        from ..launch import memory
+
+        return {"ok": True, **memory(self.launcher)}
+
     def service_start(self, service_id: str, gpu: Any = None, wait_s: float = 0.0) -> dict[str, Any]:
         res = self.launcher.start(str(service_id or ""), gpu=gpu, wait_s=max(0.0, min(float(wait_s or 0), 300.0)))
         if res.get("ok"):

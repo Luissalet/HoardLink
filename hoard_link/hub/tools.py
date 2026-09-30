@@ -89,6 +89,14 @@ def catalogue() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "hub_gpu_memory",
+            "description": "What each GPU holds and which server holds it / que hay cargado en cada GPU y quien.\n"
+                           "Per GPU: free/total and the family servers on it (ComfyUI, llama.cpp, Ollama) with the "
+                           "models they keep loaded; servers[].stoppable says whether hub_service_stop may stop it.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
             "name": "hub_service_start",
             "description": "Start a local backend server without Faustus / arrancar ComfyUI, Ollama o un servidor.\n"
                            "id from hub_services: 'comfyui@8188' (any port; other ports get their own folders), "
@@ -436,6 +444,7 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_stop_all": lambda _: hub.stop_all(),
         "hub_backends": lambda a: hub.backends(force=bool(a.get("force", False))),
         "hub_services": lambda a: hub.services(),
+        "hub_gpu_memory": lambda a: hub.gpu_memory(),
         "hub_service_start": lambda a: hub.service_start(str(a.get("id") or ""), gpu=a.get("gpu"),
                                                          wait_s=float(a.get("wait_s") or 0)),
         "hub_service_stop": lambda a: hub.service_stop(str(a.get("id") or "")),

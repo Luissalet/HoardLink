@@ -20,6 +20,7 @@ GET  /api/apps/<id>/log        last lines of its log
 POST /api/apps/<id>/start|stop|restart|open|close-windows|folder
 POST /api/apps/start-all | stop-all | rescan
 GET  /api/backends             what Hoard Link resolves right now
+GET  /api/memory               what each GPU holds and which server holds it
 GET  /api/services             local backend servers (ComfyUI, Ollama, configured) and who started them
 POST /api/services/start|stop  {"id": "comfyui@8188", "gpu": "auto", "wait_s": 0}
 GET  /api/lease                GPUs (used/free/reserved), granted leases, queue
@@ -250,6 +251,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json(hub.backends(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path == "/api/services":
                 return self._json(hub.services())
+            if path == "/api/memory":
+                return self._json(hub.gpu_memory())
             if path == "/api/lease":
                 return self._json(hub.leases.status(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path.startswith("/api/lease/"):
