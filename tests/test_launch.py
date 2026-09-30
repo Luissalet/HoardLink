@@ -183,6 +183,23 @@ def test_stop_refuses_a_server_started_elsewhere(home, tmp_path):
         proc.wait(10)
 
 
+def test_a_busy_server_is_running_not_down(home, monkeypatch):
+    # a listening socket that never answers: ComfyUI in the middle of a heavy
+    # render can leave its health page hanging for seconds
+    ln = Launcher()
+    with socket.socket() as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(8)
+        port = srv.getsockname()[1]
+        ln.set_config({"commands": [_server_command(port)]})
+        monkeypatch.setattr(launch, "_http_status", lambda url, timeout=2.0: None)
+        st = ln.status(ln.get("cmd:web"))
+        assert st["state"] == "running" and st["busy"] is True
+        assert ln.start("cmd:web")["already"]
+    st = ln.status(ln.get("cmd:web"))
+    assert st["state"] == "down" and st["busy"] is False
+
+
 def test_a_command_that_dies_reports_its_log(home, tmp_path):
     port = _free_port()
     ln = Launcher()

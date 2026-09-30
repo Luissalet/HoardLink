@@ -618,7 +618,10 @@ which processes the family started (pid and creation time, so a recycled
 pid is never taken for ours) and `backends/logs/` their output. A ComfyUI
 the hub started shows up in Prospero and can be stopped there, and the
 other way round; a server started by hand or by Faustus is reported as
-running and never stopped. Stdlib only.
+running and never stopped. A server whose port is open but whose health
+page does not answer in time (ComfyUI loading a large model mid-render)
+counts as running with `busy: true`, so nothing starts a second copy on top
+of it. Stdlib only.
 
 ```json
 {
