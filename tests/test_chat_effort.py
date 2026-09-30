@@ -112,3 +112,59 @@ def test_env_sets_the_default(tmp_path):
     f = tmp_path / "backend.json"
     f.write_text(json.dumps({"capabilities": {"llm": {"effort": "low"}}}))
     assert LinkConfig.load(f, env={}).capability("llm").effort == "low"
+
+
+_TEMPLATE_500 = ("\n------------\nWhile executing CallExpression at line 49, column 28 in source:\n...', 'low') %}\n"
+                 "    {{- raise_exception('Unexpected reasoning effort ' ~ reasoning_effort ~ '. Supported types "
+                 "are xhigh (default), medium, and low.') }}\n")
+
+
+@pytest.mark.asyncio
+async def test_a_template_that_knows_other_effort_names_gets_the_nearest_one():
+    bodies = []
+
+    def reply(n):
+        if bodies[-1].get("reasoning_effort") not in ("xhigh", "medium", "low"):
+            return httpx.Response(500, json={"error": {"code": 500, "message": _TEMPLATE_500}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    link = make_link(_capture(bodies, reply), config=_openai())
+    res = await link.chat([{"role": "user", "content": "judge"}], effort="high")
+    assert [b.get("reasoning_effort") for b in bodies] == ["high", "xhigh"]
+    assert bodies[1]["chat_template_kwargs"]["enable_thinking"] is True
+    assert res.text == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_template_500_without_a_usable_name_drops_the_reasoning_fields():
+    bodies = []
+
+    def reply(n):
+        if "reasoning_effort" in bodies[-1]:
+            return httpx.Response(500, json={"error": {"message": "While executing CallExpression: raise_exception('Unexpected reasoning effort')"}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    link = make_link(_capture(bodies, reply), config=_openai())
+    await link.chat([{"role": "user", "content": "x"}], effort="high")
+    assert len(bodies) == 2 and "reasoning_effort" not in bodies[1]
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_500_is_not_retried():
+    bodies = []
+    link = make_link(_capture(bodies, lambda n: httpx.Response(500, text="out of memory")), config=_openai())
+    with pytest.raises(Exception):
+        await link.chat([{"role": "user", "content": "x"}], effort="high")
+    assert len(bodies) == 1
+
+
+def test_supported_efforts_and_remap():
+    assert reasoning.supported_efforts(_TEMPLATE_500) == ["xhigh", "medium", "low"]
+    p = {"reasoning_effort": "high"}
+    assert reasoning.remap_effort(p, ["xhigh", "medium", "low"]) and p["reasoning_effort"] == "xhigh"
+    p = {"reasoning_effort": "minimal"}
+    assert reasoning.remap_effort(p, ["xhigh", "medium", "low"]) and p["reasoning_effort"] == "low"
+    p = {"reasoning_effort": "low"}
+    assert not reasoning.remap_effort(p, ["xhigh", "medium", "low"])
+    assert not reasoning.looks_like_reasoning_error(500, "out of memory")
+    assert reasoning.looks_like_reasoning_error(500, _TEMPLATE_500)

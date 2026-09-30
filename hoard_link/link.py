@@ -759,7 +759,9 @@ class Link:
         except httpx.HTTPError as exc:
             raise BackendError(provider, 0, f"{type(exc).__name__} at {_host(url)}: {exc}"[:200]) from exc
         if resp.status_code >= 400:
-            raise BackendError(provider, resp.status_code, resp.text[:200])
+            err = BackendError(provider, resp.status_code, resp.text[:200])
+            err.body = resp.text[:4000]
+            raise err
         return resp
 
     async def _post_chat(
@@ -771,8 +773,19 @@ class Link:
         try:
             return await self._post_json(provider, url, payload, timeout=_reasoning.timeout_for(120.0, level))
         except BackendError as exc:
-            if level is None or not _reasoning.looks_like_reasoning_error(exc.status, exc.body_excerpt):
+            body = getattr(exc, "body", None) or exc.body_excerpt
+            if level is None or not _reasoning.looks_like_reasoning_error(exc.status, body):
                 raise
+            # A chat template that only knows some effort names says which;
+            # ask again with the nearest one before giving the reasoning up.
+            if _reasoning.remap_effort(payload, _reasoning.supported_efforts(body)):
+                try:
+                    return await self._post_json(provider, url, payload,
+                                                 timeout=_reasoning.timeout_for(120.0, level))
+                except BackendError as exc2:
+                    body2 = getattr(exc2, "body", None) or exc2.body_excerpt
+                    if not _reasoning.looks_like_reasoning_error(exc2.status, body2):
+                        raise
             if not _reasoning.strip(payload):
                 raise
             return await self._post_json(provider, url, payload, timeout=_reasoning.timeout_for(120.0, level))

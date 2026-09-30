@@ -28,6 +28,7 @@ reasoning field gets the call again without those fields.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 LEVELS = ("off", "low", "medium", "high", "max")
@@ -99,11 +100,47 @@ def timeout_for(base: float, level: Optional[str]) -> float:
 
 
 def looks_like_reasoning_error(status: int, text: str) -> bool:
-    if status != 400:
-        return False
+    """A refusal caused by the reasoning fields: a 400/422 naming one, or a
+    500 raised by the chat template itself while reading them (llama-server
+    reports a template ``raise_exception`` as HTTP 500)."""
     low = str(text or "").lower()
-    return any(w in low for w in ("reasoning", "thinking", "think", "enable_thinking",
-                                  "chat_template_kwargs", "effort", "budget"))
+    named = any(w in low for w in ("reasoning", "thinking", "think", "enable_thinking",
+                                   "chat_template_kwargs", "effort", "budget"))
+    if status in (400, 422):
+        return named
+    if status == 500:
+        template = any(w in low for w in ("raise_exception", "while executing", "template"))
+        return template and (named or "unexpected" in low)
+    return False
+
+
+#: Effort names in increasing strength, as chat templates spell them.
+_EFFORT_ORDER = ("minimal", "low", "medium", "high", "xhigh", "max")
+
+
+def supported_efforts(text: str) -> list[str]:
+    """The effort names a template error lists as supported
+    ("Supported types are xhigh (default), medium, and low"), in order."""
+    m = re.search(r"supported (?:types|values|efforts?)(?: are|:)\s*([^.\n\"]+)", str(text or ""), re.I)
+    if not m:
+        return []
+    found = re.findall(r"[a-z]+", m.group(1).lower())
+    return [w for w in found if w in _EFFORT_ORDER]
+
+
+def remap_effort(payload: dict[str, Any], supported: list[str]) -> bool:
+    """Replace ``reasoning_effort`` by the nearest supported name (same
+    strength or the closest one); True when the payload changed."""
+    current = payload.get("reasoning_effort")
+    if not supported or not isinstance(current, str) or current in supported:
+        return False
+    rank = {name: i for i, name in enumerate(_EFFORT_ORDER)}
+    want = rank.get(current)
+    if want is None:
+        return False
+    best = min(supported, key=lambda s: (abs(rank[s] - want), -rank[s]))
+    payload["reasoning_effort"] = best
+    return True
 
 
 def strip(payload: dict[str, Any]) -> bool:
