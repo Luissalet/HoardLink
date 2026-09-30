@@ -553,7 +553,11 @@ class Launcher:
     def status(self, svc: Service) -> dict[str, Any]:
         code = _http_status(svc.health)
         own = self._owned(svc.id)
-        if code is not None and code < 500:
+        # a server busy with a render (ComfyUI loading a 20 GB model, a long
+        # sampler step) can leave its health page unanswered for seconds:
+        # the port still listening means it is up, not down
+        busy = code is None and _port_open(svc.health)
+        if (code is not None and code < 500) or busy:
             state = "running"
         elif own is not None:
             state = "starting"
@@ -562,7 +566,7 @@ class Launcher:
         else:
             state = "down"
         d = svc.public()
-        d.update({"state": state, "pid": own.get("pid") if own else None,
+        d.update({"state": state, "busy": busy, "pid": own.get("pid") if own else None,
                   "started_by": own.get("by") if own else None,
                   "stoppable": own is not None or (state == "running" and svc.stop_argv is not None),
                   "gpu": own.get("gpu") if own else None,
@@ -687,9 +691,9 @@ class Launcher:
         except (OSError, subprocess.SubprocessError) as exc:
             return {"ok": False, "service": svc.id, "error": f"its stop command failed: {exc}"}
         deadline = time.monotonic() + 20
-        while time.monotonic() < deadline and _http_status(svc.health) is not None:
+        while time.monotonic() < deadline and _port_open(svc.health):
             time.sleep(0.5)
-        gone = _http_status(svc.health) is None
+        gone = not _port_open(svc.health)
         tail = ((out.stdout or "") + (out.stderr or "")).strip()[-400:]
         return {"ok": gone, "service": svc.id, "via": "stop command", "output": tail,
                 **({} if gone else {"error": "it still answers after its stop command"})}
@@ -709,7 +713,7 @@ class Launcher:
                 self._save_state(state)
                 try:
                     svc = self.get(service_id)
-                    running = _http_status(svc.health) is not None
+                    running = _port_open(svc.health)
                 except KeyError:
                     running = False
                 if running and svc.stop_argv:

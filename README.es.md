@@ -652,7 +652,10 @@ qué procesos ha arrancado la familia (pid y hora de creación, para no tomar
 nunca por nuestro un pid reciclado) y `backends/logs/` su salida. Un ComfyUI
 arrancado desde el hub aparece en Prospero y se puede parar allí, y al
 revés; uno arrancado a mano o por Faustus se muestra en marcha y nunca se
-para. Solo biblioteca estándar.
+para. Un servidor con el puerto abierto cuya página de salud no contesta a
+tiempo (ComfyUI cargando un modelo grande en mitad de un render) cuenta como
+en marcha con `busy: true`, para que nada arranque una segunda copia encima.
+Solo biblioteca estándar.
 
 `hoard_link.launch.memory(launcher)` dice qué tiene cada GPU y qué servidor lo ocupa (los
 modelos que mantienen cargados ComfyUI, llama.cpp y Ollama; un servidor de modelos arrancado a
