@@ -17,6 +17,7 @@ Machine-wide and shared by the whole family:
       "commands": [
         {"id": "llamacpp", "label": "llama.cpp",
          "argv": ["powershell", "-NoProfile", "-File", "D:/LocalAI/Start-LlamaServer.ps1"],
+         "stop_argv": ["powershell", "-NoProfile", "-File", "D:/LocalAI/Stop-LlamaServer.ps1"],
          "cwd": "D:/LocalAI", "health": "http://127.0.0.1:8081/health",
          "capabilities": ["llm", "vision"]}
       ]
@@ -30,7 +31,9 @@ Machine-wide and shared by the whole family:
   and creation time, so a recycled pid is never mistaken for ours). Prospero
   can stop a ComfyUI the Hub started, and a restarted app still knows what
   it owns. Only those processes are ever stopped: a server somebody else
-  started is reported as running and left alone.
+  started is reported as running and left alone, unless its command in
+  backends.json declares its own ``stop_argv`` (a stop script is the owner
+  saying how it may be stopped).
 
 ComfyUI instances are addressed by port (``comfyui@8188``). The default
 port uses ComfyUI's own output/user folders; any other port gets its own
@@ -60,7 +63,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
-__all__ = ["Launcher", "Service", "hoard_home", "comfy_port_from_url", "list_gpus"]
+__all__ = ["Launcher", "Service", "hoard_home", "comfy_port_from_url", "list_gpus", "memory"]
 
 DEFAULT_COMFY_PORT = 8188
 OLLAMA_URL = "http://127.0.0.1:11434"
@@ -101,6 +104,7 @@ class Service:
     problem: Optional[str] = None    # why it cannot be started on this machine
     install: Optional[str] = None    # where it was found
     port: Optional[int] = None
+    stop_argv: Optional[list[str]] = None  # a command's own stop script (stops it even when started elsewhere)
 
     def public(self) -> dict[str, Any]:
         return {"id": self.id, "kind": self.kind, "label": self.label, "capabilities": list(self.capabilities),
@@ -214,17 +218,39 @@ def _alive(pid: int, created: Optional[float]) -> bool:
     return True
 
 
-def _detached_popen(argv: list[str], cwd: Optional[str], env: dict[str, str], log) -> subprocess.Popen:
-    base = dict(cwd=cwd or None, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, close_fds=True)
-    if not IS_WIN:
-        return subprocess.Popen(argv, start_new_session=True, **base)
-    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# The server must not be a child of the app that starts it: stopping an app
+# (the hub, a launcher, Task Manager's "end process tree") terminates its
+# descendants, and a ComfyUI that dies with Prospero is not "shared". A
+# short-lived Python in between starts it and exits at once, so the server
+# is orphaned from the start and no process tree reaches it.
+_SPAWNER = r"""
+import json, os, subprocess, sys
+spec = json.loads(sys.stdin.read())
+log = open(spec["log"], "ab")
+kw = dict(cwd=spec["cwd"] or None, env=spec["env"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+          close_fds=True)
+if os.name == "nt":
+    flags = 0x00000200 | 0x08000000  # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
     try:
-        # Break away from the caller's job object so the server outlives an
-        # app (or a launcher) that kills its own job when it closes.
-        return subprocess.Popen(argv, creationflags=flags | 0x01000000, **base)  # CREATE_BREAKAWAY_FROM_JOB
+        p = subprocess.Popen(spec["argv"], creationflags=flags | 0x01000000, **kw)  # + CREATE_BREAKAWAY_FROM_JOB
     except OSError:
-        return subprocess.Popen(argv, creationflags=flags, **base)
+        p = subprocess.Popen(spec["argv"], creationflags=flags, **kw)
+else:
+    p = subprocess.Popen(spec["argv"], start_new_session=True, **kw)
+sys.stdout.write(str(p.pid))
+sys.stdout.flush()
+"""
+
+
+def _spawn_orphan(argv: list[str], cwd: Optional[str], env: dict[str, str], log_path: Path) -> int:
+    """Start ``argv`` detached, as an orphan; returns its pid."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WIN else 0
+    spec = json.dumps({"argv": argv, "cwd": cwd, "env": env, "log": str(log_path)})
+    out = subprocess.run([sys.executable, "-c", _SPAWNER], input=spec, capture_output=True, text=True, timeout=60,
+                         env=env, creationflags=flags)
+    if out.returncode != 0 or not out.stdout.strip().isdigit():
+        raise OSError((out.stderr or out.stdout or "the spawner failed").strip()[-600:])
+    return int(out.stdout.strip())
 
 
 def _kill_tree(pid: int, grace_s: float = 6.0) -> None:
@@ -470,11 +496,16 @@ class Launcher:
                 argv = shlex.split(str(c["cmd"]), posix=not IS_WIN)
             health = str(c["health"])
             parts = urlsplit(health)
+            stop_argv = c.get("stop_argv")
+            if not stop_argv and c.get("stop_cmd"):
+                stop_argv = shlex.split(str(c["stop_cmd"]), posix=not IS_WIN)
             svc = Service(id=f"cmd:{c['id']}", kind="command", label=str(c.get("label") or c["id"]),
                           capabilities=[str(x) for x in (c.get("capabilities") or [])],
                           url=f"{parts.scheme}://{parts.netloc}", health=health,
                           argv=[str(a) for a in argv] if argv else None, cwd=c.get("cwd"),
-                          env={str(k): str(v) for k, v in (c.get("env") or {}).items()}, install=c.get("cwd"))
+                          env={str(k): str(v) for k, v in (c.get("env") or {}).items()}, install=c.get("cwd"),
+                          stop_argv=[str(a) for a in stop_argv] if stop_argv else None,
+                          port=parts.port)
             if not svc.argv:
                 svc.problem = "no argv/cmd configured"
             elif svc.cwd and not Path(svc.cwd).is_dir():
@@ -532,7 +563,8 @@ class Launcher:
             state = "down"
         d = svc.public()
         d.update({"state": state, "pid": own.get("pid") if own else None,
-                  "started_by": own.get("by") if own else None, "stoppable": own is not None,
+                  "started_by": own.get("by") if own else None,
+                  "stoppable": own is not None or (state == "running" and svc.stop_argv is not None),
                   "gpu": own.get("gpu") if own else None,
                   "log": str(self.log_path(svc.id)) if (own or self.log_path(svc.id).is_file()) else None,
                   "startable": state in ("down",) and svc.argv is not None})
@@ -614,17 +646,15 @@ class Launcher:
                 with open(log_path, "ab") as log:
                     log.write(f"\n--- started by {self.app} {time.strftime('%Y-%m-%d %H:%M:%S')}: "
                               f"{' '.join(svc.argv)}\n".encode("utf-8"))
-                    log.flush()
-                    proc = _detached_popen(svc.argv, svc.cwd, env, log)
-            except OSError as exc:
+                pid = _spawn_orphan(svc.argv, svc.cwd, env, log_path)
+            except (OSError, subprocess.SubprocessError) as exc:
                 return {"ok": False, "service": svc.id, "error": f"could not start: {exc}", "log": str(log_path)}
-            threading.Thread(target=proc.wait, name=f"hoard-launch-{svc.id}", daemon=True).start()
             state = self._state()
-            state[svc.id] = {"pid": proc.pid, "created": _creation_time(proc.pid), "started_at": time.time(),
+            state[svc.id] = {"pid": pid, "created": _creation_time(pid), "started_at": time.time(),
                              "by": self.app, "gpu": chosen_gpu if svc.kind == "comfyui" else None,
                              "command": " ".join(svc.argv)}
             self._save_state(state)
-            out = {"ok": True, "service": svc.id, "pid": proc.pid, "url": svc.url, "log": str(log_path),
+            out = {"ok": True, "service": svc.id, "pid": pid, "url": svc.url, "log": str(log_path),
                    "gpu": chosen_gpu if svc.kind == "comfyui" else None}
         if wait_s > 0:
             out.update(self._wait(svc, wait_s))
@@ -649,6 +679,21 @@ class Launcher:
             return False
         return bool(self._wait(svc, timeout_s).get("ready"))
 
+    def _run_stop_script(self, svc: Service) -> dict[str, Any]:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WIN else 0
+        try:
+            out = subprocess.run(svc.stop_argv or [], cwd=svc.cwd or None, capture_output=True, text=True, timeout=120,
+                                 stdin=subprocess.DEVNULL, creationflags=flags)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"ok": False, "service": svc.id, "error": f"its stop command failed: {exc}"}
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and _http_status(svc.health) is not None:
+            time.sleep(0.5)
+        gone = _http_status(svc.health) is None
+        tail = ((out.stdout or "") + (out.stderr or "")).strip()[-400:]
+        return {"ok": gone, "service": svc.id, "via": "stop command", "output": tail,
+                **({} if gone else {"error": "it still answers after its stop command"})}
+
     def stop(self, service_id: str) -> dict[str, Any]:
         """Stop a service the family started. One started elsewhere is
         refused: stop it where it runs."""
@@ -667,6 +712,8 @@ class Launcher:
                     running = _http_status(svc.health) is not None
                 except KeyError:
                     running = False
+                if running and svc.stop_argv:
+                    return self._run_stop_script(svc)
                 if running:
                     return {"ok": False, "service": service_id,
                             "error": "it is running but was not started from the Hoard family; stop it where it runs"}
@@ -678,3 +725,147 @@ class Launcher:
                 self._save_state(state)
             return {"ok": gone, "service": service_id, "pid": own["pid"],
                     **({} if gone else {"error": "the process is still alive after the stop request"})}
+
+
+# ------------------------------------------------------------- memory --
+
+def _listeners() -> dict[int, int]:
+    """Loopback/any listening TCP port -> owning pid (best effort)."""
+    out: dict[int, int] = {}
+    try:
+        if IS_WIN:
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            text = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10,
+                                  creationflags=flags).stdout
+            for line in text.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[0].upper() == "TCP" and parts[3].upper() == "LISTENING":
+                    port = parts[1].rsplit(":", 1)[-1]
+                    if port.isdigit() and parts[4].isdigit():
+                        out.setdefault(int(port), int(parts[4]))
+        elif shutil.which("ss"):
+            text = subprocess.run(["ss", "-ltnpH"], capture_output=True, text=True, timeout=10).stdout
+            for line in text.splitlines():
+                m = re.search(r":(\d+)\s.*pid=(\d+)", line)
+                if m:
+                    out.setdefault(int(m.group(1)), int(m.group(2)))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return out
+
+
+def _gpu_processes() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(gpus with bus ids, compute processes with the gpu index they use)."""
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return [], []
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WIN else 0
+
+    def q(args: list[str]) -> list[list[str]]:
+        try:
+            text = subprocess.run([exe, *args, "--format=csv,noheader,nounits"], capture_output=True, text=True,
+                                  timeout=10, stdin=subprocess.DEVNULL, creationflags=flags).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return [[p.strip() for p in line.split(",")] for line in text.splitlines() if line.strip()]
+
+    gpus, by_bus = [], {}
+    for row in q(["--query-gpu=index,name,pci.bus_id,memory.used,memory.free,memory.total"]):
+        if len(row) < 6:
+            continue
+        try:
+            g = {"index": int(row[0]), "name": row[1], "used_mb": int(float(row[3])), "free_mb": int(float(row[4])),
+                 "total_mb": int(float(row[5]))}
+        except ValueError:
+            continue
+        gpus.append(g)
+        by_bus[row[2].lower()] = g["index"]
+    procs = []
+    for row in q(["--query-compute-apps=pid,process_name,gpu_bus_id,used_memory"]):
+        if len(row) < 4 or not row[0].isdigit():
+            continue
+        try:
+            used = int(float(row[3]))
+        except ValueError:
+            used = None  # Windows (WDDM) does not report per-process memory
+        procs.append({"pid": int(row[0]), "name": os.path.basename(row[1].replace("\\", "/")) if row[1] else "",
+                      "gpu": by_bus.get(row[2].lower()), "used_mb": used})
+    return gpus, procs
+
+
+def _json(url: str, timeout: float = 3.0) -> Any:
+    if not _port_open(url):
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - loopback
+            return json.loads(resp.read() or b"null")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def _what_is_loaded(item: dict[str, Any]) -> dict[str, Any]:
+    """Models a running server holds, as far as its API tells."""
+    url = item["url"]
+    if item["kind"] == "comfyui":
+        stats = _json(url + "/system_stats") or {}
+        devs = stats.get("devices") or []
+        held = sum(int(d.get("torch_vram_total") or 0) for d in devs) // (1024 * 1024)
+        return {"held_mb": held, "models": [], "note": "ComfyUI keeps the last models it used until it is asked to free them"}
+    if item["kind"] == "ollama":
+        ps = _json(url + "/api/ps") or {}
+        models = [{"name": m.get("name"), "vram_mb": int(m.get("size_vram") or 0) // (1024 * 1024)}
+                  for m in ps.get("models") or []]
+        return {"held_mb": sum(m["vram_mb"] for m in models), "models": models}
+    models = _json(url + "/v1/models") or {}
+    names = [{"name": m.get("id")} for m in (models.get("data") or []) if isinstance(m, dict) and m.get("id")]
+    return {"held_mb": None, "models": names}
+
+
+# names of processes that serve models (a game launcher also listens on a
+# port and draws on the GPU: it is counted, not listed)
+_MODEL_SERVER = re.compile(r"llama|ollama|python|kobold|lm ?studio|lms|vllm|comfy|tabby|exllama|whisper|piper|"
+                           r"text-generation|sglang|mlc|jan|localai", re.I)
+
+
+def memory(launcher: "Launcher", comfy_ports: Optional[list[int]] = None) -> dict[str, Any]:
+    """What is loaded on each GPU and which family service holds it:
+    ``gpus[{index, name, used_mb, free_mb, total_mb, services[], others}]``
+    and ``services[{id, label, state, gpus[], models[], held_mb, stoppable}]``."""
+    gpus, procs = _gpu_processes()
+    listeners = _listeners()
+    items = [i for i in launcher.statuses(comfy_ports) if i["state"] in ("running", "starting")]
+    pid_to_service: dict[int, str] = {}
+    for item in items:
+        port = urlsplit(item["url"]).port
+        pid = listeners.get(port) if port else None
+        if pid:
+            pid_to_service[pid] = item["id"]
+        if item.get("pid"):
+            pid_to_service.setdefault(int(item["pid"]), item["id"])
+    known_pids = set(pid_to_service)
+    services = []
+    for item in items:
+        pids = {p for p, sid in pid_to_service.items() if sid == item["id"]}
+        on = sorted({p["gpu"] for p in procs if p["pid"] in pids and p["gpu"] is not None})
+        services.append({"id": item["id"], "label": item["label"], "kind": item["kind"], "state": item["state"],
+                         "url": item["url"], "gpus": on, "stoppable": item["stoppable"], "started_by": item["started_by"],
+                         **_what_is_loaded(item)})
+    # GPU processes that listen on a port but are no configured service
+    # (a llama-server started by hand...): still say what they are
+    port_of = {pid: port for port, pid in listeners.items()}
+    unknown: dict[int, dict[str, Any]] = {}
+    for p in procs:
+        if p["pid"] in known_pids or p["pid"] not in port_of or not _MODEL_SERVER.search(p["name"] or ""):
+            continue
+        u = unknown.setdefault(p["pid"], {"id": f"pid:{p['pid']}", "label": f"{p['name'] or 'process'} :{port_of[p['pid']]}",
+                                          "kind": "process", "state": "running",
+                                          "url": f"http://127.0.0.1:{port_of[p['pid']]}", "gpus": [],
+                                          "stoppable": False, "started_by": None, "held_mb": None, "models": []})
+        if p["gpu"] is not None and p["gpu"] not in u["gpus"]:
+            u["gpus"].append(p["gpu"])
+    services += list(unknown.values())
+    for g in gpus:
+        g["services"] = [s["id"] for s in services if g["index"] in s["gpus"]]
+        g["others"] = len({p["pid"] for p in procs if p["gpu"] == g["index"] and p["pid"] not in known_pids
+                           and p["pid"] not in unknown})
+    return {"gpus": gpus, "services": services}

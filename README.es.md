@@ -654,9 +654,14 @@ arrancado desde el hub aparece en Prospero y se puede parar allí, y al
 revés; uno arrancado a mano o por Faustus se muestra en marcha y nunca se
 para. Solo biblioteca estándar.
 
+`hoard_link.launch.memory(launcher)` dice qué tiene cada GPU y qué servidor lo ocupa (los
+modelos que mantienen cargados ComfyUI, llama.cpp y Ollama; un servidor de modelos arrancado a
+mano aparece con su nombre de proceso y puerto). Un comando puede declarar `stop_argv` (su propio
+script de parada): entonces se puede parar aunque se arrancara fuera de la familia.
+
 El hub muestra estos servidores bajo su franja de backends con botones de
-arrancar y parar, y expone `GET /api/services`, `POST /api/services/start|stop`
-y las herramientas `hub_services`, `hub_service_start` y `hub_service_stop`.
+arrancar y parar, y expone `GET /api/services`, `POST /api/services/start|stop`,
+`GET /api/memory` y las herramientas `hub_services`, `hub_service_start`, `hub_service_stop` y `hub_gpu_memory`.
 
 ## Límites (lo que esta librería no hace)
 

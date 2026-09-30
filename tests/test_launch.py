@@ -212,3 +212,77 @@ def test_state_survives_a_new_launcher_and_forgets_dead_pids(home):
     ids = [s.id for s in Launcher().services()]
     assert "comfyui@8199" in ids  # still listed so it can be looked at
     assert Launcher()._owned("comfyui@8199") is None
+
+
+def test_a_server_outlives_the_app_that_started_it(home, tmp_path):
+    """Stopping an app kills its process tree; the server it started must
+    not be part of that tree (it is shared by the family)."""
+    import os
+
+    port = _free_port()
+    Launcher().set_config({"commands": [_server_command(port)]})
+    code = ("import sys, time; from hoard_link.launch import Launcher; "
+            "r = Launcher(app='parent').start('cmd:web', wait_s=20); print(r.get('ready'), flush=True); time.sleep(120)")
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent.parent))
+    parent = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, env=env, cwd=str(tmp_path))
+    try:
+        assert parent.stdout.readline().strip() == "True"
+        launch._kill_tree(parent.pid, grace_s=2)
+        parent.wait(15)
+        ln = Launcher()
+        st = ln.status(ln.get("cmd:web"))
+        assert st["state"] == "running" and st["started_by"] == "parent" and st["stoppable"], st
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+        Launcher().stop("cmd:web")
+
+
+def test_a_stop_script_stops_a_server_started_elsewhere(home, tmp_path):
+    port = _free_port()
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if launch.IS_WIN else 0
+    proc = subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"], cwd=str(tmp_path),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+    stopper = tmp_path / "stop.py"
+    stopper.write_text(f"import os, signal\nos.kill({proc.pid}, signal.SIGTERM)\nprint('stopped it')\n", encoding="utf-8")
+    cmd = _server_command(port)
+    cmd["stop_argv"] = [sys.executable, str(stopper)]
+    ln = Launcher()
+    ln.set_config({"commands": [cmd]})
+    try:
+        assert ln.wait_ready("cmd:web", 20)
+        st = ln.status(ln.get("cmd:web"))
+        assert st["stoppable"] and st["started_by"] is None
+        res = ln.stop("web")
+        assert res["ok"] and res["via"] == "stop command" and "stopped it" in res["output"], res
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(10)
+
+
+def test_memory_maps_gpu_processes_to_services(home, monkeypatch):
+    ln = Launcher()
+    monkeypatch.setattr(launch, "_gpu_processes", lambda: (
+        [{"index": 0, "name": "a", "used_mb": 11000, "free_mb": 1000, "total_mb": 12000},
+         {"index": 1, "name": "b", "used_mb": 12000, "free_mb": 4000, "total_mb": 16000}],
+        [{"pid": 50, "name": "llama-server.exe", "gpu": 0, "used_mb": None},
+         {"pid": 50, "name": "llama-server.exe", "gpu": 1, "used_mb": None},
+         {"pid": 60, "name": "python.exe", "gpu": 1, "used_mb": None},
+         {"pid": 70, "name": "chrome.exe", "gpu": 0, "used_mb": None},
+         {"pid": 80, "name": "GameLauncher.exe", "gpu": 0, "used_mb": None}]))
+    monkeypatch.setattr(launch, "_listeners", lambda: {8081: 50, 8188: 60, 62234: 80})
+    monkeypatch.setattr(Launcher, "statuses", lambda self, ports=None: [
+        {"id": "comfyui@8188", "label": "ComfyUI :8188", "kind": "comfyui", "state": "running",
+         "url": "http://127.0.0.1:8188", "pid": None, "stoppable": True, "started_by": "prospero"},
+        {"id": "ollama", "label": "Ollama", "kind": "ollama", "state": "down", "url": "http://127.0.0.1:11434",
+         "pid": None, "stoppable": False, "started_by": None}])
+    monkeypatch.setattr(launch, "_what_is_loaded", lambda item: {"held_mb": 2000, "models": []})
+    mem = launch.memory(ln)
+    by = {s["id"]: s for s in mem["services"]}
+    assert by["comfyui@8188"]["gpus"] == [1] and by["comfyui@8188"]["held_mb"] == 2000
+    assert by["pid:50"]["label"] == "llama-server.exe :8081" and sorted(by["pid:50"]["gpus"]) == [0, 1]
+    assert "ollama" not in by
+    g0 = mem["gpus"][0]
+    assert "pid:80" not in by  # listens and uses the GPU, but serves no model
+    assert g0["services"] == ["pid:50"] and g0["others"] == 2
