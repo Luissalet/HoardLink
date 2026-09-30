@@ -20,6 +20,8 @@ GET  /api/apps/<id>/log        last lines of its log
 POST /api/apps/<id>/start|stop|restart|open|close-windows|folder
 POST /api/apps/start-all | stop-all | rescan
 GET  /api/backends             what Hoard Link resolves right now
+GET  /api/services             local backend servers (ComfyUI, Ollama, configured) and who started them
+POST /api/services/start|stop  {"id": "comfyui@8188", "gpu": "auto", "wait_s": 0}
 GET  /api/lease                GPUs (used/free/reserved), granted leases, queue
 GET  /api/lease/<id>           one lease (also keeps a queued one in the queue)
 POST /api/lease/request        {owner, purpose, vram_mb, gpu, priority, ttl_s, wait, pid[, lease_id]}
@@ -246,6 +248,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json(hub.snapshot())
             if path == "/api/backends":
                 return self._json(hub.backends(force=query.get("force", ["0"])[0] in ("1", "true")))
+            if path == "/api/services":
+                return self._json(hub.services())
             if path == "/api/lease":
                 return self._json(hub.leases.status(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path.startswith("/api/lease/"):
@@ -357,6 +361,13 @@ class _HubHandler(BaseHTTPRequestHandler):
                 except ValueError as exc:
                     return self._json({"ok": False, "error": str(exc)}, 400)
                 return self._json({"ok": True, "event": ev})
+            if path in ("/api/services/start", "/api/services/stop"):
+                sid = str(body.get("id") or "")
+                if path.endswith("start"):
+                    res = hub.service_start(sid, gpu=body.get("gpu"), wait_s=float(body.get("wait_s") or 0))
+                else:
+                    res = hub.service_stop(sid)
+                return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/rules":
                 res = hub.rules.add(body)
                 return self._json(res, 200 if res.get("ok") else 400)

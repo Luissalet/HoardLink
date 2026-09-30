@@ -52,6 +52,11 @@ class Hub:
         self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=gpu_fn,
                                    headroom_mb=int(self.config.lease_headroom_mb or 0))
         # External commands of the profiles (ComfyUI instances, scripts...).
+        # the shared backends (ComfyUI, Ollama, configured servers) any app of
+        # the family can start without Faustus: same files as the apps use
+        from ..launch import Launcher
+
+        self.launcher = Launcher(app="hub")
         self.commands = CommandRunner(os.path.join(self.config.data_dir, "commands.json"), self.config.logs_dir)
         # The family's nervous system: the event log every app writes to,
         # rules that react to it, jobs on a clock, and the backup store.
@@ -522,6 +527,35 @@ class Hub:
             self._faustus_cache = (time.time(), result)
             self._faustus_refreshing.clear()
         return result
+
+    def services(self) -> dict[str, Any]:
+        """Local backend servers (ComfyUI, Ollama, backends.json commands):
+        running, down or startable, who started them."""
+        from ..launch import list_gpus
+
+        items = self.launcher.statuses()
+        return {"ok": True, "items": items, "gpus": list_gpus(), "config_path": str(self.launcher.config_path)}
+
+    def service_start(self, service_id: str, gpu: Any = None, wait_s: float = 0.0) -> dict[str, Any]:
+        res = self.launcher.start(str(service_id or ""), gpu=gpu, wait_s=max(0.0, min(float(wait_s or 0), 300.0)))
+        if res.get("ok"):
+            self._backends_cache = (0.0, None)
+            try:
+                self.events.emit("hub.service.started", {"service": res.get("service"), "gpu": res.get("gpu"),
+                                                         "already": bool(res.get("already"))}, source="hub")
+            except Exception:  # noqa: BLE001 - the bus is best effort
+                pass
+        return res
+
+    def service_stop(self, service_id: str) -> dict[str, Any]:
+        res = self.launcher.stop(str(service_id or ""))
+        if res.get("ok"):
+            self._backends_cache = (0.0, None)
+            try:
+                self.events.emit("hub.service.stopped", {"service": res.get("service")}, source="hub")
+            except Exception:  # noqa: BLE001
+                pass
+        return res
 
     def backends(self, force: bool = False) -> dict[str, Any]:
         ts, cached = self._backends_cache

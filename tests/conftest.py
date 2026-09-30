@@ -90,3 +90,10 @@ def _no_real_hub(monkeypatch):
     nothing or a route on a MockTransport."""
     monkeypatch.setenv("HOARD_HUB_AUTOSTART", "0")
     monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:8810")
+
+
+@pytest.fixture(autouse=True)
+def _private_hoard_home(tmp_path, monkeypatch):
+    """hoard_link.launch keeps family-wide files in ~/.hoard: never the real one in tests."""
+    monkeypatch.setenv("HOARD_HOME", str(tmp_path / "hoard-home"))
+    monkeypatch.delenv("COMFYUI_DIR", raising=False)

@@ -25,6 +25,9 @@
       profiles: "Profiles", profile_started: "profile started", profile_stopped: "profile stopped",
       pstate: { running: "running", partial: "partly running", stopped: "stopped", empty: "empty" },
       start_profile: "Start this profile", stop_profile: "Stop this profile",
+      services: "Servers", start_service: "Start (no Faustus needed)", stop_service: "Stop",
+      sstate: { running: "running", starting: "starting", down: "stopped", unavailable: "not installed" },
+      started_by: "started by", started_elsewhere: "started outside the family",
     },
     es: {
       start_all: "Arrancar todo", stop_all: "Parar todo", rescan: "Reescanear", refresh: "Actualizar", close: "Cerrar",
@@ -48,6 +51,9 @@
       profiles: "Perfiles", profile_started: "perfil arrancado", profile_stopped: "perfil parado",
       pstate: { running: "en marcha", partial: "en marcha a medias", stopped: "parado", empty: "vacío" },
       start_profile: "Arrancar este perfil", stop_profile: "Parar este perfil",
+      services: "Servidores", start_service: "Arrancar (sin Faustus)", stop_service: "Parar",
+      sstate: { running: "en marcha", starting: "arrancando", down: "parado", unavailable: "no instalado" },
+      started_by: "arrancado por", started_elsewhere: "arrancado fuera de la familia",
     },
   };
 
@@ -312,6 +318,52 @@
     } catch (e) { /* strip is decorative */ }
   }
 
+  // ---- local servers (ComfyUI, Ollama, backends.json commands) -----------------------
+  let serviceBusy = new Set(), serviceData = null;
+  async function refreshServices() {
+    try { serviceData = await api("/api/services"); } catch (e) { return; }
+    renderServices();
+    if ((serviceData.items || []).some((s) => s.state === "starting")) setTimeout(refreshServices, 2000);
+  }
+  function renderServices() {
+    const box = $("#services");
+    const items = (serviceData && serviceData.items) || [];
+    box.hidden = !items.length;
+    box.innerHTML = "";
+    if (!items.length) return;
+    const label = document.createElement("span"); label.className = "profiles-label"; label.textContent = t("services");
+    box.appendChild(label);
+    for (const s of items) {
+      const chip = document.createElement("span");
+      const on = s.state === "running", some = s.state === "starting";
+      chip.className = `chip profile ${on ? "on" : (some ? "some" : "off")}${serviceBusy.has(s.id) ? " busy" : ""}`;
+      chip.title = [`${t("sstate")[s.state] || s.state} · ${s.url}`, (s.capabilities || []).join(", "),
+        on ? (s.started_by ? `${t("started_by")} ${s.started_by}` : t("started_elsewhere")) : "",
+        s.state !== "running" && s.problem ? s.problem : "", s.gpu != null ? `GPU ${s.gpu}` : "", s.log || ""].filter(Boolean).join("\n");
+      chip.innerHTML = `<span class="dot"></span><b></b><span class="pcount"></span>`;
+      $("b", chip).textContent = s.label;
+      $(".pcount", chip).textContent = t("sstate")[s.state] || s.state;
+      const start = document.createElement("button"); start.className = "ghost small pbtn"; start.textContent = "▶"; start.title = t("start_service");
+      const stop = document.createElement("button"); stop.className = "ghost small pbtn danger"; stop.textContent = "■"; stop.title = t("stop_service");
+      start.hidden = !s.startable; stop.hidden = !s.stoppable;
+      start.disabled = stop.disabled = serviceBusy.has(s.id);
+      start.onclick = () => runService(s, "start");
+      stop.onclick = () => runService(s, "stop");
+      chip.append(start, stop);
+      box.appendChild(chip);
+    }
+  }
+  async function runService(s, action) {
+    serviceBusy.add(s.id); renderServices();
+    try {
+      const r = await api(`/api/services/${action}`, { id: s.id, gpu: "auto" });
+      toast(`${s.label}: ${r.ok ? (action === "start" ? (r.already ? t("already") : t("started")) : t("stopped")) : (r.error || "error")}`, r.ok ? "ok" : "err");
+    } catch (e) { toast(String(e), "err"); }
+    serviceBusy.delete(s.id);
+    await refreshServices();
+    refreshBackends(true);
+  }
+
   // ---- GPU leases panel ----------------------------------------------------------
   let leaseData = null;
   const gb = (mb) => `${(mb / 1024).toFixed(1)} GB`;
@@ -395,7 +447,7 @@
   function schedule() {
     clearInterval(timer); clearInterval(backendsTimer);
     timer = setInterval(() => { if (!document.hidden) refresh(); }, 5000);
-    backendsTimer = setInterval(() => { if (!document.hidden) refreshBackends(); }, 20000);
+    backendsTimer = setInterval(() => { if (!document.hidden) { refreshBackends(); refreshServices(); } }, 20000);
   }
 
   // ---- top bar --------------------------------------------------------------------
@@ -409,10 +461,10 @@
     clearTimeout(stopAllArmed); stopAllArmed = null; btn.textContent = t("stop_all");
     const r = await api("/api/apps/stop-all", {}); const n = (r.results || []).filter((x) => x.ok && x.pid).length; toast(`${t("stop_all")}: ${n}`, "ok"); await refresh();
   };
-  $("#btn-lang").onclick = () => { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("hub.lang", lang); } catch (e) { /* ignore */ } applyI18n(); render(); renderLeases(); refreshBackends(); };
+  $("#btn-lang").onclick = () => { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("hub.lang", lang); } catch (e) { /* ignore */ } applyI18n(); render(); renderLeases(); refreshBackends(); renderServices(); };
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 
   applyI18n();
-  refresh().then(() => refreshBackends());
+  refresh().then(() => { refreshBackends(); refreshServices(); });
   schedule();
 })();

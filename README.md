@@ -587,6 +587,54 @@ with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
   private thread (e.g. inside a callback) raises `RuntimeError` instead
   of deadlocking.
 
+## Starting the backends without Faustus (`hoard_link.launch`)
+
+Resolution only finds servers that are already running. When Faustus is
+not there to have started them, an app (or the hub) starts them itself:
+
+```python
+from hoard_link.launch import Launcher
+
+ln = Launcher(app="prospero")
+ln.statuses()                              # comfyui@8188, ollama, cmd:<id>: running / down / unavailable
+ln.start("comfyui@8188", gpu="auto", wait_s=120)
+ln.stop("comfyui@8188")                    # only if the family started it
+```
+
+- **ComfyUI** is found in `COMFYUI_DIR`, `comfyui.dir` or the usual folders
+  (`~/ComfyUI`, `D:\LocalAI\ComfyUI`, the portable build...), with the Python
+  of its `venv`, `.venv` or `python_embeded`. It runs on loopback with
+  `--cuda-device` (the GPU with the most free memory unless you pick one); a
+  server on any port other than 8188 gets its own output, temp, user and
+  database folders under `~/.hoard/backends/comfyui-<port>/`. Flags are only
+  passed when the install's `cli_args.py` knows them.
+- **Ollama** is found on `PATH` or in its default install folder (`ollama serve`).
+- **Anything else** (a llama.cpp server, a TTS server) is a command in
+  `~/.hoard/backends.json` with a loopback health URL.
+
+`~/.hoard` (`HOARD_HOME` moves it) is shared by every app and the hub:
+`backends.json` says where things are installed, `backends/state.json`
+which processes the family started (pid and creation time, so a recycled
+pid is never taken for ours) and `backends/logs/` their output. A ComfyUI
+the hub started shows up in Prospero and can be stopped there, and the
+other way round; a server started by hand or by Faustus is reported as
+running and never stopped. Stdlib only.
+
+```json
+{
+  "comfyui": {"dir": "D:/LocalAI/ComfyUI", "python": null, "gpu": "auto", "args": []},
+  "ollama": {"exe": null},
+  "commands": [
+    {"id": "llamacpp", "label": "llama.cpp", "argv": ["powershell", "-NoProfile", "-File", "D:/LocalAI/Start-LlamaServer.ps1"],
+     "cwd": "D:/LocalAI", "health": "http://127.0.0.1:8081/health", "capabilities": ["llm", "vision"]}
+  ]
+}
+```
+
+The hub shows these servers under its backends strip with start and stop
+buttons, and exposes `GET /api/services`, `POST /api/services/start|stop`
+and the tools `hub_services`, `hub_service_start`, `hub_service_stop`.
+
 ## Boundaries (what this library does not do)
 
 - **No music generation.** ComfyUI's `object_info` gives no reliable
