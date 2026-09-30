@@ -63,7 +63,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
-__all__ = ["Launcher", "Service", "hoard_home", "comfy_port_from_url", "list_gpus", "memory"]
+__all__ = ["Launcher", "Service", "hoard_home", "comfy_port_from_url", "list_gpus", "memory", "host_stats"]
 
 DEFAULT_COMFY_PORT = 8188
 OLLAMA_URL = "http://127.0.0.1:11434"
@@ -770,7 +770,14 @@ def _gpu_processes() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         return [[p.strip() for p in line.split(",")] for line in text.splitlines() if line.strip()]
 
     gpus, by_bus = [], {}
-    for row in q(["--query-gpu=index,name,pci.bus_id,memory.used,memory.free,memory.total"]):
+    def num(v: str) -> Optional[float]:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None  # "[N/A]" on cards that do not report it
+
+    for row in q(["--query-gpu=index,name,pci.bus_id,memory.used,memory.free,memory.total,utilization.gpu,"
+                  "temperature.gpu,power.draw,power.limit"]):
         if len(row) < 6:
             continue
         try:
@@ -778,6 +785,8 @@ def _gpu_processes() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                  "total_mb": int(float(row[5]))}
         except ValueError:
             continue
+        extra = row[6:10] + [""] * (4 - len(row[6:10]))
+        g.update({"util": num(extra[0]), "temp": num(extra[1]), "power": num(extra[2]), "power_limit": num(extra[3])})
         gpus.append(g)
         by_bus[row[2].lower()] = g["index"]
     procs = []
@@ -791,6 +800,77 @@ def _gpu_processes() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         procs.append({"pid": int(row[0]), "name": os.path.basename(row[1].replace("\\", "/")) if row[1] else "",
                       "gpu": by_bus.get(row[2].lower()), "used_mb": used})
     return gpus, procs
+
+
+_CPU_LAST: dict[str, tuple[float, float]] = {}
+
+
+def _cpu_times() -> Optional[tuple[float, float]]:
+    """(idle, total) CPU time since boot, any unit."""
+    if IS_WIN:
+        import ctypes
+        from ctypes import wintypes
+
+        idle, kernel, user = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+        if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        val = lambda ft: (ft.dwHighDateTime << 32) | ft.dwLowDateTime  # noqa: E731
+        return float(val(idle)), float(val(kernel) + val(user))  # kernel time includes idle
+    try:
+        parts = [float(x) for x in Path("/proc/stat").read_text().splitlines()[0].split()[1:]]
+        return parts[3] + (parts[4] if len(parts) > 4 else 0.0), sum(parts)
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def host_stats() -> dict[str, Any]:
+    """System RAM and CPU use (stdlib only). CPU % is measured since the
+    previous call (the first call samples 200 ms)."""
+    out: dict[str, Any] = {"cpu_count": os.cpu_count()}
+    try:
+        if IS_WIN:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            st = MEMORYSTATUSEX()
+            st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                total, avail = st.ullTotalPhys, st.ullAvailPhys
+                out["ram"] = {"total_mb": total // 1048576, "used_mb": (total - avail) // 1048576,
+                              "free_mb": avail // 1048576}
+                out["commit"] = {"total_mb": st.ullTotalPageFile // 1048576,
+                                 "used_mb": (st.ullTotalPageFile - st.ullAvailPageFile) // 1048576}
+        else:
+            info = {}
+            for line in Path("/proc/meminfo").read_text().splitlines():
+                k, _, v = line.partition(":")
+                info[k] = int(v.split()[0]) // 1024
+            total, avail = info.get("MemTotal", 0), info.get("MemAvailable", 0)
+            out["ram"] = {"total_mb": total, "used_mb": total - avail, "free_mb": avail}
+            if info.get("SwapTotal"):
+                out["swap"] = {"total_mb": info["SwapTotal"], "used_mb": info["SwapTotal"] - info.get("SwapFree", 0)}
+    except (OSError, ValueError, AttributeError):
+        pass
+    now = _cpu_times()
+    prev = _CPU_LAST.get("t")
+    if now and not prev:
+        time.sleep(0.2)
+        prev, now = now, _cpu_times()
+    if now and prev and now[1] > prev[1]:
+        busy = 1.0 - (now[0] - prev[0]) / (now[1] - prev[1])
+        _CPU_LAST["pct"] = (round(max(0.0, min(1.0, busy)) * 100, 1), 0.0)
+        _CPU_LAST["t"] = now
+    elif now and not prev:
+        _CPU_LAST["t"] = now
+    if "pct" in _CPU_LAST:  # two calls within the clock's resolution: the last reading
+        out["cpu_pct"] = _CPU_LAST["pct"][0]
+    return out
 
 
 def _json(url: str, timeout: float = 3.0) -> Any:
@@ -868,4 +948,4 @@ def memory(launcher: "Launcher", comfy_ports: Optional[list[int]] = None) -> dic
         g["services"] = [s["id"] for s in services if g["index"] in s["gpus"]]
         g["others"] = len({p["pid"] for p in procs if p["gpu"] == g["index"] and p["pid"] not in known_pids
                            and p["pid"] not in unknown})
-    return {"gpus": gpus, "services": services}
+    return {"gpus": gpus, "services": services, "host": host_stats()}

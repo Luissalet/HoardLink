@@ -656,7 +656,12 @@ para. Solo biblioteca estándar.
 
 `hoard_link.launch.memory(launcher)` dice qué tiene cada GPU y qué servidor lo ocupa (los
 modelos que mantienen cargados ComfyUI, llama.cpp y Ollama; un servidor de modelos arrancado a
-mano aparece con su nombre de proceso y puerto). Un comando puede declarar `stop_argv` (su propio
+mano aparece con su nombre de proceso y puerto). `hoard_link.launch.host_stats()` da la RAM (y en Windows la memoria
+comprometida, RAM más archivo de paginación) y el uso de CPU, solo con la
+biblioteca estándar; `memory()` la incluye como `host` y cada GPU lleva su
+uso, temperatura y consumo.
+
+Un comando puede declarar `stop_argv` (su propio
 script de parada): entonces se puede parar aunque se arrancara fuera de la familia.
 
 El hub muestra estos servidores bajo su franja de backends con botones de
