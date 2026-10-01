@@ -1,0 +1,16 @@
+{
+  "name": "hoard-window",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop window for any Hoard app: an integrated title bar with the native caption buttons, coloured with the app's palette.",
+  "main": "main.cjs",
+  "license": "MIT",
+  "author": "Luis Salet",
+  "scripts": {
+    "start": "electron . --hoard-url=http://127.0.0.1:8810/ --hoard-id=_hub --hoard-name=\"Hoard Hub\"",
+    "check": "node --check main.cjs && node --check preload-bar.cjs && node --check preload-app.cjs"
+  },
+  "devDependencies": {
+    "electron": "43.4.1"
+  }
+}

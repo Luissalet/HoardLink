@@ -41,6 +41,32 @@ python -m hoard_link.hub --autostart-status
   and prints the command line to put in a systemd user unit or a launchd
   agent). Nothing is written.
 
+## App windows
+
+`POST /api/apps/<id>/open` (`hub_open_app`, the **Open window** button)
+opens the app's UI as a desktop window through one of two routes, picked by
+`window_engine` in `data/hub.json` (`HOARD_HUB_WINDOW_ENGINE`):
+
+| `window_engine` | Route |
+|---|---|
+| `auto` (default) | the Hoard Window shell when `shell/node_modules/electron` exists, else Chromium |
+| `shell` | Hoard Window (falls back to Chromium when it is not installed) |
+| `chromium` | an Edge/Chrome/Brave `--app` window |
+
+Both carry `--user-data-dir=<data>/profiles/<id>`, which is how
+`list_windows` finds them again (processes named msedge/chrome/chromium/
+brave/electron with that flag; children are folded into their root) and
+how **Close windows** closes them. The result of an open says which route
+ran: `{"mode": "app-window", "engine": "shell" | "chromium", "pid": …}`;
+`/api/apps` (`hub.window_engine`) and `/api/config` (`window_engine_used`) report the route as resolved now.
+
+The shell writes `hoard-window.json` (bounds, maximised, zoom) and
+`hoard-window.log` (start, page loads, failed loads, crashed child
+processes) into the app's profile folder. It turns off Chromium's native
+occlusion tracking: a window launched by a background process is not given
+the foreground, and with occlusion tracking on it was treated as hidden and
+never painted (a blank window with only the caption buttons).
+
 ## Profiles
 
 `data/hub.json` → `profiles`: `{ "<name>": { "apps": [...], "commands": [...], "desktop": [...] } }`.
