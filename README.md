@@ -36,7 +36,7 @@ Hoard Hub scans sibling manifests when refreshed. The local HomeHoard inventory
 bridge and Mercator dashboard appear as separate launchable cards; Scribe has
 been absorbed by Funes and is excluded. The hub uses each app's `app-icon.png`
 for its card. HomeHoard, Mercator and Hypatia also serve their icon as the
-window favicon. The five current recommended rules have no Scribe action.
+window favicon. None of the recommended rules has a Scribe action.
 
 ## Quick start
 
@@ -476,7 +476,8 @@ hub when none is listening. Tools: `hub_list_apps`, `hub_app_status`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
 `hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
-`hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus
+`hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
+`hub_repo_push_command`, `hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus
 adopt the hub like any other app.
 
 ### The family layer (0.4): events, rules, jobs, backups, the proxy
@@ -519,6 +520,23 @@ Tools added: `hub_events`, `hub_event_emit`, `hub_event_stats`,
 `hub_backup_verify`, `hub_backup_prune`, `hub_family_audit`. The whole
 contract — manifest, agent routes, event conventions, actions, vendoring —
 is in [docs/FAMILY.md](docs/FAMILY.md).
+
+### Repos (0.5): the state of every git repository
+
+The hub's **Repos** tab lists the git repositories next to the apps (and
+Faustus, and the portfolio) with what usually goes unnoticed: commits not
+pushed to any remote, uncommitted changes, stray branches, a vendored copy
+of `hoard_link`, a theme copy or a plugin manifest that drifted from the
+canonical one, missing README / LICENSE, failing CI (through `gh`, when it is
+installed and logged in) and tracked files that look like secrets. Click a
+repository for its issues, unpushed commits and dirty files, and copy the
+exact `git push` command to run. The hub only reads: it never pushes,
+commits, resets or checks anything out (`fetch` is the one network call, and
+only when asked). `hub_repos` and four more tools give an agent the same
+view, `hub.repos.scan` / `hub.repos.issue` events feed rules, and a
+recommended rule turns new problems into digest items. Settings under
+`repos` in `data/hub.json`; the reference is the *Repos* section of
+[docs/HUB.md](docs/HUB.md).
 
 ## Use with Faustus
 
@@ -718,11 +736,13 @@ on Windows or Linux:
 pytest -q
 ```
 
-243 tests, offline (`httpx.MockTransport`), in about 30 seconds. The only
+381 tests, offline (`httpx.MockTransport`), in about a minute. The only
 real sockets are in the sync-facade tests and the hub tests, which start
 tiny HTTP servers on ephemeral `127.0.0.1` ports (a fake app answering
 `/api/health`, a launchable one the hub really starts and stops, profile
-commands, and a hub with fake GPUs for the lease client); the
+commands, and a hub with fake GPUs for the lease client); the Repos tests
+run the real `git` on temporary repositories with a bare repository as the
+remote (and a fake `gh` runner for CI); the
 TTS-command tests run the current Python interpreter as the "TTS binary". No test needs network access or a
 downloaded model, so CI (`.github/workflows/ci.yml`: Ubuntu and Windows,
 Python 3.11 to 3.13) runs the same suite with no GPU and no network.

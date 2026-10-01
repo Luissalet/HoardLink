@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import filecmp
+import importlib.util
 import os
 import shutil
 import sys
@@ -30,19 +31,25 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SRC_PY = REPO / "hoard_link"
 SRC_JS = REPO / "js" / "hoard-link.js"
-SKIP = {"node_modules", "venv", ".venv", "dist", "static", ".git", "__pycache__", "data", "frontend", "client", "tests", "docs"}
+
+
+def _load_drift():
+    """The comparison logic lives in hoard_link/hub/drift.py, shared with the hub's Repos facet (which only
+    reports what this script fixes). Loaded by path: it is standard library only and the package import
+    would need httpx."""
+    spec = importlib.util.spec_from_file_location("hoard_link_drift", SRC_PY / "hub" / "drift.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+drift = _load_drift()
+SKIP = drift.VENDOR_SKIP
 
 
 def find_vendored(app: Path, max_depth: int = 3) -> list[Path]:
-    out: list[Path] = []
-    base = len(app.parts)
-    for root, dirs, names in os.walk(app):
-        depth = len(Path(root).parts) - base
-        dirs[:] = [d for d in dirs if d not in SKIP and not d.startswith(".")] if depth < max_depth else []
-        if Path(root).name == "hoard_link" and "__init__.py" in names and Path(root) != SRC_PY:
-            out.append(Path(root))
-            dirs[:] = []
-    return out
+    return drift.find_vendored(app, SRC_PY, max_depth)
 
 
 def package_dir(app: Path) -> Path | None:
@@ -53,9 +60,9 @@ def package_dir(app: Path) -> Path | None:
     return None
 
 
-KEEP_IN_DST = {"VENDORED.txt", "LICENSE"}
+KEEP_IN_DST = drift.KEEP_IN_DST
 #: The hub runs from this repository only; apps never need its subpackage.
-SKIP_IN_SRC = {"hub"}
+SKIP_IN_SRC = drift.SKIP_IN_SRC
 
 
 def _version() -> str:
@@ -66,32 +73,17 @@ def _version() -> str:
 
 def copy_tree(src: Path, dst: Path, dry: bool) -> tuple[int, int]:
     """Copy src over dst; returns (changed, removed)."""
-    changed = removed = 0
-    for root, dirs, names in os.walk(src):
-        dirs[:] = [d for d in dirs if d != "__pycache__" and not (Path(root) == src and d in SKIP_IN_SRC)]
-        rel = Path(root).relative_to(src)
-        for n in names:
-            if n.endswith((".pyc", ".pyo")):
-                continue
-            s, d = Path(root) / n, dst / rel / n
-            if d.is_file() and filecmp.cmp(s, d, shallow=False):
-                continue
-            changed += 1
-            if not dry:
-                d.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(s, d)
-    # files in dst that no longer exist in src (a vendored hub/ subpackage goes too)
-    if dst.is_dir():
-        for root, dirs, names in os.walk(dst, topdown=False):
-            rel = Path(root).relative_to(dst)
-            for n in names:
-                if n.endswith((".pyc", ".pyo")) or (rel == Path(".") and n in KEEP_IN_DST):
-                    continue
-                if not (src / rel / n).exists() or (rel.parts and rel.parts[0] in SKIP_IN_SRC):
-                    removed += 1
-                    if not dry:
-                        (Path(root) / n).unlink()
-            if Path(root) != dst and not dry:
+    changed, removed = drift.plan_tree(src, dst)
+    if not dry:
+        for rel in changed:
+            d = dst / rel
+            d.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src / rel, d)
+        for rel in removed:  # files that no longer exist upstream (a vendored hub/ subpackage goes too)
+            (dst / rel).unlink()
+        # empty folders left behind
+        for root, _dirs, _names in os.walk(dst, topdown=False):
+            if Path(root) != dst:
                 try:
                     if not any(Path(root).iterdir()):
                         Path(root).rmdir()
@@ -108,7 +100,7 @@ def copy_tree(src: Path, dst: Path, dry: bool) -> tuple[int, int]:
         lic = REPO / "LICENSE"
         if lic.is_file() and not (dst / "LICENSE").is_file():
             shutil.copy2(lic, dst / "LICENSE")
-    return changed, removed
+    return len(changed), len(removed)
 
 
 def main() -> int:

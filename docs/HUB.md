@@ -214,3 +214,146 @@ MCP bridge).
 
 `lease_headroom_mb` in `data/hub.json` (default 256): memory kept free on
 every GPU when granting.
+
+## Repos
+
+The **Repos** tab (and the `hub_repos*` tools) show the state of every git
+repository of the family in one table: what was never pushed, what has
+uncommitted work, which vendored copies drifted, which branches should not be
+there. It exists because those things pile up quietly across thirty-odd
+repositories, and the repositories are what gets looked at from outside.
+
+**The hub never changes a repository.** It does not push, commit, reset,
+clean, delete, check out or merge. Every git call is a read, run as
+`git --no-optional-locks -c core.quotepath=off -C <repo> …` with
+`GIT_OPTIONAL_LOCKS=0`, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`, a 10 s timeout
+and no console window on Windows, so a scan never takes `index.lock` (a
+test watches the `.git` folder during scans) and never rewrites the index.
+The one network call is `fetch` (`git fetch --quiet --prune`, 60 s), only
+when asked for by name, and it only updates remote-tracking refs. Pushing is
+text: the hub gives the command and you run it.
+
+### What is scanned
+
+Every direct child folder with a `.git` of each root the hub scans
+(`roots`, and the parent folder of every app it lists), plus the entries in
+`repos.roots`, `repos.extra` and Faustus. Names with spaces and apostrophes
+(`Phileas's Hoard`) work everywhere, including in routes
+(`/api/repos/Phileas%27s%20Hoard`) and tools, which also accept a unique
+fragment (`phileas`). `data/hub.json`:
+
+```json
+"repos": {
+  "roots": [],                 // more folders whose children are repositories
+  "extra": [],                 // repositories anywhere else
+  "exclude": ["scratch"],      // folder names or absolute paths to leave out
+  "faustus_dir": "D:/LocalAI/faustus",   // default: the hub's faustus_dir
+  "portfolio_dir": "…/portfolio-react",
+  "stray_prefixes": ["claude/"],
+  "default_branches": ["main", "master"],
+  "ci": true,
+  "expected_emails": ["luissalet@users.noreply.github.com"]
+}
+```
+
+Per repository: current branch (or detached) and HEAD; remotes with
+credentials stripped and the GitHub `owner/repo` (https, `ssh://` and the
+`git@Alias:owner/repo.git` form); upstream and ahead/behind from local refs
+(nothing is fetched); `unpushed` = commits on HEAD that are in no remote ref
+(`rev-list --count HEAD --not --remotes`, also without an upstream);
+`never_pushed` when no remote branch exists at all; staged / modified /
+untracked counts and the first 50 paths; stashes; an unfinished rebase,
+merge, cherry-pick or revert; an `index.lock` older than 10 minutes; local
+branches other than the default, flagged `stray` when the name starts with a
+`stray_prefixes` entry or the branch is fully merged into the default; the
+last 10 commits with a pushed flag; the authors of unpushed commits; whether
+README.md, README.es.md, LICENSE, `.github/workflows/*.yml`,
+`faustus-plugin.json` and `app-icon.png` exist; and tracked files that look
+like secrets (`.env`, `.env.*` except `.env.example`/`.sample`/`.template`,
+`*.pem`, `*.key`, `id_rsa*`, `mcp-token`, anything under the root `data/`
+except `.gitkeep`).
+
+### Drift
+
+The checks reuse `hoard_link/hub/drift.py`, the same code
+`scripts/sync_vendored.py` and `scripts/sync_theme.py` use to fix what is
+reported, so the two cannot disagree:
+
+* **vendored library**: every `hoard_link/` folder (with an `__init__.py` or
+  a `VENDORED.txt`, at most 3 levels deep, not under `node_modules`, `venv`,
+  `dist`…) and `server/hoard-link.js`, compared with this repository's
+  package; the stale files are listed (changed, missing, or gone upstream).
+* **theme**: copies of `hoard-theme.css` that differ from
+  `hoard_link/ui/hoard-theme.css`.
+* **manifest**: `faustus-plugin.json` against
+  `<faustus_dir>/plugins/<id>/plugin.json`, compared as JSON (key order and
+  layout do not matter). States: `ok`, `differs` (with the keys),
+  `missing_in_faustus`, `invalid`, `unchecked` (no Faustus folder),
+  `n/a` (no manifest).
+
+### CI and the portfolio
+
+With `repos.ci` on, `gh` on the PATH and a GitHub remote, the latest run is
+read with `gh run list -R owner/repo --limit 1 --json …` (15 s timeout,
+cached 10 minutes per repository) and shown as passing / failing / running /
+none. It is filled in after the snapshot is published, never in front of it.
+Without `gh`, or without being logged in, the state is `unknown` and nothing
+is reported. With `portfolio_dir`, the text files of its `src` are searched
+once per scan for each repository's name or GitHub slug (case-insensitive);
+`in_portfolio` is true/false, and `null` when no portfolio is configured.
+
+### Issues
+
+Each repository carries a list of issues with a `kind`, a severity and a
+text in Spanish and English:
+
+| severity | kinds |
+|---|---|
+| error | `in_progress` (rebase/merge/cherry-pick/revert), `stale_lock`, `ci_failing`, `tracked_secret` |
+| warn | `unpushed`, `never_pushed`, `stray_branch`, `detached_head`, `vendored_drift`, `manifest_drift`, `scan_error` |
+| info | `dirty`, `behind`, `theme_drift`, `manifest_missing`, `no_readme`, `no_readme_es`, `no_license`, `unexpected_author`, `not_in_portfolio` |
+
+`unexpected_author` is a hint, not an error: an unpushed commit whose author
+email is not in `expected_emails`.
+
+### Snapshot and refresh
+
+The last snapshot is kept in memory and in `data/repos.json` (the first paint
+after a restart). Reading never waits for git: `GET /api/repos` returns the
+cache with `age_s` and starts a background refresh when it is older than
+5 minutes (or when there is none). One refresh runs at a time, repositories
+are scanned in parallel (6 at once). Nothing is scanned when the hub starts;
+the "Scan the git repositories" job template (`every: 30m`) keeps it fresh
+without the page open.
+
+### HTTP
+
+| Route | Answer |
+|---|---|
+| `GET /api/repos` | summary + one compact row per repository, `age_s`, `refreshing`, `ci_pending` |
+| `GET /api/repos/<name>` | the full record: issues, dirty paths, branches, commits, remotes, drift, CI |
+| `GET /api/repos/<name>/push-command` | `{command}`, text only (`git -C "<path>" push`, or `push -u origin <branch>` when the branch has no upstream); 409 when there is no remote or HEAD is detached |
+| `POST /api/repos/refresh` | `{wait: false}` by default (returns at once; poll `GET`); `{wait: true}` waits for the git phase |
+| `POST /api/repos/<name>/fetch` | `git fetch --prune` there, then rescans that repository |
+| `POST /api/repos/<name>/folder` | opens its folder in the file manager |
+
+Same guard as every hub route (cross-site requests refused). Actions are
+recorded as events (`hub.repos.fetch`, `hub.repos.push_command`).
+
+### Tools
+
+`hub_repos` (`filter`: all, issues, unpushed, dirty, drift, ci_failing; `text`),
+`hub_repo` (`name`), `hub_repos_refresh`, `hub_repo_fetch` (`name`; marked
+`openWorldHint`) and `hub_repo_push_command` (`name`). `hub_repos` waits for
+the very first scan only.
+
+### Events and the rule
+
+After each full refresh the hub emits `hub.repos.scan`
+`{repos, with_issues, unpushed_total, errors, scan_errors}` (`errors` counts
+error-level issues). When a repository gains an error-level issue it did not
+have in the previous snapshot it emits `hub.repos.issue`
+`{repo, kind, severity, text, url}` (`text` in the hub's language, Spanish
+unless `language` is `en`); the very first scan, with no previous snapshot,
+emits none. The recommended rule *Repo problem → digest note*
+(`rule-repo-issue-digest`) turns each of those into a `digest.item` event.

@@ -205,6 +205,9 @@ def event_types_help() -> list[dict[str, str]]:
         {"type": "hub.rule.ran", "who": "hub", "data": "rule, event_id, results"},
         {"type": "hub.job.ran", "who": "hub", "data": "job, results"},
         {"type": "hub.lease.granted|released", "who": "hub", "data": "lease_id, owner, gpu, vram_mb"},
+        {"type": "hub.repos.scan", "who": "hub", "data": "repos, with_issues, unpushed_total, errors — after each full repo scan"},
+        {"type": "hub.repos.issue", "who": "hub", "data": "repo, kind, text — a repository gained an error-level issue"},
+        {"type": "hub.repos.fetch", "who": "hub", "data": "repo, ok, error — a git fetch the user asked for"},
     ]
 
 

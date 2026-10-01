@@ -334,12 +334,13 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     assert body["ok"]
     # the recommended rules: installed together, idempotently, every one valid
     status, body = _http(url + "/api/rules/install-defaults", {})
-    assert status == 200 and body["ok"] and len(body["installed"]) == 5 and body["already_present"] == []
+    assert status == 200 and body["ok"] and len(body["installed"]) == 6 and body["already_present"] == []
     ids = {r["id"] for r in body["rules"]}
-    assert {"rule-backup-on-stop", "rule-watch-digest", "rule-watcher-alert-digest", "rule-shipment-digest", "rule-restart-down"} <= ids
+    assert {"rule-backup-on-stop", "rule-watch-digest", "rule-watcher-alert-digest", "rule-shipment-digest", "rule-restart-down",
+            "rule-repo-issue-digest"} <= ids
     res = tools.call(hub, "hub_rule_install_defaults", {})
-    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 5 and res["refreshed"] == []
-    assert len(hub.rules.list()) == 5
+    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 6 and res["refreshed"] == []
+    assert len(hub.rules.list()) == 6
     # a template that moved on: refresh brings when/then back, keeps what the user set
     hub.rules.update("rule-restart-down", {"when": {"type": "cassandra.incident.opened"}, "enabled": False, "cooldown_s": 42})
     res = tools.call(hub, "hub_rule_install_defaults", {"refresh": True})
@@ -412,7 +413,7 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     assert status == 200
     line = next(a for a in body["apps"] if a["id"] == "contract")
     assert line["contract"] == "shared" and line["token_present"] and line["events"] and line["data_gitignored"] is True
-    assert "contract" in body["summary"]["shared_contract"] and body["summary"]["library_version"] == "0.4.0"
+    assert "contract" in body["summary"]["shared_contract"] and body["summary"]["library_version"] == "0.5.0"
     res = tools.call(hub, "hub_family_audit", {"probe": False})
     assert res["ok"] and all("stack" in a and "tools" not in a for a in res["apps"])
     # catalogue and mcp bridge list the new tools
@@ -511,7 +512,7 @@ def test_family_client_emit_and_call(fserved, tmp_path, monkeypatch):
     assert res["ok"] and res["result"]["echoed"] == {"q": 1} and res["result"]["caller"] == "contract"
     assert family.call("dead", "x")["ok"] is False
     hb = family.health_block()
-    assert hb["events"] is True and hb["app"] == "contract" and hb["version"] == "0.4.0"
+    assert hb["events"] is True and hb["app"] == "contract" and hb["version"] == "0.5.0"
     # without a token the hub refuses, and the client says so
     family.configure("contract", None, token_file=str(tmp_path / "missing"), hub=url)
     assert family.emit("x.y", {}, block=True) is False and "401" in family.status()["last_error"] or family.status()["dropped"] >= 1

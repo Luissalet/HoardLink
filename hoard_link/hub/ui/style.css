@@ -185,3 +185,36 @@ dialog pre { margin: 0; padding: 12px 14px; font-family: var(--mono); font-size:
 #edit-dialog { width: min(760px, 92vw); }
 #edit-body { width: 100%; min-height: 320px; font-family: var(--mono); font-size: 12.5px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 10px; }
 #edit-error { color: var(--red); font-size: 12px; min-height: 16px; margin-top: 6px; }
+
+/* ---- the Repos tab ---- */
+.repo-chips { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip.btn { cursor: pointer; font: inherit; font-size: 12px; padding: 3px 10px; background: var(--card-2); }
+.chip.btn:hover { border-color: var(--hoard-border-hover); color: var(--text); }
+.chip.btn.on { border-color: var(--accent); color: var(--text); background: var(--hoard-accent-soft); }
+.chip.warn { border-color: #5a4a1c; color: var(--amber); }
+.chip.info { color: var(--blue); }
+.chip.bad { border-color: #5a2b2f; color: var(--red); }
+.repos table { width: 100%; }
+.repos .repo-row { cursor: pointer; }
+.repos .repo-row:hover td, .repos .repo-row:focus td { background: var(--card-2); outline: none; }
+.repos .repo-name { font-weight: 600; }
+.repos .info { color: var(--blue); }
+.repo-icon { width: 20px; height: 20px; border-radius: 5px; margin-right: 8px; vertical-align: middle; object-fit: cover; background: var(--hoard-sunken); }
+.repo-icon.ph { display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--muted); border: 1px solid var(--line); }
+.rb { display: inline-block; margin-right: 4px; padding: 0 6px; border-radius: 6px; font-size: 11px; line-height: 17px; background: var(--card-2); color: var(--muted); }
+.rb.warn { background: #3a2a10; color: var(--amber); }
+.rb.info { background: #14283d; color: var(--blue); }
+.rb.bad { background: #3a1f24; color: var(--red); }
+.rb.dim { opacity: .55; }
+.cidot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--hoard-border-hover); }
+.cidot.passing { background: var(--green); } .cidot.failing { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.cidot.running { background: var(--amber); } .cidot.none { background: transparent; border: 1px solid var(--hoard-border-hover); }
+#repo-dialog { width: min(920px, 94vw); }
+.repo-body { padding: 10px 14px 14px; max-height: 72vh; overflow: auto; display: grid; gap: 10px; }
+.repo-sec h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.repo-lines { font-family: var(--mono); font-size: 12px; display: grid; gap: 1px; }
+.repo-lines .mono-line { white-space: pre-wrap; word-break: break-word; }
+.repo-body .rec.bad { border-left-color: var(--red); } .repo-body .rec.info { border-left-color: var(--blue); }
+.repo-body .rec { margin-bottom: 4px; }
+.btn-link { display: inline-block; font: inherit; font-size: 12px; padding: 4px 9px; color: var(--text); border: 1px solid var(--line); border-radius: var(--hoard-radius); text-decoration: none; }
+.btn-link:hover { background: var(--hoard-elevated); border-color: var(--hoard-border-hover); }

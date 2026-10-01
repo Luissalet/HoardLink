@@ -27,6 +27,10 @@ app's tool with that app's own token (``contract.py``), deduplicated
 backups of every app's data folder (``backup.py``) and an audit of how
 well each app follows the shared contract (``audit.py``).
 
+Since 0.5 it also reports the state of every git repository of the family
+(``repos.py``: unpushed commits, uncommitted work, stray branches, drifted
+vendored copies, CI) — read-only, it never pushes or changes anything.
+
 Optional extras: ``psutil`` for pid/memory/uptime and process-tree stops
 (without it the hub still shows health and can open apps, but cannot stop
 them), ``pywebview`` for a native window instead of a Chromium ``--app``
@@ -35,7 +39,7 @@ window.
 
 from __future__ import annotations
 
-HUB_VERSION = "0.4.0"
+HUB_VERSION = "0.5.0"
 DEFAULT_PORT = 8810
 SERVICE = "hoard-hub"
 

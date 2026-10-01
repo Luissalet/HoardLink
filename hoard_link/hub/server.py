@@ -46,6 +46,14 @@ GET  /api/rules | POST /api/rules (add) | POST /api/rules/<id>/update|remove|run
 GET  /api/jobs  | POST /api/jobs  (add) | POST /api/jobs/<id>/update|remove|run
 GET  /api/backups | /api/backups/<id> | POST /api/backups/run|prune|verify|restore
 GET  /api/audit                the family audit (?probe=0 for disk-only)
+
+The Repos facet (0.5): the state of every git repository of the family (read-only; the hub never pushes)
+GET  /api/repos                the cached snapshot (starts a refresh when it is older than 5 min)
+GET  /api/repos/<name>         one repository in full: issues, dirty paths, branches, commits, remotes
+GET  /api/repos/<name>/push-command   the command to run to push it (text only, never executed)
+POST /api/repos/refresh        rescan everything {"wait": true}
+POST /api/repos/<name>/fetch   git fetch --prune in that repository, then rescan it (the only network call)
+POST /api/repos/<name>/folder  open its folder in the file manager
 """
 
 from __future__ import annotations
@@ -304,6 +312,18 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "snapshot": m})
             if path == "/api/audit":
                 return self._json(hub.family_audit(probe=query.get("probe", ["1"])[0] not in ("0", "false")))
+            if path == "/api/repos":
+                return self._json(hub.repos.snapshot())
+            if path.startswith("/api/repos/"):
+                rest = path[len("/api/repos/"):].split("/")
+                name = unquote(rest[0])
+                if len(rest) == 1:
+                    res = hub.repos.detail(name)
+                    return self._json(res, 200 if res.get("ok") else 404)
+                if len(rest) == 2 and rest[1] == "push-command":
+                    res = hub.repos.push_command(name)
+                    return self._json(res, 200 if res.get("ok") else (404 if "unknown repo" in str(res.get("error")) else 409))
+                return self._json({"ok": False, "error": "not found"}, 404)
             if path == "/api/config":
                 cfg = hub.config.to_dict()
                 cfg["browser_found"] = desktop.find_browser(hub.config.browser)
@@ -399,6 +419,18 @@ class _HubHandler(BaseHTTPRequestHandler):
                 res = hub.backup_restore(str(body.get("snapshot") or ""), str(body.get("app") or ""),
                                          dest=body.get("dest"), in_place=bool(body.get("in_place", False)))
                 return self._json(res, 200 if res.get("ok") else 409)
+            if path == "/api/repos/refresh":
+                res = hub.repos.refresh(wait=bool(body.get("wait", False)))
+                return self._json({**res, "summary": hub.repos.snapshot()["summary"]})
+            if path.startswith("/api/repos/"):
+                rest = path[len("/api/repos/"):].split("/")
+                if len(rest) == 2 and rest[1] in ("fetch", "folder"):
+                    name = unquote(rest[0])
+                    res = hub.repos.fetch(name) if rest[1] == "fetch" else hub.open_repo_folder(name)
+                    if res.get("ok"):
+                        return self._json(res)
+                    return self._json(res, 404 if "unknown repo" in str(res.get("error")) else 409)
+                return self._json({"ok": False, "error": "not found"}, 404)
             if path == "/api/apps/rescan":
                 return self._json({"ok": True, "apps": [a.to_dict() for a in hub.rescan()]})
             if path == "/api/apps/start-all":

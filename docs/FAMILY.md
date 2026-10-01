@@ -62,6 +62,9 @@ contents (16 KB cap). Conventions:
 | `hub.backup.done` / `failed` / `restored` | hub | `snapshot, apps, files, new_bytes` |
 | `hub.rule.ran` / `hub.job.ran` | hub | `rule|job, ok, ms, results` |
 | `hub.lease.granted` / `released` | hub | `lease_id, owner, gpu, vram_mb` |
+| `hub.repos.scan` | hub, after each repository scan | `repos, with_issues, unpushed_total, errors, scan_errors` |
+| `hub.repos.issue` | hub, a repository gained an error-level issue | `repo, kind, severity, text, url` |
+| `hub.repos.fetch` / `push_command` | hub | `repo, ok, error, ms` / `repo, command` |
 | `tantalus.alert` | Tantalus | `event_id, type, severity, title, summary, url, price, currency, confidence, watcher_name` |
 | `phileas.update` | Phileas | `event_id, type, severity, title, summary, url, shipment_id, status, eta_likely, label, carrier, tracking_number` |
 | `phileas.status` | Phileas | `shipment_id, from, to, label, source` |
@@ -94,7 +97,7 @@ clock (`every: "6h"` or `at: "04:00"` + `days`) → `then`. Both live in
 the `hub_rule_*` / `hub_job_*` tools, both record every run as an event
 and in their `last` field.
 
-Five **recommended rules** ship with the hub and are installed together by
+Six **recommended rules** ship with the hub and are installed together by
 the "Install the recommended rules" button (Rules tab) or
 `hub_rule_install_defaults` (`POST /api/rules/install-defaults`, idempotent
 by rule id; `refresh: true` brings an installed rule's `when`/`then` back to
@@ -104,7 +107,10 @@ event (what the daily-recap skill reads); `tantalus.alert` (a confirmed restock,
 price drop, pre-order or new product from Tantalus's Hoard) → a `digest.item`
 with `title, url, watch, kind`; `phileas.update` (any notification of Phileas's Hoard,
 the shipment tracker) → a `digest.item` with `title, url, watch` (the parcel) and `kind`; `cassandra.incident.opened` with
-`to_state: down` and `service_kind: app` → start the app again (cooldown 5 min).
+`to_state: down` and `service_kind: app` → start the app again (cooldown 5 min);
+`hub.repos.issue` (a repository gained an unfinished rebase, a stale `index.lock`, a
+tracked secret or failing CI) → a `digest.item` with `title, url, watch` (the repository)
+and `kind`.
 
 Actions: `{kind: tool, app, tool, args}`, `{kind: hub, tool, args}`,
 `{kind: event, type, data}`, `{kind: start_app|stop_app|restart_app, app}`,

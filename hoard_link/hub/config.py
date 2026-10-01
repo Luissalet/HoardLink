@@ -46,6 +46,9 @@ class HubConfig:
     backup: dict[str, Any] = field(default_factory=dict)     # {dir, exclude: [...], max_file_mb, keep, include_hub}
     events_keep: int = 20000       # rows kept in events.db after a prune
     jobs_enabled: bool = True      # the scheduler thread (rules always run)
+    # The Repos facet (repos.py): {roots, extra, exclude, faustus_dir, portfolio_dir, stray_prefixes,
+    # default_branches, ci, expected_emails}; every key optional.
+    repos: dict[str, Any] = field(default_factory=dict)
     # Per-machine launch commands that replace a manifest's launch hint, keyed by app id:
     # {"writer": {"executable": "node", "argv": ["scripts/dev-desktop.mjs"], "cwd": "{APP_DIR}"}}.
     # For an app this machine runs differently from how it is shipped (a developer build, a
@@ -84,6 +87,10 @@ class HubConfig:
     def backup_dir(self) -> str:
         raw = str((self.backup or {}).get("dir") or "").strip()
         return os.path.abspath(os.path.expanduser(raw)) if raw else os.path.join(self.data_dir, "backups")
+
+    @property
+    def repos_file(self) -> str:
+        return os.path.join(self.data_dir, "repos.json")
 
     @property
     def url_file(self) -> str:
@@ -138,6 +145,8 @@ class HubConfig:
             cfg.jobs_enabled = False
         if not isinstance(cfg.backup, dict):
             cfg.backup = {}
+        if not isinstance(cfg.repos, dict):
+            cfg.repos = {}
         cfg.roots = [os.path.abspath(os.path.expanduser(r)) for r in cfg.roots]
         cfg.icon_dirs = [os.path.abspath(os.path.expanduser(r)) for r in cfg.icon_dirs]
         if not isinstance(cfg.window_size, list) or len(cfg.window_size) != 2:
