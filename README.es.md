@@ -500,7 +500,8 @@ ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
 `hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
-`hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a
+`hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
+`hub_repo_push_command`, `hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a
 Faustus adoptar el hub como a cualquier otra app.
 
 ### La capa de familia (0.4): eventos, reglas, tareas, copias, el proxy
@@ -547,6 +548,24 @@ Herramientas nuevas: `hub_events`, `hub_event_emit`, `hub_event_stats`,
 `hub_backup_verify`, `hub_backup_prune`, `hub_family_audit`. El contrato
 completo (manifiesto, rutas del agente, convenciones de eventos, acciones,
 copia de la librería) está en [docs/FAMILY.md](docs/FAMILY.md).
+
+### Repos (0.5): el estado de todos los repositorios git
+
+La pestaña **Repos** del hub lista los repositorios git que hay junto a las
+apps (y Faustus, y el portfolio) con lo que suele pasar desapercibido:
+commits sin push a ningún remoto, cambios sin commitear, ramas sueltas, una
+copia vendorizada de `hoard_link`, una copia del tema o un manifiesto de
+plugin que se han desviado del canónico, README / LICENSE ausentes, CI
+fallando (con `gh`, si está instalado y con sesión) y ficheros versionados
+que parecen secretos. Al pulsar un repositorio salen sus avisos, los commits
+sin push y los ficheros sucios, y se copia el comando `git push` exacto que
+hay que ejecutar. El hub solo lee: nunca hace push, commit, reset ni
+checkout (`fetch` es la única llamada de red, y solo cuando se pide).
+`hub_repos` y otras cuatro herramientas dan a un agente la misma vista, los
+eventos `hub.repos.scan` / `hub.repos.issue` alimentan reglas, y una regla
+recomendada convierte los problemas nuevos en notas del digest. Ajustes en
+`repos` de `data/hub.json`; la referencia es la sección *Repos* de
+[docs/HUB.md](docs/HUB.md).
 
 ## Uso con Faustus
 
@@ -742,12 +761,14 @@ Windows o en Linux:
 pytest -q
 ```
 
-243 tests, sin conexión (`httpx.MockTransport`), en unos 30 segundos. Los
+381 tests, sin conexión (`httpx.MockTransport`), en aproximadamente un minuto. Los
 únicos sockets reales están en los tests de la fachada síncrona y en los
 del hub, que arrancan servidores HTTP mínimos en puertos efímeros de
 `127.0.0.1` (una app falsa que contesta a `/api/health`, otra que el hub
 arranca y para de verdad, comandos de perfiles y un hub con GPUs falsas
-para el cliente de reservas); los tests del comando TTS usan el propio
+para el cliente de reservas); los tests de Repos ejecutan el `git` real
+sobre repositorios temporales con un repositorio bare como remoto (y un
+ejecutor falso de `gh` para la CI); los tests del comando TTS usan el propio
 intérprete de Python como "binario de TTS". Ningún test necesita red ni descargar un modelo, así
 que la CI (`.github/workflows/ci.yml`: Ubuntu y Windows, Python 3.11 a
 3.13) ejecuta la misma batería sin GPU y sin red.

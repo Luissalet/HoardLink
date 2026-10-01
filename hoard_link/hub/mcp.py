@@ -89,7 +89,9 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
                             "finished transcripts, backups), hub_rule_add automates 'when X then Y' across apps, "
                             "hub_job_add schedules actions, hub_backup_* keeps deduplicated copies of every app's data, "
                             "hub_call_app reaches any app's tool and hub_family_audit checks they all speak the same "
-                            "contract. Use hub_list_apps first to learn the ids.",
+                            "contract. hub_repos reports the state of every git repository (unpushed commits, dirty, stray "
+                            "branches, drifted copies of hoard_link and the theme, CI) — read-only: the hub never pushes. "
+                            "Use hub_list_apps first to learn the ids.",
         }}
     if method == "notifications/initialized" or method == "initialized":
         return None

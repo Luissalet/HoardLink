@@ -286,6 +286,13 @@ def example_rules() -> list[dict[str, Any]]:
          "cooldown_s": 0,
          "note": "Every notification of the shipment tracker (new parcel, on its way, arriving today, ready for pickup, "
                  "delivered, incident, new date) lands as a digest.item event for the daily recap skill."},
+        {"id": "rule-repo-issue-digest", "name": "Repo problem → digest note", "when": {"type": "hub.repos.issue"},
+         "then": [{"kind": "event", "type": "digest.item", "data": {"title": "${event.data.repo}: ${event.data.text}",
+                                                                    "url": "${event.data.url}", "watch": "${event.data.repo}",
+                                                                    "kind": "${event.data.kind}"}}],
+         "cooldown_s": 0,
+         "note": "A repository gained an error-level problem (an unfinished rebase, a stale index.lock, a tracked secret, "
+                 "failing CI): it lands as a digest.item event for the daily recap skill."},
         {"id": "rule-restart-down", "name": "Service down → try a restart",
          "when": {"type": "cassandra.incident.opened", "where": {"data.to_state": "down", "data.service_kind": "app"}},
          "then": [{"kind": "start_app", "app": "${event.data.app}"}], "cooldown_s": 300,

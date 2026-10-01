@@ -23,6 +23,7 @@ from . import actions as _actions, audit as _audit, contract, desktop, procs
 from .backup import BackupStore
 from .events import EventLog
 from .jobs import Scheduler
+from .repos import RepoMonitor, RepoSettings
 from .rules import RuleEngine
 
 BACKENDS_CACHE_S = 8.0
@@ -68,10 +69,21 @@ class Hub:
         bk = self.config.backup or {}
         self.backups = BackupStore(self.config.backup_dir, exclude=list(bk.get("exclude") or []),
                                    max_file_mb=float(bk.get("max_file_mb") or 512))
+        # The Repos facet: reads the family's git repositories, never changes one. Nothing is scanned until
+        # someone asks (the page, a tool, a job); the last snapshot is only loaded from data/repos.json.
+        self.repos = RepoMonitor(self.config.data_dir, self._repo_settings, lambda: self.apps,
+                                 emit=lambda t, d: self.events.emit(t, d, source="hub"),
+                                 lang_fn=lambda: self.config.language)
         procs._protected_pids()  # warm the ancestor list once, off the request path
         self.rescan()
         if self.config.jobs_enabled:
             self.jobs.start()
+
+    def _repo_settings(self) -> RepoSettings:
+        """The Repos facet's settings: ``hub.json`` ``repos`` plus the hub's own roots and Faustus folder."""
+        cfg = RepoSettings.from_config(self.config.repos, self.config.faustus_dir)
+        cfg.roots = [*self.config.roots, *cfg.roots]
+        return cfg
 
     def _lease_event(self, kind: str, lease: dict[str, Any]) -> None:
         try:
@@ -358,6 +370,15 @@ class Hub:
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
         return desktop.open_folder(app.folder)
+
+    def open_repo_folder(self, name: str) -> dict[str, Any]:
+        """Open a scanned repository's folder in the file manager (only ones the Repos facet knows)."""
+        rec, candidates = self.repos.find(name)
+        if rec is None:
+            return {"ok": False, "error": f"unknown repo: {name}", "candidates": candidates}
+        res = desktop.open_folder(rec["path"])
+        res["repo"] = rec["name"]
+        return res
 
     def log_tail(self, app_id: str, lines: int = 80) -> dict[str, Any]:
         app = self.get(app_id)

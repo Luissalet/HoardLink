@@ -12,14 +12,26 @@ and makes it byte-identical to the canonical one. Build folders are skipped.
 from __future__ import annotations
 
 import argparse
-import hashlib
+import importlib.util
 import os
 import sys
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CANON = os.path.join(HERE, "hoard_link", "ui", "hoard-theme.css")
-SKIP = {"node_modules", "dist", "build", ".git", ".venv", "venv", "__pycache__", "data", "release", "dist-electron",
-        "assets"}
+
+
+def _load_drift():
+    """The comparison logic lives in hoard_link/hub/drift.py, shared with the hub's Repos facet (which only
+    reports what this script fixes). Loaded by path: it is standard library only."""
+    spec = importlib.util.spec_from_file_location("hoard_link_drift", os.path.join(HERE, "hoard_link", "hub", "drift.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+drift = _load_drift()
+digest = drift.digest
 
 
 def copies(root: str):
@@ -29,15 +41,7 @@ def copies(root: str):
             continue
         if not os.path.isfile(os.path.join(folder, "faustus-plugin.json")):
             continue
-        for dirpath, dirnames, filenames in os.walk(folder):
-            dirnames[:] = [d for d in dirnames if d not in SKIP]
-            if "hoard-theme.css" in filenames:
-                yield os.path.join(dirpath, "hoard-theme.css")
-
-
-def digest(path: str) -> str:
-    with open(path, "rb") as fh:
-        return hashlib.sha256(fh.read()).hexdigest()
+        yield from drift.theme_copies_in(folder)
 
 
 def main(argv=None) -> int:

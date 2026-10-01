@@ -13,9 +13,12 @@ import time
 from typing import Any, Callable
 
 from .core import Hub
+from .repos import filter_rows
 
 _PROFILE = {"type": "string", "description": "Profile name as listed by hub_profile_list."}
 _APP_ID = {"type": "string", "description": "App id as listed by hub_list_apps (e.g. 'ledger', 'babel')."}
+_REPO = {"type": "string", "description": "Repository folder name as listed by hub_repos (e.g. 'HoardLink'); a unique "
+                                          "fragment such as 'phileas' also works."}
 
 
 def catalogue() -> list[dict[str, Any]]:
@@ -331,6 +334,49 @@ def catalogue() -> list[dict[str, Any]]:
                             "additionalProperties": False},
             "annotations": {"readOnlyHint": True},
         },
+        # -- the Repos facet: the state of every git repository (read-only; the hub never pushes) --
+        {
+            "name": "hub_repos",
+            "description": "State of every git repo: unpushed commits, dirty, stray branches, drift, CI / repos sin push.\n"
+                           "Keywords: repos sin push, commits pendientes, ramas sueltas, deriva de hoard_link, cambios sin "
+                           "commitear, CI fallando. filter: all|issues|unpushed|dirty|drift|ci_failing; text matches name, "
+                           "branch, GitHub slug or issue kind. Compact rows from the cached scan (refreshes in the background). "
+                           "The hub never pushes or changes a repo.",
+            "inputSchema": {"type": "object", "properties": {
+                "filter": {"type": "string", "enum": ["all", "issues", "unpushed", "dirty", "drift", "ci_failing"], "default": "all"},
+                "text": {"type": "string"}}, "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_repo",
+            "description": "One repo in full: issues, unpushed commits, dirty paths, branches, remotes, drift, CI / detalle de un repo.\n"
+                           "Keywords: ramas, commits sin subir, qué falta en este repo. Read-only.",
+            "inputSchema": {"type": "object", "properties": {"name": _REPO}, "required": ["name"], "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_repos_refresh",
+            "description": "Rescan every git repo now (local reads only) / reescanear los repos.\n"
+                           "Keywords: actualizar repos, rescan git. Waits for the scan (wait=false returns at once); CI status "
+                           "keeps arriving afterwards. Emits hub.repos.scan, and hub.repos.issue for each new error-level problem.",
+            "inputSchema": {"type": "object", "properties": {"wait": {"type": "boolean", "default": True}}, "additionalProperties": False},
+        },
+        {
+            "name": "hub_repo_fetch",
+            "description": "git fetch --prune in one repo, then rescan it / traer el remoto de un repo (usa la red).\n"
+                           "Keywords: fetch, actualizar remotos, behind. Only updates remote-tracking refs: never touches the "
+                           "working tree, branches or commits.",
+            "inputSchema": {"type": "object", "properties": {"name": _REPO}, "required": ["name"], "additionalProperties": False},
+            "annotations": {"openWorldHint": True},
+        },
+        {
+            "name": "hub_repo_push_command",
+            "description": "The exact command to push a repo, as text; never run / el comando de push de un repo.\n"
+                           "Keywords: cómo hago push, subir commits. Gives 'git -C \"<path>\" push', or 'push -u origin <branch>' "
+                           "when the branch has no upstream. The hub never pushes: copy it and run it yourself.",
+            "inputSchema": {"type": "object", "properties": {"name": _REPO}, "required": ["name"], "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
         {
             "name": "hub_rescan",
             "description": "Re-read the app folders for new or removed manifests. Keywords: rescan, refresh list, actualizar lista.",
@@ -408,7 +454,30 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
                        for l in rep["apps"]]
         return rep
 
+    def repos_list(a: dict[str, Any]) -> Any:
+        snap = hub.repos.snapshot(block_first=True)
+        rows = filter_rows(snap["repos"], str(a.get("filter") or "all"), str(a.get("text") or ""))
+        return {"ok": True, "age_s": snap["age_s"], "refreshing": snap["refreshing"], "ci_pending": snap["ci_pending"],
+                "summary": snap["summary"], "count": len(rows), "repos": [_compact_repo(r) for r in rows]}
+
+    def repo_detail(a: dict[str, Any]) -> Any:
+        hub.repos.snapshot(block_first=True)
+        res = hub.repos.detail(str(a.get("name") or ""))
+        if not res.get("ok"):
+            return res
+        return {"ok": True, "age_s": res["age_s"], "github_url": res["github_url"], **res["repo"]}
+
+    def repos_refresh(a: dict[str, Any]) -> Any:
+        res = hub.repos.refresh(wait=bool(a.get("wait", True)), timeout=80.0)   # the MCP bridge gives up at 90 s
+        snap = hub.repos.snapshot()
+        return {**res, "summary": snap["summary"], "age_s": snap["age_s"], "ci_pending": snap["ci_pending"]}
+
     return {
+        "hub_repos": repos_list,
+        "hub_repo": repo_detail,
+        "hub_repos_refresh": repos_refresh,
+        "hub_repo_fetch": lambda a: hub.repos.fetch(str(a.get("name") or "")),
+        "hub_repo_push_command": lambda a: hub.repos.push_command(str(a.get("name") or "")),
         "hub_events": events,
         "hub_event_emit": event_emit,
         "hub_event_stats": lambda a: {"ok": True, **hub.events.stats(a.get("since"))},
@@ -463,6 +532,19 @@ def _compact_profiles(st: dict[str, Any]) -> dict[str, Any]:
                           "members": [{k: m.get(k) for k in ("id", "kind", "name", "state")} for m in p["members"]],
                           "desktop": p["desktop"]} for p in st["profiles"]],
             "problems": st.get("problems", [])}
+
+
+def _compact_repo(r: dict[str, Any]) -> dict[str, Any]:
+    """One short row per repository for the agent: what to act on, nothing it can ask for with hub_repo."""
+    return {
+        "name": r["name"], "branch": r["branch"] if not r["detached"] else "(detached)", "github": r["github"],
+        "ahead": r["ahead"], "behind": r["behind"], "unpushed": r["unpushed"], "never_pushed": r["never_pushed"],
+        "dirty": r["dirty"]["total"], "stash": r["stash"], "stray_branches": r["stray_branches"],
+        "ci": r["ci"]["state"], "drift": [k for k in ("vendored", "theme") if r["drift"][k]]
+        + (["manifest:" + r["drift"]["manifest"]] if r["drift"]["manifest"] in ("differs", "invalid", "missing_in_faustus") else []),
+        "issues": [i["kind"] for i in r["issues"]], "errors": [i["kind"] for i in r["issues"] if i["severity"] == "error"],
+        **({"error": r["error"]} if r["error"] else {}),
+    }
 
 
 def _drop_status(res: dict[str, Any]) -> dict[str, Any]:

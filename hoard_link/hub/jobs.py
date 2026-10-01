@@ -325,6 +325,8 @@ def example_jobs() -> list[dict[str, Any]]:
          "then": [{"kind": "hub", "tool": "hub_backup_prune", "args": {"keep": 14}}]},
         {"name": "Rescan the 3D library", "every": "12h",
          "then": [{"kind": "tool", "app": "vulcan", "tool": "models_rescan", "args": {}}]},
+        {"name": "Scan the git repositories", "every": "30m", "then": [{"kind": "hub", "tool": "hub_repos_refresh", "args": {}}],
+         "note": "Keeps the Repos snapshot fresh so hub.repos.issue events fire without the page being open."},
         {"name": "Morning digest event", "at": "08:00", "days": ["weekdays"],
          "then": [{"kind": "event", "type": "digest.wanted", "data": {"date": "${today}"}}],
          "note": "Something (a rule, the assistant) listens for digest.wanted and writes the digest."},

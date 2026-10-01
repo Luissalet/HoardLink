@@ -51,6 +51,7 @@
       <button data-tab="jobs" class="tab"><b data-i18n="f_jobs">Jobs</b> <span id="jobs-badge" class="badge"></span></button>
       <button data-tab="backups" class="tab"><b data-i18n="f_backups">Backups</b> <span id="backups-badge" class="badge"></span></button>
       <button data-tab="audit" class="tab"><b data-i18n="f_audit">Audit</b> <span id="audit-badge" class="badge"></span></button>
+      <button data-tab="repos" class="tab"><b data-i18n="f_repos">Repos</b> <span id="repos-badge" class="badge"></span></button>
     </nav>
     <button id="family-toggle" class="ghost small" aria-expanded="true">▾</button>
   </div>
@@ -98,6 +99,17 @@
       </div>
       <div id="audit-recs" class="recs"></div>
       <div id="audit-table" class="audit"></div>
+    </div>
+    <div id="tab-repos" class="tab-body" hidden>
+      <div class="tab-tools">
+        <span id="repos-summary" class="repo-chips"></span>
+        <button id="repos-refresh" class="primary small" data-i18n="f_repos_refresh">Refresh</button>
+      </div>
+      <div class="tab-tools">
+        <span id="repos-filters" class="repo-chips"></span>
+        <input id="repos-filter" type="search" placeholder="repo, branch, issue…" autocomplete="off" class="narrow">
+      </div>
+      <div id="repos-table" class="audit repos"></div>
     </div>
   </div>
 </section>
@@ -156,6 +168,20 @@
     </div>
   </article>
 </template>
+
+<dialog id="repo-dialog">
+  <div class="dialog-head">
+    <strong id="repo-title"></strong>
+    <div>
+      <button id="repo-copy-push" class="primary small" data-i18n="r_copy_push">Copy push command</button>
+      <button id="repo-fetch" class="ghost small" data-i18n="r_fetch">Fetch</button>
+      <button id="repo-folder" class="ghost small" data-i18n="r_folder">Open folder</button>
+      <a id="repo-github" class="ghost small btn-link" target="_blank" rel="noopener noreferrer" hidden data-i18n="r_github">View on GitHub</a>
+      <button id="repo-close" class="ghost small" data-i18n="close">Close</button>
+    </div>
+  </div>
+  <div id="repo-body" class="repo-body"></div>
+</dialog>
 
 <dialog id="edit-dialog">
   <div class="dialog-head">
