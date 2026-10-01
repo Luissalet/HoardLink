@@ -426,6 +426,26 @@ html[data-hoard-app="links"] {
   --hoard-accent-line: rgba(118, 163, 210, 0.38);
 }
 
+html[data-hoard-app="lumiere"] {
+  --hoard-deep: #1c141c;
+  --hoard-sunken: #161016;
+  --hoard-surface: #241b25;
+  --hoard-elevated: #2f2430;
+  --hoard-hover: #382b39;
+  --hoard-border: #423543;
+  --hoard-border-hover: #69576b;
+  --hoard-text: #ebe1ec;
+  --hoard-text-muted: #bdb4be;
+  --hoard-text-dim: #a59ba6;
+  --hoard-accent: #de6fe8;
+  --hoard-accent-strong: #e692ee;
+  --hoard-accent-dim: #c44bcf;
+  --hoard-accent-ink: #1a131b;
+  --hoard-accent-rgb: 222, 111, 232;
+  --hoard-accent-soft: rgba(222, 111, 232, 0.14);
+  --hoard-accent-line: rgba(222, 111, 232, 0.38);
+}
+
 html[data-hoard-app="mercator"] {
   --hoard-deep: #141b1d;
   --hoard-sunken: #0f1517;
