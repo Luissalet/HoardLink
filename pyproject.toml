@@ -29,6 +29,7 @@ include = ["hoard_link*"]
 
 [tool.setuptools.package-data]
 "hoard_link.hub" = ["ui/*"]
+"hoard_link" = ["ui/*.css"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
