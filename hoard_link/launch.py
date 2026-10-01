@@ -471,6 +471,13 @@ class Launcher:
         extra = cfg.get("args") or []
         if isinstance(extra, str):
             extra = shlex.split(extra, posix=not IS_WIN)
+        # With "fast disk" a model bigger than the free VRAM is read back from
+        # the disk on every step (a 15 GB video model then takes minutes per
+        # step); offloading over RAM is several times faster. Opt back in with
+        # "--fast-disk" in comfyui.args.
+        if ("--disable-fast-disk" in flags and "--fast-disk" not in extra
+                and "--disable-fast-disk" not in extra):
+            argv.append("--disable-fast-disk")
         argv += [str(a) for a in extra]
         svc.argv, svc.cwd, svc.install = argv, str(folder), str(folder)
         svc.env = {"CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
