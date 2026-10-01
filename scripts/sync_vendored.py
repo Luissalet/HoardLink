@@ -117,6 +117,8 @@ def main() -> int:
         for folder in sorted(Path(root).iterdir()):
             if not folder.is_dir() or folder.resolve() == REPO.resolve():
                 continue
+            if folder.name.startswith(("_", ".")):  # _archivo, _tmp, .cache: archived or scratch, never an app
+                continue
             manifest = folder / "faustus-plugin.json"
             app_id = folder.name.lower()
             if manifest.is_file():
