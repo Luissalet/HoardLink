@@ -79,6 +79,24 @@ def test_comfy_flags_only_when_the_install_knows_them(home, tmp_path):
     assert "--database-url" not in svc.argv and "--preview-method" not in svc.argv
 
 
+def test_comfy_offloads_over_ram_not_disk(home, tmp_path):
+    # with fast disk, a model bigger than the free VRAM is re-read from disk
+    # on every step; the launcher turns it off unless the config asks for it
+    folder = _fake_comfy(tmp_path, flags=("--cuda-device", "--disable-fast-disk", "--fast-disk"))
+    ln = Launcher()
+    ln.set_config({"comfyui": {"dir": str(folder)}})
+    assert ln.comfy_service(8189).argv.count("--disable-fast-disk") == 1
+    ln.set_config({"comfyui": {"dir": str(folder), "args": ["--fast-disk"]}})
+    assert "--disable-fast-disk" not in ln.comfy_service(8189).argv
+    ln.set_config({"comfyui": {"dir": str(folder), "args": ["--disable-fast-disk"]}})
+    assert ln.comfy_service(8189).argv.count("--disable-fast-disk") == 1
+    old = _fake_comfy(tmp_path / "old", flags=("--cuda-device",))
+    older = Launcher()
+    older.set_config({"comfyui": {"dir": str(old), "args": []}})
+    assert older.comfy_install()[0] == old
+    assert "--disable-fast-disk" not in older.comfy_service(8189).argv
+
+
 def test_comfy_found_through_env(home, tmp_path, monkeypatch):
     folder = _fake_comfy(tmp_path)
     monkeypatch.setenv("COMFYUI_DIR", str(folder))
