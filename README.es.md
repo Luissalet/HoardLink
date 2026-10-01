@@ -321,6 +321,39 @@ entorno; el hub lo relee en cada reescaneo y `/api/apps` enseña
 puede ser una lista que se prueba en orden (primero una copia instalada en
 `%LOCALAPPDATA%`, después una compilación del repositorio).
 
+### Hoard Window y el tema compartido
+
+Todas las apps de la familia comparten un aspecto — superficies carbón
+teñidas con el color de la app, el nombre en una serif con su acento, una
+barra lateral de 220 px bajo una fila de marca de 64 px, tarjetas con borde,
+un acento por app — y se abren como el mismo tipo de ventana de escritorio.
+
+* **`hoard_link/ui/hoard-theme.css`** — los tokens compartidos
+  (`--hoard-deep`, `--hoard-surface`, `--hoard-elevated`, `--hoard-border`,
+  `--hoard-text`, `--hoard-accent`, `--hoard-accent-ink`, radios, fuentes…)
+  con una paleta por app bajo `html[data-hoard-app="<id>"]`. Lo genera
+  `scripts/hoard_palettes.py` (el acento de cada app es el color de su
+  dragón) y se copia idéntico en cada app; `python scripts/sync_theme.py`
+  refresca todas las copias y `--check` lista las desfasadas. Cada app lo
+  carga antes de su CSS, pone `data-hoard-app` y un `theme-color` en
+  `<html>` y apunta sus variables a los tokens. El hub lo sirve en
+  `/ui/hoard-theme.css` y lo usa él mismo.
+* **`shell/` — Hoard Window**, un pequeño programa Electron común a todas
+  las apps (`npm install` una vez dentro de `shell/`). La ventana no tiene
+  marco nativo: una barra de 36 px arriba toma los colores de la página
+  (`--hoard-deep`, si no `theme-color`, si no el fondo del body) y Windows
+  dibuja encima los botones reales de minimizar / maximizar / cerrar, así
+  que los diseños de Snap y arrastrar para mover siguen siendo nativos. El
+  menú ☰ tiene recargar, atrás/adelante, inicio, zoom, abrir en el
+  navegador, copiar dirección, siempre encima y herramientas de
+  desarrollo. Cada app tiene su perfil (`data/profiles/<id>`), su grupo e
+  icono en la barra de tareas; tamaño, posición y zoom se recuerdan por
+  app; los enlaces del mismo origen se quedan en la ventana y el resto van
+  al navegador. `window_engine` en `data/hub.json` (`auto` | `shell` |
+  `chromium`, o `HOARD_HUB_WINDOW_ENGINE`) elige la ruta; `auto` usa el
+  shell siempre que exista `shell/node_modules/electron`. Ver
+  [`shell/README.md`](shell/README.md).
+
 ### Arrancar al iniciar sesión (Windows)
 
 ```powershell

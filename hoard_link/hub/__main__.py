@@ -45,8 +45,10 @@ def _open_own_window(cfg: HubConfig, mode: str) -> Optional[int]:
     if mode == "browser":
         desktop.open_in_browser(cfg.url)
         return None
+    icon = os.path.join(os.path.dirname(desktop.SHELL_DIR), "app-icon.png")
     res = desktop.open_window(cfg.url, "_hub", cfg.profiles_dir, browser=cfg.browser,
-                              size=(int(cfg.window_size[0]), int(cfg.window_size[1])))
+                              size=(int(cfg.window_size[0]), int(cfg.window_size[1])),
+                              engine=cfg.window_engine, name="Hoard Hub", icon=icon)
     return res.get("pid") if res.get("ok") and res.get("mode") == "app-window" else None
 
 

@@ -201,7 +201,8 @@ class Hub:
             "faustus": faustus,
             "profiles": profiles["profiles"],
             "hub": {"url": self.config.url, "data_dir": self.config.data_dir, "uptime_s": int(time.time() - self.started_at),
-                    "browser": desktop.find_browser(self.config.browser), "psutil": procs._psutil() is not None,
+                    "browser": desktop.find_browser(self.config.browser),
+                    "window_engine": desktop.window_engine(self.config.window_engine), "psutil": procs._psutil() is not None,
                     "events": self.events.last_id, "rules": len(self.rules.rules), "jobs": len(self.jobs.jobs),
                     "backup_dir": self.backups.root},
         }
@@ -340,7 +341,8 @@ class Hub:
             res = desktop.open_in_browser(app.url)
         else:
             res = desktop.open_window(app.url, app.id, self.config.profiles_dir, browser=self.config.browser,
-                                      size=(int(self.config.window_size[0]), int(self.config.window_size[1])))
+                                      size=(int(self.config.window_size[0]), int(self.config.window_size[1])),
+                                      engine=self.config.window_engine, name=app.name, icon=app.icon_path)
         res["app"] = app_id
         if started:
             res["started"] = started

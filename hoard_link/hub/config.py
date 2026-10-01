@@ -37,6 +37,7 @@ class HubConfig:
     faustus_python: Optional[str] = None
     faustus_urls: list[str] = field(default_factory=lambda: ["http://127.0.0.1:7000", "http://127.0.0.1:7001"])
     browser: str = "auto"          # auto | edge | chrome | chromium | <path to a Chromium exe>
+    window_engine: str = "auto"    # auto (Hoard Window shell when installed) | shell | chromium
     window_size: list[int] = field(default_factory=lambda: [1280, 860])
     exit_with_window: bool = True
     language: str = "auto"         # auto | en | es
@@ -127,6 +128,8 @@ class HubConfig:
             cfg.faustus_python = env["HOARD_HUB_FAUSTUS_PYTHON"]
         if env.get("HOARD_HUB_BROWSER"):
             cfg.browser = env["HOARD_HUB_BROWSER"]
+        if env.get("HOARD_HUB_WINDOW_ENGINE"):
+            cfg.window_engine = env["HOARD_HUB_WINDOW_ENGINE"]
         if env.get("HOARD_HUB_LANGUAGE"):
             cfg.language = env["HOARD_HUB_LANGUAGE"]
         if env.get("HOARD_HUB_BACKUP_DIR"):

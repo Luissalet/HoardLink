@@ -147,7 +147,7 @@
     foot.innerHTML = "";
     const bits = [
       `${t("hub")} ${h.url || ""} · v${snapshot.version}`,
-      `${t("browser")}: ${h.browser ? h.browser.split(/[\\/]/).pop() : t("none")}`,
+      `${t("browser")}: ${h.window_engine === "shell" ? "Hoard Window" : (h.browser ? h.browser.split(/[\\/]/).pop() : t("none"))}`,
       `${(snapshot.roots || []).join(" ; ")}`,
     ];
     if (h.psutil === false) bits.push("⚠ " + t("psutil_missing"));

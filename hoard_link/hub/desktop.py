@@ -10,6 +10,15 @@ directory in the command line) and close, instead of a tab handed to
 whatever browser was already open. The first launch of a profile is a
 little slower; afterwards the profile remembers the window size.
 
+When the Hoard Window shell is installed (``<repo>/shell``, one
+``npm install`` there), windows open in it instead: an Electron window
+with an integrated 36 px title bar in the app's own colours and the native
+caption buttons drawn over it — the same chrome Writer's Hoard has. The
+shell is found by ``find_shell``; the hub's ``window_engine`` setting
+(``auto`` | ``shell`` | ``chromium``) picks between the two routes. Both
+carry the same ``--user-data-dir=<data>/profiles/<id>`` flag, so finding
+and closing windows works the same way for either.
+
 ``pywebview`` is used for the hub's own window when it is installed
 (``pip install hoard-link[desktop]``); the app windows always use the
 Chromium ``--app`` route, because a pywebview window has to live on the
@@ -55,7 +64,34 @@ _MAC_CANDIDATES = {
     "brave": ["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
 }
 _ORDER = ("edge", "chrome", "chromium", "brave")
-_BROWSER_NAMES = ("msedge", "chrome", "chromium", "brave")
+_BROWSER_NAMES = ("msedge", "chrome", "chromium", "brave", "electron")
+
+#: The Hoard Window shell: ``<repo>/shell`` next to the ``hoard_link`` package.
+SHELL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "shell")
+
+
+def find_shell(shell_dir: Optional[str] = None) -> Optional[tuple[str, str]]:
+    """``(electron_exe, shell_dir)`` when the Hoard Window shell is
+    installed, else None. ``HOARD_WINDOW_SHELL`` overrides the folder."""
+    folder = shell_dir or os.environ.get("HOARD_WINDOW_SHELL") or SHELL_DIR
+    if not os.path.isfile(os.path.join(folder, "main.cjs")):
+        return None
+    dist = os.path.join(folder, "node_modules", "electron", "dist")
+    if sys.platform.startswith("win"):
+        exe = os.path.join(dist, "electron.exe")
+    elif sys.platform == "darwin":
+        exe = os.path.join(dist, "Electron.app", "Contents", "MacOS", "Electron")
+    else:
+        exe = os.path.join(dist, "electron")
+    return (exe, folder) if os.path.isfile(exe) else None
+
+
+def window_engine(preference: str = "auto") -> str:
+    """Which route ``open_window`` takes: ``shell`` or ``chromium``."""
+    pref = (preference or "auto").strip().lower()
+    if pref == "chromium":
+        return "chromium"
+    return "shell" if find_shell() else "chromium"
 
 
 def find_browser(preference: str = "auto") -> Optional[str]:
@@ -86,10 +122,17 @@ def profile_dir(profiles_root: str, app_id: str) -> str:
 
 
 def open_window(
-    url: str, app_id: str, profiles_root: str, *, browser: str = "auto", size: tuple[int, int] = (1280, 860)
+    url: str, app_id: str, profiles_root: str, *, browser: str = "auto", size: tuple[int, int] = (1280, 860),
+    engine: str = "auto", name: str = "", icon: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Open ``url`` as a Chromium ``--app`` window with its own profile.
-    Falls back to the default browser (a tab) when no Chromium is found."""
+    """Open ``url`` as a desktop window with its own profile: the Hoard
+    Window shell when installed (``engine`` auto/shell), else a Chromium
+    ``--app`` window. Falls back to the default browser (a tab) when
+    neither exists."""
+    if window_engine(engine) == "shell":
+        res = _open_shell_window(url, app_id, profiles_root, size=size, name=name, icon=icon)
+        if res.get("ok"):
+            return res
     exe = find_browser(browser)
     if exe is None:
         opened = webbrowser.open(url)
@@ -110,6 +153,33 @@ def open_window(
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"could not open the window: {exc}"}
     return {"ok": True, "mode": "app-window", "pid": proc.pid, "browser": exe, "profile": profile}
+
+
+def _open_shell_window(url: str, app_id: str, profiles_root: str, *, size: tuple[int, int], name: str,
+                       icon: Optional[str]) -> dict[str, Any]:
+    found = find_shell()
+    if found is None:
+        return {"ok": False, "error": "Hoard Window shell not installed"}
+    exe, folder = found
+    profile = profile_dir(profiles_root, app_id)
+    os.makedirs(profile, exist_ok=True)
+    cmd = [exe, folder, f"--hoard-url={url}", f"--hoard-id={app_id}", f"--hoard-name={name or app_id}",
+           f"--hoard-size={size[0]}x{size[1]}", f"--user-data-dir={profile}"]
+    if icon and os.path.isfile(icon) and icon.lower().endswith((".png", ".ico", ".jpg", ".jpeg")):
+        cmd.append(f"--hoard-icon={icon}")
+    kwargs: dict[str, Any] = {}
+    if sys.platform.startswith("win"):
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    env = dict(os.environ)
+    env.pop("ELECTRON_RUN_AS_NODE", None)
+    try:
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                env=env, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"could not open the window: {exc}"}
+    return {"ok": True, "mode": "app-window", "engine": "shell", "pid": proc.pid, "browser": exe, "profile": profile}
 
 
 #: Chromium/Edge features that only get in the way of an app window: the

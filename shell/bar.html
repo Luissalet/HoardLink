@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'self'">
+<title>bar</title>
+<style>
+  :root { --bg: #17191a; --fg: #eeeae2; --muted: #babcb6; --accent: #d5b575; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg); color: var(--muted);
+    font: 12px/1 'Segoe UI', system-ui, sans-serif;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 150px 0 12px; box-sizing: border-box;
+    -webkit-app-region: drag; app-region: drag; user-select: none;
+    position: relative;
+  }
+  body.mac { padding-left: 80px; padding-right: 12px; }
+  button {
+    -webkit-app-region: no-drag; app-region: no-drag;
+    width: 28px; height: 28px; display: grid; place-items: center;
+    border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: default;
+  }
+  button:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  #status { margin-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status.error { color: #e07a6e; }
+  #load {
+    position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--accent);
+    opacity: 0; transition: opacity .2s;
+  }
+  #load.on { opacity: .9; animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { 0% { left: 0; width: 0; } 50% { left: 20%; width: 45%; } 100% { left: 100%; width: 0; } }
+</style>
+</head>
+<body>
+  <button id="menu" type="button" title="Menú" aria-label="Menú" aria-haspopup="menu">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+  <span id="status"></span>
+  <div id="load"></div>
+  <script src="bar.js"></script>
+</body>
+</html>
