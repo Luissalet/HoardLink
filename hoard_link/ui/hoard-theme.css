@@ -366,6 +366,26 @@ html[data-hoard-app="jobhunter"] {
   --hoard-accent-line: rgba(232, 168, 60, 0.38);
 }
 
+html[data-hoard-app="kafka"] {
+  --hoard-deep: #1c1c14;
+  --hoard-sunken: #161610;
+  --hoard-surface: #24241b;
+  --hoard-elevated: #2f2f25;
+  --hoard-hover: #38382b;
+  --hoard-border: #424335;
+  --hoard-border-hover: #6a6a58;
+  --hoard-text: #ecece1;
+  --hoard-text-muted: #bebeb4;
+  --hoard-text-dim: #a6a69b;
+  --hoard-accent: #a8aa5c;
+  --hoard-accent-strong: #b6b877;
+  --hoard-accent-dim: #7c7e4b;
+  --hoard-accent-ink: #1a1b13;
+  --hoard-accent-rgb: 168, 170, 92;
+  --hoard-accent-soft: rgba(168, 170, 92, 0.14);
+  --hoard-accent-line: rgba(168, 170, 92, 0.38);
+}
+
 html[data-hoard-app="laplace"] {
   --hoard-deep: #191c14;
   --hoard-sunken: #141610;
