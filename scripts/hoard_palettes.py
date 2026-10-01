@@ -31,6 +31,7 @@ PALETTES: dict[str, tuple[str, float | None, float]] = {
     "laplace":      ("#97c854", None, 0.16),
     "ledger":       ("#cfa660", None, 0.144),
     "links":        ("#76a3d2", None, 0.192),
+    "lumiere":      ("#de6fe8", None, 0.176),
     "mercator":     ("#36bbdb", None, 0.192),
     "midas":        ("#e0bd4b", None, 0.16),
     "nightingale":  ("#de8396", None, 0.16),
