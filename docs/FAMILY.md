@@ -63,6 +63,8 @@ contents (16 KB cap). Conventions:
 | `hub.rule.ran` / `hub.job.ran` | hub | `rule|job, ok, ms, results` |
 | `hub.lease.granted` / `released` | hub | `lease_id, owner, gpu, vram_mb` |
 | `tantalus.alert` | Tantalus | `event_id, type, severity, title, summary, url, price, currency, confidence, watcher_name` |
+| `phileas.update` | Phileas | `event_id, type, severity, title, summary, url, shipment_id, status, eta_likely, label, carrier, tracking_number` |
+| `phileas.status` | Phileas | `shipment_id, from, to, label, source` |
 | `cassandra.incident.opened` / `closed` | Cassandra | `incident_id, app, service_kind (app\|external\|user), to_state, probable_cause` |
 
 Reading: `GET /api/events?since_id=&type=links.*&source=&since=&until=&text=&limit=`
@@ -92,7 +94,7 @@ clock (`every: "6h"` or `at: "04:00"` + `days`) → `then`. Both live in
 the `hub_rule_*` / `hub_job_*` tools, both record every run as an event
 and in their `last` field.
 
-Four **recommended rules** ship with the hub and are installed together by
+Five **recommended rules** ship with the hub and are installed together by
 the "Install the recommended rules" button (Rules tab) or
 `hub_rule_install_defaults` (`POST /api/rules/install-defaults`, idempotent
 by rule id; `refresh: true` brings an installed rule's `when`/`then` back to
@@ -100,7 +102,8 @@ the current template without touching what you set — enabled, cooldown):
 `hub.app.stopped` → backup of that app; `links.watch.new` → a `digest.item`
 event (what the daily-recap skill reads); `tantalus.alert` (a confirmed restock,
 price drop, pre-order or new product from Tantalus's Hoard) → a `digest.item`
-with `title, url, watch, kind`; `cassandra.incident.opened` with
+with `title, url, watch, kind`; `phileas.update` (any notification of Phileas's Hoard,
+the shipment tracker) → a `digest.item` with `title, url, watch` (the parcel) and `kind`; `cassandra.incident.opened` with
 `to_state: down` and `service_kind: app` → start the app again (cooldown 5 min).
 
 Actions: `{kind: tool, app, tool, args}`, `{kind: hub, tool, args}`,

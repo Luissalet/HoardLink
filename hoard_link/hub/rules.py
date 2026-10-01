@@ -279,6 +279,13 @@ def example_rules() -> list[dict[str, Any]]:
          "cooldown_s": 0,
          "note": "A confirmed restock, price drop, pre-order or new product from the product watcher lands as a digest.item "
                  "event, next to the watched links, for the daily recap skill."},
+        {"id": "rule-shipment-digest", "name": "Shipment news → digest note", "when": {"type": "phileas.update"},
+         "then": [{"kind": "event", "type": "digest.item", "data": {"title": "${event.data.title}", "url": "${event.data.url}",
+                                                                    "watch": "${event.data.label}",
+                                                                    "kind": "${event.data.type}"}}],
+         "cooldown_s": 0,
+         "note": "Every notification of the shipment tracker (new parcel, on its way, arriving today, ready for pickup, "
+                 "delivered, incident, new date) lands as a digest.item event for the daily recap skill."},
         {"id": "rule-restart-down", "name": "Service down → try a restart",
          "when": {"type": "cassandra.incident.opened", "where": {"data.to_state": "down", "data.service_kind": "app"}},
          "then": [{"kind": "start_app", "app": "${event.data.app}"}], "cooldown_s": 300,
