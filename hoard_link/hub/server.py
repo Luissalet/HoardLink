@@ -71,6 +71,8 @@ from .events import event_types_help
 
 logger = logging.getLogger("hoard_hub")
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
+#: The family's shared theme (hoard_link/ui/hoard-theme.css), served as /ui/hoard-theme.css.
+THEME_CSS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "hoard-theme.css")
 MAX_BODY = 256 * 1024
 
 
@@ -237,6 +239,8 @@ class _HubHandler(BaseHTTPRequestHandler):
         try:
             if path == "/":
                 return self._file(os.path.join(UI_DIR, "index.html"))
+            if path == "/ui/hoard-theme.css":
+                return self._file(THEME_CSS, cache=False)
             if path.startswith("/ui/"):
                 rel = os.path.normpath(path[4:]).replace("\\", "/")
                 if rel.startswith("..") or rel.startswith("/"):
@@ -304,6 +308,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 cfg = hub.config.to_dict()
                 cfg["browser_found"] = desktop.find_browser(hub.config.browser)
                 cfg["native_window"] = desktop.hub_window_native_available()
+                cfg["window_engine_used"] = desktop.window_engine(hub.config.window_engine)
                 return self._json(cfg)
             if path == "/api/agent/tools":
                 if not self._agent_ok():
