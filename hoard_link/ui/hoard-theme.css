@@ -526,6 +526,26 @@ html[data-hoard-app="people"] {
   --hoard-accent-line: rgba(214, 144, 95, 0.38);
 }
 
+html[data-hoard-app="phileas"] {
+  --hoard-deep: #141c1b;
+  --hoard-sunken: #101615;
+  --hoard-surface: #1b2423;
+  --hoard-elevated: #252f2e;
+  --hoard-hover: #2b3836;
+  --hoard-border: #354341;
+  --hoard-border-hover: #586a68;
+  --hoard-text: #e1eceb;
+  --hoard-text-muted: #b4bebc;
+  --hoard-text-dim: #9ba6a5;
+  --hoard-accent: #3fbfae;
+  --hoard-accent-strong: #5dcabb;
+  --hoard-accent-dim: #3a877d;
+  --hoard-accent-ink: #131b1a;
+  --hoard-accent-rgb: 63, 191, 174;
+  --hoard-accent-soft: rgba(63, 191, 174, 0.14);
+  --hoard-accent-line: rgba(63, 191, 174, 0.38);
+}
+
 html[data-hoard-app="platos"] {
   --hoard-deep: #14141d;
   --hoard-sunken: #100f17;
