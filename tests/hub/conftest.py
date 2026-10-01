@@ -67,6 +67,25 @@ class _FakeApp(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+try:
+    import psutil  # noqa: F401
+    _HAS_PSUTIL = True
+except ImportError:
+    _HAS_PSUTIL = False
+
+
+def pytest_collection_modifyitems(config, items):
+    """Without psutil the hub refuses to stop what it starts, so these tests would leave
+    their test servers running; psutil is part of the hub and dev extras."""
+    if _HAS_PSUTIL:
+        return
+    here = Path(__file__).resolve().parent
+    skip = pytest.mark.skip(reason="the hub needs psutil to stop what it starts (pip install -e .[dev])")
+    for item in items:
+        if here in Path(str(item.fspath)).resolve().parents:
+            item.add_marker(skip)
+
+
 @pytest.fixture
 def fake_app():
     """Yields ``(port, server)`` of a tiny server answering as ``fake-hoard``."""
