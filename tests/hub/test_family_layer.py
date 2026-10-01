@@ -334,12 +334,12 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     assert body["ok"]
     # the recommended rules: installed together, idempotently, every one valid
     status, body = _http(url + "/api/rules/install-defaults", {})
-    assert status == 200 and body["ok"] and len(body["installed"]) == 4 and body["already_present"] == []
+    assert status == 200 and body["ok"] and len(body["installed"]) == 5 and body["already_present"] == []
     ids = {r["id"] for r in body["rules"]}
-    assert {"rule-backup-on-stop", "rule-watch-digest", "rule-watcher-alert-digest", "rule-restart-down"} <= ids
+    assert {"rule-backup-on-stop", "rule-watch-digest", "rule-watcher-alert-digest", "rule-shipment-digest", "rule-restart-down"} <= ids
     res = tools.call(hub, "hub_rule_install_defaults", {})
-    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 4 and res["refreshed"] == []
-    assert len(hub.rules.list()) == 4
+    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 5 and res["refreshed"] == []
+    assert len(hub.rules.list()) == 5
     # a template that moved on: refresh brings when/then back, keeps what the user set
     hub.rules.update("rule-restart-down", {"when": {"type": "cassandra.incident.opened"}, "enabled": False, "cooldown_s": 42})
     res = tools.call(hub, "hub_rule_install_defaults", {"refresh": True})
@@ -350,6 +350,8 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     hub.rules.clear_history() if hasattr(hub.rules, "clear_history") else None
     status, body = _http(url + "/api/rules/rule-watch-digest/test", {"type": "links.watch.new"})
     assert body["matches"] and body["matches"][0]["id"] == "rule-watch-digest"
+    status, body = _http(url + "/api/rules/rule-shipment-digest/test", {"type": "phileas.update"})
+    assert body["matches"] and body["matches"][0]["id"] == "rule-shipment-digest"
     status, body = _http(url + "/api/rules/rule-watcher-alert-digest/test", {"type": "tantalus.alert"})
     assert body["matches"] and body["matches"][0]["id"] == "rule-watcher-alert-digest"
     alert = {"type": "tantalus.alert", "source": "tantalus", "data": {"title": "Restock: Box", "url": "https://shop.example/box",
