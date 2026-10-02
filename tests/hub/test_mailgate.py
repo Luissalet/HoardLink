@@ -229,9 +229,10 @@ def test_disabled_gateway_never_runs_the_helper(gate):
     assert gate.status()["ready"] is False and gate.status()["enabled"] is False
 
 
-def test_status_without_faustus(hub):
+def test_status_without_faustus(hub, monkeypatch):
     g = hub.facet("mailgate")
     hub.config.faustus_dir = None
+    monkeypatch.setattr(g, "faustus_dir", lambda: None)
     g.background = False
     st = g.status()
     assert st["ok"] and st["configured"] is False and st["counts"]["total"] == 0

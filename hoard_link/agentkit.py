@@ -28,7 +28,7 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Sequence, Union
 from . import family
 from .tokens import check_bearer
 
-__all__ = ["Tool", "ann", "Empty", "tool_catalog", "call_tool", "cap_result", "uncapped", "confirm", "AppError",
+__all__ = ["Tool", "ann", "Empty", "tool_catalog", "call_tool", "cap_result", "uncapped", "is_uncapped", "confirm", "AppError",
            "UnknownTool", "format_issues", "issues_of", "make_agent_router", "MAX_RESULT_BYTES"]
 
 MAX_RESULT_BYTES = 20_000
@@ -95,6 +95,7 @@ class Tool:
     annotations: Mapping[str, bool]
     run: Callable[[Any, Any], Any]
     timeout_s: Optional[float] = None
+    capped: bool = True
 
 
 def ann(read_only: bool = False, destructive: bool = False, idempotent: Optional[bool] = None,
@@ -180,7 +181,7 @@ def call_tool(tools: Union[Sequence[Tool], Mapping[str, Tool]], ctx: Any, name: 
         result = {"result": result}
     if post is not None:
         result = post(result, args)
-    if cap:
+    if cap and tool.capped:
         result = cap_result(result)
     return result
 
@@ -188,6 +189,11 @@ def call_tool(tools: Union[Sequence[Tool], Mapping[str, Tool]], ctx: Any, name: 
 # ------------------------------------------------------------------------------------------------ result cap
 
 _UNCAPPED: contextvars.ContextVar[bool] = contextvars.ContextVar("hoard_link_uncapped", default=False)
+
+
+def is_uncapped() -> bool:
+    """Whether this call belongs to the web UI's uncapped result context."""
+    return _UNCAPPED.get()
 
 
 @contextlib.contextmanager
@@ -345,6 +351,12 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
             message = str(error.args[0]) if error.args else "Not found."
             outcome["error"] = message
             return JSONResponse({"error": message, "code": "not_found"}, status_code=404)
+        except LookupError as error:
+            outcome["error"] = str(error)
+            return JSONResponse({"error": str(error), "code": "not_found"}, status_code=404)
+        except PermissionError as error:
+            outcome["error"] = str(error)
+            return JSONResponse({"error": str(error), "code": "forbidden"}, status_code=403)
         except ValidationError as error:
             message = format_issues(error)
             outcome["error"] = message

@@ -27,8 +27,8 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from hoard_link.text import fold
-from hoard_link.tracking import ups_valid
+from .text import fold
+from .tracking import ups_valid
 
 __all__ = [
     "DATA", "MERCHANTS", "lookup", "merchant_id", "merchant_key", "plain_key", "merchant_tokens", "merchant_similar",

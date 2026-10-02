@@ -1,4 +1,4 @@
-# The commons (HoardLink 0.8)
+# The commons (HoardLink 0.8.1)
 
 The Hoard apps grew by copying each other: a page fetcher here, an ffmpeg finder there, a money parser in
 four flavours. Since 0.8 that code lives once, in this repository, and every app vendors it with the rest of
@@ -27,6 +27,12 @@ Two shapes:
 | Mail, notifications, agenda, references | — | hub facets | `fam_mail`, `fam_notify`, `fam_agenda`, `fam_refs` |
 
 ## Rules for code in the commons
+
+The Windows follow-up in 0.8.1 adds per-tool result cap opt-out, explicit direct-route authentication,
+http.server and WSGI guard adapters, agenda deduplication by owner, and Windows-safe test helpers.
+The Hub's **Services** tab checks the owners' tool catalogues without loading their models.
+An optional, initially disabled rule connects completed audio downloads to Funes and a transcript collection in Borges.
+See [the service contract](commons/services.md#11-hub-service-discovery-and-media-imports).
 
 1. **Importing never needs more than the standard library.** Optional dependencies (`httpx`, `bs4`,
    `playwright`, `PIL`, `numpy`, `faster_whisper` …) are imported inside the functions that need them, and a

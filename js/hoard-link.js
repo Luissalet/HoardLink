@@ -30,7 +30,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-export const FAMILY_VERSION = "0.8.0";
+export const FAMILY_VERSION = "0.8.1";
 const DEFAULT_URL = "http://127.0.0.1:8810";
 
 const state = { app: "", tokenFile: "", hub: null, enabled: true, sent: 0, dropped: 0, lastError: "" };
@@ -640,14 +640,14 @@ const callValue = (v) => { try { return typeof v === "function" ? v() : v; } cat
 /** The Faustus folder (the one with mcp_servers/email_server.py) or null. First hit wins: `setting` (a path or a function), the
  *  environment (FAUSTUS_DIR, HOARD_FAUSTUS_DIR, HOARD_HUB_FAUSTUS_DIR), a `faustus` folder next to this file, the app that vendors it or any
  *  folder above (five levels), the usual places (D:\LocalAI\faustus, ~/faustus ...), then `extra`. Sync; the hub's own hint is faustusHubHint(). */
-export function faustusDir(setting = null, { env = process.env, extra = [] } = {}) {
+export function faustusDir(setting = null, { env = process.env, extra = [], searchParents = true, commonPaths = COMMON_FAUSTUS_PATHS } = {}) {
   const candidates = [callValue(setting), ...FAUSTUS_ENV.map((k) => env[k])].filter(nonEmpty).map(expandHome);
   let dir = path.dirname(fileURLToPath(import.meta.url));
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; searchParents && i < 5; i += 1) {
     dir = path.dirname(dir);
     candidates.push(path.join(dir, "faustus"), path.join(dir, "Faustus"));
   }
-  candidates.push(...COMMON_FAUSTUS_PATHS.map(expandHome), ...extra.filter(nonEmpty).map(expandHome));
+  candidates.push(...commonPaths.map(expandHome), ...extra.filter(nonEmpty).map(expandHome));
   for (const c of candidates) if (isFile(path.join(c, "mcp_servers", "email_server.py"))) return path.resolve(c);
   return null;
 }
@@ -668,9 +668,9 @@ export function faustusPython(root, setting = null, { env = process.env } = {}) 
 /** A runHelper(action, payload, timeoutMs) that runs the Python mail helper with Faustus's Python (no console window). Never rejects:
  *  { ok: false, error } when Faustus or its Python is missing, the helper times out or answers nothing. Options: helperPath (the vendored
  *  mail_helper.py), setting (Faustus's folder), owner, python, env, envDropPrefixes (the app's own secrets), spawnFn (tests). */
-export function spawnHelperRunner({ helperPath, setting = null, owner = null, python = null, env = process.env, envDropPrefixes = [], spawnFn = spawn } = {}) {
+export function spawnHelperRunner({ helperPath, setting = null, owner = null, python = null, env = process.env, envDropPrefixes = [], discovery = {}, spawnFn = spawn } = {}) {
   return async function runHelper(action, payload = {}, timeoutMs = 180_000) {
-    const root = faustusDir(setting, { env });
+    const root = faustusDir(setting, { ...discovery, env });
     if (!root) return { ok: false, error: "Faustus folder not found (set it in the app's mail settings, or FAUSTUS_DIR)" };
     const py = faustusPython(root, python, { env });
     if (!py) return { ok: false, error: "Faustus has no venv with Python" };

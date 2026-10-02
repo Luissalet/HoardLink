@@ -423,7 +423,7 @@ def test_exe_names_on_windows(monkeypatch):
 # -- reveal -------------------------------------------------------------------------------------------------
 
 def test_reveal_command_windows_is_an_argument_list(tmp_path):
-    f = tmp_path / 'My "odd" file, 1.txt'
+    f = tmp_path / 'My odd file, 1.txt'
     f.write_text("x")
     assert proc.reveal_command(f, platform="win32") == ["explorer.exe", "/select,", str(f)]
 

@@ -471,4 +471,8 @@ def example_rules() -> list[dict[str, Any]]:
          "cooldown_s": 5,
          "note": "A file exported by one of the modelling apps is imported into the model library. "
                  "(links.highlight.added has no rule on purpose: Links has its own send-to-study button.)"},
+        {"id": "rule-download-transcribe-index", "name": "Audio downloaded → transcript library", "enabled": False,
+         "when": {"type": "links.job.done", "where": {"data.media_kind": "audio"}},
+         "then": [{"kind": "hub", "tool": "hub_media_import", "args": {"download_id": "${event.data.job_id}", "folder": "${event.data.dir}"}}],
+         "cooldown_s": 0, "note": "Enable explicitly to transcribe completed audio downloads and index *.transcript.txt in their download folder. No Funes recording session is created. Follow hub_media_import_status, then Borges library_status."},
     ]

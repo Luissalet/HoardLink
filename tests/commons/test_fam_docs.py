@@ -60,15 +60,15 @@ def test_pdf_split_pages_pages_and_info_arguments(hub):
     hub.on("kafka", "pdf_info", {"ok": True, "pages": 4, "has_text": True})
     res = fam_docs.pdf_split("/a.pdf", mode="every", every=2, out_dir="/w")
     assert res["paths"] == ["/w/1.pdf", "/w/2.pdf"] and res["output"] is None
-    assert hub.of("pdf_split")[0]["args"] == {"file": "/a.pdf", "mode": "every", "every": 2, "out_dir": "/w"}
+    assert hub.of("pdf_split")[0]["args"] == {"file": str(Path("/a.pdf").resolve()), "mode": "every", "every": 2, "out_dir": str(Path("/w").resolve())}
     fam_docs.pdf_split("/a.pdf", ranges="1-3,4-")
-    assert hub.of("pdf_split")[1]["args"] == {"file": "/a.pdf", "mode": "ranges", "ranges": "1-3,4-"}
+    assert hub.of("pdf_split")[1]["args"] == {"file": str(Path("/a.pdf").resolve()), "mode": "ranges", "ranges": "1-3,4-"}
     fam_docs.pdf_pages("/a.pdf", "rotate", pages="2", degrees=270, output="/w/r.pdf")
-    assert hub.of("pdf_pages")[0]["args"] == {"action": "rotate", "file": "/a.pdf", "pages": "2", "degrees": 270, "output": "/w/r.pdf"}
+    assert hub.of("pdf_pages")[0]["args"] == {"action": "rotate", "file": str(Path("/a.pdf").resolve()), "pages": "2", "degrees": 270, "output": str(Path("/w/r.pdf").resolve())}
     fam_docs.pdf_pages("/a.pdf", "extract", pages="1-3")
-    assert hub.of("pdf_pages")[1]["args"] == {"action": "extract", "file": "/a.pdf", "pages": "1-3"}
+    assert hub.of("pdf_pages")[1]["args"] == {"action": "extract", "file": str(Path("/a.pdf").resolve()), "pages": "1-3"}
     info = fam_docs.pdf_info("/a.pdf", password="s3cret")
-    assert info["ok"] and info["pages"] == 4 and hub.of("pdf_info")[0]["args"] == {"file": "/a.pdf", "password": "s3cret"}
+    assert info["ok"] and info["pages"] == 4 and hub.of("pdf_info")[0]["args"] == {"file": str(Path("/a.pdf").resolve()), "password": "s3cret"}
 
 
 def test_the_other_workshop_tools(hub):
@@ -84,14 +84,14 @@ def test_the_other_workshop_tools(hub):
     fam_docs.images_compress(["/imgs"], limit_kb=300, skip_small=True, out_dir="/w", time_limit_s=10)
     args = {t: hub.of(t)[0]["args"] for t in ("pdf_compress", "pdf_watermark", "pdf_protect", "pdf_metadata_set", "pdf_to_images", "pdf_from_images",
                                               "pdf_from_office", "images_compress")}
-    assert args["pdf_compress"] == {"file": "/a.pdf", "preset": "screen", "target_mb": 2, "engine": "pypdf"}
-    assert args["pdf_watermark"] == {"file": "/a.pdf", "text": "CONFIDENCIAL", "opacity": 0.5, "angle": 45, "font_size": 60, "color": "#ff0000", "pages": "1-2"}
-    assert args["pdf_protect"] == {"action": "protect", "file": "/a.pdf", "password": "pw", "allow_print": True, "allow_copy": False, "allow_modify": True}
-    assert args["pdf_metadata_set"] == {"file": "/a.pdf", "title": "T", "author": ""}                   # "" clears, an absent key keeps
-    assert args["pdf_to_images"] == {"file": "/a.pdf", "pages": "1-2", "format": "jpg", "dpi": 100, "quality": 90, "out_dir": "/w"}
-    assert args["pdf_from_images"] == {"images": ["/1.png", "/2.png"], "page_size": "fit", "margin_mm": 0, "orientation": "auto", "out_dir": "/w"}
-    assert args["pdf_from_office"] == {"file": "/a.docx", "engine": "auto"}
-    assert args["images_compress"] == {"sources": ["/imgs"], "limit_kb": 300, "recursive": True, "lossless_only": False, "skip_small": True, "out_dir": "/w",
+    assert args["pdf_compress"] == {"file": str(Path("/a.pdf").resolve()), "preset": "screen", "target_mb": 2, "engine": "pypdf"}
+    assert args["pdf_watermark"] == {"file": str(Path("/a.pdf").resolve()), "text": "CONFIDENCIAL", "opacity": 0.5, "angle": 45, "font_size": 60, "color": "#ff0000", "pages": "1-2"}
+    assert args["pdf_protect"] == {"action": "protect", "file": str(Path("/a.pdf").resolve()), "password": "pw", "allow_print": True, "allow_copy": False, "allow_modify": True}
+    assert args["pdf_metadata_set"] == {"file": str(Path("/a.pdf").resolve()), "title": "T", "author": ""}                   # "" clears, an absent key keeps
+    assert args["pdf_to_images"] == {"file": str(Path("/a.pdf").resolve()), "pages": "1-2", "format": "jpg", "dpi": 100, "quality": 90, "out_dir": str(Path("/w").resolve())}
+    assert args["pdf_from_images"] == {"images": [str(Path("/1.png").resolve()), str(Path("/2.png").resolve())], "page_size": "fit", "margin_mm": 0, "orientation": "auto", "out_dir": str(Path("/w").resolve())}
+    assert args["pdf_from_office"] == {"file": str(Path("/a.docx").resolve()), "engine": "auto"}
+    assert args["images_compress"] == {"sources": [str(Path("/imgs").resolve())], "limit_kb": 300, "recursive": True, "lossless_only": False, "skip_small": True, "out_dir": str(Path("/w").resolve()),
                                        "time_limit_s": 10.0}
     assert hub.of("images_compress")[0]["timeout_s"] >= 40
 
@@ -214,7 +214,7 @@ def test_ocr_image_and_status(hub, tmp_path):
     assert res["ok"] and res["text"] == "TOTAL 12,50" and res["backend"] == "rapidocr" and res["via"] == "kafka" and len(res["blocks"]) == 1
     assert hub.of("ocr_image")[0]["args"] == {"path": str(tmp_path / "t.png"), "lang": "es", "blocks": True}
     fam_docs.ocr_image("/t.png")
-    assert hub.of("ocr_image")[1]["args"] == {"path": str(Path("/t.png").resolve()), "lang": "es"}
+    assert hub.of("ocr_image")[1]["args"] == {"path": str(Path(str(Path("/t.png").resolve())).resolve()), "lang": "es"}
     st = fam_docs.ocr_status()
     assert st["ok"] and st["available"] is True and hub.of("ocr_status")[0]["args"] == {}
 
@@ -231,7 +231,7 @@ def test_ocr_pdf_runs_as_a_job(hub):
                                             "pages_done": 2, "pages_total": 2, "backend": "rapidocr"}))
     res = fam_docs.ocr_pdf("/scan.pdf", pages="1-2", dpi=150, lang="es", max_pages=5, timeout_s=30)
     assert res["ok"] and res["via"] == "kafka" and res["pages_done"] == 2 and res["pages"][1]["text"] == "dos"
-    assert hub.of("ocr_pdf")[0]["args"] == {"path": str(Path("/scan.pdf").resolve()), "pages": "1-2", "dpi": 150, "lang": "es", "max_pages": 5, "wait_s": 30}
+    assert hub.of("ocr_pdf")[0]["args"] == {"path": str(Path(str(Path("/scan.pdf").resolve())).resolve()), "pages": "1-2", "dpi": 150, "lang": "es", "max_pages": 5, "wait_s": 30}
     st = fam_docs.ocr_status("p1", wait_s=500)
     assert hub.of("ocr_status")[-1]["args"] == {"job_id": "p1", "wait_s": 150}
     assert st["ok"]

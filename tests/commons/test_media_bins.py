@@ -200,7 +200,7 @@ def test_ffprobe_is_found_next_to_ffmpeg(monkeypatch, tmp_path):
 def test_piper_help_may_exit_nonzero(monkeypatch, tmp_path):
     make_exe(tmp_path / "pp", "piper", "usage: piper", rc=2)
     monkeypatch.setenv("PATH", str(tmp_path / "pp"))
-    assert bins.find("piper", refresh=True)
+    assert bins.find("piper", refresh=True, runner=recording_runner(default=(2, "usage: piper", "")))
 
 
 # -- cache --------------------------------------------------------------------------------------------------

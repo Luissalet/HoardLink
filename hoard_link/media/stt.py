@@ -179,8 +179,20 @@ def _looks_like_cuda_error(error: BaseException) -> bool:
     return any(k in text for k in ("cublas", "cudnn", "cuda", "cudart", "device-side"))
 
 
+_CUDA_LIBRARY_FAILURE = ""
+
+
+def _remember_missing_cuda_library(error: BaseException) -> None:
+    # A native runtime may hang when it is initialized again after a missing DLL.
+    # Only remember missing libraries, never transient GPU contention or OOM.
+    global _CUDA_LIBRARY_FAILURE
+    text = str(error).lower()
+    if _looks_like_cuda_error(error) and any(s in text for s in ("not found", "cannot be loaded", "could not load", "cannot open shared object")):
+        _CUDA_LIBRARY_FAILURE = str(error)
+
+
 def resolve_device(device: str) -> str:
-    return ("cuda" if cuda_available() else "cpu") if device == "auto" else device
+    return ("cuda" if not _CUDA_LIBRARY_FAILURE and cuda_available() else "cpu") if device == "auto" else device
 
 
 def resolve_compute(compute: str, device: str) -> str:
@@ -488,6 +500,8 @@ class Transcriber:
             self._release_lease()
             cuda_dll_dirs()
             size, device, compute = key
+            if self.device_setting == "auto" and _CUDA_LIBRARY_FAILURE:
+                self.cpu_fallback_reason = _CUDA_LIBRARY_FAILURE
             self.state = "loading" if model_present(self.models_dir, size) else "downloading"
             self.error = ""
             self.models_dir.mkdir(parents=True, exist_ok=True)
@@ -519,6 +533,7 @@ class Transcriber:
                     self._active_lease = taken
                     self._release_lease()
                 if device == "cuda" and isinstance(error, Exception) and not isinstance(error, Unavailable):
+                    _remember_missing_cuda_library(error)
                     log.warning("CUDA load failed (%s); falling back to the CPU", error)
                     self.cpu_fallback_reason = str(error)
                     try:
@@ -589,6 +604,7 @@ class Transcriber:
                 except Exception as error:  # noqa: BLE001
                     # A CUDA library missing at inference time (not at load time): reload on the CPU instead of leaving the session stuck.
                     if self.device_used == "cuda" and _looks_like_cuda_error(error):
+                        _remember_missing_cuda_library(error)
                         log.warning("CUDA inference failed (%s); reloading on the CPU", error)
                         self.cpu_fallback_reason = str(error)
                         self.device_setting = "cpu"

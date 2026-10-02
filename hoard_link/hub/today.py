@@ -534,6 +534,19 @@ class TodayFacet(Facet):
                 item["app"] = app_id
                 item["app_name"] = names.get(app_id, app_id)
                 items.append(item)
+        # A source deadline may also be filed in the document workshop. Prefer
+        # the app named by its hoard reference, regardless of provider order.
+        deduped: dict[str, dict[str, Any]] = {}
+        unique: list[dict[str, Any]] = []
+        for item in items:
+            key = item.get("dedupe_key")
+            if not key:
+                unique.append(item)
+                continue
+            previous = deduped.get(key)
+            if previous is None or str(item.get("url", "")).startswith(f"hoard://{item['app']}/"):
+                deduped[key] = item
+        items = unique + list(deduped.values())
         items.sort(key=self._sort_key)
         return {"items": items, "errors": errors, "apps": apps}
 

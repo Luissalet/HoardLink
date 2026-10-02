@@ -672,6 +672,7 @@ Ten *facets* sit on the hub, each with its own routes, tools and tab (`hoard_lin
 | Work | Long jobs of every app (`<app>.job.*` events) with progress and GPU; failures notify | [docs/facets/work.md](docs/facets/work.md) |
 | Purchases | Ledger payment → Phileas shipment → Kafka invoice and warranty → HomeHoard item; stops the Tantalus watcher of what you bought | [docs/facets/purchases.md](docs/facets/purchases.md) |
 | Web (0.8) | One polite fetcher for every app: per-host throttle and block cooldown shared by the family, robots.txt, response cache, one optional browser profile, search, link previews (`hoard_link.fam_web`, JS `fam-web.js`) | [docs/commons/web.md](docs/commons/web.md#family-service-hub-facet-web) |
+| Services (0.8.1) | Owner catalogue status; opt-in audio download → transcription → transcript indexing, with separate job and indexing states | [docs/commons/services.md](docs/commons/services.md#11-hub-service-discovery-and-media-imports) |
 
 App side (vendored with the library): `hoard_link.fam_notify`, `fam_mail`, `fam_agenda`, `fam_refs`, `fam_web`
 (standard library); Node apps get the same functions in `hoard-link.js` (`notify`, `mail*`, `installAgenda`,

@@ -33,10 +33,10 @@ def rule_ids(hub):
 def test_the_recommended_set_keeps_the_six_and_adds_the_new_ones():
     ex = example_rules()
     ids = [r["id"] for r in ex]
-    assert sorted(ids[:6]) == sorted(OLD_SIX) and len(ids) == len(set(ids)) == 17
+    assert sorted(ids[:6]) == sorted(OLD_SIX) and len(ids) == len(set(ids)) == 18
     for r in ex:
         assert not validate_rule(r), r["id"]
-    new = [r for r in ex if r["id"] not in OLD_SIX]
+    new = [r for r in ex if r["id"] not in OLD_SIX and r["id"] != "rule-download-transcribe-index"]
     assert len(new) == 11 and all(r["id"].startswith("rule-") and r["note"] and r["cooldown_s"] == 5 for r in new)
 
 
@@ -44,7 +44,8 @@ def test_the_hub_installs_them_at_start_and_not_twice(tmp_path):
     hub = make_hub(tmp_path)
     try:
         assert rule_ids(hub) == {r["id"] for r in example_rules()}
-        assert all(r["enabled"] for r in hub.rules.list())
+        assert all(r["enabled"] for r in hub.rules.list() if r["id"] != "rule-download-transcribe-index")
+        assert not hub.rules.get("rule-download-transcribe-index")["enabled"]
     finally:
         hub.close()
     hub2 = make_hub(tmp_path)                                    # a second start adds nothing and keeps what the person changed
@@ -54,7 +55,7 @@ def test_the_hub_installs_them_at_start_and_not_twice(tmp_path):
         hub2.close()
     hub3 = make_hub(tmp_path)
     try:
-        assert len(hub3.rules.list()) == 17
+        assert len(hub3.rules.list()) == 18
         r = hub3.rules.get("rule-ledger-payment-failed")
         assert r["enabled"] is False and r["cooldown_s"] == 99
     finally:
@@ -75,17 +76,17 @@ def test_a_removed_recommended_rule_stays_removed_until_asked_for(tmp_path):
         hub.close()
     hub2 = make_hub(tmp_path)
     try:
-        assert "rule-restart-down" not in rule_ids(hub2) and "rule-ledger-subscription-new" not in rule_ids(hub2) and len(hub2.rules.list()) == 15
+        assert "rule-restart-down" not in rule_ids(hub2) and "rule-ledger-subscription-new" not in rule_ids(hub2) and len(hub2.rules.list()) == 16
         # "install the recommended rules" brings back what it installs and forgets the dismissal
         res = hub2.rules.install_examples()
         assert sorted(res["installed"]) == ["rule-ledger-subscription-new", "rule-restart-down"]
         assert json.loads(open(meta, encoding="utf-8").read())["dismissed"] == []
-        assert len(hub2.rules.list()) == 17
+        assert len(hub2.rules.list()) == 18
     finally:
         hub2.close()
     hub3 = make_hub(tmp_path)
     try:
-        assert len(hub3.rules.list()) == 17
+        assert len(hub3.rules.list()) == 18
     finally:
         hub3.close()
 
@@ -95,7 +96,7 @@ def test_the_switches(tmp_path, monkeypatch):
     hub = make_hub(tmp_path / "a")
     try:
         assert hub.rules.list() == []
-        assert len(hub.rules.install_examples()["installed"]) == 17            # the button still works
+        assert len(hub.rules.install_examples()["installed"]) == 18            # the button still works
     finally:
         hub.close()
     monkeypatch.delenv("HOARD_HUB_AUTO_RULES")

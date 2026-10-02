@@ -302,15 +302,17 @@ def test_run_process_missing_binary(tmp_path):
 def test_run_process_abort_kills_the_tree_and_waits(tmp_path):
     marker = tmp_path / "grandchild.pid"
     out = js(tmp_path, f"""
-        const code = `
+        const code = String.raw`
           const {{ spawn }} = require('node:child_process');
           const c = spawn(process.execPath, ['-e', 'setTimeout(()=>{{}}, 60000)'], {{ stdio: 'ignore' }});
           require('node:fs').writeFileSync({json.dumps(str(marker))}, String(c.pid));
           setTimeout(() => {{}}, 60000);`;
         const controller = new AbortController();
-        setTimeout(() => controller.abort(), 700);
+        const cancelWhenReady = setInterval(() => {{ if (fs.existsSync({json.dumps(str(marker))})) {{ clearInterval(cancelWhenReady); controller.abort(); }} }}, 20);
+        const safety = setTimeout(() => controller.abort(), 10000);
         const t0 = Date.now();
         const e = await m.runProcess({{ cmd: process.execPath, args: [] }}, ['-e', code], {{ signal: controller.signal, lowPriority: false }}).catch((x) => x);
+        clearInterval(cancelWhenReady); clearTimeout(safety);
         const gpid = Number(fs.readFileSync({json.dumps(str(marker))}, 'utf8'));
         const pre = await m.runProcess({{ cmd: process.execPath, args: [] }}, ['-e', '1'], {{ signal: AbortSignal.abort() }}).catch((x) => x);
         return {{ code: e.code, status: e.status, ms: Date.now() - t0, gpid, pre: pre.code }};

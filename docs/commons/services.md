@@ -290,3 +290,48 @@ keeps (or falls back to) its own code, so a caller can adopt its client first an
 `HOARD_WHISPER_MODEL` (the local transcription fallback's Whisper size, default `small`), `HOARD_GPU_LEASE`, `HOARD_WHISPER_VRAM_MB`, `HOARD_LEASE_TIMEOUT_S` (see `media.md`).
 
 Tests: `tests/commons/test_fam_media.py` (48), `test_fam_docs.py` (23), `test_fam_embed.py` (17), `test_fam_services_js.py` (10); the fake hub is `tests/commons/fam_hub.py`.
+
+## 11. Hub service discovery and media imports
+
+HoardLink 0.8.1 adds the Services tab and `hub_services_status` (also
+`GET /api/services/status?refresh=1`). The rows identify Web (Hub), downloads
+(Links), speech recognition (Funes), speech synthesis (Prospero), document OCR
+(Kafka) and embeddings (Borges). Owner catalogues are checked concurrently with
+a two-second timeout and a fifteen-second cache. `ready` means the required tools
+are exposed; it does not load models or guarantee that the next inference will succeed.
+Missing owners, unreachable apps and incompatible catalogues have distinct states.
+
+`hub_media_import({url|download_id, folder, language?, model?})` starts an asynchronous
+download → stateless transcription → transcript collection workflow. Poll
+`hub_media_import_status({job_id, wait_s?})` (maximum wait 150 seconds). An existing
+Links download can be reused without downloading it again. Files must be safe and
+inside the selected folder; protected folders are refused. Funes creates no recording
+session. Only the recovered text and its source are saved as `*.transcript.txt`, then
+Borges is asked to add/watch the folder and reindex its transcript files.
+
+`status=done, stage=index_requested` means Borges accepted the indexing request,
+not that indexing has finished. Confirm the document in Borges before claiming it
+is searchable. Owner errors, empty speech and unsafe paths stop the workflow.
+The Hub holds at most two running imports and retains finished jobs for one hour
+in memory. Restarting the Hub interrupts tracking; owner jobs can still be followed
+by their returned download/transcription identifiers. A transcription has a ten-minute
+polling limit, and terminal Funes `error` states are reported immediately.
+
+The recommended rule `rule-download-transcribe-index` listens for
+`links.job.done` with `data.media_kind=audio` and reuses `data.job_id` / `data.dir`.
+It is installed **disabled**: enable it only for downloads whose transcripts belong
+in the library. Indexing and disk writes are explicit side effects.
+
+Faustus uses the shared Hub fetch client, Funes for local speech recognition and
+Kafka for bounded OCR of scanned PDF attachments. Existing local fallbacks remain
+available when the owner cannot be reached. Attachment ingestion with vision disabled
+does not start OCR. Its adapter reuses the configured token file; older installations
+can discover the default local Hub from registered Hoard servers without copying tokens.
+Discovered credentials are never attached to a custom Hub endpoint.
+
+The common Whisper engine remembers missing CUDA libraries for subsequent `auto`
+instances in the same process, so later jobs use CPU instead of retrying a broken
+native runtime. Memory pressure does not disable CUDA, and explicit `cuda` remains
+an explicit choice. Restart after installing the missing libraries to retry automatic GPU use.
+
+Windows validation and known limitations: [validation record](windows-validation.md).

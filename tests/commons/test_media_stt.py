@@ -72,6 +72,7 @@ class FakeLease:
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch, tmp_path):
+    monkeypatch.setattr(stt, "_CUDA_LIBRARY_FAILURE", "")
     monkeypatch.setenv("HOARD_HOME", str(tmp_path / "home"))
     for var in ("HOARD_GPU_LEASE", "SCRIBE_GPU_LEASE", "HOARD_WHISPER_VRAM_MB", "SCRIBE_WHISPER_VRAM_MB", "HOARD_LEASE_TIMEOUT_S", "SCRIBE_LEASE_TIMEOUT_S"):
         monkeypatch.delenv(var, raising=False)
@@ -332,6 +333,28 @@ def test_other_inference_errors_are_not_swallowed():
     t = stt.Transcriber("m", device="cpu", model_factory=Factory({"cpu": model}))
     with pytest.raises(RuntimeError, match="shape mismatch"):
         t.transcribe("a.wav")
+
+
+def test_new_auto_transcribers_skip_a_cuda_runtime_with_missing_libraries(monkeypatch):
+    monkeypatch.setattr(stt, "cuda_available", lambda: True)
+    broken = FakeModel(GOOD, fail_on=(0, "Library cublas64_12.dll is not found or cannot be loaded"))
+    factory = Factory({"cuda": broken, "cpu": FakeModel(GOOD)})
+    first = stt.Transcriber("m", device="auto", lease=False, model_factory=factory)
+    assert first.transcribe("first.wav").device == "cpu"
+    first.close()
+    second = stt.Transcriber("m", device="auto", lease=False, model_factory=factory)
+    result = second.transcribe("second.wav")
+    assert result.device == "cpu" and "cublas" in result.note
+    assert [load[1] for load in factory.loads] == ["cuda", "cpu", "cpu"]
+    assert stt.resolve_device("cuda") == "cuda"  # an explicit choice remains explicit
+
+
+def test_transient_gpu_memory_errors_do_not_disable_auto_cuda(monkeypatch):
+    monkeypatch.setattr(stt, "cuda_available", lambda: True)
+    factory = Factory({"cuda": RuntimeError("CUDA out of memory"), "cpu": FakeModel(GOOD)})
+    first = stt.Transcriber("m", device="auto", lease=False, model_factory=factory)
+    assert first.transcribe("first.wav").device == "cpu"
+    assert stt.resolve_device("auto") == "cuda"
 
 
 def test_non_cuda_error_on_the_gpu_is_raised_and_the_lease_released():

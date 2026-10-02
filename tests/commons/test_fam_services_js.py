@@ -62,7 +62,7 @@ def test_media_download_info_subtitles_and_the_polling(hub, tmp_path):
     """)
     assert out["a"]["ok"] is True and out["a"]["path"] == "/dl/a.mp4" and out["a"]["via"] == "links" and out["a"]["media_kind"] == "video"
     args = hub.of("media_download")[0]["args"]
-    assert args["format"] == "audio" and args["quality"] == "720" and args["dir"] == args["dest_dir"] == "/dl" and args["sections"] == [[1, 2.5]]
+    assert args["format"] == "audio" and args["quality"] == "720" and args["dir"] == args["dest_dir"] == str(Path("/dl").resolve()) and args["sections"] == [[1, 2.5]]
     assert args["max_duration_s"] == 60 and args["max_height"] == 720 and args["save_link"] is False and args["cookies_browser"] == "firefox" and args["wait"] is True
     assert out["b"]["ok"] is True and out["b"]["id"] == "m2" and len(hub.of("media_status")) == 2
     assert out["bad"]["kind"] == "client_error" and "bad section" in out["bad"]["error"]
@@ -104,7 +104,7 @@ def test_transcribe_polls_normalises_and_reports_progress(hub, tmp_path):
     assert res["segments"][0] == {"start_s": 0, "end_s": 1.5, "text": "hola", "words": [{"start_s": 0, "end_s": 0.5, "word": "hola", "p": 0.9}]}
     assert out["seen"] == [0.1, 0.5, 1]
     a = hub.of("transcribe_file")[0]["args"]
-    assert a["path"] == "/clase.mp3" and a["language"] == "es" and a["model"] == "small" and a["initial_prompt"] == "Luis" and a["wait_s"] == 150
+    assert a["path"] == str(Path("/clase.mp3").resolve()) and a["language"] == "es" and a["model"] == "small" and a["initial_prompt"] == "Luis" and a["wait_s"] == 150
 
 
 def test_transcribe_timeout_status_and_cancel(hub, tmp_path):
@@ -153,15 +153,15 @@ def test_documents_pdf_ops_extract_and_ocr(hub, tmp_path):
       };
     """)
     assert out["merge"]["ok"] and out["merge"]["paths"] == ["/w/m.pdf"] and out["merge"]["via"] == "kafka"
-    assert hub.of("pdf_merge")[0]["args"] == {"files": ["/a.pdf", "d_9"], "ranges": ["", "1-2"], "out_dir": "/w", "file_result": True}
-    assert hub.of("pdf_compress")[0]["args"] == {"file": "/a.pdf", "preset": "screen", "target_mb": 2, "engine": "auto"}
-    assert out["info"]["pages"] == 3 and hub.of("pdf_info")[0]["args"] == {"file": "/a.pdf", "password": "pw"}
-    assert hub.of("pdf_from_images")[0]["args"] == {"images": ["/1.png"], "page_size": "fit", "margin_mm": 10, "orientation": "auto", "out_dir": "/w"}
+    assert hub.of("pdf_merge")[0]["args"] == {"files": [str(Path("/a.pdf").resolve()), "d_9"], "ranges": ["", "1-2"], "out_dir": str(Path("/w").resolve()), "file_result": True}
+    assert hub.of("pdf_compress")[0]["args"] == {"file": str(Path("/a.pdf").resolve()), "preset": "screen", "target_mb": 2, "engine": "auto"}
+    assert out["info"]["pages"] == 3 and hub.of("pdf_info")[0]["args"] == {"file": str(Path("/a.pdf").resolve()), "password": "pw"}
+    assert hub.of("pdf_from_images")[0]["args"] == {"images": [str(Path("/1.png").resolve())], "page_size": "fit", "margin_mm": 10, "orientation": "auto", "out_dir": str(Path("/w").resolve())}
     ex = out["extract"]
     assert ex["ok"] and ex["via"] == "kafka" and ex["pages_ocr"] == 1 and ex["text"] == "uno" and ex["units"][0]["number"] == 1
-    assert hub.of("doc_extract")[0]["args"] == {"path": "/scan.pdf", "ocr": "force", "max_pages": 5, "lang": "en", "wait_s": 30}
+    assert hub.of("doc_extract")[0]["args"] == {"path": str(Path("/scan.pdf").resolve()), "ocr": "force", "max_pages": 5, "lang": "en", "wait_s": 30}
     assert out["badOcr"]["kind"] == "client_error"
-    assert out["image"]["text"] == "TOTAL" and hub.of("ocr_image")[0]["args"] == {"path": "/t.png", "lang": "es", "blocks": True}
+    assert out["image"]["text"] == "TOTAL" and hub.of("ocr_image")[0]["args"] == {"path": str(Path("/t.png").resolve()), "lang": "es", "blocks": True}
     assert out["engine"]["available"] is True and hub.of("ocr_status")[-1]["args"] == {}
 
 
