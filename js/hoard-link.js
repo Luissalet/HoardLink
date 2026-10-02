@@ -28,7 +28,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const FAMILY_VERSION = "0.6.0";
+export const FAMILY_VERSION = "0.7.0";
 const DEFAULT_URL = "http://127.0.0.1:8810";
 
 const state = { app: "", tokenFile: "", hub: null, enabled: true, sent: 0, dropped: 0, lastError: "" };
@@ -263,4 +263,394 @@ export function resolveSince(input, nowMs = Date.now()) {
   const m = s.match(/^(?:hace\s+|last\s+)?(\d+(?:[.,]\d+)?)\s*([a-z]+)(?:\s+ago)?$/);
   if (m && SINCE_UNIT_MS[m[2]]) return new Date(nowMs - Number(m[1].replace(",", ".")) * SINCE_UNIT_MS[m[2]]).toISOString();
   throw Object.assign(new Error(SINCE_HELP), { status: 400 });
+}
+
+// ---------------------------------------------------------------- notify
+// Tell the person through the hub (facet "notify"): Windows toast, ntfy, Telegram or mail, chosen by
+// priority and sphere, with quiet hours, duplicate and rate limits. Keep your own channel code only as
+// the fallback for when the hub is unreachable (notify() then resolves {ok: false, error: "hub unreachable"}).
+//
+//   const res = await family.notify("Payment failed", "Netflix 12.99 EUR", { priority: "high", url, group: "payment", dedupeKey: `pay:${id}` });
+//   if (!res.ok && res.error === "hub unreachable") ownToast(...);
+//
+// Part of hoard-link.js: relies on post(), headers() and findHubUrl() above; never throws.
+
+const NOTIFY_CACHE_MS = 30_000;
+const notifyAvail = new Map();   // hub url -> { at, ok }
+
+/** Ask the hub to notify the person. Resolves to the hub's answer {ok, id, held, channels, delivered…}. */
+export async function notify(title, body = "", { priority = "normal", url = "", group = "", dedupeKey = "", sphere = null, timeoutMs = 5000 } = {}) {
+  const payload = { title: String(title ?? ""), body: String(body ?? ""), priority: String(priority || "normal") };
+  if (url) payload.url = String(url);
+  if (group) payload.group = String(group);
+  if (dedupeKey) payload.dedupe_key = String(dedupeKey);
+  if (sphere) payload.sphere = String(sphere);
+  const { status: st, data } = await post("/api/notify", payload, timeoutMs);
+  if (st === null) { notifyAvail.delete(findHubUrl()); return { ok: false, error: "hub unreachable" }; }
+  if (data && typeof data === "object") {
+    if (data.ok === undefined) data.ok = st >= 200 && st < 300;
+    if (data.status === undefined) data.status = st;
+    if (st === 401) data.error = `the hub refused this app's token (${state.tokenFile || "no token file"})`;
+    return data;
+  }
+  return st >= 200 && st < 300 ? { ok: true, status: st } : { ok: false, status: st, error: `HTTP ${st}` };
+}
+
+/** True when a hub with the notification facet answers. Cached for 30 seconds. */
+export async function hubAvailable(timeoutMs = 1000) {
+  const base = findHubUrl();
+  const hit = notifyAvail.get(base);
+  if (hit && Date.now() - hit.at < NOTIFY_CACHE_MS) return hit.ok;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  let ok = false;
+  try {
+    const res = await fetch(base + "/api/notify?limit=1", { headers: headers(), signal: ctl.signal });
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    ok = res.status === 200 && Boolean(data && data.ok === true);
+  } catch { ok = false; } finally { clearTimeout(timer); }
+  notifyAvail.set(base, { at: Date.now(), ok });
+  return ok;
+}
+
+// mail.js — the app side of the hub's mail gateway, from a Node app (part of hoard-link.js; the coordinator merges
+// js/parts/*.js into it, so `state`, `post`, `headers`, `findHubUrl`, `fs` and `path` below are the ones defined at the top of
+// that file). The twin of hoard_link/fam_mail.py.
+//
+// The hub reads the inbox once for the whole family (facet "mailgate"). An app registers what it is interested in, asks for the
+// messages that match and says which ones it took, so they stop showing up in the person's "sin dueño" tray. Keep the app's own
+// mail helper as the fallback for when the hub, or its gateway, is not there.
+//
+//   family.configure({ app: "ledger", dataDir: DATA_DIR });
+//   if (await family.mailAvailable()) {
+//     await family.mailRegisterInterest({ subject_terms: ["factura", "recibo"], from_domains: ["amazon.es"], has_attachment: true });
+//     const page = await family.mailMessages({ sinceId: lastSeen });          // { ok, messages, last_id }; resume from last_id
+//     for (const m of page.messages) {
+//       // m.subject, m.text, m.attachments[i].path …
+//       await family.mailClaim([m.id], "payment", "hoard://ledger/tx/12");
+//     }
+//     lastSeen = page.last_id;
+//   } else { /* the app's own helper */ }
+//
+// Nothing here rejects: when the hub cannot be reached the answer is { ok: false, error: "hub unreachable" }. The hub only returns
+// mail of the spheres the app is allowed in.
+
+const MAIL_CACHE_MS = 30_000;
+const mailAvail = new Map();   // hub url + token -> { at, ok }
+
+async function mailGet(p, timeoutMs) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(findHubUrl() + p, { headers: headers(), signal: ctl.signal });
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    return { status: res.status, data };
+  } catch (e) {
+    return { status: null, data: { error: String((e && e.message) || e) } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function mailAnswer(st, data) {
+  if (st === null) return { ok: false, error: "hub unreachable" };
+  if (!data || typeof data !== "object") return { ok: false, status: st, error: `HTTP ${st}` };
+  if (data.ok === undefined) data.ok = st >= 200 && st < 300;
+  if (data.status === undefined) data.status = st;
+  if (st === 401) data.error = `the hub refused this app's token (${state.tokenFile || "no token file"})`;
+  return data;
+}
+
+/** True when the hub is up AND its mail gateway is on and has read the inbox at least once (and recently). Cached 30 s. */
+export async function mailAvailable(timeoutMs = 1000) {
+  const key = findHubUrl() + "|" + (headers().Authorization || "");
+  const hit = mailAvail.get(key);
+  if (hit && Date.now() - hit.at < MAIL_CACHE_MS) return hit.ok;
+  const { status: st, data } = await mailGet("/api/mail/status", timeoutMs);
+  let ok = false;
+  if (st === 200 && data && data.ready) {
+    const interval = Number(data.interval_min || 0);
+    ok = data.fresh_s === null || data.fresh_s === undefined || interval === 0 || Number(data.fresh_s) <= interval * 180 + 900;   // a stalled hub pass is "not available"
+  }
+  mailAvail.set(key, { at: Date.now(), ok });
+  return ok;
+}
+
+/** Drop the 30-second cache (after changing the hub, or in tests). */
+export function mailForgetAvailability() { mailAvail.clear(); }
+
+/** Tell the hub which mail this app wants: { subject_terms, from_domains, from_addresses, text_terms, regex, has_attachment }.
+ *  A message matches when ANY non-empty criterion matches (case-insensitive, accents folded). `sphere` limits it to one sphere. */
+export async function mailRegisterInterest(spec, { sphere = null, timeoutMs = 10000 } = {}) {
+  const body = { spec: spec || {} };
+  if (sphere) body.sphere = String(sphere);
+  const { status: st, data } = await post("/api/mail/interests", body, timeoutMs);
+  return mailAnswer(st, data);
+}
+
+function mailKafkaShape(m) {
+  const name = String(m.from_name || ""), addr = String(m.from_addr || "");
+  const ts = m.date_ts || null;
+  m.from = name && addr ? `${name} <${addr}>` : (addr || name);
+  m.from_address = addr;
+  m.ts = ts;
+  m.date = ts ? new Date(ts * 1000).toUTCString() : "";
+  m.account = m.source || "";
+  m.from_self = Array.isArray(m.reasons) && m.reasons.includes("own mail");
+  if (m.text === undefined) m.text = "";
+  if (!Array.isArray(m.links)) m.links = [];
+  if (!Array.isArray(m.attachments)) m.attachments = [];
+  return m;
+}
+
+/** The messages the hub stored with id > sinceId (oldest first) for this app's spheres; with interest: true only those that
+ *  match the interest it registered. { ok, messages, last_id }: pass last_id as the next sinceId. Each message carries the
+ *  gateway's keys (id, source, sphere, from_addr, from_name, to, subject, snippet, priority, text, links,
+ *  attachments[{name, mime, size, sha, path, url}]) AND the Kafka helper's (message_id, subject, from, from_address, date, ts,
+ *  text, links, attachments with the local path). */
+export async function mailMessages({ sinceId = 0, limit = 100, full = true, interest = true, timeoutMs = 20000 } = {}) {
+  const q = `since_id=${Math.trunc(sinceId)}&limit=${Math.trunc(limit)}&kind=mail&interest=${interest ? 1 : 0}${full ? "&full=1" : ""}`;
+  const { status: st, data } = await mailGet(`/api/mail/messages?${q}`, timeoutMs);
+  const res = mailAnswer(st, data);
+  if (res.ok) {
+    res.messages = (res.messages || []).filter((m) => m && typeof m === "object").map(mailKafkaShape);
+    if (res.last_id === undefined) res.last_id = sinceId;
+  } else {
+    if (!res.messages) res.messages = [];
+    if (res.last_id === undefined) res.last_id = sinceId;
+  }
+  return res;
+}
+
+/** Record "this mail is mine" (kind e.g. payment / document / shipment; ref the hoard:// uri of what the app made from it).
+ *  A claimed message leaves the "needs you" and "sin dueño" lists. */
+export async function mailClaim(ids, kind, ref, { timeoutMs = 10000 } = {}) {
+  const { status: st, data } = await post("/api/mail/claim", { ids: (ids || []).map(Number), kind: String(kind || ""), ref: String(ref || "") }, timeoutMs);
+  return mailAnswer(st, data);
+}
+
+/** Copy one attachment (an element of a message's attachments) into destDir; resolves to the new path, or "" when it cannot be had.
+ *  Uses the local file when the hub's path is readable from here, else downloads it through the hub. */
+export async function mailCopyAttachment(att, destDir, { timeoutMs = 30000 } = {}) {
+  try { fs.mkdirSync(destDir, { recursive: true }); } catch { return ""; }
+  const src = String((att && att.path) || "");
+  const stem = String((att && att.sha) || "") || path.parse(src).name || "attachment";
+  const ext = (path.extname(src) || path.extname(String((att && att.name) || "")) || ".bin").toLowerCase();
+  const dest = path.join(destDir, stem + ext);
+  if (fs.existsSync(dest)) return dest;
+  try {
+    if (src && fs.existsSync(src)) { fs.copyFileSync(src, dest); return dest; }
+    const url = String((att && att.url) || "");
+    if (!url) return "";
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url.startsWith("/") ? findHubUrl() + url : url, { headers: headers(), signal: ctl.signal });
+      if (!res.ok) return "";
+      fs.writeFileSync(dest + ".part", Buffer.from(await res.arrayBuffer()));
+      fs.renameSync(dest + ".part", dest);
+      return dest;
+    } finally { clearTimeout(timer); }
+  } catch {
+    try { fs.rmSync(dest + ".part", { force: true }); } catch { /* ignore */ }
+    return "";
+  }
+}
+
+// agenda.js — the agenda contract, from a Node (Express) app: GET /api/family/agenda (part of hoard-link.js; the
+// coordinator merges js/parts/*.js into it, so `state` and `readText` below are the ones defined at the top of that
+// file). The twin of hoard_link/fam_agenda.py.
+//
+// The hub's Today view and the family calendar (.ics) ask every running app what is coming up for the person. The app
+// answers with a provider: one function returning plain objects for a date range.
+//
+//   family.configure({ app: "kafka", dataDir: DATA_DIR });
+//   family.installAgenda(app, async (from, to, sphere) => [      // from/to: "YYYY-MM-DD" strings; sphere: "" for everything
+//     { id: "kafka:deadline:41", title: "Renew the lease", start: "2026-10-05", kind: "deadline", priority: "high",
+//       url: "http://127.0.0.1:5200/#/deadlines/41" },
+//   ]);
+//
+// Call it before the app's SPA catch-all route (Express matches routes in order). The bearer token is the app's own
+// (state.tokenFile, read on every request). A provider that throws gives { ok: false, error, items: [] }, never a 500.
+// Item keys: id, title, start (YYYY-MM-DD or an ISO date-time), end, all_day, kind (deadline, delivery, birthday,
+// followup, maintenance, release, review, cards, incident, publish, renewal, exam, other), priority (low, normal, high,
+// urgent), url, detail, sphere. A Date object works for start/end (it is written as a UTC date-time).
+
+export const AGENDA_PATH = "/api/family/agenda";
+const AGENDA_KINDS = ["deadline", "delivery", "birthday", "followup", "maintenance", "release", "review", "cards", "incident", "publish", "renewal", "exam", "other"];
+const AGENDA_PRIORITIES = ["low", "normal", "high", "urgent"];
+const AGENDA_MAX_ITEMS = 500;
+const AGENDA_MAX_SPAN_DAYS = 400;
+
+const agendaPad = (n) => String(n).padStart(2, "0");
+const agendaIsoDay = (d) => `${d.getUTCFullYear()}-${agendaPad(d.getUTCMonth() + 1)}-${agendaPad(d.getUTCDate())}`;
+const agendaClip = (v, n) => String(v ?? "").split(/\s+/).filter(Boolean).join(" ").slice(0, n);
+
+function agendaValidDay(text) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return agendaIsoDay(d) === text ? text : null;
+}
+
+/** A date, a Date or an ISO string → { day: "YYYY-MM-DD", time: "HH:MM:SS+02:00" | "HH:MM:SS" | null, ms } or null. */
+export function agendaParseWhen(value) {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const iso = value.toISOString();
+    return { day: iso.slice(0, 10), time: iso.slice(11, 19) + "+00:00", ms: value.getTime() };
+  }
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text) return null;
+  const day = agendaValidDay(text);
+  if (day) return { day, time: null, ms: Date.parse(day + "T00:00:00Z") };
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(Z|z|[+-]\d{2}:?\d{2})?$/.exec(text);
+  if (!m || !agendaValidDay(m[1]) || +m[2] > 23 || +m[3] > 59 || +(m[4] || 0) > 59) return null;
+  let zone = m[5] || "";
+  if (zone === "Z" || zone === "z") zone = "+00:00";
+  else if (zone && !zone.includes(":")) zone = zone.slice(0, 3) + ":" + zone.slice(3);
+  const time = `${m[2]}:${m[3]}:${m[4] || "00"}${zone}`;
+  return { day: m[1], time, ms: Date.parse(`${m[1]}T${time}`) };
+}
+
+/** One provider item → the contract's shape, or null when it cannot be shown (no title, no usable start). */
+export function agendaNormalizeItem(raw, { app = "", defaultSphere = "" } = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const title = agendaClip(raw.title, 200);
+  const start = agendaParseWhen(raw.start);
+  if (!title || !start) return null;
+  const allDay = start.time === null ? true : (typeof raw.all_day === "boolean" ? raw.all_day : false);
+  const outStart = allDay ? start.day : `${start.day}T${start.time}`;
+  let outEnd = null;
+  const end = agendaParseWhen(raw.end);
+  if (end) {
+    if (allDay) { if (end.day >= start.day) outEnd = end.day; }
+    else if (end.time !== null && end.ms >= start.ms) outEnd = `${end.day}T${end.time}`;
+  }
+  const kind = String(raw.kind ?? "").trim().toLowerCase();
+  const priority = String(raw.priority ?? "").trim().toLowerCase();
+  const url = String(raw.url ?? "").trim();
+  let id = agendaClip(raw.id, 160).replace(/ /g, "_");
+  const outKind = AGENDA_KINDS.includes(kind) ? kind : "other";
+  if (!id) {
+    let h = 0;
+    for (const ch of `${title}|${outStart}`) h = (Math.imul(h, 31) + ch.codePointAt(0)) >>> 0;
+    id = `${app || "app"}:${outKind}:${h.toString(16).padStart(8, "0")}`;
+  } else if (!id.includes(":") && app) id = `${app}:${id}`;
+  const item = {
+    id, title, start: outStart, all_day: allDay, kind: outKind,
+    priority: AGENDA_PRIORITIES.includes(priority) ? priority : "normal",
+    url: /^(https?|hoard):\/\/\S+$/i.test(url) ? url.slice(0, 500) : "",
+    detail: agendaClip(raw.detail, 300),
+    sphere: agendaClip(raw.sphere, 40).toLowerCase() || defaultSphere,
+  };
+  if (outEnd) item.end = outEnd;
+  return item;
+}
+
+export function agendaNormalizeItems(result, opts = {}) {
+  const list = Array.isArray(result) ? result : (result && Array.isArray(result.items) ? result.items : []);
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const item = agendaNormalizeItem(raw, opts);
+    if (!item || seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+    if (out.length >= AGENDA_MAX_ITEMS) break;
+  }
+  return out;
+}
+
+/** The window an agenda request asks for (defaults today-7 … today+60; bad values fall back; swapped when inverted; capped). */
+export function agendaRange(from, to, now = new Date()) {
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const a = agendaParseWhen(from);
+  const b = agendaParseWhen(to);
+  let start = a ? Date.parse(a.day + "T00:00:00Z") : today - 7 * 86400000;
+  let end = b ? Date.parse(b.day + "T00:00:00Z") : today + 60 * 86400000;
+  if (end < start) [start, end] = [end, start];
+  if ((end - start) / 86400000 > AGENDA_MAX_SPAN_DAYS) end = start + AGENDA_MAX_SPAN_DAYS * 86400000;
+  return [agendaIsoDay(new Date(start)), agendaIsoDay(new Date(end))];
+}
+
+/** Run a provider for a request and return the response body. Never throws. */
+export async function agendaAnswer(provider, from, to, sphere = "", now = new Date()) {
+  const [f, t] = agendaRange(from, to, now);
+  const sph = agendaClip(sphere, 40).toLowerCase();
+  try {
+    const result = await provider(f, t, sph);
+    return { ok: true, items: agendaNormalizeItems(result, { app: state.app || "" }), from: f, to: t, sphere: sph };
+  } catch (e) {
+    return { ok: false, error: `${(e && e.name) || "Error"}: ${(e && e.message) || e}`.slice(0, 300), items: [], from: f, to: t, sphere: sph };
+  }
+}
+
+function agendaTokenOk(given, tokenFile) {
+  const expected = readText(tokenFile || state.tokenFile);
+  if (!given || !expected || given.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Express: add GET /api/family/agenda. The caller must send this app's own bearer token. Returns { installed, path }. */
+export function installAgenda(app, provider, { path = AGENDA_PATH, tokenFile = null } = {}) {
+  app.get(path, async (req, res) => {
+    const auth = String((req.headers && req.headers.authorization) || "");
+    const given = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+    if (!agendaTokenOk(given, tokenFile)) return res.status(401).json({ ok: false, error: "a family bearer token is required", items: [] });
+    const q = req.query || {};
+    const one = (v) => (Array.isArray(v) ? v[0] : v);
+    return res.json(await agendaAnswer(provider, one(q.from), one(q.to), one(q.sphere) || ""));
+  });
+  return { installed: true, path };
+}
+
+// refs.js — references between apps, from a Node app (part of hoard-link.js; the coordinator merges js/parts/*.js
+// into it, so `post`, `headers` and `findHubUrl` below are the ones defined at the top of that file).
+//
+//   family.refsLink("hoard://ledger/tx/12", "hoard://kafka/document/7", "purchase", { fromLabel: "Amazon 23.90 EUR" });
+//   const g = await family.refsAround("hoard://ledger/tx/12");     // { ok, nodes, edges }
+//
+// Both resolve (never reject): `{ ok: false, error: "hub unreachable" }` when the hub is down. The hub accepts a link
+// only when one end is a record of the calling app (its bearer token says who it is).
+
+async function refsGet(p, timeoutMs) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(findHubUrl() + p, { headers: headers(), signal: ctl.signal });
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    return { status: res.status, data };
+  } catch (e) {
+    return { status: null, data: { error: String((e && e.message) || e) } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function refsAnswer({ status, data }) {
+  if (status === null) return { ok: false, error: "hub unreachable" };
+  if (data && typeof data === "object") { if (data.ok === undefined) data.ok = status >= 200 && status < 300; return data; }
+  return { ok: status >= 200 && status < 300, status };
+}
+
+/** Record `from --rel--> to` in the hub. Idempotent. */
+export async function refsLink(from, to, rel = "related", { fromLabel = "", toLabel = "", note = "", timeoutMs = 5000 } = {}) {
+  return refsAnswer(await post("/api/refs", { from, to, rel, from_label: fromLabel, to_label: toLabel, note }, timeoutMs));
+}
+
+/** The records linked to `uri` within `depth` hops: { ok, nodes: [{uri, app, kind, id, label, app_url}], edges }. */
+export async function refsAround(uri, depth = 1, { timeoutMs = 5000 } = {}) {
+  return refsAnswer(await refsGet(`/api/refs?uri=${encodeURIComponent(uri)}&depth=${Number(depth) || 1}`, timeoutMs));
+}
+
+/** Remove a link this app owns. */
+export async function refsUnlink(from, to, rel = "", { timeoutMs = 5000 } = {}) {
+  return refsAnswer(await post("/api/refs/remove", { from, to, ...(rel ? { rel } : {}) }, timeoutMs));
 }
