@@ -1,0 +1,12 @@
+[
+  {"fn": "clamp_wait", "args": [0], "expect": 0},
+  {"fn": "clamp_wait", "args": [5], "expect": 5},
+  {"fn": "clamp_wait", "args": [5.5], "expect": 5.5},
+  {"fn": "clamp_wait", "args": [150], "expect": 150},
+  {"fn": "clamp_wait", "args": [151], "expect": 150},
+  {"fn": "clamp_wait", "args": [3600], "expect": 150},
+  {"fn": "clamp_wait", "args": [-3], "expect": 0},
+  {"fn": "clamp_wait", "args": [null], "expect": 0},
+  {"fn": "clamp_wait", "args": ["12"], "expect": 12},
+  {"fn": "clamp_wait", "args": ["soon"], "expect": 0}
+]
