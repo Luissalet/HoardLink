@@ -17,6 +17,13 @@ from hoard_link.hub.config import HubConfig
 from hoard_link.hub.core import Hub
 
 
+@pytest.fixture(autouse=True)
+def _no_auto_rules(monkeypatch):
+    """The hub installs its recommended rules when it starts; most tests want an empty rule list
+    (tests/hub/test_rules_autoinstall.py turns it back on)."""
+    monkeypatch.setenv("HOARD_HUB_AUTO_RULES", "0")
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

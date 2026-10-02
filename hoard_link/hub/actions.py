@@ -10,6 +10,10 @@ Action shapes (JSON objects, ``kind`` picks one):
 * ``{"kind": "start_app" | "stop_app" | "restart_app", "app": "funes"}``;
 * ``{"kind": "profile_start" | "profile_stop", "name": "video"}``.
 
+A ``tool`` action whose app is not installed (or a ``hub`` action naming a tool this hub does not have) is
+recorded as ``{ok: True, skipped: True, reason}``: a recommended rule for an app the person does not have
+must not turn into an error on every event.
+
 Any string inside ``args`` / ``data`` may carry ``${path}`` placeholders
 filled from the run's context: ``${event.type}``, ``${event.source}``,
 ``${event.data.session_id}``, ``${now}`` (epoch seconds), ``${today}``
@@ -110,13 +114,18 @@ def run_one(hub: Any, action: dict[str, Any], ctx: dict[str, Any], *, caller: st
         if kind == "tool":
             app = hub.get(str(action.get("app") or ""))
             if app is None:
-                return {"kind": kind, "ok": False, "error": f"unknown app: {action.get('app')}"}
+                # the target app is not installed here: nothing to do, and not an error to shout about
+                return {"kind": kind, "ok": True, "skipped": True, "app": action.get("app"), "tool": action.get("tool"),
+                        "reason": f"app not installed: {action.get('app')}"}
             args = render(action.get("args") or {}, ctx)
             res = family.call_app(app, str(action.get("tool")), args, timeout=timeout, caller=caller)
             return {"kind": kind, "app": app.id, "tool": action.get("tool"), **{k: v for k, v in res.items() if k != "app"}}
         if kind == "hub":
             args = render(action.get("args") or {}, ctx)
             res = hub_tools.call(hub, str(action.get("tool")), args if isinstance(args, dict) else {})
+            if isinstance(res, dict) and res.get("ok") is False and str(res.get("error") or "").startswith("unknown tool:"):
+                return {"kind": kind, "tool": action.get("tool"), "ok": True, "skipped": True,
+                        "reason": f"tool not available: {action.get('tool')}"}
             ok = not (isinstance(res, dict) and res.get("ok") is False)
             return {"kind": kind, "tool": action.get("tool"), "ok": ok, "result": res}
         if kind == "event":
@@ -164,7 +173,7 @@ def compact_results(results: list[dict[str, Any]], max_chars: int = 400) -> list
     import json
     out = []
     for r in results:
-        item = {k: r.get(k) for k in ("index", "kind", "app", "tool", "name", "type", "ok", "ms", "error", "event_id") if k in r}
+        item = {k: r.get(k) for k in ("index", "kind", "app", "tool", "name", "type", "ok", "ms", "error", "event_id", "skipped", "reason") if k in r}
         if "result" in r:
             text = json.dumps(r["result"], ensure_ascii=False, default=str)
             item["result"] = text if len(text) <= max_chars else text[:max_chars] + "…"

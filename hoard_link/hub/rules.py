@@ -27,10 +27,14 @@ import time
 from typing import Any, Callable, Optional
 
 from . import actions
-from .events import EventLog, matches
+from .events import EventLog, event_names, matches
 
 DEFAULT_COOLDOWN_S = 5.0
 HISTORY = 100
+#: ``HOARD_HUB_AUTO_RULES=0`` stops the hub from installing the recommended rules when it starts
+#: (the same switch as ``"auto_install": false`` in ``<data>/rules_meta.json``).
+AUTO_INSTALL_ENV = "HOARD_HUB_AUTO_RULES"
+META_NAME = "rules_meta.json"
 
 
 def _get(event: dict[str, Any], path: str) -> Any:
@@ -45,7 +49,8 @@ def _get(event: dict[str, Any], path: str) -> Any:
 
 def rule_matches(rule: dict[str, Any], event: dict[str, Any]) -> bool:
     when = rule.get("when") or {}
-    if not matches(str(when.get("type") or "*"), event.get("type", "")):
+    # an event renamed to its canonical type still answers to the name the app used (rules written before the rename)
+    if not any(matches(str(when.get("type") or "*"), n) for n in event_names(event)):
         return False
     src = when.get("source")
     if src and str(src) != event.get("source"):
@@ -75,7 +80,7 @@ def validate_rule(rule: Any) -> list[str]:
 
 class RuleEngine:
     def __init__(self, path: Optional[str], events: EventLog, runner: Callable[[list[dict[str, Any]], dict[str, Any], str], list[dict[str, Any]]],
-                 *, now: Callable[[], float] = time.time):
+                 *, now: Callable[[], float] = time.time, auto_install: Optional[bool] = None):
         self.path = path
         self.events = events
         self._run_actions = runner
@@ -88,6 +93,13 @@ class RuleEngine:
         self._worker: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._load()
+        if auto_install is None:
+            auto_install = os.environ.get(AUTO_INSTALL_ENV, "1").strip().lower() not in ("0", "false", "no", "off")
+        if auto_install and self.path:
+            try:
+                self.install_recommended_on_start()
+            except Exception:  # noqa: BLE001 - a broken template must never stop the hub
+                pass
         self._off = events.subscribe(self._on_event)
 
     # -- persistence ----------------------------------------------------------
@@ -110,6 +122,55 @@ class RuleEngine:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({"rules": self.rules}, fh, ensure_ascii=False, indent=2, default=str)
         os.replace(tmp, self.path)
+
+    # -- recommended rules: installed by the hub, removable for good ---------------------
+    @property
+    def meta_path(self) -> Optional[str]:
+        return os.path.join(os.path.dirname(os.path.abspath(self.path)), META_NAME) if self.path else None
+
+    def _meta(self) -> dict[str, Any]:
+        path = self.meta_path
+        if not path or not os.path.isfile(path):
+            return {}
+        try:
+            raw = json.loads(open(path, "r", encoding="utf-8-sig").read())
+        except (OSError, ValueError):
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _save_meta(self, meta: dict[str, Any]) -> None:
+        path = self.meta_path
+        if not path:
+            return
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+
+    def dismissed(self) -> list[str]:
+        """Ids of recommended rules the user removed: the hub does not bring them back by itself."""
+        return [str(x) for x in (self._meta().get("dismissed") or [])]
+
+    def _set_dismissed(self, ids: list[str]) -> None:
+        meta = self._meta()
+        meta["dismissed"] = sorted(set(ids))
+        self._save_meta(meta)
+
+    def install_recommended_on_start(self) -> dict[str, Any]:
+        """Install every recommended rule that is not installed yet and not dismissed (idempotent). Called when
+        the hub builds the engine; ``"auto_install": false`` in ``rules_meta.json`` turns it off."""
+        meta = self._meta()
+        if meta.get("auto_install") is False:
+            return {"ok": True, "installed": [], "skipped": "auto_install is off"}
+        dismissed = set(self.dismissed())
+        installed = []
+        for ex in example_rules():
+            if ex["id"] in dismissed or self.get(ex["id"]) is not None:
+                continue
+            if self.add(dict(ex)).get("ok"):
+                installed.append(ex["id"])
+        return {"ok": True, "installed": installed, "dismissed": sorted(dismissed)}
 
     # -- CRUD -------------------------------------------------------------------
     def list(self) -> list[dict[str, Any]]:
@@ -157,6 +218,7 @@ class RuleEngine:
         unless ``refresh`` — then its ``when``/``then``/``note`` follow the current template while the user's
         ``enabled`` and ``cooldown_s`` (and the run counters) are kept."""
         installed, present, refreshed = [], [], []
+        dismissed = set(self.dismissed())
         for ex in example_rules():
             cur = self.get(ex["id"])
             if cur is not None:
@@ -169,6 +231,9 @@ class RuleEngine:
             res = self.add(dict(ex))
             if res.get("ok"):
                 installed.append(ex["id"])
+                dismissed.discard(ex["id"])      # asking for them again brings back what was removed
+        if installed:
+            self._set_dismissed(list(dismissed))
         return {"ok": True, "installed": installed, "already_present": present, "refreshed": refreshed, "rules": self.list()}
 
     def remove(self, rule_id: str) -> dict[str, Any]:
@@ -178,6 +243,8 @@ class RuleEngine:
             if len(self.rules) == before:
                 return {"ok": False, "error": f"unknown rule: {rule_id}"}
             self._save()
+            if any(ex["id"] == rule_id for ex in example_rules()):
+                self._set_dismissed(self.dismissed() + [rule_id])   # a recommended rule: do not reinstall it at the next start
         return {"ok": True, "removed": rule_id}
 
     # -- matching -----------------------------------------------------------
@@ -232,13 +299,17 @@ class RuleEngine:
         results = self._run_actions(list(rule.get("then") or []), ctx, "rule:" + str(rule.get("id")))
         ms = int((time.monotonic() - t0) * 1000)
         ok = all(r.get("ok") for r in results)
+        skipped = sum(1 for r in results if r.get("skipped"))
         summary = {"rule": rule.get("id"), "name": rule.get("name"), "event_id": event.get("id"), "event_type": event.get("type"),
-                   "ok": ok, "ms": ms, "ts": self._now(), "manual": manual, "results": actions.compact_results(results)}
+                   "ok": ok, "ms": ms, "ts": self._now(), "manual": manual, "results": actions.compact_results(results),
+                   **({"skipped": skipped} if skipped else {})}
         with self._lock:
             for r in self.rules:
                 if r.get("id") == rule.get("id"):
                     r["runs"] = int(r.get("runs", 0)) + 1
                     r["last"] = {k: summary[k] for k in ("ok", "ms", "ts", "event_id", "event_type")}
+                    if skipped:
+                        r["last"]["skipped"] = skipped
                     if not ok:
                         r["last"]["error"] = "; ".join(str(x.get("error")) for x in results if x.get("error"))[:300]
             self.history.append(summary)
@@ -298,4 +369,70 @@ def example_rules() -> list[dict[str, Any]]:
          "then": [{"kind": "start_app", "app": "${event.data.app}"}], "cooldown_s": 300,
          "note": "Cassandra reports a hub-managed app down: the hub starts it again, at most once every five minutes "
                  "(external services such as a model server carry service_kind 'external' and are left alone)."},
+        # -- 0.7: the family reacts to itself ---------------------------------------------------
+        {"id": "rule-ledger-payment-failed", "name": "Payment failed → notify", "when": {"type": "ledger.payment.failed"},
+         "then": [{"kind": "hub", "tool": "hub_notify",
+                   "args": {"title": "Pago fallido: ${event.data.merchant}", "body": "${event.data.amount} ${event.data.currency}",
+                            "priority": "high", "group": "payment", "dedupe_key": "ledger:payment:failed:${event.data.merchant}"}}],
+         "cooldown_s": 5,
+         "note": "Ledger saw a payment that did not go through (a bounced direct debit, a declined card): the person is told at once."},
+        {"id": "rule-ledger-subscription-price", "name": "Subscription price changed → notify",
+         "when": {"type": "ledger.subscription.price"},
+         "then": [{"kind": "hub", "tool": "hub_notify",
+                   "args": {"title": "Cambio de precio: ${event.data.merchant}", "body": "${event.data.amount} ${event.data.currency}",
+                            "priority": "normal", "group": "subscription", "dedupe_key": "ledger:subscription:price:${event.data.merchant}"}}],
+         "cooldown_s": 5,
+         "note": "A subscription Ledger tracks now costs a different amount."},
+        {"id": "rule-ledger-subscription-new", "name": "New subscription → digest note", "when": {"type": "ledger.subscription.new"},
+         "then": [{"kind": "event", "type": "digest.item", "data": {"title": "Nueva suscripción: ${event.data.merchant}", "url": "${event.data.url}",
+                                                                    "watch": "ledger", "kind": "subscription"}}],
+         "cooldown_s": 5,
+         "note": "Ledger found a recurring charge it had not seen before; it lands in the digest instead of interrupting."},
+        {"id": "rule-homehoard-maintenance-due", "name": "Home maintenance due → notify",
+         "when": {"type": "homehoard.maintenance.due"},
+         "then": [{"kind": "hub", "tool": "hub_notify",
+                   "args": {"title": "Mantenimiento: ${event.data.title}", "body": "${event.data.due}", "priority": "normal",
+                            "group": "maintenance", "url": "${event.data.url}", "dedupe_key": "homehoard:maintenance:${event.data.title}"}}],
+         "cooldown_s": 5,
+         "note": "A maintenance task of the home inventory is due."},
+        {"id": "rule-cassandra-app-incident", "name": "App incident → notify",
+         "when": {"type": "cassandra.incident.opened", "where": {"data.service_kind": "app"}},
+         "then": [{"kind": "hub", "tool": "hub_notify",
+                   "args": {"title": "App con problemas: ${event.data.app}", "body": "${event.data.probable_cause}", "priority": "high",
+                            "group": "incident", "dedupe_key": "cassandra:incident:${event.data.incident_id}"}}],
+         "cooldown_s": 5,
+         "note": "Cassandra opened an incident for one of the family's apps (the restart rule tries to fix it; this one tells the person)."},
+        {"id": "rule-funes-minutes-people-deadlines", "name": "Minutes ready → people and deadlines",
+         "when": {"type": "funes.minutes.ready"},
+         "then": [{"kind": "tool", "app": "people", "tool": "people_from_minutes", "args": {"minutes_id": "${event.data.minutes_id}"}},
+                  {"kind": "tool", "app": "kafka", "tool": "deadlines_from_minutes", "args": {"minutes_id": "${event.data.minutes_id}"}}],
+         "cooldown_s": 5,
+         "note": "Meeting minutes written by Funes feed the contact book (who was there, what they promised) and the deadline list."},
+        {"id": "rule-people-commitment-deadline", "name": "Commitment added → deadline", "when": {"type": "people.commitment.added"},
+         "then": [{"kind": "tool", "app": "kafka", "tool": "deadline_add",
+                   "args": {"title": "${event.data.title}", "due": "${event.data.due}", "source_ref": "${event.data.ref}"}}],
+         "cooldown_s": 5,
+         "note": "A commitment noted against a person becomes a deadline in the paperwork app, with the reference back to it."},
+        {"id": "rule-pygmalion-publish-galton", "name": "Model published → benchmark run",
+         "when": {"type": "pygmalion.job.done", "where": {"data.kind": "publish"}},
+         "then": [{"kind": "tool", "app": "galton", "tool": "galton_run", "args": {"models": ["${event.data.model}"]}}],
+         "cooldown_s": 5,
+         "note": "When a model finishes publishing, the benchmark app runs it."},
+        {"id": "rule-lumiere-render-draft", "name": "Render done → post draft",
+         "when": {"type": "lumiere.job.done", "where": {"data.kind": "render"}},
+         "then": [{"kind": "tool", "app": "mercator", "tool": "post_draft_from_media",
+                   "args": {"media_ref": "${event.data.ref}", "title": "${event.data.title}"}}],
+         "cooldown_s": 5,
+         "note": "A finished video render becomes a post draft in the sales app."},
+        {"id": "rule-mercator-sales-ledger", "name": "Sales imported → income in the ledger", "when": {"type": "mercator.sales.imported"},
+         "then": [{"kind": "tool", "app": "ledger", "tool": "income_from_sales", "args": {"batch": "${event.data.batch}"}}],
+         "cooldown_s": 5,
+         "note": "Imported sales are booked as income."},
+        {"id": "rule-exports-to-vulcan", "name": "3D export done → model library",
+         "when": {"type": "plato.export.done|gepetto.export.done"},
+         "then": [{"kind": "tool", "app": "vulcan", "tool": "model_import_file",
+                   "args": {"path": "${event.data.path}", "source_ref": "${event.data.ref}"}}],
+         "cooldown_s": 5,
+         "note": "A file exported by one of the modelling apps is imported into the model library. "
+                 "(links.highlight.added has no rule on purpose: Links has its own send-to-study button.)"},
     ]
