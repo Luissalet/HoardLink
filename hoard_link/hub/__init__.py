@@ -31,6 +31,11 @@ Since 0.5 it also reports the state of every git repository of the family
 (``repos.py``: unpushed commits, uncommitted work, stray branches, drifted
 vendored copies, CI) — read-only, it never pushes or changes anything.
 
+Since 0.6 it also serves the local models to every app (``linkchat.py``:
+``POST /api/link/chat`` and ``GET /api/link/status``), so Node apps and
+stdlib-only apps get the same model resolution, GPU lease and reasoning
+effort as the Python apps that vendor ``hoard_link.Link``.
+
 Optional extras: ``psutil`` for pid/memory/uptime and process-tree stops
 (without it the hub still shows health and can open apps, but cannot stop
 them), ``pywebview`` for a native window instead of a Chromium ``--app``
@@ -39,7 +44,7 @@ window.
 
 from __future__ import annotations
 
-HUB_VERSION = "0.5.0"
+HUB_VERSION = "0.6.0"
 DEFAULT_PORT = 8810
 SERVICE = "hoard-hub"
 

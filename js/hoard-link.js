@@ -11,18 +11,24 @@
 //   family.configure({ app: "links", dataDir: DATA_DIR });
 //   family.emit("links.watch.new", { id, title, url });          // fire and forget
 //   const r = await family.call("hypatia", "cards_suggest", { text });
+//   const a = await family.chat({ messages: [{ role: "user", content: "..." }], json: true });  // the local model, via the hub
 //   res.json({ service: "links-hoard", hoard_link: family.healthBlock() });
 //
 // Where the hub is: HOARD_HUB_URL, else the `url` file the hub writes in
 // HOARD_HUB_DATA_DIR or in a sibling `HoardLink/data/`, else :8810.
 // Events are hints: when the hub is down they are dropped and counted,
 // never thrown. HOARD_EVENTS=0 turns emission off.
+//
+// Models: chat() and linkStatus() use the hub's own Hoard Link (0.6) over
+// HTTP, so a Node app gets the same model resolution, GPU lease and
+// reasoning effort as the Python apps. They never throw: "no model",
+// "timed out" and "hub down" come back as { ok: false, error }.
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const FAMILY_VERSION = "0.4.0";
+export const FAMILY_VERSION = "0.6.0";
 const DEFAULT_URL = "http://127.0.0.1:8810";
 
 const state = { app: "", tokenFile: "", hub: null, enabled: true, sent: 0, dropped: 0, lastError: "" };
@@ -75,7 +81,7 @@ async function post(p, body, timeoutMs) {
     try { data = await res.json(); } catch { data = null; }
     return { status: res.status, data };
   } catch (e) {
-    return { status: null, data: { error: String(e && e.message || e) } };
+    return { status: null, data: { error: String(e && e.message || e) }, aborted: ctl.signal.aborted };
   } finally {
     clearTimeout(timer);
   }
@@ -104,6 +110,64 @@ export async function call(app, tool, args = {}, { timeoutMs = 120000 } = {}) {
     return data;
   }
   return { ok: st >= 200 && st < 300, app, tool, status: st, result: data };
+}
+
+function toBase64(img) {
+  if (typeof img === "string") return img;
+  return Buffer.from(img).toString("base64");   // Buffer / Uint8Array / ArrayBuffer
+}
+
+/**
+ * Ask the local model through the hub (POST /api/link/chat).
+ * `messages`: [{role: "system"|"user"|"assistant", content}]. `capability`: "llm" or "vision"
+ * (vision needs `images`: base64 strings, Buffers or Uint8Arrays, attached to the last user message).
+ * `json`: true, or a JSON Schema object, to also get the parsed answer in `result.json`.
+ * `effort`: "off"|"low"|"medium"|"high"|"max". Never throws. Returns
+ * `{ ok, text, json, model, provider, ms, error, detail }`; on failure `ok` is false and `error` is
+ * `no_model` (nothing can serve it), `timeout`, `hub_down` or `http_<code>` (`code` has the hub's own word,
+ * e.g. gpu_busy, bad_request, backend_error). `timeoutMs` is how long the hub may take (queue and model);
+ * `graceMs` is the extra time before this client gives up on a hub that stopped answering. The evidence for any answer is the text you sent: keep it.
+ */
+export async function chat({ messages, capability = "llm", images, json, effort, maxTokens, temperature, timeoutMs = 300000, graceMs = 15000 } = {}) {
+  const body = { capability, messages: messages || [] };
+  if (images && images.length) body.images = images.map(toBase64);
+  if (json !== undefined && json !== null && json !== false) body.json = json;
+  if (effort) body.effort = effort;
+  if (maxTokens) body.max_tokens = maxTokens;
+  if (temperature !== undefined && temperature !== null) body.temperature = temperature;
+  body.timeout_s = timeoutMs / 1000;
+  // The hub answers 504 at timeout_s; the abort is only the net for a hub that stopped answering at all.
+  const { status: st, data, aborted } = await post("/api/link/chat", body, timeoutMs + graceMs);
+  if (st === null) {
+    return aborted ? { ok: false, error: "timeout", detail: `no answer from the hub within ${Math.round(timeoutMs / 1000)}s`, text: "", json: null, model: null, provider: null }
+                   : { ok: false, error: "hub_down", detail: `hub not reachable at ${findHubUrl()}`, text: "", json: null, model: null, provider: null };
+  }
+  const d = data && typeof data === "object" ? data : {};
+  if (st === 200 && d.ok) {
+    return { ok: true, text: d.text ?? "", json: d.json ?? null, model: d.model ?? null, provider: d.provider ?? null,
+             ms: d.ms ?? null, usage: d.usage ?? null, ...(d.json_error ? { json_error: d.json_error } : {}), error: null, detail: null };
+  }
+  const code = d.error || "";
+  const error = code === "no_model" || code === "timeout" ? code : `http_${st}`;
+  const detail = st === 401 ? `the hub refused this app's token (${state.tokenFile || "no token file"})` : (d.detail || code || "");
+  return { ok: false, error, code, detail, text: "", json: null, model: null, provider: null };
+}
+
+/** Which model serves llm / vision / embed / tts now: `{ ok, llm: {available, model, provider, reason}, ... }`, or `{ ok: false, error: "hub_down" }`. */
+export async function linkStatus({ force = false, timeoutMs = 30000 } = {}) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(findHubUrl() + "/api/link/status" + (force ? "?force=1" : ""), { headers: headers(), signal: ctl.signal });
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (res.ok && data && typeof data === "object") return data;
+    return { ok: false, error: `http_${res.status}`, detail: (data && (data.detail || data.error)) || "" };
+  } catch (e) {
+    return { ok: false, error: ctl.signal.aborted ? "timeout" : "hub_down", detail: String(e && e.message || e) };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** One agent.call event per /api/agent/call — the audit trail. */

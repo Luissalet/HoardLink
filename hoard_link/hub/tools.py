@@ -377,6 +377,43 @@ def catalogue() -> list[dict[str, Any]]:
             "inputSchema": {"type": "object", "properties": {"name": _REPO}, "required": ["name"], "additionalProperties": False},
             "annotations": {"readOnlyHint": True},
         },
+        # -- models for every app: the hub's own Link, served over HTTP (/api/link/chat) --
+        {
+            "name": "hub_link_status",
+            "description": "Which local model serves llm, vision, embed and tts right now / modelos locales disponibles.\n"
+                           "Per capability: available, model, provider and the reason when none can serve it; plus the "
+                           "chat queue (concurrency, active, queued). Keywords: qué modelo hay, hay modelo cargado, "
+                           "modelo local, LLM disponible, visión.\n"
+                           "Sinónimos: estado de los modelos, qué modelo se está usando, ¿hay un modelo disponible?, "
+                           "modelos para las apps.",
+            "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "default": False,
+                                                                       "description": "Re-probe the servers now."}},
+                            "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_link_chat",
+            "description": "Ask the local model (the one every app uses) a question through the hub / preguntar al modelo local.\n"
+                           "Same call apps make on POST /api/link/chat: messages or a plain prompt, capability llm|vision "
+                           "(vision needs images as base64), json true or a JSON Schema, effort off|low|medium|high|max. "
+                           "Returns text, parsed json, model and provider, or error no_model / timeout / backend_error. "
+                           "Not read-only (it may make the server load a model and takes a GPU lease), never destructive. "
+                           "Nothing is stored.\n"
+                           "Sinónimos: pregunta al modelo local, prueba el modelo, usa el LLM del hub, consulta al modelo.",
+            "inputSchema": {"type": "object", "properties": {
+                "prompt": {"type": "string", "description": "A single user message (instead of messages)."},
+                "system": {"type": "string", "description": "System message to put before prompt."},
+                "messages": {"type": "array", "items": {"type": "object"},
+                             "description": "[{role: system|user|assistant, content}], used instead of prompt."},
+                "capability": {"type": "string", "enum": ["llm", "vision"], "default": "llm"},
+                "images": {"type": "array", "items": {"type": "string"}, "description": "Base64 images (vision only)."},
+                "json": {"description": "true, or a JSON Schema object, to get a JSON answer in `json`."},
+                "effort": {"type": "string", "enum": ["off", "low", "medium", "high", "max"]},
+                "max_tokens": {"type": "integer"}, "temperature": {"type": "number"},
+                "timeout_s": {"type": "number", "default": 300}},
+                "additionalProperties": False},
+            "annotations": {"readOnlyHint": False, "destructiveHint": False},
+        },
         {
             "name": "hub_rescan",
             "description": "Re-read the app folders for new or removed manifests. Keywords: rescan, refresh list, actualizar lista.",
@@ -472,7 +509,18 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         snap = hub.repos.snapshot()
         return {**res, "summary": snap["summary"], "age_s": snap["age_s"], "ci_pending": snap["ci_pending"]}
 
+    def link_chat(a: dict[str, Any]) -> Any:
+        body = {k: v for k, v in a.items() if k not in ("prompt", "system")}
+        if not a.get("messages"):
+            msgs = ([{"role": "system", "content": str(a["system"])}] if a.get("system") else [])
+            msgs.append({"role": "user", "content": str(a.get("prompt") or "")})
+            body["messages"] = msgs
+        _status, payload = hub.link.chat("hub-tool", body)
+        return payload
+
     return {
+        "hub_link_status": lambda a: hub.link.status(force=bool(a.get("force", False))),
+        "hub_link_chat": link_chat,
         "hub_repos": repos_list,
         "hub_repo": repo_detail,
         "hub_repos_refresh": repos_refresh,

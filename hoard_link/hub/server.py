@@ -47,6 +47,10 @@ GET  /api/jobs  | POST /api/jobs  (add) | POST /api/jobs/<id>/update|remove|run
 GET  /api/backups | /api/backups/<id> | POST /api/backups/run|prune|verify|restore
 GET  /api/audit                the family audit (?probe=0 for disk-only)
 
+Models for every app (0.6): the hub serves its local models to any family app
+POST /api/link/chat            (family token or the UI) {messages, capability, images, json, effort, ...} -> {ok, text, json, model, ...}
+GET  /api/link/status          which model serves llm / vision / embed / tts right now (?force=1 re-probes)
+
 The Repos facet (0.5): the state of every git repository of the family (read-only; the hub never pushes)
 GET  /api/repos                the cached snapshot (starts a refresh when it is older than 5 min)
 GET  /api/repos/<name>         one repository in full: issues, dirty paths, branches, commits, remotes
@@ -76,6 +80,7 @@ from .lease import LeaseError
 from .rules import example_rules
 from .jobs import example_jobs
 from .events import event_types_help
+from .linkchat import LINK_MAX_BODY
 
 logger = logging.getLogger("hoard_hub")
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
@@ -210,6 +215,31 @@ class _HubHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    # -- models for every app -----------------------------------------------------
+    def _link_chat(self) -> None:
+        """POST /api/link/chat. Authenticated before the body is read (it may hold 12 MB of images), so a
+        refusal closes the connection instead of leaving unread bytes on a keep-alive socket."""
+        who = self._family_caller()
+        if who is None:
+            self.close_connection = True
+            return self._json({"ok": False, "error": "a family bearer token is required: the hub's data/mcp-token or any app's own"}, 401)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > LINK_MAX_BODY:
+            self.close_connection = True
+            return self._json({"ok": False, "error": "too_large", "detail": f"the request is over {LINK_MAX_BODY // (1024 * 1024)} MB"}, 413)
+        raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            body = json.loads(raw.decode("utf-8")) if raw else {}
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            return self._json({"ok": False, "error": "bad_request", "detail": "the body must be a JSON object"}, 400)
+        status, payload = self.hub.link.chat(who, body)
+        return self._json(payload, status)
+
     # -- leases ---------------------------------------------------------------
     def _lease_reply(self, res: dict[str, Any]) -> None:
         status = int(res.pop("status", 0) or 0) if isinstance(res, dict) else 0
@@ -312,6 +342,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "snapshot": m})
             if path == "/api/audit":
                 return self._json(hub.family_audit(probe=query.get("probe", ["1"])[0] not in ("0", "false")))
+            if path == "/api/link/status":
+                return self._json(hub.link.status(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path == "/api/repos":
                 return self._json(hub.repos.snapshot())
             if path.startswith("/api/repos/"):
@@ -362,6 +394,12 @@ class _HubHandler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path.rstrip("/")
         hub = self.hub
+        if path == "/api/link/chat":
+            try:
+                return self._link_chat()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("POST %s failed", path)
+                return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
         try:
             body = self._read_body()
         except ValueError as exc:
