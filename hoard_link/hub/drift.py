@@ -37,6 +37,8 @@ KEEP_IN_DST = {"VENDORED.txt", "LICENSE"}
 THEME_SKIP = {"node_modules", "dist", "build", ".git", ".venv", "venv", "__pycache__", "data", "release", "dist-electron",
               "assets"}
 THEME_NAME = "hoard-theme.css"
+#: The Node commons (``js/hoard-commons/``): vendored next to ``server/hoard-link.js`` as ``server/hoard-commons/``.
+JS_COMMONS = "hoard-commons"
 
 
 def find_vendored(app: Path | str, src_pkg: Optional[Path | str] = None, max_depth: int = 3) -> list[Path]:
@@ -98,6 +100,14 @@ def vendored_js_stale(app: Path | str, src_js: Path | str) -> Optional[bool]:
     if not js.is_file() or not Path(src_js).is_file():
         return None
     return not filecmp.cmp(src_js, js, shallow=False)
+
+
+def vendored_js_commons_plan(app: Path | str, src_dir: Path | str) -> Optional[tuple[list[str], list[str]]]:
+    """``None`` when the app is not a Node app of the family (no ``server/hoard-link.js``) or there is no source
+    folder; else :func:`plan_tree` of ``js/hoard-commons/`` over the app's ``server/hoard-commons/``."""
+    if not (Path(app) / "server" / "hoard-link.js").is_file() or not Path(src_dir).is_dir():
+        return None
+    return plan_tree(src_dir, Path(app) / "server" / JS_COMMONS)
 
 
 def digest(path: Path | str) -> str:

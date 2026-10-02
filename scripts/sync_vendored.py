@@ -11,7 +11,8 @@ copies equal to this repository's ``hoard_link/`` again:
     python scripts/sync_vendored.py --dry-run
 
 A Python app vendors the package at ``<app>/<package>/hoard_link/``; a
-Node app vendors ``<app>/server/hoard-link.js``. ``--install`` puts the
+Node app vendors ``<app>/server/hoard-link.js`` and the Node commons
+(``js/hoard-commons/``) at ``<app>/server/hoard-commons/``. ``--install`` puts the
 package next to the app's ``__main__.py`` (or ``main.py``) when no copy
 exists yet. ``__pycache__`` is never copied, and nothing outside the
 vendored folder is touched. Roots default to the folder above this
@@ -31,6 +32,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SRC_PY = REPO / "hoard_link"
 SRC_JS = REPO / "js" / "hoard-link.js"
+SRC_JS_COMMONS = REPO / "js" / "hoard-commons"      # the Node commons, vendored as server/hoard-commons/
 
 
 def _load_drift():
@@ -103,6 +105,27 @@ def copy_tree(src: Path, dst: Path, dry: bool) -> tuple[int, int]:
     return len(changed), len(removed)
 
 
+def _sync_js_commons(folder: Path, dry: bool) -> int:
+    """Copy ``js/hoard-commons/`` over ``<app>/server/hoard-commons/`` (Node apps only); returns the changes."""
+    if not SRC_JS_COMMONS.is_dir():
+        return 0
+    if not dry and not (folder / "server" / "hoard-link.js").is_file():
+        return 0
+    dst = folder / "server" / "hoard-commons"
+    changed, removed = drift.plan_tree(SRC_JS_COMMONS, dst)
+    if not dry:
+        for rel in changed:
+            d = dst / rel
+            d.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(SRC_JS_COMMONS / rel, d)
+        for rel in removed:
+            (dst / rel).unlink()
+    n = len(changed) + len(removed)
+    print(f"  {folder.name}: server/hoard-commons  {len(changed)} file(s) updated, {len(removed)} removed"
+          + (" [dry run]" if dry else ""))
+    return n
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--roots", nargs="*", default=[str(REPO.parent)])
@@ -143,7 +166,7 @@ def main() -> int:
                 if not args.dry_run:
                     shutil.copy2(SRC_JS, js)
                 print(f"  {folder.name}: installed server/hoard-link.js")
-                total += 1
+                total += 1 + _sync_js_commons(folder, args.dry_run)
                 continue
             for t in targets:
                 ch, rm = copy_tree(SRC_PY, t, args.dry_run)
@@ -157,6 +180,7 @@ def main() -> int:
                         shutil.copy2(SRC_JS, js)
                     total += 1
                     print(f"  {folder.name}: server/hoard-link.js updated" + (" [dry run]" if args.dry_run else ""))
+                total += _sync_js_commons(folder, args.dry_run)
     print(f"{total} change(s)" + (" (dry run)" if args.dry_run else ""))
     return 0
 
