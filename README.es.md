@@ -501,7 +501,7 @@ ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
 `hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
 `hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
-`hub_repo_push_command`, `hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a
+`hub_repo_push_command`, `hub_link_status`, `hub_link_chat`, `hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a
 Faustus adoptar el hub como a cualquier otra app.
 
 ### La capa de familia (0.4): eventos, reglas, tareas, copias, el proxy
@@ -566,6 +566,37 @@ eventos `hub.repos.scan` / `hub.repos.issue` alimentan reglas, y una regla
 recomendada convierte los problemas nuevos en notas del digest. Ajustes en
 `repos` de `data/hub.json`; la referencia es la sección *Repos* de
 [docs/HUB.md](docs/HUB.md).
+
+### Modelos para todas las apps (0.6)
+
+Las apps de Python llaman a los modelos locales con el `Link` que llevan
+copiado; las de Node (y las que no cargan `httpx`) no pueden. Desde 0.6 el
+hub, que ya tiene un Link, los sirve por HTTP: `POST /api/link/chat` recibe
+`{messages, capability: "llm" | "vision", images, json, effort, max_tokens,
+temperature, timeout_s}` con cualquier token de la familia y responde `{ok,
+text, json, model, provider, ms}`; `GET /api/link/status` dice qué modelo
+sirve `llm`, `vision`, `embed` y `tts`, y por qué no hay ninguno cuando no lo
+hay. Las llamadas usan la misma resolución de modelo, la misma reserva de GPU
+y el mismo esfuerzo de razonamiento que el Link de una app, como mucho
+`link_chat_concurrency` (2 por defecto) a la vez y el resto en cola, y nunca
+guardan ni registran lo que se dijo (el evento `hub.link.chat` lleva solo la
+app, la capacidad, el resultado, la duración y el modelo). Sin modelo la
+respuesta es `503 no_model` con los motivos, nunca un texto inventado.
+`json: true` (o un JSON Schema) devuelve además la respuesta ya interpretada,
+leída con tolerancia aunque venga entre ``` o rodeada de prosa, junto al
+texto original.
+
+```js
+import * as family from "./hoard-link.js";            // server/hoard-link.js, copiado en la app
+const r = await family.chat({ messages: [{ role: "user", content: "..." }], json: true, effort: "low" });
+// { ok, text, json, model, provider, error }  error: no_model | timeout | hub_down | http_<código>
+```
+
+Python sin Link: `hoard_link.family.chat(messages, json=True)` y
+`family.link_status()` (solo biblioteca estándar). Para un asistente:
+`hub_link_chat` y `hub_link_status`. El contrato y los códigos de estado
+están en [docs/FAMILY.md](docs/FAMILY.md#10-models-for-every-app); los
+ajustes del hub, en [docs/HUB.md](docs/HUB.md#models-for-every-app).
 
 ## Uso con Faustus
 
@@ -761,7 +792,7 @@ Windows o en Linux:
 pytest -q
 ```
 
-381 tests, sin conexión (`httpx.MockTransport`), en aproximadamente un minuto. Los
+450 tests, sin conexión (`httpx.MockTransport`), en aproximadamente un minuto. Los
 únicos sockets reales están en los tests de la fachada síncrona y en los
 del hub, que arrancan servidores HTTP mínimos en puertos efímeros de
 `127.0.0.1` (una app falsa que contesta a `/api/health`, otra que el hub
