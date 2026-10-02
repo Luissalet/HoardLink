@@ -17,7 +17,11 @@ The hub takes from it: `id`, `name`, `purpose`, `capabilities`,
 `app.url_default`, `app.health` (`path` + `expect.service`),
 `app.launch_hint`, and from `defaults`: `TOKEN_FILE` (where the app keeps
 its bearer token; default `<folder>/data/mcp-token`) and `DATA_DIR`
-(what backups copy; default the token file's folder).
+(what backups copy; default the token file's folder). In the launch hint a
+`{X_DIR}` placeholder with a value in `defaults` (typically `DATA_DIR`) takes
+that value, any other `{X_DIR}` is the app's folder, and `%VAR%` is expanded
+in `cwd`, `argv` and `env`, so the hub starts the app on the same data folder
+that Faustus's MCP bridge uses.
 
 ## 2. The agent contract
 
