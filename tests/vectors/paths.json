@@ -1,0 +1,1138 @@
+[
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "a drive root is too broad",
+  "platform": "win",
+  "note": "drive root"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "c:/"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "a drive root is too broad",
+  "platform": "win",
+  "note": "forward slash"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "D:\\"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "a drive root is too broad",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "\\\\server\\share"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "a drive root is too broad",
+  "platform": "win",
+  "note": "UNC share root"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "win",
+  "note": "profile root"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "win",
+  "note": "the Users folder"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "c:\\users\\LUIS\\"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "win",
+  "note": "case and trailing slash"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "\"C:\\Users\\luis\""
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "win",
+  "note": "quotes from Explorer's Copy as path"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "  'C:\\Users\\luis'  "
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "win",
+  "note": "single quotes and spaces"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Windows"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Windows\\System32"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "c:\\WINDOWS\\temp"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Program Files\\App"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Program Files (x86)"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\ProgramData"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "D:\\Program Files"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win",
+  "note": "other drive"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\$Recycle.Bin"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Windows.\\x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win",
+  "note": "Windows ignores trailing dots"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Windows \\x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win",
+  "note": "and trailing spaces"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "\\\\?\\C:\\Windows"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win",
+  "note": "extended-length prefix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\Documents\\..\\.."
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "win",
+  "note": "dot-dot collapses to C:\\Users"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\.ssh"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\AppData\\Roaming\\x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\.gnupg\\a"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\Projects\\app\\node_modules\\pkg"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\Documents\\..\\.ssh"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win",
+  "note": "dot-dot into .ssh"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\.aws"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\work\\.git\\hooks"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "Documents\\x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the path must be absolute",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:Documents"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the path must be absolute",
+  "platform": "win",
+  "note": "drive-relative"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "\\Users\\x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the path must be absolute",
+  "platform": "win",
+  "note": "rooted but no drive"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "..\\x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the path must be absolute",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "not a valid path",
+  "platform": "win",
+  "note": "empty"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "   "
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "not a valid path",
+  "platform": "win",
+  "note": "blank"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\Documents"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "\"C:\\Users\\luis\\My Documents\\Fotos de verano\""
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "quotes and spaces inside"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "D:\\Proyectos\\Windows"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "a user folder that happens to be called Windows"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "E:\\Fotos\\2024"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "\\\\nas\\media\\Fotos"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "UNC subfolder"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\AppData\\Local\\Temp\\docs"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "below the temp folder AppData does not count"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\Users\\luis\\Desktop\\Ñandú café"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "accents"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "D:\\Program Files Backup\\x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "not the Program Files folder"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\apps\\kafka\\data\\inbox"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data"
+  },
+  "expect": "the app's own data folder cannot be used",
+  "platform": "win",
+  "note": "inside the data folder"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\APPS\\KAFKA\\DATA\\x"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data"
+  },
+  "expect": "the app's own data folder cannot be used",
+  "platform": "win",
+  "note": "case-insensitive"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\apps\\kafka\\data"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data"
+  },
+  "expect": "the app's own data folder cannot be used",
+  "platform": "win",
+  "note": "the folder itself"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\apps\\kafka"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data"
+  },
+  "expect": "that folder contains the app's own data folder",
+  "platform": "win",
+  "note": "a folder that contains it"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\apps\\kafka\\data\\inbox"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data",
+   "allow_data_subdir": "inbox"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "allowed subfolder (relative name)"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\apps\\kafka\\data\\inbox\\2024"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data",
+   "allow_data_subdir": "inbox"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "below the allowed subfolder"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\apps\\kafka\\data\\workshop\\a"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data",
+   "allow_data_subdir": [
+    "inbox",
+    "C:\\apps\\kafka\\data\\workshop"
+   ]
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "a list of allowed subfolders (absolute)"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\apps\\kafka\\data\\db"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data",
+   "allow_data_subdir": [
+    "inbox",
+    "workshop"
+   ]
+  },
+  "expect": "the app's own data folder cannot be used",
+  "platform": "win",
+  "note": "not in the allowed list"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "C:\\apps\\other"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "unrelated"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "a drive root is too broad",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/etc"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/etc/ssh"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/usr/lib"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/proc/1"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/var/lib/x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/home/luis"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/home"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/Users/luis"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the user profile folder is too broad: pick a subfolder",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/home/luis/.ssh/keys"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/home/luis/.config/x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "/home/luis/proj/node_modules/x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_folder",
+  "args": [
+   "relative/dir"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the path must be absolute",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\Users\\luis\\.ssh\\id_rsa"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "that looks like a credentials file",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\Users\\luis\\Documents\\credentials.json"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "that looks like a credentials file",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "D:\\app\\.env"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "that looks like a credentials file",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "D:\\app\\.env.production"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "that looks like a credentials file",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "D:\\app\\data\\mcp-token"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "that looks like a credentials file",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "D:\\certs\\site.pem"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "that looks like a credentials file",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "D:\\k\\vault.kdbx"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "that looks like a credentials file",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\Windows\\notepad.exe"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\Program Files\\App\\app.exe"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\Users\\luis\\AppData\\Roaming\\x\\file.txt"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\Users\\luis\\proj\\node_modules\\a\\index.js"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "report.pdf"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the path must be absolute",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "not a valid path",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\Users\\luis\\Documents\\factura 2024.pdf"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "D:\\Fotos\\Año\\img.jpg"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "\"C:\\Users\\luis\\Desktop\\a.txt\""
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "quoted"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\Users\\luis\\AppData\\Local\\Temp\\doc.pdf"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "temp file under AppData"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\apps\\kafka\\data\\app.db"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data"
+  },
+  "expect": "the app's own data folder cannot be used",
+  "platform": "win",
+  "note": "own data file"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "C:\\apps\\kafka\\data\\inbox\\a.pdf"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data",
+   "allow_data_subdir": "inbox"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "inbox is allowed"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "/etc/passwd"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_file",
+  "args": [
+   "/home/luis/.ssh/config"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "C:\\"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "a drive root is too broad",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "C:\\Windows\\Temp"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "C:\\Users\\luis\\.ssh"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "configuration and hidden folders are not allowed",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "out"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "the path must be absolute",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "D:\\Salidas\\render"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "may not exist yet"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "C:\\Users\\luis"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "profile root is fine to write under (unlike reading it)"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "C:\\Users\\luis\\Videos\\out"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": null,
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "C:\\apps\\kafka\\data\\cache"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data"
+  },
+  "expect": "the app's own data folder cannot be used",
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "C:\\apps\\kafka\\data\\workshop\\x"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data",
+   "allow_data_subdir": [
+    "workshop",
+    "inbox"
+   ]
+  },
+  "expect": null,
+  "platform": "win"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "C:\\apps\\kafka"
+  ],
+  "opts": {
+   "lang": "en",
+   "data_dir": "C:\\apps\\kafka\\data"
+  },
+  "expect": null,
+  "platform": "win",
+  "note": "an ancestor of the data folder is fine to write into"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "/"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "a drive root is too broad",
+  "platform": "posix"
+ },
+ {
+  "fn": "unsafe_output_dir",
+  "args": [
+   "/etc/x"
+  ],
+  "opts": {
+   "lang": "en"
+  },
+  "expect": "system folders are not allowed",
+  "platform": "posix"
+ }
+]

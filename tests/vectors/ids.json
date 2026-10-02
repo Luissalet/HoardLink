@@ -1,0 +1,20 @@
+[
+  {"fn": "is_ulid", "args": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"], "expect": true},
+  {"fn": "is_ulid", "args": ["01arz3ndektsv4rrffq69g5fav"], "expect": true},
+  {"fn": "is_ulid", "args": ["81ARZ3NDEKTSV4RRFFQ69G5FAV"], "expect": false},
+  {"fn": "is_ulid", "args": ["01ARZ3NDEKTSV4RRFFQ69G5FA"], "expect": false},
+  {"fn": "is_ulid", "args": ["01ARZ3NDEKTSV4RRFFQ69G5FAVX"], "expect": false},
+  {"fn": "is_ulid", "args": ["01ARZ3NDEKTSV4RRFFQ69G5FAI"], "expect": false},
+  {"fn": "is_ulid", "args": ["01ARZ3NDEKTSV4RRFFQ69G5FAU"], "expect": false},
+  {"fn": "is_ulid", "args": [""], "expect": false},
+  {"fn": "is_ulid", "args": [12345], "expect": false},
+  {"fn": "id_time", "args": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"], "expect": 1469922850.259},
+  {"fn": "id_time", "args": ["job_01ARZ3NDEKTSV4RRFFQ69G5FAV"], "expect": 1469922850.259},
+  {"fn": "id_time", "args": ["job-01ARZ3NDEKTSV4RRFFQ69G5FAV"], "expect": 1469922850.259},
+  {"fn": "id_time", "args": ["job01ARZ3NDEKTSV4RRFFQ69G5FAV"], "expect": null},
+  {"fn": "id_time", "args": ["0123456789abcdef0123456789abcdef"], "expect": null},
+  {"fn": "id_time", "args": ["job_abc"], "expect": null},
+  {"fn": "id_time", "args": [""], "expect": null},
+  {"fn": "id_time", "args": ["00000000000000000000000000"], "expect": 0.0},
+  {"fn": "id_time", "args": ["01ARZ3NDEKTSV4RRFFQ69G5FAI"], "expect": null}
+]
