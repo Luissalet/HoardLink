@@ -597,3 +597,12 @@ def test_install_fastapi_adds_shared_contract(tmp_path, fserved):
     (folder / "data" / "mcp-token").write_text(token)
     hub.rescan()
     assert hub.get("testapp").token_file.endswith("mcp-token")
+
+
+def test_descriptions_from_a_plain_tool_decorator(tmp_path):
+    from hoard_link.family import descriptions_from_fastmcp_source
+    src = tmp_path / "mcp_server.py"
+    src.write_text('def tool(fn=None, **kw):\n    return fn\n\n@tool\ndef studio_status():\n    """Status of the studio."""\n\n'
+                   '@tool(name="voice")\ndef voice_tts(text):\n    """Speak a text."""\n', encoding="utf-8")
+    out = descriptions_from_fastmcp_source(str(src))
+    assert out["studio_status"] == "Status of the studio." and out["voice"] == "Speak a text."

@@ -414,8 +414,8 @@ def install_fastapi(app: Any, app_id: str, data_dir: str, *, contract: bool = Tr
 
 
 def descriptions_from_fastmcp_source(path: str) -> dict[str, str]:
-    """Tool descriptions from a FastMCP adapter's source (``@mcp.tool``
-    functions and their docstrings), read with ``ast`` — no import of
+    """Tool descriptions from a FastMCP adapter's source (``@mcp.tool`` or
+    ``@tool`` functions and their docstrings), read with ``ast`` — no import of
     ``mcp`` needed. Used to give ``install_fastapi`` the same texts the
     stdio bridge shows, so the shared catalogue and the MCP one agree."""
     import ast
@@ -441,7 +441,8 @@ def descriptions_from_fastmcp_source(path: str) -> dict[str, str]:
         name = node.name
         for dec in node.decorator_list:
             target = dec.func if isinstance(dec, ast.Call) else dec
-            if isinstance(target, ast.Attribute) and target.attr == "tool":
+            # ``@mcp.tool`` / ``@server.tool(...)`` and a plain ``@tool`` (an adapter's own decorator)
+            if (isinstance(target, ast.Attribute) and target.attr == "tool") or (isinstance(target, ast.Name) and target.id == "tool"):
                 is_tool = True
                 if isinstance(dec, ast.Call):
                     for kw in dec.keywords:
