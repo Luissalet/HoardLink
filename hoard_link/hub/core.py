@@ -80,8 +80,16 @@ class Hub:
         self.link = LinkService(self.config, emit=lambda t, d: self.events.emit(t, d, source="hub"))
         procs._protected_pids()  # warm the ancestor list once, off the request path
         self.rescan()
+        # Facets (0.7): notifications, spheres, mail, chats, Today, references, search, jobs view, purchases.
+        from . import facets as _facets
+        self.facets = _facets.load_all(self)
         if self.config.jobs_enabled:
             self.jobs.start()
+        _facets.start_all(self.facets)
+
+    def facet(self, facet_id: str) -> Any:
+        """The facet with that id (``notify``, ``spheres``…) or None."""
+        return getattr(self, "_facets_by_id", {}).get(facet_id)
 
     def _repo_settings(self) -> RepoSettings:
         """The Repos facet's settings: ``hub.json`` ``repos`` plus the hub's own roots and Faustus folder."""
@@ -99,6 +107,8 @@ class Hub:
         return self.events.emit(type, data, source=source)
 
     def close(self) -> None:
+        from . import facets as _facets
+        _facets.close_all(getattr(self, "facets", []))
         for part in (self.jobs, self.rules, self.link, self.events):
             try:
                 part.close()

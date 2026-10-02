@@ -614,8 +614,15 @@ def _compact(a: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def all_tools() -> list[dict[str, Any]]:
+    """The hub's own tools plus every facet's."""
+    from . import facets as _facets
+    return catalogue() + _facets.catalogue()
+
+
 def call(hub: Hub, name: str, arguments: dict[str, Any]) -> Any:
-    fn = handlers(hub).get(name)
+    from . import facets as _facets
+    fn = _facets.handlers(getattr(hub, "facets", [])).get(name) or handlers(hub).get(name)
     if fn is None:
         return {"ok": False, "error": f"unknown tool: {name}"}
     try:

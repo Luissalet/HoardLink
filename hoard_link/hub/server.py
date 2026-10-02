@@ -263,6 +263,39 @@ class _HubHandler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": str(exc)}, 400)
         return self._lease_reply(res)
 
+    # -- facets (0.7) ----------------------------------------------------------
+    def _facet(self, method: str, path: str, query: dict[str, list[str]], body: dict[str, Any]) -> bool:
+        """Let the facets answer; True when one did."""
+        from . import facets as _facets
+
+        def agent() -> bool:
+            return bool(self._bearer()) and self._bearer() == self.hub.token
+
+        req = _facets.Request(method=method, path=path, query=query, body=body, caller=self._family_caller,
+                              agent=agent, headers=self.headers)
+        res = _facets.dispatch(getattr(self.hub, "facets", []), req)
+        if res is None:
+            return False
+        if isinstance(res, _facets.Reply):
+            if res.body is not None:
+                self.send_response(res.status)
+                self.send_header("Content-Type", res.content_type)
+                self.send_header("Content-Length", str(len(res.body)))
+                self.send_header("Cache-Control", "no-store")
+                for k, v in res.headers.items():
+                    self.send_header(k, v)
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(res.body)
+            else:
+                self._json(res.payload, res.status)
+            return True
+        status = 200
+        if isinstance(res, dict) and res.get("ok") is False:
+            status = int(res.pop("status", 0) or 400) if isinstance(res.get("status"), int) else 400
+        self._json(res, status)
+        return True
+
     # -- routing --------------------------------------------------------------
     def do_HEAD(self) -> None:  # noqa: N802
         self.do_GET()
@@ -284,6 +317,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if rel.startswith("..") or rel.startswith("/"):
                     return self._json({"ok": False, "error": "not found"}, 404)
                 return self._file(os.path.join(UI_DIR, rel), cache=False)
+            if self._facet("GET", path, query, {}):
+                return None
             if path == "/api/health":
                 return self._json({"ok": True, "service": SERVICE, "version": HUB_VERSION, "apps": len(hub.apps),
                                    "url": hub.config.url})
@@ -365,7 +400,7 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/agent/tools":
                 if not self._agent_ok():
                     return None
-                return self._json({"tools": tools.catalogue()})
+                return self._json({"tools": tools.all_tools()})
             parts = path.split("/")
             if len(parts) >= 4 and parts[1] == "api" and parts[2] == "apps":
                 app = hub.get(parts[3])
@@ -405,6 +440,8 @@ class _HubHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 413)
         try:
+            if self._facet("POST", path, parse_qs(urlsplit(self.path).query), body):
+                return None
             if path == "/api/agent/call":
                 if not self._agent_ok():
                     return None
