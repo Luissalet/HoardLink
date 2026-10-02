@@ -24,9 +24,15 @@ SPEC = [
     ("midas.backtest.finished", "midas.job.done", {}),
     ("vitruvius.render.done", "vitruvius.job.done", {}),
     ("vitruvius.assay.done", "vitruvius.job.done", {}),
-    ("hub.backup.done", "hub.job.done", {"kind": "backup"}),
-    ("hub.backup.failed", "hub.job.failed", {"kind": "backup"}),
 ]
+
+
+def test_hub_backup_events_keep_their_name_and_read_as_jobs():
+    # the hub's own UI and rules listen to hub.backup.*: the log keeps the name, readers may map it
+    assert canonical_type("hub.backup.done") == "hub.backup.done"
+    typ, data = canonicalize("hub.backup.done", {"snapshot": "s"}, soft=True)
+    assert typ == "hub.job.done" and data["kind"] == "backup"
+    assert canonicalize("hub.backup.done", {}) == ("hub.backup.done", {})
 
 
 @pytest.mark.parametrize("legacy, canonical, defaults", SPEC)
@@ -103,14 +109,14 @@ def test_the_table_is_extendable(tmp_path):
 def test_an_old_rule_fires_in_a_running_hub_on_the_renamed_event(tmp_path):
     hub = make_hub(tmp_path)
     try:
-        for rid, when in (("old", "hub.backup.done"), ("new", "hub.job.done")):
+        for rid, when in (("old", "lumiere.render.done"), ("new", "lumiere.job.done")):
             res = hub.rules.add({"id": rid, "name": rid, "when": {"type": when},
                                  "then": [{"kind": "event", "type": f"fired.{rid}", "data": {"snap": "${event.data.snapshot}"}}], "cooldown_s": 0})
             assert res["ok"], res
-        hub.events.emit("hub.backup.done", {"snapshot": "s1"}, source="hub")
+        hub.events.emit("lumiere.render.done", {"snapshot": "s1"}, source="lumiere")
         assert wait_for(lambda: hub.events.query(type="fired.old") and hub.events.query(type="fired.new"))
         assert hub.events.query(type="fired.old")[0]["data"]["snap"] == "s1"
-        # the hub's own backup event is stored under the canonical name too
-        assert hub.events.query(type="hub.job.done")[0]["data"]["kind"] == "backup"
+        # stored under the canonical name, with the alias defaults
+        assert hub.events.query(type="lumiere.job.done")[0]["data"]["kind"] == "render"
     finally:
         hub.close()

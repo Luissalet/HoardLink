@@ -53,6 +53,11 @@ EVENT_ALIASES: dict[str, tuple[str, dict[str, Any]]] = {
     "midas.backtest.finished": ("midas.job.done", {"kind": "backtest"}),
     "vitruvius.render.done": ("vitruvius.job.done", {"kind": "render"}),
     "vitruvius.assay.done": ("vitruvius.job.done", {"kind": "assay"}),
+}
+
+#: Read-side aliases: the log keeps these names (the hub's own UI and rules use them), but readers that
+#: follow jobs (the worktrack facet) see them as job events.
+SOFT_ALIASES: dict[str, tuple[str, dict[str, Any]]] = {
     "hub.backup.done": ("hub.job.done", {"kind": "backup", "title": "backup"}),
     "hub.backup.failed": ("hub.job.failed", {"kind": "backup", "title": "backup"}),
 }
@@ -70,10 +75,11 @@ def canonical_type(t: str) -> str:
     return hit[0] if hit else key
 
 
-def canonicalize(etype: str, data: Optional[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+def canonicalize(etype: str, data: Optional[dict[str, Any]], *, soft: bool = False) -> tuple[str, dict[str, Any]]:
     """``(canonical type, data)`` for an event about to be stored: an aliased type is renamed, its
-    defaults (``kind``...) fill what the event lacks and the original name is kept in ``_orig_type``."""
-    hit = EVENT_ALIASES.get(etype)
+    defaults (``kind``...) fill what the event lacks and the original name is kept in ``_orig_type``.
+    ``soft=True`` also applies :data:`SOFT_ALIASES` (for readers; the log never stores those renamed)."""
+    hit = EVENT_ALIASES.get(etype) or (SOFT_ALIASES.get(etype) if soft else None)
     if not hit or hit[0] == etype:
         return etype, dict(data or {})
     out = dict(data or {})

@@ -26,7 +26,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
-from .events import canonicalize, normalize_type
+from .events import SOFT_ALIASES, canonicalize, normalize_type
 from .facets import Facet, Request
 
 STALE_AFTER_S = 6 * 3600.0
@@ -131,7 +131,7 @@ class WorkFacet(Facet):
 
     def _on_event(self, event: dict[str, Any]) -> None:
         t = str(event.get("type") or "")
-        if ".job." in t or t.startswith("hub.lease."):
+        if ".job." in t or t.startswith("hub.lease.") or t in SOFT_ALIASES:
             self._queue.put(event)
 
     def _loop(self) -> None:
@@ -171,7 +171,7 @@ class WorkFacet(Facet):
             self._lease(etype.rsplit(".", 1)[1], event.get("data") or {})
             return None
         data = event.get("data") if isinstance(event.get("data"), dict) else {}
-        etype, data = canonicalize(etype, data)
+        etype, data = canonicalize(etype, data, soft=True)
         m = _JOB_RE.match(etype)
         if not m:
             return None
