@@ -122,3 +122,35 @@ def test_token_file_may_live_under_an_environment_folder(tmp_path: Path, monkeyp
     assert app.data_dir == os.path.normpath(str(tmp_path / "profile" / "desk"))
     unknown = write_manifest(tmp_path / "unk", "unk", 4, extra={"defaults": {"APP_URL": "http://127.0.0.1:4", "TOKEN_FILE": "%NO_SUCH_VAR_HOARD%/token"}})
     assert read_manifest(unknown / "faustus-plugin.json").token_file == os.path.normpath(str(unknown / "data" / "mcp-token"))
+
+
+def test_declared_dir_default_wins_over_the_app_folder():
+    # DATA_DIR is a `_DIR` name, but a manifest default says where it lives: the hub
+    # must launch the app with that folder, the same one Faustus's bridge uses.
+    missing: set[str] = set()
+    out = resolve_placeholders(
+        "{COOKHOARD_DIR}|{DATA_DIR}|{OTHER_DIR}",
+        folder="/apps/cook", defaults={"DATA_DIR": "{COOKHOARD_DIR}/data"}, extra={}, missing=missing,
+    )
+    assert out == "/apps/cook|/apps/cook/data|/apps/cook"
+    assert not missing
+
+
+def test_launch_env_gets_the_data_dir_default_expanded(tmp_path, monkeypatch):
+    monkeypatch.setenv("HL_TEST_HOME", str(tmp_path / "home"))
+    folder = tmp_path / "Cook"
+    folder.mkdir()
+    (folder / "faustus-plugin.json").write_text(json.dumps({
+        "schema": 1, "id": "cook", "name": "Cook",
+        "defaults": {"APP_URL": "http://127.0.0.1:5999", "DATA_DIR": "%HL_TEST_HOME%/Cook",
+                     "TOKEN_FILE": "%HL_TEST_HOME%/Cook/mcp-token"},
+        "app": {"url_default": "http://127.0.0.1:5999", "health": {"path": "/api/health"},
+                "launch_hint": {"kind": "process", "executable": sys.executable, "argv": ["-c", "pass", "{DATA_DIR}"],
+                                "cwd": "{COOK_DIR}", "env": {"COOK_DATA_DIR": "{DATA_DIR}"}}},
+    }), encoding="utf-8")
+    app = read_manifest(str(folder / "faustus-plugin.json"))
+    want = str(tmp_path / "home") + "/Cook"
+    assert app.launch.env["COOK_DATA_DIR"] == want
+    assert app.launch.argv[-1] == want
+    assert os.path.normpath(app.data_dir) == os.path.normpath(want)
+    assert app.launch.cwd == str(folder)

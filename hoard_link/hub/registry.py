@@ -151,9 +151,11 @@ def resolve_placeholders(
     missing: set[str],
     _depth: int = 0,
 ) -> str:
-    """Fill ``{NAME}`` in ``template``. Any ``{X_DIR}`` (other than
-    ``FAUSTUS_DIR``) is the app's folder; the rest come from ``extra`` (the
-    hub's values) then the manifest ``defaults`` (themselves templates).
+    """Fill ``{NAME}`` in ``template`` from ``extra`` (the hub's values), then
+    the manifest ``defaults`` (themselves templates), then, for any
+    ``{X_DIR}`` other than ``FAUSTUS_DIR`` without a default, the app's
+    folder. A declared default wins over the folder so ``{DATA_DIR}`` lands
+    where the manifest says (and where Faustus puts it), not in the repo.
     Unknown names are left in place and recorded in ``missing``."""
     if _depth > _MAX_DEPTH:
         return template
@@ -162,13 +164,13 @@ def resolve_placeholders(
         name = match.group(1)
         if name in extra:
             return extra[name]
-        if name.endswith("_DIR") and name != "FAUSTUS_DIR":
-            return folder
         if name in defaults:
             return resolve_placeholders(
                 str(defaults[name]), folder=folder, defaults=defaults, extra=extra,
                 missing=missing, _depth=_depth + 1,
             )
+        if name.endswith("_DIR") and name != "FAUSTUS_DIR":
+            return folder
         missing.add(name)
         return match.group(0)
 
@@ -343,14 +345,16 @@ def read_manifest(
     missing.clear()
     cwd = expand_env(fill(hint.get("cwd") or folder)) or folder
     executable = _pick_executable(hint.get("executable"), fill, cwd)
-    argv = [fill(a) for a in (hint.get("argv") or [])]
+    argv = [expand_env(fill(a)) for a in (hint.get("argv") or [])]
     readiness = hint.get("readiness") or {}
     readiness_url = fill(readiness.get("url")) if readiness.get("url") else app.health_url()
     try:
         timeout_s = float(readiness.get("timeout_s") or 30)
     except (TypeError, ValueError):
         timeout_s = 30.0
-    env = {str(k): fill(v) for k, v in (hint.get("env") or {}).items()}
+    # The child gets real paths: "%LOCALAPPDATA%/X" from a default is expanded
+    # here, since no shell sits between the hub and the process.
+    env = {str(k): expand_env(fill(v)) for k, v in (hint.get("env") or {}).items()}
     app.launch = LaunchSpec(executable, argv, cwd, readiness_url, timeout_s, env)
     if executable.lower().endswith(".exe") and not argv and "python" not in os.path.basename(executable).lower():
         app.kind = "window-app"
