@@ -1,0 +1,1195 @@
+[
+{
+"fn": "srt_time",
+"args": [
+0
+],
+"expect": "00:00:00,000"
+},
+{
+"fn": "vtt_time",
+"args": [
+0
+],
+"expect": "00:00:00.000"
+},
+{
+"fn": "ass_time",
+"args": [
+0
+],
+"expect": "0:00:00.00"
+},
+{
+"fn": "srt_time",
+"args": [
+0.0004
+],
+"expect": "00:00:00,000"
+},
+{
+"fn": "vtt_time",
+"args": [
+0.0004
+],
+"expect": "00:00:00.000"
+},
+{
+"fn": "ass_time",
+"args": [
+0.0004
+],
+"expect": "0:00:00.00"
+},
+{
+"fn": "srt_time",
+"args": [
+0.0005
+],
+"expect": "00:00:00,001"
+},
+{
+"fn": "vtt_time",
+"args": [
+0.0005
+],
+"expect": "00:00:00.001"
+},
+{
+"fn": "ass_time",
+"args": [
+0.0005
+],
+"expect": "0:00:00.00"
+},
+{
+"fn": "srt_time",
+"args": [
+1.2345
+],
+"expect": "00:00:01,235"
+},
+{
+"fn": "vtt_time",
+"args": [
+1.2345
+],
+"expect": "00:00:01.235"
+},
+{
+"fn": "ass_time",
+"args": [
+1.2345
+],
+"expect": "0:00:01.23"
+},
+{
+"fn": "srt_time",
+"args": [
+59.9996
+],
+"expect": "00:01:00,000"
+},
+{
+"fn": "vtt_time",
+"args": [
+59.9996
+],
+"expect": "00:01:00.000"
+},
+{
+"fn": "ass_time",
+"args": [
+59.9996
+],
+"expect": "0:01:00.00"
+},
+{
+"fn": "srt_time",
+"args": [
+59.9995
+],
+"expect": "00:01:00,000"
+},
+{
+"fn": "vtt_time",
+"args": [
+59.9995
+],
+"expect": "00:01:00.000"
+},
+{
+"fn": "ass_time",
+"args": [
+59.9995
+],
+"expect": "0:01:00.00"
+},
+{
+"fn": "srt_time",
+"args": [
+3599.9996
+],
+"expect": "01:00:00,000"
+},
+{
+"fn": "vtt_time",
+"args": [
+3599.9996
+],
+"expect": "01:00:00.000"
+},
+{
+"fn": "ass_time",
+"args": [
+3599.9996
+],
+"expect": "1:00:00.00"
+},
+{
+"fn": "srt_time",
+"args": [
+3725.5
+],
+"expect": "01:02:05,500"
+},
+{
+"fn": "vtt_time",
+"args": [
+3725.5
+],
+"expect": "01:02:05.500"
+},
+{
+"fn": "ass_time",
+"args": [
+3725.5
+],
+"expect": "1:02:05.50"
+},
+{
+"fn": "srt_time",
+"args": [
+null
+],
+"expect": "00:00:00,000"
+},
+{
+"fn": "vtt_time",
+"args": [
+null
+],
+"expect": "00:00:00.000"
+},
+{
+"fn": "ass_time",
+"args": [
+null
+],
+"expect": "0:00:00.00"
+},
+{
+"fn": "srt_time",
+"args": [
+-3
+],
+"expect": "00:00:00,000"
+},
+{
+"fn": "vtt_time",
+"args": [
+-3
+],
+"expect": "00:00:00.000"
+},
+{
+"fn": "ass_time",
+"args": [
+-3
+],
+"expect": "0:00:00.00"
+},
+{
+"fn": "srt_time",
+"args": [
+100000.1239
+],
+"expect": "27:46:40,124"
+},
+{
+"fn": "vtt_time",
+"args": [
+100000.1239
+],
+"expect": "27:46:40.124"
+},
+{
+"fn": "ass_time",
+"args": [
+100000.1239
+],
+"expect": "27:46:40.12"
+},
+{
+"fn": "to_srt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"expect": "1\n00:00:00,000 --> 00:00:01,500\nHello there.\n\n2\n00:00:01,500 --> 00:00:03,250\nGeneral <b>Kenobi</b>\n\n3\n00:01:01,000 --> 01:02:06,000\nLate & long\n"
+},
+{
+"fn": "to_srt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"opts": {
+"speakers": true
+},
+"expect": "1\n00:00:00,000 --> 00:00:01,500\nHello there.\n\n2\n00:00:01,500 --> 00:00:03,250\nAna: General <b>Kenobi</b>\n\n3\n00:01:01,000 --> 01:02:06,000\nLate & long\n"
+},
+{
+"fn": "to_srt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 0.1,
+"text": "short"
+}
+]
+],
+"opts": {
+"min_duration_s": 1.0
+},
+"expect": "1\n00:00:00,000 --> 00:00:01,000\nshort\n"
+},
+{
+"fn": "to_srt",
+"args": [
+[
+{
+"start_s": 59.9996,
+"end_s": 61,
+"text": "x"
+}
+]
+],
+"expect": "1\n00:01:00,000 --> 00:01:01,000\nx\n"
+},
+{
+"fn": "to_srt",
+"args": [
+[]
+],
+"expect": ""
+},
+{
+"fn": "to_srt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1,
+"text": "  "
+},
+{
+"start_s": 1,
+"end_s": 2,
+"text": "a\n\nb"
+}
+]
+],
+"expect": "1\n00:00:01,000 --> 00:00:02,000\na\nb\n"
+},
+{
+"fn": "to_vtt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"expect": "WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello there.\n\n00:00:01.500 --> 00:00:03.250\nGeneral &lt;b&gt;Kenobi&lt;/b&gt;\n\n00:01:01.000 --> 01:02:06.000\nLate &amp; long\n"
+},
+{
+"fn": "to_vtt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"opts": {
+"speakers": true
+},
+"expect": "WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello there.\n\n00:00:01.500 --> 00:00:03.250\n<v Ana>General &lt;b&gt;Kenobi&lt;/b&gt;\n\n00:01:01.000 --> 01:02:06.000\nLate &amp; long\n"
+},
+{
+"fn": "to_vtt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1,
+"text": "a --> b & <c>"
+}
+]
+],
+"expect": "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\na --&gt; b &amp; &lt;c&gt;\n"
+},
+{
+"fn": "to_lrc",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"expect": "[00:00.00]Hello there.\n[00:01.50]General <b>Kenobi</b>\n[01:01.00]Late & long\n"
+},
+{
+"fn": "to_lrc",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"opts": {
+"metadata": {
+"ti": "Song",
+"ar": "Me"
+}
+},
+"expect": "[ti:Song]\n[ar:Me]\n[00:00.00]Hello there.\n[00:01.50]General <b>Kenobi</b>\n[01:01.00]Late & long\n"
+},
+{
+"fn": "to_txt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"expect": "Hello there.\nAna: General <b>Kenobi</b>\nLate & long\n"
+},
+{
+"fn": "to_txt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"opts": {
+"timestamps": true
+},
+"expect": "[00:00] Hello there.\n[00:01] Ana: General <b>Kenobi</b>\n[01:01] Late & long\n"
+},
+{
+"fn": "to_txt",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1.5,
+"text": "Hello there."
+},
+{
+"start_s": 1.5,
+"end_s": 3.25,
+"text": "General <b>Kenobi</b>",
+"speaker": "Ana"
+},
+{
+"start_s": 61.0004,
+"end_s": 3725.9996,
+"text": "Late & long"
+}
+]
+],
+"opts": {
+"speakers": false
+},
+"expect": "Hello there.\nGeneral <b>Kenobi</b>\nLate & long\n"
+},
+{
+"fn": "parse_srt",
+"args": [
+"1\n00:00:01,000 --> 00:00:03,000\nHello\n\n2\n00:00:03,000 --> 00:00:05,500\nTwo lines\nhere\n\n3\n00:01:00,5 --> 00:01:02,25\n<i>Italic</i>\n"
+],
+"expect": [
+{
+"start_s": 1.0,
+"end_s": 3.0,
+"text": "Hello",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "Two lines\nhere",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 60.5,
+"end_s": 62.25,
+"text": "Italic",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "parse_srt",
+"args": [
+"1\n00:00:01,000 --> 00:00:03,000\nHello\n\n2\n00:00:03,000 --> 00:00:05,500\nTwo lines\nhere\n\n3\n00:01:00,5 --> 00:01:02,25\n<i>Italic</i>\n"
+],
+"opts": {
+"per_line": true
+},
+"expect": [
+{
+"start_s": 1.0,
+"end_s": 3.0,
+"text": "Hello",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "Two lines",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "here",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 60.5,
+"end_s": 62.25,
+"text": "Italic",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "parse_srt",
+"args": [
+""
+],
+"expect": []
+},
+{
+"fn": "parse_srt",
+"args": [
+"no cues at all"
+],
+"expect": []
+},
+{
+"fn": "parse_vtt",
+"args": [
+"WEBVTT\nKind: captions\nLanguage: en\n\nNOTE x\n\n00:00:01.000 --> 00:00:03.000 align:start\n<v Bob>Hi &amp; hello</v>\n\n00:00:03.000 --> 00:00:05.500\n<c.yellow>Second</c>\nline two\n\n01:00:00.000 --> 01:00:01.000\nHour\n"
+],
+"expect": [
+{
+"start_s": 1.0,
+"end_s": 3.0,
+"text": "Hi & hello",
+"speaker": "Bob",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "Second\nline two",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3600.0,
+"end_s": 3601.0,
+"text": "Hour",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "parse_vtt",
+"args": [
+"WEBVTT\nKind: captions\nLanguage: en\n\nNOTE x\n\n00:00:01.000 --> 00:00:03.000 align:start\n<v Bob>Hi &amp; hello</v>\n\n00:00:03.000 --> 00:00:05.500\n<c.yellow>Second</c>\nline two\n\n01:00:00.000 --> 01:00:01.000\nHour\n"
+],
+"opts": {
+"per_line": true
+},
+"expect": [
+{
+"start_s": 1.0,
+"end_s": 3.0,
+"text": "Hi & hello",
+"speaker": "Bob",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "Second",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "line two",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3600.0,
+"end_s": 3601.0,
+"text": "Hour",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "parse_lrc",
+"args": [
+"[ar:Someone]\n[ti:Song]\n[00:01.50]first\n[00:04.00]second\n[01:02.345]third\n[00:10.00][00:20.00]chorus\n[00:30.00]\n"
+],
+"expect": [
+{
+"start_s": 1.5,
+"end_s": 4.0,
+"text": "first",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 4.0,
+"end_s": 10.0,
+"text": "second",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 10.0,
+"end_s": 20.0,
+"text": "chorus",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 20.0,
+"end_s": 30.0,
+"text": "chorus",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 62.345,
+"end_s": 66.345,
+"text": "third",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "parse_lrc",
+"args": [
+"[ar:Someone]\n[ti:Song]\n[00:01.50]first\n[00:04.00]second\n[01:02.345]third\n[00:10.00][00:20.00]chorus\n[00:30.00]\n"
+],
+"opts": {
+"last_s": 2.0
+},
+"expect": [
+{
+"start_s": 1.5,
+"end_s": 4.0,
+"text": "first",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 4.0,
+"end_s": 10.0,
+"text": "second",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 10.0,
+"end_s": 20.0,
+"text": "chorus",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 20.0,
+"end_s": 30.0,
+"text": "chorus",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 62.345,
+"end_s": 64.345,
+"text": "third",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "parse_json3",
+"args": [
+"{\"events\": [{\"tStartMs\": 0, \"dDurationMs\": 1500, \"segs\": [{\"utf8\": \"Hello\"}, {\"utf8\": \" world\"}]}, {\"tStartMs\": 1500, \"dDurationMs\": 500, \"segs\": [{\"utf8\": \"\\n\"}]}, {\"tStartMs\": 2000, \"dDurationMs\": 1000, \"segs\": [{\"utf8\": \"Hello world\"}]}, {\"tStartMs\": 3000, \"dDurationMs\": 1000, \"segs\": [{\"utf8\": \"Hello world again\"}]}, {\"tStartMs\": 9000}, {\"wsWinStyleId\": 1}]}"
+],
+"expect": [
+{
+"start_s": 0.0,
+"end_s": 1.5,
+"text": "Hello world",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 2.0,
+"end_s": 3.0,
+"text": "Hello world",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 4.0,
+"text": "Hello world again",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "parse_json3",
+"args": [
+"{\"events\": [{\"tStartMs\": 0, \"dDurationMs\": 1500, \"segs\": [{\"utf8\": \"Hello\"}, {\"utf8\": \" world\"}]}, {\"tStartMs\": 1500, \"dDurationMs\": 500, \"segs\": [{\"utf8\": \"\\n\"}]}, {\"tStartMs\": 2000, \"dDurationMs\": 1000, \"segs\": [{\"utf8\": \"Hello world\"}]}, {\"tStartMs\": 3000, \"dDurationMs\": 1000, \"segs\": [{\"utf8\": \"Hello world again\"}]}, {\"tStartMs\": 9000}, {\"wsWinStyleId\": 1}]}"
+],
+"opts": {
+"dedupe": true
+},
+"expect": [
+{
+"start_s": 0.0,
+"end_s": 4.0,
+"text": "Hello world again",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "parse_json3",
+"args": [
+"not json"
+],
+"expect": []
+},
+{
+"fn": "dedupe_rolling",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 2,
+"text": "hello"
+},
+{
+"start_s": 2,
+"end_s": 4,
+"text": "hello world"
+},
+{
+"start_s": 4,
+"end_s": 6,
+"text": "hello world"
+},
+{
+"start_s": 6,
+"end_s": 8,
+"text": "so it goes"
+},
+{
+"start_s": 8,
+"end_s": 9,
+"text": "so it goes"
+},
+{
+"start_s": 20,
+"end_s": 21,
+"text": "Next. "
+}
+]
+],
+"expect": [
+{
+"start_s": 0,
+"end_s": 6,
+"text": "hello world",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 6,
+"end_s": 9,
+"text": "so it goes",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 20,
+"end_s": 21,
+"text": "Next. ",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "cues_to_text",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 2,
+"text": "hello"
+},
+{
+"start_s": 2,
+"end_s": 4,
+"text": "hello world"
+},
+{
+"start_s": 4,
+"end_s": 6,
+"text": "hello world"
+},
+{
+"start_s": 6,
+"end_s": 8,
+"text": "so it goes"
+},
+{
+"start_s": 8,
+"end_s": 9,
+"text": "so it goes"
+},
+{
+"start_s": 20,
+"end_s": 21,
+"text": "Next. "
+}
+]
+],
+"expect": "hello hello world hello world so it goes so it goes\nNext. "
+},
+{
+"fn": "cues_to_text",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1,
+"text": "one"
+},
+{
+"start_s": 1.2,
+"end_s": 2,
+"text": "two"
+},
+{
+"start_s": 5,
+"end_s": 6,
+"text": "three"
+}
+]
+],
+"expect": "one two\nthree"
+},
+{
+"fn": "cues_to_text",
+"args": [
+[
+{
+"start_s": 0,
+"end_s": 1,
+"text": "one"
+},
+{
+"start_s": 1.2,
+"end_s": 2,
+"text": "two"
+},
+{
+"start_s": 5,
+"end_s": 6,
+"text": "three"
+}
+],
+10
+],
+"expect": "one two three"
+},
+{
+"fn": "subtitle_cues",
+"args": [
+"WEBVTT\nKind: captions\nLanguage: en\n\nNOTE x\n\n00:00:01.000 --> 00:00:03.000 align:start\n<v Bob>Hi &amp; hello</v>\n\n00:00:03.000 --> 00:00:05.500\n<c.yellow>Second</c>\nline two\n\n01:00:00.000 --> 01:00:01.000\nHour\n"
+],
+"expect": [
+{
+"start_s": 1.0,
+"end_s": 3.0,
+"text": "Hi & hello",
+"speaker": "Bob",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "Second",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "line two",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3600.0,
+"end_s": 3601.0,
+"text": "Hour",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "subtitle_cues",
+"args": [
+"{\"events\": [{\"tStartMs\": 0, \"dDurationMs\": 1500, \"segs\": [{\"utf8\": \"Hello\"}, {\"utf8\": \" world\"}]}, {\"tStartMs\": 1500, \"dDurationMs\": 500, \"segs\": [{\"utf8\": \"\\n\"}]}, {\"tStartMs\": 2000, \"dDurationMs\": 1000, \"segs\": [{\"utf8\": \"Hello world\"}]}, {\"tStartMs\": 3000, \"dDurationMs\": 1000, \"segs\": [{\"utf8\": \"Hello world again\"}]}, {\"tStartMs\": 9000}, {\"wsWinStyleId\": 1}]}"
+],
+"expect": [
+{
+"start_s": 0.0,
+"end_s": 4.0,
+"text": "Hello world again",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "subtitle_cues",
+"args": [
+"1\n00:00:01,000 --> 00:00:03,000\nHello\n\n2\n00:00:03,000 --> 00:00:05,500\nTwo lines\nhere\n\n3\n00:01:00,5 --> 00:01:02,25\n<i>Italic</i>\n"
+],
+"expect": [
+{
+"start_s": 1.0,
+"end_s": 3.0,
+"text": "Hello",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "Two lines",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 3.0,
+"end_s": 5.5,
+"text": "here",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 60.5,
+"end_s": 62.25,
+"text": "Italic",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "subtitle_cues",
+"args": [
+"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello\n\n00:00:02.000 --> 00:00:04.000\nhello\nhello world\n\n00:00:04.000 --> 00:00:06.000\nhello world\nand more\n"
+],
+"expect": [
+{
+"start_s": 0.0,
+"end_s": 6.0,
+"text": "hello world",
+"speaker": "",
+"words": []
+},
+{
+"start_s": 4.0,
+"end_s": 6.0,
+"text": "and more",
+"speaker": "",
+"words": []
+}
+]
+},
+{
+"fn": "subtitle_text",
+"args": [
+"WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello\n\n00:00:02.000 --> 00:00:04.000\nhello\nhello world\n\n00:00:04.000 --> 00:00:06.000\nhello world\nand more\n"
+],
+"expect": "hello world and more"
+},
+{
+"fn": "subtitle_text",
+"args": [
+"{\"events\": [{\"tStartMs\": 0, \"dDurationMs\": 1500, \"segs\": [{\"utf8\": \"Hello\"}, {\"utf8\": \" world\"}]}, {\"tStartMs\": 1500, \"dDurationMs\": 500, \"segs\": [{\"utf8\": \"\\n\"}]}, {\"tStartMs\": 2000, \"dDurationMs\": 1000, \"segs\": [{\"utf8\": \"Hello world\"}]}, {\"tStartMs\": 3000, \"dDurationMs\": 1000, \"segs\": [{\"utf8\": \"Hello world again\"}]}, {\"tStartMs\": 9000}, {\"wsWinStyleId\": 1}]}"
+],
+"expect": "Hello world again"
+},
+{
+"fn": "subtitle_text",
+"args": [
+""
+],
+"expect": ""
+},
+{
+"fn": "ass_escape",
+"args": [
+"plain"
+],
+"expect": "plain"
+},
+{
+"fn": "ass_escape",
+"args": [
+"a\\b"
+],
+"expect": "a/b"
+},
+{
+"fn": "ass_escape",
+"args": [
+"line1\nline2"
+],
+"expect": "line1\\Nline2"
+},
+{
+"fn": "ass_escape",
+"args": [
+"{\\b1}x{}"
+],
+"expect": "(/b1)x()"
+},
+{
+"fn": "ass_escape",
+"args": [
+"tab\there"
+],
+"expect": "tab\there"
+},
+{
+"fn": "ass_escape",
+"args": [
+null
+],
+"expect": ""
+},
+{
+"fn": "ass_color",
+"args": [
+"#ff0000"
+],
+"expect": "&H000000FF"
+},
+{
+"fn": "ass_color",
+"args": [
+"#ff0000"
+],
+"opts": {
+"alpha": 128
+},
+"expect": "&H800000FF"
+},
+{
+"fn": "ass_color",
+"args": [
+"00FF00"
+],
+"expect": "&H0000FF00"
+},
+{
+"fn": "ass_color",
+"args": [
+"00FF00"
+],
+"opts": {
+"alpha": 128
+},
+"expect": "&H8000FF00"
+},
+{
+"fn": "ass_color",
+"args": [
+"#abc"
+],
+"expect": "&H00CCBBAA"
+},
+{
+"fn": "ass_color",
+"args": [
+"#abc"
+],
+"opts": {
+"alpha": 128
+},
+"expect": "&H80CCBBAA"
+}
+]

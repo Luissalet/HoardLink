@@ -1,0 +1,1279 @@
+[
+{
+"fn": "video_selector",
+"args": [
+"best",
+true
+],
+"expect": "bv*[vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b/b"
+},
+{
+"fn": "video_selector",
+"args": [
+"best",
+false
+],
+"expect": "b[ext=mp4]/b/b"
+},
+{
+"fn": "video_selector",
+"args": [
+"1080",
+true
+],
+"expect": "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]/bv*[height<=1080]+ba/b[height<=1080]/b"
+},
+{
+"fn": "video_selector",
+"args": [
+"1080",
+false
+],
+"expect": "b[ext=mp4][height<=1080]/b[height<=1080]/b"
+},
+{
+"fn": "video_selector",
+"args": [
+720,
+true
+],
+"expect": "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]/bv*[height<=720]+ba/b[height<=720]/b"
+},
+{
+"fn": "video_selector",
+"args": [
+720,
+false
+],
+"expect": "b[ext=mp4][height<=720]/b[height<=720]/b"
+},
+{
+"fn": "video_selector",
+"args": [
+"weird",
+true
+],
+"expect": "bv*[vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b/b"
+},
+{
+"fn": "video_selector",
+"args": [
+"weird",
+false
+],
+"expect": "b[ext=mp4]/b/b"
+},
+{
+"fn": "cookie_args",
+"args": [
+null
+],
+"expect": []
+},
+{
+"fn": "cookie_args",
+"args": [
+{
+"type": "none"
+}
+],
+"expect": []
+},
+{
+"fn": "cookie_args",
+"args": [
+{
+"type": "file",
+"path": "C:\\c.txt"
+}
+],
+"expect": [
+"--cookies",
+"C:\\c.txt"
+]
+},
+{
+"fn": "cookie_args",
+"args": [
+{
+"type": "browser",
+"name": "firefox"
+}
+],
+"expect": [
+"--cookies-from-browser",
+"firefox"
+]
+},
+{
+"fn": "cookie_attempts",
+"args": [],
+"expect": [
+{
+"type": "none"
+},
+{
+"type": "browser",
+"name": "firefox"
+},
+{
+"type": "browser",
+"name": "chrome"
+},
+{
+"type": "browser",
+"name": "edge"
+},
+{
+"type": "browser",
+"name": "brave"
+},
+{
+"type": "browser",
+"name": "chromium"
+},
+{
+"type": "browser",
+"name": "vivaldi"
+},
+{
+"type": "browser",
+"name": "opera"
+}
+]
+},
+{
+"fn": "cookie_attempts",
+"args": [
+"none"
+],
+"expect": [
+{
+"type": "none"
+}
+]
+},
+{
+"fn": "cookie_attempts",
+"args": [
+"Chrome"
+],
+"expect": [
+{
+"type": "browser",
+"name": "chrome"
+}
+]
+},
+{
+"fn": "cookie_attempts",
+"args": [
+"auto"
+],
+"opts": {
+"cookies_file": "/tmp/c.txt"
+},
+"expect": [
+{
+"type": "file",
+"path": "/tmp/c.txt"
+}
+]
+},
+{
+"fn": "cookie_attempts",
+"args": [
+"auto"
+],
+"opts": {
+"browsers": [
+"firefox",
+"edge"
+]
+},
+"expect": [
+{
+"type": "none"
+},
+{
+"type": "browser",
+"name": "firefox"
+},
+{
+"type": "browser",
+"name": "edge"
+}
+]
+},
+{
+"fn": "build_gallery_args",
+"args": [],
+"opts": {
+"url": "https://x.com/a/status/1",
+"dir": "/d"
+},
+"expect": [
+"--write-metadata",
+"--no-mtime",
+"--range",
+"1-50",
+"-D",
+"/d",
+"--",
+"https://x.com/a/status/1"
+]
+},
+{
+"fn": "build_gallery_args",
+"args": [],
+"opts": {
+"url": "https://x.com/a/status/1",
+"dir": "/d",
+"cookie": {
+"type": "browser",
+"name": "edge"
+},
+"max_items": 5
+},
+"expect": [
+"--cookies-from-browser",
+"edge",
+"--write-metadata",
+"--no-mtime",
+"--range",
+"1-5",
+"-D",
+"/d",
+"--",
+"https://x.com/a/status/1"
+]
+},
+{
+"fn": "build_probe_args",
+"args": [],
+"opts": {
+"url": "https://youtu.be/abc",
+"node_path": ""
+},
+"expect": [
+"--ignore-config",
+"--dump-single-json",
+"--no-warnings",
+"--skip-download",
+"--no-playlist",
+"--",
+"https://youtu.be/abc"
+]
+},
+{
+"fn": "build_probe_args",
+"args": [],
+"opts": {
+"url": "https://youtu.be/abc",
+"playlist": true,
+"node_path": "/usr/bin/node",
+"ytdlp_version": "2025.11.12",
+"cookie": {
+"type": "file",
+"path": "c.txt"
+}
+},
+"expect": [
+"--ignore-config",
+"--js-runtimes",
+"node:/usr/bin/node",
+"--remote-components",
+"ejs:github",
+"--dump-single-json",
+"--no-warnings",
+"--skip-download",
+"--flat-playlist",
+"--cookies",
+"c.txt",
+"--",
+"https://youtu.be/abc"
+]
+},
+{
+"fn": "build_probe_args",
+"args": [],
+"opts": {
+"url": "https://youtu.be/abc",
+"node_path": "/usr/bin/node",
+"ytdlp_version": "2025.01.01"
+},
+"expect": [
+"--ignore-config",
+"--dump-single-json",
+"--no-warnings",
+"--skip-download",
+"--no-playlist",
+"--",
+"https://youtu.be/abc"
+]
+},
+{
+"fn": "build_ytdlp_args",
+"args": [],
+"opts": {
+"url": "https://youtu.be/abc",
+"dir": "/d",
+"node_path": ""
+},
+"expect": [
+"--ignore-config",
+"--newline",
+"--no-colors",
+"--no-warnings",
+"--progress",
+"--windows-filenames",
+"--no-mtime",
+"--retries",
+"10",
+"--fragment-retries",
+"10",
+"--concurrent-fragments",
+"4",
+"--no-playlist",
+"-P",
+"/d",
+"-o",
+"%(title).120s [%(id)s].%(ext)s",
+"-f",
+"bv*[vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b/b",
+"--merge-output-format",
+"mp4",
+"--progress-template",
+"download:LHP|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.status)s",
+"--progress-template",
+"postprocess:LHPP|%(progress.postprocessor)s|%(progress.status)s",
+"--print",
+"before_dl:LHSEL|%(format_id)s|%(playlist_index)s|%(n_entries)s|%(filename)s",
+"--print",
+"after_move:LHMETA|%(.{id,title,uploader,channel,upload_date,description,duration,playlist_title,filepath})j",
+"--",
+"https://youtu.be/abc"
+]
+},
+{
+"fn": "build_ytdlp_args",
+"args": [],
+"opts": {
+"url": "https://youtu.be/abc",
+"dir": "/d",
+"format": "audio",
+"ffmpeg_path": "/usr/bin/ffmpeg",
+"node_path": ""
+},
+"expect": [
+"--ignore-config",
+"--newline",
+"--no-colors",
+"--no-warnings",
+"--progress",
+"--windows-filenames",
+"--no-mtime",
+"--retries",
+"10",
+"--fragment-retries",
+"10",
+"--concurrent-fragments",
+"4",
+"--no-playlist",
+"-P",
+"/d",
+"-o",
+"%(title).120s [%(id)s].%(ext)s",
+"--ffmpeg-location",
+"/usr/bin/ffmpeg",
+"-f",
+"bestaudio/best",
+"-x",
+"--audio-format",
+"mp3",
+"--audio-quality",
+"0",
+"--embed-metadata",
+"--progress-template",
+"download:LHP|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.status)s",
+"--progress-template",
+"postprocess:LHPP|%(progress.postprocessor)s|%(progress.status)s",
+"--print",
+"before_dl:LHSEL|%(format_id)s|%(playlist_index)s|%(n_entries)s|%(filename)s",
+"--print",
+"after_move:LHMETA|%(.{id,title,uploader,channel,upload_date,description,duration,playlist_title,filepath})j",
+"--",
+"https://youtu.be/abc"
+]
+},
+{
+"fn": "build_ytdlp_args",
+"args": [],
+"opts": {
+"url": "https://youtu.be/abc",
+"dir": "/d",
+"quality": "720",
+"playlist": true,
+"max_items": 7,
+"node_path": "/n/node",
+"ytdlp_version": "2026.03.01",
+"has_ffmpeg": false,
+"extra": [
+"--limit-rate",
+"1M"
+],
+"cookie": {
+"type": "browser",
+"name": "firefox"
+}
+},
+"expect": [
+"--ignore-config",
+"--js-runtimes",
+"node:/n/node",
+"--remote-components",
+"ejs:github",
+"--newline",
+"--no-colors",
+"--no-warnings",
+"--progress",
+"--windows-filenames",
+"--no-mtime",
+"--retries",
+"10",
+"--fragment-retries",
+"10",
+"--concurrent-fragments",
+"4",
+"--yes-playlist",
+"--playlist-end",
+"7",
+"-P",
+"/d",
+"-o",
+"%(title).120s [%(id)s].%(ext)s",
+"-f",
+"b[ext=mp4][height<=720]/b[height<=720]/b",
+"--cookies-from-browser",
+"firefox",
+"--progress-template",
+"download:LHP|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.status)s",
+"--progress-template",
+"postprocess:LHPP|%(progress.postprocessor)s|%(progress.status)s",
+"--print",
+"before_dl:LHSEL|%(format_id)s|%(playlist_index)s|%(n_entries)s|%(filename)s",
+"--print",
+"after_move:LHMETA|%(.{id,title,uploader,channel,upload_date,description,duration,playlist_title,filepath})j",
+"--limit-rate",
+"1M",
+"--",
+"https://youtu.be/abc"
+]
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"LHP|1024|2048|NA|512.5|3|downloading"
+],
+"expect": {
+"type": "progress",
+"downloaded": 1024,
+"total": 2048,
+"estimate": null,
+"speed": 512.5,
+"eta": 3,
+"status": "downloading"
+}
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"LHP|100|NA|4000|NA|NA|"
+],
+"expect": {
+"type": "progress",
+"downloaded": 100,
+"total": null,
+"estimate": 4000,
+"speed": null,
+"eta": null,
+"status": "downloading"
+}
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"LHP|"
+],
+"expect": {
+"type": "progress",
+"downloaded": null,
+"total": null,
+"estimate": null,
+"speed": null,
+"eta": null,
+"status": "downloading"
+}
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"LHPP|Merger|started"
+],
+"expect": {
+"type": "pp",
+"name": "Merger",
+"status": "started"
+}
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"LHPP|"
+],
+"expect": {
+"type": "pp",
+"name": "",
+"status": ""
+}
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"LHSEL|137+140|2|10|C:\\a|b.mp4"
+],
+"expect": {
+"type": "sel",
+"formatId": "137+140",
+"index": 2,
+"count": 10,
+"filename": "C:\\a|b.mp4"
+}
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"LHMETA|{\"id\":\"x\",\"title\":\"T\"}"
+],
+"expect": {
+"type": "meta",
+"data": {
+"id": "x",
+"title": "T"
+}
+}
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"LHMETA|{bad"
+],
+"expect": null
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"[download] C:\\v\\clip.mp4 has already been downloaded"
+],
+"expect": {
+"type": "already",
+"path": "C:\\v\\clip.mp4"
+}
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"random line"
+],
+"expect": null
+},
+{
+"fn": "parse_ytdlp_line",
+"args": [
+"[download]  50%"
+],
+"expect": null
+},
+{
+"fn": "format_speed",
+"args": [
+0
+],
+"expect": ""
+},
+{
+"fn": "format_speed",
+"args": [
+1
+],
+"expect": "1 B/s"
+},
+{
+"fn": "format_speed",
+"args": [
+500
+],
+"expect": "500 B/s"
+},
+{
+"fn": "format_speed",
+"args": [
+1023.9
+],
+"expect": "1024 B/s"
+},
+{
+"fn": "format_speed",
+"args": [
+1024
+],
+"expect": "1.0 KB/s"
+},
+{
+"fn": "format_speed",
+"args": [
+1280
+],
+"expect": "1.3 KB/s"
+},
+{
+"fn": "format_speed",
+"args": [
+1536
+],
+"expect": "1.5 KB/s"
+},
+{
+"fn": "format_speed",
+"args": [
+102348.8
+],
+"expect": "100.0 KB/s"
+},
+{
+"fn": "format_speed",
+"args": [
+123456789
+],
+"expect": "118 MB/s"
+},
+{
+"fn": "format_speed",
+"args": [
+5368709120
+],
+"expect": "5.0 GB/s"
+},
+{
+"fn": "format_speed",
+"args": [
+null
+],
+"expect": ""
+},
+{
+"fn": "format_speed",
+"args": [
+"x"
+],
+"expect": ""
+},
+{
+"fn": "format_speed",
+"args": [
+-4
+],
+"expect": ""
+},
+{
+"fn": "format_speed",
+"args": [
+"NA"
+],
+"expect": ""
+},
+{
+"fn": "format_eta",
+"args": [
+0
+],
+"expect": "00:00"
+},
+{
+"fn": "format_eta",
+"args": [
+5
+],
+"expect": "00:05"
+},
+{
+"fn": "format_eta",
+"args": [
+59.5
+],
+"expect": "01:00"
+},
+{
+"fn": "format_eta",
+"args": [
+60
+],
+"expect": "01:00"
+},
+{
+"fn": "format_eta",
+"args": [
+3599.4
+],
+"expect": "59:59"
+},
+{
+"fn": "format_eta",
+"args": [
+3600
+],
+"expect": "1:00:00"
+},
+{
+"fn": "format_eta",
+"args": [
+86399
+],
+"expect": "23:59:59"
+},
+{
+"fn": "format_eta",
+"args": [
+null
+],
+"expect": ""
+},
+{
+"fn": "format_eta",
+"args": [
+"NA"
+],
+"expect": ""
+},
+{
+"fn": "format_eta",
+"args": [
+-1
+],
+"expect": ""
+},
+{
+"fn": "format_eta",
+"args": [
+7.5
+],
+"expect": "00:08"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: Unable to download webpage: <urlopen error [Errno -2] Name or service not known> (caused by URLError(gaierror(-2, 'Name or service not known')))"
+],
+"expect": "network"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: [youtube] abc: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication."
+],
+"expect": "login"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: unable to download video data: HTTP Error 403: Forbidden"
+],
+"expect": "forbidden"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: [youtube] abc: Video unavailable"
+],
+"expect": "unavailable"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: Unsupported URL: https://example.com/foo"
+],
+"expect": "unsupported"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: [twitter] 123: No video could be found in this tweet"
+],
+"expect": "no_video"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: Postprocessing: ffprobe and ffmpeg not found. Please install or provide the path using --ffmpeg-location"
+],
+"expect": "no_ffmpeg"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"yt-dlp: error: no such option: --js-runtimes"
+],
+"expect": "outdated"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: [generic] Unable to download webpage: HTTP Error 404: Not Found (caused by <HTTPError 404: Not Found>)"
+],
+"expect": "unavailable"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: Unable to download webpage: The read operation timed out"
+],
+"expect": "network"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: [instagram] x: Requested content is not available, rate-limit reached or login required"
+],
+"expect": "login"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: [Errno 111] Connection refused"
+],
+"expect": "network"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"ERROR: Unable to download webpage: HTTP Error 429: Too Many Requests"
+],
+"expect": "login"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+"something totally strange"
+],
+"expect": "unknown"
+},
+{
+"fn": "classify_failure",
+"args": [
+"yt-dlp",
+""
+],
+"expect": "unknown"
+},
+{
+"fn": "classify_failure",
+"args": [
+"gallery-dl",
+"[error] AuthenticationError: Login required"
+],
+"expect": "login"
+},
+{
+"fn": "classify_failure",
+"args": [
+"gallery-dl",
+"boom"
+],
+"expect": "unknown"
+},
+{
+"fn": "classify_failure",
+"args": [
+"gallery-dl",
+"boom"
+],
+"opts": {
+"code": 16
+},
+"expect": "login"
+},
+{
+"fn": "classify_failure",
+"args": [
+"gallery-dl",
+"boom"
+],
+"opts": {
+"code": 4
+},
+"expect": "unknown"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://www.youtube.com/watch?v=x"
+],
+"expect": "YouTube"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://youtu.be/x"
+],
+"expect": "YouTube"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://x.com/a"
+],
+"expect": "X (Twitter)"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://www.instagram.com/p/1"
+],
+"expect": "Instagram"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://vm.tiktok.com/x"
+],
+"expect": "TikTok"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://example.org/"
+],
+"expect": "Other (yt-dlp)"
+},
+{
+"fn": "detect_platform",
+"args": [
+"notaurl"
+],
+"expect": "Other (yt-dlp)"
+},
+{
+"fn": "detect_platform",
+"args": [
+""
+],
+"expect": "Other (yt-dlp)"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://m.facebook.com/v"
+],
+"expect": "Facebook"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://old.reddit.com/r/x"
+],
+"expect": "Reddit"
+},
+{
+"fn": "detect_platform",
+"args": [
+"https://example.org/"
+],
+"opts": {
+"other": "Web"
+},
+"expect": "Web"
+},
+{
+"fn": "file_kind",
+"args": [
+"a.mp4"
+],
+"expect": "video"
+},
+{
+"fn": "file_kind",
+"args": [
+"B.MKV"
+],
+"expect": "video"
+},
+{
+"fn": "file_kind",
+"args": [
+"x.mp3"
+],
+"expect": "audio"
+},
+{
+"fn": "file_kind",
+"args": [
+"p.JPG"
+],
+"expect": "image"
+},
+{
+"fn": "file_kind",
+"args": [
+"doc.pdf"
+],
+"expect": "other"
+},
+{
+"fn": "file_kind",
+"args": [
+"noext"
+],
+"expect": "other"
+},
+{
+"fn": "file_kind",
+"args": [
+""
+],
+"expect": "other"
+},
+{
+"fn": "file_kind",
+"args": [
+null
+],
+"expect": "other"
+},
+{
+"fn": "file_kind",
+"args": [
+"a.b.webp"
+],
+"expect": "image"
+},
+{
+"fn": "file_kind",
+"args": [
+"t.srt"
+],
+"expect": "other"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"https://example.com/a b?q=1&r=2#frag"
+],
+"expect": "https://example.com/a%20b?q=1&r=2#frag"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"example.com/path"
+],
+"expect": "https://example.com/path"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"HTTP://Example.COM:80/x"
+],
+"expect": "http://example.com/x"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"https://example.com:8443/x"
+],
+"expect": "https://example.com:8443/x"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"https://user:p%40ss@example.com/"
+],
+"expect": "https://user:p%40ss@example.com/"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"https://youtu.be/dQw4w9WgXcQ?t=42"
+],
+"expect": "https://youtu.be/dQw4w9WgXcQ?t=42"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"https://example.com/ñandú"
+],
+"expect": "https://example.com/%C3%B1and%C3%BA"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"https://[2606:4700::1111]/x"
+],
+"expect": "https://[2606:4700::1111]/x"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"  https://example.com  "
+],
+"expect": "https://example.com/"
+},
+{
+"fn": "normalize_media_url",
+"args": [
+"https://8.8.8.8/dns"
+],
+"expect": "https://8.8.8.8/dns"
+},
+{
+"fn": "ytdlp_age_days",
+"args": [
+"2026.03.01",
+"2026-03-31"
+],
+"expect": 30
+},
+{
+"fn": "ytdlp_age_days",
+"args": [
+"2025.11.12",
+"2025-11-12"
+],
+"expect": 0
+},
+{
+"fn": "ytdlp_age_days",
+"args": [
+"2025.11.12",
+"2025-11-01"
+],
+"expect": -11
+},
+{
+"fn": "ytdlp_age_days",
+"args": [
+"nightly",
+"2026-01-01"
+],
+"expect": null
+},
+{
+"fn": "ytdlp_age_days",
+"args": [
+null,
+"2026-01-01"
+],
+"expect": null
+},
+{
+"fn": "ytdlp_age_days",
+"args": [
+"2025.10.22.232845",
+"2026-01-01"
+],
+"expect": 71
+},
+{
+"fn": "ytdlp_stale",
+"args": [
+"2025.01.01",
+45,
+"2026-01-01"
+],
+"expect": true
+},
+{
+"fn": "ytdlp_stale",
+"args": [
+"2025.12.20",
+45,
+"2026-01-01"
+],
+"expect": false
+},
+{
+"fn": "ytdlp_stale",
+"args": [
+"bad",
+45,
+"2026-01-01"
+],
+"expect": false
+},
+{
+"fn": "ytdlp_base_args",
+"args": [],
+"opts": {
+"node": "/n/node",
+"version": "2025.11.12"
+},
+"expect": [
+"--ignore-config",
+"--js-runtimes",
+"node:/n/node",
+"--remote-components",
+"ejs:github"
+]
+},
+{
+"fn": "ytdlp_base_args",
+"args": [],
+"opts": {
+"node": "/n/node",
+"version": "2025.10.01"
+},
+"expect": [
+"--ignore-config"
+]
+},
+{
+"fn": "ytdlp_base_args",
+"args": [],
+"opts": {
+"node": "/n/node",
+"ignore_config": false
+},
+"expect": [
+"--js-runtimes",
+"node:/n/node",
+"--remote-components",
+"ejs:github"
+]
+},
+{
+"fn": "ytdlp_base_args",
+"args": [],
+"opts": {
+"node": "/n/node"
+},
+"expect": [
+"--ignore-config",
+"--js-runtimes",
+"node:/n/node",
+"--remote-components",
+"ejs:github"
+]
+}
+]
