@@ -1,0 +1,669 @@
+[
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<html><head><title>T</title><style>p{color:red}</style></head><body><nav>Menu Home</nav><p>Hello <b>big</b> world</p><footer>Footer</footer><script>var x=1</script></body></html>"
+  ],
+  "expect": {
+   "title": "T",
+   "text": "Hello big world"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<p>one<p>two<p>three"
+  ],
+  "expect": {
+   "title": "",
+   "text": "one\ntwo\nthree"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<ul><li>a<li>b<li>c</ul>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "a\nb\nc"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<div>x<br>y<br/>z</div>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "x\ny\nz"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<table><tr><td>Name<td>Price<tr><td>Tea<td>3</table>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "Name Price\nTea 3"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<pre>line1\n  line2\n\nline4</pre><p>after</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "line1\nline2\nline4\nafter"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<h1>Only heading</h1>"
+  ],
+  "expect": {
+   "title": "Only heading",
+   "text": "Only heading"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<title>A &amp; B</title><p>caf&eacute; &#233; &#xe9; &nbsp;x &copy; &unknown; &amp</p>"
+  ],
+  "expect": {
+   "title": "A & B",
+   "text": "café é é x © &unknown; &"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<div hidden>secret</div><div style='display:none'>secret2</div><div aria-hidden='true'>secret3</div><div class='sr-only'>secret4</div><p>shown</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "shown"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<div class='cookie-banner'>We use cookies</div><div id='onetrust-consent'>consent</div><p>content</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "content"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<body><header>Site header</header><main><article><header><h1>Post title</h1></header><p>alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta</p></article></main><aside>related</aside></body>"
+  ],
+  "expect": {
+   "title": "Post title",
+   "text": "Post title\nalpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<body><nav>skip</nav><main><p>alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta</p></main><footer>foot</footer></body>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<body><nav>skip</nav><main><p>tiny</p></main><p>outside main paragraph</p><footer>foot</footer></body>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "tiny\noutside main paragraph"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<body><article><p>alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta</p></article><article><p>other</p></article></body>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta\nother"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<body><article><p>alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta</p></article></body>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta alpha beta gamma delta"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<body><div role='navigation'>nav</div><div role='banner'>ban</div><div role='main'><p>main text</p></div></body>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "main text"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<form><label>Email</label><input type='text' value='x'><button>Go</button></form><p>after form</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "after form"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<form><button>Buy now</button></form><p>x</p>"
+  ],
+  "opts": {
+   "drop_chrome": false
+  },
+  "expect": {
+   "title": "",
+   "text": "Buy now\nx"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<nav>Menu</nav><footer>Foot</footer><p>x</p>"
+  ],
+  "opts": {
+   "drop_chrome": false
+  },
+  "expect": {
+   "title": "",
+   "text": "Menu\nFoot\nx"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<!-- c --><p>a<!-- inner -->b</p><![CDATA[x]]><?php echo 1 ?><!DOCTYPE html>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "ab"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<p>a &lt;b&gt; c</p><p>1 < 2 and 3 > 2</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "a <b> c\n1 < 2 and 3 > 2"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<p>x</p><script>document.write('<p>no</p>')</script><style>.a{}</style><p>y</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "x\ny"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<p>unclosed <b>bold <i>italic</p><p>next</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "unclosed bold italic\nnext"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<div><span>inline</span><span>text</span></div>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "inlinetext"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<div>a</div><div>a</div><div>b</div>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "a\nb"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<p>  spaced \n\n  out\t text </p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "spaced out text"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   ""
+  ],
+  "expect": {
+   "title": "",
+   "text": ""
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   null
+  ],
+  "expect": {
+   "title": "",
+   "text": ""
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "plain text without tags"
+  ],
+  "expect": {
+   "title": "",
+   "text": "plain text without tags"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<TITLE>Upper</TITLE><P CLASS='Hidden'>no</P><P>yes</P>"
+  ],
+  "expect": {
+   "title": "Upper",
+   "text": "yes"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<a href='/x' title=\"t>x\">link &amp; text</a> after"
+  ],
+  "expect": {
+   "title": "",
+   "text": "link & text after"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<dl><dt>Term<dd>Definition<dt>Term2<dd>Def2</dl>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "Term\nDefinition\nTerm2\nDef2"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<svg><path d='M0'/><text>no</text></svg><p>y</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "y"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<details><summary>Sum</summary>Body</details>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "Sum\nBody"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<p>price <span class='price'>12,50 €</span> only</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "price 12,50 € only"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<body><p>a</p><template><p>tpl</p></template><noscript>enable</noscript></body>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "a"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<p>zero&#0;width &#x200b; &#128512; &#xD800; &#x80;</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "zero�width ​ 😀 � €"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<p>café   nbsp here</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "café nbsp here"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<ul><li><a href='#'>One</a></li><li><a href='#'>Two</a></li></ul>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "One\nTwo"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<h2>Sub</h2><p>x</p><h3>Sub2</h3>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "Sub\nx\nSub2"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<base href='/'><link rel=stylesheet href=a.css><meta charset=utf-8><p>ok</p>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "ok"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<td>orphan cell</td><td>second</td>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "orphan cell second"
+  }
+ },
+ {
+  "fn": "html_to_text",
+  "args": [
+   "<blockquote>quote<br>line2</blockquote>"
+  ],
+  "expect": {
+   "title": "",
+   "text": "quote\nline2"
+  }
+ },
+ {
+  "fn": "quality",
+  "args": [
+   "the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "quality",
+  "args": [
+   "too few words here"
+  ],
+  "expect": "too short"
+ },
+ {
+  "fn": "quality",
+  "args": [
+   ""
+  ],
+  "expect": "too short"
+ },
+ {
+  "fn": "quality",
+  "args": [
+   "Please enable JavaScript to continue. Verify you are human."
+  ],
+  "expect": "blocked page"
+ },
+ {
+  "fn": "quality",
+  "args": [
+   "Access denied. the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog"
+  ],
+  "expect": "blocked page"
+ },
+ {
+  "fn": "quality",
+  "args": [
+   "Inicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda\nInicio\nCarrito\nCuenta\nAyuda"
+  ],
+  "expect": "mostly navigation"
+ },
+ {
+  "fn": "quality",
+  "args": [
+   "one two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six\none two\nthree four\nfive six"
+  ],
+  "expect": "mostly navigation"
+ },
+ {
+  "fn": "quality",
+  "args": [
+   "the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog"
+  ],
+  "opts": {
+   "min_words": 10
+  },
+  "expect": ""
+ },
+ {
+  "fn": "quality",
+  "args": [
+   "a b c d e f g h i j"
+  ],
+  "opts": {
+   "min_words": 10
+  },
+  "expect": ""
+ },
+ {
+  "fn": "quality",
+  "args": [
+   null
+  ],
+  "expect": "too short"
+ },
+ {
+  "fn": "chrome_ratio",
+  "args": [
+   ""
+  ],
+  "expect": 1.0
+ },
+ {
+  "fn": "chrome_ratio",
+  "args": [
+   "Inicio\nCarrito\nlong prose line with many words that is not menu at all"
+  ],
+  "expect": 0.14285714285714285
+ },
+ {
+  "fn": "chrome_ratio",
+  "args": [
+   "The quick brown fox jumps over the lazy dog every single day of the year"
+  ],
+  "expect": 0.0
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "Updated 5 minutes ago\nPrice 12,50 €\nhace 3 horas\n12:30:45 now\nOrder 2026-10-02T09:30:00Z shipped"
+  ],
+  "expect": "price 12,50 €\nnow\norder shipped"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "© 2026 Example Inc.\nCopyright 2026\nHoy es lunes\nreal line"
+  ],
+  "expect": "real line"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "Session 0123456789abcdef0123 token\nshort abc123"
+  ],
+  "expect": "session token\nshort abc123"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "  Mixed   CASE    text  \n\n  \n second "
+  ],
+  "expect": "mixed case text\nsecond"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "Ａｌｐｈａ ﬁne"
+  ],
+  "expect": "alpha fine"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "STRASSE Straße"
+  ],
+  "expect": "strasse strasse"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "quedan 3 horas para el sorteo\nlast updated: just now\nupdated 3 mins ago\nitem 3 days ago and 2 hours left"
+  ],
+  "expect": "para el sorteo\nitem and"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "a\r\nb\rc\u000bd"
+  ],
+  "expect": "a\nb\nc\nd"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "Precio: 19,99 EUR"
+  ],
+  "expect": "precio: 19,99 eur"
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   "At 9:05 pm and 10:15 AM and 23:59:59."
+  ],
+  "expect": "at and and ."
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   ""
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalise_for_hash",
+  "args": [
+   null
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "content_hash",
+  "args": [
+   "Hello\nWorld"
+  ],
+  "expect": "26c60a61d01db5836ca70fefd44a6a016620413c8ef5f259a6c5612d4f79d3b8"
+ },
+ {
+  "fn": "content_hash",
+  "args": [
+   "Hello\nWorld  \nUpdated 5 minutes ago"
+  ],
+  "expect": "26c60a61d01db5836ca70fefd44a6a016620413c8ef5f259a6c5612d4f79d3b8"
+ },
+ {
+  "fn": "content_hash",
+  "args": [
+   ""
+  ],
+  "expect": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ },
+ {
+  "fn": "excerpt",
+  "args": [
+   "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word "
+  ],
+  "expect": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word…"
+ },
+ {
+  "fn": "excerpt",
+  "args": [
+   "short text"
+  ],
+  "expect": "short text"
+ },
+ {
+  "fn": "excerpt",
+  "args": [
+   "  spaced   out \n text  "
+  ],
+  "expect": "spaced out text"
+ },
+ {
+  "fn": "excerpt",
+  "args": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   50
+  ],
+  "expect": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+ }
+]

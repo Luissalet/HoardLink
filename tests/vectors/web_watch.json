@@ -1,0 +1,2606 @@
+[
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>Alpha widget 10 EUR</li><li>Beta widget 20 EUR</li><li>Gamma widget 30 EUR</li></ul></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   null
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>Alpha widget 10 EUR</li><li>Beta widget 20 EUR</li><li>Gamma widget 30 EUR</li></ul></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>Alpha widget 10 EUR</li><li>Beta widget 25 EUR</li><li>Gamma widget 30 EUR</li></ul></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   {
+    "kind": "page_change",
+    "url": "https://shop.example/p",
+    "title": "Offers",
+    "snippet": "Beta widget 25 EUR",
+    "added": [
+     "Beta widget 25 EUR"
+    ],
+    "removed": [
+     "Beta widget 20 EUR"
+    ],
+    "summary": "+ Beta widget 25 EUR\n- 1 line(s) removed: Beta widget 20 EUR",
+    "content_hash": "c3b5eccad7cc0e064d372b99b32aedb6"
+   },
+   {
+    "hash": "017171b147350c5973cf0e8e50d23e3695f2f53cfe6773dd6c3b1031dca3c183",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 25 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>Gamma widget 30 EUR</li><li>Alpha widget 10 EUR</li><li>Beta widget 20 EUR</li></ul></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "47147bf3765c58211de8bb920b8514d1db298603001ba8f140d131b455069b0f",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nGamma widget 30 EUR\nAlpha widget 10 EUR\nBeta widget 20 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>Alpha widget 10 EUR</li><li>Beta widget 20 EUR</li><li>Gamma widget 30 EUR</li></ul><p>Updated 5 minutes ago</p><p>(c) 2026 Shop</p><p>12:41:09</p></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR\nUpdated 5 minutes ago\n(c) 2026 Shop\n12:41:09",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>Alpha widget 10 EUR</li></ul></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   {
+    "kind": "page_change",
+    "url": "https://shop.example/p",
+    "title": "Offers",
+    "snippet": "content removed",
+    "added": [],
+    "removed": [
+     "Beta widget 20 EUR",
+     "Gamma widget 30 EUR"
+    ],
+    "summary": "- 2 line(s) removed: Beta widget 20 EUR",
+    "content_hash": "d18de4e9e84583ee74742fb7d2fcaf3c"
+   },
+   {
+    "hash": "da69f57629a9a36efbf59091b850cf0032d064e3d34618beb1cee64c12723216",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>New product number 0 for sale</li><li>New product number 1 for sale</li><li>New product number 2 for sale</li><li>New product number 3 for sale</li><li>New product number 4 for sale</li><li>New product number 5 for sale</li><li>New product number 6 for sale</li><li>New product number 7 for sale</li><li>New product number 8 for sale</li><li>New product number 9 for sale</li><li>New product number 10 for sale</li><li>New product number 11 for sale</li><li>New product number 12 for sale</li><li>New product number 13 for sale</li></ul></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   {
+    "kind": "page_change",
+    "url": "https://shop.example/p",
+    "title": "Offers",
+    "snippet": "New product number 0 for sale New product number 1 for sale New product number 2 for sale",
+    "added": [
+     "New product number 0 for sale",
+     "New product number 1 for sale",
+     "New product number 2 for sale",
+     "New product number 3 for sale",
+     "New product number 4 for sale",
+     "New product number 5 for sale",
+     "New product number 6 for sale",
+     "New product number 7 for sale",
+     "New product number 8 for sale",
+     "New product number 9 for sale",
+     "New product number 10 for sale",
+     "New product number 11 for sale",
+     "New product number 12 for sale",
+     "New product number 13 for sale"
+    ],
+    "removed": [
+     "Alpha widget 10 EUR",
+     "Beta widget 20 EUR",
+     "Gamma widget 30 EUR"
+    ],
+    "summary": "+ New product number 0 for sale\n+ New product number 1 for sale\n+ New product number 2 for sale\n+ New product number 3 for sale\n+ New product number 4 for sale\n+ New product number 5 for sale\n+ New product number 6 for sale\n+ New product number 7 for sale\n+ … 6 more lines\n- 3 line(s) removed: Alpha widget 10 EUR",
+    "content_hash": "c9ddcf0b8e64fa26afe82cafdbc0d1e7"
+   },
+   {
+    "hash": "2cd18efdc7e38cda714ccef4f17b13614106c03f75dc57c6627bb160efa27889",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nNew product number 0 for sale\nNew product number 1 for sale\nNew product number 2 for sale\nNew product number 3 for sale\nNew product number 4 for sale\nNew product number 5 for sale\nNew product number 6 for sale\nNew product number 7 for sale\nNew product number 8 for sale\nNew product number 9 for sale\nNew product number 10 for sale\nNew product number 11 for sale\nNew product number 12 for sale\nNew product number 13 for sale",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Just a moment...</title></head><body><p>Checking your browser before accessing shop.example.</p><script src='/cdn-cgi/challenge-platform/h/b/x'></script></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": "blocked: Cloudflare challenge page"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Just a moment...</title></head><body><p>Checking your browser before accessing shop.example.</p><script src='/cdn-cgi/challenge-platform/h/b/x'></script></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   null
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "",
+    "text": "",
+    "etag": "",
+    "last_modified": "",
+    "error": "blocked: Cloudflare challenge page"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 429,
+    "ok": false,
+    "text": "",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": true,
+    "block_reason": "http_429",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": "blocked: HTTP 429 too many requests"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 403,
+    "ok": false,
+    "text": "<html>denied</html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": "blocked: HTTP 403 forbidden"
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": "blocked: HTTP 403 forbidden"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 304,
+    "ok": true,
+    "text": "",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": true,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 304,
+    "ok": true,
+    "text": "",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 500,
+    "ok": false,
+    "text": "server error",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": "server error (HTTP 500)"
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": "server error (HTTP 500)"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 0,
+    "ok": false,
+    "text": "",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": "Timeout: no answer within 20 s"
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": "Timeout: no answer within 20 s"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 0,
+    "ok": false,
+    "text": "",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": "no answer"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><body><p>Tiny page</p></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": "low quality page (too short); no comparison made"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/login",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Sign in</title></head><body><p>x</p></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ],
+  "expect": [
+   null,
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": "blocked: login wall"
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>Alpha widget 10 EUR</li><li>Beta widget 25 EUR</li><li>Gamma widget 30 EUR</li></ul></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "",
+    "last_modified": "",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "ea8b09df2e1e02b872361bc684928cd025204877d162a364572ac677df24042e",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 20 EUR\nGamma widget 30 EUR"
+   }
+  ],
+  "expect": [
+   {
+    "kind": "page_change",
+    "url": "https://shop.example/p",
+    "title": "Offers",
+    "snippet": "Beta widget 25 EUR",
+    "added": [
+     "Beta widget 25 EUR"
+    ],
+    "removed": [
+     "Beta widget 20 EUR"
+    ],
+    "summary": "+ Beta widget 25 EUR\n- 1 line(s) removed: Beta widget 20 EUR",
+    "content_hash": "c3b5eccad7cc0e064d372b99b32aedb6"
+   },
+   {
+    "hash": "017171b147350c5973cf0e8e50d23e3695f2f53cfe6773dd6c3b1031dca3c183",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 25 EUR\nGamma widget 30 EUR",
+    "etag": "",
+    "last_modified": "",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_page",
+  "args": [
+   {
+    "url": "https://shop.example/p",
+    "final_url": "https://shop.example/p",
+    "status": 200,
+    "ok": true,
+    "text": "<html><head><title>Offers</title></head><body><nav><a href='/'>Home</a> <a href='/cart'>Cart</a></nav><main><h1>Offers</h1><p>the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.</p><ul><li>Alpha widget 10 EUR</li><li>Beta widget 25 EUR</li><li>Gamma widget 30 EUR</li></ul></main><footer>(c) 2026 Example</footer></body></html>",
+    "headers": {
+     "content-type": "text/html"
+    },
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "blocked": false,
+    "block_reason": "",
+    "not_modified": false,
+    "error": ""
+   },
+   {
+    "hash": "stale",
+    "text": ""
+   }
+  ],
+  "expect": [
+   {
+    "kind": "page_change",
+    "url": "https://shop.example/p",
+    "title": "Offers",
+    "snippet": "Offers the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brow…",
+    "added": [
+     "Offers",
+     "the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.",
+     "Alpha widget 10 EUR",
+     "Beta widget 25 EUR",
+     "Gamma widget 30 EUR"
+    ],
+    "removed": [],
+    "summary": "+ Offers\n+ the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the commit…\n+ Alpha widget 10 EUR\n+ Beta widget 25 EUR\n+ Gamma widget 30 EUR",
+    "content_hash": "36718a23f27c4a4ab49296341b1033c0"
+   },
+   {
+    "hash": "017171b147350c5973cf0e8e50d23e3695f2f53cfe6773dd6c3b1031dca3c183",
+    "text": "Offers\nthe quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the weather stays calm across the valley the quick brown fox jumps over the lazy.\nAlpha widget 10 EUR\nBeta widget 25 EUR\nGamma widget 30 EUR",
+    "etag": "W/\"abc\"",
+    "last_modified": "Wed, 30 Sep 2026 10:00:00 GMT",
+    "error": ""
+   }
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": [
+     {
+      "id": "id1",
+      "title": "T1",
+      "link": "http://a.example/1"
+     },
+     {
+      "id": "id2",
+      "title": "T2",
+      "link": "http://a.example/2"
+     },
+     {
+      "id": "id3",
+      "title": "T3",
+      "link": "http://a.example/3"
+     },
+     {
+      "id": "id4",
+      "title": "T4",
+      "link": "http://a.example/4"
+     },
+     {
+      "id": "id5",
+      "title": "T5",
+      "link": "http://a.example/5"
+     }
+    ]
+   },
+   [],
+   true
+  ],
+  "expect": [
+   [],
+   [
+    "id1",
+    "id2",
+    "id3",
+    "id4",
+    "id5"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": [
+     {
+      "id": "id1",
+      "title": "T1",
+      "link": "http://a.example/1"
+     },
+     {
+      "id": "id2",
+      "title": "T2",
+      "link": "http://a.example/2"
+     },
+     {
+      "id": "id3",
+      "title": "T3",
+      "link": "http://a.example/3"
+     },
+     {
+      "id": "id4",
+      "title": "T4",
+      "link": "http://a.example/4"
+     },
+     {
+      "id": "id5",
+      "title": "T5",
+      "link": "http://a.example/5"
+     }
+    ]
+   },
+   [
+    "id1",
+    "id2",
+    "id3",
+    "id4",
+    "id5"
+   ],
+   false
+  ],
+  "expect": [
+   [],
+   [
+    "id1",
+    "id2",
+    "id3",
+    "id4",
+    "id5"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": [
+     {
+      "id": "id1",
+      "title": "T1",
+      "link": "http://a.example/1"
+     },
+     {
+      "id": "id2",
+      "title": "T2",
+      "link": "http://a.example/2"
+     },
+     {
+      "id": "id3",
+      "title": "T3",
+      "link": "http://a.example/3"
+     },
+     {
+      "id": "id4",
+      "title": "T4",
+      "link": "http://a.example/4"
+     },
+     {
+      "id": "id5",
+      "title": "T5",
+      "link": "http://a.example/5"
+     }
+    ]
+   },
+   [
+    "id1",
+    "id2"
+   ],
+   false
+  ],
+  "expect": [
+   [
+    {
+     "id": "id3",
+     "title": "T3",
+     "link": "http://a.example/3",
+     "key": "id3"
+    },
+    {
+     "id": "id4",
+     "title": "T4",
+     "link": "http://a.example/4",
+     "key": "id4"
+    },
+    {
+     "id": "id5",
+     "title": "T5",
+     "link": "http://a.example/5",
+     "key": "id5"
+    }
+   ],
+   [
+    "id1",
+    "id2",
+    "id3",
+    "id4",
+    "id5"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": [
+     {
+      "id": "id1",
+      "title": "T1",
+      "link": "http://a.example/1"
+     },
+     {
+      "id": "id2",
+      "title": "T2",
+      "link": "http://a.example/2"
+     },
+     {
+      "id": "id3",
+      "title": "T3",
+      "link": "http://a.example/3"
+     },
+     {
+      "id": "id4",
+      "title": "T4",
+      "link": "http://a.example/4"
+     },
+     {
+      "id": "id5",
+      "title": "T5",
+      "link": "http://a.example/5"
+     }
+    ]
+   },
+   [
+    "old1",
+    "old2"
+   ],
+   false
+  ],
+  "expect": [
+   [
+    {
+     "id": "id1",
+     "title": "T1",
+     "link": "http://a.example/1",
+     "key": "id1"
+    },
+    {
+     "id": "id2",
+     "title": "T2",
+     "link": "http://a.example/2",
+     "key": "id2"
+    },
+    {
+     "id": "id3",
+     "title": "T3",
+     "link": "http://a.example/3",
+     "key": "id3"
+    },
+    {
+     "id": "id4",
+     "title": "T4",
+     "link": "http://a.example/4",
+     "key": "id4"
+    },
+    {
+     "id": "id5",
+     "title": "T5",
+     "link": "http://a.example/5",
+     "key": "id5"
+    }
+   ],
+   [
+    "id1",
+    "id2",
+    "id3",
+    "id4",
+    "id5",
+    "old1",
+    "old2"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": [
+     {
+      "id": "id1",
+      "title": "T1",
+      "link": "http://a.example/1"
+     },
+     {
+      "id": "id2",
+      "title": "T2",
+      "link": "http://a.example/2"
+     },
+     {
+      "id": "id3",
+      "title": "T3",
+      "link": "http://a.example/3"
+     },
+     {
+      "id": "id4",
+      "title": "T4",
+      "link": "http://a.example/4"
+     },
+     {
+      "id": "id5",
+      "title": "T5",
+      "link": "http://a.example/5"
+     }
+    ]
+   },
+   [
+    "old1",
+    "old2",
+    "id1"
+   ],
+   true
+  ],
+  "expect": [
+   [],
+   [
+    "id1",
+    "id2",
+    "id3",
+    "id4",
+    "id5",
+    "old1",
+    "old2"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   [
+    {
+     "id": "id1",
+     "title": "T1",
+     "link": "http://a.example/1"
+    },
+    {
+     "id": "id2",
+     "title": "T2",
+     "link": "http://a.example/2"
+    },
+    {
+     "id": "id3",
+     "title": "T3",
+     "link": "http://a.example/3"
+    },
+    {
+     "id": "id4",
+     "title": "T4",
+     "link": "http://a.example/4"
+    },
+    {
+     "id": "id5",
+     "title": "T5",
+     "link": "http://a.example/5"
+    }
+   ],
+   null,
+   false
+  ],
+  "expect": [
+   [
+    {
+     "id": "id1",
+     "title": "T1",
+     "link": "http://a.example/1",
+     "key": "id1"
+    },
+    {
+     "id": "id2",
+     "title": "T2",
+     "link": "http://a.example/2",
+     "key": "id2"
+    },
+    {
+     "id": "id3",
+     "title": "T3",
+     "link": "http://a.example/3",
+     "key": "id3"
+    },
+    {
+     "id": "id4",
+     "title": "T4",
+     "link": "http://a.example/4",
+     "key": "id4"
+    },
+    {
+     "id": "id5",
+     "title": "T5",
+     "link": "http://a.example/5",
+     "key": "id5"
+    }
+   ],
+   [
+    "id1",
+    "id2",
+    "id3",
+    "id4",
+    "id5"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": []
+   },
+   [
+    "x"
+   ],
+   false
+  ],
+  "expect": [
+   [],
+   [
+    "x"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": [
+     {
+      "title": "only title"
+     },
+     {
+      "link": "http://l/"
+     },
+     {}
+    ]
+   },
+   [],
+   false
+  ],
+  "expect": [
+   [
+    {
+     "title": "only title",
+     "key": "only title"
+    },
+    {
+     "link": "http://l/",
+     "key": "http://l/"
+    }
+   ],
+   [
+    "only title",
+    "http://l/"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": [
+     {
+      "id": "n0",
+      "title": "t"
+     },
+     {
+      "id": "n1",
+      "title": "t"
+     },
+     {
+      "id": "n2",
+      "title": "t"
+     },
+     {
+      "id": "n3",
+      "title": "t"
+     },
+     {
+      "id": "n4",
+      "title": "t"
+     },
+     {
+      "id": "n5",
+      "title": "t"
+     },
+     {
+      "id": "n6",
+      "title": "t"
+     },
+     {
+      "id": "n7",
+      "title": "t"
+     },
+     {
+      "id": "n8",
+      "title": "t"
+     },
+     {
+      "id": "n9",
+      "title": "t"
+     },
+     {
+      "id": "n10",
+      "title": "t"
+     },
+     {
+      "id": "n11",
+      "title": "t"
+     },
+     {
+      "id": "n12",
+      "title": "t"
+     },
+     {
+      "id": "n13",
+      "title": "t"
+     },
+     {
+      "id": "n14",
+      "title": "t"
+     },
+     {
+      "id": "n15",
+      "title": "t"
+     },
+     {
+      "id": "n16",
+      "title": "t"
+     },
+     {
+      "id": "n17",
+      "title": "t"
+     },
+     {
+      "id": "n18",
+      "title": "t"
+     },
+     {
+      "id": "n19",
+      "title": "t"
+     },
+     {
+      "id": "n20",
+      "title": "t"
+     },
+     {
+      "id": "n21",
+      "title": "t"
+     },
+     {
+      "id": "n22",
+      "title": "t"
+     },
+     {
+      "id": "n23",
+      "title": "t"
+     },
+     {
+      "id": "n24",
+      "title": "t"
+     },
+     {
+      "id": "n25",
+      "title": "t"
+     },
+     {
+      "id": "n26",
+      "title": "t"
+     },
+     {
+      "id": "n27",
+      "title": "t"
+     },
+     {
+      "id": "n28",
+      "title": "t"
+     },
+     {
+      "id": "n29",
+      "title": "t"
+     }
+    ]
+   },
+   [],
+   false
+  ],
+  "expect": [
+   [
+    {
+     "id": "n0",
+     "title": "t",
+     "key": "n0"
+    },
+    {
+     "id": "n1",
+     "title": "t",
+     "key": "n1"
+    },
+    {
+     "id": "n2",
+     "title": "t",
+     "key": "n2"
+    },
+    {
+     "id": "n3",
+     "title": "t",
+     "key": "n3"
+    },
+    {
+     "id": "n4",
+     "title": "t",
+     "key": "n4"
+    },
+    {
+     "id": "n5",
+     "title": "t",
+     "key": "n5"
+    },
+    {
+     "id": "n6",
+     "title": "t",
+     "key": "n6"
+    },
+    {
+     "id": "n7",
+     "title": "t",
+     "key": "n7"
+    },
+    {
+     "id": "n8",
+     "title": "t",
+     "key": "n8"
+    },
+    {
+     "id": "n9",
+     "title": "t",
+     "key": "n9"
+    },
+    {
+     "id": "n10",
+     "title": "t",
+     "key": "n10"
+    },
+    {
+     "id": "n11",
+     "title": "t",
+     "key": "n11"
+    },
+    {
+     "id": "n12",
+     "title": "t",
+     "key": "n12"
+    },
+    {
+     "id": "n13",
+     "title": "t",
+     "key": "n13"
+    },
+    {
+     "id": "n14",
+     "title": "t",
+     "key": "n14"
+    },
+    {
+     "id": "n15",
+     "title": "t",
+     "key": "n15"
+    },
+    {
+     "id": "n16",
+     "title": "t",
+     "key": "n16"
+    },
+    {
+     "id": "n17",
+     "title": "t",
+     "key": "n17"
+    },
+    {
+     "id": "n18",
+     "title": "t",
+     "key": "n18"
+    },
+    {
+     "id": "n19",
+     "title": "t",
+     "key": "n19"
+    }
+   ],
+   [
+    "n0",
+    "n1",
+    "n2",
+    "n3",
+    "n4",
+    "n5",
+    "n6",
+    "n7",
+    "n8",
+    "n9",
+    "n10",
+    "n11",
+    "n12",
+    "n13",
+    "n14",
+    "n15",
+    "n16",
+    "n17",
+    "n18",
+    "n19",
+    "n20",
+    "n21",
+    "n22",
+    "n23",
+    "n24",
+    "n25",
+    "n26",
+    "n27",
+    "n28",
+    "n29"
+   ]
+  ]
+ },
+ {
+  "fn": "check_feed",
+  "args": [
+   {
+    "items": [
+     {
+      "id": "n0",
+      "title": "t"
+     },
+     {
+      "id": "n1",
+      "title": "t"
+     },
+     {
+      "id": "n2",
+      "title": "t"
+     },
+     {
+      "id": "n3",
+      "title": "t"
+     },
+     {
+      "id": "n4",
+      "title": "t"
+     },
+     {
+      "id": "n5",
+      "title": "t"
+     },
+     {
+      "id": "n6",
+      "title": "t"
+     },
+     {
+      "id": "n7",
+      "title": "t"
+     },
+     {
+      "id": "n8",
+      "title": "t"
+     },
+     {
+      "id": "n9",
+      "title": "t"
+     },
+     {
+      "id": "n10",
+      "title": "t"
+     },
+     {
+      "id": "n11",
+      "title": "t"
+     },
+     {
+      "id": "n12",
+      "title": "t"
+     },
+     {
+      "id": "n13",
+      "title": "t"
+     },
+     {
+      "id": "n14",
+      "title": "t"
+     },
+     {
+      "id": "n15",
+      "title": "t"
+     },
+     {
+      "id": "n16",
+      "title": "t"
+     },
+     {
+      "id": "n17",
+      "title": "t"
+     },
+     {
+      "id": "n18",
+      "title": "t"
+     },
+     {
+      "id": "n19",
+      "title": "t"
+     },
+     {
+      "id": "n20",
+      "title": "t"
+     },
+     {
+      "id": "n21",
+      "title": "t"
+     },
+     {
+      "id": "n22",
+      "title": "t"
+     },
+     {
+      "id": "n23",
+      "title": "t"
+     },
+     {
+      "id": "n24",
+      "title": "t"
+     },
+     {
+      "id": "n25",
+      "title": "t"
+     },
+     {
+      "id": "n26",
+      "title": "t"
+     },
+     {
+      "id": "n27",
+      "title": "t"
+     },
+     {
+      "id": "n28",
+      "title": "t"
+     },
+     {
+      "id": "n29",
+      "title": "t"
+     }
+    ]
+   },
+   [
+    "o0",
+    "o1",
+    "o2",
+    "o3",
+    "o4",
+    "o5",
+    "o6",
+    "o7",
+    "o8",
+    "o9",
+    "o10",
+    "o11",
+    "o12",
+    "o13",
+    "o14",
+    "o15",
+    "o16",
+    "o17",
+    "o18",
+    "o19",
+    "o20",
+    "o21",
+    "o22",
+    "o23",
+    "o24",
+    "o25",
+    "o26",
+    "o27",
+    "o28",
+    "o29",
+    "o30",
+    "o31",
+    "o32",
+    "o33",
+    "o34",
+    "o35",
+    "o36",
+    "o37",
+    "o38",
+    "o39",
+    "o40",
+    "o41",
+    "o42",
+    "o43",
+    "o44",
+    "o45",
+    "o46",
+    "o47",
+    "o48",
+    "o49",
+    "o50",
+    "o51",
+    "o52",
+    "o53",
+    "o54",
+    "o55",
+    "o56",
+    "o57",
+    "o58",
+    "o59",
+    "o60",
+    "o61",
+    "o62",
+    "o63",
+    "o64",
+    "o65",
+    "o66",
+    "o67",
+    "o68",
+    "o69",
+    "o70",
+    "o71",
+    "o72",
+    "o73",
+    "o74",
+    "o75",
+    "o76",
+    "o77",
+    "o78",
+    "o79",
+    "o80",
+    "o81",
+    "o82",
+    "o83",
+    "o84",
+    "o85",
+    "o86",
+    "o87",
+    "o88",
+    "o89",
+    "o90",
+    "o91",
+    "o92",
+    "o93",
+    "o94",
+    "o95",
+    "o96",
+    "o97",
+    "o98",
+    "o99",
+    "o100",
+    "o101",
+    "o102",
+    "o103",
+    "o104",
+    "o105",
+    "o106",
+    "o107",
+    "o108",
+    "o109",
+    "o110",
+    "o111",
+    "o112",
+    "o113",
+    "o114",
+    "o115",
+    "o116",
+    "o117",
+    "o118",
+    "o119",
+    "o120",
+    "o121",
+    "o122",
+    "o123",
+    "o124",
+    "o125",
+    "o126",
+    "o127",
+    "o128",
+    "o129",
+    "o130",
+    "o131",
+    "o132",
+    "o133",
+    "o134",
+    "o135",
+    "o136",
+    "o137",
+    "o138",
+    "o139",
+    "o140",
+    "o141",
+    "o142",
+    "o143",
+    "o144",
+    "o145",
+    "o146",
+    "o147",
+    "o148",
+    "o149",
+    "o150",
+    "o151",
+    "o152",
+    "o153",
+    "o154",
+    "o155",
+    "o156",
+    "o157",
+    "o158",
+    "o159",
+    "o160",
+    "o161",
+    "o162",
+    "o163",
+    "o164",
+    "o165",
+    "o166",
+    "o167",
+    "o168",
+    "o169",
+    "o170",
+    "o171",
+    "o172",
+    "o173",
+    "o174",
+    "o175",
+    "o176",
+    "o177",
+    "o178",
+    "o179",
+    "o180",
+    "o181",
+    "o182",
+    "o183",
+    "o184",
+    "o185",
+    "o186",
+    "o187",
+    "o188",
+    "o189",
+    "o190",
+    "o191",
+    "o192",
+    "o193",
+    "o194",
+    "o195",
+    "o196",
+    "o197",
+    "o198",
+    "o199",
+    "o200",
+    "o201",
+    "o202",
+    "o203",
+    "o204",
+    "o205",
+    "o206",
+    "o207",
+    "o208",
+    "o209",
+    "o210",
+    "o211",
+    "o212",
+    "o213",
+    "o214",
+    "o215",
+    "o216",
+    "o217",
+    "o218",
+    "o219",
+    "o220",
+    "o221",
+    "o222",
+    "o223",
+    "o224",
+    "o225",
+    "o226",
+    "o227",
+    "o228",
+    "o229",
+    "o230",
+    "o231",
+    "o232",
+    "o233",
+    "o234",
+    "o235",
+    "o236",
+    "o237",
+    "o238",
+    "o239",
+    "o240",
+    "o241",
+    "o242",
+    "o243",
+    "o244",
+    "o245",
+    "o246",
+    "o247",
+    "o248",
+    "o249",
+    "o250",
+    "o251",
+    "o252",
+    "o253",
+    "o254",
+    "o255",
+    "o256",
+    "o257",
+    "o258",
+    "o259",
+    "o260",
+    "o261",
+    "o262",
+    "o263",
+    "o264",
+    "o265",
+    "o266",
+    "o267",
+    "o268",
+    "o269",
+    "o270",
+    "o271",
+    "o272",
+    "o273",
+    "o274",
+    "o275",
+    "o276",
+    "o277",
+    "o278",
+    "o279",
+    "o280",
+    "o281",
+    "o282",
+    "o283",
+    "o284",
+    "o285",
+    "o286",
+    "o287",
+    "o288",
+    "o289",
+    "o290",
+    "o291",
+    "o292",
+    "o293",
+    "o294",
+    "o295",
+    "o296",
+    "o297",
+    "o298",
+    "o299",
+    "o300",
+    "o301",
+    "o302",
+    "o303",
+    "o304",
+    "o305",
+    "o306",
+    "o307",
+    "o308",
+    "o309",
+    "o310",
+    "o311",
+    "o312",
+    "o313",
+    "o314",
+    "o315",
+    "o316",
+    "o317",
+    "o318",
+    "o319",
+    "o320",
+    "o321",
+    "o322",
+    "o323",
+    "o324",
+    "o325",
+    "o326",
+    "o327",
+    "o328",
+    "o329",
+    "o330",
+    "o331",
+    "o332",
+    "o333",
+    "o334",
+    "o335",
+    "o336",
+    "o337",
+    "o338",
+    "o339",
+    "o340",
+    "o341",
+    "o342",
+    "o343",
+    "o344",
+    "o345",
+    "o346",
+    "o347",
+    "o348",
+    "o349",
+    "o350",
+    "o351",
+    "o352",
+    "o353",
+    "o354",
+    "o355",
+    "o356",
+    "o357",
+    "o358",
+    "o359",
+    "o360",
+    "o361",
+    "o362",
+    "o363",
+    "o364",
+    "o365",
+    "o366",
+    "o367",
+    "o368",
+    "o369",
+    "o370",
+    "o371",
+    "o372",
+    "o373",
+    "o374",
+    "o375",
+    "o376",
+    "o377",
+    "o378",
+    "o379",
+    "o380",
+    "o381",
+    "o382",
+    "o383",
+    "o384",
+    "o385",
+    "o386",
+    "o387",
+    "o388",
+    "o389",
+    "o390",
+    "o391",
+    "o392",
+    "o393",
+    "o394",
+    "o395",
+    "o396",
+    "o397",
+    "o398",
+    "o399",
+    "o400",
+    "o401",
+    "o402",
+    "o403",
+    "o404",
+    "o405",
+    "o406",
+    "o407",
+    "o408",
+    "o409",
+    "o410",
+    "o411",
+    "o412",
+    "o413",
+    "o414",
+    "o415",
+    "o416",
+    "o417",
+    "o418",
+    "o419",
+    "o420",
+    "o421",
+    "o422",
+    "o423",
+    "o424",
+    "o425",
+    "o426",
+    "o427",
+    "o428",
+    "o429",
+    "o430",
+    "o431",
+    "o432",
+    "o433",
+    "o434",
+    "o435",
+    "o436",
+    "o437",
+    "o438",
+    "o439",
+    "o440",
+    "o441",
+    "o442",
+    "o443",
+    "o444",
+    "o445",
+    "o446",
+    "o447",
+    "o448",
+    "o449",
+    "o450",
+    "o451",
+    "o452",
+    "o453",
+    "o454",
+    "o455",
+    "o456",
+    "o457",
+    "o458",
+    "o459",
+    "o460",
+    "o461",
+    "o462",
+    "o463",
+    "o464",
+    "o465",
+    "o466",
+    "o467",
+    "o468",
+    "o469",
+    "o470",
+    "o471",
+    "o472",
+    "o473",
+    "o474",
+    "o475",
+    "o476",
+    "o477",
+    "o478",
+    "o479",
+    "o480",
+    "o481",
+    "o482",
+    "o483",
+    "o484",
+    "o485",
+    "o486",
+    "o487",
+    "o488",
+    "o489",
+    "o490",
+    "o491",
+    "o492",
+    "o493",
+    "o494",
+    "o495",
+    "o496",
+    "o497",
+    "o498",
+    "o499"
+   ],
+   true
+  ],
+  "expect": [
+   [],
+   [
+    "n0",
+    "n1",
+    "n2",
+    "n3",
+    "n4",
+    "n5",
+    "n6",
+    "n7",
+    "n8",
+    "n9",
+    "n10",
+    "n11",
+    "n12",
+    "n13",
+    "n14",
+    "n15",
+    "n16",
+    "n17",
+    "n18",
+    "n19",
+    "n20",
+    "n21",
+    "n22",
+    "n23",
+    "n24",
+    "n25",
+    "n26",
+    "n27",
+    "n28",
+    "n29",
+    "o0",
+    "o1",
+    "o2",
+    "o3",
+    "o4",
+    "o5",
+    "o6",
+    "o7",
+    "o8",
+    "o9",
+    "o10",
+    "o11",
+    "o12",
+    "o13",
+    "o14",
+    "o15",
+    "o16",
+    "o17",
+    "o18",
+    "o19",
+    "o20",
+    "o21",
+    "o22",
+    "o23",
+    "o24",
+    "o25",
+    "o26",
+    "o27",
+    "o28",
+    "o29",
+    "o30",
+    "o31",
+    "o32",
+    "o33",
+    "o34",
+    "o35",
+    "o36",
+    "o37",
+    "o38",
+    "o39",
+    "o40",
+    "o41",
+    "o42",
+    "o43",
+    "o44",
+    "o45",
+    "o46",
+    "o47",
+    "o48",
+    "o49",
+    "o50",
+    "o51",
+    "o52",
+    "o53",
+    "o54",
+    "o55",
+    "o56",
+    "o57",
+    "o58",
+    "o59",
+    "o60",
+    "o61",
+    "o62",
+    "o63",
+    "o64",
+    "o65",
+    "o66",
+    "o67",
+    "o68",
+    "o69",
+    "o70",
+    "o71",
+    "o72",
+    "o73",
+    "o74",
+    "o75",
+    "o76",
+    "o77",
+    "o78",
+    "o79",
+    "o80",
+    "o81",
+    "o82",
+    "o83",
+    "o84",
+    "o85",
+    "o86",
+    "o87",
+    "o88",
+    "o89",
+    "o90",
+    "o91",
+    "o92",
+    "o93",
+    "o94",
+    "o95",
+    "o96",
+    "o97",
+    "o98",
+    "o99",
+    "o100",
+    "o101",
+    "o102",
+    "o103",
+    "o104",
+    "o105",
+    "o106",
+    "o107",
+    "o108",
+    "o109",
+    "o110",
+    "o111",
+    "o112",
+    "o113",
+    "o114",
+    "o115",
+    "o116",
+    "o117",
+    "o118",
+    "o119",
+    "o120",
+    "o121",
+    "o122",
+    "o123",
+    "o124",
+    "o125",
+    "o126",
+    "o127",
+    "o128",
+    "o129",
+    "o130",
+    "o131",
+    "o132",
+    "o133",
+    "o134",
+    "o135",
+    "o136",
+    "o137",
+    "o138",
+    "o139",
+    "o140",
+    "o141",
+    "o142",
+    "o143",
+    "o144",
+    "o145",
+    "o146",
+    "o147",
+    "o148",
+    "o149",
+    "o150",
+    "o151",
+    "o152",
+    "o153",
+    "o154",
+    "o155",
+    "o156",
+    "o157",
+    "o158",
+    "o159",
+    "o160",
+    "o161",
+    "o162",
+    "o163",
+    "o164",
+    "o165",
+    "o166",
+    "o167",
+    "o168",
+    "o169",
+    "o170",
+    "o171",
+    "o172",
+    "o173",
+    "o174",
+    "o175",
+    "o176",
+    "o177",
+    "o178",
+    "o179",
+    "o180",
+    "o181",
+    "o182",
+    "o183",
+    "o184",
+    "o185",
+    "o186",
+    "o187",
+    "o188",
+    "o189",
+    "o190",
+    "o191",
+    "o192",
+    "o193",
+    "o194",
+    "o195",
+    "o196",
+    "o197",
+    "o198",
+    "o199",
+    "o200",
+    "o201",
+    "o202",
+    "o203",
+    "o204",
+    "o205",
+    "o206",
+    "o207",
+    "o208",
+    "o209",
+    "o210",
+    "o211",
+    "o212",
+    "o213",
+    "o214",
+    "o215",
+    "o216",
+    "o217",
+    "o218",
+    "o219",
+    "o220",
+    "o221",
+    "o222",
+    "o223",
+    "o224",
+    "o225",
+    "o226",
+    "o227",
+    "o228",
+    "o229",
+    "o230",
+    "o231",
+    "o232",
+    "o233",
+    "o234",
+    "o235",
+    "o236",
+    "o237",
+    "o238",
+    "o239",
+    "o240",
+    "o241",
+    "o242",
+    "o243",
+    "o244",
+    "o245",
+    "o246",
+    "o247",
+    "o248",
+    "o249",
+    "o250",
+    "o251",
+    "o252",
+    "o253",
+    "o254",
+    "o255",
+    "o256",
+    "o257",
+    "o258",
+    "o259",
+    "o260",
+    "o261",
+    "o262",
+    "o263",
+    "o264",
+    "o265",
+    "o266",
+    "o267",
+    "o268",
+    "o269",
+    "o270",
+    "o271",
+    "o272",
+    "o273",
+    "o274",
+    "o275",
+    "o276",
+    "o277",
+    "o278",
+    "o279",
+    "o280",
+    "o281",
+    "o282",
+    "o283",
+    "o284",
+    "o285",
+    "o286",
+    "o287",
+    "o288",
+    "o289",
+    "o290",
+    "o291",
+    "o292",
+    "o293",
+    "o294",
+    "o295",
+    "o296",
+    "o297",
+    "o298",
+    "o299",
+    "o300",
+    "o301",
+    "o302",
+    "o303",
+    "o304",
+    "o305",
+    "o306",
+    "o307",
+    "o308",
+    "o309",
+    "o310",
+    "o311",
+    "o312",
+    "o313",
+    "o314",
+    "o315",
+    "o316",
+    "o317",
+    "o318",
+    "o319",
+    "o320",
+    "o321",
+    "o322",
+    "o323",
+    "o324",
+    "o325",
+    "o326",
+    "o327",
+    "o328",
+    "o329",
+    "o330",
+    "o331",
+    "o332",
+    "o333",
+    "o334",
+    "o335",
+    "o336",
+    "o337",
+    "o338",
+    "o339",
+    "o340",
+    "o341",
+    "o342",
+    "o343",
+    "o344",
+    "o345",
+    "o346",
+    "o347",
+    "o348",
+    "o349",
+    "o350",
+    "o351",
+    "o352",
+    "o353",
+    "o354",
+    "o355",
+    "o356",
+    "o357",
+    "o358",
+    "o359",
+    "o360",
+    "o361",
+    "o362",
+    "o363",
+    "o364",
+    "o365",
+    "o366",
+    "o367",
+    "o368",
+    "o369"
+   ]
+  ]
+ },
+ {
+  "fn": "diff_lines",
+  "args": [
+   "a\nb\nc",
+   "a\nc\nd"
+  ],
+  "expect": [
+   [
+    "d"
+   ],
+   [
+    "b"
+   ]
+  ]
+ },
+ {
+  "fn": "diff_lines",
+  "args": [
+   "a\nUpdated 5 minutes ago",
+   "a\nUpdated 7 minutes ago"
+  ],
+  "expect": [
+   [],
+   []
+  ]
+ },
+ {
+  "fn": "diff_lines",
+  "args": [
+   "x\ny",
+   "y\nx"
+  ],
+  "expect": [
+   [],
+   []
+  ]
+ },
+ {
+  "fn": "diff_lines",
+  "args": [
+   "",
+   "new"
+  ],
+  "expect": [
+   [
+    "new"
+   ],
+   []
+  ]
+ }
+]

@@ -1,0 +1,752 @@
+[
+ {
+  "fn": "normalize_url",
+  "args": [
+   "HTTPS://Www.Example.COM:443/a/b/?utm_source=x&b=2&a=1#frag"
+  ],
+  "expect": "https://www.example.com/a/b?a=1&b=2"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "http://example.com:80/"
+  ],
+  "expect": "http://example.com"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "http://example.com:8080/x"
+  ],
+  "expect": "http://example.com:8080/x"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com:0443/x"
+  ],
+  "expect": "https://example.com/x"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "example.com/path"
+  ],
+  "expect": "https://example.com/path"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "//example.com/p?q=1"
+  ],
+  "expect": "https://example.com/p?q=1"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "  https://example.com/a  "
+  ],
+  "expect": "https://example.com/a"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://user:pw@example.com/a"
+  ],
+  "expect": "https://example.com/a"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "ftp://example.com/a"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "file:///etc/passwd"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "javascript:alert(1)"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "mailto:a@b.co"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "not a url"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   ""
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   null
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com:99999/x"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?fbclid=1&gclid=2&msclkid=3&keep=1"
+  ],
+  "expect": "https://example.com/a?keep=1"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?UTM_Source=x&utm_medium=y&k=v"
+  ],
+  "expect": "https://example.com/a?k=v"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?mc_cid=1&mc_eid=2&_hsenc=3&trk=4&trkid=5&k=v"
+  ],
+  "expect": "https://example.com/a?k=v"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?ttclid=1&li_fat_id=2&srsltid=3&_gl=4&k=v"
+  ],
+  "expect": "https://example.com/a?k=v"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?b=2&a=1&c"
+  ],
+  "expect": "https://example.com/a?a=1&b=2&c"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?b=2&a=1"
+  ],
+  "opts": {
+   "sort_params": false
+  },
+  "expect": "https://example.com/a?b=2&a=1"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?x=%C3%A9&a=1"
+  ],
+  "expect": "https://example.com/a?a=1&x=%C3%A9"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?q=a+b&z=1"
+  ],
+  "expect": "https://example.com/a?q=a+b&z=1"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?ref=nav&k=1"
+  ],
+  "expect": "https://example.com/a?k=1&ref=nav"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://github.com/o/r/blob/main/a.py?ref=feature"
+  ],
+  "expect": "https://github.com/o/r/blob/main/a.py?ref=feature"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://www.producthunt.com/posts/x?ref=homepage"
+  ],
+  "expect": "https://www.producthunt.com/posts/x"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://shop.etsy.com/listing/1?ref=sr&k=1"
+  ],
+  "expect": "https://shop.etsy.com/listing/1?k=1"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?ref=nav"
+  ],
+  "opts": {
+   "strip_ref": true
+  },
+  "expect": "https://example.com/a"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://amazon.com/dp/B0?ref_=nav&k=1"
+  ],
+  "expect": "https://amazon.com/dp/B0?k=1"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://twitter.com/x?ref_src=twsrc&ref_url=u"
+  ],
+  "expect": "https://twitter.com/x"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://www.example.com/a"
+  ],
+  "opts": {
+   "strip_www": true
+  },
+  "expect": "https://example.com/a"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://www.example.com/a"
+  ],
+  "expect": "https://www.example.com/a"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a#section"
+  ],
+  "expect": "https://example.com/a"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a#section"
+  ],
+  "opts": {
+   "keep_fragment": true
+  },
+  "expect": "https://example.com/a#section"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?x=1&y=2"
+  ],
+  "opts": {
+   "drop_params": [
+    "x"
+   ]
+  },
+  "expect": "https://example.com/a?y=2"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a?utm_source=1&x=2"
+  ],
+  "opts": {
+   "keep_params": [
+    "utm_source"
+   ],
+   "drop_params": [
+    "x"
+   ]
+  },
+  "expect": "https://example.com/a?utm_source=1"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com//a//b//"
+  ],
+  "expect": "https://example.com//a//b"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/a/"
+  ],
+  "expect": "https://example.com/a"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/"
+  ],
+  "expect": "https://example.com"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://EXAMPLE.com./a"
+  ],
+  "expect": "https://example.com/a"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://bücher.example/straße"
+  ],
+  "expect": "https://xn--bcher-kva.example/straße"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "http://[2001:DB8::1]:8080/x"
+  ],
+  "expect": "http://[2001:db8::1]:8080/x"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://example.com/?a=1&&b=2&"
+  ],
+  "expect": "https://example.com?a=1&b=2"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://www.linkedin.com/jobs/view/senior-engineer-at-acme-3812345678/?trackingId=abc&refId=x"
+  ],
+  "expect": "https://www.linkedin.com/jobs/view/3812345678"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://es.linkedin.com/jobs/view/3812345678?utm_source=a"
+  ],
+  "expect": "https://www.linkedin.com/jobs/view/3812345678"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://www.linkedin.com/jobs/collections/recommended/?currentJobId=3812345678"
+  ],
+  "expect": "https://www.linkedin.com/jobs/view/3812345678"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://www.linkedin.com/in/someone"
+  ],
+  "expect": "https://www.linkedin.com/in/someone"
+ },
+ {
+  "fn": "normalize_url",
+  "args": [
+   "https://www.linkedin.com/jobs/view/3812345678"
+  ],
+  "opts": {
+   "site_rules": false
+  },
+  "expect": "https://www.linkedin.com/jobs/view/3812345678"
+ },
+ {
+  "fn": "url_key",
+  "args": [
+   "https://www.example.com/a/?utm_source=x"
+  ],
+  "expect": "example.com/a"
+ },
+ {
+  "fn": "url_key",
+  "args": [
+   "http://example.com/a"
+  ],
+  "expect": "example.com/a"
+ },
+ {
+  "fn": "url_key",
+  "args": [
+   "https://example.com/a?b=2&a=1"
+  ],
+  "expect": "example.com/a?a=1&b=2"
+ },
+ {
+  "fn": "url_key",
+  "args": [
+   "nonsense"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "url_key",
+  "args": [
+   "https://www.linkedin.com/jobs/view/title-99/"
+  ],
+  "expect": "linkedin.com/jobs/view/99"
+ },
+ {
+  "fn": "host_of",
+  "args": [
+   "https://WWW.Example.com:8080/a?x=1"
+  ],
+  "expect": "www.example.com"
+ },
+ {
+  "fn": "host_of",
+  "args": [
+   "http://user:pw@example.com/"
+  ],
+  "expect": "example.com"
+ },
+ {
+  "fn": "host_of",
+  "args": [
+   "http://[::1]:80/"
+  ],
+  "expect": "::1"
+ },
+ {
+  "fn": "host_of",
+  "args": [
+   "example.com/path"
+  ],
+  "expect": "example.com"
+ },
+ {
+  "fn": "host_of",
+  "args": [
+   "mailto:x@y.z"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "host_of",
+  "args": [
+   ""
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://t.example/c?url=https%3A%2F%2Fshop.example%2Fa%3Fid%3D1&x=2"
+  ],
+  "expect": "https://shop.example/a?id=1"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://click.example/track?redirect=https%3A%2F%2Fa.example%2F"
+  ],
+  "expect": "https://a.example/"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://www.google.com/url?q=https%3A%2F%2Ftarget.example%2Fpage&sa=D"
+  ],
+  "expect": "https://target.example/page"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://www.google.com/search?q=https%3A%2F%2Ftarget.example%2Fpage"
+  ],
+  "expect": "https://www.google.com/search?q=https%3A%2F%2Ftarget.example%2Fpage"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://example.com/page?to=https%3A%2F%2Fother.example"
+  ],
+  "expect": "https://example.com/page?to=https%3A%2F%2Fother.example"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://r.example/r?to=https%3A%2F%2Fother.example%2Fz"
+  ],
+  "expect": "https://other.example/z"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://t.example/c?url=not-a-url"
+  ],
+  "expect": "https://t.example/c?url=not-a-url"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://a.example/x?u=https%3A%2F%2Fb.example%2Fy%3Fu%3Dhttps%253A%252F%252Fc.example%252Fz"
+  ],
+  "expect": "https://c.example/z"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "https://a.example/x?u=https%3A%2F%2Fb.example%2Fy%3Fu%3Dhttps%253A%252F%252Fc.example%252Fz"
+  ],
+  "opts": {
+   "max_hops": 1
+  },
+  "expect": "https://b.example/y?u=https://c.example/z"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   "plain text"
+  ],
+  "expect": "plain text"
+ },
+ {
+  "fn": "unwrap_redirect",
+  "args": [
+   null
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://example.com/a?z=1&utm_source=x&a=2#frag"
+  ],
+  "expect": "https://example.com/a?z=1&a=2"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://example.com/a?z=1#frag"
+  ],
+  "opts": {
+   "keep_fragment": true
+  },
+  "expect": "https://example.com/a?z=1#frag"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://example.com/a?e=1&cid=2&goal=3&k=4"
+  ],
+  "expect": "https://example.com/a?e=1&cid=2&goal=3&k=4"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://example.com/a?e=1&cid=2&goal=3&k=4"
+  ],
+  "opts": {
+   "mail": true
+  },
+  "expect": "https://example.com/a?k=4"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://t.example/c?url=https%3A%2F%2Fshop.example%2Fa%3Futm_medium%3Dmail%26id%3D7"
+  ],
+  "expect": "https://shop.example/a?id=7"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://example.com/a?x=1"
+  ],
+  "opts": {
+   "max_len": 12
+  },
+  "expect": "https://exam"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://USER@Example.com:8080/A?fbclid=1"
+  ],
+  "expect": "https://USER@Example.com:8080/A"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "not a url"
+  ],
+  "expect": "not a url"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://www.medium.com/p?ref=x&a=1"
+  ],
+  "expect": "https://www.medium.com/p?a=1"
+ },
+ {
+  "fn": "clean_url",
+  "args": [
+   "https://github.com/o/r?ref=main"
+  ],
+  "expect": "https://github.com/o/r?ref=main"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "www.example.com"
+  ],
+  "expect": "example.com"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "a.b.example.co.uk"
+  ],
+  "expect": "example.co.uk"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "example.co.uk"
+  ],
+  "expect": "example.co.uk"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "www.hacienda.gob.es"
+  ],
+  "expect": "hacienda.gob.es"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "foo.gob.es"
+  ],
+  "expect": "foo.gob.es"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "gob.es"
+  ],
+  "expect": "gob.es"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "localhost"
+  ],
+  "expect": "localhost"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "127.0.0.1"
+  ],
+  "expect": "127.0.0.1"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "[::1]"
+  ],
+  "expect": "[::1]"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   ""
+  ],
+  "expect": null
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "sub.example.com.au"
+  ],
+  "expect": "example.com.au"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "shop.example.com.br"
+  ],
+  "expect": "example.com.br"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "blog.example.io"
+  ],
+  "expect": "example.io"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "https://news.example.org/a"
+  ],
+  "expect": "example.org"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "A.B.Example.COM."
+  ],
+  "expect": "example.com"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "example.com"
+  ],
+  "expect": "example.com"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "a.b.internal.corp"
+  ],
+  "expect": "internal.corp"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "x.team.internal.corp"
+  ],
+  "opts": {
+   "extra_suffixes": [
+    "internal.corp"
+   ]
+  },
+  "expect": "team.internal.corp"
+ },
+ {
+  "fn": "registrable_domain",
+  "args": [
+   "x.team.example.com"
+  ],
+  "opts": {
+   "extra_suffixes": [
+    "example.com"
+   ]
+  },
+  "expect": "team.example.com"
+ }
+]

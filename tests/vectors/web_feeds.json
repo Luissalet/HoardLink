@@ -1,0 +1,978 @@
+[
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\" xmlns:atom=\"http://www.w3.org/2005/Atom\">\n<channel><title>Example &amp; Blog</title><link>https://example.com/</link><description><![CDATA[A <b>nice</b> blog]]></description>\n<atom:link href=\"https://example.com/feed.xml\" rel=\"self\" type=\"application/rss+xml\"/>\n<item><title><![CDATA[First <i>post</i> & more]]></title><link>https://example.com/p/1</link><guid isPermaLink=\"false\">tag:example.com,2026:1</guid>\n<pubDate>Wed, 30 Sep 2026 14:30:00 +0200</pubDate><dc:creator>Ada</dc:creator><description>Plain &lt;b&gt;summary&lt;/b&gt; here</description>\n<content:encoded><![CDATA[<p>Full <b>body</b></p>]]></content:encoded></item>\n<item><title>Second</title><link>/p/2</link><pubDate>Thu, 01 Oct 2026 08:00:00 GMT</pubDate><description>Two</description></item>\n<item><title>Third without link</title><guid isPermaLink=\"true\">https://example.com/p/3</guid><pubDate>Fri, 2 Oct 2026 09:30:00 -0500</pubDate></item>\n<item><title>Fourth id only</title><guid>urn:uuid:1234</guid></item>\n<item><description>No title no link no guid</description></item>\n</channel></rss>",
+   "https://example.com/feed.xml"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "Example & Blog",
+   "link": "https://example.com/",
+   "description": "A nice blog",
+   "items": [
+    {
+     "id": "tag:example.com,2026:1",
+     "title": "First post & more",
+     "link": "https://example.com/p/1",
+     "published": "2026-09-30T12:30:00Z",
+     "updated": "",
+     "date": "2026-09-30T12:30:00Z",
+     "summary": "Plain summary here",
+     "content": "<p>Full <b>body</b></p>",
+     "author": "Ada"
+    },
+    {
+     "id": "https://example.com/p/2",
+     "title": "Second",
+     "link": "https://example.com/p/2",
+     "published": "2026-10-01T08:00:00Z",
+     "updated": "",
+     "date": "2026-10-01T08:00:00Z",
+     "summary": "Two",
+     "content": "Two",
+     "author": ""
+    },
+    {
+     "id": "https://example.com/p/3",
+     "title": "Third without link",
+     "link": "https://example.com/p/3",
+     "published": "2026-10-02T14:30:00Z",
+     "updated": "",
+     "date": "2026-10-02T14:30:00Z",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "urn:uuid:1234",
+     "title": "Fourth id only",
+     "link": "",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\" xmlns:atom=\"http://www.w3.org/2005/Atom\">\n<channel><title>Example &amp; Blog</title><link>https://example.com/</link><description><![CDATA[A <b>nice</b> blog]]></description>\n<atom:link href=\"https://example.com/feed.xml\" rel=\"self\" type=\"application/rss+xml\"/>\n<item><title><![CDATA[First <i>post</i> & more]]></title><link>https://example.com/p/1</link><guid isPermaLink=\"false\">tag:example.com,2026:1</guid>\n<pubDate>Wed, 30 Sep 2026 14:30:00 +0200</pubDate><dc:creator>Ada</dc:creator><description>Plain &lt;b&gt;summary&lt;/b&gt; here</description>\n<content:encoded><![CDATA[<p>Full <b>body</b></p>]]></content:encoded></item>\n<item><title>Second</title><link>/p/2</link><pubDate>Thu, 01 Oct 2026 08:00:00 GMT</pubDate><description>Two</description></item>\n<item><title>Third without link</title><guid isPermaLink=\"true\">https://example.com/p/3</guid><pubDate>Fri, 2 Oct 2026 09:30:00 -0500</pubDate></item>\n<item><title>Fourth id only</title><guid>urn:uuid:1234</guid></item>\n<item><description>No title no link no guid</description></item>\n</channel></rss>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "Example & Blog",
+   "link": "https://example.com/",
+   "description": "A nice blog",
+   "items": [
+    {
+     "id": "tag:example.com,2026:1",
+     "title": "First post & more",
+     "link": "https://example.com/p/1",
+     "published": "2026-09-30T12:30:00Z",
+     "updated": "",
+     "date": "2026-09-30T12:30:00Z",
+     "summary": "Plain summary here",
+     "content": "<p>Full <b>body</b></p>",
+     "author": "Ada"
+    },
+    {
+     "id": "/p/2",
+     "title": "Second",
+     "link": "/p/2",
+     "published": "2026-10-01T08:00:00Z",
+     "updated": "",
+     "date": "2026-10-01T08:00:00Z",
+     "summary": "Two",
+     "content": "Two",
+     "author": ""
+    },
+    {
+     "id": "https://example.com/p/3",
+     "title": "Third without link",
+     "link": "https://example.com/p/3",
+     "published": "2026-10-02T14:30:00Z",
+     "updated": "",
+     "date": "2026-10-02T14:30:00Z",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "urn:uuid:1234",
+     "title": "Fourth id only",
+     "link": "",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\"><title type=\"html\">Atom &amp;amp; Co</title><subtitle>Sub</subtitle>\n<link rel=\"self\" href=\"https://example.com/atom.xml\"/><link rel=\"alternate\" type=\"text/html\" href=\"https://example.com/\"/>\n<entry><title>Both dates</title><id>tag:e,1</id><link rel=\"alternate\" href=\"/a/1\"/><link rel=\"enclosure\" href=\"/a/1.mp3\"/>\n<published>2026-09-01T10:00:00+02:00</published><updated>2026-09-02T12:30:00Z</updated><author><name>Grace</name></author>\n<summary>Short summary</summary><content type=\"html\">&lt;p&gt;Body&lt;/p&gt;</content></entry>\n<entry><title>Updated only</title><id>tag:e,2</id><link href=\"https://example.com/a/2\"/><updated>2026-09-03T08:15:00-05:00</updated></entry>\n<entry><title>Published only</title><id>tag:e,3</id><link href=\"https://example.com/a/3\"/><published>2026-09-04</published></entry>\n<entry><title>No dates</title><link href=\"https://example.com/a/4\"/></entry>\n<entry><title>Bad date</title><id>tag:e,5</id><updated>yesterday</updated></entry>\n</feed>"
+  ],
+  "expect": {
+   "format": "atom",
+   "title": "Atom & Co",
+   "link": "https://example.com/",
+   "description": "Sub",
+   "items": [
+    {
+     "id": "tag:e,1",
+     "title": "Both dates",
+     "link": "/a/1",
+     "published": "2026-09-01T08:00:00Z",
+     "updated": "2026-09-02T12:30:00Z",
+     "date": "2026-09-01T08:00:00Z",
+     "summary": "Short summary",
+     "content": "<p>Body</p>",
+     "author": "Grace"
+    },
+    {
+     "id": "tag:e,2",
+     "title": "Updated only",
+     "link": "https://example.com/a/2",
+     "published": "",
+     "updated": "2026-09-03T13:15:00Z",
+     "date": "2026-09-03T13:15:00Z",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "tag:e,3",
+     "title": "Published only",
+     "link": "https://example.com/a/3",
+     "published": "2026-09-04T00:00:00Z",
+     "updated": "",
+     "date": "2026-09-04T00:00:00Z",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "https://example.com/a/4",
+     "title": "No dates",
+     "link": "https://example.com/a/4",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "tag:e,5",
+     "title": "Bad date",
+     "link": "",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\"><title type=\"html\">Atom &amp;amp; Co</title><subtitle>Sub</subtitle>\n<link rel=\"self\" href=\"https://example.com/atom.xml\"/><link rel=\"alternate\" type=\"text/html\" href=\"https://example.com/\"/>\n<entry><title>Both dates</title><id>tag:e,1</id><link rel=\"alternate\" href=\"/a/1\"/><link rel=\"enclosure\" href=\"/a/1.mp3\"/>\n<published>2026-09-01T10:00:00+02:00</published><updated>2026-09-02T12:30:00Z</updated><author><name>Grace</name></author>\n<summary>Short summary</summary><content type=\"html\">&lt;p&gt;Body&lt;/p&gt;</content></entry>\n<entry><title>Updated only</title><id>tag:e,2</id><link href=\"https://example.com/a/2\"/><updated>2026-09-03T08:15:00-05:00</updated></entry>\n<entry><title>Published only</title><id>tag:e,3</id><link href=\"https://example.com/a/3\"/><published>2026-09-04</published></entry>\n<entry><title>No dates</title><link href=\"https://example.com/a/4\"/></entry>\n<entry><title>Bad date</title><id>tag:e,5</id><updated>yesterday</updated></entry>\n</feed>",
+   "https://example.com/x/"
+  ],
+  "expect": {
+   "format": "atom",
+   "title": "Atom & Co",
+   "link": "https://example.com/",
+   "description": "Sub",
+   "items": [
+    {
+     "id": "tag:e,1",
+     "title": "Both dates",
+     "link": "https://example.com/a/1",
+     "published": "2026-09-01T08:00:00Z",
+     "updated": "2026-09-02T12:30:00Z",
+     "date": "2026-09-01T08:00:00Z",
+     "summary": "Short summary",
+     "content": "<p>Body</p>",
+     "author": "Grace"
+    },
+    {
+     "id": "tag:e,2",
+     "title": "Updated only",
+     "link": "https://example.com/a/2",
+     "published": "",
+     "updated": "2026-09-03T13:15:00Z",
+     "date": "2026-09-03T13:15:00Z",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "tag:e,3",
+     "title": "Published only",
+     "link": "https://example.com/a/3",
+     "published": "2026-09-04T00:00:00Z",
+     "updated": "",
+     "date": "2026-09-04T00:00:00Z",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "https://example.com/a/4",
+     "title": "No dates",
+     "link": "https://example.com/a/4",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "tag:e,5",
+     "title": "Bad date",
+     "link": "",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<?xml version=\"1.0\"?><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" xmlns=\"http://purl.org/rss/1.0/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n<channel rdf:about=\"https://example.org/\"><title>RDF feed</title><link>https://example.org/</link><description>Old school</description></channel>\n<item rdf:about=\"https://example.org/1\"><title>Item one</title><link>https://example.org/1</link><dc:date>2026-08-01T00:00:00Z</dc:date><dc:creator>Linus</dc:creator></item>\n<item rdf:about=\"https://example.org/2\"><title>Item two</title><link>https://example.org/2</link><description>Desc</description></item></rdf:RDF>"
+  ],
+  "expect": {
+   "format": "rdf",
+   "title": "RDF feed",
+   "link": "https://example.org/",
+   "description": "Old school",
+   "items": [
+    {
+     "id": "https://example.org/1",
+     "title": "Item one",
+     "link": "https://example.org/1",
+     "published": "2026-08-01T00:00:00Z",
+     "updated": "",
+     "date": "2026-08-01T00:00:00Z",
+     "summary": "",
+     "content": "",
+     "author": "Linus"
+    },
+    {
+     "id": "https://example.org/2",
+     "title": "Item two",
+     "link": "https://example.org/2",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "Desc",
+     "content": "Desc",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "﻿<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\" xmlns:atom=\"http://www.w3.org/2005/Atom\">\n<channel><title>Example &amp; Blog</title><link>https://example.com/</link><description><![CDATA[A <b>nice</b> blog]]></description>\n<atom:link href=\"https://example.com/feed.xml\" rel=\"self\" type=\"application/rss+xml\"/>\n<item><title><![CDATA[First <i>post</i> & more]]></title><link>https://example.com/p/1</link><guid isPermaLink=\"false\">tag:example.com,2026:1</guid>\n<pubDate>Wed, 30 Sep 2026 14:30:00 +0200</pubDate><dc:creator>Ada</dc:creator><description>Plain &lt;b&gt;summary&lt;/b&gt; here</description>\n<content:encoded><![CDATA[<p>Full <b>body</b></p>]]></content:encoded></item>\n<item><title>Second</title><link>/p/2</link><pubDate>Thu, 01 Oct 2026 08:00:00 GMT</pubDate><description>Two</description></item>\n<item><title>Third without link</title><guid isPermaLink=\"true\">https://example.com/p/3</guid><pubDate>Fri, 2 Oct 2026 09:30:00 -0500</pubDate></item>\n<item><title>Fourth id only</title><guid>urn:uuid:1234</guid></item>\n<item><description>No title no link no guid</description></item>\n</channel></rss>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "Example & Blog",
+   "link": "https://example.com/",
+   "description": "A nice blog",
+   "items": [
+    {
+     "id": "tag:example.com,2026:1",
+     "title": "First post & more",
+     "link": "https://example.com/p/1",
+     "published": "2026-09-30T12:30:00Z",
+     "updated": "",
+     "date": "2026-09-30T12:30:00Z",
+     "summary": "Plain summary here",
+     "content": "<p>Full <b>body</b></p>",
+     "author": "Ada"
+    },
+    {
+     "id": "/p/2",
+     "title": "Second",
+     "link": "/p/2",
+     "published": "2026-10-01T08:00:00Z",
+     "updated": "",
+     "date": "2026-10-01T08:00:00Z",
+     "summary": "Two",
+     "content": "Two",
+     "author": ""
+    },
+    {
+     "id": "https://example.com/p/3",
+     "title": "Third without link",
+     "link": "https://example.com/p/3",
+     "published": "2026-10-02T14:30:00Z",
+     "updated": "",
+     "date": "2026-10-02T14:30:00Z",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "urn:uuid:1234",
+     "title": "Fourth id only",
+     "link": "",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss version=\"2.0\"><channel><title>Empty</title></channel></rss>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "Empty",
+   "link": "",
+   "description": "",
+   "items": []
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss><channel><title>A&nbsp;B &copy; &E</title><item><title>t&eacute;</title><link>http://a.example/1</link></item></channel></rss>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "A B © &E",
+   "link": "",
+   "description": "",
+   "items": [
+    {
+     "id": "http://a.example/1",
+     "title": "té",
+     "link": "http://a.example/1",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss><channel><title>Ctl\u0001x</title><item><title>a</title><link>http://a.example/1</link></item></channel></rss>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "Ctl x",
+   "link": "",
+   "description": "",
+   "items": [
+    {
+     "id": "http://a.example/1",
+     "title": "a",
+     "link": "http://a.example/1",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<!DOCTYPE rss [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><rss><channel><title>&xxe;</title></channel></rss>"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<!DOCTYPE lolz [<!ENTITY a \"aaaa\"><!ENTITY b \"&a;&a;\">]><rss><channel><title>&b;</title></channel></rss>"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<html><body><p>Not a feed</p></body></html>"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "not xml at all"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   ""
+  ],
+  "expect": null
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   null
+  ],
+  "expect": null
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss><channel><title>Broken<item></channel></rss>"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss><channel><item><title>x</title><link>http://a.example/</link></item></channel></rss><rss/>"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss><channel><item><title>t0</title><link>http://a.example/0</link></item><item><title>t1</title><link>http://a.example/1</link></item><item><title>t2</title><link>http://a.example/2</link></item><item><title>t3</title><link>http://a.example/3</link></item><item><title>t4</title><link>http://a.example/4</link></item></channel></rss>"
+  ],
+  "opts": {
+   "max_items": 3
+  },
+  "expect": {
+   "format": "rss",
+   "title": "",
+   "link": "",
+   "description": "",
+   "items": [
+    {
+     "id": "http://a.example/0",
+     "title": "t0",
+     "link": "http://a.example/0",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "http://a.example/1",
+     "title": "t1",
+     "link": "http://a.example/1",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    },
+    {
+     "id": "http://a.example/2",
+     "title": "t2",
+     "link": "http://a.example/2",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss><channel><item><title>x</title><link>http://a.example/</link><description>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word </description></item></channel></rss>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "",
+   "link": "",
+   "description": "",
+   "items": [
+    {
+     "id": "http://a.example/",
+     "title": "x",
+     "link": "http://a.example/",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word…",
+     "content": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<RSS><CHANNEL><TITLE>Upper</TITLE><ITEM><TITLE>I</TITLE><LINK>http://a.example/</LINK></ITEM></CHANNEL></RSS>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "",
+   "link": "",
+   "description": "",
+   "items": [
+    {
+     "id": "http://a.example/",
+     "title": "I",
+     "link": "http://a.example/",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<?xml version=\"1.0\"?>\n<!-- c --><rss><channel><!-- inner --><title>C</title><?pi x?><item><title>I</title><link>http://a.example/c</link></item></channel></rss>\n"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "C",
+   "link": "",
+   "description": "",
+   "items": [
+    {
+     "id": "http://a.example/c",
+     "title": "I",
+     "link": "http://a.example/c",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss><channel><item><title>&#x1F600; emoji &#169;</title><link>http://a.example/e</link></item></channel></rss>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "",
+   "link": "",
+   "description": "",
+   "items": [
+    {
+     "id": "http://a.example/e",
+     "title": "😀 emoji ©",
+     "link": "http://a.example/e",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "parse_feed",
+  "args": [
+   "<rss><channel><item><title attr='1'>Attr</title><link>http://a.example/e</link><enclosure url='x' length=\"1\"/></item></channel></rss>"
+  ],
+  "expect": {
+   "format": "rss",
+   "title": "",
+   "link": "",
+   "description": "",
+   "items": [
+    {
+     "id": "http://a.example/e",
+     "title": "Attr",
+     "link": "http://a.example/e",
+     "published": "",
+     "updated": "",
+     "date": "",
+     "summary": "",
+     "content": "",
+     "author": ""
+    }
+   ]
+  }
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "Wed, 30 Sep 2026 14:30:00 +0200"
+  ],
+  "expect": "2026-09-30T12:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "Thu, 1 Oct 2026 08:00:00 GMT"
+  ],
+  "expect": "2026-10-01T08:00:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "30 Sep 2026 14:30 EST"
+  ],
+  "expect": "2026-09-30T19:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "Wed, 30 Sep 26 14:30:00 UT"
+  ],
+  "expect": "2026-09-30T14:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-09-30T14:30:00+02:00"
+  ],
+  "expect": "2026-09-30T12:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-09-30T14:30:00Z"
+  ],
+  "expect": "2026-09-30T14:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-09-30 14:30"
+  ],
+  "expect": "2026-09-30T14:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-09-30"
+  ],
+  "expect": "2026-09-30T00:00:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-09-30T14:30:00.123456Z"
+  ],
+  "expect": "2026-09-30T14:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-09-30T14:30:00+0200"
+  ],
+  "expect": "2026-09-30T12:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-09-30T14:30:00-05"
+  ],
+  "expect": "2026-09-30T19:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "20260930T143000Z"
+  ],
+  "expect": "2026-09-30T14:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-02-31"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "2026-13-01"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "yesterday"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   ""
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   null
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "Mon, 05 Oct 2026 25:00:00 GMT"
+  ],
+  "expect": ""
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "Wed, 30 Sep 2026 14:30:00 PST"
+  ],
+  "expect": "2026-09-30T22:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "Wed, 30 Sep 2026 14:30:00 -0000"
+  ],
+  "expect": "2026-09-30T14:30:00Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "Sun, 31 Dec 1999 23:59:59 +0000"
+  ],
+  "expect": "1999-12-31T23:59:59Z"
+ },
+ {
+  "fn": "to_iso_utc",
+  "args": [
+   "31 Dec 99 23:59"
+  ],
+  "expect": "1999-12-31T23:59:00Z"
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo",
+   "releases"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/releases.atom",
+   "what": "releases",
+   "name": "owner/repo releases"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo/",
+   "tags"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/tags.atom",
+   "what": "tags",
+   "name": "owner/repo tags"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo.git",
+   "commits"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/commits.atom",
+   "what": "commits",
+   "name": "owner/repo commits"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo/commits/main",
+   "releases"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/commits/main.atom",
+   "what": "commits",
+   "name": "owner/repo commits"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo/commits/feature/x.atom",
+   "releases"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/commits/feature/x.atom",
+   "what": "commits",
+   "name": "owner/repo commits"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo/tree/dev",
+   "commits"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/commits/dev.atom",
+   "what": "commits",
+   "name": "owner/repo commits"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo/tree/dev",
+   "releases"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/releases.atom",
+   "what": "releases",
+   "name": "owner/repo releases"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo/releases/tag/v1",
+   "tags"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/releases.atom",
+   "what": "releases",
+   "name": "owner/repo releases"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner/repo/tags",
+   "releases"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/tags.atom",
+   "what": "tags",
+   "name": "owner/repo tags"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://www.github.com/owner/repo",
+   "bogus"
+  ],
+  "expect": {
+   "repo": "owner/repo",
+   "url": "https://github.com/owner/repo/releases.atom",
+   "what": "releases",
+   "name": "owner/repo releases"
+  }
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/orgs/x/repo",
+   "releases"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://github.com/owner",
+   "releases"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "https://gitlab.com/owner/repo",
+   "releases"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "ftp://github.com/owner/repo",
+   "releases"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "not a url",
+   "releases"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "github_feed",
+  "args": [
+   "",
+   "releases"
+  ],
+  "expect": null
+ }
+]
