@@ -247,3 +247,20 @@ def test_http_and_tool(family):
     res = tools.call(hub, "hub_search", {"q": "tea", "apps": "notes", "limit": 3})
     assert res["ok"] and res["groups"][0]["app"] == "notes" and "status" not in res
     assert tools.call(hub, "hub_search", {"q": ""})["ok"] is False
+
+
+def test_finders_count_and_the_internet_does_not():
+    from hoard_link.hub.search import pick_search_tools
+    q = {"type": "object", "properties": {"query": {"type": "string"}}}
+    t = {"type": "object", "properties": {"text": {"type": "string"}}}
+    ro = {"readOnlyHint": True}
+    tools = [
+        {"name": "web_search", "inputSchema": q, "annotations": ro, "description": "Search the internet"},
+        {"name": "studio_stock_search", "inputSchema": q, "annotations": ro},
+        {"name": "find_people", "inputSchema": q, "annotations": ro},
+        {"name": "shipments_list", "inputSchema": t, "annotations": ro},
+        {"name": "media_list", "inputSchema": q},                       # does not say it only reads
+        {"name": "mail_scan", "inputSchema": q, "annotations": {"readOnlyHint": False}},
+        {"name": "doc_search", "inputSchema": q, "description": "Search the archived papers"},
+    ]
+    assert {p["name"] for p in pick_search_tools(tools)} == {"find_people", "shipments_list", "doc_search"}
