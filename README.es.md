@@ -78,6 +78,26 @@ servidor) y vuelve a ejecutarlo para ver cómo se resuelve esa capacidad.
 Pasa la ruta de un `backend.json` como primer argumento para probar tu
 propia configuración.
 
+## Novedades de la 0.7
+
+- **Esferas.** La vida personal y la del trabajo (o del trabajo por tu cuenta) separadas: cada esfera tiene sus
+  cuentas de correo, fuentes de chat, remitentes VIP, palabras clave, horas de silencio, reparto de avisos y
+  resumen de la mañana. Un selector en la barra del hub (y en Faustus) cambia la activa; el correo del trabajo no
+  llega a las apps personales.
+- **Un solo centro de avisos.** Las apps piden al hub que te avise (`fam_notify.notify`, en JS `notify`); el hub
+  elige Windows, ntfy, Telegram o correo según la prioridad y la esfera, guarda lo que llega en horas de silencio
+  o repetido y lleva el historial. Las apps conservan sus canales propios como respaldo.
+- **Una sola lectura del correo.** La pasarela lee las cuentas de correo de Faustus una vez para toda la familia,
+  clasifica cada mensaje (esfera, prioridad, qué apps lo quieren) y cada app solo ve su parte; más las listas
+  «necesita tu atención» y «sin dueño». Slack y Microsoft 365 (chats de Teams, Outlook) como fuentes de chat.
+- **Hoy.** Lo que tiene fecha en cada app (plazos, entregas, cumpleaños, mantenimiento, lanzamientos,
+  renovaciones, exámenes…) en una agenda, un resumen de la mañana por esfera (con unas líneas escritas por el
+  modelo local si hay uno cargado) y un calendario al que suscribirse desde el móvil (`/calendar.ics`).
+- **Referencias, búsqueda, trabajos y compras.** Enlaces entre registros de apps distintas, una búsqueda sobre
+  todas las apps, los trabajos largos de cada app con su GPU y la vida de cada compra (pagada → enviada →
+  entregada → archivada → guardada).
+- **Diecisiete reglas recomendadas** que se instalan solas (y no vuelven si quitas una).
+
 ## Novedades de la 0.6
 
 - **Rutas medidas.** Una app que hace benchmarks (Galton's Hoard) escribe
@@ -670,6 +690,26 @@ Python sin Link: `hoard_link.family.chat(messages, json=True)` y
 `hub_link_chat` y `hub_link_status`. El contrato y los códigos de estado
 están en [docs/FAMILY.md](docs/FAMILY.md#10-models-for-every-app); los
 ajustes del hub, en [docs/HUB.md](docs/HUB.md#models-for-every-app).
+
+### Esferas, avisos, correo, Hoy y más (0.7)
+
+Nueve *facetas* viven en el hub, cada una con sus rutas, herramientas y pestaña (`hoard_link/hub/facets.py`):
+
+| Faceta | Qué hace | Referencia |
+|---|---|---|
+| Esferas | Personal / trabajo / autónomo: cuentas de correo, chats, VIP, palabras clave, silenciados, horas de silencio, reparto de avisos, hora del resumen; selector en la barra superior | [docs/facets/spheres.md](docs/facets/spheres.md) |
+| Avisos | `POST /api/notify` desde cualquier app; notificación de Windows, ntfy, Telegram, correo (por Faustus o SMTP); horas de silencio, repetidos, límite por app, historial | [docs/facets/notify.md](docs/facets/notify.md) |
+| Correo | Una lectura incremental de las cuentas de correo de Faustus para todas las apps; intereses, reclamaciones, «necesita tu atención», «sin dueño»; apagada hasta que la enciendes | [docs/facets/mail.md](docs/facets/mail.md) |
+| Chats | Slack (token) y Microsoft 365 (token o inicio de sesión con código: chats de Teams y Outlook) por esfera | [docs/facets/chats.md](docs/facets/chats.md) |
+| Hoy | La agenda de la familia (`GET /api/family/agenda` en cada app), el resumen de la mañana por esfera, `/calendar.ics` con token, carpeta de exportación y escucha opcional en la red local | [docs/facets/today.md](docs/facets/today.md) |
+| Referencias | Enlaces `hoard://app/tipo/id` entre registros, en los dos sentidos | [docs/facets/refs.md](docs/facets/refs.md) |
+| Búsqueda | Una consulta sobre las herramientas de búsqueda de todas las apps en marcha, más correo y referencias | [docs/facets/search.md](docs/facets/search.md) |
+| Trabajos | Los trabajos largos de cada app (eventos `<app>.job.*`) con progreso y GPU; los fallos avisan | [docs/facets/work.md](docs/facets/work.md) |
+| Compras | Pago en Ledger → envío en Phileas → factura y garantía en Kafka → objeto en HomeHoard; deja de vigilar en Tantalus lo que ya compraste | [docs/facets/purchases.md](docs/facets/purchases.md) |
+
+Lado de las apps (va con la librería copiada): `hoard_link.fam_notify`, `fam_mail`, `fam_agenda`, `fam_refs`
+(solo biblioteca estándar); las apps Node tienen las mismas funciones en `hoard-link.js` (`notify`, `mail*`,
+`installAgenda`, `refs*`). Los contratos son las secciones 12 a 17 de [docs/FAMILY.md](docs/FAMILY.md).
 
 ## Uso con Faustus
 

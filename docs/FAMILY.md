@@ -1,4 +1,4 @@
-# The family contract (Hoard Link 0.6)
+# The family contract (Hoard Link 0.7)
 
 Twenty local apps, one assistant, one machine. This page is the contract
 every app of the family follows so the hub can list, start, back up, call
@@ -324,3 +324,92 @@ port, check this list and the manifests under the roots the hub scans
 | 5191 | Vitruvius's | 8741 | Dorian's |
 | 8766 | Writer's (desktop) | 8767 | Gepetto's |
 | 8810 | Hoard Hub | 8811–8817 | Babel, Laplace, Funes, Daguerre, Prospero, Scheherazade, DiskHoard |
+
+## 12. Spheres
+
+The person's lives — `personal`, `work`, and any other (a freelance one) — live in the hub's
+`data/spheres.json`. An app never decides a sphere: the hub does, from the mail account or chat source a
+message came from, and from each sphere's `apps` list (which apps may see that sphere's mail and receive its
+notifications). Read the active one with `GET /api/spheres`; switch it with `POST /api/spheres/active {id}`
+(any family token, so Faustus can switch it too; the hub emits `hub.sphere.changed {from, to}`).
+Details: [facets/spheres.md](facets/spheres.md).
+
+## 13. Notifications and long jobs
+
+**Tell the person through the hub.** `POST <hub>/api/notify {title, body, priority: low|normal|high|urgent,
+url, group, dedupe_key, sphere?}` with the app's token (Python `hoard_link.fam_notify.notify(...)`, Node
+`notify(...)`). The hub routes it by the sphere's rules, holds it in quiet hours, drops duplicates of the
+same `dedupe_key` for six hours, and rate-limits a chatty app. An app keeps its own channels only as the
+fallback for `{ok: false, error: "hub unreachable"}`, behind a setting `notify.via = auto | hub | own`.
+Details: [facets/notify.md](facets/notify.md).
+
+**Long work** is announced with canonical events, so the hub's Work tab, Today and Cassandra follow it:
+
+| type | data |
+|---|---|
+| `<app>.job.queued` / `started` / `progress` / `done` / `failed` / `cancelled` | `job_id, title, kind, progress (0..1), gpu, eta_s, url, error, ref` |
+
+Older names are renamed on arrival (the original stays in `data._orig_type`, and rules written for the old
+name still fire): `pygmalion.job_queued|job_done`, `hypatia.teacher_job.done|no_model`, `galton.run.done`,
+`lumiere.render.done|failed`, `links.media.done|failed`, `midas.backtest.finished`,
+`vitruvius.render.done`, `vitruvius.assay.done`. Details: [facets/work.md](facets/work.md).
+
+## 14. The mail gateway
+
+The hub reads the Faustus mail accounts (through Faustus's own Python, so passwords stay in Faustus) once for
+everybody, when the person turns the gateway on. An app registers what it is interested in —
+`POST /api/mail/interests {spec: {subject_terms, from_domains, from_addresses, text_terms, regex,
+has_attachment}}` — reads its share with `GET /api/mail/messages?since_id=&full=1` (only spheres its
+`apps` membership allows; the records carry the same keys as the Faustus mail helper's output) and claims what
+it turned into a record: `POST /api/mail/claim {ids, kind, ref: "hoard://<app>/<kind>/<id>"}`. A mail nobody
+claims shows in the hub's "nobody's" tray. Apps keep their own mail helper as the fallback, behind
+`mail.source = auto | hub | faustus`. Python: `hoard_link.fam_mail`; Node: `mail*` in `hoard-link.js`.
+Details: [facets/mail.md](facets/mail.md), chat sources in [facets/chats.md](facets/chats.md).
+
+## 15. The agenda
+
+Every app that knows dated things answers
+
+```
+GET /api/family/agenda?from=YYYY-MM-DD&to=YYYY-MM-DD&sphere=<id>     Authorization: Bearer <its token>
+→ {"ok": true, "items": [{"id", "title", "start", "end"?, "all_day", "kind", "priority", "url", "detail", "sphere"}]}
+```
+
+`kind` is one of `deadline, delivery, birthday, followup, maintenance, release, review, cards, incident,
+publish, renewal, exam, other`. Declare it in the manifest with `"x-family": {"agenda": true}`. Python:
+`hoard_link.fam_agenda.install_fastapi(app, provider)`; Node: `installAgenda(app, provider)`. The hub joins
+them into Today, the morning digest and `/calendar.ics`. Details: [facets/today.md](facets/today.md).
+
+## 16. References, search and purchases
+
+`POST /api/refs {from, to, rel, from_label, to_label}` records a link between two records of different apps
+(the caller must own one end); `GET /api/refs?uri=` returns both directions (`hoard_link.fam_refs`, Node
+`refs*`). The hub's search fans one query out to every running app's read-only `*_search` tools
+(`GET /api/search?q=`). The purchases facet follows one purchase through `ledger.mail.recorded`,
+`phileas.shipment.new|delivered`, `kafka.document.archived`, `kafka.warranty.created`,
+`homehoard.item.created` and `tantalus.watcher.bought`, matched by order number, mail, or merchant + amount +
+date. Details: [facets/refs.md](facets/refs.md), [facets/search.md](facets/search.md),
+[facets/purchases.md](facets/purchases.md).
+
+## 17. Cross-app tools the rules call
+
+The recommended rules (section 5) call these tools by name; an app that is not installed is skipped, not an
+error:
+
+| app | tools |
+|---|---|
+| Kafka | `deadline_add`, `deadlines_from_minutes`, `tax_pack`, `document_link_tx` |
+| Ledger | `tx_find`, `tx_attach_doc`, `forecast_month`, `split_add`, `splits_balance`, `split_settle`, `income_from_sales`, `budget_status`, `report_year` |
+| Tantalus | `watchers_match_purchase`, `watcher_mark_bought`, `watcher_add` |
+| HomeHoard | `item_add_from_purchase` |
+| People | `people_from_minutes`, `gift_idea_add`, `gift_ideas`, `gift_watch`, `contacts_sync_mail` |
+| Funes | `minutes_get` |
+| Links | `highlights_to_cards`, `resurface` |
+| Vulcan | `model_import_file`, `listings_export_catalog` |
+| Mercator | `post_draft_from_media`, `sales_batch_get`, `catalog_from_vulcan`, `posts_*` |
+| Lumiere | `project_from_timeline` |
+| Prospero | `production_export_lumiere`, `cast_import_character`, `production_from_storyboard`, `voice_tts` |
+| Scheherazade | `world_export`, `world_import`, `scene_narrate` |
+| Cicero | `theme_from_tokens` |
+| Galton | `galton_run` |
+| Writer's | `wh_character_to_prospero`, `wh_storyboard_to_prospero`, `wh_world_to_scheherazade`, `wh_world_from_scheherazade` |

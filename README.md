@@ -75,6 +75,25 @@ Start `llama-server`, Ollama or ComfyUI (or point `HOARD_LLM_URL` at a
 server) and run it again to see that capability resolve. Pass a
 `backend.json` path as the first argument to try your own configuration.
 
+## What's new in 0.7
+
+- **Spheres.** Personal and work (or freelance) lives kept apart: each sphere has its own mail accounts,
+  chat sources, VIP senders, keywords, quiet hours, notification routing and morning digest. A chip in the
+  hub's top bar (and in Faustus) switches the active one; work mail never reaches personal apps.
+- **One notification centre.** Apps ask the hub to tell the person (`fam_notify.notify`, JS `notify`); the hub
+  picks Windows, ntfy, Telegram or mail by priority and sphere, holds what arrives in quiet hours or twice, and
+  keeps the history. The apps keep their own channels as the fallback.
+- **One pass over the inbox.** The mail gateway reads the Faustus mail accounts once for the whole family,
+  classifies each message (sphere, priority, which apps want it) and lets each app read only its share; plus
+  "needs you" and "nobody's" lists. Slack and Microsoft 365 (Teams chats, Outlook) as chat sources.
+- **Today.** Every app's dated things (deadlines, deliveries, birthdays, maintenance, releases, renewals,
+  exams…) in one agenda, a morning digest per sphere (with a short summary when a local model is loaded) and a
+  calendar you can subscribe to from the phone (`/calendar.ics`).
+- **References, search, jobs, purchases.** Links between records of different apps, one search box over
+  every app, the long jobs of every app with their GPU, and the life of each purchase (paid → shipped →
+  delivered → filed → stored).
+- **Seventeen recommended rules** install themselves (and stay removed when you remove one).
+
 ## What's new in 0.6
 
 - **Measured routes.** A benchmarking app (Galton's Hoard) writes which
@@ -636,6 +655,26 @@ Python without Link: `hoard_link.family.chat(messages, json=True)` and
 `hub_link_chat` and `hub_link_status`. The contract and the status codes are
 in [docs/FAMILY.md](docs/FAMILY.md#10-models-for-every-app); the hub's
 settings in [docs/HUB.md](docs/HUB.md#models-for-every-app).
+
+### Spheres, notifications, mail, Today and more (0.7)
+
+Nine *facets* sit on the hub, each with its own routes, tools and tab (`hoard_link/hub/facets.py`):
+
+| Facet | What it does | Reference |
+|---|---|---|
+| Spheres | Personal / work / freelance: mail accounts, chat sources, VIP, keywords, mute, quiet hours, notification routing, digest time; selector in the top bar | [docs/facets/spheres.md](docs/facets/spheres.md) |
+| Notifications | `POST /api/notify` from any app; Windows toast, ntfy, Telegram, mail (through Faustus or SMTP); quiet hours, duplicates, rate limit, history | [docs/facets/notify.md](docs/facets/notify.md) |
+| Mail | One incremental read of the Faustus mail accounts for every app; interests, claims, "needs you", "nobody's"; off until you turn it on | [docs/facets/mail.md](docs/facets/mail.md) |
+| Chats | Slack (token) and Microsoft 365 (token or device-code login: Teams chats and Outlook) per sphere | [docs/facets/chats.md](docs/facets/chats.md) |
+| Today | The family agenda (`GET /api/family/agenda` on each app), the morning digest per sphere, `/calendar.ics` with a token, export folder, optional LAN listener | [docs/facets/today.md](docs/facets/today.md) |
+| References | `hoard://app/kind/id` links between records, both directions | [docs/facets/refs.md](docs/facets/refs.md) |
+| Search | One query over every running app's search tools, plus mail and references | [docs/facets/search.md](docs/facets/search.md) |
+| Work | Long jobs of every app (`<app>.job.*` events) with progress and GPU; failures notify | [docs/facets/work.md](docs/facets/work.md) |
+| Purchases | Ledger payment → Phileas shipment → Kafka invoice and warranty → HomeHoard item; stops the Tantalus watcher of what you bought | [docs/facets/purchases.md](docs/facets/purchases.md) |
+
+App side (vendored with the library): `hoard_link.fam_notify`, `fam_mail`, `fam_agenda`, `fam_refs`
+(standard library); Node apps get the same functions in `hoard-link.js` (`notify`, `mail*`, `installAgenda`,
+`refs*`). The contracts are sections 12 to 17 of [docs/FAMILY.md](docs/FAMILY.md).
 
 ## Use with Faustus
 
