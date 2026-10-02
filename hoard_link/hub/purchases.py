@@ -51,6 +51,7 @@ HOME_URL = "http://127.0.0.1:5196"
 AMOUNT_TOLERANCE = 0.01
 DATE_WINDOW_DAYS = 5
 TANTALUS_MIN_SCORE = 0.8
+ENRICH_EVERY_S = 600.0
 INVOICE_KINDS = {"invoice", "factura", "receipt", "recibo", "ticket", "order", "pedido", "albaran", "delivery_note"}
 WARRANTY_KINDS = {"warranty", "garantia"}
 HANDLED = ("ledger.mail.recorded", "phileas.shipment.new", "phileas.shipment.delivered", "phileas.update",
@@ -164,6 +165,7 @@ def quick_add_url(base: str, purchase: dict[str, Any]) -> str:
 class PurchasesFacet(Facet):
     id = "purchases"
     ui_scripts = ("purchases.js",)
+    background_enrich = True        # tests turn the periodic look-up off
 
     def __init__(self, hub: Any):
         super().__init__(hub)
@@ -237,23 +239,35 @@ class PurchasesFacet(Facet):
         for ev in missed:
             self._safe(ev)
         self._state_set("last_event_id", max(self._catch_up_to, int(self._state_get("last_event_id") or 0)))
+        next_enrich = time.monotonic() + 30.0
         while not self._stop.is_set():
             try:
                 ev = self._queue.get(timeout=1.0)
             except queue.Empty:
+                if self.background_enrich and time.monotonic() >= next_enrich:
+                    next_enrich = time.monotonic() + ENRICH_EVERY_S
+                    self._safe({"type": "_enrich", "data": {}})
                 continue
             try:
                 if ev is None:
                     break
-                if ev.get("id") in missed_ids:
+                if ev.get("id") is not None and ev.get("id") in missed_ids:
                     continue                      # already handled by the catch-up
                 self._safe(ev)
-                self._state_set("last_event_id", max(int(ev.get("id") or 0), int(self._state_get("last_event_id") or 0)))
+                if ev.get("id"):
+                    self._state_set("last_event_id", max(int(ev.get("id") or 0), int(self._state_get("last_event_id") or 0)))
             finally:
                 self._queue.task_done()
 
     def _safe(self, ev: dict[str, Any]) -> None:
         try:
+            if ev.get("type") == "_enrich":
+                pid = (ev.get("data") or {}).get("purchase")
+                if pid is None:
+                    self.enrich_open()
+                else:
+                    self.enrich(int(pid), force=True)
+                return
             self.ingest(ev)
         except Exception:  # noqa: BLE001 - one odd event must not stop the worker
             pass
@@ -423,6 +437,7 @@ class PurchasesFacet(Facet):
         sig = self.signal(event)
         if sig is None:
             return None
+        sig["_enrich"] = bool(event.get("_enrich"))
         with self._lock:
             p = self.find(sig)
             created = False
@@ -457,6 +472,8 @@ class PurchasesFacet(Facet):
             if sig.get("message_id") and sig["message_id"] not in p["message_ids"]:
                 p["message_ids"].append(sig["message_id"])
             p["meta"].update({k: v for k, v in (sig.get("meta") or {}).items() if v})
+            if sig["role"] == "delivered":
+                p["meta"]["delivered"] = True
             if sig["key"] not in p["refs"]:
                 p["refs"][sig["key"]] = sig["uri"]
             if p["stage"] != "closed" and sig.get("stage") and RANK.get(sig["stage"], 0) > RANK.get(p["stage"], 0):
@@ -472,7 +489,79 @@ class PurchasesFacet(Facet):
                 pass
         self._link(p, old_refs, added)
         self._actions(p, sig, added)
+        if not sig.get("_enrich") and (created or added):
+            self._queue.put({"type": "_enrich", "id": None, "data": {"purchase": p["id"]}})
         return self._fetch(p["id"])
+
+    # -- filling the gaps: ask the apps instead of waiting for an event that already went by ------------------
+    def enrich(self, pid: int, *, force: bool = False) -> dict[str, Any]:
+        """Look for the records a purchase still lacks: the Phileas shipment with the same order number and the Ledger
+        movement with the same amount, merchant and date (``tx_find``). A record found is fed in as if its event had
+        just arrived (so links, stage and actions follow the same path). At most once every ten minutes per purchase."""
+        p = self._fetch(pid)
+        if p is None or p["stage"] == "closed":
+            return {"ok": False, "error": "unknown or closed purchase"}
+        last = float(p["meta"].get("enriched_ts") or 0)
+        if not force and time.time() - last < ENRICH_EVERY_S:
+            return {"ok": True, "skipped": "recently"}
+        found: list[str] = []
+        if "phileas" not in p["refs"] and p["order_ref"]:
+            res = self._ask("phileas", "shipments_list", {"text": p["order_ref"]})
+            for sh in (res.get("shipments") if isinstance(res, dict) else None) or []:
+                if not isinstance(sh, dict) or order_key(sh.get("order_ref")) != p["order_key"] or not sh.get("id"):
+                    continue
+                delivered = str(sh.get("status") or "").lower() == "delivered"
+                data = {"shipment_id": sh["id"], "merchant": sh.get("merchant") or "", "order_ref": sh.get("order_ref") or "",
+                        "carrier": sh.get("carrier") or "", "tracking_number": sh.get("tracking_number") or "",
+                        "items": [sh["item"]] if sh.get("item") else []}
+                if delivered and sh.get("delivered_ts"):
+                    data["delivered_at"] = datetime.fromtimestamp(float(sh["delivered_ts"])).isoformat(timespec="seconds")
+                self.ingest({"type": "phileas.shipment.new", "id": None, "ts": time.time(), "data": data, "_enrich": True})
+                if delivered:
+                    self.ingest({"type": "phileas.shipment.delivered", "id": None, "ts": time.time(), "data": data, "_enrich": True})
+                found.append(f"hoard://phileas/shipment/{sh['id']}")
+                break
+        p = self._fetch(pid) or p
+        if "ledger" not in p["refs"] and p["amount"] is not None and p["date"]:
+            res = self._ask("ledger", "tx_find", {"amount": p["amount"], "date": p["date"], "merchant": p["merchant"],
+                                                  "days": DATE_WINDOW_DAYS, **({"currency": p["currency"]} if p["currency"] else {})})
+            matches = [m for m in ((res.get("matches") if isinstance(res, dict) else None) or [])
+                       if isinstance(m, dict) and m.get("tx_id") not in (None, "") and float(m.get("score") or 0) >= 0.8]
+            if len(matches) == 1:
+                m = matches[0]
+                self.ingest({"type": "ledger.mail.recorded", "id": None, "ts": time.time(), "_enrich": True,
+                             "data": {"tx_id": m["tx_id"], "merchant": m.get("merchant") or p["merchant"], "amount": m.get("amount"),
+                                      "currency": p["currency"], "date": m.get("date") or p["date"], "order_ref": p["order_ref"]}})
+                found.append(f"hoard://ledger/tx/{m['tx_id']}")
+        with self._lock:
+            fresh = self._fetch(pid) or p
+            fresh["meta"]["enriched_ts"] = time.time()
+            self._save_row(fresh)
+        return {"ok": True, "found": found}
+
+    def _ask(self, app: str, tool: str, args: dict[str, Any]) -> Any:
+        try:
+            res = self.hub.call_app(app, tool, args, caller="hub", timeout=20.0)
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(res, dict) or not res.get("ok"):
+            return None
+        out = res.get("result")
+        if isinstance(out, dict) and isinstance(out.get("result"), (dict, list)) and len(out) <= 3:
+            out = out["result"]
+        return out
+
+    def enrich_open(self) -> int:
+        """Run :meth:`enrich` over every open purchase that still lacks a shipment or a payment."""
+        with self._lock:
+            ids = [r[0] for r in self._db.execute("SELECT id FROM purchases WHERE stage != 'closed'").fetchall()]
+        n = 0
+        for pid in ids:
+            p = self._fetch(pid)
+            if p and ("phileas" not in p["refs"] or "ledger" not in p["refs"]):
+                if self.enrich(pid).get("found"):
+                    n += 1
+        return n
 
     @staticmethod
     def _title(p: dict[str, Any]) -> str:
@@ -592,8 +681,12 @@ class PurchasesFacet(Facet):
             a = self.hub.get(app)
             refs[key] = {"uri": uri, "app": app, "kind": parts[3] if len(parts) > 3 else "", "id": "/".join(parts[4:]),
                          "app_url": a.url if a is not None else ""}
+        r = p["refs"]
+        milestones = {"paid": "ledger" in r, "shipped": "phileas" in r, "delivered": bool(p["meta"].get("delivered_at") or p["meta"].get("delivered")),
+                      "filed": any(k in r for k in ("invoice", "receipt", "document", "warranty")), "stored": "homehoard" in r}
         return {"id": p["id"], "title": self._title(p), "merchant": p["merchant"], "order_ref": p["order_ref"], "amount": p["amount"],
                 "currency": p["currency"], "date": p["date"], "items": p["items"], "stage": p["stage"], "stage_index": RANK.get(p["stage"], 0),
+                "milestones": milestones,
                 "refs": refs, "meta": p["meta"], "created_ts": p["created_ts"], "updated_ts": p["updated_ts"],
                 "notified": {k: {kk: vv for kk, vv in v.items() if kk != "pending"} if isinstance(v, dict) else v
                              for k, v in p["notified"].items()},

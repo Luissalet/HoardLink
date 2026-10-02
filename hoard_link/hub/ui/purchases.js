@@ -73,9 +73,11 @@
     r.appendChild(acts);
     const track = el("div", "pc-track");
     const at = STEPS.indexOf(p.stage);          // closed -> -1: every step greyed out
+    const ms = p.milestones || null;             // what really happened (a filed invoice does not mean it arrived)
+    const reached = (s, i) => ms ? !!ms[s] : i <= at;
     STEPS.forEach((s, i) => {
-      if (i) track.appendChild(el("span", "pc-link" + (i <= at ? " done" : "")));
-      const st = el("span", "pc-step" + (i < at ? " done" : (i === at ? " now" : "")));
+      if (i) track.appendChild(el("span", "pc-link" + (reached(s, i) && reached(STEPS[i - 1], i - 1) ? " done" : "")));
+      const st = el("span", "pc-step" + (ms ? (ms[s] ? (i === at ? " now" : " done") : "") : (i < at ? " done" : (i === at ? " now" : ""))));
       st.appendChild(el("i")); st.appendChild(el("span", "", t(s)));
       track.appendChild(st);
     });

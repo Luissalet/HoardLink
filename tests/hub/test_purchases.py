@@ -315,3 +315,27 @@ def test_http_and_tools(world):
     assert tools.call(hub, "hub_purchase", {"id": 99})["ok"] is False and tools.call(hub, "hub_purchase", {"id": "x"})["ok"] is False
     for t in PurchasesFacet.tools():
         assert t["annotations"]["readOnlyHint"] is True and len(t["description"].splitlines()[0]) <= 110
+
+
+def test_enrich_finds_the_shipment_and_the_payment_that_went_by_before(tmp_path):
+    phileas = FakeApp("phileas", handlers={"shipments_list": lambda a: {"shipments": [
+        {"id": "s_9", "order_ref": "3481958", "merchant": "PC Maker", "carrier": "ups", "tracking_number": "1Z", "status": "in_transit"},
+        {"id": "s_8", "order_ref": "999999", "merchant": "Other"}]}})
+    ledger = FakeApp("ledger", handlers={"tx_find": lambda a: {"matches": [{"tx_id": 77, "score": 0.95, "date": "2026-10-01", "amount": 1719.85}]}})
+    hub = make_hub(tmp_path, [phileas, ledger], extra_apps=["kafka"])
+    try:
+        p = hub.facet("purchases")
+        p.background_enrich = False
+        hub._facets_by_id["notify"] = RecordingNotify()
+        got = p.ingest(ev("kafka.document.archived", {"doc_id": "d_1", "kind": "invoice", "merchant": "PC Maker", "amount": 1719.85,
+                                                      "currency": "EUR", "date": "2026-10-01", "order_ref": "3481958"}, source="kafka"))
+        res = p.enrich(got["id"], force=True)
+        assert sorted(res["found"]) == ["hoard://ledger/tx/77", "hoard://phileas/shipment/s_9"]
+        v = p.view(p._fetch(got["id"]))
+        assert set(v["refs"]) >= {"invoice", "phileas", "ledger"}
+        assert v["milestones"] == {"paid": True, "shipped": True, "delivered": False, "filed": True, "stored": False}
+        assert p.enrich(got["id"])["skipped"] == "recently"          # not asked again within ten minutes
+    finally:
+        hub.close()
+        phileas.stop()
+        ledger.stop()
