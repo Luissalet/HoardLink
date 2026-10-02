@@ -1,0 +1,2088 @@
+[
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": []
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": []
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Un texto corto."
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 15,
+    "text": "Un texto corto."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Un texto corto."
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 15,
+    "text": "Un texto corto."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\n"
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 290,
+    "text": "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 245,
+    "char_end": 543,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase?"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 499,
+    "char_end": 789,
+    "text": "Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 744,
+    "char_end": 1028,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 983,
+    "char_end": 1265,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 5,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1220,
+    "char_end": 1502,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 6,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1457,
+    "char_end": 1739,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 7,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1694,
+    "char_end": 1978,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 8,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 1933,
+    "char_end": 2215,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 9,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2170,
+    "char_end": 2452,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 10,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2407,
+    "char_end": 2689,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 11,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2644,
+    "char_end": 2928,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 12,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 2883,
+    "char_end": 3165,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 13,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3120,
+    "char_end": 3402,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 14,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3357,
+    "char_end": 3797,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\n"
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 893,
+    "text": "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 751,
+    "char_end": 1635,
+    "text": "con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1487,
+    "char_end": 2373,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2230,
+    "char_end": 3111,
+    "text": "del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 2969,
+    "char_end": 3797,
+    "text": "con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Línea número 0 con algo de contenido para rellenar.\nLínea número 1 con algo de contenido para rellenar.\nLínea número 2 con algo de contenido para rellenar.\nLínea número 3 con algo de contenido para rellenar.\nLínea número 4 con algo de contenido para rellenar.\nLínea número 5 con algo de contenido para rellenar.\nLínea número 6 con algo de contenido para rellenar.\nLínea número 7 con algo de contenido para rellenar.\nLínea número 8 con algo de contenido para rellenar.\nLínea número 9 con algo de contenido para rellenar.\nLínea número 10 con algo de contenido para rellenar.\nLínea número 11 con algo de contenido para rellenar.\nLínea número 12 con algo de contenido para rellenar.\nLínea número 13 con algo de contenido para rellenar.\nLínea número 14 con algo de contenido para rellenar.\nLínea número 15 con algo de contenido para rellenar.\nLínea número 16 con algo de contenido para rellenar.\nLínea número 17 con algo de contenido para rellenar.\nLínea número 18 con algo de contenido para rellenar.\nLínea número 19 con algo de contenido para rellenar.\nLínea número 20 con algo de contenido para rellenar.\nLínea número 21 con algo de contenido para rellenar.\nLínea número 22 con algo de contenido para rellenar.\nLínea número 23 con algo de contenido para rellenar.\nLínea número 24 con algo de contenido para rellenar.\nLínea número 25 con algo de contenido para rellenar.\nLínea número 26 con algo de contenido para rellenar.\nLínea número 27 con algo de contenido para rellenar.\nLínea número 28 con algo de contenido para rellenar.\nLínea número 29 con algo de contenido para rellenar.\nLínea número 30 con algo de contenido para rellenar.\nLínea número 31 con algo de contenido para rellenar.\nLínea número 32 con algo de contenido para rellenar.\nLínea número 33 con algo de contenido para rellenar.\nLínea número 34 con algo de contenido para rellenar.\nLínea número 35 con algo de contenido para rellenar.\nLínea número 36 con algo de contenido para rellenar.\nLínea número 37 con algo de contenido para rellenar.\nLínea número 38 con algo de contenido para rellenar.\nLínea número 39 con algo de contenido para rellenar.\nLínea número 40 con algo de contenido para rellenar.\nLínea número 41 con algo de contenido para rellenar.\nLínea número 42 con algo de contenido para rellenar.\nLínea número 43 con algo de contenido para rellenar.\nLínea número 44 con algo de contenido para rellenar.\nLínea número 45 con algo de contenido para rellenar.\nLínea número 46 con algo de contenido para rellenar.\nLínea número 47 con algo de contenido para rellenar.\nLínea número 48 con algo de contenido para rellenar.\nLínea número 49 con algo de contenido para rellenar.\nLínea número 50 con algo de contenido para rellenar.\nLínea número 51 con algo de contenido para rellenar.\nLínea número 52 con algo de contenido para rellenar.\nLínea número 53 con algo de contenido para rellenar.\nLínea número 54 con algo de contenido para rellenar.\nLínea número 55 con algo de contenido para rellenar.\nLínea número 56 con algo de contenido para rellenar.\nLínea número 57 con algo de contenido para rellenar.\nLínea número 58 con algo de contenido para rellenar.\nLínea número 59 con algo de contenido para rellenar."
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 259,
+    "text": "Línea número 0 con algo de contenido para rellenar.\nLínea número 1 con algo de contenido para rellenar.\nLínea número 2 con algo de contenido para rellenar.\nLínea número 3 con algo de contenido para rellenar.\nLínea número 4 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 214,
+    "char_end": 467,
+    "text": "número 4 con algo de contenido para rellenar.\nLínea número 5 con algo de contenido para rellenar.\nLínea número 6 con algo de contenido para rellenar.\nLínea número 7 con algo de contenido para rellenar.\nLínea número 8 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 9,
+    "char_start": 422,
+    "char_end": 678,
+    "text": "número 8 con algo de contenido para rellenar.\nLínea número 9 con algo de contenido para rellenar.\nLínea número 10 con algo de contenido para rellenar.\nLínea número 11 con algo de contenido para rellenar.\nLínea número 12 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 13,
+    "char_start": 632,
+    "char_end": 890,
+    "text": "número 12 con algo de contenido para rellenar.\nLínea número 13 con algo de contenido para rellenar.\nLínea número 14 con algo de contenido para rellenar.\nLínea número 15 con algo de contenido para rellenar.\nLínea número 16 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 17,
+    "char_start": 844,
+    "char_end": 1102,
+    "text": "número 16 con algo de contenido para rellenar.\nLínea número 17 con algo de contenido para rellenar.\nLínea número 18 con algo de contenido para rellenar.\nLínea número 19 con algo de contenido para rellenar.\nLínea número 20 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 5,
+    "page": null,
+    "section": "",
+    "line": 21,
+    "char_start": 1056,
+    "char_end": 1314,
+    "text": "número 20 con algo de contenido para rellenar.\nLínea número 21 con algo de contenido para rellenar.\nLínea número 22 con algo de contenido para rellenar.\nLínea número 23 con algo de contenido para rellenar.\nLínea número 24 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 6,
+    "page": null,
+    "section": "",
+    "line": 25,
+    "char_start": 1268,
+    "char_end": 1526,
+    "text": "número 24 con algo de contenido para rellenar.\nLínea número 25 con algo de contenido para rellenar.\nLínea número 26 con algo de contenido para rellenar.\nLínea número 27 con algo de contenido para rellenar.\nLínea número 28 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 7,
+    "page": null,
+    "section": "",
+    "line": 29,
+    "char_start": 1480,
+    "char_end": 1738,
+    "text": "número 28 con algo de contenido para rellenar.\nLínea número 29 con algo de contenido para rellenar.\nLínea número 30 con algo de contenido para rellenar.\nLínea número 31 con algo de contenido para rellenar.\nLínea número 32 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 8,
+    "page": null,
+    "section": "",
+    "line": 33,
+    "char_start": 1692,
+    "char_end": 1950,
+    "text": "número 32 con algo de contenido para rellenar.\nLínea número 33 con algo de contenido para rellenar.\nLínea número 34 con algo de contenido para rellenar.\nLínea número 35 con algo de contenido para rellenar.\nLínea número 36 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 9,
+    "page": null,
+    "section": "",
+    "line": 37,
+    "char_start": 1904,
+    "char_end": 2162,
+    "text": "número 36 con algo de contenido para rellenar.\nLínea número 37 con algo de contenido para rellenar.\nLínea número 38 con algo de contenido para rellenar.\nLínea número 39 con algo de contenido para rellenar.\nLínea número 40 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 10,
+    "page": null,
+    "section": "",
+    "line": 41,
+    "char_start": 2116,
+    "char_end": 2374,
+    "text": "número 40 con algo de contenido para rellenar.\nLínea número 41 con algo de contenido para rellenar.\nLínea número 42 con algo de contenido para rellenar.\nLínea número 43 con algo de contenido para rellenar.\nLínea número 44 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 11,
+    "page": null,
+    "section": "",
+    "line": 45,
+    "char_start": 2328,
+    "char_end": 2586,
+    "text": "número 44 con algo de contenido para rellenar.\nLínea número 45 con algo de contenido para rellenar.\nLínea número 46 con algo de contenido para rellenar.\nLínea número 47 con algo de contenido para rellenar.\nLínea número 48 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 12,
+    "page": null,
+    "section": "",
+    "line": 49,
+    "char_start": 2540,
+    "char_end": 2798,
+    "text": "número 48 con algo de contenido para rellenar.\nLínea número 49 con algo de contenido para rellenar.\nLínea número 50 con algo de contenido para rellenar.\nLínea número 51 con algo de contenido para rellenar.\nLínea número 52 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 13,
+    "page": null,
+    "section": "",
+    "line": 53,
+    "char_start": 2752,
+    "char_end": 3169,
+    "text": "número 52 con algo de contenido para rellenar.\nLínea número 53 con algo de contenido para rellenar.\nLínea número 54 con algo de contenido para rellenar.\nLínea número 55 con algo de contenido para rellenar.\nLínea número 56 con algo de contenido para rellenar.\nLínea número 57 con algo de contenido para rellenar.\nLínea número 58 con algo de contenido para rellenar.\nLínea número 59 con algo de contenido para rellenar."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Línea número 0 con algo de contenido para rellenar.\nLínea número 1 con algo de contenido para rellenar.\nLínea número 2 con algo de contenido para rellenar.\nLínea número 3 con algo de contenido para rellenar.\nLínea número 4 con algo de contenido para rellenar.\nLínea número 5 con algo de contenido para rellenar.\nLínea número 6 con algo de contenido para rellenar.\nLínea número 7 con algo de contenido para rellenar.\nLínea número 8 con algo de contenido para rellenar.\nLínea número 9 con algo de contenido para rellenar.\nLínea número 10 con algo de contenido para rellenar.\nLínea número 11 con algo de contenido para rellenar.\nLínea número 12 con algo de contenido para rellenar.\nLínea número 13 con algo de contenido para rellenar.\nLínea número 14 con algo de contenido para rellenar.\nLínea número 15 con algo de contenido para rellenar.\nLínea número 16 con algo de contenido para rellenar.\nLínea número 17 con algo de contenido para rellenar.\nLínea número 18 con algo de contenido para rellenar.\nLínea número 19 con algo de contenido para rellenar.\nLínea número 20 con algo de contenido para rellenar.\nLínea número 21 con algo de contenido para rellenar.\nLínea número 22 con algo de contenido para rellenar.\nLínea número 23 con algo de contenido para rellenar.\nLínea número 24 con algo de contenido para rellenar.\nLínea número 25 con algo de contenido para rellenar.\nLínea número 26 con algo de contenido para rellenar.\nLínea número 27 con algo de contenido para rellenar.\nLínea número 28 con algo de contenido para rellenar.\nLínea número 29 con algo de contenido para rellenar.\nLínea número 30 con algo de contenido para rellenar.\nLínea número 31 con algo de contenido para rellenar.\nLínea número 32 con algo de contenido para rellenar.\nLínea número 33 con algo de contenido para rellenar.\nLínea número 34 con algo de contenido para rellenar.\nLínea número 35 con algo de contenido para rellenar.\nLínea número 36 con algo de contenido para rellenar.\nLínea número 37 con algo de contenido para rellenar.\nLínea número 38 con algo de contenido para rellenar.\nLínea número 39 con algo de contenido para rellenar.\nLínea número 40 con algo de contenido para rellenar.\nLínea número 41 con algo de contenido para rellenar.\nLínea número 42 con algo de contenido para rellenar.\nLínea número 43 con algo de contenido para rellenar.\nLínea número 44 con algo de contenido para rellenar.\nLínea número 45 con algo de contenido para rellenar.\nLínea número 46 con algo de contenido para rellenar.\nLínea número 47 con algo de contenido para rellenar.\nLínea número 48 con algo de contenido para rellenar.\nLínea número 49 con algo de contenido para rellenar.\nLínea número 50 con algo de contenido para rellenar.\nLínea número 51 con algo de contenido para rellenar.\nLínea número 52 con algo de contenido para rellenar.\nLínea número 53 con algo de contenido para rellenar.\nLínea número 54 con algo de contenido para rellenar.\nLínea número 55 con algo de contenido para rellenar.\nLínea número 56 con algo de contenido para rellenar.\nLínea número 57 con algo de contenido para rellenar.\nLínea número 58 con algo de contenido para rellenar.\nLínea número 59 con algo de contenido para rellenar."
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 890,
+    "text": "Línea número 0 con algo de contenido para rellenar.\nLínea número 1 con algo de contenido para rellenar.\nLínea número 2 con algo de contenido para rellenar.\nLínea número 3 con algo de contenido para rellenar.\nLínea número 4 con algo de contenido para rellenar.\nLínea número 5 con algo de contenido para rellenar.\nLínea número 6 con algo de contenido para rellenar.\nLínea número 7 con algo de contenido para rellenar.\nLínea número 8 con algo de contenido para rellenar.\nLínea número 9 con algo de contenido para rellenar.\nLínea número 10 con algo de contenido para rellenar.\nLínea número 11 con algo de contenido para rellenar.\nLínea número 12 con algo de contenido para rellenar.\nLínea número 13 con algo de contenido para rellenar.\nLínea número 14 con algo de contenido para rellenar.\nLínea número 15 con algo de contenido para rellenar.\nLínea número 16 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 15,
+    "char_start": 745,
+    "char_end": 1632,
+    "text": "14 con algo de contenido para rellenar.\nLínea número 15 con algo de contenido para rellenar.\nLínea número 16 con algo de contenido para rellenar.\nLínea número 17 con algo de contenido para rellenar.\nLínea número 18 con algo de contenido para rellenar.\nLínea número 19 con algo de contenido para rellenar.\nLínea número 20 con algo de contenido para rellenar.\nLínea número 21 con algo de contenido para rellenar.\nLínea número 22 con algo de contenido para rellenar.\nLínea número 23 con algo de contenido para rellenar.\nLínea número 24 con algo de contenido para rellenar.\nLínea número 25 con algo de contenido para rellenar.\nLínea número 26 con algo de contenido para rellenar.\nLínea número 27 con algo de contenido para rellenar.\nLínea número 28 con algo de contenido para rellenar.\nLínea número 29 con algo de contenido para rellenar.\nLínea número 30 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 29,
+    "char_start": 1487,
+    "char_end": 2374,
+    "text": "28 con algo de contenido para rellenar.\nLínea número 29 con algo de contenido para rellenar.\nLínea número 30 con algo de contenido para rellenar.\nLínea número 31 con algo de contenido para rellenar.\nLínea número 32 con algo de contenido para rellenar.\nLínea número 33 con algo de contenido para rellenar.\nLínea número 34 con algo de contenido para rellenar.\nLínea número 35 con algo de contenido para rellenar.\nLínea número 36 con algo de contenido para rellenar.\nLínea número 37 con algo de contenido para rellenar.\nLínea número 38 con algo de contenido para rellenar.\nLínea número 39 con algo de contenido para rellenar.\nLínea número 40 con algo de contenido para rellenar.\nLínea número 41 con algo de contenido para rellenar.\nLínea número 42 con algo de contenido para rellenar.\nLínea número 43 con algo de contenido para rellenar.\nLínea número 44 con algo de contenido para rellenar."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 43,
+    "char_start": 2229,
+    "char_end": 3169,
+    "text": "42 con algo de contenido para rellenar.\nLínea número 43 con algo de contenido para rellenar.\nLínea número 44 con algo de contenido para rellenar.\nLínea número 45 con algo de contenido para rellenar.\nLínea número 46 con algo de contenido para rellenar.\nLínea número 47 con algo de contenido para rellenar.\nLínea número 48 con algo de contenido para rellenar.\nLínea número 49 con algo de contenido para rellenar.\nLínea número 50 con algo de contenido para rellenar.\nLínea número 51 con algo de contenido para rellenar.\nLínea número 52 con algo de contenido para rellenar.\nLínea número 53 con algo de contenido para rellenar.\nLínea número 54 con algo de contenido para rellenar.\nLínea número 55 con algo de contenido para rellenar.\nLínea número 56 con algo de contenido para rellenar.\nLínea número 57 con algo de contenido para rellenar.\nLínea número 58 con algo de contenido para rellenar.\nLínea número 59 con algo de contenido para rellenar."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 300,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 250,
+    "char_end": 550,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 500,
+    "char_end": 800,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 750,
+    "char_end": 1050,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1000,
+    "char_end": 1300,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 5,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1250,
+    "char_end": 1550,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 6,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1500,
+    "char_end": 2000,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 900,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 750,
+    "char_end": 1650,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1500,
+    "char_end": 2000,
+    "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "elemento0, elemento1, elemento2, elemento3, elemento4, elemento5, elemento6, elemento7, elemento8, elemento9, elemento10, elemento11, elemento12, elemento13, elemento14, elemento15, elemento16, elemento17, elemento18, elemento19, elemento20, elemento21, elemento22, elemento23, elemento24, elemento25, elemento26, elemento27, elemento28, elemento29, elemento30, elemento31, elemento32, elemento33, elemento34, elemento35, elemento36, elemento37, elemento38, elemento39, elemento40, elemento41, elemento42, elemento43, elemento44, elemento45, elemento46, elemento47, elemento48, elemento49, elemento50, elemento51, elemento52, elemento53, elemento54, elemento55, elemento56, elemento57, elemento58, elemento59, elemento60, elemento61, elemento62, elemento63, elemento64, elemento65, elemento66, elemento67, elemento68, elemento69, elemento70, elemento71, elemento72, elemento73, elemento74, elemento75, elemento76, elemento77, elemento78, elemento79, elemento80, elemento81, elemento82, elemento83, elemento84, elemento85, elemento86, elemento87, elemento88, elemento89, elemento90, elemento91, elemento92, elemento93, elemento94, elemento95, elemento96, elemento97, elemento98, elemento99, elemento100, elemento101, elemento102, elemento103, elemento104, elemento105, elemento106, elemento107, elemento108, elemento109, elemento110, elemento111, elemento112, elemento113, elemento114, elemento115, elemento116, elemento117, elemento118, elemento119, elemento120, elemento121, elemento122, elemento123, elemento124, elemento125, elemento126, elemento127, elemento128, elemento129, elemento130, elemento131, elemento132, elemento133, elemento134, elemento135, elemento136, elemento137, elemento138, elemento139, elemento140, elemento141, elemento142, elemento143, elemento144, elemento145, elemento146, elemento147, elemento148, elemento149, elemento150, elemento151, elemento152, elemento153, elemento154, elemento155, elemento156, elemento157, elemento158, elemento159, elemento160, elemento161, elemento162, elemento163, elemento164, elemento165, elemento166, elemento167, elemento168, elemento169, elemento170, elemento171, elemento172, elemento173, elemento174, elemento175, elemento176, elemento177, elemento178, elemento179, elemento180, elemento181, elemento182, elemento183, elemento184, elemento185, elemento186, elemento187, elemento188, elemento189, elemento190, elemento191, elemento192, elemento193, elemento194, elemento195, elemento196, elemento197, elemento198, elemento199, elemento200, elemento201, elemento202, elemento203, elemento204, elemento205, elemento206, elemento207, elemento208, elemento209, elemento210, elemento211, elemento212, elemento213, elemento214, elemento215, elemento216, elemento217, elemento218, elemento219, elemento220, elemento221, elemento222, elemento223, elemento224, elemento225, elemento226, elemento227, elemento228, elemento229, elemento230, elemento231, elemento232, elemento233, elemento234, elemento235, elemento236, elemento237, elemento238, elemento239, elemento240, elemento241, elemento242, elemento243, elemento244, elemento245, elemento246, elemento247, elemento248, elemento249, elemento250, elemento251, elemento252, elemento253, elemento254, elemento255, elemento256, elemento257, elemento258, elemento259, elemento260, elemento261, elemento262, elemento263, elemento264, elemento265, elemento266, elemento267, elemento268, elemento269, elemento270, elemento271, elemento272, elemento273, elemento274, elemento275, elemento276, elemento277, elemento278, elemento279, elemento280, elemento281, elemento282, elemento283, elemento284, elemento285, elemento286, elemento287, elemento288, elemento289, elemento290, elemento291, elemento292, elemento293, elemento294, elemento295, elemento296, elemento297, elemento298, elemento299"
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 289,
+    "text": "elemento0, elemento1, elemento2, elemento3, elemento4, elemento5, elemento6, elemento7, elemento8, elemento9, elemento10, elemento11, elemento12, elemento13, elemento14, elemento15, elemento16, elemento17, elemento18, elemento19, elemento20, elemento21, elemento22, elemento23, elemento24,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 242,
+    "char_end": 541,
+    "text": "elemento21, elemento22, elemento23, elemento24, elemento25, elemento26, elemento27, elemento28, elemento29, elemento30, elemento31, elemento32, elemento33, elemento34, elemento35, elemento36, elemento37, elemento38, elemento39, elemento40, elemento41, elemento42, elemento43, elemento44, elemento45,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 494,
+    "char_end": 793,
+    "text": "elemento42, elemento43, elemento44, elemento45, elemento46, elemento47, elemento48, elemento49, elemento50, elemento51, elemento52, elemento53, elemento54, elemento55, elemento56, elemento57, elemento58, elemento59, elemento60, elemento61, elemento62, elemento63, elemento64, elemento65, elemento66,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 746,
+    "char_end": 1045,
+    "text": "elemento63, elemento64, elemento65, elemento66, elemento67, elemento68, elemento69, elemento70, elemento71, elemento72, elemento73, elemento74, elemento75, elemento76, elemento77, elemento78, elemento79, elemento80, elemento81, elemento82, elemento83, elemento84, elemento85, elemento86, elemento87,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 998,
+    "char_end": 1293,
+    "text": "elemento84, elemento85, elemento86, elemento87, elemento88, elemento89, elemento90, elemento91, elemento92, elemento93, elemento94, elemento95, elemento96, elemento97, elemento98, elemento99, elemento100, elemento101, elemento102, elemento103, elemento104, elemento105, elemento106, elemento107,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 5,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1255,
+    "char_end": 1553,
+    "text": "elemento105, elemento106, elemento107, elemento108, elemento109, elemento110, elemento111, elemento112, elemento113, elemento114, elemento115, elemento116, elemento117, elemento118, elemento119, elemento120, elemento121, elemento122, elemento123, elemento124, elemento125, elemento126, elemento127,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 6,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1515,
+    "char_end": 1813,
+    "text": "elemento125, elemento126, elemento127, elemento128, elemento129, elemento130, elemento131, elemento132, elemento133, elemento134, elemento135, elemento136, elemento137, elemento138, elemento139, elemento140, elemento141, elemento142, elemento143, elemento144, elemento145, elemento146, elemento147,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 7,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1775,
+    "char_end": 2073,
+    "text": "elemento145, elemento146, elemento147, elemento148, elemento149, elemento150, elemento151, elemento152, elemento153, elemento154, elemento155, elemento156, elemento157, elemento158, elemento159, elemento160, elemento161, elemento162, elemento163, elemento164, elemento165, elemento166, elemento167,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 8,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 2035,
+    "char_end": 2333,
+    "text": "elemento165, elemento166, elemento167, elemento168, elemento169, elemento170, elemento171, elemento172, elemento173, elemento174, elemento175, elemento176, elemento177, elemento178, elemento179, elemento180, elemento181, elemento182, elemento183, elemento184, elemento185, elemento186, elemento187,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 9,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 2295,
+    "char_end": 2593,
+    "text": "elemento185, elemento186, elemento187, elemento188, elemento189, elemento190, elemento191, elemento192, elemento193, elemento194, elemento195, elemento196, elemento197, elemento198, elemento199, elemento200, elemento201, elemento202, elemento203, elemento204, elemento205, elemento206, elemento207,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 10,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 2555,
+    "char_end": 2853,
+    "text": "elemento205, elemento206, elemento207, elemento208, elemento209, elemento210, elemento211, elemento212, elemento213, elemento214, elemento215, elemento216, elemento217, elemento218, elemento219, elemento220, elemento221, elemento222, elemento223, elemento224, elemento225, elemento226, elemento227,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 11,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 2815,
+    "char_end": 3113,
+    "text": "elemento225, elemento226, elemento227, elemento228, elemento229, elemento230, elemento231, elemento232, elemento233, elemento234, elemento235, elemento236, elemento237, elemento238, elemento239, elemento240, elemento241, elemento242, elemento243, elemento244, elemento245, elemento246, elemento247,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 12,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 3075,
+    "char_end": 3373,
+    "text": "elemento245, elemento246, elemento247, elemento248, elemento249, elemento250, elemento251, elemento252, elemento253, elemento254, elemento255, elemento256, elemento257, elemento258, elemento259, elemento260, elemento261, elemento262, elemento263, elemento264, elemento265, elemento266, elemento267,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 13,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 3335,
+    "char_end": 3788,
+    "text": "elemento265, elemento266, elemento267, elemento268, elemento269, elemento270, elemento271, elemento272, elemento273, elemento274, elemento275, elemento276, elemento277, elemento278, elemento279, elemento280, elemento281, elemento282, elemento283, elemento284, elemento285, elemento286, elemento287, elemento288, elemento289, elemento290, elemento291, elemento292, elemento293, elemento294, elemento295, elemento296, elemento297, elemento298, elemento299"
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "elemento0, elemento1, elemento2, elemento3, elemento4, elemento5, elemento6, elemento7, elemento8, elemento9, elemento10, elemento11, elemento12, elemento13, elemento14, elemento15, elemento16, elemento17, elemento18, elemento19, elemento20, elemento21, elemento22, elemento23, elemento24, elemento25, elemento26, elemento27, elemento28, elemento29, elemento30, elemento31, elemento32, elemento33, elemento34, elemento35, elemento36, elemento37, elemento38, elemento39, elemento40, elemento41, elemento42, elemento43, elemento44, elemento45, elemento46, elemento47, elemento48, elemento49, elemento50, elemento51, elemento52, elemento53, elemento54, elemento55, elemento56, elemento57, elemento58, elemento59, elemento60, elemento61, elemento62, elemento63, elemento64, elemento65, elemento66, elemento67, elemento68, elemento69, elemento70, elemento71, elemento72, elemento73, elemento74, elemento75, elemento76, elemento77, elemento78, elemento79, elemento80, elemento81, elemento82, elemento83, elemento84, elemento85, elemento86, elemento87, elemento88, elemento89, elemento90, elemento91, elemento92, elemento93, elemento94, elemento95, elemento96, elemento97, elemento98, elemento99, elemento100, elemento101, elemento102, elemento103, elemento104, elemento105, elemento106, elemento107, elemento108, elemento109, elemento110, elemento111, elemento112, elemento113, elemento114, elemento115, elemento116, elemento117, elemento118, elemento119, elemento120, elemento121, elemento122, elemento123, elemento124, elemento125, elemento126, elemento127, elemento128, elemento129, elemento130, elemento131, elemento132, elemento133, elemento134, elemento135, elemento136, elemento137, elemento138, elemento139, elemento140, elemento141, elemento142, elemento143, elemento144, elemento145, elemento146, elemento147, elemento148, elemento149, elemento150, elemento151, elemento152, elemento153, elemento154, elemento155, elemento156, elemento157, elemento158, elemento159, elemento160, elemento161, elemento162, elemento163, elemento164, elemento165, elemento166, elemento167, elemento168, elemento169, elemento170, elemento171, elemento172, elemento173, elemento174, elemento175, elemento176, elemento177, elemento178, elemento179, elemento180, elemento181, elemento182, elemento183, elemento184, elemento185, elemento186, elemento187, elemento188, elemento189, elemento190, elemento191, elemento192, elemento193, elemento194, elemento195, elemento196, elemento197, elemento198, elemento199, elemento200, elemento201, elemento202, elemento203, elemento204, elemento205, elemento206, elemento207, elemento208, elemento209, elemento210, elemento211, elemento212, elemento213, elemento214, elemento215, elemento216, elemento217, elemento218, elemento219, elemento220, elemento221, elemento222, elemento223, elemento224, elemento225, elemento226, elemento227, elemento228, elemento229, elemento230, elemento231, elemento232, elemento233, elemento234, elemento235, elemento236, elemento237, elemento238, elemento239, elemento240, elemento241, elemento242, elemento243, elemento244, elemento245, elemento246, elemento247, elemento248, elemento249, elemento250, elemento251, elemento252, elemento253, elemento254, elemento255, elemento256, elemento257, elemento258, elemento259, elemento260, elemento261, elemento262, elemento263, elemento264, elemento265, elemento266, elemento267, elemento268, elemento269, elemento270, elemento271, elemento272, elemento273, elemento274, elemento275, elemento276, elemento277, elemento278, elemento279, elemento280, elemento281, elemento282, elemento283, elemento284, elemento285, elemento286, elemento287, elemento288, elemento289, elemento290, elemento291, elemento292, elemento293, elemento294, elemento295, elemento296, elemento297, elemento298, elemento299"
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 889,
+    "text": "elemento0, elemento1, elemento2, elemento3, elemento4, elemento5, elemento6, elemento7, elemento8, elemento9, elemento10, elemento11, elemento12, elemento13, elemento14, elemento15, elemento16, elemento17, elemento18, elemento19, elemento20, elemento21, elemento22, elemento23, elemento24, elemento25, elemento26, elemento27, elemento28, elemento29, elemento30, elemento31, elemento32, elemento33, elemento34, elemento35, elemento36, elemento37, elemento38, elemento39, elemento40, elemento41, elemento42, elemento43, elemento44, elemento45, elemento46, elemento47, elemento48, elemento49, elemento50, elemento51, elemento52, elemento53, elemento54, elemento55, elemento56, elemento57, elemento58, elemento59, elemento60, elemento61, elemento62, elemento63, elemento64, elemento65, elemento66, elemento67, elemento68, elemento69, elemento70, elemento71, elemento72, elemento73, elemento74,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 746,
+    "char_end": 1644,
+    "text": "elemento63, elemento64, elemento65, elemento66, elemento67, elemento68, elemento69, elemento70, elemento71, elemento72, elemento73, elemento74, elemento75, elemento76, elemento77, elemento78, elemento79, elemento80, elemento81, elemento82, elemento83, elemento84, elemento85, elemento86, elemento87, elemento88, elemento89, elemento90, elemento91, elemento92, elemento93, elemento94, elemento95, elemento96, elemento97, elemento98, elemento99, elemento100, elemento101, elemento102, elemento103, elemento104, elemento105, elemento106, elemento107, elemento108, elemento109, elemento110, elemento111, elemento112, elemento113, elemento114, elemento115, elemento116, elemento117, elemento118, elemento119, elemento120, elemento121, elemento122, elemento123, elemento124, elemento125, elemento126, elemento127, elemento128, elemento129, elemento130, elemento131, elemento132, elemento133, elemento134,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1502,
+    "char_end": 2398,
+    "text": "elemento124, elemento125, elemento126, elemento127, elemento128, elemento129, elemento130, elemento131, elemento132, elemento133, elemento134, elemento135, elemento136, elemento137, elemento138, elemento139, elemento140, elemento141, elemento142, elemento143, elemento144, elemento145, elemento146, elemento147, elemento148, elemento149, elemento150, elemento151, elemento152, elemento153, elemento154, elemento155, elemento156, elemento157, elemento158, elemento159, elemento160, elemento161, elemento162, elemento163, elemento164, elemento165, elemento166, elemento167, elemento168, elemento169, elemento170, elemento171, elemento172, elemento173, elemento174, elemento175, elemento176, elemento177, elemento178, elemento179, elemento180, elemento181, elemento182, elemento183, elemento184, elemento185, elemento186, elemento187, elemento188, elemento189, elemento190, elemento191, elemento192,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 2256,
+    "char_end": 3152,
+    "text": "elemento182, elemento183, elemento184, elemento185, elemento186, elemento187, elemento188, elemento189, elemento190, elemento191, elemento192, elemento193, elemento194, elemento195, elemento196, elemento197, elemento198, elemento199, elemento200, elemento201, elemento202, elemento203, elemento204, elemento205, elemento206, elemento207, elemento208, elemento209, elemento210, elemento211, elemento212, elemento213, elemento214, elemento215, elemento216, elemento217, elemento218, elemento219, elemento220, elemento221, elemento222, elemento223, elemento224, elemento225, elemento226, elemento227, elemento228, elemento229, elemento230, elemento231, elemento232, elemento233, elemento234, elemento235, elemento236, elemento237, elemento238, elemento239, elemento240, elemento241, elemento242, elemento243, elemento244, elemento245, elemento246, elemento247, elemento248, elemento249, elemento250,"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 3010,
+    "char_end": 3788,
+    "text": "elemento240, elemento241, elemento242, elemento243, elemento244, elemento245, elemento246, elemento247, elemento248, elemento249, elemento250, elemento251, elemento252, elemento253, elemento254, elemento255, elemento256, elemento257, elemento258, elemento259, elemento260, elemento261, elemento262, elemento263, elemento264, elemento265, elemento266, elemento267, elemento268, elemento269, elemento270, elemento271, elemento272, elemento273, elemento274, elemento275, elemento276, elemento277, elemento278, elemento279, elemento280, elemento281, elemento282, elemento283, elemento284, elemento285, elemento286, elemento287, elemento288, elemento289, elemento290, elemento291, elemento292, elemento293, elemento294, elemento295, elemento296, elemento297, elemento298, elemento299"
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. "
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 299,
+    "text": "Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund;"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 255,
+    "char_end": 539,
+    "text": "después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 495,
+    "char_end": 794,
+    "text": "Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund;"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 750,
+    "char_end": 1034,
+    "text": "después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 990,
+    "char_end": 1289,
+    "text": "Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund;"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 5,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1245,
+    "char_end": 1529,
+    "text": "después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 6,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 1485,
+    "char_end": 1799,
+    "text": "Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. "
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 899,
+    "text": "Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 759,
+    "char_end": 1799,
+    "text": "café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café. Ñandú come ñoquis en Ålesund; después, café."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra fin del texto con cola corta."
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 295,
+    "text": "palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 248,
+    "char_end": 543,
+    "text": "palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 496,
+    "char_end": 791,
+    "text": "palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 744,
+    "char_end": 1229,
+    "text": "palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra fin del texto con cola corta."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra fin del texto con cola corta."
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 895,
+    "text": "palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 752,
+    "char_end": 1229,
+    "text": "palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra palabra fin del texto con cola corta."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. "
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 278,
+    "text": "uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 25,
+    "char_start": 234,
+    "char_end": 526,
+    "text": "cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 49,
+    "char_start": 482,
+    "char_end": 774,
+    "text": "cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 73,
+    "char_start": 730,
+    "char_end": 1022,
+    "text": "cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 97,
+    "char_start": 978,
+    "char_end": 1239,
+    "text": "cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. "
+  ],
+  "opts": {
+   "size": 900,
+   "overlap": 150
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 898,
+    "text": "uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 76,
+    "char_start": 761,
+    "char_end": 1239,
+    "text": "cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco. uno\r\ndos\r\n\r\ntres cuatro cinco."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\n"
+  ],
+  "opts": {
+   "size": 100,
+   "overlap": 200
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 78,
+    "text": "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 33,
+    "char_end": 132,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 87,
+    "char_end": 182,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 142,
+    "char_end": 236,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 191,
+    "char_end": 290,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 5,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 245,
+    "char_end": 340,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 6,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 300,
+    "char_end": 394,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 7,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 349,
+    "char_end": 448,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 8,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 403,
+    "char_end": 498,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 9,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 458,
+    "char_end": 552,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 10,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 507,
+    "char_end": 606,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 11,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 561,
+    "char_end": 656,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 12,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 616,
+    "char_end": 710,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 13,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 665,
+    "char_end": 764,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 14,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 719,
+    "char_end": 814,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 15,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 774,
+    "char_end": 868,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 16,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 823,
+    "char_end": 922,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 17,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 877,
+    "char_end": 974,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 18,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 932,
+    "char_end": 1028,
+    "text": "frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 19,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 983,
+    "char_end": 1082,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 20,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1037,
+    "char_end": 1132,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 21,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1092,
+    "char_end": 1186,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 22,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1141,
+    "char_end": 1240,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 23,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1195,
+    "char_end": 1290,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 24,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1250,
+    "char_end": 1344,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 25,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1299,
+    "char_end": 1398,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 26,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1353,
+    "char_end": 1448,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 27,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1408,
+    "char_end": 1502,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 28,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1457,
+    "char_end": 1556,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 29,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1511,
+    "char_end": 1606,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 30,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1566,
+    "char_end": 1660,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 31,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1615,
+    "char_end": 1714,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 32,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1669,
+    "char_end": 1764,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 33,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1724,
+    "char_end": 1818,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 34,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1773,
+    "char_end": 1872,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 35,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1827,
+    "char_end": 1924,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 36,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1882,
+    "char_end": 1978,
+    "text": "frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 37,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 1933,
+    "char_end": 2032,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 38,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 1987,
+    "char_end": 2082,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 39,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2042,
+    "char_end": 2136,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 40,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2091,
+    "char_end": 2190,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 41,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2145,
+    "char_end": 2240,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 42,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2200,
+    "char_end": 2294,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 43,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2249,
+    "char_end": 2348,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 44,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2303,
+    "char_end": 2398,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 45,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2358,
+    "char_end": 2452,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 46,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2407,
+    "char_end": 2506,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 47,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2461,
+    "char_end": 2556,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 48,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2516,
+    "char_end": 2610,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 49,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2565,
+    "char_end": 2664,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 50,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2619,
+    "char_end": 2714,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 51,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2674,
+    "char_end": 2768,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 52,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2723,
+    "char_end": 2822,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 53,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2777,
+    "char_end": 2874,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 54,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2832,
+    "char_end": 2928,
+    "text": "frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 55,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 2883,
+    "char_end": 2982,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 56,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 2937,
+    "char_end": 3032,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 57,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 2992,
+    "char_end": 3086,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 58,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3041,
+    "char_end": 3140,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 59,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3095,
+    "char_end": 3190,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 60,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3150,
+    "char_end": 3244,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 61,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3199,
+    "char_end": 3298,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 62,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3253,
+    "char_end": 3348,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 63,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3308,
+    "char_end": 3402,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 64,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3357,
+    "char_end": 3456,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 65,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3411,
+    "char_end": 3506,
+    "text": "frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 66,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3466,
+    "char_end": 3560,
+    "text": "frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 67,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3515,
+    "char_end": 3797,
+    "text": "frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_text",
+  "args": [
+   "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\n"
+  ],
+  "opts": {
+   "size": 500,
+   "overlap": 0,
+   "min_tail": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 0,
+    "char_end": 498,
+    "text": "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "",
+    "line": 1,
+    "char_start": 499,
+    "char_end": 974,
+    "text": "Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 975,
+    "char_end": 1448,
+    "text": "Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 3,
+    "page": null,
+    "section": "",
+    "line": 3,
+    "char_start": 1449,
+    "char_end": 1924,
+    "text": "Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 4,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 1925,
+    "char_end": 2398,
+    "text": "Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 5,
+    "page": null,
+    "section": "",
+    "line": 5,
+    "char_start": 2399,
+    "char_end": 2874,
+    "text": "Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! \n\nPrimera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 6,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 2875,
+    "char_end": 3348,
+    "text": "Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 7,
+    "page": null,
+    "section": "",
+    "line": 7,
+    "char_start": 3349,
+    "char_end": 3797,
+    "text": "Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta!"
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_units",
+  "args": [
+   [
+    {
+     "kind": "page",
+     "number": 1,
+     "title": "",
+     "text": "a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b "
+    },
+    {
+     "kind": "page",
+     "number": 2,
+     "title": "",
+     "text": "corta"
+    },
+    {
+     "kind": "page",
+     "number": 3,
+     "title": "",
+     "text": "Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. "
+    }
+   ]
+  ],
+  "opts": {
+   "size": 300,
+   "overlap": 50
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": 1,
+    "section": "",
+    "line": null,
+    "char_start": 0,
+    "char_end": 299,
+    "text": "a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b"
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": 1,
+    "section": "",
+    "line": null,
+    "char_start": 252,
+    "char_end": 599,
+    "text": "a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b a b"
+   },
+   {
+    "unit_index": 1,
+    "ordinal": 2,
+    "page": 2,
+    "section": "",
+    "line": null,
+    "char_start": 0,
+    "char_end": 5,
+    "text": "corta"
+   },
+   {
+    "unit_index": 2,
+    "ordinal": 3,
+    "page": 3,
+    "section": "",
+    "line": null,
+    "char_start": 0,
+    "char_end": 299,
+    "text": "Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres."
+   },
+   {
+    "unit_index": 2,
+    "ordinal": 4,
+    "page": 3,
+    "section": "",
+    "line": null,
+    "char_start": 256,
+    "char_end": 549,
+    "text": "de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres."
+   },
+   {
+    "unit_index": 2,
+    "ordinal": 5,
+    "page": 3,
+    "section": "",
+    "line": null,
+    "char_start": 506,
+    "char_end": 999,
+    "text": "de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres. Frase de la página tres."
+   }
+  ]
+ },
+ {
+  "mod": "chunking",
+  "fn": "chunk_units",
+  "args": [
+   [
+    {
+     "kind": "section",
+     "number": 1,
+     "title": "Intro",
+     "text": "breve",
+     "line_start": 1
+    },
+    {
+     "kind": "section",
+     "number": 2,
+     "title": "Cuerpo",
+     "text": "Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. ",
+     "line_start": 5
+    },
+    {
+     "kind": "section",
+     "number": 3,
+     "title": "Fin",
+     "text": "otro final corto",
+     "line_start": 50
+    }
+   ]
+  ],
+  "opts": {
+   "size": 400,
+   "overlap": 60
+  },
+  "expect": [
+   {
+    "unit_index": 0,
+    "ordinal": 0,
+    "page": null,
+    "section": "Cuerpo",
+    "line": 5,
+    "char_start": 0,
+    "char_end": 386,
+    "text": "Intro\nbreve\n\nContenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 1,
+    "page": null,
+    "section": "Cuerpo",
+    "line": 8,
+    "char_start": 329,
+    "char_end": 726,
+    "text": "del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases."
+   },
+   {
+    "unit_index": 0,
+    "ordinal": 2,
+    "page": null,
+    "section": "Cuerpo",
+    "line": 8,
+    "char_start": 669,
+    "char_end": 1055,
+    "text": "del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. Contenido del cuerpo, con frases. \n\nFin\notro final corto"
+   }
+  ]
+ }
+]

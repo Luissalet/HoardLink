@@ -1,0 +1,327 @@
+[
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "Contrato"
+  ],
+  "opts": {
+   "page": 12
+  },
+  "expect": "«Contrato», p. 12"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "Contrato"
+  ],
+  "opts": {
+   "page": 12,
+   "section": "Cláusulas"
+  },
+  "expect": "«Contrato», p. 12 · Cláusulas"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "informe.md"
+  ],
+  "opts": {
+   "section": "Resultados"
+  },
+  "expect": "informe.md § Resultados"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "informe.md"
+  ],
+  "opts": {
+   "line": 40
+  },
+  "expect": "informe.md, l. 40"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "informe.md"
+  ],
+  "expect": "informe.md"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "page",
+   "Libro"
+  ],
+  "opts": {
+   "page": 3
+  },
+  "expect": "«Libro», p. 3"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "page",
+   "Libro"
+  ],
+  "expect": "«Libro»"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "book",
+   "El Aleph"
+  ],
+  "opts": {
+   "section": "3"
+  },
+  "expect": "«El Aleph», cap. 3"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "book",
+   "El Aleph"
+  ],
+  "expect": "«El Aleph»"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "chat",
+   "Viaje a Lisboa"
+  ],
+  "opts": {
+   "date": "2026-09-30",
+   "turn": 4
+  },
+  "expect": "[chat «Viaje a Lisboa» · 2026-09-30 · turno 4]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "chat",
+   "Viaje a Lisboa"
+  ],
+  "opts": {
+   "section": "turno 2"
+  },
+  "expect": "[chat «Viaje a Lisboa» · turno 2]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "chat",
+   "Viaje"
+  ],
+  "expect": "[chat «Viaje»]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "link",
+   "Receta de pan"
+  ],
+  "opts": {
+   "site": "example.org"
+  },
+  "expect": "[enlace «Receta de pan» · example.org]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "link",
+   "Receta"
+  ],
+  "expect": "[enlace «Receta»]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "mail",
+   "Factura"
+  ],
+  "opts": {
+   "site": "banco@example.org",
+   "date": "2026-10-01"
+  },
+  "expect": "[correo «Factura» · banco@example.org · 2026-10-01]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "mail",
+   "Factura"
+  ],
+  "expect": "[correo «Factura»]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "code",
+   "src/app.py"
+  ],
+  "opts": {
+   "section": "Install",
+   "line": 42
+  },
+  "expect": "src/app.py § Install:42"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "code",
+   "src/app.py"
+  ],
+  "opts": {
+   "line": 3
+  },
+  "expect": "src/app.py:3"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "code",
+   "a.py"
+  ],
+  "expect": "a.py"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "Contract"
+  ],
+  "opts": {
+   "page": 2,
+   "lang": "en"
+  },
+  "expect": "“Contract”, p. 2"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "notes.md"
+  ],
+  "opts": {
+   "line": 7,
+   "lang": "en"
+  },
+  "expect": "notes.md, line 7"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "book",
+   "Ficciones"
+  ],
+  "opts": {
+   "section": "4",
+   "lang": "en"
+  },
+  "expect": "“Ficciones”, ch. 4"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "chat",
+   "Trip"
+  ],
+  "opts": {
+   "date": "2026-09-30",
+   "turn": 4,
+   "lang": "en"
+  },
+  "expect": "[chat “Trip” · 2026-09-30 · turn 4]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "link",
+   "Bread"
+  ],
+  "opts": {
+   "site": "example.org",
+   "lang": "en"
+  },
+  "expect": "[link “Bread” · example.org]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "mail",
+   "Invoice"
+  ],
+  "opts": {
+   "site": "bank@example.org",
+   "lang": "en-GB"
+  },
+  "expect": "[mail “Invoice” · bank@example.org]"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "  Spaces  "
+  ],
+  "opts": {
+   "page": " 5 "
+  },
+  "expect": "«Spaces», p. 5"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "doc",
+   "Num"
+  ],
+  "opts": {
+   "page": 7
+  },
+  "expect": "«Num», p. 7"
+ },
+ {
+  "mod": "citations",
+  "fn": "cite",
+  "args": [
+   "nope",
+   "x"
+  ],
+  "expect": {
+   "__error__": "unknown citation kind 'nope'; use one of doc, page, book, chat, link, mail, code"
+  }
+ }
+]

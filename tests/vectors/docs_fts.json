@@ -1,0 +1,1803 @@
+[
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "hojas AND árboles"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"hojas\" AND \"árboles\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "hojas AND árboles"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"hoja\"* OR \"árbol\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "hojas AND árboles"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"hoja\"* AND \"árbol\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "hojas AND árboles"
+  ],
+  "expect": [
+   "\"hojas\" AND \"árboles\"",
+   "\"hoja\"* AND \"árbol\"*",
+   "\"hoja\"* OR \"árbol\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "hojas AND árboles"
+  ],
+  "expect": [
+   "hoja",
+   "arbol"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "hojas AND árboles"
+  ],
+  "expect": [
+   "hojas",
+   "árboles"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "NEAR(a b) \"x\" -y *z :c ^d (e"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"near\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "NEAR(a b) \"x\" -y *z :c ^d (e"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"near\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "NEAR(a b) \"x\" -y *z :c ^d (e"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"near\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "NEAR(a b) \"x\" -y *z :c ^d (e"
+  ],
+  "expect": [
+   "\"near\"",
+   "\"near\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "NEAR(a b) \"x\" -y *z :c ^d (e"
+  ],
+  "expect": [
+   "near"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "NEAR(a b) \"x\" -y *z :c ^d (e"
+  ],
+  "expect": [
+   "NEAR"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "AND"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"and\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "AND"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"and\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "AND"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"and\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "AND"
+  ],
+  "expect": [
+   "\"and\"",
+   "\"and\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "AND"
+  ],
+  "expect": [
+   "and"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "AND"
+  ],
+  "expect": [
+   "AND"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "OR NOT"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"not\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "OR NOT"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"not\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "OR NOT"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"not\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "OR NOT"
+  ],
+  "expect": [
+   "\"not\"",
+   "\"not\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "OR NOT"
+  ],
+  "expect": [
+   "not"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "OR NOT"
+  ],
+  "expect": [
+   "NOT"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "\"\"\""
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "\"\"\""
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "\"\"\""
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "\"\"\""
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "\"\"\""
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "\"\"\""
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "a-b c:d"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"a\" AND \"b\" AND \"c\" AND \"d\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "a-b c:d"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"a\" OR \"b\" OR \"c\" OR \"d\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "a-b c:d"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"a\" AND \"b\" AND \"c\" AND \"d\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "a-b c:d"
+  ],
+  "expect": [
+   "\"a\" AND \"b\" AND \"c\" AND \"d\"",
+   "\"a\" OR \"b\" OR \"c\" OR \"d\""
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "a-b c:d"
+  ],
+  "expect": [
+   "a",
+   "b",
+   "c",
+   "d"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "a-b c:d"
+  ],
+  "expect": [
+   "a",
+   "b",
+   "c",
+   "d"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "¿Dónde están las hojas?"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"están\" AND \"hojas\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "¿Dónde están las hojas?"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"están\"* OR \"hoja\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "¿Dónde están las hojas?"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"están\"* AND \"hoja\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "¿Dónde están las hojas?"
+  ],
+  "expect": [
+   "\"están\" AND \"hojas\"",
+   "\"están\"* AND \"hoja\"*",
+   "\"están\"* OR \"hoja\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "¿Dónde están las hojas?"
+  ],
+  "expect": [
+   "estan",
+   "hoja"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "¿Dónde están las hojas?"
+  ],
+  "expect": [
+   "están",
+   "hojas"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "x\" OR \"1\"=\"1"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"x\" AND \"or\" AND \"1\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "x\" OR \"1\"=\"1"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"x\" OR \"or\" OR \"1\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "x\" OR \"1\"=\"1"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"x\" AND \"or\" AND \"1\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "x\" OR \"1\"=\"1"
+  ],
+  "expect": [
+   "\"x\" AND \"or\" AND \"1\"",
+   "\"x\" OR \"or\" OR \"1\""
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "x\" OR \"1\"=\"1"
+  ],
+  "expect": [
+   "x",
+   "or",
+   "1"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "x\" OR \"1\"=\"1"
+  ],
+  "expect": [
+   "x",
+   "OR",
+   "1",
+   "1"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "  "
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "  "
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "  "
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "  "
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "  "
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "  "
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   ""
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   ""
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   ""
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "ñandú CAFÉ ünïcode"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"ñandú\" AND \"café\" AND \"ünïcode\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "ñandú CAFÉ ünïcode"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"ñandú\"* OR \"café\"* OR \"ünïcode\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "ñandú CAFÉ ünïcode"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"ñandú\"* AND \"café\"* AND \"ünïcode\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "ñandú CAFÉ ünïcode"
+  ],
+  "expect": [
+   "\"ñandú\" AND \"café\" AND \"ünïcode\"",
+   "\"ñandú\"* AND \"café\"* AND \"ünïcode\"*",
+   "\"ñandú\"* OR \"café\"* OR \"ünïcode\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "ñandú CAFÉ ünïcode"
+  ],
+  "expect": [
+   "nandu",
+   "cafe",
+   "unicode"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "ñandú CAFÉ ünïcode"
+  ],
+  "expect": [
+   "ñandú",
+   "CAFÉ",
+   "ünïcode"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "the quick brown fox"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"quick\" AND \"brown\" AND \"fox\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "the quick brown fox"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"quick\"* OR \"brown\"* OR \"fox\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "the quick brown fox"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"quick\"* AND \"brown\"* AND \"fox\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "the quick brown fox"
+  ],
+  "expect": [
+   "\"quick\" AND \"brown\" AND \"fox\"",
+   "\"quick\"* AND \"brown\"* AND \"fox\"*",
+   "\"quick\"* OR \"brown\"* OR \"fox\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "the quick brown fox"
+  ],
+  "expect": [
+   "quick",
+   "brown",
+   "fox"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "the quick brown fox"
+  ],
+  "expect": [
+   "quick",
+   "brown",
+   "fox"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "resumen de las ciudades más grandes"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"resumen\" AND \"ciudades\" AND \"grandes\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "resumen de las ciudades más grandes"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"resumen\"* OR \"ciudad\"* OR \"grand\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "resumen de las ciudades más grandes"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"resumen\"* AND \"ciudad\"* AND \"grand\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "resumen de las ciudades más grandes"
+  ],
+  "expect": [
+   "\"resumen\" AND \"ciudades\" AND \"grandes\"",
+   "\"resumen\"* AND \"ciudad\"* AND \"grand\"*",
+   "\"resumen\"* OR \"ciudad\"* OR \"grand\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "resumen de las ciudades más grandes"
+  ],
+  "expect": [
+   "resumen",
+   "ciudad",
+   "grand"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "resumen de las ciudades más grandes"
+  ],
+  "expect": [
+   "resumen",
+   "ciudades",
+   "grandes"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "co-op \"quoted phrase\" otoño"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"co\" AND \"op\" AND \"quoted\" AND \"phrase\" AND \"otoño\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "co-op \"quoted phrase\" otoño"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"co\" OR \"op\" OR \"quoted\"* OR \"phrase\"* OR \"otoño\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "co-op \"quoted phrase\" otoño"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"co\" AND \"op\" AND \"quoted\"* AND \"phrase\"* AND \"otoño\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "co-op \"quoted phrase\" otoño"
+  ],
+  "expect": [
+   "\"co\" AND \"op\" AND \"quoted\" AND \"phrase\" AND \"otoño\"",
+   "\"co\" AND \"op\" AND \"quoted\"* AND \"phrase\"* AND \"otoño\"*",
+   "\"co\" OR \"op\" OR \"quoted\"* OR \"phrase\"* OR \"otoño\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "co-op \"quoted phrase\" otoño"
+  ],
+  "expect": [
+   "co",
+   "op",
+   "quoted",
+   "phrase",
+   "otono"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "co-op \"quoted phrase\" otoño"
+  ],
+  "expect": [
+   "co",
+   "op",
+   "quoted",
+   "phrase",
+   "otoño"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"uno\" AND \"dos\" AND \"tres\" AND \"cuatro\" AND \"cinco\" AND \"seis\" AND \"siete\" AND \"ocho\" AND \"nueve\" AND \"diez\" AND \"once\" AND \"doce\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"uno\"* OR \"dos\"* OR \"tres\"* OR \"cuatro\"* OR \"cinco\"* OR \"seis\"* OR \"siete\"* OR \"ocho\"* OR \"nueve\"* OR \"diez\"* OR \"once\"* OR \"doce\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"uno\"* AND \"dos\"* AND \"tres\"* AND \"cuatro\"* AND \"cinco\"* AND \"seis\"* AND \"siete\"* AND \"ocho\"* AND \"nueve\"* AND \"diez\"* AND \"once\"* AND \"doce\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce"
+  ],
+  "expect": [
+   "\"uno\" AND \"dos\" AND \"tres\" AND \"cuatro\" AND \"cinco\" AND \"seis\" AND \"siete\" AND \"ocho\" AND \"nueve\" AND \"diez\" AND \"once\" AND \"doce\"",
+   "\"uno\"* AND \"dos\"* AND \"tres\"* AND \"cuatro\"* AND \"cinco\"* AND \"seis\"* AND \"siete\"* AND \"ocho\"* AND \"nueve\"* AND \"diez\"* AND \"once\"* AND \"doce\"*",
+   "\"uno\"* OR \"dos\"* OR \"tres\"* OR \"cuatro\"* OR \"cinco\"* OR \"seis\"* OR \"siete\"* OR \"ocho\"* OR \"nueve\"* OR \"diez\"* OR \"once\"* OR \"doce\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce"
+  ],
+  "expect": [
+   "uno",
+   "dos",
+   "tres",
+   "cuatro",
+   "cinco",
+   "seis",
+   "siete",
+   "ocho",
+   "nueve",
+   "diez",
+   "once",
+   "doce"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "uno dos tres cuatro cinco seis siete ocho nueve diez once doce trece catorce"
+  ],
+  "expect": [
+   "uno",
+   "dos",
+   "tres",
+   "cuatro",
+   "cinco",
+   "seis",
+   "siete",
+   "ocho",
+   "nueve",
+   "diez",
+   "once",
+   "doce",
+   "trece",
+   "catorce"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "hola hola HOLA"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"hola\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "hola hola HOLA"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"hola\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "hola hola HOLA"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"hola\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "hola hola HOLA"
+  ],
+  "expect": [
+   "\"hola\"",
+   "\"hola\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "hola hola HOLA"
+  ],
+  "expect": [
+   "hola"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "hola hola HOLA"
+  ],
+  "expect": [
+   "hola",
+   "hola",
+   "HOLA"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "años"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"años\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "años"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"años\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "años"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"años\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "años"
+  ],
+  "expect": [
+   "\"años\"",
+   "\"años\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "años"
+  ],
+  "expect": [
+   "anos"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "años"
+  ],
+  "expect": [
+   "años"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "ab cd efg"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"ab\" AND \"cd\" AND \"efg\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "ab cd efg"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"ab\" OR \"cd\" OR \"efg\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "ab cd efg"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"ab\" AND \"cd\" AND \"efg\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "ab cd efg"
+  ],
+  "expect": [
+   "\"ab\" AND \"cd\" AND \"efg\"",
+   "\"ab\" AND \"cd\" AND \"efg\"*",
+   "\"ab\" OR \"cd\" OR \"efg\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "ab cd efg"
+  ],
+  "expect": [
+   "ab",
+   "cd",
+   "efg"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "ab cd efg"
+  ],
+  "expect": [
+   "ab",
+   "cd",
+   "efg"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "snake_case_word"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"snake\" AND \"case\" AND \"word\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "snake_case_word"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"snake\"* OR \"case\"* OR \"word\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "snake_case_word"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"snake\"* AND \"case\"* AND \"word\"*"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "snake_case_word"
+  ],
+  "expect": [
+   "\"snake\" AND \"case\" AND \"word\"",
+   "\"snake\"* AND \"case\"* AND \"word\"*",
+   "\"snake\"* OR \"case\"* OR \"word\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "snake_case_word"
+  ],
+  "expect": [
+   "snake",
+   "case",
+   "word"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "snake_case_word"
+  ],
+  "expect": [
+   "snake",
+   "case",
+   "word"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "x"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"x\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "x"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"x\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "x"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"x\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "x"
+  ],
+  "expect": [
+   "\"x\""
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "x"
+  ],
+  "expect": [
+   "x"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "x"
+  ],
+  "expect": [
+   "x"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "C++ y C#"
+  ],
+  "opts": {
+   "mode": "and"
+  },
+  "expect": "\"c\" AND \"y\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "C++ y C#"
+  ],
+  "opts": {
+   "mode": "or"
+  },
+  "expect": "\"c\" OR \"y\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "C++ y C#"
+  ],
+  "opts": {
+   "mode": "prefix"
+  },
+  "expect": "\"c\" AND \"y\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "C++ y C#"
+  ],
+  "expect": [
+   "\"c\" AND \"y\"",
+   "\"c\" OR \"y\""
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "query_terms",
+  "args": [
+   "C++ y C#"
+  ],
+  "expect": [
+   "c",
+   "y"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "content_words",
+  "args": [
+   "C++ y C#"
+  ],
+  "expect": [
+   "C",
+   "y",
+   "C"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   "uno dos tres cuatro"
+  ],
+  "opts": {
+   "max_terms": 2
+  },
+  "expect": "\"uno\" AND \"dos\""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_query",
+  "args": [
+   null
+  ],
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "fts_ladder",
+  "args": [
+   "uno dos tres cuatro"
+  ],
+  "opts": {
+   "max_terms": 3
+  },
+  "expect": [
+   "\"uno\" AND \"dos\" AND \"tres\"",
+   "\"uno\"* AND \"dos\"* AND \"tres\"*",
+   "\"uno\"* OR \"dos\"* OR \"tres\"*"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "hojas"
+  ],
+  "expect": "hoja"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "árboles"
+  ],
+  "expect": "árbol"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "ciudades"
+  ],
+  "expect": "ciudad"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "casa"
+  ],
+  "expect": "casa"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "Mesas"
+  ],
+  "expect": "mesa"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "luz"
+  ],
+  "expect": "luz"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "vez"
+  ],
+  "expect": "vez"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "ÁRBOLES"
+  ],
+  "expect": "árbol"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "stem",
+  "args": [
+   "pez"
+  ],
+  "expect": "pez"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "tokens",
+  "args": [
+   "Hola, Mundo! ñandú 123 a_b"
+  ],
+  "expect": [
+   "hola",
+   "mundo",
+   "nandu",
+   "123",
+   "a",
+   "b"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "tokens",
+  "args": [
+   "Straße ÁÉÍ"
+  ],
+  "expect": [
+   "straße",
+   "aei"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "tokens",
+  "args": [
+   ""
+  ],
+  "expect": []
+ },
+ {
+  "mod": "textsearch",
+  "fn": "tokens",
+  "args": [
+   "uno-dos tres"
+  ],
+  "expect": [
+   "uno",
+   "dos",
+   "tres"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "tokens",
+  "args": [
+   "el gato y la casa"
+  ],
+  "opts": {
+   "stop": [
+    "a",
+    "about",
+    "acerca",
+    "al",
+    "an",
+    "and",
+    "are",
+    "como",
+    "con",
+    "cual",
+    "cuales",
+    "cuando",
+    "de",
+    "del",
+    "dice",
+    "did",
+    "dijo",
+    "donde",
+    "e",
+    "el",
+    "en",
+    "es",
+    "escribi",
+    "esta",
+    "este",
+    "esto",
+    "for",
+    "ha",
+    "hay",
+    "he",
+    "how",
+    "i",
+    "in",
+    "is",
+    "la",
+    "las",
+    "le",
+    "lei",
+    "les",
+    "lo",
+    "los",
+    "mas",
+    "me",
+    "mi",
+    "mis",
+    "muy",
+    "my",
+    "ni",
+    "no",
+    "o",
+    "of",
+    "on",
+    "or",
+    "para",
+    "por",
+    "que",
+    "quien",
+    "se",
+    "sobre",
+    "son",
+    "su",
+    "sus",
+    "te",
+    "that",
+    "the",
+    "this",
+    "to",
+    "tu",
+    "tus",
+    "u",
+    "un",
+    "una",
+    "unas",
+    "unos",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "with",
+    "y",
+    "ya"
+   ]
+  },
+  "expect": [
+   "gato",
+   "casa"
+  ]
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "Las hojas del Árbol caen en otoño. Más hojas caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte.\nSegunda línea con árboles & <tags> dentro.",
+   [
+    "hoja",
+    "arbol"
+   ]
+  ],
+  "opts": {
+   "window": 60
+  },
+  "expect": "Las <mark>hojas</mark> del <mark>Árbol</mark> caen en otoño. Más <mark>hojas</mark> caen después de…"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "Las hojas del Árbol caen en otoño. Más hojas caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte.\nSegunda línea con árboles & <tags> dentro.",
+   [
+    "hoja",
+    "arbol"
+   ]
+  ],
+  "opts": {
+   "window": 200
+  },
+  "expect": "Las <mark>hojas</mark> del <mark>Árbol</mark> caen en otoño. Más <mark>hojas</mark> caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte. Segunda línea con <mark>árboles</mark> &amp; &lt;tags&gt; dentro."
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "Las hojas del Árbol caen en otoño. Más hojas caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte.\nSegunda línea con árboles & <tags> dentro.",
+   [
+    "pajaro"
+   ]
+  ],
+  "opts": {
+   "window": 50
+  },
+  "expect": "…donde viven los <mark>pájaros</mark> del norte. Segunda línea con…"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "Las hojas del Árbol caen en otoño. Más hojas caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte.\nSegunda línea con árboles & <tags> dentro.",
+   [
+    "tags"
+   ]
+  ],
+  "opts": {
+   "window": 40
+  },
+  "expect": "…con árboles &amp; &lt;<mark>tags</mark>&gt; dentro."
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "Las hojas del Árbol caen en otoño. Más hojas caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte.\nSegunda línea con árboles & <tags> dentro.",
+   [
+    "zzz"
+   ]
+  ],
+  "opts": {
+   "window": 40
+  },
+  "expect": "Las hojas del Árbol caen en otoño. Más hojas…"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "Las hojas del Árbol caen en otoño. Más hojas caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte.\nSegunda línea con árboles & <tags> dentro.",
+   [
+    "hoja"
+   ]
+  ],
+  "opts": {
+   "window": 60,
+   "tag": "b"
+  },
+  "expect": "Las <b>hojas</b> del Árbol caen en otoño. Más <b>hojas</b> caen después de…"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "Las hojas del Árbol caen en otoño. Más hojas caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte.\nSegunda línea con árboles & <tags> dentro.",
+   [
+    "hoja"
+   ]
+  ],
+  "opts": {
+   "window": 60,
+   "tag": null
+  },
+  "expect": "Las hojas del Árbol caen en otoño. Más hojas caen después de…"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "",
+   [
+    "a"
+   ]
+  ],
+  "expect": ""
+ },
+ {
+  "mod": "textsearch",
+  "fn": "highlight",
+  "args": [
+   "ÁRBOL árbol Arbol",
+   [
+    "arbol"
+   ]
+  ],
+  "expect": "<mark>ÁRBOL</mark> <mark>árbol</mark> <mark>Arbol</mark>"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "snippet",
+  "args": [
+   "Las hojas del Árbol caen en otoño. Más hojas caen después de la lluvia en el bosque grande y verde donde viven los pájaros del norte.\nSegunda línea con árboles & <tags> dentro.",
+   [
+    "bosque"
+   ]
+  ],
+  "opts": {
+   "window": 50
+  },
+  "expect": "…la lluvia en el bosque grande y verde donde viven los…"
+ },
+ {
+  "mod": "textsearch",
+  "fn": "snippet",
+  "args": [
+   "a  b\n c",
+   []
+  ],
+  "expect": "a b c"
+ }
+]
