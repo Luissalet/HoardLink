@@ -382,7 +382,20 @@ export function openDatabase(file, { migrations = [], busyTimeoutMs = 15000, wal
   const sync = String(synchronous).toUpperCase();
   if (!["OFF", "NORMAL", "FULL", "EXTRA", "0", "1", "2", "3"].includes(sync)) throw new Error(`bad synchronous: ${synchronous}`);
   raw.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(busyTimeoutMs))}`);
-  if (wal && file !== ":memory:") raw.exec("PRAGMA journal_mode = WAL");
+  if (wal && file !== ":memory:") {
+    // SQLite skips the busy handler for this pragma: retry while another process holds a fresh file
+    const deadline = Date.now() + Math.max(1000, busyTimeoutMs);
+    for (let delay = 10; ; delay = Math.min(200, delay * 2)) {
+      try {
+        const cur = raw.prepare("PRAGMA journal_mode").get();
+        if (!cur || String(Object.values(cur)[0]).toUpperCase() !== "WAL") raw.exec("PRAGMA journal_mode = WAL");
+        break;
+      } catch (e) {
+        if (!/locked|busy/i.test(String(e && e.message)) || Date.now() >= deadline) throw e;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      }
+    }
+  }
   raw.exec(`PRAGMA synchronous = ${sync}`);
   raw.exec(`PRAGMA foreign_keys = ${foreignKeys ? "ON" : "OFF"}`);
 

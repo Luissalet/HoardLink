@@ -158,7 +158,7 @@ class Database:
             self.conn.row_factory = sqlite3.Row
             self.conn.execute(f"PRAGMA busy_timeout = {timeout_ms}")
             if mode and str(path) != ":memory:":
-                self.conn.execute(f"PRAGMA journal_mode = {mode}")
+                self._set_journal_mode(mode, timeout_ms)
             self.conn.execute(f"PRAGMA synchronous = {sync}")
             self.conn.execute(f"PRAGMA foreign_keys = {'ON' if foreign_keys else 'OFF'}")
             if on_open is not None:
@@ -167,6 +167,24 @@ class Database:
         except BaseException:
             self.conn.close()
             raise
+
+    def _set_journal_mode(self, mode: str, timeout_ms: int) -> None:
+        """Switch the journal mode, retrying while another connection holds the file: SQLite does not run the busy
+        handler for this pragma, so two processes opening a fresh database together got "database is locked"."""
+        deadline = time.monotonic() + max(1.0, timeout_ms / 1000.0)
+        delay = 0.01
+        while True:
+            try:
+                row = self.conn.execute("PRAGMA journal_mode").fetchone()
+                if row and str(row[0]).upper() == mode:
+                    return
+                self.conn.execute(f"PRAGMA journal_mode = {mode}")
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() and "busy" not in str(exc).lower() or time.monotonic() >= deadline:
+                    raise
+                time.sleep(delay)
+                delay = min(0.2, delay * 2)
 
     # ------------------------------------------------------------ context manager
     def __enter__(self) -> "Database":
