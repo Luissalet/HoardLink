@@ -1,0 +1,429 @@
+[
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/private/x"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/private/public/page"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/docs/file.pdf"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/docs/file.pdf?download=1"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/docs/file.pdf.html"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/tmpfile"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/robots.txt"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/robots.txt?x=1"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "hoardlink/1.0 (+https://example.com)",
+   "/nothoard/a"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "HoardLink",
+   "/private/x"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "HoardLink",
+   "/"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "BadBot",
+   "/anything"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "worse",
+   "/"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "private/x"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   ""
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot",
+   "/%70rivate/x"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow:\n",
+   "x",
+   "/a"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /\n",
+   "x",
+   "/a"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /\nAllow: /ok\n",
+   "x",
+   "/ok"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /a\nAllow: /a\n",
+   "x",
+   "/a"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nAllow: /a\nDisallow: /a\n",
+   "x",
+   "/a"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /a*b\n",
+   "x",
+   "/axxb"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /a*b\n",
+   "x",
+   "/axxc"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /*?\n",
+   "x",
+   "/p?x=1"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /*?\n",
+   "x",
+   "/p"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /end$\n",
+   "x",
+   "/end"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /end$\n",
+   "x",
+   "/ending"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /a.b\n",
+   "x",
+   "/axb"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "USER-AGENT: *\nDISALLOW: /x\n",
+   "x",
+   "/x"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "﻿User-agent: *\nDisallow: /x\n",
+   "x",
+   "/x"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\r\nDisallow: /x\r\n",
+   "x",
+   "/x"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "Disallow: /x\n",
+   "x",
+   "/x"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "",
+   "x",
+   "/x"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   null,
+   "x",
+   "/x"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: a\nDisallow: /x\n",
+   "b",
+   "/x"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /x # trailing comment\n",
+   "x",
+   "/x"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nUser-agent: other\nDisallow: /g\n",
+   "other",
+   "/g"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: bot\nDisallow: /one\n\nUser-agent: bot\nDisallow: /two\n",
+   "bot",
+   "/two"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: botx\nDisallow: /\n\nUser-agent: *\nDisallow:\n",
+   "mybotx-agent",
+   "/p"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: bot\nDisallow: /\n\nUser-agent: botx\nAllow: /\n",
+   "botx",
+   "/p"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /café\n",
+   "x",
+   "/caf%C3%A9"
+  ],
+  "expect": false
+ },
+ {
+  "fn": "robots_rules_allowed",
+  "args": [
+   "User-agent: *\nDisallow: /caf%C3%A9\n",
+   "x",
+   "/café"
+  ],
+  "expect": true
+ },
+ {
+  "fn": "robots_crawl_delay",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "SomeBot"
+  ],
+  "expect": 2.5
+ },
+ {
+  "fn": "robots_crawl_delay",
+  "args": [
+   "# comment\nUser-agent: *\nDisallow: /private/\nDisallow: /*.pdf$\nDisallow: /tmp\nAllow: /private/public/\nCrawl-delay: 2.5\n\nUser-agent: HoardLink\nDisallow: /nothoard/\nAllow: /\n\nUser-agent: badbot\nUser-agent: worse\nDisallow: /\n\nSitemap: https://example.com/sitemap.xml\n",
+   "HoardLink"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "robots_crawl_delay",
+  "args": [
+   "User-agent: *\nCrawl-delay: 10\n",
+   "x"
+  ],
+  "expect": 10.0
+ },
+ {
+  "fn": "robots_crawl_delay",
+  "args": [
+   "User-agent: *\nCrawl-delay: soon\n",
+   "x"
+  ],
+  "expect": null
+ },
+ {
+  "fn": "robots_crawl_delay",
+  "args": [
+   "",
+   "x"
+  ],
+  "expect": null
+ }
+]

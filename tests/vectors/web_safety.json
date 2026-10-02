@@ -1,0 +1,4131 @@
+[
+ {
+  "fn": "classify_ip",
+  "args": [
+   "8.8.8.8"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "1.1.1.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "2606:4700:4700::1111"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "127.0.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 127.0.0.1 is a loopback address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "127.0.0.1"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "127.0.0.1"
+  ],
+  "opts": {
+   "profile": "internal"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address ::1 is a loopback address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "::1"
+  ],
+  "opts": {
+   "profile": "internal"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "10.1.2.3"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 10.1.2.3 is a private address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "10.1.2.3"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "10.1.2.3"
+  ],
+  "opts": {
+   "profile": "internal"
+  },
+  "expect": "address 10.1.2.3 is a private address (not allowed for internal)"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "172.16.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 172.16.0.1 is a private address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "172.32.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "192.168.1.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 192.168.1.1 is a private address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "100.64.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 100.64.0.1 is a shared (CGNAT 100.64.0.0/10) address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "100.64.0.5"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "100.127.255.255"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 100.127.255.255 is a shared (CGNAT 100.64.0.0/10) address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "100.128.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "169.254.169.254"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 169.254.169.254 is a cloud metadata address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "169.254.169.254"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": "address 169.254.169.254 is a cloud metadata address (not allowed for operator_local)"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "169.254.1.1"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": "address 169.254.1.1 is a link-local address (not allowed for operator_local)"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "100.100.100.200"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": "address 100.100.100.200 is a cloud metadata address (not allowed for operator_local)"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "fd00:ec2::254"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": "address fd00:ec2::254 is a cloud metadata address (not allowed for operator_local)"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "0.0.0.0"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 0.0.0.0 is the unspecified address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "::"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address :: is the unspecified address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "224.0.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 224.0.0.1 is a multicast address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "ff02::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address ff02::1 is a multicast address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "240.0.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 240.0.0.1 is a reserved address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "255.255.255.255"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 255.255.255.255 is a reserved address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "192.0.2.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 192.0.2.1 is a reserved address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "198.18.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 198.18.0.1 is a reserved address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "fe80::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address fe80::1 is a link-local address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "fe80::1%eth0"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address fe80::1 is a link-local address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "fc00::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address fc00::1 is a private address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "fdff::1"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "2001:db8::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 2001:db8::1 is a reserved address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "2001:0:4136:e378:8000:63bf:3fff:fdd2"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 2001:0:4136:e378:8000:63bf:3fff:fdd2 is a reserved address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "2001:0:4136:e378:8000:63bf:3fff:fdd2"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": "address 2001:0:4136:e378:8000:63bf:3fff:fdd2 is a reserved address (not allowed for operator_local)"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "4000::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 4000::1 is a reserved address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "::ffff:127.0.0.1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address ::ffff:127.0.0.1 is a loopback address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "::ffff:8.8.8.8"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "::ffff:10.0.0.1"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "::ffff:169.254.169.254"
+  ],
+  "opts": {
+   "profile": "operator_local"
+  },
+  "expect": "address ::ffff:169.254.169.254 is a cloud metadata address (not allowed for operator_local)"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "2002:7f00:1::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 2002:7f00:1::1 is a loopback address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "2002:0808:0808::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "2002:a00:1::1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 2002:a00:1::1 is a private address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "64:ff9b::7f00:1"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address 64:ff9b::7f00:1 is a loopback address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "64:ff9b::808:808"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": null
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "[::1]"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "address ::1 is a loopback address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "not-an-ip"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "'not-an-ip' is not an IP address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "'' is not an IP address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "1.2.3"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "'1.2.3' is not an IP address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "1.2.3.256"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "'1.2.3.256' is not an IP address"
+ },
+ {
+  "fn": "classify_ip",
+  "args": [
+   "01.2.3.4"
+  ],
+  "opts": {
+   "profile": "public"
+  },
+  "expect": "'01.2.3.4' is not an IP address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://example.com/path?q=1"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://example.com"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://api.example.com/v1"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://8.8.8.8/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[2606:4700:4700::1111]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://v6.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "  https://example.com/  "
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "HTTPS://EXAMPLE.COM/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://example.com./x"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://example.com:8443/x"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://127.0.0.1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 127.0.0.1 is a loopback address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://127.1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 127.1 is an obfuscated IP address (127.0.0.1)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://2130706433/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 2130706433 is an obfuscated IP address (127.0.0.1)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://0x7f.1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 0x7f.1 is an obfuscated IP address (127.0.0.1)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://0x7f000001/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 0x7f000001 is an obfuscated IP address (127.0.0.1)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://017700000001/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 017700000001 is an obfuscated IP address (127.0.0.1)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://0177.0.0.1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 0177.0.0.1 is an obfuscated IP address (127.0.0.1)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://010.1.1.1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 010.1.1.1 is an obfuscated IP address (8.1.1.1)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://1.2.3/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 1.2.3 is an obfuscated IP address (1.2.0.3)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://999999999999/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host 999999999999 is an obfuscated IP address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "file:///etc/passwd"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unsupported scheme 'file': only http and https are allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "FILE:///C:/Windows/win.ini"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unsupported scheme 'file': only http and https are allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "ftp://example.com/x"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unsupported scheme 'ftp': only http and https are allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "javascript:alert(1)"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unsupported scheme 'javascript': only http and https are allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "data:text/html,<b>x</b>"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unsupported scheme 'data': only http and https are allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "//example.com/x"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unsupported scheme '(none)': only http and https are allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "example.com/x"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unsupported scheme '(none)': only http and https are allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "gopher://example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unsupported scheme 'gopher': only http and https are allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[::ffff:127.0.0.1]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect_has": "loopback"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[::1]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address ::1 is a loopback address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[2002:7f00:1::1]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 2002:7f00:1::1 is a loopback address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[2002:a00:1::1]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 2002:a00:1::1 is a private address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[64:ff9b::7f00:1]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 64:ff9b::7f00:1 is a loopback address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[fe80::1]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address fe80::1 is a link-local address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[fc00::1]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address fc00::1 is a private address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[::]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address :: is the unspecified address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://100.64.0.1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 100.64.0.1 is a shared (CGNAT 100.64.0.0/10) address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://100.64.0.5/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://10.0.0.5/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 10.0.0.5 is a private address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://10.0.0.5/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://10.0.0.5/"
+  ],
+  "opts": {
+   "profile": "internal",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 10.0.0.5 is a private address (not allowed for internal)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://127.0.0.1:8080/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://127.0.0.1:8080/"
+  ],
+  "opts": {
+   "profile": "internal",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://169.254.169.254/latest/meta-data/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 169.254.169.254 is a cloud metadata address"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://169.254.169.254/latest/meta-data/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "address 169.254.169.254 is a cloud metadata address (not allowed for operator_local)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://metadata.google.internal/computeMetadata/v1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host metadata.google.internal is a cloud metadata name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://metadata.google.internal/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host metadata.google.internal is a cloud metadata name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://metadata/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host metadata is a cloud metadata name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://instance-data/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host instance-data is a cloud metadata name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://x.metadata.google.internal/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host x.metadata.google.internal is a cloud metadata name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://localhost/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host localhost is a local (single-label) name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://localhost:3000/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://localhost:3000/"
+  ],
+  "opts": {
+   "profile": "internal",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://app.localhost/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host app.localhost is a local name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://app.localhost/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://printer.local/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host printer.local is a local name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://nas.lan/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host nas.lan is a local name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://db.internal/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host db.internal is a local name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://intranet/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host intranet is a local (single-label) name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://user:pw@example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URLs with embedded credentials are not allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://user@example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URLs with embedded credentials are not allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://example.com@127.0.0.1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URLs with embedded credentials are not allowed"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://example.com\\@127.0.0.1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URL contains a backslash"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://example.com/a b"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URL contains control characters or spaces"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://example.com/\n"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://exa\tmple.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URL contains control characters or spaces"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://example.com:0/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "invalid port"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://example.com:99999/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "invalid port"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://example.com:abc/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "invalid port"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http:///x"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URL has no host"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URL has no host"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   ""
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "empty URL"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "   "
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "empty URL"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   null
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "empty URL"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://[::1/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "malformed URL"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://::1]/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "malformed URL"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://-bad-.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host -bad-.example.com is not a valid name"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://exa mple.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URL contains control characters or spaces"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "http://bücher.example/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unresolvable host bücher.example: getaddrinfo ENOTFOUND xn--bcher-kva.example"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "URL longer than 2048 characters"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   },
+   "max_len": 2048
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://rebind.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host rebind.example.com resolves to a non-allowed address (10.0.0.7: a private address)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://rebind.example.com/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://lan.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host lan.example.com resolves to a non-allowed address (192.168.1.20: a private address)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://lan.example.com/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://meta.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host meta.example.com resolves to a non-allowed address (169.254.169.254: a cloud metadata address)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://meta.example.com/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host meta.example.com resolves to a non-allowed address (169.254.169.254: a cloud metadata address (not allowed for operator_local))"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://tail.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host tail.example.com resolves to a non-allowed address (100.64.1.1: a shared (CGNAT 100.64.0.0/10) address)"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://tail.example.com/"
+  ],
+  "opts": {
+   "profile": "operator_local",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://empty.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unresolvable host empty.example.com"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://nowhere.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "unresolvable host nowhere.example.com: getaddrinfo ENOTFOUND nowhere.example.com"
+ },
+ {
+  "fn": "check_url",
+  "args": [
+   "https://mapped.example.com/"
+  ],
+  "opts": {
+   "profile": "public",
+   "hosts": {
+    "example.com": [
+     "93.184.216.34"
+    ],
+    "api.example.com": [
+     "93.184.216.35",
+     "2606:2800:220:1::1"
+    ],
+    "rebind.example.com": [
+     "93.184.216.34",
+     "10.0.0.7"
+    ],
+    "lan.example.com": [
+     "192.168.1.20"
+    ],
+    "meta.example.com": [
+     "169.254.169.254"
+    ],
+    "tail.example.com": [
+     "100.64.1.1"
+    ],
+    "empty.example.com": [],
+    "v6.example.com": [
+     "2606:4700:4700::1111"
+    ],
+    "mapped.example.com": [
+     "::ffff:127.0.0.1"
+    ]
+   }
+  },
+  "expect": "host mapped.example.com resolves to a non-allowed address (::ffff:127.0.0.1: a loopback address)"
+ }
+]

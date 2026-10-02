@@ -1,0 +1,1843 @@
+[
+ {
+  "fn": "page_meta",
+  "args": [
+   "<!doctype html><html lang=\"es-ES\"><head><meta charset=\"utf-8\"><title>  Fallback   title </title>\n<meta content=\"Order matters not\" property=\"og:title\"><meta name=\"description\" content=\"Plain description &amp; more\">\n<meta property=\"og:description\" content=\"OG description\"><meta content=\"https://cdn.example/img.png\" property=\"og:image\">\n<meta name=\"twitter:card\" content=\"summary\"><meta name=\"author\" content=\"Ada Lovelace\"><meta property=\"article:published_time\" content=\"2026-09-30T10:00:00Z\">\n<meta property=\"og:site_name\" content=\"Example &amp; Co\"><meta name=\"keywords\" content=\"a, b; c ,, d\">\n<link rel=\"canonical\" href=\"/articles/one\"><link rel=\"icon\" href=\"/static/icon.png\"><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple.png\">\n<link rel=\"alternate\" type=\"application/rss+xml\" href=\"/feed.xml\" title=\"Main feed\"></head><body><h1>Heading</h1></body></html>",
+   "https://example.com/a/b"
+  ],
+  "expect": {
+   "title": "Order matters not",
+   "description": "OG description",
+   "canonical": "https://example.com/articles/one",
+   "lang": "es-ES",
+   "site_name": "Example & Co",
+   "author": "Ada Lovelace",
+   "published": "2026-09-30T10:00:00Z",
+   "image": "https://cdn.example/img.png",
+   "favicon": "https://example.com/static/icon.png",
+   "keywords": [
+    "a",
+    "b",
+    "c",
+    "d"
+   ],
+   "og": {
+    "title": "Order matters not",
+    "description": "OG description",
+    "image": "https://cdn.example/img.png",
+    "site_name": "Example & Co"
+   },
+   "twitter": {
+    "card": "summary"
+   },
+   "properties": {
+    "article:published_time": "2026-09-30T10:00:00Z"
+   }
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta content=\"Hi\" property=\"og:title\"><title>x</title>",
+   "https://a.com/p"
+  ],
+  "expect": {
+   "title": "Hi",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "https://a.com/favicon.ico",
+   "keywords": [],
+   "og": {
+    "title": "Hi"
+   },
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<title>Only title</title>"
+  ],
+  "expect": {
+   "title": "Only title",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<h1>Heading only</h1>"
+  ],
+  "expect": {
+   "title": "Heading only",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<base href='https://cdn.example/base/'><link rel=canonical href=page><meta property=og:image content=img.jpg><title>t</title>",
+   "https://example.com/"
+  ],
+  "expect": {
+   "title": "t",
+   "description": "",
+   "canonical": "https://cdn.example/base/page",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "https://cdn.example/base/img.jpg",
+   "favicon": "https://example.com/favicon.ico",
+   "keywords": [],
+   "og": {
+    "image": "img.jpg"
+   },
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta property='og:image' content='/logo.svg'><meta name='twitter:image' content='/pic.jpg'>",
+   "https://example.com/x"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "https://example.com/pic.jpg",
+   "favicon": "https://example.com/favicon.ico",
+   "keywords": [],
+   "og": {
+    "image": "/logo.svg"
+   },
+   "twitter": {
+    "image": "/pic.jpg"
+   },
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<link rel='image_src' href='/thumb.jpg'>",
+   "https://example.com/x"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "https://example.com/thumb.jpg",
+   "favicon": "https://example.com/favicon.ico",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta name='date' content='2026-01-02'><meta name='author' content='Bob'><meta name='description' content='D'>"
+  ],
+  "expect": {
+   "title": "",
+   "description": "D",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "Bob",
+   "published": "2026-01-02",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta itemprop='datePublished' content='2025-12-24'><meta itemprop='name' content='Item'>"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "2025-12-24",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta http-equiv='content-language' content='fr'><meta property='og:url' content='/u'>",
+   "https://example.com/"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "https://example.com/u",
+   "lang": "fr",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "https://example.com/favicon.ico",
+   "keywords": [],
+   "og": {
+    "url": "/u"
+   },
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta charset='utf-8'><meta content='' name='description'><meta name='description' content='  real  '>"
+  ],
+  "expect": {
+   "title": "",
+   "description": "real",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta name=\"description\" content=\"It's &quot;quoted&quot; &#8364;\">"
+  ],
+  "expect": {
+   "title": "",
+   "description": "It's \"quoted\" €",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<script type='application/ld+json'>{\"@type\":\"Article\",\"author\":{\"@type\":\"Person\",\"name\":\"Jane\"},\"datePublished\":\"2026-02-03\",\"description\":\"From JSON-LD\"}</script><title>t</title>"
+  ],
+  "expect": {
+   "title": "t",
+   "description": "From JSON-LD",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "Jane",
+   "published": "2026-02-03",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<script type='application/ld+json'>{\"@type\":\"Article\",\"author\":[{\"name\":\"A\"},{\"name\":\"B\"}],\"datePublished\":\"2026-02-03\",}</script><meta name='author' content='Meta wins'>"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "Meta wins",
+   "published": "2026-02-03",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<link rel='shortcut icon' href='icon.ico'><link rel='icon' href='https://cdn.example/i.png'>",
+   "https://example.com/dir/page"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "https://example.com/dir/icon.ico",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<link rel='apple-touch-icon' sizes='57x57' href='/a57.png'><link rel='apple-touch-icon' sizes='180x180' href='/a180.png'>",
+   "https://example.com/"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "https://example.com/a180.png",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<link rel='icon' href='javascript:x'><link rel='icon' href='data:image/png;base64,AAAA'>",
+   "https://example.com/"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "https://example.com/favicon.ico",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "",
+   "https://example.com/"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "https://example.com/favicon.ico",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   null
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<html xml:lang='de'><body>x</body></html>"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "de",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta property='og:title' content='A'><meta name='og:title' content='B'><meta name='og:locale' content='en_GB'>"
+  ],
+  "expect": {
+   "title": "A",
+   "description": "",
+   "canonical": "",
+   "lang": "en_GB",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {
+    "title": "A",
+    "locale": "en_GB"
+   },
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<meta property='article:tag' content='x'><meta property='fb:app_id' content='1'><meta name='twitter:site' content='@a'>"
+  ],
+  "expect": {
+   "title": "",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {
+    "site": "@a"
+   },
+   "properties": {
+    "article:tag": "x",
+    "fb:app_id": "1"
+   }
+  }
+ },
+ {
+  "fn": "page_meta",
+  "args": [
+   "<title>One</title><title>Two</title><h1>H1</h1><h1>H2</h1>"
+  ],
+  "expect": {
+   "title": "One",
+   "description": "",
+   "canonical": "",
+   "lang": "",
+   "site_name": "",
+   "author": "",
+   "published": "",
+   "image": "",
+   "favicon": "",
+   "keywords": [],
+   "og": {},
+   "twitter": {},
+   "properties": {}
+  }
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\">{\"@type\":\"Product\",\"name\":\"Cook's Trailing Comma\",\"offers\":{\"@type\":\"Offer\",\"price\":\"9.99\",},}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Product",
+     "name": "Cook's Trailing Comma",
+     "offers": {
+      "@type": "Offer",
+      "price": "9.99"
+     }
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\">[{\"@type\":\"A\",\"x\":1,},{\"@type\":\"B\",}]</script>"
+  ],
+  "expect": [
+   [
+    [
+     {
+      "@type": "A",
+      "x": 1
+     },
+     {
+      "@type": "B"
+     }
+    ]
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\"><!--\n{\"@type\":\"Recipe\",\"name\":\"Wrapped\"}\n--></script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Recipe",
+     "name": "Wrapped"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\">//<![CDATA[\n{\"@type\":\"X\"}\n//]]></script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "X"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\"><![CDATA[{\"@type\":\"Cdata\"}]]></script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Cdata"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\">{&quot;@type&quot;:&quot;Escaped&quot;,&quot;name&quot;:&quot;Q&quot;}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Escaped",
+     "name": "Q"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\">{\"@type\":\"Raw\",\"description\":\"line one\nline two\ttabbed\"}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Raw",
+     "description": "line one\nline two\ttabbed"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\">{\"@type\":\"Ctl\",\"name\":\"bell\u0007here\"}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Ctl",
+     "name": "bell here"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\">{\"@type\": broken</script>"
+  ],
+  "expect": [
+   [],
+   1
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\"></script>"
+  ],
+  "expect": [
+   [],
+   1
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/ld+json\">{\"@type\":\"Good\"}</script><script type=\"application/ld+json\">not json</script><script type=\"application/ld+json; charset=utf-8\">{\"@type\":\"Good2\"}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Good"
+    },
+    {
+     "@type": "Good2"
+    }
+   ],
+   1
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=\"application/json\">{\"@type\":\"Ignored\"}</script>"
+  ],
+  "expect": [
+   [],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type=application/ld+json>{\"@type\":\"Unquoted\"}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Unquoted"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type='application/ld+json'>{\"@type\":\"Tag\",\"name\":\"has </b> html-ish <i>text\"}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Tag",
+     "name": "has </b> html-ish <i>text"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type='application/ld+json'>﻿{\"@type\":\"Bom\"}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "@type": "Bom"
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_blocks",
+  "args": [
+   "<script type='application/ld+json'>{\"a\": \"\\u00e9\\n\", \"b\": [1, 2.5, null, true]}</script>"
+  ],
+  "expect": [
+   [
+    {
+     "a": "é\n",
+     "b": [
+      1,
+      2.5,
+      null,
+      true
+     ]
+    }
+   ],
+   0
+  ]
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@context": "https://schema.org",
+     "@graph": [
+      {
+       "@type": "WebSite",
+       "name": "Site"
+      },
+      {
+       "@type": [
+        "Product",
+        "Thing"
+       ],
+       "name": "P1",
+       "hasVariant": [
+        {
+         "@type": "Product",
+         "name": "V1"
+        },
+        {
+         "@type": "Product",
+         "name": "V2"
+        }
+       ],
+       "review": [
+        {
+         "@type": "Review",
+         "name": "R"
+        }
+       ],
+       "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": 4
+       },
+       "offers": {
+        "@type": "Offer",
+        "price": "5"
+       },
+       "author": {
+        "@type": "Person",
+        "name": "Hidden"
+       }
+      },
+      {
+       "@type": "ItemList",
+       "itemListElement": [
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Soup"
+         }
+        },
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Stew"
+         }
+        }
+       ]
+      },
+      {
+       "@type": "https://schema.org/JobPosting",
+       "title": "Dev",
+       "mainEntity": {
+        "@type": "schema:Organization",
+        "name": "Org"
+       }
+      }
+     ]
+    }
+   ]
+  ],
+  "expect": [
+   {
+    "@type": "WebSite",
+    "name": "Site"
+   },
+   {
+    "@type": [
+     "Product",
+     "Thing"
+    ],
+    "name": "P1",
+    "hasVariant": [
+     {
+      "@type": "Product",
+      "name": "V1"
+     },
+     {
+      "@type": "Product",
+      "name": "V2"
+     }
+    ],
+    "review": [
+     {
+      "@type": "Review",
+      "name": "R"
+     }
+    ],
+    "aggregateRating": {
+     "@type": "AggregateRating",
+     "ratingValue": 4
+    },
+    "offers": {
+     "@type": "Offer",
+     "price": "5"
+    },
+    "author": {
+     "@type": "Person",
+     "name": "Hidden"
+    }
+   },
+   {
+    "@type": "Product",
+    "name": "V1"
+   },
+   {
+    "@type": "Product",
+    "name": "V2"
+   },
+   {
+    "@type": "Offer",
+    "price": "5"
+   },
+   {
+    "@type": "ItemList",
+    "itemListElement": [
+     {
+      "@type": "ListItem",
+      "item": {
+       "@type": "Recipe",
+       "name": "Soup"
+      }
+     },
+     {
+      "@type": "ListItem",
+      "item": {
+       "@type": "Recipe",
+       "name": "Stew"
+      }
+     }
+    ]
+   },
+   {
+    "@type": "ListItem",
+    "item": {
+     "@type": "Recipe",
+     "name": "Soup"
+    }
+   },
+   {
+    "@type": "Recipe",
+    "name": "Soup"
+   },
+   {
+    "@type": "ListItem",
+    "item": {
+     "@type": "Recipe",
+     "name": "Stew"
+    }
+   },
+   {
+    "@type": "Recipe",
+    "name": "Stew"
+   },
+   {
+    "@type": "https://schema.org/JobPosting",
+    "title": "Dev",
+    "mainEntity": {
+     "@type": "schema:Organization",
+     "name": "Org"
+    }
+   },
+   {
+    "@type": "schema:Organization",
+    "name": "Org"
+   }
+  ]
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@context": "https://schema.org",
+     "@graph": [
+      {
+       "@type": "WebSite",
+       "name": "Site"
+      },
+      {
+       "@type": [
+        "Product",
+        "Thing"
+       ],
+       "name": "P1",
+       "hasVariant": [
+        {
+         "@type": "Product",
+         "name": "V1"
+        },
+        {
+         "@type": "Product",
+         "name": "V2"
+        }
+       ],
+       "review": [
+        {
+         "@type": "Review",
+         "name": "R"
+        }
+       ],
+       "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": 4
+       },
+       "offers": {
+        "@type": "Offer",
+        "price": "5"
+       },
+       "author": {
+        "@type": "Person",
+        "name": "Hidden"
+       }
+      },
+      {
+       "@type": "ItemList",
+       "itemListElement": [
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Soup"
+         }
+        },
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Stew"
+         }
+        }
+       ]
+      },
+      {
+       "@type": "https://schema.org/JobPosting",
+       "title": "Dev",
+       "mainEntity": {
+        "@type": "schema:Organization",
+        "name": "Org"
+       }
+      }
+     ]
+    }
+   ],
+   [
+    "product"
+   ]
+  ],
+  "expect": [
+   {
+    "@type": [
+     "Product",
+     "Thing"
+    ],
+    "name": "P1",
+    "hasVariant": [
+     {
+      "@type": "Product",
+      "name": "V1"
+     },
+     {
+      "@type": "Product",
+      "name": "V2"
+     }
+    ],
+    "review": [
+     {
+      "@type": "Review",
+      "name": "R"
+     }
+    ],
+    "aggregateRating": {
+     "@type": "AggregateRating",
+     "ratingValue": 4
+    },
+    "offers": {
+     "@type": "Offer",
+     "price": "5"
+    },
+    "author": {
+     "@type": "Person",
+     "name": "Hidden"
+    }
+   },
+   {
+    "@type": "Product",
+    "name": "V1"
+   },
+   {
+    "@type": "Product",
+    "name": "V2"
+   }
+  ]
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@context": "https://schema.org",
+     "@graph": [
+      {
+       "@type": "WebSite",
+       "name": "Site"
+      },
+      {
+       "@type": [
+        "Product",
+        "Thing"
+       ],
+       "name": "P1",
+       "hasVariant": [
+        {
+         "@type": "Product",
+         "name": "V1"
+        },
+        {
+         "@type": "Product",
+         "name": "V2"
+        }
+       ],
+       "review": [
+        {
+         "@type": "Review",
+         "name": "R"
+        }
+       ],
+       "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": 4
+       },
+       "offers": {
+        "@type": "Offer",
+        "price": "5"
+       },
+       "author": {
+        "@type": "Person",
+        "name": "Hidden"
+       }
+      },
+      {
+       "@type": "ItemList",
+       "itemListElement": [
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Soup"
+         }
+        },
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Stew"
+         }
+        }
+       ]
+      },
+      {
+       "@type": "https://schema.org/JobPosting",
+       "title": "Dev",
+       "mainEntity": {
+        "@type": "schema:Organization",
+        "name": "Org"
+       }
+      }
+     ]
+    }
+   ],
+   [
+    "Recipe",
+    "JobPosting"
+   ]
+  ],
+  "expect": [
+   {
+    "@type": "Recipe",
+    "name": "Soup"
+   },
+   {
+    "@type": "Recipe",
+    "name": "Stew"
+   },
+   {
+    "@type": "https://schema.org/JobPosting",
+    "title": "Dev",
+    "mainEntity": {
+     "@type": "schema:Organization",
+     "name": "Org"
+    }
+   }
+  ]
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@context": "https://schema.org",
+     "@graph": [
+      {
+       "@type": "WebSite",
+       "name": "Site"
+      },
+      {
+       "@type": [
+        "Product",
+        "Thing"
+       ],
+       "name": "P1",
+       "hasVariant": [
+        {
+         "@type": "Product",
+         "name": "V1"
+        },
+        {
+         "@type": "Product",
+         "name": "V2"
+        }
+       ],
+       "review": [
+        {
+         "@type": "Review",
+         "name": "R"
+        }
+       ],
+       "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": 4
+       },
+       "offers": {
+        "@type": "Offer",
+        "price": "5"
+       },
+       "author": {
+        "@type": "Person",
+        "name": "Hidden"
+       }
+      },
+      {
+       "@type": "ItemList",
+       "itemListElement": [
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Soup"
+         }
+        },
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Stew"
+         }
+        }
+       ]
+      },
+      {
+       "@type": "https://schema.org/JobPosting",
+       "title": "Dev",
+       "mainEntity": {
+        "@type": "schema:Organization",
+        "name": "Org"
+       }
+      }
+     ]
+    }
+   ],
+   [
+    "Person"
+   ]
+  ],
+  "expect": []
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@context": "https://schema.org",
+     "@graph": [
+      {
+       "@type": "WebSite",
+       "name": "Site"
+      },
+      {
+       "@type": [
+        "Product",
+        "Thing"
+       ],
+       "name": "P1",
+       "hasVariant": [
+        {
+         "@type": "Product",
+         "name": "V1"
+        },
+        {
+         "@type": "Product",
+         "name": "V2"
+        }
+       ],
+       "review": [
+        {
+         "@type": "Review",
+         "name": "R"
+        }
+       ],
+       "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": 4
+       },
+       "offers": {
+        "@type": "Offer",
+        "price": "5"
+       },
+       "author": {
+        "@type": "Person",
+        "name": "Hidden"
+       }
+      },
+      {
+       "@type": "ItemList",
+       "itemListElement": [
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Soup"
+         }
+        },
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Stew"
+         }
+        }
+       ]
+      },
+      {
+       "@type": "https://schema.org/JobPosting",
+       "title": "Dev",
+       "mainEntity": {
+        "@type": "schema:Organization",
+        "name": "Org"
+       }
+      }
+     ]
+    }
+   ],
+   [
+    "Person"
+   ]
+  ],
+  "opts": {
+   "skip": []
+  },
+  "expect": [
+   {
+    "@type": "Person",
+    "name": "Hidden"
+   }
+  ]
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@context": "https://schema.org",
+     "@graph": [
+      {
+       "@type": "WebSite",
+       "name": "Site"
+      },
+      {
+       "@type": [
+        "Product",
+        "Thing"
+       ],
+       "name": "P1",
+       "hasVariant": [
+        {
+         "@type": "Product",
+         "name": "V1"
+        },
+        {
+         "@type": "Product",
+         "name": "V2"
+        }
+       ],
+       "review": [
+        {
+         "@type": "Review",
+         "name": "R"
+        }
+       ],
+       "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": 4
+       },
+       "offers": {
+        "@type": "Offer",
+        "price": "5"
+       },
+       "author": {
+        "@type": "Person",
+        "name": "Hidden"
+       }
+      },
+      {
+       "@type": "ItemList",
+       "itemListElement": [
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Soup"
+         }
+        },
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Stew"
+         }
+        }
+       ]
+      },
+      {
+       "@type": "https://schema.org/JobPosting",
+       "title": "Dev",
+       "mainEntity": {
+        "@type": "schema:Organization",
+        "name": "Org"
+       }
+      }
+     ]
+    }
+   ],
+   [
+    "Review"
+   ]
+  ],
+  "opts": {
+   "skip": []
+  },
+  "expect": [
+   {
+    "@type": "Review",
+    "name": "R"
+   }
+  ]
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@context": "https://schema.org",
+     "@graph": [
+      {
+       "@type": "WebSite",
+       "name": "Site"
+      },
+      {
+       "@type": [
+        "Product",
+        "Thing"
+       ],
+       "name": "P1",
+       "hasVariant": [
+        {
+         "@type": "Product",
+         "name": "V1"
+        },
+        {
+         "@type": "Product",
+         "name": "V2"
+        }
+       ],
+       "review": [
+        {
+         "@type": "Review",
+         "name": "R"
+        }
+       ],
+       "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": 4
+       },
+       "offers": {
+        "@type": "Offer",
+        "price": "5"
+       },
+       "author": {
+        "@type": "Person",
+        "name": "Hidden"
+       }
+      },
+      {
+       "@type": "ItemList",
+       "itemListElement": [
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Soup"
+         }
+        },
+        {
+         "@type": "ListItem",
+         "item": {
+          "@type": "Recipe",
+          "name": "Stew"
+         }
+        }
+       ]
+      },
+      {
+       "@type": "https://schema.org/JobPosting",
+       "title": "Dev",
+       "mainEntity": {
+        "@type": "schema:Organization",
+        "name": "Org"
+       }
+      }
+     ]
+    }
+   ],
+   [
+    "Offer"
+   ]
+  ],
+  "expect": [
+   {
+    "@type": "Offer",
+    "price": "5"
+   }
+  ]
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    [
+     {
+      "@type": "A"
+     },
+     {
+      "@type": "B",
+      "child": [
+       {
+        "@type": "C"
+       }
+      ]
+     },
+     {
+      "name": "untyped",
+      "x": {
+       "@type": "D"
+      }
+     }
+    ]
+   ]
+  ],
+  "expect": [
+   {
+    "@type": "A"
+   },
+   {
+    "@type": "B",
+    "child": [
+     {
+      "@type": "C"
+     }
+    ]
+   },
+   {
+    "@type": "C"
+   },
+   {
+    "@type": "D"
+   }
+  ]
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   []
+  ],
+  "expect": []
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@type": null
+    },
+    {
+     "@type": []
+    },
+    {
+     "@type": ""
+    }
+   ]
+  ],
+  "expect": []
+ },
+ {
+  "fn": "jsonld_nodes",
+  "args": [
+   [
+    {
+     "@type": "Deep",
+     "a": {
+      "b": {
+       "c": {
+        "d": {
+         "e": {
+          "f": {
+           "g": {
+            "h": {
+             "i": {
+              "j": {
+               "k": {
+                "l": {
+                 "m": {
+                  "n": {
+                   "o": {
+                    "@type": "TooDeep"
+                   }
+                  }
+                 }
+                }
+               }
+              }
+             }
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   ]
+  ],
+  "expect": [
+   {
+    "@type": "Deep",
+    "a": {
+     "b": {
+      "c": {
+       "d": {
+        "e": {
+         "f": {
+          "g": {
+           "h": {
+            "i": {
+             "j": {
+              "k": {
+               "l": {
+                "m": {
+                 "n": {
+                  "o": {
+                   "@type": "TooDeep"
+                  }
+                 }
+                }
+               }
+              }
+             }
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ {
+  "fn": "discover_feeds",
+  "args": [
+   "<head><link rel=\"alternate\" type=\"application/rss+xml\" title=\"RSS &amp; more\" href=\"/rss.xml\"><link rel=\"alternate\" type=\"application/atom+xml\" href=\"https://other.example/atom\"><link rel=\"feed\" type=\"application/rss+xml\" href=\"rss.xml\">\n<link rel=\"alternate\" type=\"application/xml\" href=\"/sitemap.xml\"><link rel=\"alternate\" type=\"text/xml\" href=\"/blog/feed.xml\" title=\"blog\"><link rel=\"alternate\" type=\"application/json\" href=\"/data.json\"><link rel=\"alternate\" type=\"application/feed+json\" href=\"/feed.json\"><link rel=\"alternate\" hreflang=\"es\" href=\"/es/\"><link rel=\"stylesheet\" type=\"text/css\" href=\"a.css\"><link rel=\"alternate\" type=\"application/rss+xml\" href=\"/rss.xml\"></head>",
+   "https://example.com/dir/"
+  ],
+  "expect": [
+   {
+    "url": "https://example.com/rss.xml",
+    "type": "application/rss+xml",
+    "kind": "rss",
+    "title": "RSS & more"
+   },
+   {
+    "url": "https://other.example/atom",
+    "type": "application/atom+xml",
+    "kind": "atom",
+    "title": ""
+   },
+   {
+    "url": "https://example.com/dir/rss.xml",
+    "type": "application/rss+xml",
+    "kind": "rss",
+    "title": ""
+   },
+   {
+    "url": "https://example.com/sitemap.xml",
+    "type": "application/xml",
+    "kind": "rss",
+    "title": ""
+   },
+   {
+    "url": "https://example.com/blog/feed.xml",
+    "type": "text/xml",
+    "kind": "rss",
+    "title": "blog"
+   },
+   {
+    "url": "https://example.com/feed.json",
+    "type": "application/feed+json",
+    "kind": "json",
+    "title": ""
+   }
+  ]
+ },
+ {
+  "fn": "discover_feeds",
+  "args": [
+   "<head><link rel=\"alternate\" type=\"application/rss+xml\" title=\"RSS &amp; more\" href=\"/rss.xml\"><link rel=\"alternate\" type=\"application/atom+xml\" href=\"https://other.example/atom\"><link rel=\"feed\" type=\"application/rss+xml\" href=\"rss.xml\">\n<link rel=\"alternate\" type=\"application/xml\" href=\"/sitemap.xml\"><link rel=\"alternate\" type=\"text/xml\" href=\"/blog/feed.xml\" title=\"blog\"><link rel=\"alternate\" type=\"application/json\" href=\"/data.json\"><link rel=\"alternate\" type=\"application/feed+json\" href=\"/feed.json\"><link rel=\"alternate\" hreflang=\"es\" href=\"/es/\"><link rel=\"stylesheet\" type=\"text/css\" href=\"a.css\"><link rel=\"alternate\" type=\"application/rss+xml\" href=\"/rss.xml\"></head>"
+  ],
+  "expect": [
+   {
+    "url": "/rss.xml",
+    "type": "application/rss+xml",
+    "kind": "rss",
+    "title": "RSS & more"
+   },
+   {
+    "url": "https://other.example/atom",
+    "type": "application/atom+xml",
+    "kind": "atom",
+    "title": ""
+   },
+   {
+    "url": "rss.xml",
+    "type": "application/rss+xml",
+    "kind": "rss",
+    "title": ""
+   },
+   {
+    "url": "/sitemap.xml",
+    "type": "application/xml",
+    "kind": "rss",
+    "title": ""
+   },
+   {
+    "url": "/blog/feed.xml",
+    "type": "text/xml",
+    "kind": "rss",
+    "title": "blog"
+   },
+   {
+    "url": "/feed.json",
+    "type": "application/feed+json",
+    "kind": "json",
+    "title": ""
+   }
+  ]
+ },
+ {
+  "fn": "discover_feeds",
+  "args": [
+   "<base href='https://b.example/x/'><link rel=alternate type=application/rss+xml href=f.xml>",
+   "https://example.com/"
+  ],
+  "expect": [
+   {
+    "url": "https://b.example/x/f.xml",
+    "type": "application/rss+xml",
+    "kind": "rss",
+    "title": ""
+   }
+  ]
+ },
+ {
+  "fn": "discover_feeds",
+  "args": [
+   "<p>no links</p>"
+  ],
+  "expect": []
+ },
+ {
+  "fn": "discover_feeds",
+  "args": [
+   null
+  ],
+  "expect": []
+ },
+ {
+  "fn": "favicon_candidates",
+  "args": [
+   "<!doctype html><html lang=\"es-ES\"><head><meta charset=\"utf-8\"><title>  Fallback   title </title>\n<meta content=\"Order matters not\" property=\"og:title\"><meta name=\"description\" content=\"Plain description &amp; more\">\n<meta property=\"og:description\" content=\"OG description\"><meta content=\"https://cdn.example/img.png\" property=\"og:image\">\n<meta name=\"twitter:card\" content=\"summary\"><meta name=\"author\" content=\"Ada Lovelace\"><meta property=\"article:published_time\" content=\"2026-09-30T10:00:00Z\">\n<meta property=\"og:site_name\" content=\"Example &amp; Co\"><meta name=\"keywords\" content=\"a, b; c ,, d\">\n<link rel=\"canonical\" href=\"/articles/one\"><link rel=\"icon\" href=\"/static/icon.png\"><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple.png\">\n<link rel=\"alternate\" type=\"application/rss+xml\" href=\"/feed.xml\" title=\"Main feed\"></head><body><h1>Heading</h1></body></html>",
+   "https://example.com/a/b"
+  ],
+  "expect": [
+   "https://example.com/favicon.ico",
+   "https://example.com/static/icon.png",
+   "https://example.com/apple.png"
+  ]
+ },
+ {
+  "fn": "favicon_candidates",
+  "args": [
+   "<!doctype html><html lang=\"es-ES\"><head><meta charset=\"utf-8\"><title>  Fallback   title </title>\n<meta content=\"Order matters not\" property=\"og:title\"><meta name=\"description\" content=\"Plain description &amp; more\">\n<meta property=\"og:description\" content=\"OG description\"><meta content=\"https://cdn.example/img.png\" property=\"og:image\">\n<meta name=\"twitter:card\" content=\"summary\"><meta name=\"author\" content=\"Ada Lovelace\"><meta property=\"article:published_time\" content=\"2026-09-30T10:00:00Z\">\n<meta property=\"og:site_name\" content=\"Example &amp; Co\"><meta name=\"keywords\" content=\"a, b; c ,, d\">\n<link rel=\"canonical\" href=\"/articles/one\"><link rel=\"icon\" href=\"/static/icon.png\"><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple.png\">\n<link rel=\"alternate\" type=\"application/rss+xml\" href=\"/feed.xml\" title=\"Main feed\"></head><body><h1>Heading</h1></body></html>",
+   "https://example.com/a/b"
+  ],
+  "opts": {
+   "ico_first": false
+  },
+  "expect": [
+   "https://example.com/static/icon.png",
+   "https://example.com/favicon.ico",
+   "https://example.com/apple.png"
+  ]
+ },
+ {
+  "fn": "favicon_candidates",
+  "args": [
+   "<link rel='icon' href='//cdn.example/i.png'><link rel='icon' href='/i.png'>",
+   "https://example.com:8443/x"
+  ],
+  "expect": [
+   "https://example.com:8443/favicon.ico",
+   "https://cdn.example/i.png",
+   "https://example.com:8443/i.png"
+  ]
+ },
+ {
+  "fn": "favicon_candidates",
+  "args": [
+   "<p>none</p>",
+   "https://example.com/x"
+  ],
+  "expect": [
+   "https://example.com/favicon.ico"
+  ]
+ },
+ {
+  "fn": "favicon_candidates",
+  "args": [
+   "<p>none</p>"
+  ],
+  "expect": []
+ }
+]
