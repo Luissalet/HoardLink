@@ -206,6 +206,26 @@ html[data-hoard-app="daguerre"] {
   --hoard-accent-line: rgba(69, 188, 203, 0.38);
 }
 
+html[data-hoard-app="cookhoard"] {
+  --hoard-deep: #1c1614;
+  --hoard-sunken: #161110;
+  --hoard-surface: #241d1b;
+  --hoard-elevated: #2f2725;
+  --hoard-hover: #382e2b;
+  --hoard-border: #433835;
+  --hoard-border-hover: #6a5b58;
+  --hoard-text: #ece3e1;
+  --hoard-text-muted: #beb6b4;
+  --hoard-text-dim: #a69d9b;
+  --hoard-accent: #d35f44;
+  --hoard-accent-strong: #db7b65;
+  --hoard-accent-dim: #a34b37;
+  --hoard-accent-ink: #1b1513;
+  --hoard-accent-rgb: 211, 95, 68;
+  --hoard-accent-soft: rgba(211, 95, 68, 0.14);
+  --hoard-accent-line: rgba(211, 95, 68, 0.38);
+}
+
 html[data-hoard-app="diskhoard"] {
   --hoard-deep: #141c19;
   --hoard-sunken: #101614;

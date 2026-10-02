@@ -20,6 +20,7 @@ PALETTES: dict[str, tuple[str, float | None, float]] = {
     "cassandra":    ("#e466a0", None, 0.176),
     "cicero":       ("#d98f86", None, 0.144),
     "daguerre":     ("#45bccb", None, 0.176),
+    "cookhoard":    ("#d35f44", None, 0.16),
     "diskhoard":    ("#45c58f", None, 0.16),
     "dorian":       ("#df5b74", None, 0.176),
     "echo":         ("#a77de4", None, 0.192),
