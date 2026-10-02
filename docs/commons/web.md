@@ -189,3 +189,100 @@ Not in the Node twin: `to_markdown`, `search`, `browser` (a Node app that needs 
   repaired once.
 * JSON-LD survives `<!-- -->`, `//<![CDATA[`, trailing commas (as one real recipe site emits them), raw control characters and
   HTML-escaped quotes. `<meta>` attribute order does not matter.
+
+## Family service (hub facet `web`)
+
+The commons above are libraries: each app can build its own `Fetcher`. The hub also runs ONE of them for the whole family
+(`hoard_link/hub/web.py`, facet id `web`, tab "Web"), so that the things that only work when everybody shares them do:
+
+* **one throttle**: every request to a host, from any app, is serialized and spaced (`default_min_interval_s`, `Crawl-delay`
+  honoured); at most 20 requests wait for one host (more get `error_kind: "busy"`);
+* **one block cooldown**: a 429, a login wall or an anti-bot page blocks the host for everyone (30 minutes, or `Retry-After`,
+  capped at one hour) and the state is in `<data>/web.db`, so it survives restarts;
+* **one robots.txt cache** (also in `web.db`) and one policy: apps only reach PUBLIC addresses; `operator_local` is for the hub's
+  page and agent. `respect_robots` is a hub setting first: an app can ask for it but cannot turn it off while the setting is on;
+* **one response cache** (`<data>/web/cache`: ttl, stale-if-error, conditional GET) and 7-day link previews. Nothing fetched with
+  the wider `operator_local` profile is cached or previewed for the apps;
+* **one optional browser**: `hoard_link.web.browser.BrowserRung` on ONE profile, `<data>/web/browser-profile`, used when the hub's
+  Python has `playwright` (`tier: "auto"` escalates blocked pages to it; `tier: "browser"` asks for it). Without playwright the
+  tier answers `{ok: false, error: "browser tier unavailable: playwright is not installed in the hub's Python", error_kind: "unavailable"}`
+  and everything else keeps working. `open_for_human` opens the profile visibly (or the default browser) so a person can solve a
+  challenge; the block is cleared when the window closes;
+* **one search** (`WebSearch`): SearXNG when a URL is set, DuckDuckGo HTML, Bing HTML, Brave with a key, Google/Bing News RSS;
+  per-engine minimum intervals shared by the family.
+
+### Routes
+
+A family bearer token (an app's own `data/mcp-token`), the hub's token, or the hub page (caller `ui`) is required. The caller is
+the token's owner: an app cannot name another one in `caller` (the hub token and the page can label themselves).
+
+| Route | Body / query | Answer |
+|---|---|---|
+| `POST /api/web/fetch` | `url, tier (auto/http/browser/window*), accept (html/json/any), etag, last_modified, respect_robots, max_bytes (cap 16 MiB), timeout (1-120 s), extract (readable/markdown/meta/jsonld/feed), cache_ttl_s, fresh, profile (public; operator_local*)` | the `FetchResult` as a dict plus `text` (capped at 2 MB, `text_truncated`), `body_b64` + `body_size` (`accept: "any"`, up to 5 MB, else `body_omitted`), `extract`, `blocked_until_ts` |
+| `POST /api/web/fetch_file` | `url, dest_dir?, max_bytes (default 50 MB, cap 500 MB), timeout` | `{ok, path, sha256, content_type, size, filename}`; saved in `<data>/web/files/<caller>/` or in `dest_dir` (an absolute folder, checked with `paths.unsafe_output_dir`); the same bytes under the same name are reused, other bytes become `name (2).ext` |
+| `POST /api/web/search` | `query, limit (1-50), freshness_days, engines, news` | `{ok, query, hits: [{url, title, snippet, engine, rank, published}], errors: {engine: why}, engines, ms}` |
+| `GET /api/web/preview?url=`, `POST` | `url, fresh` | `{ok, title, description, image, site_name, favicon, favicons, canonical, lang, author, published, from_cache}`; 7 days; a failed refresh serves the old one with `stale: true` |
+| `GET /api/web/hosts` | | `{ok, hosts: [{host, last_status, blocked_now, blocked_until_ts, block_reason, min_interval_s, effective_min_interval_s, preferred_tier, last_caller, last_error, ok_count, fail_count, last_fetch_ts}], blocked}` |
+| `POST /api/web/hosts/clear` | `host, reset?` | lifts the cooldown (`reset` also forgets the preferred tier); hub page / hub token only |
+| `POST /api/web/open` | `url` | `{ok, started, via: "family_profile" \| "default_browser"}`; returns at once, one window at a time (409 otherwise) |
+| `GET /api/web/status` | | enabled, settings that matter, browser tier (`available`, `reason`, `profile_dir`), cache stats, engines, hosts, last 15 audit rows |
+
+\* `window` and `operator_local` are for the hub page and agent; an app asking gets 403.
+
+A fetch that fails is **HTTP 200 with `ok: false`** (the answer keeps the upstream `status`, `error`, `error_kind`: the `Fetcher` kinds
+plus `unavailable` and `busy`). HTTP errors mean the request itself was wrong (400), unauthorised (401/403) or the service is off
+(503, `web.enabled = false`). Every request is audited in `web.db` (caller, host, status, ms, tier, cached: never the URL path or
+the body) and emitted as the hub event `web.fetch` (`host, status, ms, caller, ok, tier, from_cache, kind`) or `web.search`.
+
+### Agent tools (hub MCP)
+
+`hub_web_fetch` (readable text / markdown / meta / jsonld / feed / raw, `max_chars`, `fresh`, `profile`), `hub_web_search`,
+`hub_web_preview`, `hub_web_hosts` (list the per-host state; `clear_block` lifts one).
+
+### Settings (`hub.json` → `web`)
+
+| Key | Default | |
+|---|---|---|
+| `enabled` | `true` | `false` answers 503 everywhere (apps fall back to their own fetcher) |
+| `user_agent` | `""` | empty = the family's desktop-browser string (no app name) |
+| `default_min_interval_s` | `2.0` | between two requests to one host (per-host overrides live in `web.db`) |
+| `respect_robots` | `true` | for HTML requests; `false` turns it off for the family |
+| `cache_ttl_s` | `300` | how old a cached page may be unless the request says otherwise (`0` = never use it) |
+| `max_bytes` | `3145728` | the default body cap of a fetch |
+| `searxng_url` | `""` | your own SearXNG (private addresses allowed for it) |
+| `brave_api_key` | `""` | enables Brave; never shown by `/api/config` (masked) |
+| `browser` | `"auto"` | `"off"` never starts a browser |
+
+Hidden extras: `search_intervals` (`{engine: seconds}`), `lang` / `region` (search interface, default `es` / `ES`). Restart the hub
+after editing `hub.json`.
+
+### From an app
+
+```python
+from hoard_link import family, fam_web
+
+family.configure("tantalus", DATA_DIR)                       # the token file is how the hub knows who asks
+page = fam_web.fetch(url, extract="readable")                # {ok, status, text, extract: {title, text, quality}, from_cache, tier, ...}
+page = fam_web.fetch_or_local(url, extract="readable")       # the hub when it answers, a local Fetcher otherwise; page["via"]
+found = fam_web.search("pellet stove review", limit=8, freshness_days=30)
+card = fam_web.preview(url)                                  # {title, description, image, favicon, favicons}
+got = fam_web.fetch_file(url, dest_dir=r"D:\Downloads")      # {ok, path, sha256, size}
+fam_web.open_for_human(url)                                  # a challenge the person has to solve
+```
+
+```js
+import * as family from "./hoard-link.js";
+import { webFetchOrLocal, webSearch, webPreview, webFetchFile, webHostStatus, webOpen } from "./hoard-commons/fam-web.js";
+family.configure({ app: "links", dataDir: DATA_DIR });
+const page = await webFetchOrLocal(url, { extract: "readable" });      // page.via: "hub" | "local" (falls back to web.js webGet)
+```
+
+Both clients follow the conventions of `fam_notify` / `fam_mail`: standard library only, nothing raises, availability cached 30 s,
+`{"ok": False, "error": "hub unreachable"}` when nothing answers, a refused token adds `status: 401`. `fetch(cache_ttl_s=0)` means
+"the hub's default"; `fresh=True` skips the cache. A body fetched with `accept="any"` arrives decoded in `body` (bytes / Buffer).
+
+**Fallback.** `available()` is false when the hub is down, has no `web` facet (an older hub), is switched off, or refuses the token.
+`fetch_or_local` then uses a process-local `Fetcher` (Python, needs `httpx`; the default has a 2 s interval, no cache and the
+`public` policy) or `webGet` (Node: robots.txt only when `respectRobots`, throttle only inside that process, no browser tier, no
+Markdown extract). A page that failed on the hub (404, robots, blocked) is NOT retried locally: that would defeat the shared
+cooldown. The tradeoff of the fallback is exactly what the hub removes: per-process throttle and block state.

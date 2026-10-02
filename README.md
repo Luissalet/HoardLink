@@ -658,7 +658,7 @@ settings in [docs/HUB.md](docs/HUB.md#models-for-every-app).
 
 ### Spheres, notifications, mail, Today and more (0.7)
 
-Nine *facets* sit on the hub, each with its own routes, tools and tab (`hoard_link/hub/facets.py`):
+Ten *facets* sit on the hub, each with its own routes, tools and tab (`hoard_link/hub/facets.py`):
 
 | Facet | What it does | Reference |
 |---|---|---|
@@ -671,10 +671,12 @@ Nine *facets* sit on the hub, each with its own routes, tools and tab (`hoard_li
 | Search | One query over every running app's search tools, plus mail and references | [docs/facets/search.md](docs/facets/search.md) |
 | Work | Long jobs of every app (`<app>.job.*` events) with progress and GPU; failures notify | [docs/facets/work.md](docs/facets/work.md) |
 | Purchases | Ledger payment → Phileas shipment → Kafka invoice and warranty → HomeHoard item; stops the Tantalus watcher of what you bought | [docs/facets/purchases.md](docs/facets/purchases.md) |
+| Web (0.8) | One polite fetcher for every app: per-host throttle and block cooldown shared by the family, robots.txt, response cache, one optional browser profile, search, link previews (`hoard_link.fam_web`, JS `fam-web.js`) | [docs/commons/web.md](docs/commons/web.md#family-service-hub-facet-web) |
 
-App side (vendored with the library): `hoard_link.fam_notify`, `fam_mail`, `fam_agenda`, `fam_refs`
+App side (vendored with the library): `hoard_link.fam_notify`, `fam_mail`, `fam_agenda`, `fam_refs`, `fam_web`
 (standard library); Node apps get the same functions in `hoard-link.js` (`notify`, `mail*`, `installAgenda`,
-`refs*`). The contracts are sections 12 to 17 of [docs/FAMILY.md](docs/FAMILY.md).
+`refs*`; the web service in `hoard-commons/fam-web.js`: `webFetch`, `webSearch`, `webFetchOrLocal`...). The contracts are
+sections 12 to 17 of [docs/FAMILY.md](docs/FAMILY.md).
 
 ## Use with Faustus
 
