@@ -44,7 +44,7 @@ except Exception:  # noqa: BLE001
     _Request = Any  # type: ignore[misc,assignment]
     _JSONResponse = None  # type: ignore[assignment]
 
-FAMILY_VERSION = "0.6.0"
+FAMILY_VERSION = "0.7.0"
 _state: dict[str, Any] = {"app": "", "token_file": "", "hub_url": None, "enabled": True, "sent": 0, "dropped": 0,
                           "last_error": ""}
 _lock = threading.Lock()
