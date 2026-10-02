@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 
 import pytest
@@ -203,9 +204,21 @@ def test_http_and_tool(hub):
 
 def test_the_emitter_is_never_blocked(hub):
     w = work(hub)
-    t0 = time.monotonic()
-    for i in range(300):
-        emit(hub, "pygmalion.job.progress", {"job_id": "burst", "progress": i / 300})
-    assert time.monotonic() - t0 < 5
+    gate = threading.Event()
+    real = w.handle_event
+
+    def held(ev):                         # the worker is stuck on the first event until the gate opens
+        gate.wait(30)
+        real(ev)
+
+    w.handle_event = held
+    try:
+        for i in range(300):
+            emit(hub, "pygmalion.job.progress", {"job_id": "burst", "progress": i / 300})
+        # every emit came back while the worker was still held: the facet never runs in the emitter's thread
+        assert not gate.is_set() and w._queue.unfinished_tasks >= 299
+    finally:
+        gate.set()
     settle(hub)
+    w.handle_event = real
     assert w.active()[0]["progress"] > 0.9

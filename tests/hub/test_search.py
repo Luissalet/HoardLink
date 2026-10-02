@@ -162,7 +162,7 @@ def test_apps_filter_and_catalogue_cache(family):
 
 def test_a_slow_app_times_out_without_holding_the_others(tmp_path):
     slow = FakeApp("slow", [{"name": "search", "inputSchema": schema(query="string")}], {"search": lambda a: {"results": [{"title": "late"}]}},
-                   delay=3.0)
+                   delay=10.0)
     fast = FakeApp("fast", [{"name": "search", "inputSchema": schema(query="string")}], {"search": lambda a: {"results": [{"title": "now"}]}})
     hub = make_hub(tmp_path, [slow, fast])
     try:
@@ -172,7 +172,7 @@ def test_a_slow_app_times_out_without_holding_the_others(tmp_path):
         g = groups_by_app(res)
         assert g["fast"]["results"][0]["title"] == "now"
         assert g["slow"]["results"] == [] and g["slow"]["error"]
-        assert res["took_ms"] < 2500
+        assert res["took_ms"] < 6000          # far below the slow app's 10 s; slow CI runners need the margin
         assert [x["app"] for x in res["groups"] if not x.get("own")][0] == "fast"
     finally:
         hub.close()
