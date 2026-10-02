@@ -53,7 +53,7 @@ ICS_PAST_DAYS = 14
 ICS_FUTURE_DAYS = 120
 EXPORT_EVERY_S = 3600.0
 NEWS_DEFAULT_WINDOW_S = 24 * 3600.0
-INCIDENT_WINDOW_S = 7 * 24 * 3600.0
+INCIDENT_WINDOW_S = 2 * 24 * 3600.0
 #: Past items of these kinds are history, not "overdue".
 NOT_OVERDUE_KINDS = ("birthday", "exam", "release", "incident")
 PRIORITY_RANK = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
@@ -628,6 +628,53 @@ class TodayFacet(Facet):
         return out
 
     def _incidents(self, sphere: Optional[str]) -> list[dict[str, Any]]:
+        """Open incidents: Cassandra's own list when it runs (it knows which are still open), else the bus
+        of the last two days (an incident whose close never reached the bus would otherwise stay forever)."""
+        live = self._cassandra_open()
+        if live is not None:
+            return [r for r in live if not (sphere and r["app"] and not self._app_allowed(sphere, r["app"]))]
+        return self._incidents_from_bus(sphere)
+
+    def _cassandra_open(self) -> Optional[list[dict[str, Any]]]:
+        now = self.clock()
+        cached = getattr(self, "_cass_cache", None)
+        if cached and now - cached[0] < 60:
+            return cached[1]
+        out: Optional[list[dict[str, Any]]] = None
+        try:
+            app = self.hub.get("cassandra") if hasattr(self.hub, "get") else None
+            if app is not None and self._running("cassandra"):
+                res = self.hub.call_app("cassandra", "svc_incidents", {"open_only": True, "limit": 50}, caller="hub", timeout=8.0)
+                body = res.get("result") if isinstance(res, dict) and res.get("ok") else None
+                if isinstance(body, dict) and isinstance(body.get("result"), dict):
+                    body = body["result"]
+                if isinstance(body, dict) and isinstance(body.get("incidents"), list):
+                    out = []
+                    for i in body["incidents"]:
+                        ts = 0.0
+                        try:
+                            ts = datetime.fromisoformat(str(i.get("opened"))).timestamp()
+                        except (TypeError, ValueError):
+                            pass
+                        out.append({"incident_id": str(i.get("id") or ""), "app": str(i.get("service") or ""),
+                                    "service_kind": _clip(i.get("kind"), 20),
+                                    "to_state": _clip(str(i.get("change") or "").split("→")[-1].strip(), 20),
+                                    "probable_cause": _clip(i.get("probable_cause"), 200), "ts": ts})
+                    out.sort(key=lambda r: -r["ts"])
+        except Exception:  # noqa: BLE001
+            out = None
+        self._cass_cache = (now, out)
+        return out
+
+    def _running(self, app_id: str) -> bool:
+        try:
+            app = self.hub.get(app_id)
+            st = self.hub.app_status(app) if app is not None else {}
+            return str((st or {}).get("state") or "") == "running"
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _incidents_from_bus(self, sphere: Optional[str]) -> list[dict[str, Any]]:
         opened: dict[str, dict[str, Any]] = {}
         evs = self._events("cassandra.incident", "cassandra.incident.*", self.clock() - INCIDENT_WINDOW_S,
                            newest_first=False)
