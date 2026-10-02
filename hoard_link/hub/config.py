@@ -53,6 +53,10 @@ class HubConfig:
     # The Repos facet (repos.py): {roots, extra, exclude, faustus_dir, portfolio_dir, stray_prefixes,
     # default_branches, ci, expected_emails}; every key optional.
     repos: dict[str, Any] = field(default_factory=dict)
+    # The Web facet (web.py), the family's one web service: {enabled, user_agent, default_min_interval_s,
+    # respect_robots, cache_ttl_s, max_bytes, searxng_url, brave_api_key, browser: "auto" | "off"}; every key optional
+    # (defaults and validation live in web.py; restart the hub after editing).
+    web: dict[str, Any] = field(default_factory=dict)
     # Per-machine launch commands that replace a manifest's launch hint, keyed by app id:
     # {"writer": {"executable": "node", "argv": ["scripts/dev-desktop.mjs"], "cwd": "{APP_DIR}"}}.
     # For an app this machine runs differently from how it is shipped (a developer build, a
@@ -116,7 +120,12 @@ class HubConfig:
         return f"http://127.0.0.1:{self.port}"
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        """The effective configuration as ``/api/config`` shows it: secrets masked (``save`` writes the real ones)."""
+        out = asdict(self)
+        web = out.get("web")
+        if isinstance(web, dict) and web.get("brave_api_key"):
+            out["web"] = {**web, "brave_api_key": "\u2022\u2022\u2022\u2022" + str(web["brave_api_key"])[-4:]}
+        return out
 
     @classmethod
     def load(cls, path: Optional[str | Path] = None, env: Optional[Mapping[str, str]] = None) -> "HubConfig":
@@ -173,6 +182,8 @@ class HubConfig:
             cfg.lease = {}
         if not isinstance(cfg.repos, dict):
             cfg.repos = {}
+        if not isinstance(cfg.web, dict):
+            cfg.web = {}
         cfg.roots = [os.path.abspath(os.path.expanduser(r)) for r in cfg.roots]
         cfg.icon_dirs = [os.path.abspath(os.path.expanduser(r)) for r in cfg.icon_dirs]
         if not isinstance(cfg.window_size, list) or len(cfg.window_size) != 2:
@@ -182,7 +193,7 @@ class HubConfig:
     def save(self, path: Optional[str | Path] = None) -> str:
         file = Path(path) if path else Path(self.data_dir) / "hub.json"
         file.parent.mkdir(parents=True, exist_ok=True)
-        payload = self.to_dict()
+        payload = asdict(self)
         payload.pop("data_dir", None)
         file.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return str(file)
