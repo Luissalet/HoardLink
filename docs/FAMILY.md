@@ -1,4 +1,4 @@
-# The family contract (Hoard Link 0.4)
+# The family contract (Hoard Link 0.6)
 
 Twenty local apps, one assistant, one machine. This page is the contract
 every app of the family follows so the hub can list, start, back up, call
@@ -147,7 +147,10 @@ import it relatively (`from .hoard_link import family`). Node apps copy
 scripts/sync_vendored.py`** in this repository refreshes every copy in the
 sibling folders (`--install <ids>` vendors it where missing, `--dry-run`
 shows what would change); `VENDORED.txt` records the version.
-`hub_family_audit` reports which app lags.
+`hub_family_audit` reports which app lags. The vendored `hoard-link.js` is
+the Node client for everything on this page, including the models (section
+10): `chat()` and `linkStatus()` arrived in 0.6, so a Node app that wants
+them refreshes its `server/hoard-link.js` with the script.
 
 ## 8. The audit
 
@@ -178,3 +181,107 @@ the process environment and keep both local apps running. Repeating the command
 returns the same writing; a changed source is reported without replacing local
 work. `--refresh` applies a changed source only when Writer's imported text is
 still untouched. The script sends its token only to Writer's loopback API.
+
+## 10. Models for every app
+
+Python apps reach the local models through the vendored `hoard_link.Link`.
+Node apps cannot (Link is Python) and a small standard-library-only app may
+not want `httpx`. The hub is Python, always running and already has Link, so
+it serves the same thing over HTTP: the same model resolution, the same GPU
+lease when a model has to be loaded, the same reasoning effort, the same
+wait for an idle server. Loopback only, like the rest of the hub.
+
+```
+POST /api/link/chat      Authorization: Bearer <the app's own token | the hub's data/mcp-token>
+body: {"capability": "llm" | "vision",               default "llm"
+       "messages": [{"role": "system"|"user"|"assistant", "content": "..."}],
+       "images": ["<base64 png/jpg>", ...],          vision only; attached to the last user message
+       "json": true | {<JSON Schema>},               ask for JSON; the hub parses it
+       "effort": "off"|"low"|"medium"|"high"|"max",  how hard the model reasons; omitted = the server's default
+       "max_tokens": 2048, "temperature": 0.2,
+       "timeout_s": 300}                             default 300, at most 1800; covers the queue and the call
+200 -> {"ok": true, "text": "...", "json": <parsed or null>, "model": "...", "provider": "...",
+        "ms": 1234, "queued_ms": 0, "usage": {...}, "effort": "low"}
+```
+
+| Status | `error` | Meaning |
+|---|---|---|
+| 400 | `bad_request` | The body is not what the contract says (`detail` names the field). |
+| 401 | — | No family token, or one the hub does not know. |
+| 413 | `too_large` | Over 12 MB (messages and base64 images together). Refused before the body is read. |
+| 503 | `no_model` | Nothing can serve that capability right now; `detail` has the reasons the resolution collected. |
+| 503 | `gpu_busy` | A model had to be loaded and no GPU memory was granted in time. |
+| 504 | `timeout` | `timeout_s` ran out, waiting in the queue or in the model. |
+| 502 | `backend_error` | The server answered with an error (`backend_status`, `provider`, `detail`). |
+
+Never a made-up answer: with no model the answer is `503 no_model`, and an
+app must show that state (or use its deterministic fallback), not pretend.
+
+**JSON.** `"json": true` asks for one JSON object. A schema object is passed
+to the server as its response format when it supports one (a server that
+rejects the field is asked again without it), and in both cases a system
+instruction says the same in words, so servers that ignore the field still
+comply. The hub reads the answer leniently: a bare document, a fenced block,
+or the first balanced object/array inside prose. `json` is the parsed value;
+`text` is always the model's raw answer, so what the model produced stays
+next to what was extracted from it. When nothing parses, `json` is `null`,
+the call is still `ok`, and `json_error` says so.
+
+**Concurrency.** At most `link_chat_concurrency` model calls run at once
+(`data/hub.json`, default 2, 1 to 16; `HOARD_HUB_LINK_CHAT_CONCURRENCY`);
+the rest wait in arrival order, inside their own `timeout_s`. A call that
+gives up while queued never reaches the model.
+
+**What it resolves with.** The hub's own Link, configured from
+`<hub data>/backend.json` (the same schema as an app's, see the README) plus
+the `HOARD_*` variables, with the hub's Faustus URLs and the hub itself as
+the lease arbiter. As for any app, only an already-resident model is used
+unless that file says `only_resident: false` or `allow_load` for the
+capability. There is one Link per calling app, so a GPU lease taken to load a
+model is owned by the app that asked for it.
+
+**Events.** Every call (also the refused ones that got past the token) emits
+`hub.link.chat {app, capability, ok, ms, model, error?}`. Contents are never
+logged or stored.
+
+```
+GET /api/link/status      -> {"ok": true,
+                              "llm": {"available": true, "model": "...", "provider": "...", "reason": "..."},
+                              "vision": {...}, "embed": {...}, "tts": {...},
+                              "chat": {"concurrency": 2, "active": 0, "queued": 0}, "checked_at": ...}
+```
+
+`reason` says why a capability is unavailable (or how the available one was
+chosen). The answer is cached for a few seconds; `?force=1` probes again.
+Same guard as the other read routes: no token needed, loopback only.
+
+**Clients.**
+
+```js
+// Node: server/hoard-link.js (vendored). Never throws.
+import * as family from "./hoard-link.js";
+const r = await family.chat({ messages: [{ role: "user", content: "..." }], json: { type: "object" }, effort: "low" });
+if (r.ok) use(r.json ?? r.text); else show(r.error, r.detail);   // no_model | timeout | hub_down | http_<code>
+const s = await family.linkStatus();                             // { llm: {available, model, ...}, ... }
+```
+
+```python
+# Python without Link (standard library only): hoard_link.family. Never raises.
+from hoard_link import family
+r = family.chat([{"role": "user", "content": "..."}], json=True, effort="low")
+s = family.link_status()
+```
+
+Both return `{ok, text, json, model, provider, ms, error, detail}`; on
+failure `error` is `no_model`, `timeout`, `hub_down` (the hub is not
+running) or `http_<code>`, and `code` repeats the hub's own word (`gpu_busy`,
+`bad_request`, `backend_error`). They use the app's own token like `call()`.
+Python apps that vendor `hoard_link.Link` should keep calling it directly.
+
+For an assistant, the same call is the hub tool `hub_link_chat` (not
+read-only: it can make the server load a model; never destructive) and the
+state is `hub_link_status` (read-only).
+
+Every LLM-based feature of an app keeps the evidence (the source text) next
+to what the model produced, and has either a deterministic fallback or an
+explicit "no model" state.

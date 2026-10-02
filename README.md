@@ -477,7 +477,7 @@ hub when none is listening. Tools: `hub_list_apps`, `hub_app_status`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
 `hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
 `hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
-`hub_repo_push_command`, `hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus
+`hub_repo_push_command`, `hub_link_status`, `hub_link_chat`, `hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus
 adopt the hub like any other app.
 
 ### The family layer (0.4): events, rules, jobs, backups, the proxy
@@ -537,6 +537,35 @@ view, `hub.repos.scan` / `hub.repos.issue` events feed rules, and a
 recommended rule turns new problems into digest items. Settings under
 `repos` in `data/hub.json`; the reference is the *Repos* section of
 [docs/HUB.md](docs/HUB.md).
+
+### Models for every app (0.6)
+
+Python apps call the local models through the vendored `Link`; Node apps
+(and apps that carry no `httpx`) cannot. Since 0.6 the hub, which already
+has a Link, serves them over HTTP: `POST /api/link/chat` takes
+`{messages, capability: "llm" | "vision", images, json, effort, max_tokens,
+temperature, timeout_s}` with any family token and answers `{ok, text, json,
+model, provider, ms}`; `GET /api/link/status` says which model serves `llm`,
+`vision`, `embed` and `tts`, and why not when none does. The calls use the
+same model resolution, GPU lease and reasoning effort as an app's own Link,
+at most `link_chat_concurrency` (default 2) at a time with the rest queued,
+and never store or log what was said (the `hub.link.chat` event carries the
+app, capability, outcome, duration and model only). With no model the answer
+is `503 no_model` with the reasons, never an invented text. `json: true` (or
+a JSON Schema) also returns the parsed answer, read leniently from fenced or
+prose-wrapped output, next to the raw text.
+
+```js
+import * as family from "./hoard-link.js";            // server/hoard-link.js, vendored
+const r = await family.chat({ messages: [{ role: "user", content: "..." }], json: true, effort: "low" });
+// { ok, text, json, model, provider, error }  error: no_model | timeout | hub_down | http_<code>
+```
+
+Python without Link: `hoard_link.family.chat(messages, json=True)` and
+`family.link_status()` (standard library only). For an assistant:
+`hub_link_chat` and `hub_link_status`. The contract and the status codes are
+in [docs/FAMILY.md](docs/FAMILY.md#10-models-for-every-app); the hub's
+settings in [docs/HUB.md](docs/HUB.md#models-for-every-app).
 
 ## Use with Faustus
 
@@ -736,7 +765,7 @@ on Windows or Linux:
 pytest -q
 ```
 
-381 tests, offline (`httpx.MockTransport`), in about a minute. The only
+450 tests, offline (`httpx.MockTransport`), in about a minute. The only
 real sockets are in the sync-facade tests and the hub tests, which start
 tiny HTTP servers on ephemeral `127.0.0.1` ports (a fake app answering
 `/api/health`, a launchable one the hub really starts and stops, profile

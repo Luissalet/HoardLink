@@ -215,6 +215,47 @@ MCP bridge).
 `lease_headroom_mb` in `data/hub.json` (default 256): memory kept free on
 every GPU when granting.
 
+## Models for every app
+
+`POST /api/link/chat` and `GET /api/link/status` serve the hub's own Hoard
+Link (chat and vision, plus the availability of `llm`, `vision`, `embed` and
+`tts`) to every family app, so Node apps and standard-library-only apps get
+the same model resolution, GPU lease and reasoning effort as the Python apps
+that vendor `hoard_link.Link`. The request, the answers and the status codes
+are the contract in [FAMILY.md](FAMILY.md#10-models-for-every-app); this is
+the hub side.
+
+| Setting | Where | Default |
+|---|---|---|
+| `link_chat_concurrency` | `data/hub.json`, or `HOARD_HUB_LINK_CHAT_CONCURRENCY` | 2 (1 to 16, read at start) |
+| model resolution | `data/backend.json` (same schema as an app's) and `HOARD_*` variables | only resident models |
+
+* **Auth.** Any family bearer token the bus accepts (an app's own, or the
+  hub's), or the hub's own page. The token is checked before the body is
+  read; a refused request closes the connection. Bodies up to 12 MB (images).
+* **Queue.** At most `link_chat_concurrency` calls reach a model at once; the
+  others wait in arrival order and their `timeout_s` (default 300, at most
+  1800) counts the wait. `GET /api/link/status` shows `chat.active` and
+  `chat.queued`.
+* **Link per app.** The hub keeps one Link per calling app, so a GPU lease
+  (see above) taken to load a model is owned by that app. The calls run on a
+  private event loop thread and are cancelled when `timeout_s` runs out.
+* **Events.** `hub.link.chat {app, capability, ok, ms, model, error?}` for
+  every call; never the messages or the answer.
+* **Tools.** `hub_link_status` (read-only) and `hub_link_chat` (for trying it
+  from an assistant: `prompt` or `messages`, `capability`, `images`, `json`,
+  `effort`, `max_tokens`, `temperature`, `timeout_s`; not read-only, not
+  destructive). The stdio MCP bridge waits up to `timeout_s` + 15 s for it
+  instead of its usual 90 s.
+* **Without a model.** `503 no_model` with the reasons; nothing is invented.
+  Put the servers' addresses or models in `data/backend.json` (for example
+  `{"capabilities": {"llm": {"url": "http://127.0.0.1:8081/v1/chat/completions", "model": "..."}}}`)
+  when the automatic search does not find them.
+
+The Node client is `js/hoard-link.js` (`chat`, `linkStatus`), vendored by the
+apps as `server/hoard-link.js`; the standard-library Python client is
+`hoard_link.family.chat` / `link_status`.
+
 ## Repos
 
 The **Repos** tab (and the `hub_repos*` tools) show the state of every git
