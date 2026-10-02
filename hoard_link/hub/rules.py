@@ -164,13 +164,22 @@ class RuleEngine:
         if meta.get("auto_install") is False:
             return {"ok": True, "installed": [], "skipped": "auto_install is off"}
         dismissed = set(self.dismissed())
-        installed = []
+        installed, upgraded = [], []
         for ex in example_rules():
-            if ex["id"] in dismissed or self.get(ex["id"]) is not None:
+            if ex["id"] in dismissed:
                 continue
-            if self.add(dict(ex)).get("ok"):
-                installed.append(ex["id"])
-        return {"ok": True, "installed": installed, "dismissed": sorted(dismissed)}
+            cur = self.get(ex["id"])
+            if cur is None:
+                if self.add(dict(ex)).get("ok"):
+                    installed.append(ex["id"])
+                continue
+            # a newer template of a recommended rule (``rev``) replaces when/then/note; enabled and cooldown stay yours
+            if int(cur.get("rev") or 1) < int(ex.get("rev") or 1):
+                res = self.update(ex["id"], {"when": ex["when"], "then": ex["then"], "note": ex.get("note", ""),
+                                             "name": ex["name"], "rev": ex.get("rev") or 1})
+                if res.get("ok"):
+                    upgraded.append(ex["id"])
+        return {"ok": True, "installed": installed, "upgraded": upgraded, "dismissed": sorted(dismissed)}
 
     # -- CRUD -------------------------------------------------------------------
     def list(self) -> list[dict[str, Any]]:
@@ -196,6 +205,8 @@ class RuleEngine:
             rec = {"id": rid, "name": str(rule.get("name") or rid), "when": rule["when"], "then": rule["then"],
                    "enabled": bool(rule.get("enabled", True)), "cooldown_s": float(rule.get("cooldown_s", DEFAULT_COOLDOWN_S)),
                    "note": str(rule.get("note") or ""), "created_ts": self._now(), "runs": 0, "last": None}
+            if rule.get("rev"):
+                rec["rev"] = int(rule["rev"])
             self.rules.append(rec)
             self._save()
         return {"ok": True, "rule": dict(rec)}
@@ -204,7 +215,7 @@ class RuleEngine:
         with self._lock:
             for r in self.rules:
                 if r.get("id") == rule_id:
-                    cand = {**r, **{k: v for k, v in patch.items() if k in ("name", "when", "then", "enabled", "cooldown_s", "note")}}
+                    cand = {**r, **{k: v for k, v in patch.items() if k in ("name", "when", "then", "enabled", "cooldown_s", "note", "rev")}}
                     problems = validate_rule(cand)
                     if problems:
                         return {"ok": False, "error": "; ".join(problems)}
@@ -258,6 +269,9 @@ class RuleEngine:
             for r in self.rules:
                 if not r.get("enabled", True) or r.get("id") == via or not rule_matches(r, event):
                     continue
+                if self._recently_excused(r, event):
+                    r["skipped"] = int(r.get("skipped", 0)) + 1
+                    continue
                 cooldown = float(r.get("cooldown_s", DEFAULT_COOLDOWN_S) or 0)
                 last = self._last_fire.get(r["id"], -1e12)
                 if self._now() - last < cooldown:
@@ -269,6 +283,26 @@ class RuleEngine:
             self._queue.put((r, event))
         if due:
             self._ensure_worker()
+
+    def _recently_excused(self, rule: dict[str, Any], event: dict[str, Any]) -> bool:
+        """``when.unless_recent: {type, same, within_s}``: skip the rule when an event of ``type`` about the same
+        ``data.<same>`` happened in the last ``within_s`` seconds (an app the hub itself stopped or restarted is
+        not an incident to report or to undo)."""
+        spec = (rule.get("when") or {}).get("unless_recent")
+        if not isinstance(spec, dict) or not spec.get("type"):
+            return False
+        same = str(spec.get("same") or "app")
+        wanted = _get(event, "data." + same)
+        try:
+            within = float(spec.get("within_s") or 300)
+        except (TypeError, ValueError):
+            within = 300.0
+        since = float(event.get("ts") or self._now()) - within
+        try:
+            recent = self.events.query(type=str(spec["type"]), since_ts=since, limit=200)
+        except Exception:  # noqa: BLE001
+            return False
+        return any(e.get("id") != event.get("id") and _get(e, "data." + same) == wanted for e in recent)
 
     def test(self, event: dict[str, Any]) -> list[dict[str, Any]]:
         """Which rules would fire for ``event`` (no side effects)."""
@@ -364,8 +398,9 @@ def example_rules() -> list[dict[str, Any]]:
          "cooldown_s": 0,
          "note": "A repository gained an error-level problem (an unfinished rebase, a stale index.lock, a tracked secret, "
                  "failing CI): it lands as a digest.item event for the daily recap skill."},
-        {"id": "rule-restart-down", "name": "Service down → try a restart",
-         "when": {"type": "cassandra.incident.opened", "where": {"data.to_state": "down", "data.service_kind": "app"}},
+        {"id": "rule-restart-down", "name": "Service down → try a restart", "rev": 2,
+         "when": {"type": "cassandra.incident.opened", "where": {"data.to_state": "down", "data.service_kind": "app"},
+                  "unless_recent": {"type": "hub.app.stopped|hub.app.started", "same": "app", "within_s": 300}},
          "then": [{"kind": "start_app", "app": "${event.data.app}"}], "cooldown_s": 300,
          "note": "Cassandra reports a hub-managed app down: the hub starts it again, at most once every five minutes "
                  "(external services such as a model server carry service_kind 'external' and are left alone)."},
@@ -395,8 +430,9 @@ def example_rules() -> list[dict[str, Any]]:
                             "group": "maintenance", "url": "${event.data.url}", "dedupe_key": "homehoard:maintenance:${event.data.title}"}}],
          "cooldown_s": 5,
          "note": "A maintenance task of the home inventory is due."},
-        {"id": "rule-cassandra-app-incident", "name": "App incident → notify",
-         "when": {"type": "cassandra.incident.opened", "where": {"data.service_kind": "app"}},
+        {"id": "rule-cassandra-app-incident", "name": "App incident → notify", "rev": 2,
+         "when": {"type": "cassandra.incident.opened", "where": {"data.service_kind": "app"},
+                  "unless_recent": {"type": "hub.app.stopped|hub.app.started", "same": "app", "within_s": 300}},
          "then": [{"kind": "hub", "tool": "hub_notify",
                    "args": {"title": "App con problemas: ${event.data.app}", "body": "${event.data.probable_cause}", "priority": "high",
                             "group": "incident", "dedupe_key": "cassandra:incident:${event.data.incident_id}"}}],

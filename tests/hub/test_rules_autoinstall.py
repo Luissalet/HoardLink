@@ -228,3 +228,46 @@ def test_a_rule_for_an_app_that_is_not_installed_is_skipped_not_failed(tmp_path)
             down.close()
     finally:
         hub.close()
+
+
+def test_an_app_the_hub_just_stopped_is_neither_reported_nor_restarted(tmp_path):
+    from hoard_link.hub.events import EventLog
+    from hoard_link.hub.rules import RuleEngine, example_rules
+    ran = []
+    log = EventLog(None)
+    eng = RuleEngine(str(tmp_path / "rules.json"), log, lambda acts, ctx, caller: ran.append(ctx["event"]["data"]) or [],
+                     auto_install=False)
+    try:
+        for ex in example_rules():
+            if ex["id"] in ("rule-restart-down", "rule-cassandra-app-incident"):
+                assert eng.add(dict(ex))["ok"]
+        log.emit("hub.app.stopped", {"app": "kafka"}, source="hub")
+        log.emit("cassandra.incident.opened", {"app": "kafka", "to_state": "down", "service_kind": "app", "incident_id": "1"},
+                 source="cassandra")
+        log.emit("cassandra.incident.opened", {"app": "ledger", "to_state": "down", "service_kind": "app", "incident_id": "2"},
+                 source="cassandra")
+        import time
+        deadline = time.time() + 5
+        while time.time() < deadline and len(ran) < 2:
+            time.sleep(0.05)
+        time.sleep(0.2)
+        assert sorted({d["app"] for d in ran}) == ["ledger"]          # kafka was stopped by the hub a moment ago
+    finally:
+        eng.close()
+
+
+def test_a_newer_template_upgrades_an_installed_recommended_rule(tmp_path):
+    from hoard_link.hub.events import EventLog
+    from hoard_link.hub.rules import RuleEngine, example_rules
+    old = next(dict(ex) for ex in example_rules() if ex["id"] == "rule-restart-down")
+    old["when"] = {"type": "cassandra.incident.opened"}
+    old.pop("rev", None)
+    old["enabled"] = False
+    eng = RuleEngine(str(tmp_path / "rules.json"), EventLog(None), lambda *a: [], auto_install=False)
+    assert eng.add(old)["ok"]
+    res = eng.install_recommended_on_start()
+    assert "rule-restart-down" in res["upgraded"]
+    cur = eng.get("rule-restart-down")
+    assert cur["when"].get("unless_recent") and cur["rev"] == 2 and cur["enabled"] is False     # the person's switch stays
+    assert eng.install_recommended_on_start()["upgraded"] == []
+    eng.close()
