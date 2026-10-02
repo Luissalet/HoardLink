@@ -25,7 +25,7 @@ GET  /api/services             local backend servers (ComfyUI, Ollama, configure
 POST /api/services/start|stop  {"id": "comfyui@8188", "gpu": "auto", "wait_s": 0}
 GET  /api/lease                GPUs (used/free/reserved), granted leases, queue
 GET  /api/lease/<id>           one lease (also keeps a queued one in the queue)
-POST /api/lease/request        {owner, purpose, vram_mb, gpu, priority, ttl_s, wait, pid[, lease_id]}
+POST /api/lease/request        {owner, purpose, vram_mb, gpu (index | [indices] | "2,3" | "any"), priority, ttl_s, wait, pid[, lease_id]}
 POST /api/lease/renew          {lease_id, ttl_s}
 POST /api/lease/release        {lease_id}
 GET  /api/profiles             every profile with the state of its apps and commands

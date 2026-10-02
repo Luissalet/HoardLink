@@ -12,6 +12,7 @@ stale).
       "faustus": {"url": "http://127.0.0.1:7000", "token": "ody_..."},
       "comfy": {"url": "http://127.0.0.1:8188"},
       "gpu_lease": {"enabled": true, "hub_url": "http://127.0.0.1:8810", "timeout_s": 300, "vram_mb": 8192},
+      "routes": {"enabled": true, "file": "~/.hoard/routes.json"},
       "capabilities": {
         "llm": {
           "url": "http://127.0.0.1:8081/v1/chat/completions",
@@ -37,6 +38,9 @@ Environment overrides (highest priority, applied on top of the file):
 - ``HOARD_COMFY_URL``.
 - ``HOARD_GPU_LEASE=0`` turns the GPU lease off (``HOARD_HUB_URL`` points
   the lease client at a hub on another port).
+- ``HOARD_ROUTES=0`` ignores the measured routes (``routes.enabled: false``
+  in the file); ``HOARD_ROUTES_FILE`` names the routes file (``routes.file``),
+  by default ``~/.hoard/routes.json``. See :mod:`hoard_link.routes`.
 
 ``gpu_lease`` only matters when a call is about to make a server *load* a
 model (``allow_load`` / ``only_resident: false``): :class:`~hoard_link.link.Link`
@@ -107,6 +111,8 @@ class LinkConfig:
     hub_url: Optional[str] = None
     lease_timeout_s: float = 300.0
     lease_vram_mb: int = 8192
+    use_routes: bool = True             # order candidates by the measured routes (hoard_link.routes)
+    routes_file: Optional[str] = None   # None: HOARD_ROUTES_FILE, else ~/.hoard/routes.json
 
     def capability(self, capability: str) -> CapabilityConfig:
         return self.capabilities.get(capability, CapabilityConfig())
@@ -217,6 +223,12 @@ class LinkConfig:
             lease_timeout_s = 300.0
         lease_vram_mb = _int_or_none(lease_raw.get("vram_mb")) or 8192
 
+        routes_raw = _section(raw, "routes")
+        use_routes = bool(routes_raw.get("enabled", True))
+        if (env_value("HOARD_ROUTES") or "").lower() in ("0", "false", "no", "off"):
+            use_routes = False
+        routes_file = env_value("HOARD_ROUTES_FILE") or (str(routes_raw.get("file") or "").strip() or None)
+
         return cls(
             app=app,
             only_resident=only_resident,
@@ -228,4 +240,6 @@ class LinkConfig:
             hub_url=_clean_url(hub_url) if hub_url else None,
             lease_timeout_s=lease_timeout_s,
             lease_vram_mb=lease_vram_mb,
+            use_routes=use_routes,
+            routes_file=routes_file,
         )

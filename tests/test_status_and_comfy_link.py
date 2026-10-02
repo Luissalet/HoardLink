@@ -14,8 +14,10 @@ async def test_status_covers_every_capability():
     router = Router()
     link = make_link(router, config=LinkConfig())
     status = await link.status()
-    assert set(status.keys()) == set(CAPABILITIES)
-    for cap, entry in status.items():
+    assert set(status.keys()) == set(CAPABILITIES) | {"routes"}      # + the measured-routes block
+    assert set(status["routes"]) == {"file", "updated_at", "source", "tasks", "problem"}
+    for cap in CAPABILITIES:
+        entry = status[cap]
         assert entry["capability"] == cap
         assert entry["state"] in ("resolved", "unavailable")
         assert isinstance(entry["reason"], str) and entry["reason"]
