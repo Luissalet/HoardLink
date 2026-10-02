@@ -157,13 +157,22 @@ the GPU has no lease again (the estimate errs on the safe side).
 ### Scheduling
 
 * Order: `priority` (higher first), then arrival.
-* A `gpu` index pins the request to that GPU; `"any"` (or omitted) places
-  it on the eligible GPU with the most room.
+* A `gpu` index pins the request to that GPU; a list (`[2, 3]` or `"2,3"`)
+  means "any of these" and places it on the listed GPU with the most room;
+  `"any"` (or omitted) places it on the eligible GPU with the most room.
+  Every index is validated against the inventory, and the lease shows what
+  was requested (`gpu_request`).
+* `lease.protected_gpus` in `data/hub.json` (a list of GPU indices, empty
+  by default) keeps GPUs out of every `"any"` request: only a request that
+  names them, as an index or in a list, gets them. `"any"` with every GPU
+  protected is refused (HTTP 400). `GET /api/lease` and `hub_lease_status`
+  show `protected_gpus`, and each GPU carries `protected`.
 * A queued request that does not fit **blocks the GPUs it could use** for
   every request behind it. A request pinned to another GPU still goes
   ahead; a stream of small loads cannot starve a large render.
-* A request larger than the biggest eligible GPU (minus the headroom) is
-  refused at once (HTTP 400): it could never be granted.
+* A request larger than the biggest eligible GPU (minus the headroom; for a
+  list, the biggest GPU in the list) is refused at once (HTTP 400): it
+  could never be granted.
 * With no inventory (no NVIDIA GPU or no `nvidia-smi`) every request is
   granted with `gpu: null` and a note, so callers never wait on a machine
   with nothing to arbitrate.
@@ -192,11 +201,11 @@ calls refused).
 
 | Route | Body | Answer |
 |---|---|---|
-| `POST /api/lease/request` | `owner, purpose, vram_mb, gpu, priority, ttl_s, wait, wait_s, pid` | `lease_id, state (granted\|queued), gpu, expires_at, position, lease` |
+| `POST /api/lease/request` | `owner, purpose, vram_mb, gpu (index \| [indices] \| "2,3" \| "any"), priority, ttl_s, wait, wait_s, pid` | `lease_id, state (granted\|queued), gpu, expires_at, position, lease` |
 | `POST /api/lease/request` | `lease_id, wait, wait_s` | the same, for a request already queued (keeps its place) |
 | `POST /api/lease/renew` | `lease_id, ttl_s` | the same; 404 when unknown or expired |
 | `POST /api/lease/release` | `lease_id` | `released: true\|false` (idempotent) |
-| `GET /api/lease` | — | `gpus[] (total, used, free, reserved, base_used, available, leases)`, `leases[]`, `queue[]`, `inventory`, `headroom_mb`, `reaped[]` |
+| `GET /api/lease` | — | `gpus[] (total, used, free, reserved, base_used, available, protected, leases)`, `leases[]`, `queue[]`, `inventory`, `headroom_mb`, `protected_gpus`, `reaped[]` |
 | `GET /api/lease/<id>` | — | one lease; 404 when unknown or expired |
 
 `wait: true` long-polls up to 25 s (`wait_s` shortens it) and returns the

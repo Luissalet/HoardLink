@@ -79,8 +79,8 @@ class SyncFacade:
             )
         return asyncio.run_coroutine_threadsafe(call(self._twin()), loop).result()
 
-    def resolve(self, capability: str):
-        return self._run(lambda link: link.resolve(capability))
+    def resolve(self, capability: str, task: Optional[str] = None):
+        return self._run(lambda link: link.resolve(capability, task))
 
     def chat(self, *args: Any, **kwargs: Any):
         return self._run(lambda link: link.chat(*args, **kwargs))
@@ -91,8 +91,8 @@ class SyncFacade:
     def tts(self, *args: Any, **kwargs: Any):
         return self._run(lambda link: link.tts(*args, **kwargs))
 
-    def status(self):
-        return self._run(lambda link: link.status())
+    def status(self, task: Optional[str] = None):
+        return self._run(lambda link: link.status(task))
 
     def wait_idle(self, *args: Any, **kwargs: Any):
         return self._run(lambda link: link.wait_idle(*args, **kwargs))

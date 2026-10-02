@@ -78,6 +78,20 @@ servidor) y vuelve a ejecutarlo para ver cómo se resuelve esa capacidad.
 Pasa la ruta de un `backend.json` como primer argumento para probar tu
 propia configuración.
 
+## Novedades de la 0.6
+
+- **Rutas medidas.** Una app que hace benchmarks (Galton's Hoard) escribe
+  en `~/.hoard/routes.json` qué modelo local va mejor para cada tarea, y
+  `link.resolve("llm", task="code")` / `link.chat(..., task="code")` lo
+  usan para ordenar los modelos que la resolución ya considera. Las rutas
+  solo ordenan: nunca cargan un modelo ni pisan una URL explícita. Véase
+  [Rutas medidas](#rutas-medidas).
+- **Listas de GPU en las reservas.** `lease(gpu=[2, 3])` pide "cualquiera
+  de las GPU 2 o 3", y el ajuste del hub `lease.protected_gpus` mantiene
+  GPUs elegidas fuera de toda petición `"any"`. Véase
+  [Reservas de memoria de GPU](#reservas-de-memoria-de-gpu).
+- Dos paletas nuevas en el tema compartido: `galton` y `pygmalion`.
+
 ## Orden de resolución
 
 Para cada capacidad, en este orden:
@@ -169,6 +183,54 @@ flowchart LR
   127.0.0.1:8081 (qwen3.8-27b-q8-llamacpp), from Faustus registry;
   resident"`.
 
+## Rutas medidas
+
+Una app que mide los modelos locales (Galton's Hoard) escribe sus
+resultados en `~/.hoard/routes.json` (`HOARD_HOME` mueve `~/.hoard`;
+`HOARD_ROUTES_FILE` da el fichero en sí). Hoard Link lo lee y lo usa para
+una sola cosa: **ordenar los candidatos que la resolución ya considera**.
+
+```json
+{"schema": 1, "source": "galton", "updated_at": "2026-10-02T10:00:00+02:00",
+ "tasks": {"code": {"capability": "llm",
+                    "prefer": [{"names": ["qwen3.8:27b-q4_K_M", "qwen3.8-27b-q4-llamacpp"],
+                                "score": 0.81, "ci": [0.74, 0.87], "n": 60, "tok_s": 34.2, "vram_gb": 17.1}],
+                    "explain": "..."}},
+ "capabilities": {"llm": {"prefer": [...]}, "vision": {"prefer": [...]}}}
+```
+
+```python
+res = await link.resolve("llm", task="code")
+reply = await link.chat(messages, task="code")      # también link.sync.*, wait_idle(), status(task=...)
+```
+
+- **Orden.** Entre los modelos residentes (o, si se permite cargar, los
+  cargables): primero el modelo fijado por configuración o entorno
+  (`capabilities.llm.model`, `HOARD_LLM_MODEL`); después los nombres de
+  `tasks[task].prefer` (solo si esa tarea es de esta capacidad), luego los
+  de `capabilities[cap].prefer`; y por último el orden original. Entre
+  varios servidores llama.cpp residentes gana el que sirve el modelo mejor
+  clasificado.
+- **Lo que nunca hacen.** Las rutas nunca hacen que un servidor cargue un
+  modelo (un modelo medido que no está residente se ignora mientras
+  `only_resident` esté activo) ni pisan una `url`/`command` explícitos. No
+  se sondea nada que no se sondeara antes.
+- **Nombres.** Un nombre coincide sin distinguir mayúsculas, con o sin el
+  `:latest` de Ollama, y un fichero GGUF por el nombre sin extensión
+  (`D:\models\x.gguf`, `x.gguf` y `x` son el mismo modelo). Cada lista
+  `names` son los alias de un modelo en distintos servidores.
+- **Visible.** Cuando una preferencia medida cambió la elección, el
+  `Resolution.reason` termina en `; ranked by measured routes (task code)`
+  y `details["routes"]` es `{"task", "source", "updated_at"}`.
+  `link.status()` añade una entrada `routes`: `{file, updated_at, source,
+  tasks, problem}`.
+- **Segura.** El fichero se cachea por ruta, mtime y tamaño; un fichero
+  ausente o roto es un conjunto de rutas vacío con un texto en `problem`,
+  nunca un error.
+- **Apagar.** `"routes": {"enabled": false}` en `backend.json`, o
+  `HOARD_ROUTES=0`. `"routes": {"file": "..."}` / `HOARD_ROUTES_FILE`
+  apuntan a otro fichero.
+
 ## Instalación (copia en la aplicación)
 
 Hoard Link está pensado para ser **copiado**, no instalado como
@@ -220,7 +282,8 @@ Todas las claves son opcionales; lo que no se fije cae al siguiente paso
     },
     "tts": {"command": ["piper", "--model", "es_ES.onnx", "--output_file", "{out}"]}
   },
-  "gpu_lease": {"enabled": true, "hub_url": "http://127.0.0.1:8810", "timeout_s": 300, "vram_mb": 8192}
+  "gpu_lease": {"enabled": true, "hub_url": "http://127.0.0.1:8810", "timeout_s": 300, "vram_mb": 8192},
+  "routes": {"enabled": true, "file": "~/.hoard/routes.json"}
 }
 ```
 
@@ -228,8 +291,9 @@ Variables de entorno (máxima prioridad, se aplican encima del archivo):
 `HOARD_<CAP>_URL`, `HOARD_<CAP>_MODEL` (p. ej. `HOARD_LLM_URL`,
 `HOARD_VISION_MODEL`), `HOARD_FAUSTUS_URL`, `HOARD_FAUSTUS_TOKEN`,
 `HOARD_COMFY_URL`, `HOARD_GPU_LEASE=0` (sin reservas de GPU),
-`HOARD_HUB_URL` (dónde está el hub). Una variable vacía cuenta como no
-definida.
+`HOARD_HUB_URL` (dónde está el hub), `HOARD_ROUTES=0` (ignorar las
+[rutas medidas](#rutas-medidas)), `HOARD_ROUTES_FILE`. Una variable vacía
+cuenta como no definida.
 
 - `gpu_lease` y `vram_mb` solo cuentan cuando una llamada haría **cargar**
   un modelo al servidor (`allow_load`, o `only_resident: false`): ver
@@ -456,6 +520,15 @@ async with lease(vram_mb=20000, purpose="render de vídeo", owner="daguerre", pr
   se cae nunca bloquea la cola. Una petición en cola que nadie consulta en
   90 s sale de la cola. Las reservas se guardan en `data/leases.json` y
   sobreviven a un reinicio del hub.
+* **Qué GPU.** `gpu=2` fija una GPU; `gpu=[2, 3]` (o `"2,3"`) significa
+  "cualquiera de estas": el hub coloca la reserva en la GPU de la lista con
+  más sitio, y la comprobación de "nunca cabrá" usa la mayor GPU de la
+  lista; el `"any"` por defecto considera todas. Sin hub, la comprobación local
+  de respaldo elige la GPU de la lista con más memoria libre. `lease.protected_gpus`
+  en `hub.json` (una lista, vacía por defecto) deja GPUs fuera de toda
+  petición `"any"`: solo las recibe una petición que las nombra (`gpu=0` o
+  una lista que contenga 0). Se ve en `hub_lease_status` y en
+  `GET /api/lease`.
 * Entrar espera a la concesión; `timeout_s` acota la espera y lanza
   `LeaseTimeout` (la petición se retira de la cola). Una petición mayor que
   cualquier GPU elegible lanza `LeaseError`.
@@ -625,8 +698,9 @@ from hoard_link import Link, LinkConfig
 link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="argus"))
 
 res = await link.resolve("vision")   # Resolution(capability, provider, url, model, api, state, reason, details)
+res = await link.resolve("llm", task="code")   # igual, ordenada por las rutas medidas de esa tarea
 
-status = await link.status()         # dict para GET /api/backend en la aplicación: la Resolution de cada capacidad
+status = await link.status()         # dict para GET /api/backend en la aplicación: la Resolution de cada capacidad + "routes"
 
 text = await link.chat(
     [{"role": "user", "content": "..."}],
@@ -636,6 +710,7 @@ text = await link.chat(
     capability="vision",
     response_format=None,
     effort=None,                      # off | low | medium | high | max; None = HOARD_LLM_EFFORT, si no el del servidor
+    task=None,                        # una ruta medida ("code"): prefiere el modelo medido como mejor para ella
 )                                     # -> ChatResult(text, model, provider, usage, elapsed_ms, reasoning, effort)
 
 vecs = await link.embed(["a", "b"])  # cuando resuelve un servidor de embeddings; si no, lanza Unavailable
@@ -650,7 +725,7 @@ link.sync.chat(...)                  # las mismas llamadas, bloqueantes, para c�
 
 from hoard_link import lease, Lease, LeaseTimeout, LeaseError
 with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
-           timeout_s=None, hub_url=None) as l:   # también `async with`
+           timeout_s=None, hub_url=None) as l:   # también `async with`; gpu: None | 2 | [2, 3]
     l.gpu, l.via, l.lease_id          # índice de GPU (o None), "hub" | "local", id en el hub
 ```
 
@@ -792,7 +867,7 @@ Windows o en Linux:
 pytest -q
 ```
 
-450 tests, sin conexión (`httpx.MockTransport`), en aproximadamente un minuto. Los
+546 tests, sin conexión (`httpx.MockTransport`), en aproximadamente un minuto. Los
 únicos sockets reales están en los tests de la fachada síncrona y en los
 del hub, que arrancan servidores HTTP mínimos en puertos efímeros de
 `127.0.0.1` (una app falsa que contesta a `/api/health`, otra que el hub

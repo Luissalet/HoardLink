@@ -75,6 +75,19 @@ Start `llama-server`, Ollama or ComfyUI (or point `HOARD_LLM_URL` at a
 server) and run it again to see that capability resolve. Pass a
 `backend.json` path as the first argument to try your own configuration.
 
+## What's new in 0.6
+
+- **Measured routes.** A benchmarking app (Galton's Hoard) writes which
+  local model is best for which task to `~/.hoard/routes.json`, and
+  `link.resolve("llm", task="code")` / `link.chat(..., task="code")` use it
+  to order the models resolution already considers. Routes only rank; they
+  never load a model and never override an explicit URL. See
+  [Measured routes](#measured-routes).
+- **GPU lists in leases.** `lease(gpu=[2, 3])` asks for "any of GPUs 2 or
+  3", and the hub setting `lease.protected_gpus` keeps chosen GPUs out of
+  every `"any"` request. See [GPU memory leases](#gpu-memory-leases).
+- Two new palettes in the shared theme: `galton` and `pygmalion`.
+
 ## Resolution order
 
 For each capability, in order:
@@ -158,6 +171,53 @@ flowchart LR
   fit for a Settings screen, e.g. `"llm -> llama.cpp at 127.0.0.1:8081
   (qwen3.8-27b-q8-llamacpp), from Faustus registry; resident"`.
 
+## Measured routes
+
+An app that measures the local models (Galton's Hoard) writes its findings
+to `~/.hoard/routes.json` (`HOARD_HOME` moves `~/.hoard`; `HOARD_ROUTES_FILE`
+names the file itself). Hoard Link reads it and uses it for one thing:
+**ordering the candidates resolution already considers**.
+
+```json
+{"schema": 1, "source": "galton", "updated_at": "2026-10-02T10:00:00+02:00",
+ "tasks": {"code": {"capability": "llm",
+                    "prefer": [{"names": ["qwen3.8:27b-q4_K_M", "qwen3.8-27b-q4-llamacpp"],
+                                "score": 0.81, "ci": [0.74, 0.87], "n": 60, "tok_s": 34.2, "vram_gb": 17.1}],
+                    "explain": "..."}},
+ "capabilities": {"llm": {"prefer": [...]}, "vision": {"prefer": [...]}}}
+```
+
+```python
+res = await link.resolve("llm", task="code")
+reply = await link.chat(messages, task="code")      # also link.sync.*, wait_idle(), status(task=...)
+```
+
+- **Order.** Among the resident models (or, when loading is allowed, the
+  loadable ones) the order is: the model pinned by config or environment
+  (`capabilities.llm.model`, `HOARD_LLM_MODEL`) first; then the names under
+  `tasks[task].prefer` (only if that task is about this capability), then
+  those under `capabilities[cap].prefer`; then the original order. Between
+  several resident llama.cpp servers, the one serving the best-ranked model
+  wins.
+- **What they never do.** Routes never make a server load a model (a
+  measured model that is not resident is ignored while `only_resident` is
+  on) and never override an explicit `url`/`command`. Nothing is probed
+  that was not probed before.
+- **Names.** A name matches case-insensitively, with or without Ollama's
+  `:latest`, and a GGUF file by its file-name stem (`D:\models\x.gguf`,
+  `x.gguf` and `x` are the same model). Each `names` list is one model's
+  aliases across servers.
+- **Visible.** When a measured preference changed the pick, the
+  `Resolution.reason` ends with `; ranked by measured routes (task code)`
+  and `details["routes"]` is `{"task", "source", "updated_at"}`.
+  `link.status()` adds a `routes` entry: `{file, updated_at, source, tasks,
+  problem}`.
+- **Safe.** The file is cached by path, mtime and size; a missing or broken
+  file is an empty set of routes with a `problem` string, never an error.
+- **Off.** `"routes": {"enabled": false}` in `backend.json`, or
+  `HOARD_ROUTES=0`. `"routes": {"file": "..."}` / `HOARD_ROUTES_FILE`
+  point at another file.
+
 ## Installing (vendoring)
 
 Hoard Link is meant to be **copied**, not installed as a third-party
@@ -207,7 +267,8 @@ loopback probing.
     },
     "tts": {"command": ["piper", "--model", "es_ES.onnx", "--output_file", "{out}"]}
   },
-  "gpu_lease": {"enabled": true, "hub_url": "http://127.0.0.1:8810", "timeout_s": 300, "vram_mb": 8192}
+  "gpu_lease": {"enabled": true, "hub_url": "http://127.0.0.1:8810", "timeout_s": 300, "vram_mb": 8192},
+  "routes": {"enabled": true, "file": "~/.hoard/routes.json"}
 }
 ```
 
@@ -215,7 +276,8 @@ Environment overrides (highest priority, layered on top of the file):
 `HOARD_<CAP>_URL`, `HOARD_<CAP>_MODEL` (e.g. `HOARD_LLM_URL`,
 `HOARD_VISION_MODEL`), `HOARD_FAUSTUS_URL`, `HOARD_FAUSTUS_TOKEN`,
 `HOARD_COMFY_URL`, `HOARD_GPU_LEASE=0` (no GPU leases),
-`HOARD_HUB_URL` (where the hub is). An empty variable counts as unset.
+`HOARD_HUB_URL` (where the hub is), `HOARD_ROUTES=0` (ignore
+[measured routes](#measured-routes)), `HOARD_ROUTES_FILE`. An empty variable counts as unset.
 
 - `gpu_lease` and `vram_mb` only matter when a call would make a server
   **load** a model (`allow_load`, or `only_resident: false`): see
@@ -434,6 +496,14 @@ async with lease(vram_mb=20000, purpose="video render", owner="daguerre", priori
   never blocks the queue. A queued request that is not polled for 90 s
   leaves the queue. Leases are kept in `data/leases.json` across hub
   restarts.
+* **Which GPU.** `gpu=2` pins one GPU; `gpu=[2, 3]` (or `"2,3"`) means
+  "any of these": the hub places the lease on the listed GPU with the most
+  room, and the "can never fit" check uses the largest GPU in the list; the
+  default `"any"` considers every GPU. With no hub, the local fallback
+  picks the listed GPU with the most free memory. `lease.protected_gpus`
+  in `hub.json` (a list, empty by default) keeps GPUs out of every `"any"`
+  request: only a request that names them (`gpu=0` or a list containing 0)
+  gets them. It is shown in `hub_lease_status` and `GET /api/lease`.
 * Entering waits for the grant; `timeout_s` bounds the wait and raises
   `LeaseTimeout` (the queued request is withdrawn). A request larger than
   any eligible GPU raises `LeaseError`.
@@ -593,8 +663,9 @@ from hoard_link import Link, LinkConfig
 link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="argus"))
 
 res = await link.resolve("vision")   # Resolution(capability, provider, url, model, api, state, reason, details)
+res = await link.resolve("llm", task="code")   # same, ranked by the measured routes for that task
 
-status = await link.status()         # dict for GET /api/backend in the app: every capability's Resolution
+status = await link.status()         # dict for GET /api/backend in the app: every capability's Resolution + "routes"
 
 text = await link.chat(
     [{"role": "user", "content": "..."}],
@@ -604,6 +675,7 @@ text = await link.chat(
     capability="vision",
     response_format=None,
     effort=None,                      # off | low | medium | high | max; None = HOARD_LLM_EFFORT, else server default
+    task=None,                        # a measured route ("code"): prefer the model measured best for it
 )                                     # -> ChatResult(text, model, provider, usage, elapsed_ms, reasoning, effort)
 
 vecs = await link.embed(["a", "b"])  # when an embeddings server resolves; else raises Unavailable
@@ -618,7 +690,7 @@ link.sync.chat(...)                  # same calls, blocking, for synchronous app
 
 from hoard_link import lease, Lease, LeaseTimeout, LeaseError
 with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
-           timeout_s=None, hub_url=None) as l:   # also `async with`
+           timeout_s=None, hub_url=None) as l:   # also `async with`; gpu: None | 2 | [2, 3]
     l.gpu, l.via, l.lease_id          # GPU index (or None), "hub" | "local", id on the hub
 ```
 
@@ -765,7 +837,7 @@ on Windows or Linux:
 pytest -q
 ```
 
-450 tests, offline (`httpx.MockTransport`), in about a minute. The only
+546 tests, offline (`httpx.MockTransport`), in about a minute. The only
 real sockets are in the sync-facade tests and the hub tests, which start
 tiny HTTP servers on ephemeral `127.0.0.1` ports (a fake app answering
 `/api/health`, a launchable one the hub really starts and stops, profile

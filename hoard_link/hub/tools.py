@@ -120,7 +120,8 @@ def catalogue() -> list[dict[str, Any]]:
             "name": "hub_lease_status",
             "description": "GPU VRAM per GPU with active leases and the queue / VRAM libre, reservas y cola de la GPU.\n"
                            "Per GPU: total, used (nvidia-smi), reserved by granted leases, available. Then the granted "
-                           "leases (owner, purpose, vram_mb, gpu, expires_in_s) and the queue in grant order.",
+                           "leases (owner, purpose, vram_mb, gpu, expires_in_s) and the queue in grant order. "
+                           "protected_gpus lists the GPUs that only an explicit request may get.",
             "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "default": False,
                                                                        "description": "Re-read nvidia-smi now."}},
                             "additionalProperties": False},
@@ -135,7 +136,10 @@ def catalogue() -> list[dict[str, Any]]:
                 "vram_mb": {"type": "integer", "minimum": 0, "description": "MiB of VRAM needed."},
                 "owner": {"type": "string", "description": "Who holds it (app id or agent name)."},
                 "purpose": {"type": "string", "description": "What for, shown in the hub (e.g. 'whisper large-v3')."},
-                "gpu": {"description": "GPU index, or 'any' (default).", "anyOf": [{"type": "integer"}, {"type": "string"}]},
+                "gpu": {"description": "GPU index, a list of GPU indices (any of them: [2, 3] or '2,3'), or 'any' "
+                                       "(default; never a protected GPU).",
+                        "anyOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}},
+                                  {"type": "string"}]},
                 "priority": {"type": "integer", "default": 0, "description": "Higher is served first."},
                 "ttl_s": {"type": "integer", "default": 1800, "description": "Seconds until it expires unless renewed."},
                 "wait": {"type": "boolean", "default": False, "description": "Wait up to 25 s for a grant."},

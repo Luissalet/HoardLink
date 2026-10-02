@@ -52,7 +52,8 @@ class Hub:
         self.token = self._load_token()
         # The GPU/VRAM lease arbiter: one queue for every app on this machine.
         self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=gpu_fn,
-                                   headroom_mb=int(self.config.lease_headroom_mb or 0))
+                                   headroom_mb=int(self.config.lease_headroom_mb or 0),
+                                   protected_gpus=self.config.protected_gpus)
         # External commands of the profiles (ComfyUI instances, scripts...).
         # the shared backends (ComfyUI, Ollama, configured servers) any app of
         # the family can start without Faustus: same files as the apps use
@@ -608,7 +609,8 @@ def _backends_now(config: HubConfig) -> dict[str, Any]:
     async def run() -> dict[str, Any]:
         cfg = LinkConfig.load(None, app="hoard-hub")
         cfg = LinkConfig(app="hoard-hub", only_resident=True, faustus_urls=tuple(config.faustus_urls),
-                         faustus_token=cfg.faustus_token, comfy_url=cfg.comfy_url, capabilities=cfg.capabilities)
+                         faustus_token=cfg.faustus_token, comfy_url=cfg.comfy_url, capabilities=cfg.capabilities,
+                         use_routes=cfg.use_routes, routes_file=cfg.routes_file)
         async with Link(cfg) as link:
             status = await link.status()
         return {cap: status[cap] for cap in CAPABILITIES}

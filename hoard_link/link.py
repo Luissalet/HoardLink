@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
 import logging
 import os
 import re
@@ -31,6 +32,7 @@ from .errors import BackendError, Unavailable
 from .gpu import GpuMemory, gpu_free_mb
 from .lease import Lease, LeaseError, LeaseTimeout
 from . import reasoning as _reasoning
+from . import routes as _routes
 from .types import CAPABILITIES, ChatResult, Resolution, Usage
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
@@ -261,6 +263,42 @@ def _prefer(names: list[str], preferred: Optional[str]) -> list[str]:
     return names
 
 
+def _prefer_many(names: list[str], prefs: list[str]) -> list[str]:
+    """``names`` reordered by the measured preferences: a name that matches an
+    earlier preference goes first (see :func:`hoard_link.routes.names_match`);
+    names that match none keep their original order after them."""
+    if not prefs:
+        return names
+    ranked: list[tuple[int, int, str]] = []
+    for i, name in enumerate(names):
+        rank = next((j for j, pref in enumerate(prefs) if _routes.names_match(name, pref)), len(prefs))
+        ranked.append((rank, i, name))
+    ranked.sort(key=lambda t: (t[0], t[1]))
+    return [name for _r, _i, name in ranked]
+
+
+@dataclasses.dataclass(frozen=True)
+class _RouteCtx:
+    """The measured routes in force for one resolution."""
+
+    capability: str
+    task: Optional[str]
+    routes: _routes.Routes
+    prefs: tuple[str, ...]
+
+    def note(self) -> str:
+        return f"; ranked by measured routes ({'task ' + self.task if self.task else self.capability})"
+
+    def details(self) -> dict[str, Any]:
+        return {"task": self.task, "source": self.routes.source, "updated_at": self.routes.updated_at}
+
+
+def _promoted(model: Optional[str], ranked: list[str], base: list[str]) -> bool:
+    """True when the measured routes moved ``model`` ahead of where the
+    original order (with the explicit preference) had it."""
+    return model in ranked and model in base and ranked.index(model) < base.index(model)
+
+
 class Link:
     """Resolves and calls the shared model backend for one app."""
 
@@ -347,11 +385,41 @@ class Link:
     def _may_load(self, capability: str) -> bool:
         return self.config.capability(capability).allow_load or not self.config.only_resident
 
-    async def resolve(self, capability: str) -> Resolution:
+    def _routes(self) -> _routes.Routes:
+        """The measured routes file (cached by mtime); empty when routes are switched off."""
+        if not self.config.use_routes:
+            return _routes.Routes(problem="routes disabled")
+        return _routes.load_routes(self.config.routes_file)
+
+    def _route_ctx(self, capability: str, task: Optional[str]) -> Optional[_RouteCtx]:
+        if not self.config.use_routes:
+            return None
+        routes = _routes.load_routes(self.config.routes_file)
+        prefs = routes.preferences(capability, task)
+        return _RouteCtx(capability, task, routes, tuple(prefs)) if prefs else None
+
+    @staticmethod
+    def _rank(
+        names: list[str], preferred: Optional[str], ctx: Optional[_RouteCtx]
+    ) -> tuple[list[str], list[str]]:
+        """``(ranked, base)``: the explicit preference first, then the measured
+        routes, then the original order; ``base`` is the same without routes."""
+        base = _prefer(names, preferred)
+        if ctx is None:
+            return base, base
+        return _prefer(_prefer_many(names, list(ctx.prefs)), preferred), base
+
+    async def resolve(self, capability: str, task: Optional[str] = None) -> Resolution:
+        """Which server and model to use for ``capability``.
+
+        ``task`` (e.g. ``"code"``) names a measured route from
+        ``~/.hoard/routes.json``: among the candidates resolution already
+        considers, the model measured best for that task is preferred."""
         if capability not in CAPABILITIES:
             raise ValueError(f"unknown capability {capability!r}, expected one of {CAPABILITIES}")
 
         reasons: list[str] = []
+        ctx = self._route_ctx(capability, task)
 
         explicit = self._resolve_explicit(capability)
         if explicit is not None:
@@ -359,13 +427,13 @@ class Link:
 
         faustus_url = await self._faustus_url()
         if faustus_url:
-            res = await self._resolve_from_faustus(capability, faustus_url, reasons)
+            res = await self._resolve_from_faustus(capability, faustus_url, reasons, ctx)
             if res is not None:
                 return res
         else:
             reasons.append("Faustus not reachable on configured/default ports")
 
-        res = await self._resolve_from_loopback(capability, reasons)
+        res = await self._resolve_from_loopback(capability, reasons, ctx)
         if res is not None:
             return res
 
@@ -412,7 +480,7 @@ class Link:
         )
 
     async def _resolve_from_faustus(
-        self, capability: str, faustus_url: str, reasons: list[str]
+        self, capability: str, faustus_url: str, reasons: list[str], ctx: Optional[_RouteCtx] = None
     ) -> Optional[Resolution]:
         token = self.config.faustus_token
         headers = _faustus.auth_headers(token)
@@ -429,7 +497,7 @@ class Link:
             elif not matches:
                 reasons.append(f"Faustus registry has no server for capability '{capability}'")
             for item in local:
-                res = await self._resolution_from_registry_item(capability, item, reasons)
+                res = await self._resolution_from_registry_item(capability, item, reasons, ctx)
                 if res is not None:
                     return res
         elif status in (401, 403):
@@ -492,7 +560,7 @@ class Link:
         return None
 
     async def _resolution_from_registry_item(
-        self, capability: str, item: dict, reasons: list[str]
+        self, capability: str, item: dict, reasons: list[str], ctx: Optional[_RouteCtx] = None
     ) -> Optional[Resolution]:
         backend = str(item.get("backend") or "?")
         provider = "llamacpp" if backend.lower() in _LLAMACPP_BACKENDS else backend
@@ -502,6 +570,7 @@ class Link:
         preferred = self.config.capability(capability).model
         resident: Optional[bool]
         size_mb: Optional[int] = None
+        by_routes = False
 
         if api == "ollama":
             # The registry lists what Faustus *can* use, not what is loaded:
@@ -511,11 +580,14 @@ class Link:
                 reasons.append(f"Faustus registry names Ollama at {_host(url)} but it does not answer /api/ps")
                 return None
             loaded = [m["name"] for m in ollama["resident"]]
-            candidates = _prefer([m for m in listed if m in loaded], preferred)
+            candidates, base = self._rank([m for m in listed if m in loaded], preferred, ctx)
             if candidates:
                 model, resident = candidates[0], True
+                by_routes = _promoted(model, candidates, base)
             elif self._may_load(capability) and listed:
-                model, resident = _prefer(listed, preferred)[0], False
+                ranked, base = self._rank(listed, preferred, ctx)
+                model, resident = ranked[0], False
+                by_routes = _promoted(model, ranked, base)
                 size_mb = _tag_size_mb(ollama.get("tags"), model)
             else:
                 reasons.append(
@@ -524,7 +596,9 @@ class Link:
                 )
                 return None
         else:
-            model = _prefer(listed, preferred)[0] if listed else None
+            ranked, base = self._rank(listed, preferred, ctx)
+            model = ranked[0] if listed else None
+            by_routes = bool(listed) and _promoted(model, ranked, base)
             # A llama-server serves exactly the model it loaded at start.
             resident = True if provider == "llamacpp" else None
 
@@ -535,6 +609,9 @@ class Link:
         reason = (
             f"{capability} -> {backend} at {_host(url)} ({model}), from Faustus registry{tail}"
         )
+        if by_routes and ctx is not None:
+            reason += ctx.note()
+            details_extra["routes"] = ctx.details()
         return Resolution(
             capability=capability,
             provider=provider,
@@ -554,23 +631,23 @@ class Link:
         )
 
     async def _resolve_from_loopback(
-        self, capability: str, reasons: list[str]
+        self, capability: str, reasons: list[str], ctx: Optional[_RouteCtx] = None
     ) -> Optional[Resolution]:
         if capability in ("llm", "vision"):
-            res = await self._loopback_llamacpp(capability, reasons)
+            res = await self._loopback_llamacpp(capability, reasons, ctx)
             if res is not None:
                 return res
-            res = await self._loopback_ollama(capability, reasons)
+            res = await self._loopback_ollama(capability, reasons, ctx)
             if res is not None:
                 return res
             if capability == "llm":
-                res = await self._loopback_openai_compat(reasons)
+                res = await self._loopback_openai_compat(reasons, ctx)
                 if res is not None:
                     return res
             return None
 
         if capability == "embeddings":
-            return await self._loopback_ollama(capability, reasons)
+            return await self._loopback_ollama(capability, reasons, ctx)
 
         if capability in ("image", "video"):
             return await self._loopback_comfy(capability, reasons)
@@ -580,14 +657,42 @@ class Link:
         )
         return None
 
-    async def _loopback_llamacpp(self, capability: str, reasons: list[str]) -> Optional[Resolution]:
+    @staticmethod
+    def _llamacpp_aliases(server: dict) -> list[str]:
+        """Every name a llama-server's model goes by: the served id and the GGUF file name."""
+        names = [Link._llamacpp_model_name(server)]
+        path = (server.get("props") or {}).get("model_path")
+        if isinstance(path, str) and path:
+            names.append(path.replace("\\", "/").rsplit("/", 1)[-1])
+        return [n for n in names if n]
+
+    async def _loopback_llamacpp(
+        self, capability: str, reasons: list[str], ctx: Optional[_RouteCtx] = None
+    ) -> Optional[Resolution]:
         servers = await self._probe_llamacpp()
         if not servers:
             reasons.append("no llama.cpp server found on ports 8080-8090")
             return None
-        for s in servers:
-            if capability == "vision" and not _probes.llamacpp_supports_vision(s):
-                continue
+        suitable = [s for s in servers
+                    if not (capability == "vision" and not _probes.llamacpp_supports_vision(s))]
+        if suitable:
+            s = suitable[0]
+            by_routes = False
+            if ctx is not None and len(suitable) > 1:
+                # Several resident servers: the one whose model was measured best wins.
+                explicit = self.config.capability(capability).model
+
+                def rank(server: dict) -> tuple[int, int]:
+                    aliases = self._llamacpp_aliases(server)
+                    if explicit and explicit in aliases:          # config/env still wins
+                        return (0, 0)
+                    return (1, next((j for j, pref in enumerate(ctx.prefs)
+                                     if any(_routes.names_match(a, pref) for a in aliases)), len(ctx.prefs)))
+                best = min(suitable, key=rank)       # min keeps the first of equals: original order
+                if best is not s and rank(best)[1] < len(ctx.prefs) and rank(best)[0] == 1:
+                    s, by_routes = best, True
+                elif best is not s:
+                    s = best
             model = self._llamacpp_model_name(s)
             busy = _probes.llamacpp_busy(s)
             reason = (
@@ -596,6 +701,10 @@ class Link:
             )
             if busy:
                 reason += "; busy"
+            details: dict[str, Any] = {"source": "loopback", "busy": busy, "port": s["port"], "resident": True}
+            if by_routes and ctx is not None:
+                reason += ctx.note()
+                details["routes"] = ctx.details()
             return Resolution(
                 capability=capability,
                 provider="llamacpp",
@@ -604,7 +713,7 @@ class Link:
                 api="openai",
                 state="resolved",
                 reason=reason,
-                details={"source": "loopback", "busy": busy, "port": s["port"], "resident": True},
+                details=details,
             )
         reasons.append(f"llama.cpp server found but does not support '{capability}' (no vision modality)")
         return None
@@ -623,7 +732,9 @@ class Link:
             return model_path.replace("\\", "/").rsplit("/", 1)[-1]
         return None
 
-    async def _loopback_ollama(self, capability: str, reasons: list[str]) -> Optional[Resolution]:
+    async def _loopback_ollama(
+        self, capability: str, reasons: list[str], ctx: Optional[_RouteCtx] = None
+    ) -> Optional[Resolution]:
         ollama = await self._probe_ollama()
         if not ollama:
             reasons.append("Ollama not reachable on 11434")
@@ -635,19 +746,23 @@ class Link:
         }
         model: Optional[str] = None
         resident = True
-        names = _prefer(list(fitting), preferred)
+        by_routes = False
+        names, base = self._rank(list(fitting), preferred, ctx)
         if names:
             model = names[0]
+            by_routes = _promoted(model, names, base)
         elif self._may_load(capability):
             loaded = {m["name"] for m in ollama["resident"]}
             tag_names = [
                 t.get("name") or t.get("model") for t in ollama.get("tags") or []
             ]
             tag_names = [n for n in tag_names if isinstance(n, str) and n and n not in loaded]
-            for name in _prefer(tag_names, preferred)[:8]:
+            ranked_tags, base_tags = self._rank(tag_names, preferred, ctx)
+            for name in ranked_tags[:8]:
                 caps = await _probes.ollama_show_capabilities(self._client, ollama["url"], name)
                 if _ollama_fits(capability, caps):
                     model, resident = name, False
+                    by_routes = _promoted(name, ranked_tags, base_tags)
                     break
 
         if model is None:
@@ -665,6 +780,11 @@ class Link:
         )
         if preferred and preferred != model:
             reason += f"; preferred '{preferred}' not available"
+        details = {"source": "loopback", "resident": resident,
+                   **({"size_mb": _tag_size_mb(ollama.get("tags"), model)} if not resident else {})}
+        if by_routes and ctx is not None:
+            reason += ctx.note()
+            details["routes"] = ctx.details()
         return Resolution(
             capability=capability,
             provider="ollama",
@@ -673,17 +793,23 @@ class Link:
             api="ollama",
             state="resolved",
             reason=reason,
-            details={"source": "loopback", "resident": resident,
-                     **({"size_mb": _tag_size_mb(ollama.get("tags"), model)} if not resident else {})},
+            details=details,
         )
 
-    async def _loopback_openai_compat(self, reasons: list[str]) -> Optional[Resolution]:
+    async def _loopback_openai_compat(
+        self, reasons: list[str], ctx: Optional[_RouteCtx] = None
+    ) -> Optional[Resolution]:
         compat = await self._probe_openai_compat()
         if not compat:
             reasons.append("no OpenAI-compatible server found on 1234")
             return None
-        model = _prefer(compat["models"], self.config.capability("llm").model)[0]
+        ranked, base = self._rank(compat["models"], self.config.capability("llm").model, ctx)
+        model = ranked[0]
         reason = f"llm -> OpenAI-compatible server at {_host(compat['url'])} ({model}), shared loopback server"
+        details: dict[str, Any] = {"source": "loopback"}
+        if ctx is not None and _promoted(model, ranked, base):
+            reason += ctx.note()
+            details["routes"] = ctx.details()
         return Resolution(
             capability="llm",
             provider="openai_compat",
@@ -692,7 +818,7 @@ class Link:
             api="openai",
             state="resolved",
             reason=reason,
-            details={"source": "loopback"},
+            details=details,
         )
 
     async def _loopback_comfy(self, capability: str, reasons: list[str]) -> Optional[Resolution]:
@@ -806,8 +932,13 @@ class Link:
         capability: str = "llm",
         response_format: Optional[dict[str, Any]] = None,
         effort: Optional[str] = None,
+        task: Optional[str] = None,
     ) -> ChatResult:
         """One chat call to the resolved model.
+
+        `task` (e.g. ``"code"``) asks for the model measured best for that
+        task in ``~/.hoard/routes.json`` among the servers already resident
+        (see :meth:`resolve`).
 
         `effort` (``off`` / ``low`` / ``medium`` / ``high`` / ``max``) is how
         hard the model reasons before answering; None or ``auto`` uses the
@@ -818,7 +949,7 @@ class Link:
         level = _reasoning.normalize(effort)
         if level is None and (effort is None or str(effort).strip().lower() in ("", "auto")):
             level = _reasoning.normalize(self.config.capability(capability).effort)
-        res = await self.resolve(capability)
+        res = await self.resolve(capability, task)
         if not res.resolved:
             raise Unavailable(capability, res.details.get("reasons", [res.reason]))
         if not res.url:
@@ -1088,14 +1219,14 @@ class Link:
             return None
         return ComfyClient(candidate, client=self._client)
 
-    async def wait_idle(self, capability: str, max_wait_s: float = 30.0) -> bool:
+    async def wait_idle(self, capability: str, max_wait_s: float = 30.0, task: Optional[str] = None) -> bool:
         """Wait until the chosen llama-server has no slot processing.
 
         Works whether the server came from loopback probing, the Faustus
         registry or explicit configuration (it is probed by the resolved
         URL's server root). Ollama exposes no busy signal: returns True.
         """
-        res = await self.resolve(capability)
+        res = await self.resolve(capability, task)
         if not res.resolved or res.provider != "llamacpp" or not res.url:
             return True
 
@@ -1110,6 +1241,11 @@ class Link:
                 return False
             await self._sleep(min(2.0, remaining))
 
-    async def status(self) -> dict[str, Any]:
-        results = await asyncio.gather(*(self.resolve(cap) for cap in CAPABILITIES))
-        return {cap: res.to_dict() for cap, res in zip(CAPABILITIES, results)}
+    async def status(self, task: Optional[str] = None) -> dict[str, Any]:
+        """Every capability's Resolution, plus a ``routes`` entry with the
+        measured-routes file in use (``file``, ``updated_at``, ``source``,
+        ``tasks``, ``problem``)."""
+        results = await asyncio.gather(*(self.resolve(cap, task) for cap in CAPABILITIES))
+        out: dict[str, Any] = {cap: res.to_dict() for cap, res in zip(CAPABILITIES, results)}
+        out["routes"] = self._routes().summary()
+        return out

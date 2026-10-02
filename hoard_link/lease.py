@@ -12,6 +12,9 @@
     async with lease(vram_mb=20000, purpose="video render", owner="daguerre", priority=1) as l:
         ...
 
+    with lease(vram_mb=12000, purpose="render", gpu=[2, 3]) as l:   # any of GPUs 2 or 3
+        ...
+
 The hub (``python -m hoard_link.hub``, port 8810) keeps one queue for the
 whole machine, counting both what ``nvidia-smi`` reports and what it has
 already promised to others, so two apps can no longer see the same free
@@ -58,6 +61,27 @@ class LeaseTimeout(HoardLinkError, TimeoutError):
     def __init__(self, message: str, position: Optional[int] = None):
         self.position = position
         super().__init__(message)
+
+
+def _wanted_gpus(request: Any) -> Optional[list[int]]:
+    """The GPU indices a request restricts the lease to (``gpu=2``, ``gpu=[2, 3]``,
+    ``"2,3"``), or None for "any"."""
+    if request is None or isinstance(request, bool):
+        return None
+    if isinstance(request, str):
+        text = request.strip().lower()
+        if text in ("", "any", "auto"):
+            return None
+        request = [p for p in text.replace(";", ",").split(",")]
+    elif isinstance(request, int):
+        request = [request]
+    out: list[int] = []
+    for item in request if isinstance(request, (list, tuple, set, frozenset)) else []:
+        try:
+            out.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return out or None
 
 
 def _default_owner() -> str:
@@ -142,16 +166,20 @@ class Lease:
         self.state = "local"
         self.lease_id = None
         gpus = gpu_free_mb()
-        pool = gpus if self.gpu_request in (None, "any") else [g for g in gpus if g.index == self.gpu_request]
+        wanted = _wanted_gpus(self.gpu_request)
+        pool = gpus if wanted is None else [g for g in gpus if g.index in wanted]
+        # A single named GPU is used as asked even when it is not listed; with several, the roomiest wins.
+        named = wanted[0] if wanted is not None and len(wanted) == 1 else None
         fits = [g for g in pool if g.free_mb >= self.vram_mb]
         if fits:
             self.gpu = max(fits, key=lambda g: g.free_mb).index
             detail = f"GPU {self.gpu} has {max(g.free_mb for g in fits)} MiB free"
         elif pool:
-            self.gpu = self.gpu_request if isinstance(self.gpu_request, int) else None
+            self.gpu = named if named is not None else (
+                max(pool, key=lambda g: g.free_mb).index if wanted is not None else None)
             detail = f"no GPU has {self.vram_mb} MiB free (best: {max(g.free_mb for g in pool)} MiB); proceeding anyway"
         else:
-            self.gpu = self.gpu_request if isinstance(self.gpu_request, int) else None
+            self.gpu = named
             detail = "no GPU inventory (nvidia-smi not found)"
         self.warning = f"GPU lease hub not reachable at {self.hub_url} ({reason}); local check only: {detail}"
         key = self.hub_url + "|" + reason

@@ -23,6 +23,9 @@ async def main() -> None:
     for cap in CAPABILITIES:
         res = status[cap]
         print(f"{cap:>10}  {res['state']:<11}  {res['reason']}")
+    routes = status["routes"]
+    print(f"{'routes':>10}  {routes['source'] or '-':<11}  {routes['file']}"
+          + (f" ({routes['problem']})" if routes["problem"] else f" (tasks: {', '.join(routes['tasks']) or '-'})"))
 
 
 if __name__ == "__main__":

@@ -31,6 +31,11 @@ really sits in memory (then ``smi_used`` already includes it). Memory a
 lease-less program grabs later shows up in ``smi_used`` and is respected
 too.
 
+A request may name one GPU (``gpu=2``), a list of acceptable GPUs
+(``gpu=[2, 3]`` or ``"2,3"``: it is placed on whichever has the most room)
+or ``"any"``. ``protected_gpus`` (hub.json ``lease.protected_gpus``) are kept
+out of every ``"any"`` request: only a request that names them gets them.
+
 Queue order is priority (higher first), then arrival. A queued lease that
 does not fit holds back every later lease that could use the same GPU,
 so a large request is not starved by a stream of small ones; a request
@@ -66,7 +71,7 @@ class Lease:
     owner: str
     purpose: str
     vram_mb: int
-    gpu_request: Any                 # "any" or an int
+    gpu_request: Any                 # "any", an int, or a list of ints (any of those GPUs)
     priority: int
     ttl_s: int
     state: str                       # granted | queued
@@ -97,6 +102,25 @@ class _Gpu:
 def _default_gpu_fn() -> list[Any]:
     from hoard_link.gpu import gpu_free_mb
     return gpu_free_mb()
+
+
+def _as_index_list(value: Any) -> list[int]:
+    """GPU indices from a setting (a list, ``"0,1"`` or one int); junk is ignored."""
+    if value is None or isinstance(value, bool):
+        return []
+    if isinstance(value, str):
+        value = [p for p in value.replace(";", ",").split(",")]
+    elif isinstance(value, int):
+        value = [value]
+    out: list[int] = []
+    for item in value if isinstance(value, (list, tuple, set, frozenset)) else []:
+        try:
+            idx = int(item)
+        except (TypeError, ValueError):
+            continue
+        if idx >= 0 and idx not in out and not isinstance(item, bool):
+            out.append(idx)
+    return out
 
 
 def _psutil():
@@ -138,6 +162,42 @@ class LeaseError(ValueError):
     pass
 
 
+def parse_gpu_request(gpu: Any) -> Any:
+    """``"any"``, one GPU index, or a list of GPU indices from what a client sent:
+    None / ``"any"`` / ``"auto"`` / ``[]``, an int (or ``"2"``), a list of ints, or ``"2,3"``."""
+    if gpu is None:
+        return "any"
+    if isinstance(gpu, bool):
+        raise LeaseError("gpu must be a GPU index, a list of GPU indices or 'any'")
+    if isinstance(gpu, str):
+        text = gpu.strip().lower()
+        if text in ("", "any", "auto"):
+            return "any"
+        text = text.replace(";", ",")
+        gpu = [part for part in text.split(",") if part.strip()] if "," in text else text
+    if isinstance(gpu, (list, tuple, set, frozenset)):
+        out: list[int] = []
+        for item in (sorted(gpu) if isinstance(gpu, (set, frozenset)) else gpu):
+            if isinstance(item, bool):
+                raise LeaseError("gpu must be a GPU index, a list of GPU indices or 'any'")
+            try:
+                idx = int(item)
+            except (TypeError, ValueError):
+                raise LeaseError(f"gpu list entries must be GPU indices, got {item!r}") from None
+            if idx < 0:
+                raise LeaseError(f"GPU index must be >= 0, got {idx}")
+            if idx not in out:
+                out.append(idx)
+        return out or "any"
+    try:
+        idx = int(gpu)
+    except (TypeError, ValueError):
+        raise LeaseError("gpu must be a GPU index, a list of GPU indices or 'any'") from None
+    if idx < 0:
+        raise LeaseError(f"GPU index must be >= 0, got {idx}")
+    return idx
+
+
 class LeaseArbiter:
     """Thread-safe; every public method reaps and schedules first, so the
     arbiter needs no background thread of its own."""
@@ -151,10 +211,13 @@ class LeaseArbiter:
         now: Callable[[], float] = time.time,
         alive: Callable[[int, Optional[float]], bool] = pid_alive,
         cache_s: float = INVENTORY_CACHE_S,
+        protected_gpus: Any = (),
     ):
         self.path = path
         self._gpu_fn = gpu_fn or _default_gpu_fn
         self.headroom_mb = max(0, int(headroom_mb))
+        #: GPUs no ``"any"`` request may get (hub.json ``lease.protected_gpus``).
+        self.protected_gpus: list[int] = _as_index_list(protected_gpus)
         self._now = now
         self._alive = alive
         self._cache_s = cache_s
@@ -276,9 +339,11 @@ class LeaseArbiter:
         return bool(gone)
 
     def _candidates(self, lease: Lease, gpus: list[_Gpu]) -> list[_Gpu]:
-        if lease.gpu_request == "any":
-            return list(gpus)
-        return [g for g in gpus if g.index == lease.gpu_request]
+        req = lease.gpu_request
+        if req == "any":
+            return [g for g in gpus if g.index not in self.protected_gpus]
+        wanted = req if isinstance(req, list) else [req]
+        return [g for g in gpus if g.index in wanted]
 
     def _schedule(self, gpus: list[_Gpu]) -> bool:
         changed = False
@@ -380,17 +445,18 @@ class LeaseArbiter:
             raise LeaseError("vram_mb must be an integer number of MiB") from None
         if vram < 0:
             raise LeaseError("vram_mb must be >= 0")
-        if gpu is None or (isinstance(gpu, str) and gpu.strip().lower() in ("", "any", "auto")):
-            gpu_req: Any = "any"
-        else:
-            try:
-                gpu_req = int(gpu)
-            except (TypeError, ValueError):
-                raise LeaseError("gpu must be a GPU index or 'any'") from None
-            if gpus and gpu_req not in {g.index for g in gpus}:
-                raise LeaseError(f"no GPU with index {gpu_req} (have {sorted(g.index for g in gpus)})")
+        gpu_req = parse_gpu_request(gpu)
+        if gpus and gpu_req != "any":
+            have = {g.index for g in gpus}
+            for idx in gpu_req if isinstance(gpu_req, list) else [gpu_req]:
+                if idx not in have:
+                    raise LeaseError(f"no GPU with index {idx} (have {sorted(have)})")
         if gpus:
-            pool = gpus if gpu_req == "any" else [g for g in gpus if g.index == gpu_req]
+            pool = self._candidates(Lease(id="", owner="", purpose="", vram_mb=0, gpu_request=gpu_req, priority=0,
+                                          ttl_s=0, state="queued", created_at=0.0, expires_at=0.0, seq=0), gpus)
+            if not pool:
+                raise LeaseError(f"every GPU is protected ({sorted(self.protected_gpus)}); "
+                                 "name one explicitly to use it")
             biggest = max(g.total_mb - self.headroom_mb for g in pool)
             if vram > biggest:
                 raise LeaseError(f"{vram} MiB can never fit: the largest eligible GPU has {biggest} MiB")
@@ -465,6 +531,7 @@ class LeaseArbiter:
                 reserved = self._reserved(g.index)
                 per_gpu.append({
                     "index": g.index, "total_mb": g.total_mb, "used_mb": g.used_mb, "free_mb": g.total_mb - g.used_mb,
+                    "protected": g.index in self.protected_gpus,
                     "reserved_mb": reserved, "base_used_mb": self._base_used.get(g.index, g.used_mb),
                     "available_mb": max(0, self._available(g)),
                     "leases": sum(1 for l in self._leases.values() if l.state == "granted" and l.gpu == g.index),
@@ -472,4 +539,4 @@ class LeaseArbiter:
             granted = [l.to_dict(now) for l in self._ordered() if l.state == "granted"]
             queue = [dict(l.to_dict(now), position=i) for i, l in enumerate(self._queue(), 1)]
             return {"ok": True, "gpus": per_gpu, "inventory": bool(gpus), "leases": granted, "queue": queue,
-                    "headroom_mb": self.headroom_mb, "reaped": list(self.reaped[-10:]), "checked_at": self._inv[0]}
+                    "headroom_mb": self.headroom_mb, "protected_gpus": list(self.protected_gpus), "reaped": list(self.reaped[-10:]), "checked_at": self._inv[0]}

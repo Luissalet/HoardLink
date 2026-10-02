@@ -42,6 +42,9 @@ class HubConfig:
     exit_with_window: bool = True
     language: str = "auto"         # auto | en | es
     lease_headroom_mb: int = 256   # VRAM kept free on every GPU when granting leases
+    # GPU lease settings: {"protected_gpus": [0, 1]} keeps those GPUs out of every "any" request (only a
+    # request that names them gets them). Empty by default: nothing is protected until it is set.
+    lease: dict[str, Any] = field(default_factory=dict)
     profiles: dict[str, Any] = field(default_factory=dict)   # name -> {apps, commands, desktop}
     backup: dict[str, Any] = field(default_factory=dict)     # {dir, exclude: [...], max_file_mb, keep, include_hub}
     events_keep: int = 20000       # rows kept in events.db after a prune
@@ -55,6 +58,12 @@ class HubConfig:
     # For an app this machine runs differently from how it is shipped (a developer build, a
     # different install folder) without editing the app's own manifest.
     launch_overrides: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def protected_gpus(self) -> list[int]:
+        """``lease.protected_gpus`` of hub.json as a list of GPU indices (junk entries are ignored)."""
+        from .lease import _as_index_list
+        return _as_index_list((self.lease or {}).get("protected_gpus"))
 
     @property
     def logs_dir(self) -> str:
@@ -160,6 +169,8 @@ class HubConfig:
             cfg.link_chat_concurrency = 2
         if not isinstance(cfg.backup, dict):
             cfg.backup = {}
+        if not isinstance(cfg.lease, dict):
+            cfg.lease = {}
         if not isinstance(cfg.repos, dict):
             cfg.repos = {}
         cfg.roots = [os.path.abspath(os.path.expanduser(r)) for r in cfg.roots]
