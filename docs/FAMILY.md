@@ -69,6 +69,15 @@ contents (16 KB cap). Conventions:
 | `phileas.update` | Phileas | `event_id, type, severity, title, summary, url, shipment_id, status, eta_likely, label, carrier, tracking_number` |
 | `phileas.status` | Phileas | `shipment_id, from, to, label, source` |
 | `cassandra.incident.opened` / `closed` | Cassandra | `incident_id, app, service_kind (app\|external\|user), to_state, probable_cause` |
+| `phileas.trip.new` / `phileas.trip.changed` | Phileas (travel) | `trip_id, title, start, end` |
+| `phileas.checkin.open` / `phileas.trip.update` | Phileas (travel) | `trip_id, segment_id, title, opens_at|kind` |
+| `cookhoard.pantry.expiring` | CookHoard (daily) | `count, items` (names, at most 10) |
+| `cookhoard.recipe.imported` / `cookhoard.menu.planned` | CookHoard | `recipe_id, title, source` / `week` |
+| `homehoard.item.added` / `homehoard.maintenance.done` | HomeHoard | `item_id, name` / `task_id, title, next_due` |
+| `homehoard.maintenance.due` | HomeHoard (daily) | tasks due within 7 days: ids and titles |
+| `funes.minutes.ready` | Funes | `session_id, title, action_items, started_at` (People ingests it) |
+| `people.commitment.added` / `done` / `overdue` | People | `commitment_id, direction, person_id, due` |
+| `hub.link.chat` | hub, one per model call served to an app | `app, capability, ok, ms, model` |
 
 Reading: `GET /api/events?since_id=&type=links.*&source=&since=&until=&text=&limit=`
 (newest first; `order=asc` with `since_id` to tail), `GET /api/events/stream`
@@ -285,3 +294,29 @@ state is `hub_link_status` (read-only).
 Every LLM-based feature of an app keeps the evidence (the source text) next
 to what the model produced, and has either a deterministic fallback or an
 explicit "no model" state.
+
+
+## 11. Ports in use
+
+Every app keeps one fixed loopback port (`PORT_STRICT=1` in its launch hint), so
+the hub, Cassandra and the assistant always find it. Before giving a new app a
+port, check this list and the manifests under the roots the hub scans
+(`hub_apps`): two apps on one port is the first thing that breaks.
+
+| Port | App | Port | App |
+|---|---|---|---|
+| 5000 | Plato's | 5192 | Midas's |
+| 5178 | JobHunter's | 5193 | Atlas's (archived) |
+| 5180 | Ledger's | 5194 | Cicero's |
+| 5181 | Links | 5195 | Mercator's |
+| 5182 | People's | 5196 | HomeHoard |
+| 5183 | Argus's | 5197 | Tantalus's |
+| 5184 | Borges's | 5198 | Lumiere's |
+| 5186 | Vulcan's | 5199 | Phileas's |
+| 5187 | Hypatia's | 5200 | Kafka's |
+| 5188 | Echo's | 5201 | Galton's |
+| 5189 | Nightingale's | 5202 | Pygmalion's |
+| 5190 | Cassandra's | 5210 | CookHoard |
+| 5191 | Vitruvius's | 8741 | Dorian's |
+| 8766 | Writer's (desktop) | 8767 | Gepetto's |
+| 8810 | Hoard Hub | 8811–8817 | Babel, Laplace, Funes, Daguerre, Prospero, Scheherazade, DiskHoard |
