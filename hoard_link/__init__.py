@@ -24,7 +24,7 @@ from ._comfy import ComfyClient
 from .types import CAPABILITIES, ChatResult, OutputFile, Resolution, Usage
 from . import family
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "__version__",
