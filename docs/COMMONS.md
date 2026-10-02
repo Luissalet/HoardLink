@@ -54,7 +54,10 @@ Each area has its own page with the full API, the copies it replaces (with paths
 | Documents and search | `docs.textsearch`, `docs.chunking`, `docs.sniff`, `docs.pageranges`, `docs.vecmath`, `docs.citations`, `docs.textclean`, `docs.readers_lite`, `docs.imaging`, `docs.archives` | `docs.js` | [commons/docs.md](commons/docs.md) |
 | Money, dates and personal data | `text`, `money`, `dates`, `idcheck`, `tracking`, `merchants`, `ics`, `bizdays` | `text.js`, `money.js`, `dates.js`, `idcheck.js`, `tracking.js`, `merchants.js`, `ics.js` | [commons/commerce.md](commons/commerce.md) |
 | Notifications and mail | `notify_channels`, `fam_notify.Router`, `mail_helper`, `fam_mail.FaustusHelper`, `fam_mail.MailRouter` | in `hoard-link.js` | [commons/notify-mail.md](commons/notify-mail.md) |
-| App plumbing | `atomic`, `tokens`, `ids`, `sqlkit`, `paths`, `net`, `appconfig`, `lanes`, `waiting` | `server.js` | [commons/plumbing.md](commons/plumbing.md) |
+| App plumbing | `atomic`, `tokens`, `ids`, `sqlkit`, `paths`, `net`, `appconfig`, `lanes`, `waiting`, `guard`, `agentkit`, `service`, `bridge` | `server.js`, `express.js` | [commons/plumbing.md](commons/plumbing.md) |
+
+Family services (who owns what, the tools, arguments, results and polling rules): [commons/services.md](commons/services.md).
+The web service in the hub: [commons/web.md](commons/web.md#family-service-hub-facet-web).
 
 The shared test vectors are in `tests/vectors/`; `tests/commons/` runs every vector against the Python module and,
 when `node` is installed, against its Node twin.
