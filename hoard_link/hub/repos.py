@@ -390,6 +390,7 @@ class RepoMonitor:
         self._lang_fn = lang_fn or (lambda: "es")
         self.src_pkg = Path(src_pkg) if src_pkg else Path(__file__).resolve().parents[1]
         self.src_js = self.src_pkg.parent / "js" / "hoard-link.js"
+        self.src_js_commons = self.src_pkg.parent / "js" / drift.JS_COMMONS
         self.canon_theme = self.src_pkg / "ui" / drift.THEME_NAME
         self._now = now
         self._ci_runner = ci_runner or _default_ci_runner
@@ -712,6 +713,10 @@ class RepoMonitor:
         js = drift.vendored_js_stale(path, self.src_js)
         if js is not None:
             copies.append({"path": "server/hoard-link.js", "kind": "js", "count": 1 if js else 0, "stale": ["hoard-link.js"] if js else []})
+        commons = drift.vendored_js_commons_plan(path, self.src_js_commons)
+        if commons is not None:
+            stale = commons[0] + commons[1]
+            copies.append({"path": "server/" + drift.JS_COMMONS, "kind": "js", "count": len(stale), "stale": stale[:20]})
         theme_copies = list(drift.theme_copies_in(path))
         theme = [Path(os.path.relpath(p, path)).as_posix() for p in drift.theme_stale(theme_copies, self.canon_theme)]
         return {"vendored": {"copies": copies, "stale": any(c["count"] for c in copies)},

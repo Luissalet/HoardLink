@@ -42,3 +42,10 @@ class BackendError(HoardLinkError):
         else:
             message = f"{who} returned HTTP {status}: {body_excerpt}"
         super().__init__(message)
+
+
+def missing_dependency(package: str, feature: str = "", *, pip_name: Optional[str] = None) -> Unavailable:
+    """The :class:`Unavailable` the commons raise when an optional package is not installed:
+    ``raise missing_dependency("bs4", "html extraction", pip_name="beautifulsoup4")``."""
+    what = feature or package
+    return Unavailable(what, [f"the optional package {package!r} is not installed (pip install {pip_name or package})"])

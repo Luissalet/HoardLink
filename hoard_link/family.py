@@ -44,7 +44,7 @@ except Exception:  # noqa: BLE001
     _Request = Any  # type: ignore[misc,assignment]
     _JSONResponse = None  # type: ignore[assignment]
 
-FAMILY_VERSION = "0.7.0"
+FAMILY_VERSION = "0.8.0"
 _state: dict[str, Any] = {"app": "", "token_file": "", "hub_url": None, "enabled": True, "sent": 0, "dropped": 0,
                           "last_error": ""}
 _lock = threading.Lock()
@@ -251,23 +251,11 @@ class _AgentCallsMiddleware:
 
 
 def _write_token_if_missing(path: str) -> str:
-    try:
-        with open(path, "r", encoding="utf-8-sig") as fh:
-            tok = fh.read().strip()
-        if tok:
-            return tok
-    except OSError:
-        pass
-    import secrets
-    tok = secrets.token_urlsafe(32)
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(tok)
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-    return tok
+    """The app's token at ``path``, created when missing (kept stable across restarts). Since 0.8 this is
+    :func:`hoard_link.tokens.read_or_create_token` (atomic, 0600, two starting processes agree on one token);
+    any existing token of 16+ characters is kept as it is."""
+    from .tokens import read_or_create_token
+    return read_or_create_token(path, min_len=16)
 
 
 def install_fastapi(app: Any, app_id: str, data_dir: str, *, contract: bool = True, instructions: str = "",

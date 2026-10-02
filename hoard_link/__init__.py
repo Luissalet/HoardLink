@@ -1,50 +1,70 @@
-"""Hoard Link: the shared model backend for agent-controlled apps.
+"""Hoard Link: the shared library of the Hoard family.
 
-A tiny, dependency-light library (stdlib + ``httpx``) that answers, for a
-capability (``llm``, ``vision``, ``embeddings``, ``tts``, ``stt``,
-``image``, ``video``, ``music``): which server and model to use right now,
-and why — favoring servers other local apps (and Faustus) already have
-resident, so a GPU-bound machine is never asked to load a second copy of
-the same kind of model.
+It started as the shared model backend (``Link``): for a capability
+(``llm``, ``vision``, ``embeddings``, ``tts``, ``stt``, ``image``,
+``video``, ``music``) it answers which server and model to use right now,
+favouring servers other local apps (and Faustus) already have resident.
 
-Since 0.4 it also carries what an app needs to belong to the *family*
-(``hoard_link.family``): emit events to the hub's bus, call other apps
-through the hub, and answer the shared agent contract.
+Since 0.4 it carries what an app needs to belong to the *family*
+(``hoard_link.family``, the ``fam_*`` clients of the hub's facets), and
+since 0.8 the code the apps used to copy from each other (the *commons*):
 
-See ``README.md`` for the resolution order, the policies and how an app
-vendors this package.
+* ``hoard_link.web``   — polite fetching, SSRF guard, robots, block
+  detection, HTML to text/markdown, page metadata and JSON-LD, feeds, page
+  watching, URL canonical forms, the shared Playwright rung;
+* ``hoard_link.media`` — ffmpeg/ffprobe/yt-dlp discovery, the ffmpeg
+  runner and probe, subtitles, local speech to text;
+* ``hoard_link.docs``  — FTS queries and ``fold``, chunking, file sniffing,
+  page ranges, vectors, citations, images, light document readers;
+* money, dates, identifiers, tracking numbers, merchants, ICS, business
+  days; and the app plumbing (atomic writes, tokens, ids, subprocesses,
+  SQLite, the request guard, ports, lanes).
+
+Importing the package is cheap and needs only the standard library: the
+two names that need ``httpx`` (``Link`` and ``ComfyClient``)
+are loaded the first time they are used (PEP 562), so a stdlib-only app can
+``from .hoard_link import fam_notify, money`` without ``httpx`` installed.
+
+See ``README.md`` and ``docs/COMMONS.md``.
 """
+
+from __future__ import annotations
+
+import importlib
+from typing import Any
+
+__version__ = "0.8.0"
 
 from .config import CapabilityConfig, LinkConfig
 from .errors import BackendError, HoardLinkError, Unavailable
 from .gpu import GpuMemory, gpu_free_mb
 from .lease import Lease, LeaseError, LeaseTimeout, lease
-from .link import Link
-from ._comfy import ComfyClient
 from .types import CAPABILITIES, ChatResult, OutputFile, Resolution, Usage
-from . import family
 
-__version__ = "0.7.0"
+#: names that need ``httpx``: loaded on first use (PEP 562)
+_LAZY: dict[str, tuple[str, str]] = {
+    "Link": ("link", "Link"),
+    "ComfyClient": ("_comfy", "ComfyClient"),
+}
 
 __all__ = [
-    "__version__",
-    "Link",
-    "LinkConfig",
-    "CapabilityConfig",
-    "ComfyClient",
-    "Resolution",
-    "ChatResult",
-    "Usage",
-    "OutputFile",
-    "Unavailable",
-    "BackendError",
-    "HoardLinkError",
-    "gpu_free_mb",
-    "GpuMemory",
-    "lease",
-    "Lease",
-    "LeaseError",
-    "LeaseTimeout",
-    "CAPABILITIES",
-    "family",
+    "__version__", "Link", "LinkConfig", "CapabilityConfig", "ComfyClient", "Resolution", "ChatResult", "Usage",
+    "OutputFile", "Unavailable", "BackendError", "HoardLinkError", "gpu_free_mb", "GpuMemory", "lease", "Lease",
+    "LeaseError", "LeaseTimeout", "CAPABILITIES", "family",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    target = _LAZY.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(importlib.import_module(f"{__name__}.{target[0]}"), target[1])
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY))
+
+
+from . import family  # noqa: E402  (standard library only)
