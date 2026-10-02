@@ -1,0 +1,1154 @@
+[
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.pdf",
+   {
+    "__b64__": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAzNSA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDcyIDcyMCBUZCAoaG9sYSkgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSAvRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZyA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDAzMjYgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MjMKJSVFT0YK"
+   }
+  ],
+  "expect": {
+   "kind": "pdf",
+   "mime": "application/pdf",
+   "ext": "pdf"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "x.png",
+   {
+    "__b64__": "anVuawolUERGLTEuNAo="
+   }
+  ],
+  "expect": {
+   "kind": "pdf",
+   "mime": "application/pdf",
+   "ext": "pdf"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.png",
+   {
+    "__b64__": "iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/png",
+   "ext": "png"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "scan.pdf",
+   {
+    "__b64__": "iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/png",
+   "ext": "png"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.JPG",
+   {
+    "__b64__": "/9j/4AAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/jpeg",
+   "ext": "jpg"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.gif",
+   {
+    "__b64__": "R0lGODlhAAAAAAAAAAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/gif",
+   "ext": "gif"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.webp",
+   {
+    "__b64__": "UklGRgAAAABXRUJQVlA4IAAAAAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/webp",
+   "ext": "webp"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.wav",
+   {
+    "__b64__": "UklGRgAAAABXQVZFZm10IAAAAAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "audio",
+   "mime": "audio/wav",
+   "ext": "wav"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.avi",
+   {
+    "__b64__": "UklGRgAAAABBVkkgTElTVAAAAAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "video",
+   "mime": "video/x-msvideo",
+   "ext": "avi"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.tif",
+   {
+    "__b64__": "SUkqAAAAAAAAAAAAAAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/tiff",
+   "ext": "tif"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.bmp",
+   {
+    "__b64__": "Qk0AAAAAAAAAAAAAAAAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/bmp",
+   "ext": "bmp"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.txt",
+   {
+    "__b64__": "Qk0gaXMgYSB0ZXh0IGZpbGUgdGhhdCBzdGFydHMgd2l0aCBCTSBhbmQgaXMgbG9uZyBlbm91Z2ggdG8gYmUgdGVzdGVk"
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.heic",
+   {
+    "__b64__": "AAAAGGZ0eXBoZWljAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/heic",
+   "ext": "heic"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.avif",
+   {
+    "__b64__": "AAAAHGZ0eXBhdmlmAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/avif",
+   "ext": "avif"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.heif",
+   {
+    "__b64__": "AAAAGGZ0eXBtaWYxAAAAAG1pZjFhdmlm"
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/avif",
+   "ext": "avif"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.mp4",
+   {
+    "__b64__": "AAAAGGZ0eXBtcDQyAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "video",
+   "mime": "video/mp4",
+   "ext": "mp4"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.mov",
+   {
+    "__b64__": "AAAAFGZ0eXBxdCAgAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "video",
+   "mime": "video/quicktime",
+   "ext": "mov"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.m4a",
+   {
+    "__b64__": "AAAAGGZ0eXBNNEEgAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "audio",
+   "mime": "audio/mp4",
+   "ext": "m4a"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.mkv",
+   {
+    "__b64__": "GkXfowEAAABCgm1hdHJvc2th"
+   }
+  ],
+  "expect": {
+   "kind": "video",
+   "mime": "video/x-matroska",
+   "ext": "mkv"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.webm",
+   {
+    "__b64__": "GkXfowEAAABCgndlYm0="
+   }
+  ],
+  "expect": {
+   "kind": "video",
+   "mime": "video/webm",
+   "ext": "webm"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.flac",
+   {
+    "__b64__": "ZkxhQwAAAAAAAAAAAAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "audio",
+   "mime": "audio/flac",
+   "ext": "flac"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.ogg",
+   {
+    "__b64__": "T2dnUwACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXZvcmJpcw=="
+   }
+  ],
+  "expect": {
+   "kind": "audio",
+   "mime": "audio/ogg",
+   "ext": "ogg"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.opus",
+   {
+    "__b64__": "T2dnUwACAAAAAAAAAAAAAAAAAAAAAAAAAABPcHVzSGVhZA=="
+   }
+  ],
+  "expect": {
+   "kind": "audio",
+   "mime": "audio/ogg",
+   "ext": "opus"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.mp3",
+   {
+    "__b64__": "SUQzBAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "audio",
+   "mime": "audio/mpeg",
+   "ext": "mp3"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.mp3",
+   {
+    "__b64__": "//uQAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "audio",
+   "mime": "audio/mpeg",
+   "ext": "mp3"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.bin",
+   {
+    "__b64__": "//uQAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "unknown",
+   "mime": "application/octet-stream",
+   "ext": "bin"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.7z",
+   {
+    "__b64__": "N3q8ryccAAQAAAAAAAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "archive",
+   "mime": "application/x-7z-compressed",
+   "ext": "7z"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.rar",
+   {
+    "__b64__": "UmFyIRoHAAAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "archive",
+   "mime": "application/vnd.rar",
+   "ext": "rar"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.gz",
+   {
+    "__b64__": "H4sIAAAAAAAAAAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "archive",
+   "mime": "application/gzip",
+   "ext": "gz"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.db",
+   {
+    "__b64__": "U1FMaXRlIGZvcm1hdCAzAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "sqlite",
+   "mime": "application/vnd.sqlite3",
+   "ext": "sqlite"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.xls",
+   {
+    "__b64__": "0M8R4KGxGuEAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "ole",
+   "mime": "application/vnd.ms-excel",
+   "ext": "xls"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.rtf",
+   {
+    "__b64__": "e1xydGYxXGFuc2kgaG9sYX0="
+   }
+  ],
+  "expect": {
+   "kind": "rtf",
+   "mime": "application/rtf",
+   "ext": "rtf"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.bin",
+   {
+    "__b64__": "UEsDBBQAAAAIAAAAIQCDFtyMAwAAAAEAAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbKsAAFBLAwQUAAAACAAAACEAFsN6GQYAAAAEAAAAEQAAAHdvcmQvZG9jdW1lbnQueG1ssynXtwMAUEsBAhQDFAAAAAgAAAAhAIMW3IwDAAAAAQAAABMAAAAAAAAAAAAAAIABAAAAAFtDb250ZW50X1R5cGVzXS54bWxQSwECFAMUAAAACAAAACEAFsN6GQYAAAAEAAAAEQAAAAAAAAAAAAAAgAE0AAAAd29yZC9kb2N1bWVudC54bWxQSwUGAAAAAAIAAgCAAAAAaQAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "docx",
+   "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+   "ext": "docx"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.zip",
+   {
+    "__b64__": "UEsDBBQAAAAIAAAAIQCDFtyMAwAAAAEAAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbKsAAFBLAwQUAAAACAAAACEAFsN6GQYAAAAEAAAADwAAAHhsL3dvcmtib29rLnhtbLMp17cDAFBLAQIUAxQAAAAIAAAAIQCDFtyMAwAAAAEAAAATAAAAAAAAAAAAAACAAQAAAABbQ29udGVudF9UeXBlc10ueG1sUEsBAhQDFAAAAAgAAAAhABbDehkGAAAABAAAAA8AAAAAAAAAAAAAAIABNAAAAHhsL3dvcmtib29rLnhtbFBLBQYAAAAAAgACAH4AAABnAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "xlsx",
+   "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+   "ext": "xlsx"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "UEsDBBQAAAAIAAAAIQCT1TUcBgAAAAQAAAAUAAAAcHB0L3ByZXNlbnRhdGlvbi54bWyzKdC3AwBQSwECFAMUAAAACAAAACEAk9U1HAYAAAAEAAAAFAAAAAAAAAAAAAAAgAEAAAAAcHB0L3ByZXNlbnRhdGlvbi54bWxQSwUGAAAAAAEAAQBCAAAAOAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "pptx",
+   "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+   "ext": "pptx"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.zip",
+   {
+    "__b64__": "UEsDBBQAAAAAAAAAIQBvYassFAAAABQAAAAIAAAAbWltZXR5cGVhcHBsaWNhdGlvbi9lcHViK3ppcFBLAwQUAAAACAAAACEAushVAgYAAAAEAAAAFgAAAE1FVEEtSU5GL2NvbnRhaW5lci54bWyzSda3AwBQSwMEFAAAAAgAAAAhAFsnAA4GAAAABAAAAA0AAABPRUJQUy9jLnhodG1ss8nQtwMAUEsBAhQDFAAAAAAAAAAhAG9hqywUAAAAFAAAAAgAAAAAAAAAAAAAAIABAAAAAG1pbWV0eXBlUEsBAhQDFAAAAAgAAAAhALrIVQIGAAAABAAAABYAAAAAAAAAAAAAAIABOgAAAE1FVEEtSU5GL2NvbnRhaW5lci54bWxQSwECFAMUAAAACAAAACEAWycADgYAAAAEAAAADQAAAAAAAAAAAAAAgAF0AAAAT0VCUFMvYy54aHRtbFBLBQYAAAAAAwADALUAAAClAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "epub",
+   "mime": "application/epub+zip",
+   "ext": "epub"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "UEsDBBQAAAAAAAAAIQBexjIMJwAAACcAAAAIAAAAbWltZXR5cGVhcHBsaWNhdGlvbi92bmQub2FzaXMub3BlbmRvY3VtZW50LnRleHRQSwMEFAAAAAgAAAAhALrIVQIGAAAABAAAAAsAAABjb250ZW50LnhtbLNJ1rcDAFBLAQIUAxQAAAAAAAAAIQBexjIMJwAAACcAAAAIAAAAAAAAAAAAAACAAQAAAABtaW1ldHlwZVBLAQIUAxQAAAAIAAAAIQC6yFUCBgAAAAQAAAALAAAAAAAAAAAAAACAAU0AAABjb250ZW50LnhtbFBLBQYAAAAAAgACAG8AAAB8AAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "odt",
+   "mime": "application/vnd.oasis.opendocument.text",
+   "ext": "odt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "UEsDBBQAAAAAAAAAIQCFbDmKLgAAAC4AAAAIAAAAbWltZXR5cGVhcHBsaWNhdGlvbi92bmQub2FzaXMub3BlbmRvY3VtZW50LnNwcmVhZHNoZWV0UEsDBBQAAAAIAAAAIQC6yFUCBgAAAAQAAAALAAAAY29udGVudC54bWyzSda3AwBQSwECFAMUAAAAAAAAACEAhWw5ii4AAAAuAAAACAAAAAAAAAAAAAAAgAEAAAAAbWltZXR5cGVQSwECFAMUAAAACAAAACEAushVAgYAAAAEAAAACwAAAAAAAAAAAAAAgAFUAAAAY29udGVudC54bWxQSwUGAAAAAAIAAgBvAAAAgwAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "ods",
+   "mime": "application/vnd.oasis.opendocument.spreadsheet",
+   "ext": "ods"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "UEsDBBQAAAAAAAAAIQAzJqyoLwAAAC8AAAAIAAAAbWltZXR5cGVhcHBsaWNhdGlvbi92bmQub2FzaXMub3BlbmRvY3VtZW50LnByZXNlbnRhdGlvblBLAwQUAAAACAAAACEAushVAgYAAAAEAAAACwAAAGNvbnRlbnQueG1ss0nWtwMAUEsBAhQDFAAAAAAAAAAhADMmrKgvAAAALwAAAAgAAAAAAAAAAAAAAIABAAAAAG1pbWV0eXBlUEsBAhQDFAAAAAgAAAAhALrIVQIGAAAABAAAAAsAAAAAAAAAAAAAAIABVQAAAGNvbnRlbnQueG1sUEsFBgAAAAACAAIAbwAAAIQAAAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "odp",
+   "mime": "application/vnd.oasis.opendocument.presentation",
+   "ext": "odp"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "UEsDBBQAAAAAAAAAIQCfAy7EKwAAACsAAAAIAAAAbWltZXR5cGVhcHBsaWNhdGlvbi92bmQub2FzaXMub3BlbmRvY3VtZW50LmdyYXBoaWNzUEsDBBQAAAAIAAAAIQC6yFUCBgAAAAQAAAALAAAAY29udGVudC54bWyzSda3AwBQSwECFAMUAAAAAAAAACEAnwMuxCsAAAArAAAACAAAAAAAAAAAAAAAgAEAAAAAbWltZXR5cGVQSwECFAMUAAAACAAAACEAushVAgYAAAAEAAAACwAAAAAAAAAAAAAAgAFRAAAAY29udGVudC54bWxQSwUGAAAAAAIAAgBvAAAAgAAAAAAA"
+   }
+  ],
+  "expect": {
+   "kind": "zip",
+   "mime": "application/vnd.oasis.opendocument.graphics",
+   "ext": "odg"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.docx",
+   {
+    "__b64__": "UEsDBBQAAAAIAAAAIQCI+aBvBgAAAAQAAAAFAAAAYS50eHTLyM9JBABQSwMEFAAAAAgAAAAhAPVuW7oHAAAABQAAAAcAAABiL2MudHh0S0zJzC8GAFBLAQIUAxQAAAAIAAAAIQCI+aBvBgAAAAQAAAAFAAAAAAAAAAAAAACAAQAAAABhLnR4dFBLAQIUAxQAAAAIAAAAIQD1blu6BwAAAAUAAAAHAAAAAAAAAAAAAACAASkAAABiL2MudHh0UEsFBgAAAAACAAIAaAAAAFUAAAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "zip",
+   "mime": "application/zip",
+   "ext": "zip"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "UEsDBBQAAAAAAAAAIQBvYassFAAAABQAAAAIAAAAbWltZXR5cGVhcHBsaWNhdGlvbi9lcHViK3ppcFBLAwQUAAAACAAAAA=="
+   }
+  ],
+  "expect": {
+   "kind": "epub",
+   "mime": "application/epub+zip",
+   "ext": "epub"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.txt",
+   {
+    "__b64__": "SG9sYSDDsWFuZMO6LCBjYWbDqQ=="
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "README",
+   {
+    "__b64__": "anVzdCBzb21lIHdvcmRzIGhlcmU="
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "77u/aG9sYQ=="
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.txt",
+   {
+    "__b64__": "//5oAG8AbABhACAAbQB1AG4AZABvAA=="
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.txt",
+   {
+    "__b64__": "SG9sYSDxYW5k+iBjYWbp"
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "SG9sYSDxYW5k+iBjYWbp"
+   }
+  ],
+  "expect": {
+   "kind": "unknown",
+   "mime": "application/octet-stream",
+   "ext": "bin"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "eyJhIjogWzEsIDIsIDNdfQ=="
+   }
+  ],
+  "expect": {
+   "kind": "json",
+   "mime": "application/json",
+   "ext": "json"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "data.json",
+   {
+    "__b64__": "eyJhIjogMX0="
+   }
+  ],
+  "expect": {
+   "kind": "json",
+   "mime": "application/json",
+   "ext": "json"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.json",
+   {
+    "__b64__": "eyJhIjog"
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "application/json",
+   "ext": "json"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.txt",
+   {
+    "__b64__": "WzEsMiwzXQ=="
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "W2xpbmtdKGh0dHA6Ly94KSBpcyBtYXJrZG93bg=="
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "PCFET0NUWVBFIGh0bWw+PGh0bWw+PGJvZHk+aGk8L2JvZHk+PC9odG1sPg=="
+   }
+  ],
+  "expect": {
+   "kind": "html",
+   "mime": "text/html",
+   "ext": "html"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "ICA8SFRNTD48cD5oaQ=="
+   }
+  ],
+  "expect": {
+   "kind": "html",
+   "mime": "text/html",
+   "ext": "html"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.csv",
+   {
+    "__b64__": "YSxiCjEsMg=="
+   }
+  ],
+  "expect": {
+   "kind": "csv",
+   "mime": "text/csv",
+   "ext": "csv"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "YSxiLGMKMSwyLDMKNCw1LDYKNyw4LDkK"
+   }
+  ],
+  "expect": {
+   "kind": "csv",
+   "mime": "text/csv",
+   "ext": "csv"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "YQliCWMKMQkyCTMKNAk1CTYK"
+   }
+  ],
+  "expect": {
+   "kind": "csv",
+   "mime": "text/tab-separated-values",
+   "ext": "tsv"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "notes.md",
+   {
+    "__b64__": "IyBUaXRsZQoKc29tZSB0ZXh0"
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/markdown",
+   "ext": "md"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg=="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/svg+xml",
+   "ext": "svg"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "PD94bWwgdmVyc2lvbj0iMS4wIj8+PHN2Zz48L3N2Zz4="
+   }
+  ],
+  "expect": {
+   "kind": "image",
+   "mime": "image/svg+xml",
+   "ext": "svg"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "UmVjZWl2ZWQ6IGZyb20geApTdWJqZWN0OiBoaQoKYm9keQ=="
+   }
+  ],
+  "expect": {
+   "kind": "eml",
+   "mime": "message/rfc822",
+   "ext": "eml"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.eml",
+   {
+    "__b64__": "RnJvbSBhQGIuYyBNb24KU3ViamVjdDogaGkKCmJvZHk="
+   }
+  ],
+  "expect": {
+   "kind": "eml",
+   "mime": "message/rfc822",
+   "ext": "eml"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.eml",
+   {
+    "__b64__": "RnJvbTogQW5hIDxhQGIuYz4KVG86IHhAeS56ClN1YmplY3Q6IGhvbGEKCmN1ZXJwbw=="
+   }
+  ],
+  "expect": {
+   "kind": "eml",
+   "mime": "message/rfc822",
+   "ext": "eml"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.txt",
+   {
+    "__b64__": "RnJvbTogQW5hIDxhQGIuYz4KU3ViamVjdDogaG9sYQoKY3VlcnBv"
+   }
+  ],
+  "expect": {
+   "kind": "text",
+   "mime": "text/plain",
+   "ext": "txt"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.dat",
+   {
+    "__b64__": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+   }
+  ],
+  "expect": {
+   "kind": "unknown",
+   "mime": "application/octet-stream",
+   "ext": "dat"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": "AAECAwQ="
+   }
+  ],
+  "expect": {
+   "kind": "unknown",
+   "mime": "application/octet-stream",
+   "ext": "bin"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.pdf",
+   {
+    "__b64__": ""
+   }
+  ],
+  "expect": {
+   "kind": "pdf",
+   "mime": "application/pdf",
+   "ext": "pdf"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a",
+   {
+    "__b64__": ""
+   }
+  ],
+  "expect": {
+   "kind": "unknown",
+   "mime": "application/octet-stream",
+   "ext": "bin"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "constructor",
+   {
+    "__b64__": ""
+   }
+  ],
+  "expect": {
+   "kind": "unknown",
+   "mime": "application/octet-stream",
+   "ext": "bin"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.tar",
+   {
+    "__b64__": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB1c3RhcgAAAAAAAAAAAAA="
+   }
+  ],
+  "expect": {
+   "kind": "archive",
+   "mime": "application/x-tar",
+   "ext": "tar"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "sniff",
+  "args": [
+   "a.parquet",
+   {
+    "__b64__": "UEFSMQAAAAAAAAAAAABQQVIx"
+   }
+  ],
+  "expect": {
+   "kind": "parquet",
+   "mime": "application/vnd.apache.parquet",
+   "ext": "parquet"
+  }
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   "pdf"
+  ],
+  "expect": "application/pdf"
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   ".PDF"
+  ],
+  "expect": "application/pdf"
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   "report.docx"
+  ],
+  "expect": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   "a.b.tar.gz"
+  ],
+  "expect": "application/gzip"
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   "zzz"
+  ],
+  "expect": "application/octet-stream"
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   ""
+  ],
+  "expect": "application/octet-stream"
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   "constructor"
+  ],
+  "expect": "application/octet-stream"
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   "JPG"
+  ],
+  "expect": "image/jpeg"
+ },
+ {
+  "mod": "sniff",
+  "fn": "mime_for",
+  "args": [
+   " png "
+  ],
+  "expect": "image/png"
+ }
+]
