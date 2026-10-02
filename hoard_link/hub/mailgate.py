@@ -17,6 +17,12 @@ interest it registered. Apps keep their own helper as a fallback for when the hu
 
 The ``messages`` table also holds chat messages (``kind = 'chat'``, filled by the ``chats`` facet through
 ``store.insert_message``).
+
+0.8 (the commons): a stored message may also carry ``html`` (the raw HTML part, at most 240000 characters, kept only for mail with
+structured markup: schema.org / JSON-LD), ``images`` (``[{alt, src}]``) and ``headers`` (``{list_unsubscribe, one_click,
+gmail_category, message_id}``). They are returned only when the caller asks (``fields=html,images,headers`` on
+``GET /api/mail/messages[/<id>]``), so the default answer is the one it always was. An interest spec may also carry ``exclude``,
+``all_of`` and ``category`` (see :func:`normalize_spec` / :func:`match_interest`).
 """
 
 from __future__ import annotations
@@ -37,18 +43,26 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import quote
 
-from .config import REPO_DIR
+from .. import fam_mail, mail_helper as _mail_helper
+from .config import REPO_DIR  # noqa: F401 - kept for callers that import it from here
 from .facets import Facet, Reply, Request
 
 logger = logging.getLogger("hoard_hub.mailgate")
 
-HELPER = Path(__file__).with_name("mail_helper.py")
+HELPER = Path(__file__).resolve().parent.parent / "mail_helper.py"        # the one helper of the whole family (hoard_link/mail_helper.py)
 HELPER_TIMEOUT_S = 180
 STATUS_TTL_S = 300.0
 PRIORITIES = ("attention", "normal", "low")
 DEFAULT_CONFIG: dict[str, Any] = {"enabled": False, "interval_min": 10, "retention_days": 60, "owner": "", "max_per_pass": 300,
                                   "since_days": 14}
 _SHA = re.compile(r"^[0-9a-f]{64}$")
+MAX_HTML = 240_000
+MAX_IMAGES = 40
+FIELDS = ("html", "images", "headers")
+CATEGORIES = ("promo", "social", "security", "dev", "other")
+_CATEGORY_ALIASES = {"promotion": "promo", "promotions": "promo", "promos": "promo", "marketing": "promo", "newsletter": "promo",
+                     "forums": "social", "updates": "other"}
+_SPEC_LISTS = ("subject_terms", "from_domains", "from_addresses", "text_terms")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -78,10 +92,8 @@ def _clean_list(value: Any, *, limit: int = 60, width: int = 120) -> list[str]:
     return out[:limit]
 
 
-def normalize_spec(spec: Any) -> dict[str, Any]:
-    """The interest an app registers: ``subject_terms, from_domains, from_addresses, text_terms, regex, has_attachment``."""
-    if not isinstance(spec, dict):
-        raise ValueError("spec must be an object")
+def _normalize_any(spec: dict[str, Any]) -> dict[str, Any]:
+    """The any-of criteria of one (sub-)spec: ``subject_terms, from_domains, from_addresses, text_terms, regex, has_attachment``."""
     regex = str(spec.get("regex") or "").strip()[:500]
     if regex:
         try:
@@ -93,11 +105,62 @@ def normalize_spec(spec: Any) -> dict[str, Any]:
             "regex": regex, "has_attachment": bool(spec.get("has_attachment"))}
 
 
-def match_interest(spec: dict[str, Any], msg: dict[str, Any]) -> bool:
-    """True when ANY non-empty criterion of ``spec`` matches (case-insensitive, accents folded).
+def _normalize_categories(value: Any) -> list[str]:
+    out: list[str] = []
+    for item in _clean_list(value, limit=10, width=40):
+        name = _CATEGORY_ALIASES.get(fold(item).strip(), fold(item).strip())
+        if name not in CATEGORIES:
+            raise ValueError(f"unknown category {item!r} (use {', '.join(CATEGORIES)})")
+        if name not in out:
+            out.append(name)
+    return out
 
-    ``msg``: ``from_addr`` (or ``from_address``), ``from_name``, ``subject``, ``text``, ``attachments``.
+
+def _has_any(spec: dict[str, Any]) -> bool:
+    return bool(any(spec.get(k) for k in _SPEC_LISTS) or spec.get("regex") or spec.get("has_attachment"))
+
+
+def normalize_spec(spec: Any, _nested: bool = False) -> dict[str, Any]:
+    """The interest an app registers: ``subject_terms, from_domains, from_addresses, text_terms, regex, has_attachment`` (a message
+    matches when ANY of them does), plus three optional extras that only appear in the result when they are used:
+
+    * ``exclude``: a spec with the same keys (and ``category``); a message that matches it is dropped;
+    * ``all_of``: a list of specs (any-of rule each, ``exclude`` and ``category`` allowed, no further ``all_of``) that must ALL match;
+      together with the plain criteria both must hold;
+    * ``category``: ``promo | social | security | dev | other`` (string or list): only messages :func:`guess_category` puts there.
     """
+    if not isinstance(spec, dict):
+        raise ValueError("spec must be an object")
+    out = _normalize_any(spec)
+    cats = _normalize_categories(spec.get("category"))
+    if cats:
+        out["category"] = cats
+    raw_ex = spec.get("exclude")
+    if raw_ex not in (None, "", {}, []):
+        if not isinstance(raw_ex, dict):
+            raise ValueError("exclude must be an object")
+        ex = _normalize_any(raw_ex)
+        ex_cats = _normalize_categories(raw_ex.get("category"))
+        if _has_any(ex) or ex_cats:
+            out["exclude"] = {**ex, **({"category": ex_cats} if ex_cats else {})}
+    raw_all = spec.get("all_of")
+    if raw_all not in (None, "", [], {}):
+        if _nested:
+            raise ValueError("all_of cannot be nested")
+        if not isinstance(raw_all, list):
+            raise ValueError("all_of must be a list of specs")
+        subs = []
+        for sub in raw_all[:10]:
+            norm = normalize_spec(sub, _nested=True)
+            if _has_any(norm) or norm.get("category"):
+                subs.append(norm)
+        if subs:
+            out["all_of"] = subs
+    return out
+
+
+def _matches_any(spec: dict[str, Any], msg: dict[str, Any]) -> bool:
+    """True when ANY non-empty criterion of ``spec`` matches (case-insensitive, accents folded)."""
     sender = str(msg.get("from_addr") or msg.get("from_address") or "").strip().lower()
     sender_dom = domain_of(sender)
     subject = str(msg.get("subject") or "")
@@ -133,6 +196,38 @@ def match_interest(spec: dict[str, Any], msg: dict[str, Any]) -> bool:
     return False
 
 
+def _as_categories(value: Any) -> list[str]:
+    return [str(c) for c in (value if isinstance(value, (list, tuple)) else [value] if value else []) if c]
+
+
+def match_interest(spec: dict[str, Any], msg: dict[str, Any]) -> bool:
+    """Does ``msg`` match the interest ``spec``?
+
+    * the plain criteria (``subject_terms, text_terms, from_domains, from_addresses, regex, has_attachment``): ANY non-empty one matches
+      (case-insensitive, accents folded);
+    * ``all_of`` (list of sub-specs): every sub-spec must match; with plain criteria too, both must hold;
+    * ``category``: the message's :func:`guess_category` must be one of them (alone, it selects those categories);
+    * ``exclude`` (same keys as a spec, and ``category``): a match drops the message whatever else matched.
+
+    ``msg``: ``from_addr`` (or ``from_address``), ``from_name``, ``subject``, ``text``, ``attachments``.
+    """
+    ex = spec.get("exclude")
+    if isinstance(ex, dict) and ex:
+        ex_cats = _as_categories(ex.get("category"))
+        if _matches_any(ex, msg) or (ex_cats and guess_category(msg) in ex_cats):
+            return False
+    cats = _as_categories(spec.get("category"))
+    if cats and guess_category(msg) not in cats:
+        return False
+    subs = [x for x in (spec.get("all_of") or []) if isinstance(x, dict) and x]
+    plain = _has_any(spec)
+    if not plain and not subs:
+        return bool(cats)
+    if plain and not _matches_any(spec, msg):
+        return False
+    return all(match_interest(x, msg) for x in subs)
+
+
 _CATEGORY_RULES: list[tuple[str, re.Pattern[str], re.Pattern[str]]] = [
     ("security",
      re.compile(r"security|seguridad|accounts?\.google|noreply@.*(verif|auth)|no-reply@.*(verif|auth)"),
@@ -158,7 +253,7 @@ _CATEGORY_RULES: list[tuple[str, re.Pattern[str], re.Pattern[str]]] = [
 
 def guess_category(msg: dict[str, Any]) -> str:
     """promo / social / security / dev / other, by sender and subject (cheap heuristics for the "sin dueño" tray)."""
-    sender = fold(str(msg.get("from_addr") or "") + " " + str(msg.get("from_name") or ""))
+    sender = fold(str(msg.get("from_addr") or msg.get("from_address") or "") + " " + str(msg.get("from_name") or ""))
     subject = fold(msg.get("subject"))
     for name, sender_rx, subject_rx in _CATEGORY_RULES:
         if sender_rx.search(sender) or subject_rx.search(subject):
@@ -200,6 +295,51 @@ CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAU
 """
 
 
+#: Columns added after the first release of the table (0.8): applied to an existing ``mail.db`` without touching its rows.
+_MIGRATIONS = (("html", "TEXT NOT NULL DEFAULT ''"), ("images_json", "TEXT NOT NULL DEFAULT '[]'"),
+               ("headers_json", "TEXT NOT NULL DEFAULT '{}'"))
+#: Every column but ``html`` (raw HTML parts are big: they are only read when a caller asks for them).
+_COLS = ("id, kind, source, sphere, folder, uid, message_id, thread, date_ts, from_addr, from_name, to_json, subject, snippet, text, "
+         "links_json, attachments_json, fetched_ts, priority, reasons_json, interests_json, dismissed, search_text, images_json, headers_json")
+
+
+def _migrate(db: sqlite3.Connection) -> None:
+    have = {r[1] for r in db.execute("PRAGMA table_info(messages)").fetchall()}
+    for name, decl in _MIGRATIONS:
+        if name not in have:
+            try:
+                db.execute(f"ALTER TABLE messages ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError:          # another process added it first
+                pass
+    db.commit()
+
+
+def clean_images(value: Any) -> list[dict[str, str]]:
+    """``[{alt, src}]`` (at most 40, strings only) from whatever a helper sent."""
+    out: list[dict[str, str]] = []
+    for item in value if isinstance(value, list) else []:
+        if isinstance(item, dict):
+            alt, src = str(item.get("alt") or "")[:160], str(item.get("src") or "")[:500]
+            if alt or src:
+                out.append({"alt": alt, "src": src})
+        if len(out) >= MAX_IMAGES:
+            break
+    return out
+
+
+def clean_headers(value: Any) -> dict[str, Any]:
+    """``{list_unsubscribe, one_click, gmail_category, message_id}``: only these keys, only these types."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, width in (("list_unsubscribe", 800), ("gmail_category", 40), ("message_id", 400)):
+        if value.get(key):
+            out[key] = str(value[key])[:width]
+    if value.get("one_click"):
+        out["one_click"] = True
+    return out
+
+
 def _like(token: str) -> str:
     return "%" + token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
@@ -220,7 +360,7 @@ class MailStore:
             except sqlite3.DatabaseError:
                 pass
             self._db.executescript(_SCHEMA)
-            self._db.commit()
+            _migrate(self._db)
 
     def close(self) -> None:
         with self._lock:
@@ -234,8 +374,10 @@ class MailStore:
                        message_id: str = "", thread: str = "", date_ts: Optional[float] = None, from_addr: str = "",
                        from_name: str = "", to: Any = None, subject: str = "", snippet: str = "", text: str = "",
                        links: Any = None, attachments: Any = None, priority: str = "normal", reasons: Any = None,
-                       interests: Any = None, fetched_ts: Optional[float] = None) -> dict[str, Any]:
-        """Store one message. ``{"id", "created"}``; a ``message_id`` already stored is not stored twice (``created`` False)."""
+                       interests: Any = None, fetched_ts: Optional[float] = None, html: str = "", images: Any = None,
+                       headers: Any = None) -> dict[str, Any]:
+        """Store one message. ``{"id", "created"}``; a ``message_id`` already stored is not stored twice (``created`` False).
+        ``html`` (cut at 240000 characters), ``images`` and ``headers`` are the 0.8 extras."""
         now = float(fetched_ts or self.clock())
         mid = str(message_id or "").strip()[:400] or f"local:{uuid.uuid4().hex}"
         text = str(text or "")
@@ -247,12 +389,15 @@ class MailStore:
                str(thread or "")[:400], float(date_ts or now), str(from_addr)[:300], str(from_name)[:200],
                json.dumps(to if to is not None else [], ensure_ascii=False), str(subject)[:600], snippet[:400], text,
                json.dumps(links or [], ensure_ascii=False), json.dumps(attachments or [], ensure_ascii=False), now, priority,
-               json.dumps(list(reasons or []), ensure_ascii=False), json.dumps(list(interests or []), ensure_ascii=False), search)
+               json.dumps(list(reasons or []), ensure_ascii=False), json.dumps(list(interests or []), ensure_ascii=False), search,
+               str(html or "")[:MAX_HTML], json.dumps(clean_images(images), ensure_ascii=False),
+               json.dumps(clean_headers(headers), ensure_ascii=False))
         with self._lock:
             cur = self._db.execute(
                 "INSERT OR IGNORE INTO messages(kind, source, sphere, folder, uid, message_id, thread, date_ts, from_addr, from_name, to_json,"
-                " subject, snippet, text, links_json, attachments_json, fetched_ts, priority, reasons_json, interests_json, dismissed, search_text)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)", row)
+                " subject, snippet, text, links_json, attachments_json, fetched_ts, priority, reasons_json, interests_json, dismissed, search_text,"
+                " html, images_json, headers_json)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)", row)
             self._db.commit()
             if cur.rowcount:
                 return {"id": int(cur.lastrowid), "created": True}
@@ -320,8 +465,9 @@ class MailStore:
     def query(self, *, kind: Optional[str] = None, spheres: Optional[Iterable[str]] = None, source: Optional[str] = None,
               folder: Optional[str] = None, since_id: Optional[int] = None, q: str = "", days: Optional[float] = None,
               interest_app: Optional[str] = None, unclaimed: bool = False, attention: bool = False,
-              hide_dismissed: bool = False, limit: int = 50, order: str = "desc", ids: Optional[Iterable[int]] = None) -> list[dict[str, Any]]:
-        """Raw rows as dicts (JSON columns parsed), each with its ``claims``."""
+              hide_dismissed: bool = False, limit: int = 50, order: str = "desc", ids: Optional[Iterable[int]] = None,
+              with_html: bool = False) -> list[dict[str, Any]]:
+        """Raw rows as dicts (JSON columns parsed), each with its ``claims``. ``html`` is only selected with ``with_html``."""
         where, params = ["1=1"], []
         if kind:
             where.append("kind = ?"); params.append(kind)
@@ -353,7 +499,7 @@ class MailStore:
             where.append("priority = 'attention'")
         if hide_dismissed or attention or unclaimed:
             where.append("dismissed = 0")
-        sql = f"SELECT * FROM messages WHERE {' AND '.join(where)} ORDER BY " + \
+        sql = f"SELECT {_COLS}{', html' if with_html else ''} FROM messages WHERE {' AND '.join(where)} ORDER BY " + \
               ("id ASC" if order == "asc" else "date_ts DESC, id DESC") + " LIMIT ?"
         params.append(max(1, min(int(limit or 50), 2000)))
         with self._lock:
@@ -370,12 +516,14 @@ class MailStore:
             r["attachments"] = _loads(r.pop("attachments_json"), [])
             r["reasons"] = _loads(r.pop("reasons_json"), [])
             r["interests"] = _loads(r.pop("interests_json"), [])
+            r["images"] = _loads(r.pop("images_json", None), [])
+            r["headers"] = _loads(r.pop("headers_json", None), {})
             r.pop("search_text", None)
             r["dismissed"] = bool(r["dismissed"])
         return rows
 
-    def get(self, mail_id: int) -> Optional[dict[str, Any]]:
-        rows = self.query(ids=[int(mail_id)], limit=1)
+    def get(self, mail_id: int, with_html: bool = False) -> Optional[dict[str, Any]]:
+        rows = self.query(ids=[int(mail_id)], limit=1, with_html=with_html)
         return rows[0] if rows else None
 
     def distinct_spheres(self) -> list[str]:
@@ -405,17 +553,19 @@ class MailStore:
 
     # -- retention ---------------------------------------------------------
     def prune(self, retention_days: float, attachments_dir: str = "") -> dict[str, int]:
-        """Drop ``text``, snippet, links and attachment files of messages older than ``retention_days``; headers stay."""
+        """Drop ``text``, snippet, links, html, images and attachment files of messages older than ``retention_days``; headers stay."""
         cutoff = self.clock() - float(retention_days) * 86400
         pruned = 0
         with self._lock:
             rows = self._db.execute("SELECT id, subject, from_name, from_addr, attachments_json FROM messages "
-                                    "WHERE fetched_ts < ? AND (text != '' OR snippet != '' OR links_json != '[]' OR attachments_json LIKE '%\"path\"%')",
+                                    "WHERE fetched_ts < ? AND (text != '' OR snippet != '' OR links_json != '[]' OR html != '' OR images_json != '[]' "
+                                    "OR attachments_json LIKE '%\"path\"%')",
                                     (cutoff,)).fetchall()
             for r in rows:
                 atts = [{**{k: v for k, v in a.items() if k != "path"}, "pruned": True} for a in _loads(r["attachments_json"], [])]
                 search = fold(" ".join([r["subject"], r["from_name"], r["from_addr"]]))
-                self._db.execute("UPDATE messages SET text = '', snippet = '', links_json = '[]', attachments_json = ?, search_text = ? WHERE id = ?",
+                self._db.execute("UPDATE messages SET text = '', snippet = '', links_json = '[]', html = '', images_json = '[]', attachments_json = ?, "
+                                 "search_text = ? WHERE id = ?",
                                  (json.dumps(atts, ensure_ascii=False), search, r["id"]))
                 pruned += 1
             self._db.commit()
@@ -440,6 +590,13 @@ class MailStore:
 # ---------------------------------------------------------------------------------------------
 # the facet
 # ---------------------------------------------------------------------------------------------
+def parse_fields(value: Any) -> list[str]:
+    """``html``, ``images``, ``headers`` (``all`` = the three) from a comma string or a list; anything else is ignored."""
+    items = re.split(r"[,\s]+", value) if isinstance(value, str) else list(value or [])
+    names = [f for f in dict.fromkeys(str(i).strip().lower() for i in items) if f in FIELDS or f == "all"]
+    return list(FIELDS) if "all" in names else names
+
+
 def _bad(status: int, error: str, **extra: Any) -> dict[str, Any]:
     return {"ok": False, "status": status, "error": error, **extra}
 
@@ -584,27 +741,12 @@ class MailGate(Facet):
 
     # -- the helper ------------------------------------------------------------
     def faustus_dir(self) -> Optional[Path]:
-        raw = [self.hub.config.faustus_dir, os.environ.get("HOARD_FAUSTUS_DIR"), os.environ.get("FAUSTUS_DIR"),
-               r"D:\LocalAI\faustus", str(REPO_DIR.parent / "faustus"), str(REPO_DIR.parent / "Faustus")]
-        for r in raw:
-            if not r or not str(r).strip():
-                continue
-            path = Path(str(r)).expanduser()
-            try:
-                if (path / "mcp_servers" / "email_server.py").is_file():
-                    return path.resolve()
-            except OSError:
-                continue
-        return None
+        """The Faustus folder: the hub's ``faustus_dir`` setting, then the shared discovery (``fam_mail.faustus_dir``: environment,
+        sibling folders, the usual places). The hub does not ask itself, so ``ask_hub`` is off."""
+        return fam_mail.faustus_dir(getattr(self.hub.config, "faustus_dir", None), ask_hub=False)
 
     def python_of(self, root: Path) -> Optional[str]:
-        for rel in ("venv/Scripts/python.exe", ".venv/Scripts/python.exe", "venv/bin/python", ".venv/bin/python"):
-            if (root / rel).is_file():
-                return str(root / rel)
-        py = getattr(self.hub.config, "faustus_python", None)
-        if py and os.path.isfile(str(py)):
-            return str(py)
-        return None
+        return fam_mail.faustus_python(root, getattr(self.hub.config, "faustus_python", None))
 
     def call_helper(self, request: dict[str, Any], timeout: float = HELPER_TIMEOUT_S) -> dict[str, Any]:
         root = self.faustus_dir()
@@ -691,6 +833,8 @@ class MailGate(Facet):
         if rec.get("from_self"):
             priority, reasons = "low", reasons + ["own mail"]
         msg = {"from_addr": address, "from_name": name, "subject": subject, "text": text, "attachments": rec.get("attachments") or []}
+        raw_html = str(rec.get("html") or "")
+        html = raw_html[:MAX_HTML] if _mail_helper.has_markup(raw_html) else ""         # the gateway only keeps HTML that carries markup
         interests = self._interests_for(sph, msg)
         refs = rec.get("references") or []
         thread = (refs[0] if refs else "") or str(rec.get("in_reply_to") or "") or str(rec.get("message_id") or "")
@@ -699,7 +843,8 @@ class MailGate(Facet):
             message_id=str(rec.get("message_id") or "") or f"nomid:{account}:{rec.get('folder')}:{rec.get('uid')}", thread=thread,
             date_ts=rec.get("date_ts") or rec.get("ts"), from_addr=address, from_name=name,
             to={"to": rec.get("to") or [], "cc": rec.get("cc") or []}, subject=subject, text=text, links=rec.get("links"),
-            attachments=rec.get("attachments"), priority=priority, reasons=reasons, interests=interests)
+            attachments=rec.get("attachments"), priority=priority, reasons=reasons, interests=interests,
+            html=html, images=rec.get("images"), headers=rec.get("headers"))
         out = {**res, "sphere": sph, "priority": priority, "interests": interests}
         if res["created"] and emit:
             try:
@@ -839,7 +984,7 @@ class MailGate(Facet):
             self._store = None
 
     # -- views ---------------------------------------------------------------------
-    def _view(self, row: dict[str, Any], *, full: bool = False, category: bool = False) -> dict[str, Any]:
+    def _view(self, row: dict[str, Any], *, full: bool = False, category: bool = False, fields: Iterable[str] = ()) -> dict[str, Any]:
         to = row.get("to_raw")
         to_list = to.get("to", []) if isinstance(to, dict) else (to or [])
         cc_list = to.get("cc", []) if isinstance(to, dict) else []
@@ -855,6 +1000,13 @@ class MailGate(Facet):
             v["text"] = row["text"]
             v["links"] = row["links"]
             v["attachments"] = [{**a, **({"url": f"/api/mail/attachments/{a['sha']}"} if a.get("sha") else {})} for a in row["attachments"]]
+        for f in fields:                                   # 0.8: only what the caller asked for
+            if f == "html":
+                v["html"] = row.get("html", "")
+            elif f == "images":
+                v["images"] = row.get("images") or []
+            elif f == "headers":
+                v["headers"] = row.get("headers") or {}
         return v
 
     # -- python API for other facets ---------------------------------------------------
@@ -872,9 +1024,10 @@ class MailGate(Facet):
         rows = self.store.query(kind=kind, spheres=[sphere] if sphere else None, q=q, days=days, limit=limit)
         return [self._view(r) for r in rows]
 
-    def get_message(self, mail_id: int, *, full: bool = True) -> Optional[dict[str, Any]]:
-        row = self.store.get(mail_id)
-        return self._view(row, full=full, category=True) if row else None
+    def get_message(self, mail_id: int, *, full: bool = True, fields: Iterable[str] = ()) -> Optional[dict[str, Any]]:
+        fields = parse_fields(fields)
+        row = self.store.get(mail_id, with_html="html" in fields)
+        return self._view(row, full=full, category=True, fields=fields) if row else None
 
     def status(self, refresh: bool = False) -> dict[str, Any]:
         cfg = self.config()
@@ -940,21 +1093,23 @@ class MailGate(Facet):
                 interest_app = who if not priv else (req.q("app") or None)
             kind = (req.q("kind") or ("any" if priv else "mail")).lower()
             order = (req.q("order") or ("asc" if has_since else "desc")).lower()
+            fields = parse_fields(req.q("fields") or "")
             rows = self.store.query(kind=None if kind == "any" else kind, spheres=spheres, source=req.q("source") or None,
                                     folder=req.q("folder") or None, since_id=req.q_int("since_id") if has_since else None,
                                     q=req.q("q") or "", days=float(days) if days else None, interest_app=interest_app,
                                     unclaimed=req.q_bool("unclaimed"), hide_dismissed=req.q_bool("hide_dismissed"),
-                                    limit=req.q_int("limit", 50), order="asc" if order == "asc" else "desc")
+                                    limit=req.q_int("limit", 50), order="asc" if order == "asc" else "desc", with_html="html" in fields)
             full = req.q_bool("full")
-            views = [self._view(r, full=full, category=req.q_bool("unclaimed")) for r in rows]
+            views = [self._view(r, full=full, category=req.q_bool("unclaimed"), fields=fields) for r in rows]
             last = max([v["id"] for v in views], default=req.q_int("since_id"))
             return {"ok": True, "count": len(views), "last_id": last, "messages": views}
         m = re.fullmatch(r"/api/mail/messages/(\d+)", p)
         if m:
-            row = self.store.get(int(m.group(1)))
+            fields = parse_fields(req.q("fields") or "")
+            row = self.store.get(int(m.group(1)), with_html="html" in fields)
             if row is None or (allowed is not None and row["sphere"] not in allowed):
                 return _bad(404, "no such message")
-            return {"ok": True, "message": self._view(row, full=True, category=True)}
+            return {"ok": True, "message": self._view(row, full=True, category=True, fields=fields)}
         m = re.fullmatch(r"/api/mail/attachments/([0-9a-f]{64})", p)
         if m:
             return self._attachment(m.group(1), allowed)

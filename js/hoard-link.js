@@ -25,10 +25,12 @@
 // "timed out" and "hub down" come back as { ok: false, error }.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-export const FAMILY_VERSION = "0.7.0";
+export const FAMILY_VERSION = "0.8.0";
 const DEFAULT_URL = "http://127.0.0.1:8810";
 
 const state = { app: "", tokenFile: "", hub: null, enabled: true, sent: 0, dropped: 0, lastError: "" };
@@ -314,6 +316,142 @@ export async function hubAvailable(timeoutMs = 1000) {
   return ok;
 }
 
+// ---- channels and the router: the Node twins of hoard_link/notify_channels.py (toast) and fam_notify.Router ----------------------------
+// A Node app that wants the Windows toast as its own fallback uses buildToastPs1/showToast; ledger-style "via" switching is notifyRouter.
+//
+//   const router = family.notifyRouter({ via: () => getSetting("notify.via", "auto"), ownSend: (title, body, o) => family.showToast(title, body, o.url), app: "ledger" });
+//   const res = await router.send("Payment failed", "Netflix 12.99 EUR", { priority: "high", url, group: "payment", dedupeKey: `pay:${id}` });
+//   // { via: "hub" | "own", ok, why, held?, id?, hub?, own? }
+
+export const POWERSHELL_APP_ID = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
+const TOAST_TIMEOUT_MS = 20_000;
+const cutChars = (v, n) => Array.from(String(v ?? "")).slice(0, n).join("");
+
+/** Escape for XML text and attribute values; also drops the control characters XML 1.0 forbids. */
+export function xmlEscape(text) {
+  return String(text ?? "").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
+}
+
+function urlScheme(u) {
+  const m = /^([A-Za-z][A-Za-z0-9+.\-]*):/.exec(String(u ?? "").trim());
+  return m ? m[1].toLowerCase() : "";
+}
+
+/** The URL when it is http(s), else "". */
+export function httpUrl(url) {
+  const u = String(url ?? "").trim();
+  return ["http", "https"].includes(urlScheme(u)) ? u : "";
+}
+
+/** PowerShell that shows one toast through Windows.UI.Notifications. Byte-for-byte the output of notify_channels.build_toast_ps1. */
+export function buildToastPs1(title, body = "", url = null, { appName = null, appId = POWERSHELL_APP_ID } = {}) {
+  const launch = httpUrl(url);
+  const attrs = launch ? ` activationType="protocol" launch="${xmlEscape(launch)}"` : "";
+  const attribution = appName ? `<text placement="attribution">${xmlEscape(cutChars(appName, 60))}</text>` : "";
+  const xml = `<toast${attrs}><visual><binding template="ToastGeneric"><text>${xmlEscape(cutChars(title, 120))}</text>`
+    + `<text>${xmlEscape(cutChars(body, 300))}</text>${attribution}</binding></visual></toast>`;
+  return "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null\n"
+    + "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null\n"
+    + `$xml = @'\n${xml}\n'@\n`
+    + "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument\n"
+    + "$doc.LoadXml($xml)\n"
+    + "$toast = [Windows.UI.Notifications.ToastNotification]::new($doc)\n"
+    + `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${appId}').Show($toast)\n`;
+}
+
+function spawnRun({ command, args, timeoutMs }) {
+  return new Promise((resolve) => {
+    let child;
+    try { child = spawn(command, args, { windowsHide: true, stdio: "ignore" }); } catch (e) { resolve({ code: null, error: (e && e.code) || "spawn" }); return; }
+    let settled = false;
+    const finish = (r) => { if (settled) return; settled = true; clearTimeout(timer); resolve(r); };
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } finish({ code: null, error: "timeout" }); }, timeoutMs);
+    child.on("error", (e) => finish({ code: null, error: (e && e.code) || "spawn" }));
+    child.on("close", (code) => finish({ code }));
+  });
+}
+
+/** Run a PowerShell script from a temporary .ps1 (UTF-8 with BOM) without a console window. Resolves { ok } or { ok: false, error }. */
+export async function runPs1(script, { runner = null, timeoutMs = TOAST_TIMEOUT_MS } = {}) {
+  const file = path.join(os.tmpdir(), `hoard-toast-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`);
+  try {
+    fs.writeFileSync(file, "﻿" + script, "utf8");
+    const done = await (runner || spawnRun)({ command: "powershell", args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file], timeoutMs });
+    if (done && done.code === 0) return { ok: true };
+    return { ok: false, error: done && done.error ? String(done.error) : `powershell exit ${done ? done.code : "?"}` };
+  } catch (e) {
+    return { ok: false, error: String((e && e.code) || (e && e.name) || "error") };
+  } finally {
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+  }
+}
+
+/** Show one Windows toast and wait for PowerShell. Off Windows: { ok: false, unsupported: true, error: "unsupported" }. Never rejects. */
+export async function showToast(title, body = "", url = null, { appName = null, runner = null, platform = process.platform, timeoutMs = TOAST_TIMEOUT_MS } = {}) {
+  if (!String(platform).startsWith("win")) return { ok: false, unsupported: true, error: "unsupported" };
+  return runPs1(buildToastPs1(title, body, url, { appName }), { runner, timeoutMs });
+}
+
+/** The auto | hub | own switch in front of the hub's notification facet (twin of fam_notify.Router).
+ *  via: "auto" | "hub" | "own", or a (maybe async) function returning one; ownSend(title, body, { priority, url, group, dedupeKey, sphere })
+ *  is the app's own delivery (resolves an object with ok/error, a boolean, an error string, or nothing); hub: { notify, hubAvailable }
+ *  (default: this module). A message the hub HELD (quiet hours, duplicate, digest, rate, disabled) counts as delivered and is not repeated
+ *  through ownSend. */
+export function notifyRouter({ via = "auto", ownSend = null, app = "", hub = null } = {}) {
+  const api = () => hub || { notify, hubAvailable };
+  const setting = async () => {
+    try {
+      const v = String(typeof via === "function" ? await via() : via ?? "auto").trim().toLowerCase();
+      return ["auto", "hub", "own"].includes(v) ? v : "auto";
+    } catch { return "auto"; }
+  };
+  const hubUp = async () => { try { return Boolean(await api().hubAvailable()); } catch { return false; } };
+  const viaHub = async (title, body, o) => {
+    let answer;
+    try {
+      answer = await api().notify(title, body, { priority: o.priority || "normal", url: o.url || "", group: o.group || "", dedupeKey: o.dedupeKey || "", sphere: o.sphere || null });
+    } catch (e) { return { via: "hub", ok: false, why: `hub notify: ${(e && e.name) || "error"}` }; }
+    if (!answer || typeof answer !== "object") return { via: "hub", ok: false, why: "hub notify: unexpected answer" };
+    if (answer.ok) {
+      const held = String(answer.held || "");
+      return { via: "hub", ok: true, why: held ? `held: ${held}` : "", held, id: answer.id, hub: answer };
+    }
+    return { via: "hub", ok: false, held: "", hub: answer, why: String(answer.error || `hub notify failed (${answer.status})`).slice(0, 200) };
+  };
+  const viaOwn = async (title, body, o) => {
+    if (typeof ownSend !== "function") return { via: "own", ok: false, why: "no own channel configured" };
+    let raw;
+    try { raw = await ownSend(title, body, { priority: o.priority || "normal", url: o.url, group: o.group, dedupeKey: o.dedupeKey, sphere: o.sphere }); }
+    catch (e) { return { via: "own", ok: false, why: String((e && e.name) || "error") }; }
+    if (raw && typeof raw === "object") {
+      const ok = "ok" in raw ? Boolean(raw.ok) : !raw.error;
+      return { via: "own", ok, why: ok ? "" : String(raw.error || "failed").slice(0, 200), own: raw };
+    }
+    if (typeof raw === "string") return { via: "own", ok: !raw, why: raw.slice(0, 200) };
+    if (raw === false) return { via: "own", ok: false, why: "failed" };
+    return { via: "own", ok: true, why: "" };
+  };
+  return {
+    app,
+    via: setting,
+    async viaStatus() {
+      const s = await setting();
+      const up = s !== "own" ? await hubUp() : false;
+      return { setting: s, effective: s === "hub" || (s === "auto" && up) ? "hub" : "own", hub_available: up };
+    },
+    /** { via, ok, why, held?, id?, hub?, own? }. Never rejects. */
+    async send(title, body = "", o = {}) {
+      const s = await setting();
+      if (s !== "own" && (s === "hub" || (await hubUp()))) {
+        const res = await viaHub(title, body, o);
+        if (res.ok || s === "hub") return res;
+      }
+      return viaOwn(title, body, o);
+    },
+  };
+}
+
 // mail.js — the app side of the hub's mail gateway, from a Node app (part of hoard-link.js; the coordinator merges
 // js/parts/*.js into it, so `state`, `post`, `headers`, `findHubUrl`, `fs` and `path` below are the ones defined at the top of
 // that file). The twin of hoard_link/fam_mail.py.
@@ -382,7 +520,9 @@ export async function mailAvailable(timeoutMs = 1000) {
 export function mailForgetAvailability() { mailAvail.clear(); }
 
 /** Tell the hub which mail this app wants: { subject_terms, from_domains, from_addresses, text_terms, regex, has_attachment }.
- *  A message matches when ANY non-empty criterion matches (case-insensitive, accents folded). `sphere` limits it to one sphere. */
+ *  A message matches when ANY non-empty criterion matches (case-insensitive, accents folded). Optional extras (0.8): `exclude` (a spec
+ *  with the same keys: a message that matches it is dropped), `all_of` (a list of specs that must ALL match) and `category`
+ *  (promo | social | security | dev | other, a string or a list). `sphere` limits it to one sphere. */
 export async function mailRegisterInterest(spec, { sphere = null, timeoutMs = 10000 } = {}) {
   const body = { spec: spec || {} };
   if (sphere) body.sphere = String(sphere);
@@ -405,17 +545,33 @@ function mailKafkaShape(m) {
   return m;
 }
 
+function mailFieldsParam(fields) {
+  const items = Array.isArray(fields) ? fields : String(fields || "").split(/[,\s]+/);
+  const names = [...new Set(items.map((f) => String(f).trim().toLowerCase()).filter((f) => ["html", "images", "headers", "all"].includes(f)))];
+  return names.includes("all") ? "html,images,headers" : names.join(",");
+}
+
 /** The messages the hub stored with id > sinceId (oldest first) for this app's spheres; with interest: true only those that
  *  match the interest it registered. { ok, messages, last_id }: pass last_id as the next sinceId. Each message carries the
  *  gateway's keys (id, source, sphere, from_addr, from_name, to, subject, snippet, priority, text, links,
  *  attachments[{name, mime, size, sha, path, url}]) AND the Kafka helper's (message_id, subject, from, from_address, date, ts,
- *  text, links, attachments with the local path). */
-export async function mailMessages({ sinceId = 0, limit = 100, full = true, interest = true, timeoutMs = 20000 } = {}) {
-  const q = `since_id=${Math.trunc(sinceId)}&limit=${Math.trunc(limit)}&kind=mail&interest=${interest ? 1 : 0}${full ? "&full=1" : ""}`;
+ *  text, links, attachments with the local path). `fields` (array or comma string: html, images, headers, all) asks for what the default
+ *  answer leaves out: the raw HTML part (only for mail with structured markup), images [{alt, src}] and headers {list_unsubscribe,
+ *  one_click, gmail_category, message_id}. */
+export async function mailMessages({ sinceId = 0, limit = 100, full = true, interest = true, timeoutMs = 20000, fields = null } = {}) {
+  const wanted = mailFieldsParam(fields);
+  const q = `since_id=${Math.trunc(sinceId)}&limit=${Math.trunc(limit)}&kind=mail&interest=${interest ? 1 : 0}${full ? "&full=1" : ""}${wanted ? `&fields=${wanted}` : ""}`;
   const { status: st, data } = await mailGet(`/api/mail/messages?${q}`, timeoutMs);
   const res = mailAnswer(st, data);
   if (res.ok) {
     res.messages = (res.messages || []).filter((m) => m && typeof m === "object").map(mailKafkaShape);
+    if (wanted) {
+      for (const m of res.messages) {
+        if (wanted.includes("html") && m.html === undefined) m.html = "";
+        if (wanted.includes("images") && m.images === undefined) m.images = [];
+        if (wanted.includes("headers") && m.headers === undefined) m.headers = {};
+      }
+    }
     if (res.last_id === undefined) res.last_id = sinceId;
   } else {
     if (!res.messages) res.messages = [];
@@ -457,6 +613,275 @@ export async function mailCopyAttachment(att, destDir, { timeoutMs = 30000 } = {
     try { fs.rmSync(dest + ".part", { force: true }); } catch { /* ignore */ }
     return "";
   }
+}
+
+// ---- Faustus discovery, the helper runner and the router: Node twins of fam_mail.faustus_dir / FaustusHelper / MailRouter ------------------
+// The Python mail helper (hoard_link/mail_helper.py) runs with Faustus's own Python. A Node app that vendors that file gives
+// spawnHelperRunner its path; one that keeps its own spawn passes any `runHelper(action, payload, timeoutMs) -> answer`.
+//
+//   const router = family.famMailRouter({
+//     runHelper: family.spawnHelperRunner({ helperPath: HELPER, setting: () => getSetting("mail.faustus_dir") }),
+//     sourceGetter: () => getSetting("mail.source", "auto"), interest: { subject_terms: TERMS }, claimKind: "payment",
+//     watermarkGet: () => Number(getSetting("mail.hub_since_id", 0)), watermarkSet: (v) => setSetting("mail.hub_since_id", v),
+//   });
+//   const rows = await router.scan({ since_days: 30, limit: 60, skip: knownIds, subject_terms: TERMS });
+//   ...file them...; router.commit(); await router.claim(rows, "hoard://ledger/tx/12");
+
+const FAUSTUS_ENV = ["FAUSTUS_DIR", "HOARD_FAUSTUS_DIR", "HOARD_HUB_FAUSTUS_DIR"];
+const FAUSTUS_PYTHON_ENV = ["FAUSTUS_PYTHON", "HOARD_FAUSTUS_PYTHON", "HOARD_HUB_FAUSTUS_PYTHON"];
+export const PYTHON_CANDIDATES = ["venv/Scripts/python.exe", ".venv/Scripts/python.exe", "venv/bin/python", ".venv/bin/python"];
+const COMMON_FAUSTUS_PATHS = ["D:\\LocalAI\\faustus", "C:\\LocalAI\\faustus", "~/LocalAI/faustus", "~/faustus"];
+
+const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+const nonEmpty = (v) => v !== undefined && v !== null && String(v).trim() !== "";
+const expandHome = (p) => (String(p).startsWith("~") ? path.join(os.homedir(), String(p).slice(1)) : String(p));
+const callValue = (v) => { try { return typeof v === "function" ? v() : v; } catch { return null; } };
+
+/** The Faustus folder (the one with mcp_servers/email_server.py) or null. First hit wins: `setting` (a path or a function), the
+ *  environment (FAUSTUS_DIR, HOARD_FAUSTUS_DIR, HOARD_HUB_FAUSTUS_DIR), a `faustus` folder next to this file, the app that vendors it or any
+ *  folder above (five levels), the usual places (D:\LocalAI\faustus, ~/faustus ...), then `extra`. Sync; the hub's own hint is faustusHubHint(). */
+export function faustusDir(setting = null, { env = process.env, extra = [] } = {}) {
+  const candidates = [callValue(setting), ...FAUSTUS_ENV.map((k) => env[k])].filter(nonEmpty).map(expandHome);
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i += 1) {
+    dir = path.dirname(dir);
+    candidates.push(path.join(dir, "faustus"), path.join(dir, "Faustus"));
+  }
+  candidates.push(...COMMON_FAUSTUS_PATHS.map(expandHome), ...extra.filter(nonEmpty).map(expandHome));
+  for (const c of candidates) if (isFile(path.join(c, "mcp_servers", "email_server.py"))) return path.resolve(c);
+  return null;
+}
+
+/** What the hub's mail gateway says is Faustus's folder (GET /api/mail/status), or "" . */
+export async function faustusHubHint(timeoutMs = 1000) {
+  const { status: st, data } = await mailGet("/api/mail/status", timeoutMs);
+  return st === 200 && data && data.faustus_dir ? String(data.faustus_dir) : "";
+}
+
+/** Faustus's own interpreter: its venv / .venv (Windows or POSIX layout), else `setting`, else FAUSTUS_PYTHON ... when that file exists. */
+export function faustusPython(root, setting = null, { env = process.env } = {}) {
+  if (root) for (const rel of PYTHON_CANDIDATES) { const full = path.join(String(root), rel); if (isFile(full)) return full; }
+  for (const c of [callValue(setting), ...FAUSTUS_PYTHON_ENV.map((k) => env[k])]) if (nonEmpty(c) && isFile(String(c))) return String(c);
+  return null;
+}
+
+/** A runHelper(action, payload, timeoutMs) that runs the Python mail helper with Faustus's Python (no console window). Never rejects:
+ *  { ok: false, error } when Faustus or its Python is missing, the helper times out or answers nothing. Options: helperPath (the vendored
+ *  mail_helper.py), setting (Faustus's folder), owner, python, env, envDropPrefixes (the app's own secrets), spawnFn (tests). */
+export function spawnHelperRunner({ helperPath, setting = null, owner = null, python = null, env = process.env, envDropPrefixes = [], spawnFn = spawn } = {}) {
+  return async function runHelper(action, payload = {}, timeoutMs = 180_000) {
+    const root = faustusDir(setting, { env });
+    if (!root) return { ok: false, error: "Faustus folder not found (set it in the app's mail settings, or FAUSTUS_DIR)" };
+    const py = faustusPython(root, python, { env });
+    if (!py) return { ok: false, error: "Faustus has no venv with Python" };
+    const request = { ...payload, action: String(action) };
+    const who = String(callValue(owner) || "").trim();
+    if (who && !request.owner) request.owner = who;
+    const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !envDropPrefixes.some((p) => k.startsWith(p))));
+    childEnv.PYTHONIOENCODING = "utf-8";
+    return new Promise((resolve) => {
+      let child;
+      try { child = spawnFn(py, [helperPath, root], { cwd: root, env: childEnv, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }); }
+      catch (e) { resolve({ ok: false, error: `mail helper: ${(e && e.code) || "spawn"}` }); return; }
+      let out = "";
+      let settled = false;
+      const finish = (r) => { if (settled) return; settled = true; clearTimeout(timer); resolve(r); };
+      const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } finish({ ok: false, error: "the mail read took too long" }); }, timeoutMs);
+      child.stdout.on("data", (c) => { out += c.toString("utf8"); });
+      child.on("error", (e) => finish({ ok: false, error: `mail helper: ${(e && e.code) || "spawn"}` }));
+      child.on("close", (code) => {
+        const lines = out.split(/\r?\n/).filter((l) => l.trim().startsWith("{"));
+        let answer = null;
+        try { answer = lines.length ? JSON.parse(lines[lines.length - 1]) : null; } catch { answer = null; }
+        finish(answer && typeof answer === "object" && "ok" in answer ? answer : { ok: false, error: `mail helper exit ${code}` });
+      });
+      child.stdin.on("error", () => {});
+      child.stdin.end(JSON.stringify(request));
+    });
+  };
+}
+
+const MAIL_SOURCES = ["auto", "hub", "faustus"];
+const ROUTER_KEYS = new Set(["limit", "max", "deep", "fields", "order", "sinceDays", "senderDomains", "skipOwn"]);
+const snakeKey = (k) => String(k).replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+const mailDomain = (a) => { const s = String(a ?? "").trim().toLowerCase(); return s.includes("@") ? s.slice(s.lastIndexOf("@") + 1).replace(/[ >]+$/g, "") : ""; };
+
+/** The mail source of a Node app: the hub's gateway when it is ready, the Faustus helper otherwise (twin of fam_mail.MailRouter; same
+ *  paging, claim and watermark semantics). Options: runHelper(action, payload, timeoutMs), helperAvailable() (default: runHelper given),
+ *  sourceGetter() (auto | hub | faustus), interest (a spec or a function of the criteria), watermarkGet / watermarkSet, claimKind, page (100),
+ *  maxPages (6), registerEveryS (21600), sphere, hub ({ mailAvailable, mailRegisterInterest, mailMessages, mailClaim }; default: this module),
+ *  clock() in seconds, deepUsesHelper, autoClaim. Criteria for scan: since_days (30), limit (100), skip, query, deep, fields, sender_domains,
+ *  skip_own, order; the rest goes to the helper as it is (camelCase keys become snake_case). Nothing here rejects. */
+export function famMailRouter({ runHelper = null, helperAvailable = null, sourceGetter = null, interest = null, watermarkGet = null, watermarkSet = null,
+  claimKind = "", page = 100, maxPages = 6, registerEveryS = 21600, sphere = null, hub = null, clock = () => Date.now() / 1000,
+  deepUsesHelper = false, autoClaim = false } = {}) {
+  const api = () => hub || { mailAvailable, mailRegisterInterest, mailMessages, mailClaim };
+  const pageSize = Math.max(1, Math.trunc(page));
+  const pages = Math.max(1, Math.trunc(maxPages));
+  let wmMem = 0;
+  let registeredAt = 0;
+  let registeredSig = "";
+  let pending = null;
+  const router = { lastSource: "", lastError: "", lastMeta: {} };
+
+  const mode = async () => {
+    let v;
+    try { v = String((await callValue(sourceGetter)) ?? "auto").trim().toLowerCase(); } catch { return "auto"; }
+    if (v === "own" || v === "helper") v = "faustus";
+    return MAIL_SOURCES.includes(v) ? v : "auto";
+  };
+  const hubUp = async () => { try { return Boolean(await api().mailAvailable()); } catch { return false; } };
+  const helperUp = async () => {
+    try { return typeof helperAvailable === "function" ? Boolean(await helperAvailable()) : typeof runHelper === "function"; } catch { return false; }
+  };
+  const sourceNow = async ({ deep = false } = {}) => {
+    const m = await mode();
+    if (m === "faustus") return "faustus";
+    if (m === "hub") return "hub";
+    if (deep && deepUsesHelper && (await helperUp())) return "faustus";
+    return (await hubUp()) ? "hub" : "faustus";
+  };
+  const watermark = async () => { try { return Math.trunc(Number(await (watermarkGet ? watermarkGet() : wmMem)) || 0); } catch { return 0; } };
+
+  async function ensureInterest(criteria = {}, { force = false } = {}) {
+    let spec;
+    try { spec = typeof interest === "function" ? await interest(criteria) : interest; } catch { spec = null; }
+    if (!spec || typeof spec !== "object" || !Object.keys(spec).length) return { ok: true, skipped: "no interest" };
+    const sig = JSON.stringify(spec) + "|" + String(sphere || "");
+    if (!force && sig === registeredSig && clock() - registeredAt < registerEveryS) return { ok: true, cached: true };
+    let answer;
+    try { answer = sphere ? await api().mailRegisterInterest(spec, { sphere }) : await api().mailRegisterInterest(spec); }
+    catch (e) { return { ok: false, error: `hub interest: ${(e && e.name) || "error"}` }; }
+    if (answer && answer.ok) { registeredAt = clock(); registeredSig = sig; return { ok: true }; }
+    return { ok: false, error: String((answer && answer.error) || "the hub refused the interest") };
+  }
+
+  const pick = (c, camel, snake, dflt) => (c[camel] !== undefined ? c[camel] : c[snake] !== undefined ? c[snake] : dflt);
+  const sortRows = (rows, order) => (order === "asc" || order === "desc"
+    ? rows.sort((a, b) => ((a.ts || 0) - (b.ts || 0)) * (order === "desc" ? -1 : 1)) : rows);
+
+  async function scanHelper(c, fallbackFrom = "") {
+    const limit = Math.trunc(Number(pick(c, "limit", "max", 100)) || 100);
+    const payload = {};
+    for (const [k, v] of Object.entries(c)) if (!ROUTER_KEYS.has(k) && !ROUTER_KEYS.has(snakeKey(k)) && k !== "order") payload[snakeKey(k)] = v;
+    for (const [camel, snake] of [["sinceDays", "since_days"], ["senderDomains", "sender_domains"], ["skipOwn", "skip_own"]]) {
+      const v = c[camel] !== undefined ? c[camel] : c[snake];
+      if (v !== undefined) payload[snake] = v;
+    }
+    payload.max = limit;
+    if (payload.since_days === undefined) payload.since_days = 30;
+    let res;
+    try { res = typeof runHelper === "function" ? await runHelper("scan", payload, 180_000) : { ok: false, error: "no mail helper configured" }; }
+    catch (e) { res = { ok: false, error: `mail helper: ${(e && e.name) || "error"}` }; }
+    if (!res || typeof res !== "object" || !res.ok) {
+      return { ok: false, source: "faustus", error: String((res && res.error) || "the mail helper failed"), messages: [], more: false, pending_since: null, fallback_from: fallbackFrom };
+    }
+    const rows = sortRows((res.messages || []).filter((m) => m && typeof m === "object"), c.order);
+    return { ok: true, source: "faustus", error: "", messages: rows, more: false, pending_since: null, accounts: res.accounts || [], read: rows.length, fallback_from: fallbackFrom };
+  }
+
+  async function scanHub(c) {
+    const fail = (error) => ({ ok: false, source: "hub", error, messages: [], more: false, pending_since: null });
+    const reg = await ensureInterest(c);
+    if (!reg.ok) return fail(String(reg.error || "hub interest failed").slice(0, 200));
+    const limit = Math.max(1, Math.trunc(Number(pick(c, "limit", "max", 100)) || 100));
+    const deep = Boolean(c.deep);
+    const days = Number(pick(c, "sinceDays", "since_days", 30)) || 30;
+    const known = new Set((c.skip || []).map(String));
+    const words = String(c.query || "").toLowerCase().split(/\s+/).filter(Boolean);
+    const domains = (pick(c, "senderDomains", "sender_domains", []) || []).map((d) => String(d).toLowerCase().replace(/^@/, "")).filter(Boolean);
+    const skipOwn = Boolean(pick(c, "skipOwn", "skip_own", false));
+    const wm = deep ? 0 : await watermark();
+    const cutoff = deep || wm === 0 ? clock() - days * 86400 : 0;
+    const out = [];
+    let last = wm; let read = 0; let gotAny = false; let more = false;
+    for (let i = 0; i < pages; i += 1) {
+      const opts = { sinceId: last, limit: pageSize, full: true };
+      if (c.fields) opts.fields = c.fields;
+      const pg = await api().mailMessages(opts);
+      if (!pg || !pg.ok) { if (!read) return fail(String((pg && pg.error) || "the hub did not answer")); break; }
+      const rows = (pg.messages || []).filter((m) => m && typeof m === "object");
+      if (!rows.length) { last = Math.max(last, Number(pg.last_id) || last); break; }
+      gotAny = true; read += rows.length;
+      let full = false;
+      for (const m of rows) {
+        last = Math.max(last, Number(m.id) || 0);
+        if (known.has(String(m.message_id || ""))) continue;
+        if (cutoff && m.ts && Number(m.ts) < cutoff) continue;
+        if (skipOwn && m.from_self) continue;
+        if (domains.length) { const dom = mailDomain(m.from_address || m.from_addr); if (!domains.some((d) => dom === d || dom.endsWith(`.${d}`))) continue; }
+        if (words.length) {
+          const hay = ["subject", "text", "from_address", "from_name"].map((k) => String(m[k] ?? "")).join(" ").toLowerCase();
+          if (!words.every((w) => hay.includes(w))) continue;
+        }
+        m.hub_id = m.id;
+        if (m.account === undefined || m.account === "") m.account = m.source || "hub";
+        out.push(m);
+        if (out.length >= limit) { full = true; break; }
+      }
+      if (full) { more = true; break; }
+      more = rows.length >= pageSize;
+      if (!more) break;
+    }
+    sortRows(out, c.order);
+    const pend = deep ? null : (gotAny || last !== wm ? last : null);
+    return { ok: true, source: "hub", error: "", messages: out, more, pending_since: pend, read, accounts: [{ account: "hub gateway", matches: out.length }] };
+  }
+
+  async function claim(messages, ref = "", kind = null) {
+    const rows = (Array.isArray(messages) ? messages : [messages]).filter((m) => m && typeof m === "object");
+    const groups = new Map();
+    for (const m of rows) {
+      if (m.hub_id === undefined || m.hub_id === null || m.hub_id === "") continue;
+      const n = Number(m.hub_id);
+      if (!Number.isFinite(n)) continue;
+      let r;
+      try { r = String(typeof ref === "function" ? ref(m) : ref || ""); } catch { continue; }
+      if (!groups.has(r)) groups.set(r, []);
+      groups.get(r).push(Math.trunc(n));
+    }
+    let claimed = 0;
+    for (const [r, ids] of groups) {
+      try { const res = await api().mailClaim(ids, String(kind || claimKind), r); claimed += Number(res && res.claimed) || 0; } catch { /* a hint */ }
+    }
+    return { ok: true, claimed, groups: groups.size };
+  }
+
+  async function scanEx(criteria = {}) {
+    const c = { ...criteria };
+    const use = await sourceNow({ deep: Boolean(c.deep) });
+    let answer;
+    if (use === "hub") {
+      answer = await scanHub(c);
+      if (!answer.ok && (await mode()) === "auto") answer = await scanHelper(c, answer.error || "");
+    } else {
+      answer = await scanHelper(c);
+    }
+    pending = answer.pending_since === undefined ? null : answer.pending_since;
+    router.lastSource = answer.ok ? answer.source : "";
+    router.lastError = answer.ok ? "" : String(answer.error || "");
+    const { messages: _m, ...meta } = answer;
+    router.lastMeta = meta;
+    if (answer.ok && autoClaim && answer.source === "hub") await claim(answer.messages);
+    return answer;
+  }
+
+  return Object.assign(router, {
+    mode, hubUp, helperUp, sourceNow, watermark, ensureInterest, scanEx, claim,
+    forgetInterest() { registeredAt = 0; registeredSig = ""; },
+    async scan(criteria = {}) { return [...((await scanEx(criteria)).messages || [])]; },
+    async commit() {
+      const p = pending; pending = null;
+      if (p === null || p === undefined) return;
+      if (watermarkSet) await watermarkSet(p); else wmMem = Math.trunc(Number(p));
+    },
+    async status() {
+      const m = await mode();
+      const up = m !== "faustus" ? await hubUp() : false;
+      return { setting: m, effective: await sourceNow(), hub_available: up, helper_available: await helperUp(), interest_registered: Boolean(registeredSig),
+        hub_since_id: await watermark(), last_source: router.lastSource, last_error: router.lastError };
+    },
+  });
 }
 
 // agenda.js — the agenda contract, from a Node (Express) app: GET /api/family/agenda (part of hoard-link.js; the
