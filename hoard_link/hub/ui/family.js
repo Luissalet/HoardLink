@@ -109,6 +109,7 @@
     (loaders[name] || (() => {}))();
   }
   document.querySelectorAll("#family-tabs .tab").forEach((b) => { b.onclick = () => showTab(b.dataset.tab); });
+  window.hubShowTab = showTab;  // facets.js adds its own tabs and switches through this
   $("#family-toggle").onclick = () => {
     const body = $("#family-body"); const open = body.hidden; body.hidden = !open;
     $("#family-toggle").textContent = open ? "▾" : "▸"; $("#family-toggle").setAttribute("aria-expanded", String(open));
@@ -506,7 +507,7 @@
 
   // ---- boot --------------------------------------------------------------------------------------------------
   localize();
-  $("#btn-lang").addEventListener("click", () => setTimeout(() => { localize(); loaders[tab](); }, 0));
+  $("#btn-lang").addEventListener("click", () => setTimeout(() => { localize(); (loaders[tab] || (() => {}))(); }, 0));
   showTab(tab);
   loadRules(); loadJobs(); loadBackups(); loadRepos();
   connectSse();

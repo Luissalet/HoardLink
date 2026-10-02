@@ -20,7 +20,7 @@ import urllib.request
 from typing import Any, Optional
 
 from . import DEFAULT_PORT, HUB_VERSION, SERVICE
-from .tools import catalogue
+from .tools import all_tools as catalogue
 
 PROTOCOL = "2024-11-05"
 
