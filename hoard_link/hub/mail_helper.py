@@ -69,6 +69,10 @@ def _mask(address: str) -> str:
 
 # ------------------------------------------------------------------ Faustus plumbing
 def _load_server(root: str):
+    # This file lives next to the hub's own modules (mcp.py, config.py, events.py…): with its folder first on
+    # sys.path they would shadow Faustus's packages (``import mcp`` would find the hub's mcp.py). Drop it.
+    here = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.getcwd()) != here]
     sys.path.insert(0, root)
     os.chdir(root)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -531,7 +535,7 @@ def handle(request: dict, root: str) -> dict:
     try:
         server = _load_server(root)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"Faustus mail module not loadable ({type(exc).__name__})"}
+        return {"ok": False, "error": f"Faustus mail module not loadable ({type(exc).__name__}: {str(exc)[:160]})"}
     owner = _pick_owner(server, str(request.get("owner") or "").strip())
     if owner:
         os.environ["ODYSSEUS_MCP_EMAIL_OWNER"] = owner

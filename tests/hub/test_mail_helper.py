@@ -190,3 +190,24 @@ def test_real_helper_without_accounts_or_module(tmp_path, fake_faustus):
     empty = tmp_path / "nothing"
     empty.mkdir()
     assert "not loadable" in run_helper(empty, {"action": "status"})["error"]
+
+
+def test_the_helper_does_not_let_the_hubs_own_modules_shadow_faustus(tmp_path):
+    """mail_helper.py sits next to the hub's mcp.py: Faustus's ``import mcp`` must find Faustus's package."""
+    import json as _json
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+    root = tmp_path / "faustus"
+    (root / "mcp_servers").mkdir(parents=True)
+    (root / "mcp_servers" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "mcp").mkdir()
+    (root / "mcp" / "__init__.py").write_text("FROM_FAUSTUS = True\n", encoding="utf-8")
+    (root / "mcp_servers" / "email_server.py").write_text(
+        "import mcp\nassert mcp.FROM_FAUSTUS\n"
+        "def _read_accounts_from_db():\n    return []\n", encoding="utf-8")
+    helper = _Path(__file__).resolve().parents[2] / "hoard_link" / "hub" / "mail_helper.py"
+    done = subprocess.run([_sys.executable, str(helper), str(root)], input=_json.dumps({"action": "status"}),
+                          capture_output=True, text=True, cwd=str(root), timeout=60)
+    answer = _json.loads(done.stdout.strip().splitlines()[-1])
+    assert "not loadable" not in str(answer.get("error")), answer
