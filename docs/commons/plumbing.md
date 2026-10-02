@@ -305,5 +305,254 @@ checkFts5(db)
 
 ## What is not here
 
-`guard`, `bridge`, `agent`, `proc`, `service` (SPA, logging, health), `backend_settings` and the UI layer are other
-modules of the commons. `family._write_token_if_missing` still exists and should delegate to `tokens.read_or_create_token`.
+`backend_settings` and the UI layer are other modules of the commons; `proc` is documented in [media.md](media.md).
+`family._write_token_if_missing` delegates to `tokens.read_or_create_token`. The guard, the agent kit, the service helpers and
+the MCP bridge are Part 2 below.
+
+# Part 2: guard, agent kit, service, bridge
+
+What every app wrote around its API: the request guard, the `/api/agent` contract, `python -m`, the single-page-app server,
+the MCP stdio bridge. Python modules are in `hoard_link/`, the Node twin of all four in `js/hoard-commons/express.js`.
+Importing any of them needs the standard library only: `fastapi`, `starlette`, `pydantic`, `uvicorn`, `httpx` and `mcp` are
+imported inside the functions that use them (a test imports the four modules with those packages blocked).
+
+| Module | What it replaces | Node twin (`express.js`) |
+|---|---|---|
+| `guard` | 17 identical `guard.py` (Argus, Borges, Cassandra, Cicero, Echo, Funes/`audio_memory`, Galton, Hypatia, Kafka, Lumiere, Midas, Nightingale, Phileas, Pygmalion, Tantalus, Vitruvius, Vulcan), 4 `guard.js`/`guard.mjs` (Links, Ledger, People, Cook), 7 weaker variants (Daguerre `guard.py`, Babel `api.py:82`, Laplace `security.py`, Prospero `api.py:68`, Scheherazade `api.py:333`, Funes `api.py:269`, Dorian `selfhoard/api.py:70`) | `createGuard`, `checkRequest`, `parseAllowedHosts` |
+| `agentkit` | `agent_tools.py` plumbing (17 + Mercator), `api/agent.py` (17), `api/deps.py` `tool()` (17), 9 `errors.py` | `makeAgentRoutes`, `capResult` |
+| `service` | 24 `__main__.py` (9 with an `_already_running`), `startup.py` of Pygmalion / Galton and 4 `RotatingFileHandler` set-ups, the `main.py` catch-all and 2 exception handlers (17), `api/pwa.py` (15), `api/health.py` (9) | `installSpa`, `installErrorHandlers`, `runServer` |
+| `bridge` | `mcp_server.py` (17 family-A copies of 107-167 lines, 7 static B-family bridges, DiskHoard, HomeHoard, Mercator), 5 Node bridges | `createBridge`, `postJson` |
+
+Tests: `tests/commons/test_guard.py` (shared vectors `tests/vectors/guard.json`, 116 cases run against Python and Node),
+`test_agentkit.py`, `test_service.py`, `test_bridge.py`, `test_express_js.py` (the last two also run a real stdio MCP server and the
+Node bridge over JSON-RPC; set `HOARD_TEST_NODE_MODULES` to a folder with `express`, `zod` and `@modelcontextprotocol/sdk` to run
+the Node side against the real packages too, and `HOARD_TEST_MCP1_PATH` to a folder with `mcp` 1.x to cover `FastMCP`).
+
+## `hoard_link.guard`
+
+```python
+host_of(value) -> str                    port_of(value) -> int | None
+parse_allowed_hosts(raw | list) -> tuple[str, ...]
+is_allowed_host(host, port=None, allowed=(), *, strict_ports=False) -> bool
+check_request(method, headers, port=None, allowed=(), *, dev_origins=DEV_ORIGINS, strict_ports=False) -> (403, message) | None
+install_guard(app, *, port_getter, allowed_env="ALLOWED_HOSTS", allowed_hosts=None, dev_origins=DEV_ORIGINS, strict_ports=False)
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")   DEV_ORIGINS (Vite 5173 / 5174 / 4173)   FRAME_DESTS   class GuardMiddleware
+```
+
+* The rules are the 17 copies' (Host must be loopback or in the allowed list; an Origin must pass the host rule or be a dev
+  origin; cross-site requests only as top-level navigations; no form posts), so the family A frontends see no change:
+  `403 {"error": "<message>"}`. Node: `createGuard({port | portGetter, allowedHosts, devOrigins, strictPorts})` (an Express
+  middleware) and `checkRequest(method, headers, port, allowed, {devOrigins, strictPorts}) -> [403, message] | null`; both languages
+  pass the same vectors, so Links' Spanish messages become the English ones.
+* `install_guard` is a **pure ASGI** middleware (`app.add_middleware(GuardMiddleware, ...)`): no starlette import, no
+  `BaseHTTPMiddleware` buffering, and it also guards **WebSocket** upgrades (Host and Origin checked, closed with 1008 before accept),
+  which no copy did. `port_getter` is read per request, so the port found by the port search is the one enforced.
+  `allowed_hosts` (a list, or the comma-separated `config.allowed_hosts`) and the variable named by `allowed_env`
+  (`KAFKA_ALLOWED_HOSTS`) are merged; entries are `name`, `*.suffix` or `name:port` (pinned).
+* **Opt-in `strict_ports`** is the B family's rule (`Host: 127.0.0.1:<port>` exactly): a Host naming another port is refused and
+  a local Origin must carry this app's port (dev origins excepted). Off by default, because a dev proxy forwards
+  `Host: localhost:5173` and the family A guard always let that through. `port` is only consulted with `strict_ports` or a pinned
+  allowed host.
+* **Bugs fixed:** the 7 weaker guards had no allowed-hosts list (the app only worked on loopback, never on a LAN name or a
+  tailnet), 400 vs 403 and three different envelopes; Daguerre did not refuse `Sec-Fetch-Dest: iframe` reads (embeddable from another
+  origin); Dorian trusted `request.client.host` (open to DNS rebinding, `Host` was never checked); Babel and Prospero answered
+  400 `bad_host`; each app had its own `DEV_ORIGINS`.
+* **Migration, family A (17 apps):** delete `guard.py`; `main.py` changes `install_guard(app, config.allowed_hosts)` to
+  `install_guard(app, port_getter=lambda: config.port, allowed_hosts=config.allowed_hosts)` (the variable name is read from the
+  config as before, or pass `allowed_env="KAFKA_ALLOWED_HOSTS"`). **Family B and Dorian** (Babel, Daguerre, Funes, Laplace,
+  Prospero, Scheherazade): replace the middleware class with the same call, add `strict_ports=True` to keep the exact `host:port`
+  behaviour or leave it off to accept dev proxies, and check that the frontend does not special-case the old 400 `bad_host` body
+  (Prospero, Babel). **Node** (Links, Ledger, People, Cook, and new in JobHunter): `app.use(createGuard({ portGetter, allowedHosts: process.env.LINKS_ALLOWED_HOSTS }))`;
+  delete `guard.js` / `guard.mjs`. DiskHoard (header token `X-DH-Token`), Gepetto, Plato, HomeHoard and Mercator were not audited
+  and keep their own checks until someone does.
+
+## `hoard_link.agentkit`
+
+```python
+@dataclass(frozen=True) Tool(name, description, input_model, annotations, run, timeout_s=None)   # run(ctx, args)
+ann(read_only=False, destructive=False, idempotent=None, open_world=False) -> dict    # idempotent defaults to read_only
+Empty                                      # a pydantic model without fields (built on first access)
+tool_catalog(tools) -> [{name, description, annotations, inputSchema[, "x-timeout-s"]}]
+call_tool(tools, ctx, name, arguments, *, cap=True, post=None) -> dict   # UnknownTool (a KeyError), ValidationError, ValueError
+cap_result(data, limit=20_000)    uncapped()    confirm(flag, what)
+class AppError(code, message, *, hint="", status=None, details=None)  .to_dict()  .STATUS  (subclass it)
+make_agent_router(*, tools_fn, call_fn, token_fn, instructions, app_name, error_types=()) -> APIRouter
+issues_of(error) / format_issues(error)     # pydantic or fastapi validation errors as [{loc, msg}] / "loc: msg; ..."
+```
+
+* **`call_tool`** validates the arguments with the tool's model, runs `tool.run(ctx, args)` (`ctx` is the app's `Services`), wraps a
+  non-dict result as `{"result": ...}`, runs `post(result, args)` (Kafka's identifier masking goes there) and caps. `with uncapped():`
+  (the web UI calling the same handlers, `deps.tool()`) skips the cap; `uncapped` is a context variable, so it follows threads that copy context.
+* **`cap_result`** is Kafka's: over `limit` bytes of JSON the largest top-level list is halved until it fits (one item always
+  stays) and `"truncated": {reason, original_lengths, hint}` says what was cut. New: when one huge string is what is left, it is cut
+  too, and a list result is returned as `{"result": [...], "truncated": ...}`. The Node `capResult` gives byte-identical output (checked).
+* **`AppError`**: stable `code`, `message`, `hint`, `status` (from `STATUS` by code, 400 otherwise), `details` merged into the body.
+  `class KafkaError(AppError)` keeps the app's own constructor (the nine `errors.py` shrink to a status table and a subclass).
+* **`make_agent_router`** serves `GET /api/agent/tools` (`{instructions, tools, app}`, no token) and `POST /api/agent/call`
+  `{name, arguments, caller?}` with a **case-insensitive** `Bearer` (`tokens.check_bearer`, constant time, an empty token never matches).
+  A callable that declares a parameter named `request` also gets the request (`call_fn(name, args, request)` reaches
+  `request.app.state.services`); a sync `call_fn` runs in the thread pool. Errors are always JSON `{error, code, ...}`: `AppError` and
+  `error_types` (any class with `.status` and `.to_dict()`) use their own; unknown tool 404 `unknown_tool`; a `KeyError` from the tool
+  404 `not_found`; pydantic `ValidationError` 400 `invalid_arguments` with `issues`; `ValueError` 400 `invalid`; anything else 500
+  `internal` (logged). Every call ends in `family.record_call` (the `agent.call` audit event).
+* **Bugs fixed:** 11 apps (Argus, Borges, Echo, Vulcan, Vitruvius, Nightingale, Funes-audio, Cassandra, Hypatia, Mercator, Cicero
+  without `uncapped`) had no result cap, so a listing could put hundreds of KB into the model's context, and only 6 had `_confirm`;
+  `agent.py` compared `Bearer ` case-sensitively while `family.py` did not; an unexpected exception became an HTML/plain-text 500 that
+  the bridge could not parse (Nightingale parsed it by hand); validation errors had no machine-readable `issues`.
+* **Migration, family A:** `api/agent.py` and the `tool()` helper of `api/deps.py` become
+  `make_agent_router(tools_fn=lambda: tool_catalog(TOOLS), call_fn=lambda name, args, request: call_tool(TOOLS, services(request), name, args, post=mask), token_fn=lambda request: services(request).token, instructions=AGENT_INSTRUCTIONS, app_name="kafka", error_types=(KafkaError,))`
+  and `deps.tool` is `with uncapped(): return call_tool(...)`. `agent_tools.py` keeps `TOOLS` and the argument models and imports `Tool`, `ann`,
+  `Empty` from here; call `family.install_fastapi(app, ..., contract=False)` so the two contract installers do not both register `/api/agent/*`.
+  Apps that already cap inside their tools (Kafka, Phileas, Tantalus, Pygmalion, Midas, Galton) can drop their own `cap_result` calls; the
+  other 11 get the cap from `call_tool`. **Family B** (Babel, Daguerre, Funes, Laplace, Prospero, Scheherazade): their per-tool
+  `POST /api/agent/<tool>` routes (introspected by `family.install_fastapi`) are **unauthenticated**, only `/api/agent/call` checks the
+  token; the migration is to require the same Bearer token on them (a dependency on the router) or to drop them and keep only `/call`
+  (nothing in the bridges calls them: `/call` is what the catalogue path uses). Until then any local process that passes the guard can
+  run a destructive tool without the token. **Node** (Links, Ledger, People, JobHunter, Cook): `makeAgentRoutes({ app, tools, z, token, instructions, recordCall: family.recordCall }).install(app)`
+  replaces `agent-routes.js` (the zod issues become the same `invalid_arguments` + `issues` body, the result is capped at 20 000 bytes, and
+  `writeToken` becomes `readOrCreateToken` as in Part 1).
+
+## `hoard_link.service`
+
+```python
+setup_logging(app_name, logs_dir, *, level=INFO, max_bytes=2_000_000, backups=3, loggers=(), console=True) -> Path | None
+say(message)   rotate_log(path, *, max_bytes=2_000_000, backups=3) -> bool   install_excepthook(logger)
+install_spa(app, static_dir, *, api_prefix="/api")      install_error_handlers(app)
+install_pwa(app, *, name, short_name, theme, background, cache, icons=(), start_url="/", lang="en", static_dir=None, version="0")
+health_router(service, version, *, extra=None) -> APIRouter
+run_main(*, service, package, default_port, app_factory, data_dir_env=None, port_env=None, argv=None, open_browser_default=True,
+         default_data_dir=None, title=None, serve=None) -> int
+```
+
+* **`setup_logging`**: `<logs_dir>/<app_name>.log`, rotating, UTF-8, opened on the first record (a second instance that exits early
+  creates nothing), idempotent (calling it again replaces its own handlers, never stacks them), console handler only when there is a
+  console (`pythonw.exe` has none), `httpx` held at WARNING. `rotate_log` is the same rotation for a file a child appends to
+  (the bridge's autostart log).
+* **`install_spa`** (call it after the routers are included; `install_pwa` keeps it last): `/api/*` nothing matched is `404 {"error": "Not found.", "code": "not_found"}`
+  for any method; a path that is a file **inside** `static_dir` is served (`..`, `%2e%2e`, `%2f`, backslashes, drive letters, NUL,
+  dotfiles and symlinks out of the folder all fall through; the old `resolve() in candidate.parents` check did not refuse dotfiles
+  and served `index.html` for a missing asset); hashed `assets/` files are `immutable`, every other response is `no-cache`; a missing
+  asset or static-extension file is a 404, not an HTML page; other paths get `index.html` (`no-cache`); an unbuilt folder is `503 {"code": "not_built"}`.
+  Explicit media types for `.js` / `.css` / `.svg` / `.wasm` / fonts (Windows maps `.js` to `text/plain` when the registry says so).
+* **`install_error_handlers`**: `{"error", "code"?, "hint"?, "details"?, "issues"?}` for `HTTPException` (a dict detail with `error` passes
+  through), request validation (400 `"loc: msg; loc: msg"`, `code: "invalid_arguments"`, `issues`), `AppError` and any other
+  exception (500 `internal`, logged). Replaces the two handlers pasted into 17 `main.py` and the `{error, message}` / `{ok:false,error,code}` variants.
+* **`install_pwa`**: `/manifest.webmanifest` and `/sw.js`. The worker is **network-first for navigations** (the cached copy only
+  answers when the network fails), cache-first for the hashed `/assets/`, and never touches `/api/`; its cache name is
+  `<cache>-<hash of index.html>`, so a new build starts a new cache and activation deletes the old ones. The 15 `pwa.py` served a
+  cache-first worker, and without `no-cache` on `index.html` a browser kept an old `index.html` pointing at deleted hashed assets
+  (blank page until a forced reload). Both files are `no-cache`.
+* **`health_router(service, version, extra=...)`**: `{service, version, **extra, hoard_link: family.health_block()}`; `extra` is a dict
+  or a callable (it may take `request`); it cannot override `service` or `hoard_link` and a failing `extra` still answers 200 with
+  `health_error` (the launcher, the bridge, `net.already_running` and the hub all poll this).
+* **`run_main`** is the whole `__main__.py`:
+  `raise SystemExit(run_main(service="kafka-hoard", package="kafka_hoard", default_port=5200, app_factory="kafka_hoard.main:create_app", data_dir_env="KAFKA_DATA_DIR", port_env="KAFKA_PORT", open_browser_default=False))`.
+  `--port`, `--data-dir`, `--host`, `--no-browser` / `--browser`. **Before touching the data folder** it asks `net.already_running` and, if
+  this very app answers `/api/health` on the wanted port, prints it and returns **0** (opening the browser at it when asked). Then the
+  port: `--port`, else `port_env`, else `default_port`; `PORT_STRICT=1` makes a taken port an error (return 1), otherwise the next
+  free one. `--data-dir` and the chosen port are exported to the environment (`data_dir_env` / `port_env`, else `HOARD_DATA_DIR` /
+  `HOARD_PORT`) **before** the factory runs, so the app's `Config.from_env()` and its guard see them; logging goes to
+  `<data>/logs/<service>.log` (default data folder: `<repo>/data`, the folder above the package; `default_data_dir` overrides). The
+  factory is `"pkg.main:create_app"` (zero-argument, or taking `port`), `"pkg.main:app"` (an ASGI object) or a callable. `uvicorn.run`
+  with `log_config=None` (no console needed); `serve(app, host=, port=)` replaces it. The browser opens only if `open_browser_default`
+  or `--browser` is set and neither `--no-browser` nor `HOARD_NO_BROWSER` is: the bridge's autostart sets both, and apps that never
+  opened a browser on `python -m` pass `open_browser_default=False`. Exit codes: 0 stopped / already running, 1 failed to start, 2 bad arguments.
+* **Deviation from the old apps:** the already-running check happens **regardless of `PORT_STRICT`** (the nine apps that had it only
+  ran it in strict mode, so a double click started a second copy on the next port); to run two instances on purpose pass different `--port`s.
+* **Bugs fixed:** eight apps (Argus, Borges, Cassandra, Echo, Vulcan, Nightingale, Funes-audio, Hypatia) migrated the database and
+  rotated the token before the bind failed; the B family died with a uvicorn traceback; only Pygmalion and Galton logged to a rotated
+  file in the family A, so an autostarted app left no trace; an uncaught exception without a console vanished (`install_excepthook`).
+* **Migration:** each `__main__.py` is the `run_main(...)` call above; `main.py` loses `spa()`, the two exception handlers and the guard
+  class: `install_error_handlers(app)`, `install_guard(...)`, the routers, then `install_pwa(...)` and `install_spa(app, STATIC_DIR)` last;
+  `api/health.py` becomes `health_router(SERVICE, __version__, extra=lambda request: {...})` (or `app.include_router`). Babel, Daguerre and
+  Prospero already had `no-cache` and `StaticFiles("/assets")`: use `install_spa` and delete their `is_relative_to` copies; their frontends read `message`, so
+  check the TypeScript that handled `{error, message}` before switching to `{error}`. **Node:** `runServer({ service, createApp, port, onShutdown })`
+  is Links' `index.js` (SIGINT / SIGTERM, 15 s force exit); Ledger and People had no graceful shutdown, so their WAL was not checkpointed
+  (give them `onShutdown: () => db.close()`); `installSpa(app, DIST, { express })` and `installErrorHandlers(app)` replace the catch-all and
+  the error middleware of the four `app.js`.
+
+## `hoard_link.bridge`
+
+```python
+CatalogBridge(*, app, service, package, default_port, data_dir_env=None, token_env=None, token_file=None, url_file=None,
+              default_timeout=90.0, autostart=True, refresh_tools_s=60.0, tool_timeouts=None, image_content=False,
+              title=None, env_prefix=None, root=None, heartbeat_s=10.0, base_url=None)
+    .run_bridge()  .build_server()  async .tools()  async .call(name, arguments, progress=None) -> BridgeResult(content, is_error, body)
+    .base_url .data_dir .token() .healthy() .start_app()
+ensure_running(package, port, *, service, data_dir, wait_s=45, env=None, cwd=None, port_env=None, log_name=None, args=()) -> bool
+bridge_token(app, data_dir=None, *, token_env=None, token_file=None, env_prefix=None) -> str     # FileNotFoundError names the file
+tool_timeout(tool, default, *, arguments=None, overrides=None) -> float
+```
+
+An app's `mcp_server.py` becomes (the app passes `root=__file__` so `<root>/data` and the autostart working directory are the repo):
+
+```python
+from kafka_hoard.hoard_link.bridge import CatalogBridge
+CatalogBridge(app="kafka", service="kafka-hoard", package="kafka_hoard", default_port=5200, data_dir_env="KAFKA_DATA_DIR",
+              title="Kafka's Hoard", root=__file__, tool_timeouts={"pdf_*": 175, "images_*": 175}).run_bridge()
+```
+
+* Variables are derived from `app`: `KAFKA_URL`, `KAFKA_PORT`, `KAFKA_TOKEN`, `KAFKA_TOKEN_FILE`, `KAFKA_BRIDGE_AUTOSTART` (`env_prefix` overrides) plus `data_dir_env`.
+  The URL is `$KAFKA_URL`, else the app's `data/url` (`url_file`), else `127.0.0.1:<$KAFKA_PORT or default_port>`; only loopback `http` is accepted.
+* **Catalogue refresh:** `GET /api/agent/tools` is repeated when older than `refresh_tools_s` or when a call names a tool the bridge does
+  not know (the 17 bridges listed once, so an app that started after its workspace, or gained a tool, stayed stale until a restart); a failed
+  refresh keeps the last list. A tool still unknown after the refresh answers `unknown_tool` without a request.
+* **Timeouts:** `tool_timeouts` (exact names or `fnmatch` patterns) > the catalogue's `x-timeout-s` (`Tool(timeout_s=...)`) > `default_timeout`;
+  a `wait_s` argument stretches it to `clamp_wait(wait_s) + 30` s so the bridge never cuts before the app's own wait ends (Galton 660 s, Lumiere 300 s,
+  Kafka's 175 s for `pdf_*` become `default_timeout` / `tool_timeouts` / `x-timeout-s`). Calls longer than `heartbeat_s` send `report_progress`
+  **heartbeats** (a no-op unless the client asked for progress) so clients that reset their timeout on progress keep waiting (Links' Node bridge only).
+* **`outcome_unknown`:** a tool that is not read-only whose request was sent but got no answer (timeout, connection dropped) returns
+  `{"error", "code": "outcome_unknown", "status": "outcome_unknown", "outcome_unknown": true, "reconcile_action": "read_current_state_before_retry"}`
+  (Ledger's and People's Node semantics; a Python bridge gave an error identical to "nothing happened"). A refused connection is **not** unknown: the request never left.
+  A tool the catalogue does not list counts as a write.
+* **Errors:** the app's envelope (`error`, `code`, `hint`, `issues`, `details`, `candidates`, `key`, `params`) is forwarded and results carry `isError`; 401 says
+  which token file was refused (Cicero's message, now everywhere); a missing token file with the app running says so instead of offering to start the app;
+  a non-JSON answer is reported with its first 200 characters.
+* **Transport:** `httpx` with `trust_env=False` always (Prospero, Laplace and Nightingale did not set it, so `HTTP_PROXY` could capture loopback calls),
+  or `urllib` with proxies off when httpx is not installed. `image_content=True` turns a result's `_image: {data, mime}` into an MCP image part (Lumiere).
+* **Autostart:** when the app does not answer, `python -m <package>` is launched detached without a console window (`proc.popen(detached=True)`),
+  with `PORT_STRICT=1`, `HOARD_NO_BROWSER=1` and `<APP>_PORT`, from `root`; stdout / stderr go to `<data>/logs/<app>-app.log`, **rotated** at 2 MB (it grew without limit);
+  one child per process (later callers wait for it), a child that exits with an error ends the wait at once instead of after 45 s;
+  `<APP>_BRIDGE_AUTOSTART=0` or `autostart=False` turns it off. A failed call to a stopped app starts it and retries once.
+* **`mcp` versions:** `mcp` 1.x (`FastMCP`, what the apps pin: `mcp>=1.10,<2`) and 2.x (`MCPServer`, renamed; `FastMCP` no longer exists) both work; `mcp`
+  is imported only by `build_server()`. The server name is `service`, the instructions come from the catalogue.
+* **Migration, family A (17 bridges):** replace `mcp_server.py` with the call above. Cicero's 401 handling, Tantalus' / Kafka's error details and Galton's
+  660 s are now the default behaviour or `default_timeout=660`; Lumiere passes `image_content=True`, Kafka `tool_timeouts`, Hypatia `default_timeout=180`;
+  Nightingale gains autostart and `trust_env=False`. The tests that monkeypatched `bridge.ensure_running` / `_healthy` (Argus `tests/test_bridge_autostart.py`)
+  move to `CatalogBridge(...).healthy` / `start_app` or to `ensure_running(...)`. **Family B** (Babel 315 lines, Daguerre 340, Funes 476, Laplace 544,
+  Scheherazade 408, Prospero 1653) and **Dorian** (134) keep hand-written `@mcp.tool` functions that duplicate their schemas; they can adopt `CatalogBridge`
+  once their backends serve a catalogue (`family.install_fastapi(contract=True)` already builds one from the per-tool routes, and Prospero's
+  `descriptions_from_fastmcp_source` gives it the texts): that is the biggest and lowest-priority migration, and it is also the moment to put the token on their routes.
+  **DiskHoard** (raw JSON-RPC, `X-DH-Token`, 900 s), **HomeHoard** (`http.server` bridge) and **Mercator** (52 lines) migrate only if they adopt `/api/agent/*`.
+  **Node:** `createBridge({ app, service, version, McpServer, StdioServerTransport, tools, instructions, baseUrl | urlFile, token | tokenFile, callTimeoutMs, defaultTimeoutMs, heartbeatMs })`
+  with the SDK classes the app already imports replaces `mcp.js` and `bridge-call.js` (Links), the `fetch` bridges of Ledger / People / JobHunter, and gives Ledger's
+  `outcome_unknown` and Links' heartbeats to all of them; Cook's `apps/mcp/server.mjs` keeps its in-process fallback and can use `postJson`. No Node bridge autostarts the app (Cook's does); that part is not in `createBridge`.
+
+## Node: `js/hoard-commons/express.js`
+
+```js
+createGuard({ port, portGetter, allowedHosts, devOrigins, strictPorts })     checkRequest(method, headers, port, allowed, { devOrigins, strictPorts })
+hostOf  portOf  parseAllowedHosts  isAllowedHost  LOCAL_HOSTS  DEV_ORIGINS
+capResult(data, limit = 20000)    errorBody(error) -> { status, body }
+makeAgentRoutes({ app, tools, callTool, z, toJsonSchema, token, tokenGetter, instructions, capLimit, recordCall }) -> { catalog, tools, call, install(app) }
+installSpa(app, distDir, { express, apiPrefix })    installErrorHandlers(app, { log })
+runServer({ service, createApp, port, host, onShutdown, forceMs, log, exit, signals }) -> { server, port, shutdown }
+createBridge({ app, service, version, McpServer, StdioServerTransport, tools, instructions, baseUrl, urlFile, portFile, defaultPort, token, tokenFile,
+               callTimeoutMs, defaultTimeoutMs, heartbeatMs, messages, z }) -> { server, handlers, call, start() }
+postJson(base, pathname, payload, { token, timeoutMs }) -> { status, ok, body, raw }     # rejects with .code and .connected
+```
+
+No npm dependency: `express`, `zod` and the MCP SDK are passed in (`installSpa(app, dist, { express })`, `makeAgentRoutes({ z })`,
+`createBridge({ McpServer, StdioServerTransport })`). Checked against real Express 4.22 and 5.2, zod 4 and `@modelcontextprotocol/sdk` 1.31.
+`makeAgentRoutes` expects `express.json()` before it; `installSpa` after the API routes; `installErrorHandlers` last. `postJson` uses `node:http` (fetch
+gives up on a response that takes over five minutes to start) and tells whether the connection was made, which is what separates "app stopped" from
+`outcome_unknown`.
+
+## Deviations and limits
+
+* `check_request` / `is_allowed_host` take the app's `port` (the request's Host and Origin ports are only compared with `strict_ports`), and the dev origins
+  include Vite's preview port 4173.
+* The agent router and `call_tool` are synchronous-tool oriented: `tool.run` is called without `await` (an `async` tool needs its own wrapper or an `async` `call_fn`).
+* `run_main` does not open a browser unless asked; `scripts/launch.py` (the launcher) is not covered here. Setting the app's `Config.port` from the chosen port
+  is done through the environment, so an app whose `Config` ignores `<APP>_PORT` must read it.
+* The bridge does not send `notifications/tools/list_changed` when the catalogue changes; clients see the new tools at their next `tools/list`.
