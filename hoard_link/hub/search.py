@@ -45,8 +45,23 @@ def _fold(text: Any) -> str:
 
 # ---- choosing the tools ---------------------------------------------------------------------
 
+#: Tools that look like a search but reach the internet (a web search, stock footage, a shop): a family search stays home.
+_OUTSIDE_WORDS = ("web", "internet", "online", "stock_search")
+
+
 def _is_search_name(name: str) -> bool:
     return name.endswith("_search") or name.startswith("search_") or name in EXACT_NAMES
+
+
+def _is_find_name(name: str) -> bool:
+    """Read-only finders and lists that take a text: ``find_people``, ``shipments_list(text)``, ``media_list(query)``."""
+    return name.startswith("find_") or name.endswith("_find") or name.endswith("_list") or name.endswith("_assets")
+
+
+def _reaches_outside(tool: dict[str, Any]) -> bool:
+    name = str(tool.get("name") or "").lower()
+    first = str(tool.get("description") or "").split("\n", 1)[0].lower()
+    return any(w in name for w in _OUTSIDE_WORDS) or "internet" in first or "the web" in first or "en la web" in first
 
 
 def pick_search_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -58,10 +73,16 @@ def pick_search_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not isinstance(t, dict):
             continue
         name = str(t.get("name") or "")
-        if not name or not _is_search_name(name):
+        if not name or _reaches_outside(t):
             continue
         ann = t.get("annotations") if isinstance(t.get("annotations"), dict) else None
-        if ann is not None and (ann.get("readOnlyHint") is False or ann.get("destructiveHint") is True):
+        if _is_search_name(name):
+            if ann is not None and (ann.get("readOnlyHint") is False or ann.get("destructiveHint") is True):
+                continue
+        elif _is_find_name(name):
+            if not (ann and ann.get("readOnlyHint") is True):     # a finder only when it says it only reads
+                continue
+        else:
             continue
         schema = t.get("inputSchema") or t.get("input_schema") or {}
         props = schema.get("properties") if isinstance(schema, dict) and isinstance(schema.get("properties"), dict) else {}
@@ -222,6 +243,20 @@ class SearchFacet(Facet):
         self._catalogue: dict[str, tuple[float, list[dict[str, Any]], str]] = {}   # app id -> (ts, picked tools, error)
         self.call_timeout_s = CALL_TIMEOUT_S
 
+    def _running_ids(self) -> Optional[set[str]]:
+        """Apps whose server answers now (from the hub's snapshot, cached a few seconds); None when unknown."""
+        now = time.monotonic()
+        cached = getattr(self, "_running_cache", None)
+        if cached and now - cached[0] < 10:
+            return cached[1]
+        try:
+            snap = self.hub.snapshot()
+            ids = {a["id"] for a in snap.get("apps", []) if a.get("state") in ("running", "foreign", "starting")}
+        except Exception:  # noqa: BLE001
+            ids = None
+        self._running_cache = (now, ids)
+        return ids
+
     def reset_cache(self) -> None:
         with self._lock:
             self._catalogue.clear()
@@ -315,8 +350,11 @@ class SearchFacet(Facet):
         limit = max(1, min(int(limit or 8), 50))
         wanted = {str(a).strip() for a in (apps or []) if str(a).strip()} or None
         candidates = [a for a in self.hub.apps if a.agent_contract and (wanted is None or a.id in wanted)]
+        running = self._running_ids()
+        skipped_down = [a for a in candidates if running is not None and a.id not in running]
+        candidates = [a for a in candidates if running is None or a.id in running]
         groups: list[dict[str, Any]] = []
-        skipped: list[dict[str, str]] = []
+        skipped: list[dict[str, str]] = [{"app": a.id, "reason": "not running"} for a in skipped_down]
 
         # 1. catalogues (parallel; cached)
         pool = ThreadPoolExecutor(max_workers=max(4, min(len(candidates) * 2 + 2, 32)), thread_name_prefix="hub-search")
