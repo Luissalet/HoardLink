@@ -19,7 +19,7 @@ from hoard_link.hub.actions import render, validate as validate_actions
 from hoard_link.hub.backup import BackupStore
 from hoard_link.hub.events import EventLog, matches
 from hoard_link.hub.jobs import Scheduler, is_due, next_run, parse_every, validate_job
-from hoard_link.hub.rules import RuleEngine, rule_matches
+from hoard_link.hub.rules import RuleEngine, example_rules, rule_matches
 from hoard_link.hub.server import make_server
 
 from .conftest import free_port, write_manifest
@@ -334,13 +334,13 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     assert body["ok"]
     # the recommended rules: installed together, idempotently, every one valid
     status, body = _http(url + "/api/rules/install-defaults", {})
-    assert status == 200 and body["ok"] and len(body["installed"]) == 6 and body["already_present"] == []
+    assert status == 200 and body["ok"] and len(body["installed"]) == len(example_rules()) and body["already_present"] == []
     ids = {r["id"] for r in body["rules"]}
     assert {"rule-backup-on-stop", "rule-watch-digest", "rule-watcher-alert-digest", "rule-shipment-digest", "rule-restart-down",
             "rule-repo-issue-digest"} <= ids
     res = tools.call(hub, "hub_rule_install_defaults", {})
-    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == 6 and res["refreshed"] == []
-    assert len(hub.rules.list()) == 6
+    assert res["ok"] and res["installed"] == [] and len(res["already_present"]) == len(example_rules()) and res["refreshed"] == []
+    assert len(hub.rules.list()) == len(example_rules())
     # a template that moved on: refresh brings when/then back, keeps what the user set
     hub.rules.update("rule-restart-down", {"when": {"type": "cassandra.incident.opened"}, "enabled": False, "cooldown_s": 42})
     res = tools.call(hub, "hub_rule_install_defaults", {"refresh": True})
