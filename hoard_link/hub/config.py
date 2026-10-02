@@ -46,6 +46,7 @@ class HubConfig:
     backup: dict[str, Any] = field(default_factory=dict)     # {dir, exclude: [...], max_file_mb, keep, include_hub}
     events_keep: int = 20000       # rows kept in events.db after a prune
     jobs_enabled: bool = True      # the scheduler thread (rules always run)
+    link_chat_concurrency: int = 2  # model calls served at once through /api/link/chat; the rest wait in a queue
     # The Repos facet (repos.py): {roots, extra, exclude, faustus_dir, portfolio_dir, stray_prefixes,
     # default_branches, ci, expected_emails}; every key optional.
     repos: dict[str, Any] = field(default_factory=dict)
@@ -91,6 +92,11 @@ class HubConfig:
     @property
     def repos_file(self) -> str:
         return os.path.join(self.data_dir, "repos.json")
+
+    @property
+    def backend_file(self) -> str:
+        """The hub's own ``backend.json`` (same schema as an app's): what /api/link/chat resolves with."""
+        return os.path.join(self.data_dir, "backend.json")
 
     @property
     def url_file(self) -> str:
@@ -143,6 +149,15 @@ class HubConfig:
             cfg.backup = {**(cfg.backup or {}), "dir": env["HOARD_HUB_BACKUP_DIR"]}
         if env.get("HOARD_HUB_JOBS") in ("0", "false", "no", "off"):
             cfg.jobs_enabled = False
+        if env.get("HOARD_HUB_LINK_CHAT_CONCURRENCY"):
+            try:
+                cfg.link_chat_concurrency = int(env["HOARD_HUB_LINK_CHAT_CONCURRENCY"])
+            except ValueError:
+                pass
+        try:
+            cfg.link_chat_concurrency = max(1, min(int(cfg.link_chat_concurrency), 16))
+        except (TypeError, ValueError):
+            cfg.link_chat_concurrency = 2
         if not isinstance(cfg.backup, dict):
             cfg.backup = {}
         if not isinstance(cfg.repos, dict):

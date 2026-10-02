@@ -89,7 +89,7 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
                             "finished transcripts, backups), hub_rule_add automates 'when X then Y' across apps, "
                             "hub_job_add schedules actions, hub_backup_* keeps deduplicated copies of every app's data, "
                             "hub_call_app reaches any app's tool and hub_family_audit checks they all speak the same "
-                            "contract. hub_repos reports the state of every git repository (unpushed commits, dirty, stray "
+                            "contract. hub_link_status / hub_link_chat show and use the local model every app shares. hub_repos reports the state of every git repository (unpushed commits, dirty, stray "
                             "branches, drifted copies of hoard_link and the theme, CI) — read-only: the hub never pushes. "
                             "Use hub_list_apps first to learn the ids.",
         }}
@@ -104,7 +104,13 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
         args = params.get("arguments") or {}
         if not _ensure_hub():
             return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text({"ok": False, "error": f"hub not reachable at {_url()} and could not be started"}), "isError": True}}
-        status, body = _request("POST", "/api/agent/call", {"tool": name, "arguments": args})
+        wait = 90.0
+        if name == "hub_link_chat":   # a model call may legitimately take minutes
+            try:
+                wait = min(1830.0, max(90.0, float((args or {}).get("timeout_s") or 300.0) + 15.0))
+            except (TypeError, ValueError):
+                wait = 315.0
+        status, body = _request("POST", "/api/agent/call", {"tool": name, "arguments": args}, timeout=wait)
         if status is None:
             return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text({"ok": False, "error": "hub did not answer"}), "isError": True}}
         result = body.get("result") if isinstance(body, dict) else body

@@ -413,7 +413,7 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
     assert status == 200
     line = next(a for a in body["apps"] if a["id"] == "contract")
     assert line["contract"] == "shared" and line["token_present"] and line["events"] and line["data_gitignored"] is True
-    assert "contract" in body["summary"]["shared_contract"] and body["summary"]["library_version"] == "0.5.0"
+    assert "contract" in body["summary"]["shared_contract"] and body["summary"]["library_version"] == "0.6.0"
     res = tools.call(hub, "hub_family_audit", {"probe": False})
     assert res["ok"] and all("stack" in a and "tools" not in a for a in res["apps"])
     # catalogue and mcp bridge list the new tools
@@ -512,7 +512,7 @@ def test_family_client_emit_and_call(fserved, tmp_path, monkeypatch):
     assert res["ok"] and res["result"]["echoed"] == {"q": 1} and res["result"]["caller"] == "contract"
     assert family.call("dead", "x")["ok"] is False
     hb = family.health_block()
-    assert hb["events"] is True and hb["app"] == "contract" and hb["version"] == "0.5.0"
+    assert hb["events"] is True and hb["app"] == "contract" and hb["version"] == "0.6.0"
     # without a token the hub refuses, and the client says so
     family.configure("contract", None, token_file=str(tmp_path / "missing"), hub=url)
     assert family.emit("x.y", {}, block=True) is False and "401" in family.status()["last_error"] or family.status()["dropped"] >= 1

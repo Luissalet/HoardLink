@@ -118,6 +118,34 @@ def fetch(url: str, body: Optional[dict[str, Any]] = None, *, method: Optional[s
         return status, None
 
 
+def fetch_detailed(url: str, body: Optional[dict[str, Any]] = None, *, method: Optional[str] = None,
+                   timeout: float = 5.0, headers: Optional[dict[str, str]] = None) -> tuple[Optional[int], Any, str]:
+    """Like :func:`fetch` but also says why nothing answered: ``(status, json, "")`` when something did,
+    else ``(None, None, "timeout" | "unreachable")``."""
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method or ("POST" if data is not None else "GET"),
+                                 headers={"Content-Type": "application/json", "Accept": "application/json",
+                                          "User-Agent": "hoard-link", **(headers or {})})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as exc:
+        try:
+            raw = exc.read()
+        except Exception:  # noqa: BLE001
+            raw = b""
+        status = exc.code
+    except Exception as exc:  # noqa: BLE001
+        reason = getattr(exc, "reason", exc)
+        timed_out = isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError) or "timed out" in str(reason).lower()
+        return None, None, "timeout" if timed_out else "unreachable"
+    try:
+        return status, json.loads(raw.decode("utf-8", "replace")) if raw else None, ""
+    except ValueError:
+        return status, None, ""
+
+
 def is_hub(body: Any) -> bool:
     return isinstance(body, dict) and body.get("service") == SERVICE
 

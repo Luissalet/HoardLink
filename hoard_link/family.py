@@ -28,13 +28,14 @@ same contract as the rest without touching their existing endpoints.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
 import time
 from typing import Any, Callable, Optional
 
-from ._hubclient import fetch, hub_url
+from ._hubclient import fetch, fetch_detailed, hub_url
 
 try:  # only for install_fastapi; the rest of the module is standard library
     from fastapi import Request as _Request
@@ -43,7 +44,7 @@ except Exception:  # noqa: BLE001
     _Request = Any  # type: ignore[misc,assignment]
     _JSONResponse = None  # type: ignore[assignment]
 
-FAMILY_VERSION = "0.4.0"
+FAMILY_VERSION = "0.6.0"
 _state: dict[str, Any] = {"app": "", "token_file": "", "hub_url": None, "enabled": True, "sent": 0, "dropped": 0,
                           "last_error": ""}
 _lock = threading.Lock()
@@ -127,6 +128,63 @@ def call(app: str, tool: str, arguments: Optional[dict[str, Any]] = None, *, tim
             body["error"] = "the hub refused this app's token (" + (_state.get("token_file") or "no token file") + ")"
         return body
     return {"ok": 200 <= status_ < 300, "app": app, "tool": tool, "status": status_, "result": body}
+
+
+def chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Optional[list[Any]] = None,
+         json: Any = None, effort: Optional[str] = None, max_tokens: Optional[int] = None,
+         temperature: Optional[float] = None, timeout: float = 300.0) -> dict[str, Any]:
+    """Ask the local model through the hub (``POST /api/link/chat``), for apps that cannot load models
+    themselves (standard library only; apps that have :class:`hoard_link.Link` should use it directly).
+
+    ``messages`` is ``[{"role": "system"|"user"|"assistant", "content": str}]``; ``capability`` is ``"llm"`` or
+    ``"vision"`` (vision needs ``images``: bytes or base64 strings, attached to the last user message);
+    ``json`` is True, or a JSON Schema dict, to also get the parsed answer; ``effort`` is
+    off|low|medium|high|max. Never raises. Returns ``{ok, text, json, model, provider, ms, error, detail}``;
+    when ``ok`` is False, ``error`` is ``no_model`` (nothing can serve it), ``timeout``, ``hub_down`` or
+    ``http_<code>`` and ``code`` carries the hub's own word (``gpu_busy``, ``bad_request``...). Same semantics
+    as the Node helper ``chat()`` in ``hoard-link.js``."""
+    body: dict[str, Any] = {"capability": capability, "messages": list(messages or []), "timeout_s": timeout}
+    if images:
+        body["images"] = [i if isinstance(i, str) else base64.b64encode(bytes(i)).decode("ascii") for i in images]
+    if json is not None and json is not False:
+        body["json"] = json
+    if effort:
+        body["effort"] = effort
+    if max_tokens:
+        body["max_tokens"] = max_tokens
+    if temperature is not None:
+        body["temperature"] = temperature
+    blank = {"text": "", "json": None, "model": None, "provider": None}
+    status_, resp, why = fetch_detailed(_hub() + "/api/link/chat", body, method="POST", timeout=timeout + 15.0,
+                                        headers=_headers())
+    if status_ is None:
+        if why == "timeout":
+            return {"ok": False, "error": "timeout", "detail": f"no answer from the hub within {timeout:.0f}s", **blank}
+        return {"ok": False, "error": "hub_down", "detail": f"hub not reachable at {_hub()}", **blank}
+    d = resp if isinstance(resp, dict) else {}
+    if status_ == 200 and d.get("ok"):
+        out = {"ok": True, "text": d.get("text") or "", "json": d.get("json"), "model": d.get("model"),
+               "provider": d.get("provider"), "ms": d.get("ms"), "usage": d.get("usage"), "error": None, "detail": None}
+        if d.get("json_error"):
+            out["json_error"] = d["json_error"]
+        return out
+    code = str(d.get("error") or "")
+    detail = ("the hub refused this app's token (" + (_state.get("token_file") or "no token file") + ")"
+              if status_ == 401 else str(d.get("detail") or code))
+    return {"ok": False, "error": code if code in ("no_model", "timeout") else f"http_{status_}", "code": code,
+            "detail": detail, **blank}
+
+
+def link_status(*, force: bool = False, timeout: float = 30.0) -> dict[str, Any]:
+    """Which model serves llm / vision / embed / tts now (``GET /api/link/status``): ``{ok, llm: {available,
+    model, provider, reason}, ...}``, or ``{ok: False, error: "hub_down" | "timeout" | "http_<code>"}``."""
+    status_, resp, why = fetch_detailed(_hub() + "/api/link/status" + ("?force=1" if force else ""), method="GET",
+                                        timeout=timeout, headers=_headers())
+    if status_ is None:
+        return {"ok": False, "error": "timeout" if why == "timeout" else "hub_down", "detail": f"hub at {_hub()}"}
+    if status_ == 200 and isinstance(resp, dict):
+        return resp
+    return {"ok": False, "error": f"http_{status_}", "detail": str((resp or {}).get("error") if isinstance(resp, dict) else "")}
 
 
 def record_call(tool: str, ok: bool, ms: Optional[int] = None, *, caller: str = "", error: str = "") -> None:
@@ -407,5 +465,5 @@ def _looks_read_only(name: str) -> bool:
                                                                   "update", "review", "import") for p in parts)
 
 
-__all__ = ["configure", "status", "emit", "call", "record_call", "health_block", "install_fastapi",
+__all__ = ["configure", "status", "emit", "call", "chat", "link_status", "record_call", "health_block", "install_fastapi",
            "descriptions_from_fastmcp_source", "FAMILY_VERSION"]

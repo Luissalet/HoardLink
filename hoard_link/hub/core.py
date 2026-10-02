@@ -23,6 +23,7 @@ from . import actions as _actions, audit as _audit, contract, desktop, procs
 from .backup import BackupStore
 from .events import EventLog
 from .jobs import Scheduler
+from .linkchat import LinkService
 from .repos import RepoMonitor, RepoSettings
 from .rules import RuleEngine
 
@@ -74,6 +75,8 @@ class Hub:
         self.repos = RepoMonitor(self.config.data_dir, self._repo_settings, lambda: self.apps,
                                  emit=lambda t, d: self.events.emit(t, d, source="hub"),
                                  lang_fn=lambda: self.config.language)
+        # Models for every app (Hoard Link 0.6): chat/vision over HTTP through the hub's own Link.
+        self.link = LinkService(self.config, emit=lambda t, d: self.events.emit(t, d, source="hub"))
         procs._protected_pids()  # warm the ancestor list once, off the request path
         self.rescan()
         if self.config.jobs_enabled:
@@ -95,7 +98,7 @@ class Hub:
         return self.events.emit(type, data, source=source)
 
     def close(self) -> None:
-        for part in (self.jobs, self.rules, self.events):
+        for part in (self.jobs, self.rules, self.link, self.events):
             try:
                 part.close()
             except Exception:  # noqa: BLE001
