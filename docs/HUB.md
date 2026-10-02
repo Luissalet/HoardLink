@@ -407,3 +407,23 @@ have in the previous snapshot it emits `hub.repos.issue`
 unless `language` is `en`); the very first scan, with no previous snapshot,
 emits none. The recommended rule *Repo problem → digest note*
 (`rule-repo-issue-digest`) turns each of those into a `digest.item` event.
+
+## Facets (0.7)
+
+Spheres, notifications, mail, chats, Today, references, search, work and purchases are *facets*: one module
+each under `hoard_link/hub/`, with its own routes, `hub_*` tools and tab (loaded by `ui/facets.js` from
+`GET /api/facets`). A facet that fails to load is logged and skipped; the rest of the hub runs.
+Their settings live next to the others in the hub's data folder:
+
+| File | Facet | Edited from |
+|---|---|---|
+| `spheres.json` | spheres | the sphere chip → "Configurar esferas…" |
+| `notify.json`, `notify.db` | notifications | Notifications tab (channels, test buttons) |
+| `mail.json`, `mail.db`, `mail/attachments/` | mail gateway | Mail tab (off by default; turn it on there) |
+| `chats.json` | chat sources | Chats tab (add Slack / Microsoft 365, device-code login) |
+| `today.json`, `digests/` | Today | Today section (send the digest now, calendar link, export folder, LAN port) |
+| `refs.db`, `purchases.db`, `work.json` | references, purchases, work | their tabs |
+| `rules_meta.json` | recommended rules | removing a recommended rule records it as dismissed; `{"auto_install": false}` stops the automatic install (`HOARD_HUB_AUTO_RULES=0` too) |
+
+`mail.db` holds mail text for `retention_days` (60): add `mail.db` to `backup.exclude` if mail should not be
+copied by backups. The references for every route and tool are in [docs/facets/](facets/).
