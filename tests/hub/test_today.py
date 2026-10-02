@@ -499,6 +499,26 @@ def test_today_system_incidents_and_jobs(env):
     assert "i2" in [i["incident_id"] for i in env.facet.today("personal")["system"]["incidents"]]
 
 
+def test_today_prefers_cassandras_open_incidents(env, monkeypatch):
+    emit(env, "cassandra.incident.opened", {"incident_id": "stale", "app": "kafka"}, ts=NOW - 3600, source="cassandra")
+    calls = []
+
+    def fake_call(app_id, tool, args, caller="hub", timeout=0):
+        calls.append((app_id, tool, args))
+        return {"ok": True, "result": {"ok": True, "result": {"incidents": [
+            {"id": 7, "service": "ledger", "kind": "app", "opened": "2026-10-02T08:00:00+02:00", "change": "up → down",
+             "probable_cause": "process gone"}]}}}
+
+    monkeypatch.setattr(env.facet, "_running", lambda app_id: True)
+    monkeypatch.setattr(env.hub, "get", lambda app_id: object())
+    monkeypatch.setattr(env.hub, "call_app", fake_call)
+    inc = env.facet.today("personal")["system"]["incidents"]
+    assert [(i["incident_id"], i["app"], i["to_state"]) for i in inc] == [("7", "ledger", "down")]   # the bus's stale one is ignored
+    assert calls == [("cassandra", "svc_incidents", {"open_only": True, "limit": 50})]
+    env.facet.today("personal")
+    assert len(calls) == 1                                                                         # cached for a minute
+
+
 def test_today_notifications_today(env):
     emit(env, "notify.sent", {"id": 1, "app": "ledger", "sphere": "personal", "priority": "high", "title": "Payment failed",
                               "channels": ["windows"]}, ts=NOW - 600)
