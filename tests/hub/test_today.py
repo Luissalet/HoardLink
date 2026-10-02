@@ -200,7 +200,7 @@ def env(tmp_path):
     clock = {"now": NOW}
     spheres, notify = FakeSpheres(), FakeNotify()
     hub._facets_by_id = {"spheres": spheres, "notify": notify, "mailgate": FakeMail(), "worktrack": FakeWork()}
-    facet = TodayFacet(hub, clock=lambda: clock["now"], tz=TZ, background=False)
+    facet = TodayFacet(hub, clock=lambda: clock["now"], tz=TZ, background=False, llm=lambda *a: None)
     hub.facets = [facet]
     hub._facets_by_id["today"] = facet
     ns = type("Env", (), {})()
@@ -317,6 +317,16 @@ def test_agenda_fans_out_with_each_apps_token(env):
     assert by_app["kafka"]["items"] == 8 and by_app["dead"]["skipped"] == "not running"
     assert "error" not in by_app["dead"]                                              # a stopped app is not an error
     assert by_app["plain"]["skipped"] == "no agenda route"
+
+
+def test_agenda_collapses_mirrors_and_keeps_the_reference_owner(env):
+    common = {"title": "Maintenance", "start": "2026-10-05", "dedupe_key": "ledger:task:42", "url": "hoard://ledger/task/42"}
+    env.apps["kafka"].items = [{**common, "id": "kafka:mirror"}, {**common, "id": "kafka:independent", "dedupe_key": ""}]
+    env.apps["ledger"].items = [{**common, "id": "ledger:original"}]
+    result = env.facet.agenda("2026-10-01", "2026-10-31", refresh=True)
+    assert {item["id"] for item in result["items"]} == {"ledger:original", "kafka:independent"}
+    kept = next(item for item in result["items"] if item.get("dedupe_key"))
+    assert kept["app"] == "ledger"
 
 
 def test_agenda_sphere_filters_apps_and_items(env):

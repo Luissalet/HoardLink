@@ -132,7 +132,11 @@ class FakeMailHub:
 
 
 @pytest.fixture
-def isolated():
+def isolated(monkeypatch):
+    monkeypatch.setattr(fam_mail, "COMMON_FAUSTUS_PATHS", ())
+    monkeypatch.setattr(fam_mail, "_sibling_candidates", lambda: [])
+    for key in fam_mail.FAUSTUS_ENV:
+        monkeypatch.delenv(key, raising=False)
     saved = dict(family._state)
     fam_mail.forget_availability()
     fam_mail._hub_hint.update(at=0.0, key="", dir="")
@@ -1220,8 +1224,8 @@ def test_node_faustus_dir_matches_python(tmp_path, monkeypatch, isolated):
              {"setting": str(tmp_path / "empty"), "env": {"HOARD_FAUSTUS_DIR": str(a)}},
              {"setting": None, "env": {"FAUSTUS_DIR": str(a), "HOARD_FAUSTUS_DIR": str(b)}}]
     js = run_link_js("""
-        const out = input.cases.map((c) => fam.faustusDir(c.setting, { env: c.env }));
-        out.push(fam.faustusDir(null, { env: {}, extra: [input.extra] }));
+        const out = input.cases.map((c) => fam.faustusDir(c.setting, { env: c.env, searchParents: false, commonPaths: [] }));
+        out.push(fam.faustusDir(null, { env: {}, extra: [input.extra], searchParents: false, commonPaths: [] }));
         return out;
     """, {"cases": cases, "extra": str(b)})
     py = []
@@ -1281,12 +1285,12 @@ def test_node_spawn_runner_runs_the_real_helper_like_python_does(faustus):
 
 def test_node_spawn_runner_failures_and_environment(tmp_path, faustus):
     none = run_link_js("""
-        const run = fam.spawnHelperRunner({ helperPath: input.helper, setting: input.setting, env: {} });
+        const run = fam.spawnHelperRunner({ helperPath: input.helper, setting: input.setting, env: {}, discovery: { searchParents: false, commonPaths: [] } });
         return await run("status");
     """, {"helper": str(HELPER_FILE), "setting": str(tmp_path / "nowhere")})
     assert none["ok"] is False and "Faustus folder not found" in none["error"]
     no_python = run_link_js("""
-        const run = fam.spawnHelperRunner({ helperPath: input.helper, setting: input.setting, env: {} });
+        const run = fam.spawnHelperRunner({ helperPath: input.helper, setting: input.setting, env: {}, discovery: { searchParents: false, commonPaths: [] } });
         return await run("status");
     """, {"helper": str(HELPER_FILE), "setting": str(faustus)})
     assert no_python == {"ok": False, "error": "Faustus has no venv with Python"}

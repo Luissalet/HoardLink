@@ -25,7 +25,7 @@ import os
 import posixpath
 import re
 import tempfile
-from pathlib import Path, PurePath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable, Optional, Sequence, Union
 
 __all__ = [
@@ -133,6 +133,9 @@ def _parse(path: Any, *, resolve: bool = True) -> tuple[Optional[_Parsed], Optio
     if s.startswith("\\\\?\\") and _looks_windows(s[4:]):
         s = s[4:]
     on_nt = os.name == "nt"
+    if on_nt and not resolve and s.startswith("/") and not _looks_windows(s):
+        parts = PurePosixPath(posixpath.normpath(s)).parts
+        return _Parsed(False, tuple(x.lower() for x in parts), parts, None, False), None
     if on_nt or _looks_windows(s):
         if on_nt:
             try:

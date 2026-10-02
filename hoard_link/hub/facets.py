@@ -44,6 +44,7 @@ FACET_MODULES = (
     "worktrack",
     "purchases",
     "web",
+    "services",
 )
 
 

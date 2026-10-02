@@ -22,7 +22,7 @@ def run_js_bytes(module: str, calls: list[dict[str, Any]], *, timeout: float = 6
     prepared = [{"fn": camel(c["fn"]), "args": c.get("args", []), "opts": camel_keys(c.get("opts") or {})} for c in calls]
     script = (
         f"import * as m from {json.dumps(mod)};\n"
-        "const calls = JSON.parse(process.argv[2]);\n"
+        "import { readFileSync } from 'node:fs';\nconst calls = JSON.parse(readFileSync(0, 'utf8'));\n"
         "const revive = (v) => { if (v && typeof v === 'object' && !Array.isArray(v) && '__b64__' in v) return Buffer.from(v.__b64__, 'base64');\n"
         "  if (Array.isArray(v)) return v.map(revive); return v; };\n"
         "const wrap = (v) => { if (v instanceof Uint8Array) return { __b64__: Buffer.from(v).toString('base64') };\n"
@@ -43,7 +43,7 @@ def run_js_bytes(module: str, calls: list[dict[str, Any]], *, timeout: float = 6
     with tempfile.TemporaryDirectory() as tmp:
         f = Path(tmp) / "run.mjs"
         f.write_text(script, encoding="utf-8")
-        proc = subprocess.run([exe, str(f), json.dumps(prepared)], capture_output=True, text=True, timeout=timeout, encoding="utf-8")
+        proc = subprocess.run([exe, str(f)], input=json.dumps(prepared), capture_output=True, text=True, timeout=timeout, encoding="utf-8")
     if proc.returncode != 0:
         raise AssertionError(f"node failed: {proc.stderr[-2000:]}")
     return json.loads(proc.stdout)

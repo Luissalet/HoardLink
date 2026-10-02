@@ -151,6 +151,8 @@ dialog pre { margin: 0; padding: 12px 14px; font-family: var(--mono); font-size:
 .family-panel { border-bottom: 1px solid var(--line); background: var(--bg-2); }
 .family-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 22px 0; }
 .tabs { display: flex; gap: 4px; }
+#family-tabs { min-width: 0; overflow-x: auto; }
+#family-tabs .tab { flex-shrink: 0; }
 .tab { background: transparent; border: 1px solid transparent; border-bottom: none; border-radius: 9px 9px 0 0; color: var(--muted); padding: 6px 12px; }
 .tab.on { background: var(--card); border-color: var(--line); color: var(--text); }
 .badge { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--card-2); color: var(--muted); font-size: 11px; line-height: 18px; }

@@ -35,7 +35,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Callable, Optional, Union
 
 __all__ = ["LOCAL_HOSTS", "DEV_ORIGINS", "FRAME_DESTS", "SAFE_METHODS", "host_of", "port_of", "parse_allowed_hosts",
-           "is_allowed_host", "check_request", "install_guard", "GuardMiddleware"]
+           "is_allowed_host", "check_request", "install_guard", "GuardMiddleware", "check_handler", "wsgi_middleware"]
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 # The Vite dev server (5173 / 5174) and ``vite preview`` (4173), under both spellings of loopback.
@@ -164,13 +164,16 @@ def _origin_ok(origin: str, port: Optional[int], allowed: tuple[str, ...], dev_o
 
 
 def check_request(method: str, headers: Mapping[str, str], port: Optional[int] = None, allowed: Iterable[str] = (), *,
-                  dev_origins: Iterable[str] = DEV_ORIGINS, strict_ports: bool = False) -> Optional[tuple[int, str]]:
+                  dev_origins: Iterable[str] = DEV_ORIGINS, strict_ports: bool = False,
+                  guard_safe_methods: bool = True) -> Optional[tuple[int, str]]:
     """``None`` when the request may proceed, otherwise ``(status, message)`` (always 403). ``headers`` is any
     mapping with lowercase names (``host``, ``origin``, ``sec-fetch-site`` / ``-mode`` / ``-dest``)."""
     allowed_t = tuple(allowed)
     host = headers.get("host")
     if not is_allowed_host(host, port, allowed_t, strict_ports=strict_ports):
         return 403, _MSG_HOST
+    if not guard_safe_methods and str(method).upper() in SAFE_METHODS:
+        return None
     origin = headers.get("origin")
     if origin and not _origin_ok(origin, port, allowed_t, tuple(dev_origins), strict_ports):
         return 403, _MSG_ORIGIN
@@ -186,6 +189,41 @@ def check_request(method: str, headers: Mapping[str, str], port: Optional[int] =
 
 # ------------------------------------------------------------------------------------------------ ASGI
 
+def check_handler(handler: Any, *, allowed: Iterable[str] = (), strict_ports: bool = False) -> bool:
+    """Guard an http.server handler. Return True to proceed; send JSON on refusal."""
+    headers = {key.lower(): value for key, value in handler.headers.items()}
+    port = handler.server.server_address[1]
+    verdict = check_request(handler.command, headers, port, allowed, strict_ports=strict_ports)
+    if verdict is None:
+        return True
+    status, message = verdict
+    body = json.dumps({"error": message}).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    if handler.command != "HEAD":
+        handler.wfile.write(body)
+    return False
+
+
+def wsgi_middleware(app: Any, *, port_getter: Callable[[], int], allowed: Iterable[str] = (), strict_ports: bool = False) -> Any:
+    """Apply the same request rules to a Flask or other WSGI application."""
+    patterns = tuple(allowed)
+
+    def guarded(environ: dict[str, Any], start_response: Any) -> Any:
+        headers = {key[5:].lower().replace("_", "-"): value for key, value in environ.items() if key.startswith("HTTP_")}
+        verdict = check_request(environ.get("REQUEST_METHOD", "GET"), headers, port_getter(), patterns, strict_ports=strict_ports)
+        if verdict is None:
+            return app(environ, start_response)
+        status, message = verdict
+        body = json.dumps({"error": message}).encode("utf-8")
+        start_response(f"{status} Forbidden", [("Content-Type", "application/json"), ("Content-Length", str(len(body))), ("Cache-Control", "no-store")])
+        return [b"" if environ.get("REQUEST_METHOD") == "HEAD" else body]
+
+    return guarded
+
 def _scope_headers(scope: Mapping[str, Any]) -> dict[str, str]:
     """The ASGI header list as ``{lowercase name: value}`` (the first of a repeated header wins)."""
     out: dict[str, str] = {}
@@ -200,12 +238,13 @@ class GuardMiddleware:
     """Pure ASGI middleware: ``check_request`` on every ``http`` and ``websocket`` scope (``lifespan`` passes)."""
 
     def __init__(self, app: Any, *, port_getter: Callable[[], int], allowed: Iterable[str] = (),
-                 dev_origins: Iterable[str] = DEV_ORIGINS, strict_ports: bool = False) -> None:
+                 dev_origins: Iterable[str] = DEV_ORIGINS, strict_ports: bool = False, guard_safe_methods: bool = True) -> None:
         self.app = app
         self.port_getter = port_getter
         self.allowed = tuple(allowed)
         self.dev_origins = tuple(dev_origins)
         self.strict_ports = strict_ports
+        self.guard_safe_methods = guard_safe_methods
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         kind = scope.get("type")
@@ -216,7 +255,8 @@ class GuardMiddleware:
         except Exception:  # noqa: BLE001 - a broken getter must not take the app down; the port is then not enforced
             port = 0
         verdict = check_request("GET" if kind == "websocket" else scope.get("method", "GET"), _scope_headers(scope),
-                                port, self.allowed, dev_origins=self.dev_origins, strict_ports=self.strict_ports)
+                                port, self.allowed, dev_origins=self.dev_origins, strict_ports=self.strict_ports,
+                                guard_safe_methods=kind == "websocket" or self.guard_safe_methods)
         if verdict is None:
             return await self.app(scope, receive, send)
         status, message = verdict
@@ -233,7 +273,7 @@ class GuardMiddleware:
 
 def install_guard(app: Any, *, port_getter: Callable[[], int], allowed_env: str = "ALLOWED_HOSTS",
                   allowed_hosts: Union[str, Iterable[str], None] = None, dev_origins: Iterable[str] = DEV_ORIGINS,
-                  strict_ports: bool = False) -> None:
+                  strict_ports: bool = False, guard_safe_methods: bool = True) -> None:
     """Put the guard in front of ``app`` (a FastAPI / Starlette application: ``app.add_middleware``).
 
     ``port_getter`` returns the port the app really listens on (known after the port search, so it is read per
@@ -242,4 +282,4 @@ def install_guard(app: Any, *, port_getter: Callable[[], int], allowed_env: str 
     ``KAFKA_ALLOWED_HOSTS``...), both read once, now."""
     patterns = parse_allowed_hosts(allowed_hosts) + parse_allowed_hosts(os.environ.get(allowed_env) if allowed_env else None)
     app.add_middleware(GuardMiddleware, port_getter=port_getter, allowed=tuple(dict.fromkeys(patterns)),
-                       dev_origins=tuple(dev_origins), strict_ports=strict_ports)
+                       dev_origins=tuple(dev_origins), strict_ports=strict_ports, guard_safe_methods=guard_safe_methods)

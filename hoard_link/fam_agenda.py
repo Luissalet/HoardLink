@@ -162,6 +162,9 @@ def normalize_item(raw: Any, *, app: str = "", default_sphere: str = "") -> Opti
                             "detail": _clip(raw.get("detail"), 300), "sphere": sphere}
     if end_out:
         item["end"] = end_out
+    dedupe_key = _clip(raw.get("dedupe_key"), 200)
+    if dedupe_key:
+        item["dedupe_key"] = dedupe_key
     return item
 
 

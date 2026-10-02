@@ -44,7 +44,7 @@ window.
 
 from __future__ import annotations
 
-HUB_VERSION = "0.8.0"
+HUB_VERSION = "0.8.1"
 DEFAULT_PORT = 8810
 SERVICE = "hoard-hub"
 

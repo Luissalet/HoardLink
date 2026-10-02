@@ -51,7 +51,8 @@ def run_js(module: str, calls: list[dict[str, Any]], *, timeout: float = 60.0) -
     prepared = [{"fn": camel(c["fn"]), "args": c.get("args", []), "opts": camel_keys(c.get("opts") or {})} for c in calls]
     script = (
         f"import * as m from {json.dumps(mod)};\n"
-        "const calls = JSON.parse(process.argv[2]);\n"
+        "import { readFileSync } from 'node:fs';\n"
+        "const calls = JSON.parse(readFileSync(0, 'utf8'));\n"
         "const out = [];\n"
         "for (const c of calls) {\n"
         "  try {\n"
@@ -67,7 +68,7 @@ def run_js(module: str, calls: list[dict[str, Any]], *, timeout: float = 60.0) -
         f = Path(tmp) / "run.mjs"
         f.write_text(script, encoding="utf-8")
         payload = json.dumps(prepared)
-        proc = subprocess.run([exe, str(f), payload], capture_output=True, text=True, timeout=timeout, encoding="utf-8")
+        proc = subprocess.run([exe, str(f)], input=payload, capture_output=True, text=True, timeout=timeout, encoding="utf-8")
     if proc.returncode != 0:
         raise AssertionError(f"node failed: {proc.stderr[-2000:]}")
     return json.loads(proc.stdout)

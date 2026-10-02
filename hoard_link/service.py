@@ -266,6 +266,9 @@ def install_error_handlers(app: Any) -> None:
     async def app_error(request: Request, exc: Any) -> Any:
         return JSONResponse(exc.to_dict(), status_code=exc.status)
 
+    async def invalid_value(request: Request, exc: Any) -> Any:
+        return JSONResponse({"error": str(exc), "code": "invalid"}, status_code=400)
+
     async def internal(request: Request, exc: Exception) -> Any:
         log.error("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
         return JSONResponse({"error": f"Internal error: {type(exc).__name__}: {str(exc)[:200]}", "code": "internal"}, status_code=500)
@@ -277,6 +280,13 @@ def install_error_handlers(app: Any) -> None:
         RequestValidationError = None  # type: ignore[assignment]
     if RequestValidationError is not None:
         app.add_exception_handler(RequestValidationError, validation_error)
+    try:
+        from pydantic import ValidationError
+    except ImportError:
+        ValidationError = None
+    if ValidationError is not None:
+        app.add_exception_handler(ValidationError, validation_error)
+    app.add_exception_handler(ValueError, invalid_value)
     app.add_exception_handler(AppError, app_error)
     app.add_exception_handler(Exception, internal)
 

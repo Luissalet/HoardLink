@@ -44,7 +44,7 @@ except Exception:  # noqa: BLE001
     _Request = Any  # type: ignore[misc,assignment]
     _JSONResponse = None  # type: ignore[assignment]
 
-FAMILY_VERSION = "0.8.0"
+FAMILY_VERSION = "0.8.1"
 _state: dict[str, Any] = {"app": "", "token_file": "", "hub_url": None, "enabled": True, "sent": 0, "dropped": 0,
                           "last_error": ""}
 _lock = threading.Lock()
@@ -217,6 +217,32 @@ def _library_version() -> str:
 # FastAPI helpers
 # ---------------------------------------------------------------------------
 
+class _ToolTokenMiddleware:
+    """Protect direct tool routes without consuming the request body."""
+
+    def __init__(self, app: Any, *, token_file: str) -> None:
+        self.app, self.token_file = app, token_file
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        path = scope.get("path", "").rstrip("/")
+        prefix = "/api/agent/"
+        if scope.get("type") == "http" and scope.get("method") == "POST" and path.startswith(prefix) and path not in (prefix + "tools", prefix + "call"):
+            from .tokens import check_bearer
+            try:
+                with open(self.token_file, encoding="utf-8") as handle:
+                    expected = handle.read().strip()
+            except OSError:
+                expected = ""
+            header = next((value.decode("latin-1") for key, value in scope.get("headers", ()) if key.lower() == b"authorization"), "")
+            if not check_bearer(header, expected):
+                body = b'{"error":"Invalid MCP token.","code":"unauthorized"}'
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
+
+
 class _AgentCallsMiddleware:
     """Pure ASGI: records ``POST /api/agent/<tool>`` (the per-tool shape)
     as ``agent.call`` events from the response status, without touching
@@ -260,13 +286,14 @@ def _write_token_if_missing(path: str) -> str:
 
 def install_fastapi(app: Any, app_id: str, data_dir: str, *, contract: bool = True, instructions: str = "",
                     descriptions: Optional[dict[str, str]] = None, token: bool = True,
-                    mcp_source: Optional[str] = None) -> dict[str, Any]:
+                    mcp_source: Optional[str] = None, protect_tool_routes: bool = False) -> dict[str, Any]:
     """Wire a FastAPI app into the family. With ``contract=True`` also adds
     ``GET /api/agent/tools`` and ``POST /api/agent/call`` built from the
     app's existing ``POST /api/agent/<tool>`` routes (their pydantic body
     model gives the schema; ``descriptions`` or the endpoint docstring the
     text), guarded by a bearer token written to ``<data>/mcp-token``. The
-    existing per-tool routes are untouched."""
+    ``protect_tool_routes=True`` also requires the token on the existing
+    per-tool routes. The catalogue remains readable without a token."""
     from pathlib import Path
     data_dir = str(data_dir)
     token_file = str(Path(data_dir) / "mcp-token")
@@ -281,6 +308,10 @@ def install_fastapi(app: Any, app_id: str, data_dir: str, *, contract: bool = Tr
     if token:
         _write_token_if_missing(token_file)
     app.add_middleware(_AgentCallsMiddleware)
+    if protect_tool_routes:
+        if not token:
+            raise ValueError("protect_tool_routes requires token=True")
+        app.add_middleware(_ToolTokenMiddleware, token_file=token_file)
     installed: dict[str, Any] = {"app": app_id, "token_file": token_file, "contract": False, "tools": []}
     if not contract:
         return installed

@@ -20,6 +20,20 @@ Tests: `tests/commons/test_<module>.py`, shared vectors in `tests/vectors/` (`to
 
 ## `hoard_link.atomic`
 
+Version 0.8.1 also adds per-tool output-cap opt-out (`Tool(..., capped=False)`),
+maps bare `LookupError` / `PermissionError` to `404 not_found` / `403 forbidden`,
+and validates arguments as `400 invalid_arguments`. `family.install_fastapi` can
+protect direct `POST /api/agent/<tool>` routes with the app token by enabling
+`protect_tool_routes=True` together with `token=True`; it refuses the
+insecure combination before installing routes. `guard.check_handler` and
+`guard.wsgi_middleware` adapt the same host/origin rules to http.server and Flask.
+Safe-method checks remain enabled by default; `guard_safe_methods=False` is an
+explicit compatibility option for existing read-only GET routes.
+
+Agenda rows can carry a trimmed `dedupe_key` (maximum 200 characters). Hub Today
+retains existing id/sphere filtering and uses that key to prefer a row whose
+`hoard://<app>/` link belongs to its source app when owners mirror the same item.
+
 ```python
 replace_with_retry(src, dst, *, attempts=40, delay=0.05, replace=os.replace, sleep=time.sleep) -> None
 write_bytes_atomic(path, data, *, fsync=True, mode=None) -> None
@@ -369,12 +383,12 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")   DEV_ORIGINS (Vite 5173 / 517
 ## `hoard_link.agentkit`
 
 ```python
-@dataclass(frozen=True) Tool(name, description, input_model, annotations, run, timeout_s=None)   # run(ctx, args)
+@dataclass(frozen=True) Tool(name, description, input_model, annotations, run, timeout_s=None, capped=True)   # run(ctx, args)
 ann(read_only=False, destructive=False, idempotent=None, open_world=False) -> dict    # idempotent defaults to read_only
 Empty                                      # a pydantic model without fields (built on first access)
 tool_catalog(tools) -> [{name, description, annotations, inputSchema[, "x-timeout-s"]}]
 call_tool(tools, ctx, name, arguments, *, cap=True, post=None) -> dict   # UnknownTool (a KeyError), ValidationError, ValueError
-cap_result(data, limit=20_000)    uncapped()    confirm(flag, what)
+cap_result(data, limit=20_000)    uncapped()    is_uncapped()    confirm(flag, what)
 class AppError(code, message, *, hint="", status=None, details=None)  .to_dict()  .STATUS  (subclass it)
 make_agent_router(*, tools_fn, call_fn, token_fn, instructions, app_name, error_types=()) -> APIRouter
 issues_of(error) / format_issues(error)     # pydantic or fastapi validation errors as [{loc, msg}] / "loc: msg; ..."

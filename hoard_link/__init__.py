@@ -33,7 +33,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
 
 from .config import CapabilityConfig, LinkConfig
 from .errors import BackendError, HoardLinkError, Unavailable

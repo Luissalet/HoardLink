@@ -55,6 +55,9 @@ def find_vendored(app: Path, max_depth: int = 3) -> list[Path]:
 
 
 def package_dir(app: Path) -> Path | None:
+    # Some services use a namespace package named src and a root app.py.
+    if (app / "app.py").is_file() and (app / "src").is_dir():
+        return app / "src"
     for cand in sorted(app.iterdir()):
         if cand.is_dir() and cand.name not in SKIP and not cand.name.startswith(".") and (
                 (cand / "__main__.py").is_file() or (cand / "main.py").is_file() or (cand / "api.py").is_file()):

@@ -460,7 +460,7 @@ class FFmpeg:
     def loudness(self, path: "str | Path", *, stream: int = 0) -> dict[str, Optional[float]]:
         """EBU R128 measurement (``ebur128`` filter): ``integrated_lufs``, ``lra`` (LU) and ``true_peak_dbfs``; ``None`` for a value
         ffmpeg printed as ``-inf`` (digital silence)."""
-        _, err = self.capture(["-nostats", "-i", _input_arg(path), "-map", f"0:a:{stream}", "-filter_complex", "ebur128=peak=true:framelog=quiet",
+        _, err = self.capture(["-nostats", "-i", _input_arg(path), "-map", f"0:a:{stream}", "-af", "ebur128=peak=true:framelog=quiet",
                                "-f", "null", "-"])
         tail = err[err.rfind("Summary:"):] if "Summary:" in err else err
 
@@ -478,10 +478,10 @@ class FFmpeg:
         Feed the result to :func:`loudnorm_second_pass`."""
         flt = f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json"
         _, err = self.capture(["-nostats", "-i", _input_arg(path), "-map", f"0:a:{stream}", "-af", flt, "-f", "null", "-"])
-        m = re.search(r"\{[^{}]*\}\s*$", err.strip(), re.S)
-        if not m:
+        measurements = re.findall(r"\{[^{}]*\}", err, re.S)
+        raw = next((json.loads(block) for block in reversed(measurements) if '"input_i"' in block and '"target_offset"' in block), None)
+        if raw is None:
             raise FFmpegError("loudnorm printed no measurement.", code="failed", stderr=proc.tail_lines(err))
-        raw = json.loads(m.group(0))
         out: dict[str, float] = {}
         for key in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset"):
             try:
