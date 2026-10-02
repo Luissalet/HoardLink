@@ -262,5 +262,7 @@ def test_finders_count_and_the_internet_does_not():
         {"name": "media_list", "inputSchema": q},                       # does not say it only reads
         {"name": "mail_scan", "inputSchema": q, "annotations": {"readOnlyHint": False}},
         {"name": "doc_search", "inputSchema": q, "description": "Search the archived papers"},
+        {"name": "hf_search", "inputSchema": q, "annotations": ro},
+        {"name": "lots_search", "inputSchema": q, "annotations": {"readOnlyHint": True, "openWorldHint": True}},
     ]
     assert {p["name"] for p in pick_search_tools(tools)} == {"find_people", "shipments_list", "doc_search"}

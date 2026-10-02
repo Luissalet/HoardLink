@@ -46,7 +46,8 @@ def _fold(text: Any) -> str:
 # ---- choosing the tools ---------------------------------------------------------------------
 
 #: Tools that look like a search but reach the internet (a web search, stock footage, a shop): a family search stays home.
-_OUTSIDE_WORDS = ("web", "internet", "online", "stock_search")
+_OUTSIDE_WORDS = ("web", "internet", "online", "stock_search", "hf_", "huggingface", "secondhand", "market_search")
+_OUTSIDE_DESC = ("internet", "the web", "en la web", "online", "hugging face", "wallapop", "yahoo", "coingecko", "en línea")
 
 
 def _is_search_name(name: str) -> bool:
@@ -61,7 +62,8 @@ def _is_find_name(name: str) -> bool:
 def _reaches_outside(tool: dict[str, Any]) -> bool:
     name = str(tool.get("name") or "").lower()
     first = str(tool.get("description") or "").split("\n", 1)[0].lower()
-    return any(w in name for w in _OUTSIDE_WORDS) or "internet" in first or "the web" in first or "en la web" in first
+    ann = tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
+    return bool(ann.get("openWorldHint")) or any(w in name for w in _OUTSIDE_WORDS) or any(w in first for w in _OUTSIDE_DESC)
 
 
 def pick_search_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
