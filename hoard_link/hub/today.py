@@ -499,6 +499,9 @@ class TodayFacet(Facet):
         if d1 < d0:
             d0, d1 = d1, d0
         sph = self._norm_sphere(sphere)
+        if refresh:
+            with self._lock:
+                self._unsupported.clear()          # "refresh" asks every app again, the ones without an agenda too
         targets = self._targets(sph)
         results: list[dict[str, Any]] = []
         if targets:
@@ -1013,6 +1016,14 @@ class TodayFacet(Facet):
                 self._save()
 
     def _on_event(self, ev: dict[str, Any]) -> None:
+        if ev.get("type") in ("hub.app.started", "hub.app.stopped"):
+            # a restarted app may speak the agenda now (or no longer): forget what we remembered about it
+            app_id = str((ev.get("data") or {}).get("app") or "")
+            with self._lock:
+                self._unsupported.pop(app_id, None)
+                for key in [k for k in self._cache if k[0] == app_id]:
+                    self._cache.pop(key, None)
+            return
         if ev.get("type") == "digest.wanted":
             threading.Thread(target=self._digest_wanted, args=(ev,), name="hoard-today-digest", daemon=True).start()
 

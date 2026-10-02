@@ -1159,3 +1159,12 @@ def test_today_ui_script_renders_and_follows_the_sphere(tmp_path):
     run = subprocess.run(["node", str(script), ui.as_uri()], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert run.returncode == 0, run.stderr + run.stdout
     assert run.stdout.strip() == "ui ok"
+
+
+def test_agenda_forgets_an_unsupported_app_when_it_restarts_or_on_refresh(env):
+    env.facet._unsupported["kafka"] = NOW
+    assert "kafka" not in {a["app"] for a in env.facet.agenda("2026-10-01", "2026-10-31")["apps"]}
+    env.facet._on_event({"type": "hub.app.started", "data": {"app": "kafka"}})
+    assert "kafka" in {a["app"] for a in env.facet.agenda("2026-10-01", "2026-10-31")["apps"]}
+    env.facet._unsupported["ledger"] = NOW
+    assert "ledger" in {a["app"] for a in env.facet.agenda("2026-10-01", "2026-10-31", refresh=True)["apps"]}
