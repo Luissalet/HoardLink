@@ -76,6 +76,7 @@ La repetición de la transcripción detectó una biblioteca CUDA ausente que blo
 - El trabajo del Hub termina al solicitar la indexación, tiene un límite de espera de diez minutos y no sobrevive a su reinicio; los identificadores de los trabajos de los proveedores permiten seguirlos por separado.
 - Chromium no permite fijar la IP de sus conexiones; la captura vuelve a comprobar DNS y todas las solicitudes observables. El motor externo de descargas administra sus propias conexiones.
 - Las pruebas oficiales de Writers pasan. Una comprobación adicional de TypeScript sobre pruebas no incluidas en su comprobación oficial conserva un TS2367 previo en `tests/media-security.ts:203`.
+- Faustus conserva su rama principal `master`; los 34 repos del paquete están en `main`.
 - Se conservan fuera de estos commits los cambios previos de Faustus sobre parada, escritorio y documentación de adaptaciones.
 - Las pruebas y descargas de verificación utilizan material sintético o público, separado de los datos de trabajo. Los logs detallados quedan en la carpeta temporal de validación del equipo.
 
