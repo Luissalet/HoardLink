@@ -506,14 +506,16 @@ def test_today_prefers_cassandras_open_incidents(env, monkeypatch):
     def fake_call(app_id, tool, args, caller="hub", timeout=0):
         calls.append((app_id, tool, args))
         return {"ok": True, "result": {"ok": True, "result": {"incidents": [
-            {"id": 7, "service": "ledger", "kind": "app", "opened": "2026-10-02T08:00:00+02:00", "change": "up → down",
-             "probable_cause": "process gone"}]}}}
+            {"id": 7, "service": "ledger", "kind": "app", "opened": "2026-10-05T08:00:00+02:00", "change": "up → down",
+             "probable_cause": "process gone"},
+            {"id": 3, "service": "babel", "kind": "app", "opened": "2026-10-01T08:00:00+02:00", "change": "up → down"}]}}}
 
     monkeypatch.setattr(env.facet, "_running", lambda app_id: True)
     monkeypatch.setattr(env.hub, "get", lambda app_id: object())
     monkeypatch.setattr(env.hub, "call_app", fake_call)
     inc = env.facet.today("personal")["system"]["incidents"]
-    assert [(i["incident_id"], i["app"], i["to_state"]) for i in inc] == [("7", "ledger", "down")]   # the bus's stale one is ignored
+    # the bus's stale one is ignored, and so is an app down for days (a state, not news)
+    assert [(i["incident_id"], i["app"], i["to_state"]) for i in inc] == [("7", "ledger", "down")]
     assert calls == [("cassandra", "svc_incidents", {"open_only": True, "limit": 50})]
     env.facet.today("personal")
     assert len(calls) == 1                                                                         # cached for a minute

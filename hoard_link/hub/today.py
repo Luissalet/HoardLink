@@ -54,6 +54,7 @@ ICS_FUTURE_DAYS = 120
 EXPORT_EVERY_S = 3600.0
 NEWS_DEFAULT_WINDOW_S = 24 * 3600.0
 INCIDENT_WINDOW_S = 2 * 24 * 3600.0
+RECENT_INCIDENT_S = 24 * 3600.0
 #: Past items of these kinds are history, not "overdue".
 NOT_OVERDUE_KINDS = ("birthday", "exam", "release", "incident")
 PRIORITY_RANK = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
@@ -634,9 +635,11 @@ class TodayFacet(Facet):
         """Open incidents: Cassandra's own list when it runs (it knows which are still open), else the bus
         of the last two days (an incident whose close never reached the bus would otherwise stay forever)."""
         live = self._cassandra_open()
-        if live is not None:
-            return [r for r in live if not (sphere and r["app"] and not self._app_allowed(sphere, r["app"]))]
-        return self._incidents_from_bus(sphere)
+        if live is None:
+            return self._incidents_from_bus(sphere)
+        recent = self.clock() - RECENT_INCIDENT_S
+        # an app that went down days ago and was never started again is a state, not news: Today shows the last day
+        return [r for r in live if r["ts"] >= recent and not (sphere and r["app"] and not self._app_allowed(sphere, r["app"]))]
 
     def _cassandra_open(self) -> Optional[list[dict[str, Any]]]:
         now = self.clock()
@@ -745,7 +748,7 @@ class TodayFacet(Facet):
             errors["agenda"] = ag["errors"]
         last = self._last_digest(sph)
         return {"ok": True, "date": today.isoformat(), "sphere": sph or "all", "generated_ts": self.clock(),
-                "agenda": self._buckets(ag["items"]),
+                "agenda": self._buckets([i for i in ag["items"] if i.get("kind") != "incident"]),   # incidents: System column
                 "attention": self._attention(sph, errors),
                 "news": self._news(sph),
                 "system": {"incidents": self._incidents(sph), "jobs": self._jobs_running(sph, errors)},
