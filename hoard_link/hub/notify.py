@@ -20,28 +20,23 @@ are never returned unmasked (``••••last4``). Every channel sender is inj
 from __future__ import annotations
 
 import copy
-import html as _html
 import json
 import logging
 import os
 import re
-import shutil
-import smtplib
 import sqlite3
-import ssl
 import subprocess
 import sys
-import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from email.message import EmailMessage
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
+from .. import notify_channels as nc
+from ..notify_channels import (  # noqa: F401 - re-exported: the hub's tests and tools import them from here
+    HTTP_TIMEOUT_S, POWERSHELL_APP_ID, TOAST_TIMEOUT_S, build_toast_ps1, clean_url, http_json as _http_json, scrub as _scrub, xml_escape)
 from .facets import Facet, Request
 
 logger = logging.getLogger("hoard_hub.notify")
@@ -49,9 +44,6 @@ logger = logging.getLogger("hoard_hub.notify")
 CHANNELS = ("windows", "ntfy", "telegram", "email")
 PRIORITIES = ("low", "normal", "high", "urgent")
 MASK = "••••"
-HTTP_TIMEOUT_S = 10.0
-TOAST_TIMEOUT_S = 20
-POWERSHELL_APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
 DEFAULT_ROUTES = {"urgent": ["windows", "telegram"], "high": ["windows"], "normal": ["windows"], "low": ["digest"]}
 KEEP_ROWS = 5000
 _TOPIC = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -92,74 +84,6 @@ def mask(secret: Any) -> str:
 
 def is_masked(value: Any) -> bool:
     return isinstance(value, str) and value.startswith(MASK)
-
-
-def xml_escape(text: str) -> str:
-    """Escape for XML text and attributes; also drops the control characters XML 1.0 forbids."""
-    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text or "")
-    return _html.escape(text, quote=True)
-
-
-def clean_url(url: Any) -> str:
-    """Only http(s) and ``hoard://`` links survive (a toast or a chat message must not carry anything else)."""
-    u = str(url or "").strip()
-    return u[:500] if urlsplit(u).scheme in ("http", "https", "hoard") else ""
-
-
-def build_toast_ps1(title: str, body: str, url: str = "") -> str:
-    """PowerShell that shows one toast through Windows.UI.Notifications (no module needed)."""
-    launch = url if urlsplit(url or "").scheme in ("http", "https") else ""
-    attrs = f' activationType="protocol" launch="{xml_escape(launch)}"' if launch else ""
-    xml = (f'<toast{attrs}><visual><binding template="ToastGeneric"><text>{xml_escape(title[:120])}</text>'
-           f'<text>{xml_escape(body[:300])}</text></binding></visual></toast>')
-    return (
-        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null\n"
-        "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null\n"
-        f"$xml = @'\n{xml}\n'@\n"
-        "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument\n"
-        "$doc.LoadXml($xml)\n"
-        "$toast = [Windows.UI.Notifications.ToastNotification]::new($doc)\n"
-        f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{POWERSHELL_APP_ID}').Show($toast)\n"
-    )
-
-
-def _scrub(text: Any, secrets: Iterable[str]) -> str:
-    out = str(text or "")
-    for s in secrets:
-        if s and len(s) >= 4:
-            out = out.replace(s, "***")
-    return out
-
-
-def _is_loopback(url: str) -> bool:
-    host = (urlsplit(url).hostname or "").lower()
-    return host in ("127.0.0.1", "localhost", "::1")
-
-
-def _http_json(url: str, payload: Optional[dict[str, Any]], headers: Optional[dict[str, str]] = None,
-               timeout: float = HTTP_TIMEOUT_S) -> tuple[Optional[int], Any]:
-    """``(status, json)`` or ``(None, error name)``. Loopback targets never go through a proxy."""
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(url, data=data, method="POST" if data is not None else "GET",
-                                 headers={"Content-Type": "application/json; charset=utf-8", "Accept": "application/json",
-                                          "User-Agent": "hoard-hub", **(headers or {})})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if _is_loopback(url) \
-        else urllib.request.build_opener()
-    try:
-        with opener.open(req, timeout=timeout) as resp:
-            raw, status = resp.read(), resp.status
-    except urllib.error.HTTPError as exc:
-        try:
-            raw = exc.read()
-        except Exception:  # noqa: BLE001
-            raw = b""
-        status = exc.code
-    except Exception as exc:  # noqa: BLE001
-        return None, type(exc).__name__
-    try:
-        return status, json.loads(raw.decode("utf-8", "replace")) if raw else None
-    except ValueError:
-        return status, None
 
 
 def _norm_result(channel: str, value: Any) -> dict[str, Any]:
@@ -610,7 +534,7 @@ class NotifyFacet(Facet):
                 else:
                     channels = [c for c in route if c in CHANNELS]
                     wants_digest = "digest" in route
-                    if spheres is not None and priority != "urgent" and spheres.in_quiet_hours(sphere_id, now_dt):
+                    if spheres is not None and priority != "urgent" and self._quiet(spheres, sph, sphere_id, now_dt):
                         held, digest_item, channels = "quiet", True, []
                     elif wants_digest and not channels:
                         held, digest_item = "digest", True
@@ -700,6 +624,19 @@ class NotifyFacet(Facet):
         self._set_channels(note["id"], results)
         return results
 
+    @staticmethod
+    def _quiet(spheres: Any, sph: Optional[dict[str, Any]], sphere_id: str, now_dt: datetime) -> bool:
+        """Is ``now_dt`` inside the sphere's quiet hours? The window arithmetic is ``notify_channels.in_quiet_hours`` (the hub holds
+        everything but urgent); a spheres facet that does not expose its window falls back to its own check."""
+        q = (sph or {}).get("quiet_hours")
+        if isinstance(q, dict):
+            try:
+                from .spheres import parse_days
+                return nc.in_quiet_hours(now_dt, q.get("start"), q.get("end"), allow_high=False, days=parse_days(q.get("days", "daily")))
+            except Exception:  # noqa: BLE001
+                pass
+        return bool(spheres.in_quiet_hours(sphere_id, now_dt))
+
     def _sender(self, channel: str) -> Callable[[dict[str, Any], dict[str, Any]], Any]:
         custom = self.senders.get(channel)
         if custom is not None:
@@ -740,57 +677,17 @@ class NotifyFacet(Facet):
         return {"ok": True, "async": True}
 
     def _run_toast(self, script: str) -> dict[str, Any]:
-        fd, path = tempfile.mkstemp(suffix=".ps1", prefix="hoard-toast-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8-sig") as fh:   # BOM: Windows PowerShell 5.1 reads UTF-8 only with it
-                fh.write(script)
-            exe = shutil.which("powershell") or "powershell"
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            done = self.powershell_runner([exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path],
-                                          capture_output=True, text=True, timeout=TOAST_TIMEOUT_S, creationflags=flags)
-            code = getattr(done, "returncode", 1)
-            return {"ok": True} if code == 0 else {"ok": False, "error": f"powershell exit {code}"}
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {"ok": False, "error": type(exc).__name__}
-        finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        return nc.run_ps1(script, runner=self.powershell_runner, timeout=TOAST_TIMEOUT_S)
 
     def _send_ntfy(self, note: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
-        topic, server = cfg.get("topic") or "", str(cfg.get("server") or "https://ntfy.sh").rstrip("/")
-        if not topic:
-            return {"ok": False, "error": "not configured: missing topic"}
-        prio = {"urgent": 5, "high": 4, "normal": 3, "low": 2}.get(note.get("priority", "normal"), 3)
-        payload: dict[str, Any] = {"topic": topic, "title": note["title"][:250], "message": note.get("body") or note["title"],
-                                   "priority": prio, "tags": list(note.get("tags") or []) or ["bell"]}
-        if note.get("url"):
-            payload["click"] = note["url"]
-        headers = {"Authorization": "Bearer " + cfg["token"]} if cfg.get("token") else {}
-        status, data = self.http(server + "/", payload, headers)
-        if status is None:
-            return {"ok": False, "error": _scrub(data, [cfg.get("token", "")])}
-        return {"ok": True} if 200 <= status < 300 else {"ok": False, "error": f"http {status}"}
+        return nc.send_ntfy(cfg.get("server") or "https://ntfy.sh", cfg.get("topic") or "", note["title"], note.get("body") or "",
+                            priority=note.get("priority", "normal"), url=note.get("url"), token=cfg.get("token") or None,
+                            tags=note.get("tags") or [], http=self.http)
 
     def _send_telegram(self, note: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
-        token, chat = cfg.get("bot_token") or "", cfg.get("chat_id") or ""
-        if not token or not chat:
-            return {"ok": False, "error": "not configured: missing bot token or chat id"}
-        text = f"<b>{_html.escape(note['title'])}</b>"
-        if note.get("body"):
-            text += "\n" + _html.escape(note["body"])
-        if note.get("url") and urlsplit(note["url"]).scheme in ("http", "https"):
-            text += f'\n<a href="{_html.escape(note["url"], quote=True)}">{_html.escape(note["url"])}</a>'
-        api = str(cfg.get("api_base") or "https://api.telegram.org").rstrip("/")
-        status, data = self.http(f"{api}/bot{token}/sendMessage",
-                                 {"chat_id": chat, "text": text[:4000], "parse_mode": "HTML"})
-        if status is None:
-            return {"ok": False, "error": _scrub(data, [token, chat])}
-        if status == 200 and isinstance(data, dict) and data.get("ok"):
-            return {"ok": True}
-        desc = data.get("description") if isinstance(data, dict) else None
-        return {"ok": False, "error": _scrub(desc or f"http {status}", [token, chat])[:160]}
+        text = nc.telegram_text(note["title"], note.get("body") or "", note.get("url"))
+        return nc.send_telegram(cfg.get("bot_token") or "", cfg.get("chat_id") or "", text,
+                                api_base=str(cfg.get("api_base") or nc.TELEGRAM_API), http=self.http)
 
     def telegram_discover_chat_id(self) -> dict[str, Any]:
         """Find the chat id after the person has written to the bot (getUpdates with the stored token)."""
@@ -798,30 +695,14 @@ class NotifyFacet(Facet):
         token = cfg.get("bot_token") or ""
         if not token:
             return {"ok": False, "status": 400, "error": "save the bot token first"}
-        api = str(cfg.get("api_base") or "https://api.telegram.org").rstrip("/")
-        status, data = self.http(f"{api}/bot{token}/getUpdates?limit=20&timeout=0", None)
-        if status is None:
-            return {"ok": False, "error": _scrub(data, [token])}
-        if status != 200 or not isinstance(data, dict) or not data.get("ok"):
-            desc = data.get("description") if isinstance(data, dict) else None
-            return {"ok": False, "error": _scrub(desc or f"http {status}", [token])[:160]}
-        for update in reversed(data.get("result") or []):
-            for key in ("message", "edited_message", "channel_post", "my_chat_member"):
-                chat = (update.get(key) or {}).get("chat")
-                if isinstance(chat, dict) and chat.get("id") is not None:
-                    name = chat.get("title") or " ".join(x for x in (chat.get("first_name"), chat.get("last_name")) if x) \
-                        or chat.get("username") or ""
-                    return {"ok": True, "chat_id": str(chat["id"]), "name": name}
-        return {"ok": False, "error": "no messages yet: write to the bot first"}
+        res = nc.telegram_discover_chat_id(token, api_base=str(cfg.get("api_base") or nc.TELEGRAM_API), http=self.http)
+        if res.get("ok"):
+            return {"ok": True, "chat_id": res["chat_id"], "name": res["name"]}
+        return {"ok": False, "error": res["error"]}
 
     @staticmethod
     def _email_parts(note: dict[str, Any]) -> tuple[str, str, str]:
-        subject = re.sub(r"[\r\n]+", " ", note["title"])[:200]
-        url, body = note.get("url") or "", note.get("body") or ""
-        text = (body + (f"\n\n{url}" if url else "")) or subject
-        rows = "".join(f"<p>{_html.escape(line)}</p>" for line in body.splitlines() if line.strip())
-        link = f'<p><a href="{_html.escape(url, quote=True)}">{_html.escape(url)}</a></p>' if url else ""
-        return subject, text, f"<html><body><h3>{_html.escape(note['title'])}</h3>{rows}{link}</body></html>"
+        return nc.email_parts(note["title"], note.get("body") or "", note.get("url"))
 
     def _send_email(self, note: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         subject, text, html_body = self._email_parts(note)
@@ -838,45 +719,11 @@ class NotifyFacet(Facet):
 
     @staticmethod
     def _default_smtp(cfg: dict[str, Any]) -> Any:
-        host, port = cfg["host"], int(cfg.get("port") or 465)
-        if cfg.get("tls", True):
-            ctx = ssl.create_default_context()
-            if port == 465:
-                return smtplib.SMTP_SSL(host, port, timeout=20, context=ctx)
-            client = smtplib.SMTP(host, port, timeout=20)
-            client.starttls(context=ctx)
-            return client
-        return smtplib.SMTP(host, port, timeout=20)
+        return nc.default_smtp(cfg)
 
     def _send_smtp(self, subject: str, text: str, html_body: str, cfg: dict[str, Any]) -> dict[str, Any]:
-        to = [a for a in cfg.get("to") or [] if a]
-        if not cfg.get("host") or not to:
-            return {"ok": False, "error": "not configured: missing SMTP host or recipient"}
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = cfg.get("from") or cfg.get("user") or "hoard-hub@localhost"
-        msg["To"] = ", ".join(to)
-        msg.set_content(text)
-        msg.add_alternative(html_body, subtype="html")
-        secret = cfg.get("password") or ""
-        try:
-            client = self.smtp_factory(cfg)
-        except (smtplib.SMTPException, OSError) as exc:
-            return {"ok": False, "error": _scrub(type(exc).__name__, [secret])}
-        try:
-            if cfg.get("user"):
-                client.login(cfg["user"], secret)
-            client.send_message(msg)
-        except smtplib.SMTPAuthenticationError:
-            return {"ok": False, "error": "authentication failed"}
-        except (smtplib.SMTPException, OSError) as exc:
-            return {"ok": False, "error": _scrub(type(exc).__name__, [secret])}
-        finally:
-            try:
-                client.quit()
-            except Exception:  # noqa: BLE001
-                pass
-        return {"ok": True}
+        return nc.send_smtp(cfg, [a for a in cfg.get("to") or [] if a], subject, text, html=html_body,
+                            smtp_factory=self.smtp_factory, default_from="hoard-hub@localhost")
 
     def test_channel(self, channel: str) -> dict[str, Any]:
         """Send a sample through one channel now, ignoring its enabled flag, routing and quiet hours."""
