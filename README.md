@@ -343,8 +343,14 @@ roots you configure) — nothing new to write — and for each app shows:
   `data/logs/<id>.log`), **Stop** (the process tree, only when the
   health check says the listener really is that app), **Restart**,
   **Close windows**, **Folder**, **Log**;
-* at the top, whether Faustus is reachable and what Hoard Link resolves
-  right now for every capability, plus free VRAM per GPU;
+* at the top, Faustus status with **Start** and **Stop** controls, what Hoard Link resolves
+  right now for every capability, plus free VRAM per GPU. Faustus uses its own installed
+  `server_runtime.py`, including its tray instances; set `faustus_dir` if it is not discovered;
+* **Stop all** stops apps, Faustus, profile commands and managed backend servers with one click.
+  Failed stops are shown. Manual stops persist across Hub restarts and prevent recovery rules
+  or scheduled jobs from relaunching the stopped app until an explicit **Start**, **Open**,
+  profile start or **Start all**. A configured backend's `stop_argv` runs before removing its
+  supervisor so a model watchdog cannot undo the stop;
 * **profile** chips to start or stop a named set of apps at once (see
   [Profiles](#profiles));
 * a **GPU** panel: per GPU used / reserved / available, and the

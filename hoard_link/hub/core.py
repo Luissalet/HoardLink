@@ -26,6 +26,7 @@ from .jobs import Scheduler
 from .linkchat import LinkService
 from .repos import RepoMonitor, RepoSettings
 from .rules import RuleEngine
+from .faustus import FaustusRuntime
 
 BACKENDS_CACHE_S = 8.0
 FAUSTUS_CACHE_S = 6.0
@@ -42,6 +43,10 @@ class Hub:
         self._inflight: dict[str, tuple[int, float]] = {}
         self._spawned: dict[str, int] = {}   # app id -> pid of the last process the hub spawned for it
         self._start_locks: dict[str, threading.Lock] = {}
+        self._spawned_created: dict[str, float] = {}
+        self._stopping_all = threading.Event()
+        self._stop_all_lock = threading.Lock()
+        self._manual_stops: set[str] = set()
         self._backends_cache: tuple[float, dict[str, Any]] = (0.0, {})
         self._faustus_cache: tuple[float, dict[str, Any]] = (0.0, {})
         self._faustus_refreshing = threading.Event()
@@ -49,6 +54,12 @@ class Hub:
         os.makedirs(self.config.data_dir, exist_ok=True)
         os.makedirs(self.config.logs_dir, exist_ok=True)
         os.makedirs(self.config.profiles_dir, exist_ok=True)
+        try:
+            with open(os.path.join(self.config.data_dir, "manual-stops.json"), encoding="utf-8") as fh:
+                self._manual_stops = set(json.load(fh).get("stopped", []))
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        self.faustus_runtime = FaustusRuntime(self.config)
         self.token = self._load_token()
         # The GPU/VRAM lease arbiter: one queue for every app on this machine.
         self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=gpu_fn,
@@ -200,6 +211,7 @@ class Hub:
             "windows": windows.get(app.id, []),
             "log": os.path.join(self.config.logs_dir, f"{app.id}.log"),
             "stoppable": bool(proc) and h.state == "healthy" and not proc.protected,
+            "manually_stopped": self.automation_blocked(app.id),
         })
         return d
 
@@ -234,13 +246,33 @@ class Hub:
         }
 
     # -- actions --------------------------------------------------------------
-    def start(self, app_id: str, wait: bool = True) -> dict[str, Any]:
+    def automation_blocked(self, target: str) -> bool:
+        with self._lock:
+            return self._stopping_all.is_set() or target in self._manual_stops
+
+    def _manual_stop(self, targets: list[str], stopped: bool = True) -> None:
+        with self._lock:
+            if stopped:
+                self._manual_stops.update(targets)
+            else:
+                self._manual_stops.difference_update(targets)
+            path = os.path.join(self.config.data_dir, "manual-stops.json")
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"stopped": sorted(self._manual_stops)}, fh)
+            os.replace(tmp, path)
+
+    def start(self, app_id: str, wait: bool = True, *, automatic: bool = False) -> dict[str, Any]:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
         with self._lock:
-            lock = self._start_locks.setdefault(app_id, threading.Lock())
+            lock = self._start_locks.setdefault(app_id, threading.RLock())
         with lock:  # one start per app at a time
+            if self._stopping_all.is_set() or (automatic and self.automation_blocked(app_id)):
+                return {"ok": False, "app": app_id, "error": "manually stopped; start it explicitly to resume"}
+            if not automatic:
+                self._manual_stop([app_id], False)
             pending = self._pending_start(app)
             if pending is not None:
                 res = self._await_ready(app, pending) if wait else {"ok": True, "already": True, "pid": pending,
@@ -250,6 +282,9 @@ class Hub:
                 if res.get("ok") and res.get("pid"):
                     with self._lock:
                         self._spawned[app_id] = int(res["pid"])
+                        created = procs.proc_info(int(res["pid"])).created_at
+                        if created is not None:
+                            self._spawned_created[app_id] = created
                         if not res.get("ready"):
                             self._inflight[app_id] = (int(res["pid"]), time.time())
             if res.get("ok") and not res.get("pid"):
@@ -313,9 +348,26 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        # Record intent before probing/killing: a queued recovery rule must not undo it.
+        self._manual_stop([app_id])
+        with self._lock:
+            lock = self._start_locks.setdefault(app_id, threading.RLock())
+        with lock:
+            self._manual_stop([app_id])
+            return self._stop_app(app)
+
+    def _stop_app(self, app: App) -> dict[str, Any]:
+        app_id = app.id
         h = procs.health(app)
         proc = procs.find_app_process(app)
+        with self._lock:
+            spawned, created = self._spawned.get(app_id), self._spawned_created.get(app_id)
+        if spawned and created is not None and procs.pid_running(spawned):
+            tracked = procs.proc_info(spawned)
+            if tracked.created_at is not None and abs(tracked.created_at - created) < .01:
+                proc = tracked  # stop the launcher too, including a server still booting
         if proc is None:
+            desktop.close_windows(app_id, self.config.profiles_dir)
             return {"ok": True, "app": app_id, "detail": "not running"}
         if h.state == "foreign":
             return {"ok": False, "app": app_id, "error": "refusing: " + h.detail}
@@ -332,26 +384,54 @@ class Hub:
         # Its windows are pointless without the server behind them.
         desktop.close_windows(app_id, self.config.profiles_dir)
         if res.get("ok"):
+            with self._lock:
+                self._inflight.pop(app_id, None)
+                self._spawned.pop(app_id, None)
+                self._spawned_created.pop(app_id, None)
             self._safe_emit("hub.app.stopped", {"app": app_id, "pid": proc.pid})
         return res
 
-    def restart(self, app_id: str) -> dict[str, Any]:
+    def restart(self, app_id: str, *, automatic: bool = False) -> dict[str, Any]:
+        if automatic:
+            app = self.get(app_id)
+            if app is None:
+                return {"ok": False, "error": f"unknown app: {app_id}"}
+            with self._lock:
+                lock = self._start_locks.setdefault(app_id, threading.RLock())
+            with lock:
+                if self.automation_blocked(app_id):
+                    return {"ok": False, "error": "manually stopped; start it explicitly to resume"}
+                stopped = self._stop_app(app)
+                if not stopped.get("ok"):
+                    return stopped
+                started = self.start(app_id, automatic=True)
+                started["stopped"] = stopped
+                return started
         stopped = self.stop(app_id)
         if not stopped.get("ok"):
             return stopped
         time.sleep(0.5)
-        started = self.start(app_id)
+        started = self.start(app_id, automatic=automatic)
         started["stopped"] = stopped
         return started
 
-    def open(self, app_id: str, mode: str = "window", autostart: bool = True) -> dict[str, Any]:
+    def open(self, app_id: str, mode: str = "window", autostart: bool = True, *, automatic: bool = False) -> dict[str, Any]:
+        with self._lock:
+            lock = self._start_locks.setdefault(app_id, threading.RLock())
+        # The stop uses this same lock and closes windows after a pending open finishes.
+        with lock:
+            return self._open_app(app_id, mode, autostart, automatic=automatic)
+
+    def _open_app(self, app_id: str, mode: str, autostart: bool, *, automatic: bool = False) -> dict[str, Any]:
+        if self._stopping_all.is_set() or (automatic and self.automation_blocked(app_id)):
+            return {"ok": False, "error": "manually stopped; start it explicitly to resume"}
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
         h = procs.health(app)
         started: Optional[dict[str, Any]] = None
         if h.state == "down" and autostart and app.launchable:
-            started = self.start(app_id, wait=True)
+            started = self.start(app_id, wait=True, automatic=automatic)
             if not started.get("ok"):
                 started["app"] = app_id
                 return started
@@ -401,11 +481,30 @@ class Hub:
         path = os.path.join(self.config.logs_dir, f"{app.id}.log")
         return {"ok": True, "app": app_id, "path": path, "lines": procs.tail(path, lines)}
 
-    def start_all(self) -> dict[str, Any]:
-        return {"ok": True, "results": [self.start(a.id, wait=False) for a in self.apps if a.launchable]}
+    def start_all(self, *, automatic: bool = False) -> dict[str, Any]:
+        results = [self.start(a.id, wait=False, automatic=automatic) for a in self.apps if a.launchable]
+        faustus = self.faustus_start(automatic=automatic) if self.faustus_runtime.available() else {"ok": True, "skipped": True}
+        return {"ok": all(r.get("ok") for r in results) and faustus["ok"], "results": results, "faustus": faustus}
 
     def stop_all(self) -> dict[str, Any]:
-        return {"ok": True, "results": [self.stop(a.id) for a in self.apps]}
+        with self._stop_all_lock:
+            self._stopping_all.set()
+            try:
+                apps = self.apps
+                self._manual_stop([a.id for a in apps] + ["faustus"] +
+                                  ["profile:" + name for name in self.profiles()] +
+                                  ["service:" + svc.id for svc in self.launcher.services()])
+                faustus = self.faustus_stop() if self.faustus_runtime.available() else {"ok": True, "skipped": True}
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    results = list(pool.map(lambda a: self.stop(a.id), apps))
+                commands = [self.commands.stop(c) for p in self.profiles().values() for c in p.commands]
+                services = [self.service_stop(s["id"]) for s in self.launcher.statuses()
+                            if s.get("stoppable") or s.get("state") in ("running", "starting")]
+                all_results = results + commands + services + [faustus]
+                return {"ok": all(r.get("ok") for r in all_results), "results": results,
+                        "commands": commands, "services": services, "faustus": faustus}
+            finally:
+                self._stopping_all.clear()
 
     # -- profiles -------------------------------------------------------------
     def profiles(self) -> dict[str, Profile]:
@@ -444,12 +543,17 @@ class Hub:
                 return dict(p, ok=True)
         return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
 
-    def profile_start(self, name: str) -> dict[str, Any]:
+    def profile_start(self, name: str, *, automatic: bool = False) -> dict[str, Any]:
         """Start the profile's apps and commands together (not waiting for
         each), then open its desktop apps as windows (that waits for them)."""
         p = self.profiles().get(name)
         if p is None:
             return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
+        if self._stopping_all.is_set() or (automatic and
+                (self.automation_blocked("profile:" + name) or any(self.automation_blocked(a) for a in p.members))):
+            return {"ok": False, "error": "profile was manually stopped; start it explicitly to resume"}
+        if not automatic:
+            self._manual_stop(["profile:" + name], False)
         unknown = [a for a in p.members if self.get(a) is None]
         known = [a for a in p.members if self.get(a) is not None]
         # A desktop app is started by open() itself (which waits for it to be
@@ -458,9 +562,9 @@ class Hub:
         desktop = [a for a in known if a in p.desktop]
         n = max(2, len(known) + len(p.commands))
         with ThreadPoolExecutor(max_workers=n) as pool:
-            fut_apps = [pool.submit(self.start, a, False) for a in plain]
+            fut_apps = [pool.submit(self.start, a, False, automatic=automatic) for a in plain]
             fut_cmds = [pool.submit(self.commands.start, c) for c in p.commands]
-            fut_desk = [pool.submit(self.open, a, "window", True) for a in desktop]
+            fut_desk = [pool.submit(self.open, a, "window", True, automatic=automatic) for a in desktop]
             app_res = [f.result() for f in fut_apps]
             cmd_res = [f.result() for f in fut_cmds]
             desk_res = [f.result() for f in fut_desk]
@@ -473,6 +577,7 @@ class Hub:
         p = self.profiles().get(name)
         if p is None:
             return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
+        self._manual_stop(["profile:" + name])
         cmd_res = [self.commands.stop(c) for c in p.commands]
         app_res = [self.stop(a) for a in p.members if self.get(a) is not None]
         results = cmd_res + app_res
@@ -552,7 +657,8 @@ class Hub:
         return self._refresh_faustus()
 
     def _refresh_faustus(self) -> dict[str, Any]:
-        result = {"reachable": False, "url": None, "status": None, "body": None}
+        result = {"reachable": False, "url": self.config.faustus_urls[0] if self.config.faustus_urls else None,
+                  "status": None, "body": None}
         try:
             for url in self.config.faustus_urls:
                 status, body = procs.fetch_json(url.rstrip("/") + "/api/health", timeout=3.0)
@@ -561,9 +667,40 @@ class Hub:
                               "body": body if isinstance(body, dict) else None}
                     break
         finally:
+            result.update(available=self.faustus_runtime.available(),
+                          manually_stopped=self.automation_blocked("faustus"))
+            result["startable"] = result["available"] and not result["reachable"]
+            result["stoppable"] = result["available"]
             self._faustus_cache = (time.time(), result)
             self._faustus_refreshing.clear()
         return result
+
+    def faustus_start(self, *, automatic: bool = False) -> dict[str, Any]:
+        with self._lock:
+            lock = self._start_locks.setdefault("faustus", threading.RLock())
+        with lock:
+            if self._stopping_all.is_set() or (automatic and self.automation_blocked("faustus")):
+                return {"ok": False, "error": "stop all is still in progress"}
+            self._manual_stop(["faustus"], False)
+            self.faustus_runtime.prepare_start()
+            res = self.faustus_runtime.run("start")
+            self._faustus_cache = (0.0, {})
+            if res.get("ok"):
+                self._safe_emit("hub.faustus.started", {"port": res.get("port")})
+            return res
+
+    def faustus_stop(self) -> dict[str, Any]:
+        self._manual_stop(["faustus"])
+        self.faustus_runtime.cancel_start()
+        with self._lock:
+            lock = self._start_locks.setdefault("faustus", threading.RLock())
+        with lock:
+            self._manual_stop(["faustus"])
+            res = self.faustus_runtime.run("stop-all")
+            self._faustus_cache = (0.0, {})
+            if res.get("ok"):
+                self._safe_emit("hub.faustus.stopped", {})
+            return res
 
     def services(self) -> dict[str, Any]:
         """Local backend servers (ComfyUI, Ollama, backends.json commands):
@@ -578,7 +715,10 @@ class Hub:
 
         return {"ok": True, **memory(self.launcher)}
 
-    def service_start(self, service_id: str, gpu: Any = None, wait_s: float = 0.0) -> dict[str, Any]:
+    def service_start(self, service_id: str, gpu: Any = None, wait_s: float = 0.0, *, automatic: bool = False) -> dict[str, Any]:
+        if self._stopping_all.is_set() or (automatic and self.automation_blocked("service:" + service_id)):
+            return {"ok": False, "error": "stop all is still in progress"}
+        self._manual_stop(["service:" + service_id], False)
         res = self.launcher.start(str(service_id or ""), gpu=gpu, wait_s=max(0.0, min(float(wait_s or 0), 300.0)))
         if res.get("ok"):
             self._backends_cache = (0.0, None)
@@ -590,6 +730,7 @@ class Hub:
         return res
 
     def service_stop(self, service_id: str) -> dict[str, Any]:
+        self._manual_stop(["service:" + service_id])
         res = self.launcher.stop(str(service_id or ""))
         if res.get("ok"):
             self._backends_cache = (0.0, None)

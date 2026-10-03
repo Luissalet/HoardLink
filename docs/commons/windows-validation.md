@@ -81,3 +81,15 @@ La repetición de la transcripción detectó una biblioteca CUDA ausente que blo
 - Las pruebas y descargas de verificación utilizan material sintético o público, separado de los datos de trabajo. Los logs detallados quedan en la carpeta temporal de validación del equipo.
 
 El Manual de Faustus y la familia Hoard se ha actualizado con los servicios compartidos y la regla opcional, conservando sus tablas y secciones. Contrato de servicios: [services.md](services.md).
+
+## Corrección de parada del Hub — 3 de octubre de 2026
+
+«Parar todo» actúa con un clic e incluye aplicaciones, Faustus, comandos de perfiles y servidores gestionados. Guarda las paradas manuales en `data/manual-stops.json`; las reglas de recuperación y los trabajos no las deshacen después de reiniciar el Hub. Los resultados agregan los fallos reales de parada. Las aperturas y arranques pendientes se coordinan con la parada para cerrar sus ventanas al terminar.
+
+Faustus tiene controles de arranque y parada en la barra superior y herramientas MCP propias. Utilizan su gestor `server_runtime.py`, conservan los cambios previos del escritorio y no exponen el token de propiedad. Se verificó el arranque real, la parada y la cancelación durante el arranque desde el navegador.
+
+La orden local configurada para detener llama.cpp (`D:/LocalAI/Stop-LlamaServer.ps1`) ahora detiene primero el supervisor y comprueba la identidad del ejecutable antes de detener los servidores de los puertos 8081/8082. La versión previa se conserva junto al script en `Stop-LlamaServer.ps1.before-hub-stop-fix.bak`. El lanzador respeta `stop_argv` también para procesos propios y comunica los fallos del script.
+
+Se arrancaron DiskHoard y llama.cpp por MCP y se detuvieron con «Parar todo» desde el navegador. Después de más de tres minutos no quedaban servidores llama.cpp ni su supervisor; las 34 aplicaciones, Faustus y los servidores configurados permanecían apagados. Una ejecución de la regla `rule-restart-down` por MCP devolvió `skipped: true` con motivo de parada manual. El estado de parada también se conservó después de reiniciar el Hub.
+
+Las baterías específicas de Hub, reglas, perfiles, servicios y lanzador pasaron. La última comprobación de ciclo de vida, perfiles y API del Hub pasó 31 pruebas, incluidas las carreras entre abrir/arrancar y parar. No se modificaron los cambios previos sin confirmar de Faustus.

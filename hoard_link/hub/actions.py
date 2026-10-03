@@ -111,6 +111,18 @@ def run_one(hub: Any, action: dict[str, Any], ctx: dict[str, Any], *, caller: st
     kind = str(action.get("kind") or "")
     t0 = time.monotonic()
     try:
+        automatic = caller.startswith(("rule:", "job:"))
+        if automatic and callable(getattr(hub, "automation_blocked", None)):
+            target = render(action.get("app") or (action.get("args") or {}).get("app") or "", ctx)
+            if kind == "hub" and action.get("tool") in ("hub_faustus_start", "hub_faustus_stop"):
+                target = "faustus"
+            if kind == "hub" and action.get("tool") == "hub_service_start":
+                target = "service:" + str(render((action.get("args") or {}).get("id") or "", ctx))
+            if target and hub.automation_blocked(str(target)):
+                return {"kind": kind, "ok": True, "skipped": True, "app": target,
+                        "reason": "manually stopped; waiting for an explicit start"}
+            if hub._stopping_all.is_set():
+                return {"kind": kind, "ok": True, "skipped": True, "reason": "stop all is in progress"}
         if kind == "tool":
             app = hub.get(str(action.get("app") or ""))
             if app is None:
@@ -122,6 +134,8 @@ def run_one(hub: Any, action: dict[str, Any], ctx: dict[str, Any], *, caller: st
             return {"kind": kind, "app": app.id, "tool": action.get("tool"), **{k: v for k, v in res.items() if k != "app"}}
         if kind == "hub":
             args = render(action.get("args") or {}, ctx)
+            if automatic and isinstance(args, dict):
+                args = {**args, "_automatic": True}
             res = hub_tools.call(hub, str(action.get("tool")), args if isinstance(args, dict) else {})
             if isinstance(res, dict) and res.get("ok") is False and str(res.get("error") or "").startswith("unknown tool:"):
                 return {"kind": kind, "tool": action.get("tool"), "ok": True, "skipped": True,
@@ -139,11 +153,13 @@ def run_one(hub: Any, action: dict[str, Any], ctx: dict[str, Any], *, caller: st
             return {"kind": kind, "ok": True, "event_id": ev["id"], "type": ev["type"]}
         if kind in ("start_app", "stop_app", "restart_app"):
             fn = {"start_app": hub.start, "stop_app": hub.stop, "restart_app": hub.restart}[kind]
-            res = fn(str(action.get("app") or ""))
+            kwargs = {"automatic": True} if automatic and kind != "stop_app" else {}
+            res = fn(str(render(action.get("app") or "", ctx)), **kwargs)
             return {"kind": kind, "app": action.get("app"), "ok": bool(res.get("ok")), "result": res}
         if kind in ("profile_start", "profile_stop"):
             fn = hub.profile_start if kind == "profile_start" else hub.profile_stop
-            res = fn(str(action.get("name") or ""))
+            kwargs = {"automatic": True} if automatic and kind == "profile_start" else {}
+            res = fn(str(render(action.get("name") or "", ctx)), **kwargs)
             return {"kind": kind, "name": action.get("name"), "ok": bool(res.get("ok")), "result": res}
         return {"kind": kind, "ok": False, "error": f"unknown action kind: {kind}"}
     except Exception as exc:  # noqa: BLE001

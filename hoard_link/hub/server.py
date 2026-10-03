@@ -324,6 +324,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                                    "url": hub.config.url})
             if path == "/api/apps":
                 return self._json(hub.snapshot())
+            if path == "/api/faustus":
+                return self._json(hub.faustus_status())
             if path == "/api/backends":
                 return self._json(hub.backends(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path == "/api/services":
@@ -508,6 +510,9 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": "not found"}, 404)
             if path == "/api/apps/rescan":
                 return self._json({"ok": True, "apps": [a.to_dict() for a in hub.rescan()]})
+            if path in ("/api/faustus/start", "/api/faustus/stop"):
+                res = hub.faustus_start() if path.endswith("/start") else hub.faustus_stop()
+                return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/apps/start-all":
                 return self._json(hub.start_all())
             if path == "/api/apps/stop-all":
