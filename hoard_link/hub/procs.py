@@ -319,8 +319,12 @@ def terminate_tree(pid: int, grace_s: float = STOP_GRACE_S, *, created_at: Optio
         except Exception:  # noqa: BLE001
             pass
     if alive:
-        ps.wait_procs(alive, timeout=2.0)
-    return {"ok": True, "stopped": [p.pid for p in family], "killed": [p.pid for p in alive]}
+        _, remaining = ps.wait_procs(alive, timeout=2.0)
+    else:
+        remaining = []
+    return {"ok": not remaining, "stopped": [p.pid for p in family if p not in remaining],
+            "killed": [p.pid for p in alive],
+            **({"error": "processes still running after stop", "remaining": [p.pid for p in remaining]} if remaining else {})}
 
 
 # ---------------------------------------------------------------------------

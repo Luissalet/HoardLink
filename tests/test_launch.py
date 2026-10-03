@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -294,6 +295,32 @@ def test_a_stop_script_stops_a_server_started_elsewhere(home, tmp_path):
         if proc.poll() is None:
             proc.kill()
         proc.wait(10)
+
+
+def test_owned_server_runs_its_stop_command_before_removing_supervisor(home, monkeypatch):
+    ln = Launcher()
+    command = _server_command(_free_port())
+    command["stop_argv"] = ["stop-supervisor"]
+    ln.set_config({"commands": [command]})
+    ln._save_state({"cmd:web": {"pid": 123, "created": 1}})
+    owner = {"pid": 123, "created": 1}
+    order = []
+    monkeypatch.setattr(ln, "_owned", lambda sid: owner if "kill" not in order else None)
+    monkeypatch.setattr(ln, "_run_stop_script", lambda svc: order.append("stop command") or {"ok": True})
+    monkeypatch.setattr(launch, "_kill_tree", lambda pid: order.append("kill"))
+    assert ln.stop("cmd:web")["ok"]
+    assert order == ["stop command", "kill"] and not ln._state()
+
+
+def test_stop_script_failure_is_reported_even_if_port_is_closed(home, monkeypatch):
+    ln = Launcher()
+    command = _server_command(_free_port())
+    command["stop_argv"] = ["stop-supervisor"]
+    ln.set_config({"commands": [command]})
+    monkeypatch.setattr(launch.subprocess, "run", lambda *args, **kw: SimpleNamespace(returncode=1, stdout="", stderr="access denied"))
+    monkeypatch.setattr(launch, "_port_open", lambda url: False)
+    out = ln.stop("cmd:web")
+    assert not out["ok"] and "access denied" in out["output"]
 
 
 def test_memory_maps_gpu_processes_to_services(home, monkeypatch):

@@ -10,10 +10,12 @@
       counts: (c) => `${c.total} apps · ${c.running} running · ${c.windows} windows`,
       state: { running: "running", starting: "starting", foreign: "port busy", down: "stopped" },
       faustus_on: "Faustus reachable", faustus_off: "Faustus not running",
+      faustus_starting: "Faustus starting…", faustus_stopping: "Faustus stopping…",
       unavailable: "unavailable", gpu_free: "free",
       no_apps: "No apps found. Put app folders (each with a faustus-plugin.json) next to this repository, or set roots in data/hub.json.",
       started: "started", stopped: "stopped", opened: "opened", closed: "closed", already: "already running",
-      not_ready: "started but not ready yet", confirm_stop_all: "Stop every running app?",
+      not_ready: "started but not ready yet", stopping: "Stopping…", stop_failed: "Some processes could not stop",
+      stopped_all: "Apps, Faustus and managed servers stopped",
       windows: (n) => `${n} window${n === 1 ? "" : "s"}`, uptime: "up", mem: "mem",
       cannot_start: "Cannot start from here", hub: "hub", browser: "window engine", none: "none (tabs only)",
       psutil_missing: "psutil missing: no pid/stop",
@@ -36,10 +38,12 @@
       counts: (c) => `${c.total} apps · ${c.running} en marcha · ${c.windows} ventanas`,
       state: { running: "en marcha", starting: "arrancando", foreign: "puerto ocupado", down: "parada" },
       faustus_on: "Faustus accesible", faustus_off: "Faustus apagado",
+      faustus_starting: "Faustus arrancando…", faustus_stopping: "Parando Faustus…",
       unavailable: "no disponible", gpu_free: "libres",
       no_apps: "No hay apps. Pon las carpetas de las apps (cada una con su faustus-plugin.json) junto a este repositorio, o configura roots en data/hub.json.",
       started: "arrancada", stopped: "parada", opened: "abierta", closed: "cerradas", already: "ya estaba en marcha",
-      not_ready: "arrancada pero aún no responde", confirm_stop_all: "¿Parar todas las apps en marcha?",
+      not_ready: "arrancada pero aún no responde", stopping: "Parando…", stop_failed: "No se han podido parar algunos procesos",
+      stopped_all: "Apps, Faustus y servidores gestionados parados",
       windows: (n) => `${n} ventana${n === 1 ? "" : "s"}`, uptime: "activa", mem: "mem",
       cannot_start: "No se puede arrancar desde aquí", hub: "hub", browser: "motor de ventanas", none: "ninguno (solo pestañas)",
       psutil_missing: "falta psutil: sin pid ni parar",
@@ -137,9 +141,23 @@
     chip.className = `chip ${f.reachable ? "on" : "off"}`;
     chip.innerHTML = `<span class="dot"></span>`;
     const label = document.createElement("b");
-    label.textContent = f.reachable ? t("faustus_on") : t("faustus_off");
+    label.textContent = faustusPending.has("stop") ? t("faustus_stopping") :
+      (faustusPending.has("start") ? t("faustus_starting") : (f.reachable ? t("faustus_on") : t("faustus_off")));
     chip.appendChild(label);
     if (f.reachable && f.url) { const a = document.createElement("a"); a.href = f.url; a.target = "_blank"; a.textContent = f.url.replace("http://", ""); chip.appendChild(a); }
+    const startFaustus = document.createElement("button");
+    startFaustus.id = "btn-faustus-start"; startFaustus.className = "ghost small";
+    startFaustus.textContent = t("start"); startFaustus.title = `${t("start")} Faustus`;
+    startFaustus.setAttribute("aria-label", startFaustus.title);
+    startFaustus.disabled = faustusPending.size > 0 || batchBusy || !f.startable;
+    startFaustus.onclick = () => runFaustus("start");
+    const stopFaustus = document.createElement("button");
+    stopFaustus.id = "btn-faustus-stop"; stopFaustus.className = "ghost small danger";
+    stopFaustus.textContent = t("stop"); stopFaustus.title = `${t("stop")} Faustus`;
+    stopFaustus.setAttribute("aria-label", stopFaustus.title);
+    stopFaustus.disabled = faustusPending.has("stop") || batchBusy || !f.stoppable;
+    stopFaustus.onclick = () => runFaustus("stop");
+    chip.append(startFaustus, stopFaustus);
     $("#faustus").appendChild(chip);
     const sep = document.createElement("span"); sep.className = "strip-sep"; $("#faustus").appendChild(sep);
 
@@ -152,6 +170,21 @@
     ];
     if (h.psutil === false) bits.push("⚠ " + t("psutil_missing"));
     bits.forEach((b) => { const s = document.createElement("span"); s.textContent = b; foot.appendChild(s); });
+  }
+
+  const faustusPending = new Set();
+  let batchBusy = false;
+  async function runFaustus(action) {
+    if (batchBusy || faustusPending.has(action) || (action === "start" && faustusPending.size)) return;
+    faustusPending.add(action); render();
+    try {
+      const r = await api(`/api/faustus/${action}`, {});
+      if (!r.cancelled) toast(`Faustus: ${r.ok ? t(action === "start" ? "started" : "stopped") : (r.error || "error")}`, r.ok ? "ok" : "err", r.model_error || "");
+    } catch (e) { toast(String(e), "err"); }
+    finally {
+      faustusPending.delete(action);
+      await refresh(); refreshBackends(true); refreshServices();
+    }
   }
 
   let profileBusy = new Set();
@@ -453,14 +486,28 @@
   // ---- top bar --------------------------------------------------------------------
   $("#search").addEventListener("input", (e) => { filter = e.target.value.trim().toLowerCase(); render(); });
   $("#btn-rescan").onclick = async () => { const r = await api("/api/apps/rescan", {}); toast(`${t("rescan")}: ${(r.apps || []).length} apps`, "ok"); await refresh(); await refreshBackends(true); };
-  $("#btn-start-all").onclick = async () => { const r = await api("/api/apps/start-all", {}); const n = (r.results || []).filter((x) => x.ok).length; toast(`${t("start_all")}: ${n}`, "ok"); setTimeout(refresh, 1500); setTimeout(refresh, 6000); };
-  let stopAllArmed = null;
-  $("#btn-stop-all").onclick = async () => {
-    const btn = $("#btn-stop-all");
-    if (!stopAllArmed) { stopAllArmed = setTimeout(() => { stopAllArmed = null; btn.textContent = t("stop_all"); }, 4000); btn.textContent = t("confirm_stop_all"); return; }
-    clearTimeout(stopAllArmed); stopAllArmed = null; btn.textContent = t("stop_all");
-    const r = await api("/api/apps/stop-all", {}); const n = (r.results || []).filter((x) => x.ok && x.pid).length; toast(`${t("stop_all")}: ${n}`, "ok"); await refresh();
-  };
+  async function runBatch(action) {
+    if (batchBusy || (action === "start" && faustusPending.size)) return;
+    batchBusy = true;
+    const start = $("#btn-start-all"), stop = $("#btn-stop-all");
+    start.disabled = stop.disabled = true;
+    if (action === "stop") stop.textContent = t("stopping");
+    render();
+    try {
+      const r = await api(`/api/apps/${action}-all`, {});
+      const outcomes = [...(r.results || []), ...(r.commands || []), ...(r.services || []), ...(r.faustus ? [{...r.faustus, app: "Faustus"}] : [])];
+      const errors = outcomes.filter((x) => !x.ok).map((x) => `${x.app || x.service || x.command || ""}: ${x.error || "error"}`);
+      const message = action === "stop" ? t(r.ok ? "stopped_all" : "stop_failed") : `${t("start_all")}: ${(r.results || []).filter((x) => x.ok).length}`;
+      toast(message, r.ok ? "ok" : "err", errors.join("\n"));
+    } catch (e) { toast(String(e), "err"); }
+    finally {
+      batchBusy = false; start.disabled = stop.disabled = false; stop.textContent = t("stop_all");
+      await refresh(); refreshBackends(true); refreshServices();
+      setTimeout(refresh, 2000); setTimeout(refresh, 7000);
+    }
+  }
+  $("#btn-start-all").onclick = () => runBatch("start");
+  $("#btn-stop-all").onclick = () => runBatch("stop");
   $("#btn-lang").onclick = () => { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("hub.lang", lang); } catch (e) { /* ignore */ } applyI18n(); render(); renderLeases(); refreshBackends(); renderServices(); };
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 
