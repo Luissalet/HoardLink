@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import threading
+import sys
 from pathlib import Path
 
 import pytest
@@ -62,10 +63,37 @@ def test_foreign_startup_file_is_left_alone(windows):
     assert res["ok"] is False and (windows / "Hoard Hub.cmd").exists()
 
 
+def test_percent_paths_are_literal_batch_arguments():
+    text = autostart.render('C:/literal %TEMP% folder', 'C:/python.exe', ['--data-dir','C:/literal %TEMP% data'])
+    assert '%%TEMP%%' in text and 'DisableDelayedExpansion' in text and 'chcp 65001' in text
+    with pytest.raises(ValueError):
+        autostart.render('C:/bad\npath','python',[])
+
+
+@pytest.mark.skipif(not sys.platform.startswith('win'), reason='actual Windows batch semantics')
+def test_windows_batch_preserves_percent_and_unicode_paths(tmp_path):
+    import json, subprocess, time
+    folder=tmp_path/'literal %TEMP% á'; folder.mkdir()
+    probe=folder/'probe.py'
+    probe.write_text("import json,sys\nfrom pathlib import Path\nPath(__file__).with_suffix('.json').write_text(json.dumps(sys.argv[1:]),encoding='utf-8')\n",encoding='utf-8')
+    script=tmp_path/'probe.cmd'
+    script.write_bytes(autostart.render(str(folder),autostart.pythonw(),[str(probe),'literal %TEMP% á']).encode('utf-8'))
+    subprocess.run(['cmd.exe','/d','/c',str(script)],check=True,creationflags=subprocess.CREATE_NO_WINDOW,
+                   stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=10)
+    for _ in range(100):
+        if probe.with_suffix('.json').exists(): break
+        time.sleep(.05)
+    assert json.loads(probe.with_suffix('.json').read_text(encoding='utf-8')) == ['literal %TEMP% á']
+
+
 def test_cli_on_windows(windows, capsys, tmp_path):
+    assert cli.main(["--install-autostart", "--profile", "video", "--data-dir", str(tmp_path / "d")]) == 1
+    assert not (windows / "Hoard Hub.cmd").exists()
+    from hoard_link.hub.config import HubConfig
+    HubConfig(data_dir=str(tmp_path / "d"), profiles={"video":{"apps":["a"]}}).save()
     assert cli.main(["--install-autostart", "--profile", "video", "--data-dir", str(tmp_path / "d")]) == 0
     out = capsys.readouterr().out
-    assert "installed" in out and "not defined in hub.json" in out
+    assert "installed" in out and "unknown profile" in out
     text = (windows / "Hoard Hub.cmd").read_text(encoding="utf-8")
     assert "--data-dir" in text and "--profile video" in text
     assert cli.main(["--autostart-status"]) == 0 and "profile video" in capsys.readouterr().out

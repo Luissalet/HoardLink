@@ -91,6 +91,25 @@ input[type=search]:focus { border-color: var(--accent); }
 
 .profiles { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
 .profiles-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; margin-right: 2px; }
+.login-note { flex-basis: 100%; }
+.group-editor { margin-block: 0 24px; padding: 18px; background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; }
+.group-editor h2 { margin: 0 0 16px; font-size: 20px; }
+.group-editor #group-name { display: block; width: min(100%, 420px); margin-block: 6px 12px; font: inherit; font-size: 16px; padding: 10px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); }
+.group-editor { font-size: 16px; }
+.group-editor :focus-visible, .profiles button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.group-members { max-height: 380px; overflow: auto; margin-block: 14px; }
+.group-member { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; padding-block: 10px; border-bottom: 1px solid var(--line); }
+.group-member label { display: flex; gap: 10px; align-items: center; overflow-wrap: anywhere; }
+.group-member input { flex-shrink: 0; accent-color: var(--accent); }
+.group-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.group-editor .err { color: var(--red); }
+.profile { max-width: 100%; flex-wrap: wrap; }
+.profile b { overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .group-member { grid-template-columns: 1fr; gap: 8px; }
+  .group-member label:last-child { margin-inline-start: 24px; }
+  .profiles button { min-height: 40px; }
+}
 .chip.profile { padding: 3px 4px 3px 10px; font-size: 12.5px; }
 .chip.profile.some { border-color: #5a4a1c; }
 .chip.profile.some .dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }

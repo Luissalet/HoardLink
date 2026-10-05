@@ -54,6 +54,8 @@ class Hub:
         os.makedirs(self.config.data_dir, exist_ok=True)
         os.makedirs(self.config.logs_dir, exist_ok=True)
         os.makedirs(self.config.profiles_dir, exist_ok=True)
+        from .ports import PortAssignments
+        self.ports = PortAssignments(os.path.join(self.config.data_dir, "app-ports.json"))
         try:
             with open(os.path.join(self.config.data_dir, "manual-stops.json"), encoding="utf-8") as fh:
                 self._manual_stops = set(json.load(fh).get("stopped", []))
@@ -178,6 +180,7 @@ class Hub:
             exclude_ids=self.config.exclude_ids + [SERVICE, "hoardhub"],
             launch_overrides=self._launch_overrides(),
         )
+        self.ports.restore(apps)
         with self._lock:
             self._apps = {a.id: a for a in apps}
         return apps
@@ -278,7 +281,12 @@ class Hub:
                 res = self._await_ready(app, pending) if wait else {"ok": True, "already": True, "pid": pending,
                                                                        "detail": "already starting"}
             else:
+                allocation = self.ports.prepare(app, self.apps, self.config.port)
+                if not allocation.get("ok"):
+                    return dict(allocation, app=app_id)
                 res = procs.start_app(app, self.config.logs_dir, wait=wait)
+                if allocation.get("previous_port"):
+                    res.update(previous_port=allocation["previous_port"], port=allocation["port"])
                 if res.get("ok") and res.get("pid"):
                     with self._lock:
                         self._spawned[app_id] = int(res["pid"])

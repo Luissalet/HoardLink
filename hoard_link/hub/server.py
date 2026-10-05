@@ -75,7 +75,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import HUB_VERSION, SERVICE
 from .core import Hub
-from . import desktop, tools
+from . import desktop, tools, autostart, profile_editor
 from .lease import LeaseError
 from .rules import example_rules
 from .jobs import example_jobs
@@ -338,6 +338,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._lease_reply(hub.leases.get(path[len("/api/lease/"):]))
             if path == "/api/profiles":
                 return self._json(hub.profiles_status())
+            if path == "/api/autostart":
+                return self._json(autostart.status())
             if path.startswith("/api/profiles/"):
                 res = hub.profile_status(unquote(path[len("/api/profiles/"):]))
                 return self._json(res, 200 if res.get("ok") else 404)
@@ -518,6 +520,13 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/apps/stop-all":
                 return self._json(hub.stop_all())
             parts = path.split("/")
+            if path == "/api/autostart":
+                res = profile_editor.startup(hub, body)
+                return self._json(res, 200 if res.get("ok") else 400)
+            if len(parts) == 5 and parts[1:3] == ["api", "profiles"] and parts[4] in ("save", "remove"):
+                name = unquote(parts[3])
+                res = profile_editor.save(hub, name, body) if parts[4] == "save" else profile_editor.remove(hub, name)
+                return self._json(res, 200 if res.get("ok") else 400)
             if len(parts) == 5 and parts[1] == "api" and parts[2] == "profiles" and parts[4] in ("start", "stop"):
                 name = unquote(parts[3])
                 if name not in hub.profiles():

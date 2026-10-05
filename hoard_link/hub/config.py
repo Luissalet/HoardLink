@@ -195,5 +195,7 @@ class HubConfig:
         file.parent.mkdir(parents=True, exist_ok=True)
         payload = asdict(self)
         payload.pop("data_dir", None)
-        file.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        tmp = file.with_suffix(file.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(tmp, file)
         return str(file)

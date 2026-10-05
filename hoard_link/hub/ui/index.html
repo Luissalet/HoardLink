@@ -116,6 +116,21 @@
 
 <main>
   <div id="profiles" class="profiles" hidden></div>
+  <section id="group-editor" class="group-editor" hidden aria-labelledby="group-heading">
+    <form id="group-form">
+      <h2 id="group-heading" data-i18n="edit_group">Edit group</h2>
+      <label for="group-name" data-i18n="group_name">Group name</label>
+      <input id="group-name" maxlength="64" required autocomplete="off">
+      <p class="hint" data-i18n="group_hint">Choose apps to start together. Windows are optional.</p>
+      <div id="group-members" class="group-members"></div>
+      <p id="group-error" class="err" role="alert"></p>
+      <div class="group-actions">
+        <button id="group-save" class="primary" type="submit" data-i18n="save_group">Save group</button>
+        <button id="group-cancel" type="button" class="ghost" data-i18n="cancel_group">Cancel</button>
+        <button id="group-remove" type="button" class="ghost danger" data-i18n="delete_group">Delete group</button>
+      </div>
+    </form>
+  </section>
   <div id="grid" class="grid"></div>
   <div id="empty" class="empty" hidden></div>
 </main>

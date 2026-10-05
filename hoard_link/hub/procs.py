@@ -66,24 +66,31 @@ class Health:
         return {"state": self.state, "status": self.status, "service": self.service, "detail": self.detail}
 
 
-def fetch_json(url: str, timeout: float = HEALTH_TIMEOUT_S) -> tuple[Optional[int], Any]:
+def fetch_json(url: str, timeout: float = HEALTH_TIMEOUT_S, *, follow_redirects: bool = True,
+               max_bytes: Optional[int] = None) -> tuple[Optional[int], Any]:
     """``(status, json-or-None)``; ``(None, None)`` when nothing answered.
     Ignores proxies: this is loopback, and a system proxy would otherwise
     swallow every probe."""
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "hoard-hub"})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                         *([] if follow_redirects else [NoRedirect()]))
     try:
         with opener.open(req, timeout=timeout) as resp:
-            raw = resp.read()
+            raw = resp.read() if max_bytes is None else resp.read(max_bytes + 1)
             status = resp.status
     except urllib.error.HTTPError as exc:
         try:
-            raw = exc.read()
+            raw = exc.read() if max_bytes is None else exc.read(max_bytes + 1)
         except Exception:  # noqa: BLE001
             raw = b""
         status = exc.code
     except Exception:  # noqa: BLE001
         return None, None
+    if max_bytes is not None and len(raw) > max_bytes:
+        return status, None
     try:
         return status, json.loads(raw.decode("utf-8", "replace")) if raw else None
     except ValueError:
@@ -365,6 +372,7 @@ def start_app(app: App, logs_dir: str, *, wait: bool = True) -> dict[str, Any]:
         )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"could not start: {exc}", "log": log_path}
+    spawned_created = proc_info(proc.pid).created_at if proc.poll() is None else None
     result: dict[str, Any] = {"ok": True, "pid": proc.pid, "log": log_path, "command": cmd}
     if not wait or not spec.readiness_url:
         return result
@@ -376,9 +384,20 @@ def start_app(app: App, logs_dir: str, *, wait: bool = True) -> dict[str, Any]:
             return result
         status, _ = fetch_json(spec.readiness_url, timeout=1.0)
         if status is not None and status < 500:
-            result["ready"] = True
-            result["health"] = health(app).to_dict()
-            return result
+            observed = health(app)
+            if observed.state == "healthy":
+                result["ready"] = True
+                result["health"] = observed.to_dict()
+                return result
+            if observed.state == "foreign":
+                # Stop only the child we just spawned, never the listener
+                # whose identity failed the readiness check.
+                cleanup = (terminate_tree(proc.pid, created_at=spawned_created)
+                           if spawned_created is not None else
+                           {"ok": False, "error": "spawned child identity unavailable; no process terminated"})
+                result.update(ok=False, ready=False, error=observed.detail, cleanup=cleanup,
+                              health=observed.to_dict())
+                return result
         time.sleep(0.5)
     result.update(ready=False, detail=f"not ready after {spec.readiness_timeout_s:.0f}s (still starting?)")
     result["log_tail"] = tail(log_path, 30)
