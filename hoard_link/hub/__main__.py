@@ -76,6 +76,13 @@ def _autostart_command(args: argparse.Namespace) -> Optional[int]:
     if not (args.install_autostart or args.uninstall_autostart or args.autostart_status):
         return None
     if args.install_autostart:
+        env = dict(os.environ)
+        if args.data_dir:
+            env["HOARD_HUB_DATA_DIR"] = args.data_dir
+        known = HubConfig.load(env=env).profiles or {}
+        if args.profile and args.profile not in known:
+            print(f"autostart: unknown profile '{args.profile}'; nothing installed")
+            return 1
         extra: list[str] = []
         if args.port:
             extra += ["--port", str(args.port)]

@@ -408,6 +408,44 @@ unless `language` is `en`); the very first scan, with no previous snapshot,
 emits none. The recommended rule *Repo problem → digest note*
 (`rule-repo-issue-digest`) turns each of those into a `digest.item` event.
 
+## Custom groups and Windows login
+
+The Apps view's **Groups** row can create, edit, start and stop named selections
+such as `Creative` or `On start`. Select registered apps and optionally open their
+windows. The selections persist in `hub.json` as profiles; existing configured
+commands are preserved when editing. Stop a group before deleting it so running
+commands remain controllable.
+
+**Start with Windows** selects one group for login. It writes the current user's
+`Startup/Hoard Hub.cmd`, with this Hub's data folder, port and exact profile name.
+Disable login startup before removing that group. An existing file not created
+by the Hub is left untouched. No group or login startup is selected automatically.
+
+The UI uses `POST /api/profiles/<name>/save` (`apps`, `desktop`, `create`),
+`POST /api/profiles/<name>/remove`, and `GET/POST /api/autostart`. The latter POST
+takes `{enabled: true, profile: name}` or `{enabled: false}`. Existing profile
+start/stop routes perform group actions. Cross-site mutation requests are refused.
+
+## Ports and service identity
+
+The Hub never resolves a collision by stopping its occupant. A launch hint can
+opt in to port adaptation with `app.launch_hint.port_argument: "--port"` (or
+another explicitly supported long option). DiskHoard declares this option. Before
+launching, the Hub avoids listeners, its own port and the preferred/current ports
+of other registered apps, passes the selected port explicitly, and persists the
+assignment in `app-ports.json`. Repeated starts and Hub rescans reuse it.
+
+An app may declare `app.x-url-file` for its runtime URL sidecar. The Hub accepts
+only a small file inside that app's data folder, a loopback HTTP URL and a live
+health response matching the manifest's service identity. Redirects are refused.
+DiskHoard's sidecar lets the Hub discover an instance already using another port.
+Readiness also checks service identity; if a foreign process wins the final bind
+race, cleanup targets only the child just launched, with its process creation time.
+
+Apps without an explicit port option fail safely on a busy port. The allocator
+coordinates Hub launches; programs started elsewhere still need to bind exclusively
+and may race with the Hub. No unsupported command-line option is guessed.
+
 ## Facets (0.7)
 
 Spheres, notifications, mail, chats, Today, references, search, work and purchases are *facets*: one module

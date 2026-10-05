@@ -42,6 +42,7 @@ class LaunchSpec:
     readiness_url: Optional[str]
     readiness_timeout_s: float = 30.0
     env: dict[str, str] = field(default_factory=dict)
+    port_argument: str = ""  # explicit manifest opt-in; never guess launch CLI support
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +51,7 @@ class LaunchSpec:
             "cwd": self.cwd,
             "readiness_url": self.readiness_url,
             "readiness_timeout_s": self.readiness_timeout_s,
+            "port_argument": self.port_argument,
         }
 
 
@@ -77,6 +79,7 @@ class App:
     #: false for an app that has no /api/agent/call at all (the audit stops asking it for one),
     #: ``stack`` to override the node/python guess, ``events`` false when it will never emit.
     family: dict[str, Any] = field(default_factory=dict)
+    runtime_url_file: str = ""
 
     @property
     def agent_contract(self) -> bool:
@@ -118,6 +121,7 @@ class App:
             "data_dir": self.data_dir,
             "family": dict(self.family),
             "agent_contract": self.agent_contract,
+            "port_adaptable": bool(self.launch and self.launch.port_argument),
         }
 
 
@@ -337,6 +341,8 @@ def read_manifest(
     if not data_dir or "{" in data_dir or "%" in data_dir:
         data_dir = os.path.dirname(app.token_file)
     app.data_dir = os.path.normpath(data_dir)
+    if app_block.get("x-url-file"):
+        app.runtime_url_file = expand_env(fill(app_block["x-url-file"]))
 
     hint = app_block.get("launch_hint")
     if not isinstance(hint, dict) or hint.get("kind", "process") != "process":
@@ -356,6 +362,9 @@ def read_manifest(
     # here, since no shell sits between the hub and the process.
     env = {str(k): expand_env(fill(v)) for k, v in (hint.get("env") or {}).items()}
     app.launch = LaunchSpec(executable, argv, cwd, readiness_url, timeout_s, env)
+    port_argument = str(hint.get("port_argument") or "")
+    if re.fullmatch(r"--[a-z][a-z0-9-]*", port_argument):
+        app.launch.port_argument = port_argument
     if executable.lower().endswith(".exe") and not argv and "python" not in os.path.basename(executable).lower():
         app.kind = "window-app"
 

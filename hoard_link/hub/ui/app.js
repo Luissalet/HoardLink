@@ -24,7 +24,14 @@
       used: "used", reserved: "reserved", available: "available", release: "Release", released: "lease released",
       queued: "queued", granted: "granted", no_leases: "No GPU leases.", expires: "expires in", owner: "owner",
       any_gpu: "any",
-      profiles: "Profiles", profile_started: "profile started", profile_stopped: "profile stopped",
+      profiles: "Groups", profile_started: "group started", profile_stopped: "group stopped",
+      new_group: "New group", edit_group: "Edit group", group_name: "Group name", save_group: "Save group",
+      cancel_group: "Cancel", delete_group: "Delete group", group_hint: "Choose apps to start together. Windows are optional.",
+      group_window: "Open window", group_saved: "Group saved", group_deleted: "Group deleted",
+      login_group: "Start at Windows login", login_on: "Starts at Windows login", login_off: "Disable Windows startup",
+      login_none: "No group starts at Windows login", login_unavailable: "Windows startup is unavailable",
+      login_foreign: "An unrelated Startup file exists; the Hub will preserve it.",
+      delete_confirm: "Delete this group? Its apps and data will remain.", commands_kept: "Configured external commands are preserved.",
       pstate: { running: "running", partial: "partly running", stopped: "stopped", empty: "empty" },
       start_profile: "Start this profile", stop_profile: "Stop this profile",
       services: "Servers", start_service: "Start (no Faustus needed)", stop_service: "Stop",
@@ -52,7 +59,14 @@
       used: "usada", reserved: "reservada", available: "disponible", release: "Liberar", released: "reserva liberada",
       queued: "en cola", granted: "concedida", no_leases: "Sin reservas de GPU.", expires: "caduca en", owner: "dueño",
       any_gpu: "cualquiera",
-      profiles: "Perfiles", profile_started: "perfil arrancado", profile_stopped: "perfil parado",
+      profiles: "Grupos", profile_started: "grupo arrancado", profile_stopped: "grupo parado",
+      new_group: "Crear grupo", edit_group: "Editar grupo", group_name: "Nombre del grupo", save_group: "Guardar grupo",
+      cancel_group: "Cancelar", delete_group: "Eliminar grupo", group_hint: "Elige las apps que arrancarán juntas. Abrir sus ventanas es opcional.",
+      group_window: "Abrir ventana", group_saved: "Grupo guardado", group_deleted: "Grupo eliminado",
+      login_group: "Iniciar con Windows", login_on: "Se inicia con Windows", login_off: "Desactivar inicio con Windows",
+      login_none: "Ningún grupo se inicia con Windows", login_unavailable: "Inicio con Windows no disponible",
+      login_foreign: "Existe un archivo de inicio ajeno; el Hub lo conservará.",
+      delete_confirm: "¿Eliminar este grupo? Sus apps y datos se conservarán.", commands_kept: "Se conservan los comandos externos configurados.",
       pstate: { running: "en marcha", partial: "en marcha a medias", stopped: "parado", empty: "vacío" },
       start_profile: "Arrancar este perfil", stop_profile: "Parar este perfil",
       services: "Servidores", start_service: "Arrancar (sin Faustus)", stop_service: "Parar",
@@ -187,15 +201,16 @@
     }
   }
 
-  let profileBusy = new Set();
+  let profileBusy = new Set(), loginState = null, editingGroup = null, loginPending = false;
   function renderProfiles() {
     const box = $("#profiles");
     const profiles = snapshot.profiles || [];
-    box.hidden = !profiles.length;
+    box.hidden = false;
     box.innerHTML = "";
-    if (!profiles.length) return;
     const label = document.createElement("span"); label.className = "profiles-label"; label.textContent = t("profiles");
     box.appendChild(label);
+    const add = document.createElement("button"); add.className = "ghost small"; add.textContent = t("new_group");
+    add.onclick = () => editGroup(null); box.appendChild(add);
     for (const p of profiles) {
       const chip = document.createElement("span");
       const on = p.state === "running", some = p.state === "partial";
@@ -211,9 +226,87 @@
       start.onclick = () => runProfile(p.name, "start");
       stop.onclick = () => runProfile(p.name, "stop");
       chip.append(start, stop);
+      const edit = document.createElement("button"); edit.className = "ghost small"; edit.textContent = t("edit_group");
+      edit.onclick = () => editGroup(p); edit.disabled = profileBusy.has(p.name); chip.appendChild(edit);
+      const login = document.createElement("button"); login.className = "ghost small";
+      const selected = loginState?.installed && loginState.ours && loginState.profile === p.name;
+      login.textContent = t(selected ? "login_on" : "login_group");
+      login.setAttribute("aria-pressed", String(!!selected));
+      login.disabled = loginPending || !loginState?.supported || (loginState.installed && !loginState.ours) || profileBusy.has(p.name) || !p.members.some(m => m.kind === "app" && m.state !== "unknown");
+      login.onclick = () => setLogin(p.name, !selected); chip.appendChild(login);
       box.appendChild(chip);
     }
+    const note = document.createElement("span"); note.className = "hint login-note";
+    note.textContent = loginState?.installed ? (loginState.ours ? `${t("login_on")}: ${loginState.profile || "Hoard Hub"}` : t("login_foreign")) : t(loginState?.supported ? "login_none" : "login_unavailable");
+    box.appendChild(note);
+    if (loginState?.installed && loginState.ours) {
+      const off = document.createElement("button"); off.className = "ghost small"; off.textContent = t("login_off");
+      off.disabled = loginPending; off.onclick = () => setLogin(null, false); box.appendChild(off);
+    }
   }
+  async function setLogin(name, enabled) {
+    if (loginPending) return;
+    loginPending = true;
+    if (name) profileBusy.add(name); renderProfiles();
+    try {
+      const r = await api("/api/autostart", {profile: name, enabled});
+      if (!r.ok) toast(r.error, "err");
+      loginState = await api("/api/autostart");
+    } catch (e) { toast(String(e), "err"); }
+    finally { loginPending = false; profileBusy.delete(name); renderProfiles(); }
+  }
+  function editGroup(p) {
+    editingGroup = p?.name || null;
+    $("#group-editor").hidden = false;
+    $("#group-heading").textContent = t(p ? "edit_group" : "new_group");
+    $("#group-name").value = p?.name || "";
+    $("#group-name").readOnly = !!p;
+    $("#group-error").textContent = p?.commands?.length ? t("commands_kept") : "";
+    $("#group-remove").hidden = !p;
+    const members = $("#group-members"); members.replaceChildren();
+    for (const app of snapshot.apps) {
+      const row = document.createElement("div"); row.className = "group-member";
+      const label = document.createElement("label"), check = document.createElement("input");
+      check.type = "checkbox"; check.value = app.id; check.className = "group-choice";
+      check.checked = !!p?.members.some(m => m.kind === "app" && m.id === app.id);
+      label.append(check, document.createTextNode(app.name));
+      const windowLabel = document.createElement("label"), windowCheck = document.createElement("input");
+      windowCheck.type = "checkbox"; windowCheck.className = "group-window"; windowCheck.checked = !!p?.desktop.includes(app.id);
+      windowCheck.disabled = !check.checked;
+      check.onchange = () => { windowCheck.disabled = !check.checked; if (!check.checked) windowCheck.checked = false; };
+      windowLabel.append(windowCheck, document.createTextNode(t("group_window")));
+      row.append(label, windowLabel); members.appendChild(row);
+    }
+    $("#group-name").focus();
+    $("#group-editor").scrollIntoView({block: "nearest"});
+  }
+  $("#group-cancel").onclick = () => { $("#group-editor").hidden = true; };
+  $("#group-form").onsubmit = async (event) => {
+    event.preventDefault();
+    const apps = [], desktop = [];
+    document.querySelectorAll(".group-member").forEach(row => {
+      const choice = $(".group-choice", row); if (choice.checked) apps.push(choice.value);
+      if (choice.checked && $(".group-window", row).checked) desktop.push(choice.value);
+    });
+    const name = $("#group-name").value.trim();
+    $("#group-save").disabled = true; $("#group-error").textContent = "";
+    try {
+      const r = await api(`/api/profiles/${encodeURIComponent(name)}/save`, {apps, desktop, create: !editingGroup});
+      if (!r.ok) { $("#group-error").textContent = r.error; return; }
+      $("#group-editor").hidden = true; toast(t("group_saved"), "ok"); await refresh();
+    } catch (e) { $("#group-error").textContent = String(e); }
+    finally { $("#group-save").disabled = false; }
+  };
+  $("#group-remove").onclick = async () => {
+    if (!editingGroup || !confirm(t("delete_confirm"))) return;
+    $("#group-remove").disabled = true;
+    try {
+      const r = await api(`/api/profiles/${encodeURIComponent(editingGroup)}/remove`, {});
+      if (!r.ok) { $("#group-error").textContent = r.error; return; }
+      $("#group-editor").hidden = true; toast(t("group_deleted"), "ok"); await refresh();
+    } catch (e) { $("#group-error").textContent = String(e); }
+    finally { $("#group-remove").disabled = false; }
+  };
   async function runProfile(name, action) {
     profileBusy.add(name); renderProfiles();
     try {
@@ -267,7 +360,7 @@
     $(".act-window", el).disabled = !(running || a.launchable);
     $(".act-browser", el).disabled = !(running || a.launchable);
     $(".act-start", el).hidden = running || a.state === "starting";
-    $(".act-start", el).disabled = !a.launchable || a.state === "foreign";
+    $(".act-start", el).disabled = !a.launchable || (a.state === "foreign" && !a.port_adaptable);
     $(".act-stop", el).hidden = !(running || a.state === "starting");
     $(".act-stop", el).disabled = !a.stoppable && a.state !== "starting";
     $(".act-restart", el).hidden = !running;
@@ -471,6 +564,7 @@
     refreshing = (async () => {
       try {
         snapshot = await api("/api/apps");
+        loginState = await api("/api/autostart");
         render();
         refreshLeases();
       } catch (e) { counts.textContent = String(e); }

@@ -30,12 +30,18 @@ from .config import REPO_DIR
 
 SCRIPT_NAME = "Hoard Hub.cmd"
 MARKER = "rem hoard-hub autostart"
+MARKER_LINE = f"{MARKER} (python -m hoard_link.hub --uninstall-autostart removes it)"
 UNSUPPORTED = ("autostart at login is only automated on Windows; on this system add a systemd user unit or "
                "launchd agent that runs: {cmd}")
 
 
 def _is_windows() -> bool:
     return sys.platform.startswith("win")
+
+
+def _owned(text: str) -> bool:
+    return any(line.strip().casefold() in {MARKER.casefold(), MARKER_LINE.casefold()}
+               for line in text.splitlines())
 
 
 def startup_dir(env: Optional[Mapping[str, str]] = None) -> Optional[Path]:
@@ -71,6 +77,9 @@ def hub_args(profile: Optional[str] = None, window: bool = False, extra: Optiona
 
 
 def _q(arg: str) -> str:
+    if any(ord(c) < 32 for c in arg):
+        raise ValueError("Startup arguments cannot contain control characters")
+    arg = arg.replace("%", "%%")  # cmd expands environment references even inside quotes
     return '"' + arg.replace('"', '') + '"' if (not arg or re.search(r'[\s&|<>^()"]', arg)) else arg
 
 
@@ -80,7 +89,9 @@ def render(repo_dir: str, python: str, args: list[str]) -> str:
     line = " ".join(_q(a) for a in [python, *args])
     return (
         "@echo off\r\n"
-        f"{MARKER} (python -m hoard_link.hub --uninstall-autostart removes it)\r\n"
+        "setlocal DisableDelayedExpansion\r\n"
+        "chcp 65001 >nul\r\n"
+        f"{MARKER_LINE}\r\n"
         f"cd /d {_q(repo_dir)}\r\n"
         f'start "" {line}\r\n'
     )
@@ -97,8 +108,17 @@ def install(profile: Optional[str] = None, window: bool = False, *, extra: Optio
     path = script_path(env)
     if path is None:
         return {"ok": False, "supported": True, "error": "APPDATA is not set: cannot find the Startup folder"}
+    if path.exists():
+        try:
+            if not _owned(path.read_text(encoding="utf-8", errors="replace")):
+                return {"ok": False, "supported": True, "error": "Startup file was not written by the hub; leaving it alone"}
+        except OSError as exc:
+            return {"ok": False, "supported": True, "error": str(exc)}
     # render() uses CRLF (cmd.exe); written as bytes so no newline translation happens.
-    text = render(str(repo_dir or REPO_DIR), python, args)
+    try:
+        text = render(str(repo_dir or REPO_DIR), python, args)
+    except ValueError as exc:
+        return {"ok": False, "supported": True, "error": str(exc)}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text.encode("utf-8"))
@@ -120,7 +140,7 @@ def uninstall(env: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return {"ok": False, "supported": True, "error": str(exc)}
-    if MARKER not in text:
+    if not _owned(text):
         return {"ok": False, "supported": True, "path": str(path),
                 "error": f"{path} was not written by the hub; leaving it alone"}
     try:
@@ -140,7 +160,7 @@ def status(env: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8", errors="replace")
     start = next((l for l in text.splitlines() if l.lower().startswith("start ")), "")
     m = re.search(r'--profile\s+("([^"]*)"|(\S+))', start)
-    return {"ok": True, "supported": True, "installed": True, "ours": MARKER in text, "path": str(path),
+    return {"ok": True, "supported": True, "installed": True, "ours": _owned(text), "path": str(path),
             "command": start[len('start ""'):].strip() if start else None,
             "profile": (m.group(2) or m.group(3)) if m else None, "window": "--no-window" not in start}
 
