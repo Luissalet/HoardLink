@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -96,10 +97,24 @@ class App:
     def host(self) -> str:
         return urlsplit(self.url).hostname or "127.0.0.1"
 
+    @property
+    def icon_revision(self) -> Optional[str]:
+        """Cheap stable cache key for the current icon; no file-content hashing per poll."""
+        if not self.icon_path:
+            return None
+        try:
+            info = os.stat(self.icon_path)
+        except OSError:
+            return None
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        return f"{info.st_mtime_ns:x}-{info.st_size:x}"
+
     def health_url(self) -> str:
         return self.url.rstrip("/") + self.health_path
 
     def to_dict(self) -> dict[str, Any]:
+        icon_revision = self.icon_revision
         return {
             "id": self.id,
             "name": self.name,
@@ -110,7 +125,8 @@ class App:
             "health_url": self.health_url(),
             "expect_service": self.expect_service,
             "capabilities": list(self.capabilities),
-            "has_icon": bool(self.icon_path),
+            "has_icon": icon_revision is not None,
+            "icon_revision": icon_revision,
             "launchable": self.launchable,
             "launch_reason": self.launch_reason,
             "launch": self.launch.to_dict() if self.launch else None,
