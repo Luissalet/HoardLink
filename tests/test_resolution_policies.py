@@ -25,6 +25,16 @@ LLAMA_ITEM = {
 }
 
 
+def llama_ready(router: Router, model: str = "qwen3.8-27b-q8-llamacpp") -> Router:
+    router.get(8081, "/props", httpx.Response(200, json={
+        "model_path": f"C:/models/{model}.gguf",
+        "default_generation_settings": {},
+    }))
+    router.get(8081, "/v1/models", httpx.Response(200, json={"data": [{"id": model}]}))
+    router.get(8081, "/slots", httpx.Response(200, json=[]))
+    return router
+
+
 @pytest.mark.asyncio
 async def test_faustus_401_without_token_says_a_token_is_needed():
     router = Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", httpx.Response(401, json={}))
@@ -48,7 +58,7 @@ async def test_faustus_without_token_sends_no_authorization_header():
         seen["auth"] = request.headers.get("authorization")
         return registry(LLAMA_ITEM)
 
-    router = Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", models)
+    router = llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", models))
     res = await make_link(router).resolve("llm")
     assert res.resolved and seen["auth"] is None
 
@@ -65,7 +75,7 @@ async def test_faustus_cloud_endpoint_is_never_used():
 @pytest.mark.asyncio
 async def test_faustus_registry_prefers_local_item_over_cloud():
     cloud = dict(LLAMA_ITEM, url="https://api.example.com/v1/chat/completions", category="cloud")
-    router = Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(cloud, LLAMA_ITEM))
+    router = llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(cloud, LLAMA_ITEM)))
     res = await make_link(router).resolve("llm")
     assert res.url == LLAMA_ITEM["url"]
 
@@ -110,7 +120,7 @@ async def test_faustus_registry_ollama_nothing_resident_is_skipped_by_default():
 @pytest.mark.asyncio
 async def test_faustus_registry_honours_preferred_model():
     item = dict(LLAMA_ITEM, models=["a", "b"])
-    router = Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(item))
+    router = llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(item)), model="b")
     cfg = LinkConfig.load(None, env={"HOARD_LLM_MODEL": "b"})
     res = await make_link(router, config=cfg).resolve("llm")
     assert res.model == "b"
@@ -118,7 +128,7 @@ async def test_faustus_registry_honours_preferred_model():
 
 @pytest.mark.asyncio
 async def test_faustus_url_with_trailing_slash_still_works():
-    router = Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(LLAMA_ITEM))
+    router = llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(LLAMA_ITEM)))
     cfg = LinkConfig.load(None, env={"HOARD_FAUSTUS_URL": "http://127.0.0.1:7000/"})
     res = await make_link(router, config=cfg).resolve("llm")
     assert res.details["source"] == "faustus_registry"
