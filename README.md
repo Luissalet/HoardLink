@@ -12,6 +12,8 @@ copy of a model.**
 
 Shared native projects through Atlas and the Hub: [workspace guide](docs/commons/workspace.md).
 
+App icons update on the Hub's normal polling cycle without a restart, page reload or manual rescan: [icon refresh](docs/HUB-ICONS.md).
+
 Hoard Link is a small Python library — standard library plus `httpx`, no
 server, no port, no UI — that a set of local apps can each vendor a copy
 of to answer one question: **for capability X (`llm`, `vision`,

@@ -16,6 +16,8 @@ en vez de cargar una segunda copia de un modelo.**
 
 Proyectos y archivos nativos compartidos mediante Atlas y Hub: [guía de espacios compartidos](docs/commons/workspace.es.md).
 
+Los iconos se actualizan con la consulta normal del Hub, sin reiniciar, recargar la página ni escanear manualmente: [actualización de iconos](docs/HUB-ICONS.es.md).
+
 Hoard Link es una librería de Python pequeña — solo librería estándar más
 `httpx`, sin servidor, sin puerto, sin interfaz — que un conjunto de
 aplicaciones locales pueden incluir (cada una con su propia copia) para

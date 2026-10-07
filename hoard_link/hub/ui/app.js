@@ -149,6 +149,7 @@
     order.forEach((el) => grid.appendChild(el));
 
     renderProfiles();
+    syncAppIconImages();
 
     // Faustus + hub footer
     const f = snapshot.faustus || {};
@@ -186,6 +187,31 @@
     ];
     if (h.psutil === false) bits.push("⚠ " + t("psutil_missing"));
     bits.forEach((b) => { const s = document.createElement("span"); s.textContent = b; foot.appendChild(s); });
+  }
+
+  // Facets and other views create app-icon images outside the dashboard cards.
+  // Reconcile them against the same five-second snapshot poll, using stable URLs
+  // so unchanged icons stay cached without per-image timers or cache-busting.
+  function syncAppIconImages() {
+    if (!snapshot) return;
+    const byId = new Map(snapshot.apps.map((app) => [app.id, app]));
+    for (const img of document.querySelectorAll('img[src*="/api/apps/"][src*="/icon"]')) {
+      let url;
+      try { url = new URL(img.getAttribute("src"), location.href); } catch (_) { continue; }
+      if (url.origin !== location.origin) continue;
+      const match = url.pathname.match(/^\/api\/apps\/([^/]+)\/icon$/);
+      if (!match) continue;
+      let id;
+      try { id = decodeURIComponent(match[1]); } catch (_) { continue; }
+      const app = byId.get(id);
+      if (!app) continue;
+      const revision = app.icon_revision || "missing";
+      const available = app.has_icon ? "1" : "0";
+      if (url.searchParams.get("revision") === revision && url.searchParams.get("available") === available) continue;
+      url.searchParams.set("available", available);
+      url.searchParams.set("revision", revision);
+      img.src = url.href;
+    }
   }
 
   const faustusPending = new Set();
