@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import http.server
+import importlib.util
 import json
 import os
 import subprocess
@@ -12,6 +13,7 @@ import sys
 import textwrap
 import threading
 import time
+import venv
 from pathlib import Path
 
 import pytest
@@ -125,6 +127,21 @@ def make(app, **kw):
 def text_of(result: BridgeResult):
     assert result.content[0]["type"] == "text"
     return json.loads(result.content[0]["text"])
+
+
+@pytest.fixture
+def faustus_runtime(tmp_path):
+    root = os.environ.get("FAUSTUS_TEST_ROOT")
+    if not root:
+        pytest.skip("set FAUSTUS_TEST_ROOT to exercise the installed Faustus child classifier")
+    path = Path(root) / "server_runtime.py"
+    spec = importlib.util.spec_from_file_location("hoard_test_faustus_server_runtime", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.RUNTIME = tmp_path / "faustus-runtime"
+    module.RUNTIME.mkdir()
+    return module
 
 
 # ------------------------------------------------------------------------------------------------ pure helpers
@@ -432,6 +449,10 @@ async def test_urllib_connection_refused_is_not_running(data_dir, no_httpx):
 
 FAKE_PACKAGE = textwrap.dedent('''
     import http.server, json, os, sys
+    if os.environ.get("FAKE_IDENTITY_FILE"):
+        from hoard_link.launch import process_created
+        with open(os.environ["FAKE_IDENTITY_FILE"], "w", encoding="utf-8") as identity:
+            json.dump({"pid": os.getpid(), "created": process_created(os.getpid()), "python": sys.executable, "cwd": os.getcwd()}, identity)
     PORT = int(os.environ["FAKE_PORT"])
     if os.environ.get("FAKE_EXIT_WITH"):
         print("could not start", flush=True)
@@ -443,7 +464,7 @@ FAKE_PACKAGE = textwrap.dedent('''
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
         def do_GET(self):
             if self.path == "/api/health":
-                return self.send_json({"service": "fake-hoard", "pid": os.getpid(), "strict": os.environ.get("PORT_STRICT"), "no_browser": os.environ.get("HOARD_NO_BROWSER"), "cwd": os.getcwd()})
+                return self.send_json({"service": "fake-hoard", "pid": os.getpid(), "strict": os.environ.get("PORT_STRICT"), "no_browser": os.environ.get("HOARD_NO_BROWSER"), "cwd": os.getcwd(), "python": sys.executable})
             self.send_json({"instructions": "", "tools": TOOLS})
         def do_POST(self):
             n = int(self.headers["Content-Length"]); body = json.loads(self.rfile.read(n))
@@ -467,7 +488,7 @@ def fake_package(tmp_path, monkeypatch):
     yield root
     for child in list(bridge._children.values()):
         try:
-            proc.kill_tree(child)
+            proc.kill_tree(child[0])
         except Exception:
             pass
     bridge._children.clear()
@@ -527,6 +548,117 @@ async def test_the_bridge_starts_the_app_when_nothing_answers(fake_package, monk
     assert text_of(result)["echo"] == {"v": 1} and text_of(result)["auth"] == f"Bearer {TOKEN}"
 
 
+def test_stdio_host_exit_does_not_take_down_autostarted_app(fake_package, faustus_runtime):
+    pytest.importorskip("mcp")
+    import psutil
+
+    port = net.free_port()
+    app = type("App", (), {"port": port})()
+    host, send, wait_for, _, _ = rpc_session(app, fake_package / "data", extra_env={"path": [str(fake_package)]},
+                                              autostart=True, root=str(fake_package))
+    server_pid = None
+    server_created = None
+    try:
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        wait_for(lambda message: message.get("id") == 2)
+        deadline = time.monotonic() + 10
+        health = None
+        while time.monotonic() < deadline and health is None:
+            health = net.fetch_health(f"http://127.0.0.1:{port}/api/health", timeout=0.2)
+            time.sleep(0.05)
+        assert health and health["service"] == "fake-hoard"
+        server_pid = int(health["pid"])
+        server_created = psutil.Process(server_pid).create_time()
+        descendants = {child.pid for child in psutil.Process(host.pid).children(recursive=True)}
+        assert server_pid not in descendants
+        cleanup_candidates = {child.pid for child in faustus_runtime._children_to_terminate()}
+        assert server_pid not in cleanup_candidates
+        host.stdin.close()
+        assert host.wait(timeout=10) == 0
+        still_healthy = net.fetch_health(f"http://127.0.0.1:{port}/api/health", timeout=2)
+        assert still_healthy and still_healthy["pid"] == server_pid
+    finally:
+        if host.poll() is None:
+            host.kill()
+            host.wait(timeout=5)
+        if server_pid is not None and server_created is not None and proc.pid_alive(server_pid):
+            try:
+                current = psutil.Process(server_pid)
+                if (abs(current.create_time() - server_created) <= 0.01
+                        and Path(current.cwd()).resolve() == fake_package.resolve()
+                        and "fake_pkg" in current.cmdline()):
+                    proc.kill_tree(server_pid, grace_s=0)
+            except psutil.Error:
+                pass
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows venv redirector regression")
+def test_autostart_uses_venv_redirector_from_a_path_with_spaces(fake_package, tmp_path):
+    import psutil
+
+    venv_root = tmp_path / "venv with spaces"
+    venv.EnvBuilder(with_pip=False).create(venv_root)
+    venv_python = venv_root / "Scripts" / "python.exe"
+    assert venv_python.is_file()
+    port = net.free_port()
+    code = (
+        "import json, os; from hoard_link.bridge import ensure_running; "
+        "ok=ensure_running('fake_pkg', int(os.environ['FAKE_PORT']), service='fake-hoard', "
+        "data_dir=os.environ['FAKE_DATA_DIR'], cwd=os.environ['FAKE_CWD'], port_env='FAKE_PORT', wait_s=20); "
+        "print(json.dumps({'ok':ok}))"
+    )
+    environment = {**os.environ, "FAKE_PORT": str(port), "FAKE_DATA_DIR": str(fake_package / "data"),
+                   "FAKE_CWD": str(fake_package),
+                   "FAKE_IDENTITY_FILE": str(fake_package / "data" / "server-identity.json"),
+                   "PYTHONPATH": os.pathsep.join((str(Path(__file__).resolve().parents[2]), str(fake_package)))}
+    host = subprocess.run([str(venv_python), "-c", code], cwd=fake_package, env=environment,
+                          capture_output=True, text=True, timeout=45)
+    assert host.returncode == 0, host.stderr
+    assert json.loads(host.stdout.strip()) == {"ok": True}
+    identity_path = fake_package / "data" / "server-identity.json"
+    deadline = time.monotonic() + 5
+    while not identity_path.is_file() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    server_pid, server_created = int(identity["pid"]), float(identity["created"])
+    try:
+        health = health_of(port)
+        assert health and health["service"] == "fake-hoard" and int(health["pid"]) == server_pid
+        assert Path(health["python"]).resolve() == venv_python.resolve()
+        assert abs(psutil.Process(server_pid).create_time() - server_created) <= 0.01
+        assert "fake_pkg" in psutil.Process(server_pid).cmdline()
+        assert health_of(port)["pid"] == server_pid                  # the listener stayed up after its venv host exited
+    finally:
+        if proc.pid_alive(server_pid):
+            try:
+                current = psutil.Process(server_pid)
+                if (abs(current.create_time() - server_created) <= 0.01
+                        and Path(current.cwd()).resolve() == fake_package.resolve()
+                        and "fake_pkg" in current.cmdline()
+                        and Path(identity["python"]).resolve() == venv_python.resolve()):
+                    proc.kill_tree(server_pid, grace_s=0)
+            except psutil.Error:
+                pass
+
+
+def test_faustus_detached_ledger_requires_exact_process_identity(tmp_path, faustus_runtime):
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        import psutil
+
+        created = psutil.Process(child.pid).create_time()
+        assert child.pid in {process.pid for process in faustus_runtime._children_to_terminate()}
+        ledger = faustus_runtime.RUNTIME / "detached.json"
+        ledger.write_text(json.dumps({str(child.pid): {"created": created}}), encoding="utf-8")
+        assert child.pid not in {process.pid for process in faustus_runtime._children_to_terminate()}
+        ledger.write_text(json.dumps({str(child.pid): {"created": created + 3}}), encoding="utf-8")
+        assert child.pid in {process.pid for process in faustus_runtime._children_to_terminate()}
+    finally:
+        child.kill()
+        child.wait(timeout=5)
+
+
 async def test_a_call_to_a_stopped_app_starts_it_and_retries(fake_package):
     port = net.free_port()
     b = CatalogBridge(app="fake", service="fake-hoard", package="fake_pkg", default_port=port, data_dir_env="FAKE_DATA_DIR", root=fake_package)
@@ -552,11 +684,11 @@ async def test_autostart_disabled_leaves_the_app_stopped(fake_package, monkeypat
 
 # ------------------------------------------------------------------------------------------------ the real MCP server
 
-def rpc_session(app, data_dir, *, extra_env=None, protocol="2025-06-18", **bridge_kwargs):
+def rpc_session(app, data_dir, *, extra_env=None, protocol="2025-06-18", autostart=False, **bridge_kwargs):
     code = textwrap.dedent(f"""
         from hoard_link.bridge import CatalogBridge
         CatalogBridge(app="fake", service="fake-hoard", package="fake_pkg", default_port={app.port}, data_dir_env="FAKE_DATA_DIR",
-                      autostart=False, heartbeat_s=0.1, title="Fake's Hoard", **{bridge_kwargs!r}).run_bridge()
+                      autostart={autostart!r}, heartbeat_s=0.1, title="Fake's Hoard", **{bridge_kwargs!r}).run_bridge()
     """)
     root = str(Path(__file__).resolve().parents[2])
     env = {**os.environ, "FAKE_DATA_DIR": str(data_dir), "PYTHONPATH": os.pathsep.join(filter(None, [*(extra_env or {}).get("path", []), root]))}
