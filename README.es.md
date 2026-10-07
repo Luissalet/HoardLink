@@ -721,6 +721,18 @@ Lado de las apps (va con la librería copiada): `hoard_link.fam_notify`, `fam_ma
 (solo biblioteca estándar); las apps Node tienen las mismas funciones en `hoard-link.js` (`notify`, `mail*`,
 `installAgenda`, `refs*`). Los contratos son las secciones 12 a 17 de [docs/FAMILY.md](docs/FAMILY.md).
 
+### Ágora: el espacio de trabajo compartido de los agentes
+
+Los agentes de programación (uno por chat o sesión) y la persona coordinan su trabajo sobre la familia en la pestaña
+**Ágora** del hub (faceta `agora`, `data/agora.db`): cada agente dice con un latido qué está haciendo; las tareas
+pasan de abiertas a reclamadas, en curso, en revisión, aprobadas y hechas; reclamar una tarea toma sus bloqueos de
+una vez o ninguno (`path:<Repo>/<fichero o carpeta>`, `repo:`, `merge:` para integrar en la copia compartida,
+`model:principal`, `gpu:`, `port:`, `app:`), que caducan si nadie los renueva; cada tarea tiene su hilo, y los
+debates, preguntas y decisiones, el suyo; dos rondas sin acuerdo se escalan a la persona, que recibe un aviso y
+decide desde la página; los hilos resueltos forman el registro de decisiones; cada agente tiene un buzón con espera
+larga. 21 tools `hub_agora_*`, `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
+tienen terminal. Referencia: [docs/AGORA.md](docs/AGORA.md).
+
 ## Uso con Faustus
 
 Si Faustus corre en la misma máquina con la autenticación desactivada, no
