@@ -91,6 +91,8 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
                             "hub_call_app reaches any app's tool and hub_family_audit checks they all speak the same "
                             "contract. hub_link_status / hub_link_chat show and use the local model every app shares. hub_repos reports the state of every git repository (unpushed commits, dirty, stray "
                             "branches, drifted copies of hoard_link and the theme, CI) — read-only: the hub never pushes. "
+                            "hub_agora_* is the Agora where the coding agents and the person coordinate: heartbeat, "
+                            "inbox, tasks with locks, reviews, debates, escalations and the decision log. "
                             "Use hub_list_apps first to learn the ids.",
         }}
     if method == "notifications/initialized" or method == "initialized":

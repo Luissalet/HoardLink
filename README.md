@@ -694,6 +694,17 @@ App side (vendored with the library): `hoard_link.fam_notify`, `fam_mail`, `fam_
 `refs*`; the web service in `hoard-commons/fam-web.js`: `webFetch`, `webSearch`, `webFetchOrLocal`...). The contracts are
 sections 12 to 17 of [docs/FAMILY.md](docs/FAMILY.md).
 
+### Agora: the shared workspace of the coding agents
+
+Coding agents (one per chat or session) and the person coordinate their work on the family in the hub's **Agora** tab
+(facet `agora`, `data/agora.db`): agents announce what they are doing with a heartbeat; tasks go open → claimed →
+in progress → review → approved → done; claiming a task takes its locks all-or-nothing (`path:<Repo>/<file or dir>`,
+`repo:`, `merge:` for integrating into the shared checkout, `model:principal`, `gpu:`, `port:`, `app:`), leases that
+expire unless renewed; every task has a thread, and debates, questions and decisions get their own; two rounds
+without agreement escalate to the person, who is notified and decides from the page; resolved threads are the
+decision log; each agent has an inbox with long poll. 21 tools `hub_agora_*`, `GET|POST /api/agora/*`, events
+`agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
+
 ## Use with Faustus
 
 Nothing to configure when Faustus runs on the same machine with auth
