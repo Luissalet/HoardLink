@@ -327,7 +327,8 @@
     el.className = `card ${a.state}${busyNow ? " busy" : ""}`;
     const img = $(".icon", el);
     // Keep a cached fallback separate from an icon found by a later rescan.
-    const src = `/api/apps/${encodeURIComponent(a.id)}/icon?available=${a.has_icon ? 1 : 0}`;
+    const revision = a.icon_revision || "missing";
+    const src = `/api/apps/${encodeURIComponent(a.id)}/icon?available=${a.has_icon ? 1 : 0}&revision=${encodeURIComponent(revision)}`;
     if (img.dataset.src !== src) { img.src = src; img.dataset.src = src; }
     $("h2", el).textContent = a.name;
     $("h2", el).title = a.id;

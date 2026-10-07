@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -114,6 +116,29 @@ def test_health_and_ui(served):
     req = urllib.request.Request(url + "/api/apps/dead/icon")  # has an icon too; a missing one falls back
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=5) as resp:
         assert resp.status == 200
+
+
+def test_replaced_icon_gets_revision_and_removed_icon_serves_fallback(served):
+    hub, url = served
+    app = hub.get("fake")
+    icon = Path(app.icon_path)
+    old_revision = app.to_dict()["icon_revision"]
+    before = icon.stat()
+    replacement = b"replacement png payload"
+    icon.write_bytes(replacement)
+    os.utime(icon, ns=(before.st_atime_ns, before.st_mtime_ns + 2_000_000_000))
+    new_revision = app.to_dict()["icon_revision"]
+    assert new_revision and new_revision != old_revision
+    req = urllib.request.Request(url + f"/api/apps/fake/icon?available=1&revision={new_revision}")
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=5) as response:
+        assert response.status == 200 and response.read() == replacement
+        assert response.headers["Cache-Control"] == "max-age=3600"
+
+    icon.unlink()
+    assert app.to_dict()["icon_revision"] is None and app.to_dict()["has_icon"] is False
+    req = urllib.request.Request(url + "/api/apps/fake/icon?available=0&revision=missing")
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=5) as response:
+        assert response.status == 200 and b"<svg" in response.read()
 
 
 def test_api_apps_and_actions(served):

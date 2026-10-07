@@ -40,6 +40,31 @@ def test_scan_reads_family_and_skips_junk(family):
     assert not fake.launchable and "no process launch hint" in fake.launch_reason
 
 
+def test_icon_revision_is_stable_until_stat_changes_or_icon_disappears(family):
+    apps = scan([str(family["root"])])
+    fake = next(app for app in apps if app.id == "fake")
+    first = fake.to_dict()
+    assert first["has_icon"] is True and first["icon_revision"]
+    assert fake.to_dict()["icon_revision"] == first["icon_revision"]
+
+    icon = Path(fake.icon_path)
+    stat = icon.stat()
+    icon.write_bytes(b"replacement bytes with a different length")
+    os.utime(icon, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+    changed = fake.to_dict()
+    assert changed["has_icon"] is True and changed["icon_revision"] != first["icon_revision"]
+
+    icon.unlink()
+    removed = fake.to_dict()
+    assert removed["has_icon"] is False and removed["icon_revision"] is None
+
+
+def test_hub_icon_url_uses_revision_without_per_refresh_nonce():
+    source = (Path(__file__).resolve().parents[2] / "hoard_link" / "hub" / "ui" / "app.js").read_text(encoding="utf-8")
+    assert 'const revision = a.icon_revision || "missing";' in source
+    assert "&revision=${encodeURIComponent(revision)}`" in source
+
+
 def test_unresolved_and_missing_executable(family):
     apps = {a.id: a for a in scan([str(family["root"])])}
     dead = apps["dead"]
