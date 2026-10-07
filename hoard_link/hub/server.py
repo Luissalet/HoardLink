@@ -415,8 +415,9 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if sub == "":
                     return self._json(hub.app_status(app))
                 if sub == "icon":
-                    if app.icon_path and os.path.isfile(app.icon_path):
-                        return self._file(app.icon_path, cache=True)
+                    icon_path = app.icon_path      # read once: a snapshot on another thread may reset it meanwhile
+                    if icon_path and os.path.isfile(icon_path):
+                        return self._file(icon_path, cache=True)
                     return self._file(os.path.join(UI_DIR, "fallback-icon.svg"), cache=True)
                 if sub == "log":
                     n = int(query.get("lines", ["80"])[0])
