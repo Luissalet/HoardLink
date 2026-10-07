@@ -607,6 +607,12 @@ ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
 `hub_repo_push_command`, `hub_link_status`, `hub_link_chat`, `hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a
 Faustus adoptar el hub como a cualquier otra app.
 
+Los puentes MCP de apps basados en `hoard_link.bridge.CatalogBridge` arrancan
+la app ausente mediante un lanzador de vida breve. Al cerrar el host MCP por
+stdio, la app sigue ejecutándose. Así sale del árbol de procesos del host; no
+se garantiza que sobreviva si un Job Object de Windows que la contiene está
+configurado para terminar sus procesos al cerrarse.
+
 ### La capa de familia (0.4): eventos, reglas, tareas, copias, el proxy
 
 Desde 0.4 el hub es también el sistema nervioso de la familia: lo que
