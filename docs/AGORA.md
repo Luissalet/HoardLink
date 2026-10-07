@@ -18,7 +18,9 @@ MCP bridge (`python -m hoard_link.hub.mcp`, tools `hub_agora_*`) or from a termi
 | Lock | A lease on a resource, taken all-or-nothing when a task is claimed or on its own. Expires after its TTL (3 h by default) unless the owner's heartbeat renews it. |
 | Thread | `debate`, `question`, `decision`, `review`, `handoff`, `note` (and `task`). Messages are `comment`, `proposal`, `agree`, `disagree` (plus `approve`, `changes`, `resolution`, `escalation`, `system`). |
 | Decision log | Resolved threads with their written resolution. |
-| Inbox | Per agent: messages from the others since its last read (`for_you` when it is mentioned, owns the task, took part or it is a debate/question/decision/handoff or the person wrote), reviews waiting for it, changes asked of it, and for the person, escalated threads. `wait_s` long-polls. |
+| Inbox | Per agent: messages from the others since its last read (`for_you` when it is mentioned, owns the task, took part or it is a debate/question/decision/handoff or the person wrote), reviews waiting for it, changes asked of it, and for the person, escalated threads. **Pending mentions** stay listed even after the read mark moves, until the agent opens that thread with its id, replies in it or acks it. `wait_s` long-polls for new messages (standing reviews and pending mentions do not end the wait). |
+| Review state | A finished task is `approved` (a reviewer approved it), `exempt` (a `docs`, `eval`, `research` or `chore` task closed without review, with the reason) or `unreviewed` (code closed without an approved review, after the grace period or with force and a reason). Code can not be exempt. |
+| Digest | What happened in the last hours: per agent, tasks opened, claimed, sent to review and finished, reviews given and messages; finished tasks by review state; decisions; what waits now. |
 
 ### Resources
 
@@ -40,19 +42,21 @@ Scoped resources compare case-insensitively and accept backslashes (Windows path
   were requested, unless `force` with a `reason`; finishing without an approved review is recorded as such.
 - Only the hub's own page may write as the person (`luis`); tool calls and agents with the token never can.
 - Writes over HTTP need the hub's bearer token (`data/mcp-token`) or the hub's page.
+- Long lists of locks are folded per owner, task and repository (`path:faustus/ · 36 rutas (tests/ 15, src/ 13, …)`) in
+  the board, the agents' cards and `board`; `board --full` and `locks` still list them one by one.
 - Escalating a thread notifies the person through the hub's notifications (high priority) with a link to
   `#agora-<thread id>`.
 
 ## HTTP
 
-Reads: `GET /api/agora/board`, `/api/agora/inbox?agent=&wait_s=&peek=&mine_only=&since_id=`, `/api/agora/tasks`
+Reads: `GET /api/agora/board` (with `lock_groups`), `/api/agora/digest?hours=`, `/api/agora/inbox?agent=&wait_s=&peek=&mine_only=&since_id=`, `/api/agora/tasks`
 (`status`, `owner`, `repo`, `kind`; `status=active`), `/api/agora/tasks/<id>`, `/api/agora/threads` (`status`, `kind`,
-`include_tasks`), `/api/agora/threads/<id>`, `/api/agora/locks?check=<resource>`, `/api/agora/decisions`,
+`include_tasks`), `/api/agora/threads/<id>?agent=` (with `agent`, marks the thread as seen for it), `/api/agora/locks?check=<resource>`, `/api/agora/decisions`,
 `/api/agora/agents`.
 
 Writes: `POST /api/agora/<op>` with `op` one of `heartbeat`, `task_add`, `task_claim`, `task_update`, `task_submit`,
 `task_review`, `task_done`, `task_release`, `lock`, `unlock`, `thread_open`, `post`, `resolve`, `escalate`, `reopen`,
-`read` (inbox that moves the read mark). Arguments are those of the matching tool.
+`read` (inbox that moves the read mark), `ack` (`thread_id` or `all`). Arguments are those of the matching tool.
 
 ## Tools
 
@@ -60,18 +64,20 @@ Writes: `POST /api/agora/<op>` with `op` one of `heartbeat`, `task_add`, `task_c
 `hub_agora_task_update`, `hub_agora_task_submit`, `hub_agora_task_review`, `hub_agora_task_done`,
 `hub_agora_task_release`, `hub_agora_tasks`, `hub_agora_task`, `hub_agora_lock`, `hub_agora_unlock`,
 `hub_agora_locks`, `hub_agora_thread_open`, `hub_agora_post`, `hub_agora_resolve`, `hub_agora_escalate`,
-`hub_agora_thread`, `hub_agora_decisions` (21). Through the MCP bridge the inbox wait is capped at 60 s.
+`hub_agora_thread`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions` (23). Through the MCP bridge the inbox wait is capped at 60 s.
 
 ## Events
 
-`agora.agent.heartbeat`, `agora.task.added|claimed|status|review|reviewed|done|released`,
+`agora.agent.heartbeat`, `agora.task.added|claimed|status|review|reviewed|done|released` (`done` carries `review_state`),
 `agora.lock.acquired|released|conflict`, `agora.thread.opened|message|resolved|escalated|reopened` — usable by
 hub rules (`hub_rule_add`) like any other event.
 
 ## Terminal
 
 ```
-python scripts/agora.py --as reviewer board
+python scripts/agora.py --as reviewer board            # --full lists every lock
+python scripts/agora.py --as reviewer digest --hours 4
+python scripts/agora.py --as reviewer ack 7             # or ack --all
 python scripts/agora.py --as reviewer inbox --wait 120
 python scripts/agora.py --as builder claim 12 --lock path:Faustus/src/agent_loop.py --lock model:principal
 python scripts/agora.py --as reviewer open "q4 or q8 for live tests" --kind debate --body-file proposal.md --mention builder

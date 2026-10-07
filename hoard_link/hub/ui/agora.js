@@ -28,6 +28,8 @@
     reopen: { es: "Reabrir", en: "Reopen" }, approve: { es: "Aprobar", en: "Approve" }, changes: { es: "Pedir cambios", en: "Ask for changes" },
     write: { es: "Escribe… (Ctrl+Enter envía)", en: "Write… (Ctrl+Enter sends)" }, back: { es: "Volver", en: "Back" },
     owner: { es: "lo lleva", en: "owner" }, reviewer: { es: "revisa", en: "reviewer" }, unreviewed: { es: "sin revisión", en: "unreviewed" },
+    exempt: { es: "exenta de revisión", en: "review exempt" }, more_groups: { es: "más", en: "more" },
+    locks_total: { es: "bloqueos", en: "locks" },
     stale: { es: "sin señales", en: "silent" }, kind_comment: { es: "Comentario", en: "Comment" },
     kind_proposal: { es: "Propuesta", en: "Proposal" }, kind_agree: { es: "De acuerdo", en: "Agree" }, kind_disagree: { es: "En desacuerdo", en: "Disagree" },
     filter_open: { es: "Abiertas", en: "Open" }, filter_all: { es: "Todas", en: "All" }, filter_resolved: { es: "Resueltas", en: "Resolved" },
@@ -68,6 +70,9 @@
       .ag-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
       .ag-dot.working { background: var(--green); } .ag-dot.waiting { background: var(--amber); } .ag-dot.away { background: var(--line); }
       .ag-lockline { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+      details.ag-lockline > summary { cursor: pointer; }
+      details.ag-lockline > div { padding-left: 18px; }
+      .ag-card .pill.warn { color: var(--amber); }
       .ag-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
       .ag-col { background: var(--hoard-sunken); border: 1px solid var(--line); border-radius: 10px; padding: 6px; display: grid; gap: 6px; align-content: start; min-height: 60px; }
       .ag-col > .ag-colhead { color: var(--muted); font-size: 12px; font-weight: 600; padding: 2px 4px; display: flex; justify-content: space-between; }
@@ -132,7 +137,9 @@
       head.appendChild(el("span", "hint", `${st(a.state || "idle")} · ${fmtWhen(a.last_seen)}${a.stale ? " · " + t("stale") : ""}`));
       c.appendChild(head);
       if (a.doing) c.appendChild(el("div", "ag-doing", a.doing));
-      for (const lk of a.locks || []) c.appendChild(el("div", "ag-lockline", "🔒 " + lk));
+      const groups = a.lock_groups || (a.locks || []).map((lk) => ({ label: lk }));
+      for (const g of groups.slice(0, 3)) c.appendChild(el("div", "ag-lockline", "🔒 " + g.label + (g.task_id ? ` · #${g.task_id}` : "")));
+      if (groups.length > 3) c.appendChild(el("div", "ag-lockline", `+${groups.length - 3} ${t("more_groups")}`));
       agentsBox.appendChild(c);
     }
   }
@@ -145,7 +152,8 @@
     if (task.repo) m.appendChild(el("span", "", task.repo));
     if (task.owner) m.appendChild(el("span", "", `${t("owner")}: ${task.owner}`));
     if (task.reviewer && ["review", "approved", "changes"].includes(task.status)) m.appendChild(el("span", "", `${t("reviewer")}: ${task.reviewer}`));
-    if (task.status === "done" && !task.reviewed) m.appendChild(pill(t("unreviewed")));
+    if (task.status === "done" && task.review_state === "exempt") m.appendChild(pill(t("exempt")));
+    else if (task.status === "done" && !task.reviewed) m.appendChild(pill(t("unreviewed"), "warn"));
     c.appendChild(m);
     c.onclick = () => openTask(task.id);
     return c;
@@ -189,12 +197,22 @@
 
   function renderLocks(b) {
     locksBox.replaceChildren();
-    if (!(b.locks || []).length) { locksBox.appendChild(el("div", "hint", t("no_locks"))); return; }
-    for (const lk of b.locks) {
-      const line = el("div", "ag-lockline", `🔒 ${lk.resource} — ${lk.owner}${lk.task_id ? " · #" + lk.task_id : ""} · ${fmtWhen(lk.expires)}${lk.note ? " · " + lk.note : ""}`);
-      locksBox.appendChild(line);
+    const groups = b.lock_groups || (b.locks || []).map((lk) => ({ ...lk, label: lk.resource, resources: [lk.resource], count: 1 }));
+    if (!groups.length) { locksBox.appendChild(el("div", "hint", t("no_locks"))); return; }
+    locksBox.appendChild(el("div", "hint", `${(b.locks || []).length} ${t("locks_total")}`));
+    for (const g of groups) {
+      const head = `🔒 ${g.label} — ${g.owner}${g.task_id ? " · #" + g.task_id : ""} · ${fmtWhen(g.expires)}${g.note && g.count === 1 ? " · " + g.note : ""}`;
+      if ((g.count || 1) > 1) {
+        const d = el("details", "ag-lockline");
+        d.appendChild(el("summary", "", head));
+        for (const r of g.resources || []) d.appendChild(el("div", "", r));
+        locksBox.appendChild(d);
+      } else {
+        locksBox.appendChild(el("div", "ag-lockline", head));
+      }
     }
   }
+
 
   function renderDecisions(b) {
     decisionsBox.replaceChildren();
@@ -314,7 +332,7 @@
     const keep = detailBox.querySelector("textarea");
     const draft = keep ? keep.value : "";
     const focused = keep && document.activeElement === keep;
-    const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}`);
+    const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}?agent=luis`);
     if (!r || !r.ok) return;
     const task = r.task || null;
     const thread = r.thread || { id: task && task.thread_id, kind: "task", status: task && task.status, title: task && task.title };

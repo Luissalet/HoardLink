@@ -132,21 +132,25 @@ def short(s, n=160) -> str:
 
 # ---- printers ---------------------------------------------------------------------------------------------------
 
-def print_board(b: dict) -> None:
+def print_board(b: dict, full: bool = False) -> None:
     print("AGENTES")
     for a in b.get("agents", []):
         flag = " (sin señales)" if a.get("stale") else ""
         print(f"  {a['id']:<14} {a.get('state') or '-':<8} {when(a.get('last_seen'))}{flag}  {short(a.get('doing'), 90)}")
-        for lk in a.get("locks") or []:
-            print(f"      🔒 {lk}")
+        for g in a.get("lock_groups") or [{"label": lk} for lk in a.get("locks") or []]:
+            print(f"      🔒 {g['label']}" + (f"  (tarea #{g['task_id']})" if g.get("task_id") else ""))
     print("\nTAREAS")
     for t in b.get("tasks", []):
         owner = f" @{t['owner']}" if t.get("owner") else ""
         print(f"  #{t['id']:<4} [{t['status']:<11}] p{t.get('priority')} {t.get('repo') or '':<14} {short(t['title'], 70)}{owner}")
-    if b.get("locks"):
+    if b.get("locks") and (full or not b.get("lock_groups")):
         print("\nBLOQUEOS")
         for lk in b["locks"]:
             print(f"  {lk['resource']:<45} {lk['owner']:<12} tarea {lk.get('task_id') or '-':<5} hasta {when(lk['expires'])}")
+    elif b.get("lock_groups"):
+        print(f"\nBLOQUEOS ({len(b['locks'])}; --full para verlos uno a uno)")
+        for g in b["lock_groups"]:
+            print(f"  {short(g['label'], 70):<70} {g['owner']:<12} tarea {g.get('task_id') or '-':<5} hasta {when(g['expires'])}")
     print("\nHILOS")
     for th in b.get("threads", []):
         print(f"  {th['id']:<4} [{th['status']:<9}] {th['kind']:<9} {short(th['title'], 70)} ({th.get('messages')} msj, último {th.get('last_author')})")
@@ -164,6 +168,15 @@ def print_inbox(r: dict) -> None:
         print(f"  REVISAR  #{t['id']} {t['title']} (de {t.get('owner')}, rama {t.get('branch') or '-'}, commits {', '.join(t.get('commits') or []) or '-'})")
     for t in r.get("changes", []):
         print(f"  CAMBIOS  #{t['id']} {t['title']} (revisor {t.get('reviewer')})")
+    if r.get("pending"):
+        print(f"  MENCIONES SIN VER ({len(r['pending'])}; se quitan al abrir el hilo con thread, contestar o con ack):")
+        seen = set()
+        for m in r["pending"]:
+            if m["thread_id"] in seen:
+                continue
+            seen.add(m["thread_id"])
+            n = sum(1 for x in r["pending"] if x["thread_id"] == m["thread_id"])
+            print(f"    hilo {m['thread_id']} · {short(m.get('thread_title'), 60)} · {n} de {m['author']}" + ("…" if n > 1 else ""))
     for th in r.get("escalated", []):
         print(f"  ESCALADO hilo {th['id']}: {th['title']}")
     for m in r.get("messages", []):
@@ -172,6 +185,24 @@ def print_inbox(r: dict) -> None:
         print(f"{mark} [{where} · {m['thread_kind']}] {m['author']} ({m['kind']}, {when(m['created'])}) — {m.get('thread_title')}")
         for line in str(m.get("body") or "").splitlines() or [""]:
             print("      " + line)
+
+
+def print_digest(r: dict) -> None:
+    print(f"Últimas {r.get('hours'):g} h")
+    for agent, c in sorted((r.get("agents") or {}).items()):
+        print(f"  {agent:<14} abiertas {c['opened']} · reclamadas {c['claimed']} · a revisión {c['submitted']} · "
+              f"hechas {c['done']} · revisiones dadas {c['reviews']} · mensajes {c['messages']}")
+    s = r.get("done_by_review") or {}
+    print(f"Hechas: {len(r.get('done') or [])} (revisadas {s.get('approved', 0)}, exentas {s.get('exempt', 0)}, "
+          f"sin revisión {s.get('unreviewed', 0)})")
+    for t in r.get("done") or []:
+        state = {"approved": "revisada", "exempt": "exenta", "unreviewed": "SIN REVISIÓN"}.get(t.get("review_state") or "", "-")
+        print(f"  #{t['id']:<4} {short(t['title'], 70)} @{t.get('owner')} · {state} · {', '.join(t.get('commits') or []) or '-'}")
+    for d in r.get("decisions") or []:
+        print(f"  decisión {d['id']}: {short(d['title'], 50)} → {short(d['resolution'], 70)}")
+    w = r.get("waiting") or {}
+    print(f"Esperando: {len(w.get('reviews') or [])} revisiones, {len(w.get('changes') or [])} con cambios pedidos, "
+          f"{len(w.get('escalated') or [])} escaladas a Luis")
 
 
 def print_conversation(r: dict) -> None:
@@ -208,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument(f"--{n}")
             sp.add_argument(f"--{n}-file", dest=f"{n}_file")
 
-    sub.add_parser("board")
+    s = sub.add_parser("board"); s.add_argument("--full", action="store_true", help="todos los bloqueos, uno a uno")
     s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true")
     s = sub.add_parser("hb"); s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
     s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--repo"); s.add_argument("--paths", action="append")
@@ -232,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("reopen"); s.add_argument("thread", type=int); s.add_argument("--reason", required=True)
     s = sub.add_parser("task"); s.add_argument("task", type=int)
     s = sub.add_parser("thread"); s.add_argument("thread", type=int)
+    s = sub.add_parser("ack"); s.add_argument("thread", type=int, nargs="?"); s.add_argument("--all", action="store_true")
+    s = sub.add_parser("digest"); s.add_argument("--hours", type=float, default=12)
     s = sub.add_parser("tasks"); s.add_argument("--status"); s.add_argument("--owner"); s.add_argument("--repo")
     sub.add_parser("decisions")
     a = p.parse_args(argv)
@@ -241,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(value, list):
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
-    reads = {"board", "task", "thread", "tasks", "decisions", "locks"}
+    reads = {"board", "task", "thread", "tasks", "decisions", "locks", "digest"}
     if a.cmd not in reads and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
@@ -299,7 +332,13 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "task":
         r = call("GET", f"/api/agora/tasks/{a.task}")
     elif c == "thread":
-        r = call("GET", f"/api/agora/threads/{a.thread}")
+        r = call("GET", f"/api/agora/threads/{a.thread}" + (f"?agent={urllib.parse.quote(ag)}" if ag else ""))
+    elif c == "ack":
+        if not a.all and not a.thread:
+            p.error("ack necesita un hilo o --all")
+        r = call("POST", "/api/agora/ack", {"agent": ag, "thread_id": a.thread, "all": a.all})
+    elif c == "digest":
+        r = call("GET", "/api/agora/digest?" + urllib.parse.urlencode({"hours": a.hours}))
     elif c == "tasks":
         q = {k: v for k, v in {"status": a.status, "owner": a.owner, "repo": a.repo}.items() if v}
         r = call("GET", "/api/agora/tasks" + ("?" + urllib.parse.urlencode(q) if q else ""))
@@ -310,7 +349,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(r, ensure_ascii=False, indent=2))
         return 0 if r.get("ok", True) else 1
     if c == "board":
-        print_board(r)
+        print_board(r, full=a.full)
+    elif c == "digest":
+        print_digest(r)
     elif c == "inbox":
         print_inbox(r)
     elif c in ("task", "thread"):
@@ -327,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "hb":
         i = r.get("inbox") or {}
         print(f"ok · latido de {r.get('agent')} · buzón: {i.get('messages', 0)} mensajes ({i.get('for_you', 0)} para ti), "
-              f"{i.get('reviews', 0)} revisiones, {i.get('changes', 0)} cambios")
+              f"{i.get('reviews', 0)} revisiones, {i.get('changes', 0)} cambios, {i.get('pending', 0)} menciones sin ver")
     else:
         brief = r.get("task") or r.get("thread") or {k: v for k, v in r.items() if k != "ok"}
         if isinstance(brief, dict) and "id" in brief:
