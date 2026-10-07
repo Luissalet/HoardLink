@@ -28,11 +28,22 @@ LLM_REGISTRY = httpx.Response(
 EMPTY_REGISTRY = httpx.Response(200, json={"items": []})
 
 
+def llamacpp_ready(router: Router, port: int = 8081, model: str = "qwen3.8-27b-q8-llamacpp") -> Router:
+    router.get(port, "/props", httpx.Response(200, json={
+        "model_path": f"C:/models/{model}.gguf",
+        "default_generation_settings": {},
+    }))
+    router.get(port, "/v1/models", httpx.Response(200, json={"data": [{"id": model}]}))
+    router.get(port, "/slots", httpx.Response(200, json=[]))
+    return router
+
+
 @pytest.mark.asyncio
 async def test_faustus_registry_resolves_llm_with_token():
     router = Router()
     router.get(7000, "/api/health", HEALTHY)
     router.get(7000, "/api/models", LLM_REGISTRY)
+    llamacpp_ready(router)
     cfg = LinkConfig(faustus_token="ody_test")
     link = make_link(router, config=cfg)
 
@@ -52,6 +63,7 @@ async def test_faustus_second_candidate_port_used_when_first_is_down():
     router = Router()
     router.get(7001, "/api/health", HEALTHY)
     router.get(7001, "/api/models", LLM_REGISTRY)
+    llamacpp_ready(router)
     cfg = LinkConfig(faustus_token="ody_test")
     link = make_link(router, config=cfg)
 
@@ -78,6 +90,7 @@ async def test_faustus_without_token_tries_unauthenticated_request():
     router = Router()
     router.get(7000, "/api/health", HEALTHY)
     router.get(7000, "/api/models", LLM_REGISTRY)
+    llamacpp_ready(router)
     cfg = LinkConfig(faustus_token=None)
     link = make_link(router, config=cfg)
 
