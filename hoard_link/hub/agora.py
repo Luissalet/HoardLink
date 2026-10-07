@@ -85,7 +85,7 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE tasks ADD COLUMN reviewed_commits TEXT;
-    UPDATE tasks SET reviewed_commits=commits WHERE reviewed=1;
+    UPDATE tasks SET reviewed_commits=commits WHERE reviewed=1 AND status='approved';
     """,
 ]
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
