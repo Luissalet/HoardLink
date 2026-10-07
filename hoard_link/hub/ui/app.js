@@ -20,6 +20,7 @@
       cannot_start: "Cannot start from here", hub: "hub", browser: "window engine", none: "none (tabs only)",
       psutil_missing: "psutil missing: no pid/stop",
       gpu_none: "No NVIDIA GPU found (nvidia-smi); leases are granted without a memory check.",
+      gpu_probe_failed: "GPU detection failed. Memory could not be verified; new requests remain queued.",
       gpu_summary: (n, l, q) => `${n} GPU · ${l} lease${l === 1 ? "" : "s"} · ${q} queued`,
       used: "used", reserved: "reserved", available: "available", release: "Release", released: "lease released",
       queued: "queued", granted: "granted", no_leases: "No GPU leases.", expires: "expires in", owner: "owner",
@@ -55,6 +56,7 @@
       cannot_start: "No se puede arrancar desde aquí", hub: "hub", browser: "motor de ventanas", none: "ninguno (solo pestañas)",
       psutil_missing: "falta psutil: sin pid ni parar",
       gpu_none: "No se encontró GPU NVIDIA (nvidia-smi); las reservas se conceden sin comprobar memoria.",
+      gpu_probe_failed: "Falló la detección de GPU. No se pudo verificar la memoria; las nuevas solicitudes siguen en cola.",
       gpu_summary: (n, l, q) => `${n} GPU · ${l} reserva${l === 1 ? "" : "s"} · ${q} en cola`,
       used: "usada", reserved: "reservada", available: "disponible", release: "Liberar", released: "reserva liberada",
       queued: "en cola", granted: "concedida", no_leases: "Sin reservas de GPU.", expires: "caduca en", owner: "dueño",
@@ -498,11 +500,14 @@
     const d = leaseData;
     if (!d) return;
     const leases = d.leases || [], queue = d.queue || [];
-    $("#gpu-summary").textContent = t("gpu_summary", (d.gpus || []).length, leases.length, queue.length);
+    const probeFailed = d.inventory_status === "error";
+    $("#gpu-summary").textContent = t("gpu_summary", probeFailed ? "?" : (d.gpus || []).length, leases.length, queue.length);
     const cards = $("#gpu-cards");
     cards.innerHTML = "";
     if (!d.inventory) {
-      const p = document.createElement("div"); p.className = "gpu-none"; p.textContent = t("gpu_none"); cards.appendChild(p);
+      const p = document.createElement("div"); p.className = "gpu-none";
+      p.textContent = probeFailed ? `${t("gpu_probe_failed")} ${d.inventory_error || ""}` : t("gpu_none");
+      cards.appendChild(p);
     }
     for (const g of d.gpus || []) {
       const card = document.createElement("div");
