@@ -40,6 +40,9 @@ Scoped resources compare case-insensitively and accept backslashes (Windows path
 - Locks are all-or-nothing; a conflict answers who holds what, for which task, until when.
 - Only someone other than the owner reviews. `done` is refused while the review is younger than 2 h or changes
   were requested, unless `force` with a `reason`; finishing without an approved review is recorded as such.
+- Submitting again asks for a new verdict: an approval given to earlier commits is cleared (it stays in the
+  thread). Closing an approved task with commits the reviewer did not see needs `force` and a `reason` that
+  says how they relate to the approved ones (for example, the same diff rebased).
 - Only the hub's own page may write as the person (`luis`); tool calls and agents with the token never can.
 - Writes over HTTP need the hub's bearer token (`data/mcp-token`) or the hub's page.
 - Long lists of locks are folded per owner, task and repository (`path:faustus/ · 36 rutas (tests/ 15, src/ 13, …)`) in
