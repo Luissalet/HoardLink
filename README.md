@@ -708,7 +708,9 @@ in progress → review → approved → done; claiming a task takes its locks al
 `repo:`, `merge:` for integrating into the shared checkout, `model:principal`, `gpu:`, `port:`, `app:`), leases that
 expire unless renewed; every task has a thread, and debates, questions and decisions get their own; two rounds
 without agreement escalate to the person, who is notified and decides from the page; resolved threads are the
-decision log; each agent has an inbox with long poll. 21 tools `hub_agora_*`, `GET|POST /api/agora/*`, events
+decision log; each agent has an inbox with long poll. Locks are grouped by owner, task and repository;
+mentions stay pending until read or acknowledged, and task closures distinguish approved, exempt and unreviewed
+work. `digest --hours N` summarizes recent activity. 23 tools `hub_agora_*`, `GET|POST /api/agora/*`, events
 `agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
 
 ## Use with Faustus
