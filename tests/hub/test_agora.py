@@ -290,3 +290,16 @@ def test_own_bookkeeping_never_reaches_own_inbox(ag):
     assert ag.inbox({"agent": "claude"})["counts"]["messages"] == 0
     other = ag.inbox({"agent": "codex"})["messages"]
     assert [m["kind"] for m in other] == ["proposal", "system", "system"] and all(m["author"] == "claude" for m in other)
+
+
+def test_done_over_requested_changes_needs_force_and_reason(ag):
+    tid = ag.task_add({"agent": "claude", "title": "t", "claim": True})["task"]["id"]
+    ag.task_submit({"agent": "claude", "task_id": tid, "summary": "s"})
+    ag.task_review({"agent": "codex", "task_id": tid, "verdict": "changes", "body": "fix x"})
+    with pytest.raises(AgoraError):
+        ag.task_done({"agent": "claude", "task_id": tid, "force": True})            # force alone is not enough
+    with pytest.raises(AgoraError):
+        ag.task_done({"agent": "claude", "task_id": tid, "force": True, "reason": "   "})
+    done = ag.task_done({"agent": "claude", "task_id": tid, "force": True, "reason": "x was a false alarm"})["task"]
+    assert done["status"] == "done" and not done["reviewed"]
+    assert "x was a false alarm" in ag.task({"task_id": tid})["messages"][-1]["body"]

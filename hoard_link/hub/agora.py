@@ -550,7 +550,7 @@ class Agora:
                 if waited < self.review_grace_s and not (a.get("force") and str(a.get("reason") or "").strip()):
                     raise AgoraError(f"task {task['id']} has been waiting for review {int(waited // 60)} min; wait "
                                      f"{int(self.review_grace_s // 60)} min or pass force with a reason", 409)
-            if task["status"] == "changes" and not a.get("force"):
+            if task["status"] == "changes" and not (a.get("force") and str(a.get("reason") or "").strip()):
                 raise AgoraError(f"the reviewer asked for changes on task {task['id']}: address them and submit again, "
                                  "or pass force with a reason", 409)
             commits = _list(a.get("commits"), "commits") or task["commits"]
