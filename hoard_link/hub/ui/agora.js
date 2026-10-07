@@ -219,7 +219,17 @@
     if (!esc.length && !reviews.length) { waitBox.hidden = true; return; }
     waitBox.hidden = false;
     waitBox.appendChild(el("h4", "", `🙋 ${t("waiting")} (${esc.length + reviews.length})`));
-    for (const th of esc) waitBox.appendChild(threadRow({ ...th, status: "escalated" }));
+    for (const th of esc) {
+      const row = el("div", "ag-th escalated");
+      row.appendChild(pill(S["k_" + th.kind] ? t("k_" + th.kind) : th.kind));
+      const txt = el("span", "ag-t");
+      txt.appendChild(el("b", "", th.title));
+      if (th.question) txt.appendChild(el("div", "hint", `${th.escalated_by || ""}: ${th.question}`));
+      row.appendChild(txt);
+      row.appendChild(el("span", "hint", fmtWhen(th.updated)));
+      row.onclick = () => openThread(th.id);
+      waitBox.appendChild(row);
+    }
     for (const task of reviews) waitBox.appendChild(taskCard(task));
   }
 
@@ -406,9 +416,12 @@
   function openFromHash() {
     const m = /^#agora-(\d+)$/.exec(location.hash || "");
     if (!m) return false;
-    const me = document.querySelector('#family-tabs .tab[data-tab="agora"]');
-    if (me && !me.classList.contains("on")) me.click();
-    openThread(Number(m[1]));
+    const id = Number(m[1]);
+    const select = () => { const me = document.querySelector('#family-tabs .tab[data-tab="agora"]'); if (me && !me.classList.contains("on")) me.click(); };
+    select();
+    if (!current || current.id !== id || current.type !== "thread") openThread(id);
+    // the hub restores the last tab it showed once its own data arrives: select ours again after that
+    for (const ms of [800, 2000, 4000]) setTimeout(() => { if (location.hash === `#agora-${id}`) select(); }, ms);
     return true;
   }
 
