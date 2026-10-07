@@ -77,6 +77,33 @@ def call(method: str, path: str, body: dict | None = None, timeout: float = 150.
         return {"ok": False, "error": f"hub not reachable at {_url()}: {exc}"}
 
 
+_MOJIBAKE = ("Ã", "Â", "â€", "├", "┬", "┤", "Ô")
+
+
+def fix_text(value: str) -> str:
+    """Undo the classic Windows double encoding of command-line text (UTF-8 bytes read as cp1252/cp850 by a
+    BOM-less PowerShell 5.1 script or a batch file): «Â¿Ãgora» → «¿Ágora». Text that is already right is kept."""
+    if not isinstance(value, str) or not any(m in value for m in _MOJIBAKE):
+        return value
+    for enc in ("cp1252", "cp850"):
+        raw = bytearray()
+        try:
+            for ch in value:
+                try:
+                    raw += ch.encode(enc)
+                except UnicodeEncodeError:
+                    if ord(ch) < 256:
+                        raw.append(ord(ch))
+                    else:
+                        raise
+            fixed = bytes(raw).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if fixed != value:
+            return fixed
+    return value
+
+
 def text_arg(args: argparse.Namespace, name: str) -> str | None:
     path = getattr(args, f"{name}_file", None)
     if path:
@@ -208,6 +235,11 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("tasks"); s.add_argument("--status"); s.add_argument("--owner"); s.add_argument("--repo")
     sub.add_parser("decisions")
     a = p.parse_args(argv)
+    for key, value in list(vars(a).items()):
+        if isinstance(value, str) and not key.endswith("_file"):
+            setattr(a, key, fix_text(value))
+        elif isinstance(value, list):
+            setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
     reads = {"board", "task", "thread", "tasks", "decisions", "locks"}
     if a.cmd not in reads and not a.agent:
@@ -292,6 +324,10 @@ def main(argv: list[str] | None = None) -> int:
         print("libre" if r["free"] else "ocupado por " + ", ".join(f"{x['owner']} ({x['resource']})" for x in r["held_by"]))
     elif c == "locks":
         print_board({"locks": r.get("locks", [])})
+    elif c == "hb":
+        i = r.get("inbox") or {}
+        print(f"ok · latido de {r.get('agent')} · buzón: {i.get('messages', 0)} mensajes ({i.get('for_you', 0)} para ti), "
+              f"{i.get('reviews', 0)} revisiones, {i.get('changes', 0)} cambios")
     else:
         brief = r.get("task") or r.get("thread") or {k: v for k, v in r.items() if k != "ok"}
         if isinstance(brief, dict) and "id" in brief:
