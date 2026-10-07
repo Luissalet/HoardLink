@@ -282,3 +282,11 @@ def test_cli_repairs_windows_double_encoding():
     assert cli.fix_text("Probando el \u00c3\u0081gora") == "Probando el Ágora"
     assert cli.fix_text("c├│mo, due├▒o") == "cómo, dueño"
     assert cli.fix_text("ya bien: ¿Ágora?") == "ya bien: ¿Ágora?"
+
+
+def test_own_bookkeeping_never_reaches_own_inbox(ag):
+    tid = ag.task_add({"agent": "claude", "title": "t", "claim": True})["task"]["id"]
+    ag.task_update({"agent": "claude", "task_id": tid, "status": "in_progress"})
+    assert ag.inbox({"agent": "claude"})["counts"]["messages"] == 0
+    other = ag.inbox({"agent": "codex"})["messages"]
+    assert [m["kind"] for m in other] == ["proposal", "system", "system"] and all(m["author"] == "claude" for m in other)

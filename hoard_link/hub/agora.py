@@ -267,9 +267,10 @@ class Agora:
         self.db.execute("UPDATE threads SET updated=? WHERE id=?", (now, thread_id))
         return mid
 
-    def _system(self, task: dict[str, Any], text: str) -> None:
+    def _system(self, task: dict[str, Any], text: str, actor: str = "system") -> None:
+        """A bookkeeping line in the task's thread, authored by whoever caused it (so it never lands in their own inbox)."""
         if task.get("thread_id"):
-            self._msg(int(task["thread_id"]), "system", "system", text)
+            self._msg(int(task["thread_id"]), actor, "system", text)
 
     def _live_locks(self) -> list[dict[str, Any]]:
         now = self.clock()
@@ -439,7 +440,7 @@ class Agora:
                     raise AgoraError(f"task {task['id']} is held by {owner}"
                                      + ("" if self._agent_stale(owner) else " (active)"), 409, owner=owner)
                 self.db.execute("DELETE FROM locks WHERE owner=? AND task_id=?", (owner, task["id"]))
-                self._system(task, f"{agent} toma la tarea: {owner} lleva más de 6 h sin dar señales.")
+                self._system(task, f"{agent} toma la tarea: {owner} lleva más de 6 h sin dar señales.", agent)
             locks = _list(a.get("locks"), "locks") or [f"path:{task['repo']}/{p}" for p in task["paths"] if task.get("repo")]
             got = self._acquire(agent, locks, task["id"], ttl, task["title"][:120]) if locks else {"ok": True, "locks": []}
             if not got["ok"]:
@@ -450,7 +451,7 @@ class Agora:
             self.db.execute("UPDATE tasks SET owner=?, status=?, claimed_at=?, updated=? WHERE id=?",
                             (agent, status, now, now, task["id"]))
             if owner != agent:
-                self._system(task, f"{agent} reclama la tarea" + (f" con {', '.join(got['locks'])}" if got["locks"] else "") + ".")
+                self._system(task, f"{agent} reclama la tarea" + (f" con {', '.join(got['locks'])}" if got["locks"] else "") + ".", agent)
         self._bump("agora.task.claimed", {"task_id": task["id"], "agent": agent, "locks": got["locks"]})
         return {"ok": True, "task": self._task_row(task["id"]), "locks": got["locks"]}
 
@@ -486,7 +487,7 @@ class Agora:
             if note:
                 self._msg(int(task["thread_id"]), agent, "comment", note)
             elif status != task["status"]:
-                self._system(task, f"{agent}: {task['status']} → {status}.")
+                self._system(task, f"{agent}: {task['status']} → {status}.", agent)
         self._bump("agora.task.status", {"task_id": task["id"], "agent": agent, "status": status})
         return {"ok": True, "task": self._task_row(task["id"])}
 
