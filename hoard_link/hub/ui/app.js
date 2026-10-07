@@ -214,6 +214,15 @@
     }
   }
 
+  // Icon URL for the other views, with the snapshot's revision from the first render: the image is fetched once and
+  // syncAppIconImages has nothing to rewrite. Without a snapshot yet it falls back to the bare URL.
+  window.hubAppIcon = (id) => {
+    const base = `/api/apps/${encodeURIComponent(id)}/icon`;
+    const app = snapshot && snapshot.apps.find((a) => a.id === id);
+    if (!app) return base;
+    return `${base}?available=${app.has_icon ? 1 : 0}&revision=${encodeURIComponent(app.icon_revision || "missing")}`;
+  };
+
   const faustusPending = new Set();
   let batchBusy = false;
   async function runFaustus(action) {

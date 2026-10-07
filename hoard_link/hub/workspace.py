@@ -82,8 +82,14 @@ class WorkspaceFacet(Facet):
             return Reply({"ok": False, "error": "Atlas is not installed"}, status=503)
         result = self.hub.call_app("atlas", tool, args, caller=caller)
         if not result.get("ok"):
-            status = result.get("status") or (503 if result.get("error") == "not reachable" else 502)
-            return Reply({"ok": False, "error": result.get("error", "Atlas call failed"), "atlas": result}, status=int(status))
+            # Atlas may answer 200 with ok:false: a failure is never reported with a success status.
+            try:
+                status = int(result.get("status") or 0)
+            except (TypeError, ValueError):
+                status = 0
+            if status < 400:
+                status = 503 if result.get("error") == "not reachable" else 502
+            return Reply({"ok": False, "error": result.get("error", "Atlas call failed"), "atlas": result}, status=status)
         # Preserve the original workspace REST/MCP contract: successful calls
         # return Atlas's result object directly; callers depend on its fields.
         return Reply(result.get("result"))
@@ -103,7 +109,8 @@ class WorkspaceFacet(Facet):
         return self._call(req.caller(), tool or operation, req.body.get("arguments"))
 
     def handlers(self):
-        out = {"hub_atlas_" + suffix: (lambda args, op=suffix: self._call("hub", op, args).payload)
+        out = {"hub_atlas_" + suffix: (lambda args, op=suffix: self._call("hub", op, args or {}).payload)
                for suffix, *_ in _SPECS}
-        out["hub_workspace"] = lambda args: self._call("hub", args.get("tool"), args.get("arguments", {})).payload
+        out["hub_workspace"] = lambda args: self._call("hub", (args or {}).get("tool"),
+                                                       (args or {}).get("arguments", {})).payload
         return out
