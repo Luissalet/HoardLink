@@ -28,7 +28,8 @@
     reopen: { es: "Reabrir", en: "Reopen" }, approve: { es: "Aprobar", en: "Approve" }, changes: { es: "Pedir cambios", en: "Ask for changes" },
     write: { es: "Escribe… (Ctrl+Enter envía)", en: "Write… (Ctrl+Enter sends)" }, back: { es: "Volver", en: "Back" },
     owner: { es: "lo lleva", en: "owner" }, reviewer: { es: "revisa", en: "reviewer" }, unreviewed: { es: "sin revisión", en: "unreviewed" },
-    exempt: { es: "exenta de revisión", en: "review exempt" }, more_groups: { es: "más", en: "more" },
+    exempt: { es: "exenta de revisión", en: "review exempt" },
+    equivalent: { es: "integrada como equivalente", en: "integrated as equivalent" }, more_groups: { es: "más", en: "more" },
     locks_total: { es: "bloqueos", en: "locks" },
     stale: { es: "sin señales", en: "silent" }, kind_comment: { es: "Comentario", en: "Comment" },
     kind_proposal: { es: "Propuesta", en: "Proposal" }, kind_agree: { es: "De acuerdo", en: "Agree" }, kind_disagree: { es: "En desacuerdo", en: "Disagree" },
@@ -153,6 +154,7 @@
     if (task.owner) m.appendChild(el("span", "", `${t("owner")}: ${task.owner}`));
     if (task.reviewer && ["review", "approved", "changes"].includes(task.status)) m.appendChild(el("span", "", `${t("reviewer")}: ${task.reviewer}`));
     if (task.status === "done" && task.review_state === "exempt") m.appendChild(pill(t("exempt")));
+    else if (task.status === "done" && task.review_state === "equivalent") m.appendChild(pill(t("equivalent")));
     else if (task.status === "done" && !task.reviewed) m.appendChild(pill(t("unreviewed"), "warn"));
     c.appendChild(m);
     c.onclick = () => openTask(task.id);

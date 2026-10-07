@@ -131,7 +131,11 @@ def test_review_flow(ag):
     assert "were not reviewed" in str(exc.value)
     done = ag.task_done({"agent": "claude", "task_id": tid, "result": "merged", "commits": ["def456"], "force": True,
                          "reason": "def456 is abc123 rebased onto main, same diff"})["task"]
-    assert done["status"] == "done" and done["reviewed"] and done["commits"] == ["def456"]
+    assert done["status"] == "done" and done["commits"] == ["def456"] and done["reviewed_commits"] == ["abc123"]
+    assert done["review_state"] == "equivalent"           # not an approval of def456: codex never saw it
+    resolution = ag.thread({"thread_id": done["thread_id"]})["messages"][-1]["body"]
+    assert "abc123" in resolution and "def456" in resolution and "same diff" in resolution
+    assert ag.digest({"hours": 1})["done_by_review"]["equivalent"] == 1
     assert ag.locks()["locks"] == []
 
 
@@ -389,7 +393,7 @@ def test_digest_counts_by_agent_and_review_state(ag):
     d = ag.digest({"hours": 1})
     assert d["agents"]["codex"]["done"] == 1 and d["agents"]["claude"]["submitted"] == 1
     assert d["agents"]["codex"]["reviews"] == 1
-    assert d["done_by_review"] == {"approved": 1, "exempt": 1, "unreviewed": 0}
+    assert d["done_by_review"] == {"approved": 1, "equivalent": 0, "exempt": 1, "unreviewed": 0}
     ag.fake_clock.t += 2 * 3600
     assert ag.digest({"hours": 1})["done"] == []
 
@@ -422,4 +426,4 @@ def test_resubmitting_new_commits_clears_the_previous_approval(ag):
     assert [t["id"] for t in ag.inbox({"agent": "codex", "peek": True})["reviews"]] == [tid]
     ag.task_review({"agent": "codex", "task_id": tid, "verdict": "approve", "body": "bbb222 checked"})
     done = ag.task_done({"agent": "claude", "task_id": tid, "commits": ["aaa111", "bbb222"]})["task"]
-    assert done["review_state"] == "approved"
+    assert done["review_state"] == "approved" and done["reviewed_commits"] == ["aaa111", "bbb222"]
