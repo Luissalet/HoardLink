@@ -47,12 +47,15 @@ Standard library only; ``psutil`` (optional) for the pid checks.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import threading
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Optional
+
+log = logging.getLogger(__name__)
 
 DEFAULT_TTL_S = 1800
 MIN_TTL_S = 5
@@ -99,9 +102,9 @@ class _Gpu:
     used_mb: int
 
 
-def _default_gpu_fn() -> list[Any]:
-    from hoard_link.gpu import gpu_free_mb
-    return gpu_free_mb()
+def _default_gpu_fn() -> Any:
+    from hoard_link.gpu import probe_gpu_memory
+    return probe_gpu_memory()
 
 
 def _as_index_list(value: Any) -> list[int]:
@@ -206,7 +209,7 @@ class LeaseArbiter:
         self,
         path: Optional[str] = None,
         *,
-        gpu_fn: Optional[Callable[[], list[Any]]] = None,
+        gpu_fn: Optional[Callable[[], Any]] = None,
         headroom_mb: int = DEFAULT_HEADROOM_MB,
         now: Callable[[], float] = time.time,
         alive: Callable[[int, Optional[float]], bool] = pid_alive,
@@ -226,6 +229,9 @@ class LeaseArbiter:
         self._base_used: dict[int, int] = {}
         self._seq = 0
         self._inv: tuple[float, list[_Gpu]] = (-1e18, [])
+        self._inventory_error = ""
+        self._inventory_error_type = ""
+        self._inventory_status = "unprobed"
         self.reaped: list[dict[str, Any]] = []   # last few reaps, for the UI
         #: Optional ``(kind, lease_dict)`` callback: "granted" / "released" / "expired".
         self.on_event: Optional[Callable[[str, dict[str, Any]], None]] = None
@@ -249,11 +255,30 @@ class LeaseArbiter:
         if not force and now - ts < self._cache_s:
             return gpus
         out: list[_Gpu] = []
+        error = ""
+        error_type = ""
         try:
-            for g in self._gpu_fn() or []:
+            from hoard_link.gpu import GpuProbe
+            result = self._gpu_fn()
+            if isinstance(result, GpuProbe):
+                error, error_type = result.error, result.error_type
+                rows = result.gpus if not error else ()
+            elif result is None:
+                error, error_type = "GPU inventory provider returned no result", "invalid_output"
+                rows = ()
+            else:
+                rows = result
+            for g in rows:
                 out.append(_Gpu(int(getattr(g, "index")), int(getattr(g, "total_mb")), int(getattr(g, "used_mb"))))
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             out = []
+            error, error_type = f"GPU inventory query failed: {str(exc)[:300]}", "provider_error"
+        if error and error != self._inventory_error:
+            log.warning("GPU inventory unavailable (%s): %s", error_type, error)
+        elif not error and self._inventory_error:
+            log.info("GPU inventory recovered: %s device(s)", len(out))
+        self._inventory_error, self._inventory_error_type = error, error_type
+        self._inventory_status = "error" if error else "ready" if out else "empty"
         self._inv = (now, out)
         return out
 
@@ -350,9 +375,14 @@ class LeaseArbiter:
         blocked: set[int] = set()
         now = self._now()
         for lease in self._queue():
+            if self._inventory_error:
+                note = f"GPU memory could not be verified: {self._inventory_error}; request remains queued"
+                if lease.note != note:
+                    lease.note = note
+                    changed = True
+                continue
             if not gpus:
-                # No inventory (no NVIDIA GPU, or nvidia-smi missing): nothing
-                # to arbitrate against; grant so apps are never stuck.
+                # A successful empty probe confirms there is no inventory to arbitrate.
                 self._grant(lease, None, now, "no GPU inventory; granted without a memory check")
                 changed = True
                 continue
@@ -539,4 +569,6 @@ class LeaseArbiter:
             granted = [l.to_dict(now) for l in self._ordered() if l.state == "granted"]
             queue = [dict(l.to_dict(now), position=i) for i, l in enumerate(self._queue(), 1)]
             return {"ok": True, "gpus": per_gpu, "inventory": bool(gpus), "leases": granted, "queue": queue,
+                    "inventory_status": self._inventory_status, "inventory_error": self._inventory_error or None,
+                    "inventory_error_type": self._inventory_error_type or None,
                     "headroom_mb": self.headroom_mb, "protected_gpus": list(self.protected_gpus), "reaped": list(self.reaped[-10:]), "checked_at": self._inv[0]}

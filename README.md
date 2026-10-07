@@ -549,8 +549,11 @@ async with lease(vram_mb=20000, purpose="video render", owner="daguerre", priori
   `gpu_lease.timeout_s` into `Unavailable`. A request the hub rejects
   outright (e.g. an estimate larger than one GPU, for a model Ollama would
   split across several) loads without a lease.
-* No NVIDIA GPU (no `nvidia-smi`): leases are granted without a memory
-  check, so the same code runs everywhere.
+* A successful inventory query returning no GPUs keeps the CPU-host fallback.
+  Missing `nvidia-smi`, timeouts, driver errors and invalid memory rows are
+  probe failures: new requests remain queued, with the reason. The Hub shows
+  an unavailable inventory instead of claiming there are zero GPUs. A recovered
+  query applies the ordinary memory accounting before admitting queued work.
 
 HTTP (loopback, no token, same cross-site guard as the UI):
 `POST /api/lease/request` `{owner, purpose, vram_mb, gpu, priority, ttl_s, wait, pid}`

@@ -570,8 +570,12 @@ async with lease(vram_mb=20000, purpose="render de vídeo", owner="daguerre", pr
   larga que `gpu_lease.timeout_s` en `Unavailable`. Si el hub rechaza la
   petición de plano (p. ej. una estimación mayor que una GPU, para un
   modelo que Ollama repartiría entre varias) se carga sin reserva.
-* Sin GPU NVIDIA (sin `nvidia-smi`) las reservas se conceden sin mirar la
-  memoria, así el mismo código funciona en cualquier máquina.
+* Una consulta correcta que devuelve cero GPUs conserva el caso de máquina
+  sin GPU. Si falta `nvidia-smi`, tarda demasiado, el controlador devuelve un
+  error o hay filas de memoria inválidas, las nuevas solicitudes quedan en
+  cola con el motivo. El Hub muestra inventario no disponible en vez de afirmar
+  que hay cero GPUs. Al recuperarse la consulta, comprueba la memoria antes de
+  conceder las solicitudes en cola.
 
 HTTP (loopback, sin token, con la misma protección cross-site que la
 interfaz): `POST /api/lease/request`
