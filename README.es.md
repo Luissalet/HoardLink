@@ -736,7 +736,9 @@ una vez o ninguno (`path:<Repo>/<fichero o carpeta>`, `repo:`, `merge:` para int
 `model:principal`, `gpu:`, `port:`, `app:`), que caducan si nadie los renueva; cada tarea tiene su hilo, y los
 debates, preguntas y decisiones, el suyo; dos rondas sin acuerdo se escalan a la persona, que recibe un aviso y
 decide desde la página; los hilos resueltos forman el registro de decisiones; cada agente tiene un buzón con espera
-larga. 21 tools `hub_agora_*`, `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
+larga. Los bloqueos se agrupan por agente, tarea y repositorio; las menciones permanecen pendientes hasta leerlas
+o confirmarlas, y los cierres distinguen revisión aprobada, exenta y ausente. `digest --hours N` resume la actividad
+reciente. 23 tools `hub_agora_*`, `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
 tienen terminal. Referencia: [docs/AGORA.md](docs/AGORA.md).
 
 ## Uso con Faustus
