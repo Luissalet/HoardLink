@@ -452,7 +452,8 @@ FAKE_PACKAGE = textwrap.dedent('''
     if os.environ.get("FAKE_IDENTITY_FILE"):
         from hoard_link.launch import process_created
         with open(os.environ["FAKE_IDENTITY_FILE"], "w", encoding="utf-8") as identity:
-            json.dump({"pid": os.getpid(), "created": process_created(os.getpid()), "python": sys.executable, "cwd": os.getcwd()}, identity)
+            json.dump({"pid": os.getpid(), "created": process_created(os.getpid()), "python": sys.executable,
+                       "cwd": os.getcwd(), "parent_pid": os.getppid(), "module": "fake_pkg", "port": int(os.environ["FAKE_PORT"])}, identity)
     PORT = int(os.environ["FAKE_PORT"])
     if os.environ.get("FAKE_EXIT_WITH"):
         print("could not start", flush=True)
@@ -486,16 +487,160 @@ def fake_package(tmp_path, monkeypatch):
     for name in ("FAKE_DATA_DIR", "FAKE_PORT", "FAKE_URL", "FAKE_BRIDGE_AUTOSTART", "FAKE_EXIT_WITH"):
         monkeypatch.delenv(name, raising=False)
     yield root
-    for child in list(bridge._children.values()):
-        try:
-            proc.kill_tree(child[0])
-        except Exception:
-            pass
-    bridge._children.clear()
+    _cleanup_tracked_fake_apps(root)
 
 
 def health_of(port):
     return net.fetch_health(f"http://127.0.0.1:{port}/api/health", timeout=2)
+
+
+def _stop_verified_windows_fixture(root: Path, port: int, venv_python: Path, started_at: float) -> list[int]:
+    """Stop only this test's module processes, after checking their full fixture identity."""
+    import psutil
+
+    expected_python = str(venv_python.resolve()).casefold()
+    expected_cwd = str(root.resolve()).casefold()
+
+    def is_fixture(process):
+        try:
+            info = process.as_dict(attrs=["create_time", "cmdline", "cwd"])
+            argv = info.get("cmdline") or []
+            return (info.get("create_time", 0) >= started_at
+                    and len(argv) >= 3 and str(Path(argv[0]).resolve()).casefold() == expected_python
+                    and argv[1:3] == ["-m", "fake_pkg"]
+                    and str(Path(info.get("cwd") or "").resolve()).casefold() == expected_cwd)
+        except (psutil.Error, OSError, ValueError):
+            return False
+
+    matches = [p for p in psutil.process_iter() if is_fixture(p)]
+    match_pids = {p.pid for p in matches}
+    unexpected_descendants = []
+    for process in matches:
+        try:
+            descendants = process.children(recursive=True)
+        except psutil.Error:
+            descendants = []
+        for child in reversed(descendants):
+            if child.pid not in match_pids and child.is_running():
+                unexpected_descendants.append((process.pid, child.pid))
+                continue
+            if child.pid in match_pids:
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+        for child in descendants:
+            try:
+                child.wait(timeout=3)
+            except (psutil.Error, psutil.TimeoutExpired):
+                pass
+        try:
+            process.kill()
+        except psutil.NoSuchProcess:
+            pass
+    for process in matches:
+        try:
+            process.wait(timeout=5)
+        except (psutil.Error, psutil.TimeoutExpired):
+            pass
+
+    leftovers = [p.pid for p in psutil.process_iter() if is_fixture(p)]
+    if leftovers:
+        raise AssertionError(f"verified fake_pkg process remains after cleanup: {leftovers}")
+    deadline = time.monotonic() + 3
+    while not net.can_listen(port) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not net.can_listen(port):
+        raise AssertionError(f"fake fixture listener remains on port {port}")
+    if unexpected_descendants:
+        raise AssertionError(
+            "unexpected descendant(s) were left untouched after verified fake_pkg cleanup: "
+            f"{unexpected_descendants}"
+        )
+    return leftovers
+
+
+def test_windows_fixture_cleanup_stops_verified_processes_before_reporting_unknown_child(tmp_path, monkeypatch):
+    import psutil
+
+    root = tmp_path / "fixture root"
+    root.mkdir()
+    python = root / "venv" / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    known = _FakeCleanupProcess(41001, python, root, children=[])
+    unknown = _FakeCleanupProcess(41002, Path(sys.executable), root, children=[])
+    known._children = [unknown]
+    scans = 0
+
+    def process_iter():
+        nonlocal scans
+        scans += 1
+        return [known] if scans == 1 else []
+
+    monkeypatch.setattr(psutil, "process_iter", process_iter)
+    monkeypatch.setattr(net, "can_listen", lambda port: True)
+
+    with pytest.raises(AssertionError, match="unexpected descendant.*left untouched"):
+        _stop_verified_windows_fixture(root, 59435, python, started_at=1)
+
+    assert known.killed is True
+    assert unknown.killed is False
+
+
+class _FakeCleanupProcess:
+    def __init__(self, pid, executable, cwd, *, children):
+        self.pid = pid
+        self.executable = executable
+        self.cwd_path = cwd
+        self._children = children
+        self.killed = False
+
+    def as_dict(self, attrs):
+        return {"create_time": 2, "cmdline": [str(self.executable), "-m", "fake_pkg"], "cwd": str(self.cwd_path)}
+
+    def children(self, recursive=False):
+        assert recursive is True
+        return list(self._children)
+
+    def is_running(self):
+        return not self.killed
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def _cleanup_tracked_fake_apps(root: Path) -> None:
+    """Fixture teardown for bridge children, guarded by PID, start time, cwd and module argv."""
+    import psutil
+
+    for key, identity in list(bridge._children.items()):
+        if not key.startswith("fake_pkg:"):
+            continue
+        pid, created = identity
+        port = int(key.rsplit(":", 1)[1])
+        try:
+            process = psutil.Process(pid)
+            current_created = process.create_time()
+            if created is None or abs(current_created - created) > 0.02:
+                bridge._children.pop(key, None)
+                continue
+            if (Path(process.cwd()).resolve() != root.resolve()
+                    or "fake_pkg" not in process.cmdline()):
+                continue
+            proc.kill_tree(pid, grace_s=0)
+        except psutil.NoSuchProcess:
+            bridge._children.pop(key, None)
+        else:
+            bridge._children.pop(key, None)
+        deadline = time.monotonic() + 3
+        while not net.can_listen(port) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not net.can_listen(port):
+            raise AssertionError(f"fake bridge fixture listener remains on port {port}")
 
 
 def test_ensure_running_starts_the_package_detached_and_quiet(fake_package):
@@ -518,6 +663,29 @@ def test_ensure_running_gives_up_when_the_child_dies(fake_package, monkeypatch):
     assert ensure_running("fake_pkg", port, service="fake-hoard", data_dir=fake_package / "data", cwd=fake_package, port_env="FAKE_PORT", wait_s=30) is False
     assert time.monotonic() - started < 15                                                                        # it did not wait out the 30 s
     assert "could not start" in (fake_package / "data" / "logs" / "fake-app.log").read_text()
+
+
+def test_ensure_running_diagnostics_point_to_app_log_without_inventing_exit_code(fake_package, monkeypatch, caplog):
+    port = net.free_port()
+    monkeypatch.setattr(bridge.launch, "spawn_orphan", lambda *args, **kwargs: 987654)
+    monkeypatch.setattr(bridge.launch, "process_created", lambda _pid: None)
+    assert ensure_running("fake_pkg", port, service="fake-hoard", data_dir=fake_package / "data", cwd=fake_package,
+                          port_env="FAKE_PORT", wait_s=1) is False
+    message = caplog.text
+    assert str(fake_package / "data" / "logs" / "fake-app.log") in message
+    assert "exit code unavailable" in message and "exit code 0" not in message
+
+
+def test_ensure_running_exit_during_start_points_to_app_log(fake_package, monkeypatch, caplog):
+    port = net.free_port()
+    monkeypatch.setattr(bridge.launch, "spawn_orphan", lambda *args, **kwargs: 987655)
+    monkeypatch.setattr(bridge.launch, "process_created", lambda _pid: 1234.0)
+    monkeypatch.setattr(bridge.launch, "process_alive", lambda *_args: False)
+    assert ensure_running("fake_pkg", port, service="fake-hoard", data_dir=fake_package / "data", cwd=fake_package,
+                          port_env="FAKE_PORT", wait_s=1) is False
+    message = caplog.text
+    assert str(fake_package / "data" / "logs" / "fake-app.log") in message
+    assert "exit code unavailable" in message
 
 
 def test_ensure_running_ignores_another_service_on_the_port(fake_package):
@@ -593,7 +761,7 @@ def test_stdio_host_exit_does_not_take_down_autostarted_app(fake_package, faustu
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows venv redirector regression")
-def test_autostart_uses_venv_redirector_from_a_path_with_spaces(fake_package, tmp_path):
+def test_autostart_uses_venv_redirector_from_a_path_with_spaces(fake_package, tmp_path, request):
     import psutil
 
     venv_root = tmp_path / "venv with spaces"
@@ -601,6 +769,8 @@ def test_autostart_uses_venv_redirector_from_a_path_with_spaces(fake_package, tm
     venv_python = venv_root / "Scripts" / "python.exe"
     assert venv_python.is_file()
     port = net.free_port()
+    started_at = time.time()
+    request.addfinalizer(lambda: _stop_verified_windows_fixture(fake_package, port, venv_python, started_at))
     code = (
         "import json, os; from hoard_link.bridge import ensure_running; "
         "ok=ensure_running('fake_pkg', int(os.environ['FAKE_PORT']), service='fake-hoard', "
@@ -611,34 +781,27 @@ def test_autostart_uses_venv_redirector_from_a_path_with_spaces(fake_package, tm
                    "FAKE_CWD": str(fake_package),
                    "FAKE_IDENTITY_FILE": str(fake_package / "data" / "server-identity.json"),
                    "PYTHONPATH": os.pathsep.join((str(Path(__file__).resolve().parents[2]), str(fake_package)))}
-    host = subprocess.run([str(venv_python), "-c", code], cwd=fake_package, env=environment,
-                          capture_output=True, text=True, timeout=45)
-    assert host.returncode == 0, host.stderr
-    assert json.loads(host.stdout.strip()) == {"ok": True}
     identity_path = fake_package / "data" / "server-identity.json"
-    deadline = time.monotonic() + 5
-    while not identity_path.is_file() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    identity = json.loads(identity_path.read_text(encoding="utf-8"))
-    server_pid, server_created = int(identity["pid"]), float(identity["created"])
     try:
+        host = subprocess.run([str(venv_python), "-c", code], cwd=fake_package, env=environment,
+                              capture_output=True, text=True, timeout=45)
+        assert host.returncode == 0, host.stderr
+        assert json.loads(host.stdout.strip()) == {"ok": True}
+        deadline = time.monotonic() + 5
+        while not identity_path.is_file() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        server_pid, server_created = int(identity["pid"]), float(identity["created"])
         health = health_of(port)
         assert health and health["service"] == "fake-hoard" and int(health["pid"]) == server_pid
         assert Path(health["python"]).resolve() == venv_python.resolve()
         assert abs(psutil.Process(server_pid).create_time() - server_created) <= 0.01
         assert "fake_pkg" in psutil.Process(server_pid).cmdline()
+        assert identity["module"] == "fake_pkg" and identity["port"] == port
         assert health_of(port)["pid"] == server_pid                  # the listener stayed up after its venv host exited
     finally:
-        if proc.pid_alive(server_pid):
-            try:
-                current = psutil.Process(server_pid)
-                if (abs(current.create_time() - server_created) <= 0.01
-                        and Path(current.cwd()).resolve() == fake_package.resolve()
-                        and "fake_pkg" in current.cmdline()
-                        and Path(identity["python"]).resolve() == venv_python.resolve()):
-                    proc.kill_tree(server_pid, grace_s=0)
-            except psutil.Error:
-                pass
+        leftovers = _stop_verified_windows_fixture(fake_package, port, venv_python, started_at)
+        assert leftovers == []
 
 
 def test_faustus_detached_ledger_requires_exact_process_identity(tmp_path, faustus_runtime):

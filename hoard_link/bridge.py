@@ -157,7 +157,8 @@ def ensure_running(package: str, port: int, *, service: str, data_dir: Union[str
                                             environment, target)
             created = launch.process_created(child_pid)
             if created is None:
-                log.warning("%s exited before its process identity could be recorded", package)
+                log.warning("%s exited before its process identity could be recorded; see %s (exit code unavailable)",
+                            package, target)
                 return False
             child = (child_pid, created)
             _children[key] = child
@@ -166,7 +167,7 @@ def ensure_running(package: str, port: int, *, service: str, data_dir: Union[str
         if _healthy(port, service):
             return True
         if not launch.process_alive(*child):
-            log.warning("%s exited while starting", package)
+            log.warning("%s exited while starting; see %s (exit code unavailable)", package, target)
             return False
         if time.monotonic() >= deadline:
             return False

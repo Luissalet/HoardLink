@@ -687,8 +687,10 @@ class Launcher:
             if code is not None and code < 500:
                 return {"ready": True, "state": "running"}
             if svc.id in self._state() and self._owned(svc.id) is None:
-                return {"ok": False, "ready": False, "state": "exited",
-                        "error": f"{svc.label} exited while starting; last log lines:\n{self.log_tail(svc.id, 800)}"}
+                log_path = self.log_path(svc.id)
+                return {"ok": False, "ready": False, "state": "exited", "log": str(log_path),
+                        "error": f"{svc.label} exited while starting; see {log_path} (exit code unavailable); "
+                                 f"last log lines:\n{self.log_tail(svc.id, 800)}"}
             time.sleep(1.0)
         return {"ready": False, "state": "starting", "detail": f"not answering after {int(wait_s)} s; still starting"}
 

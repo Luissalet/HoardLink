@@ -226,6 +226,8 @@ def test_a_command_that_dies_reports_its_log(home, tmp_path):
                                  "health": f"http://127.0.0.1:{port}/"}]})
     res = ln.start("boom", wait_s=15)
     assert res["ok"] is False and res["state"] == "exited" and "no model here" in res["error"]
+    assert str(ln.log_path("cmd:boom")) in res["error"] and res["log"] == str(ln.log_path("cmd:boom"))
+    assert "exit code unavailable" in res["error"]
 
 
 def test_pick_gpu_prefers_free_memory_and_skips_busy(home, monkeypatch):
