@@ -76,7 +76,16 @@ MIGRATIONS = [
     CREATE INDEX messages_thread ON messages(thread_id, id);
     CREATE INDEX tasks_status ON tasks(status, priority);
     """,
+    """
+    ALTER TABLE tasks ADD COLUMN review_state TEXT;
+    CREATE TABLE acks (agent TEXT NOT NULL, thread_id INTEGER NOT NULL, upto INTEGER NOT NULL, updated REAL,
+                       PRIMARY KEY(agent, thread_id));
+    UPDATE tasks SET review_state='approved' WHERE status='done' AND reviewed=1;
+    UPDATE tasks SET review_state='unreviewed' WHERE status='done' AND reviewed=0;
+    """,
 ]
+#: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
+EXEMPT_KINDS = ("docs", "eval", "research", "chore")
 
 
 class AgoraError(ValueError):
@@ -146,6 +155,42 @@ def conflicts(a: str, b: str) -> bool:
             return True
         return False                              # editing a file never blocks someone integrating something else
     return a == b
+
+
+def group_locks(locks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fold a long list of locks into one line per owner, task and resource family.
+
+    ``path:faustus/src/a.py`` … ``path:faustus/tests/b.py`` held by one agent for one task become
+    ``{owner, task_id, kind: "path", repo: "faustus", count: 36, folders: {"src/": 13, "tests/": 15, …}}``;
+    exact resources (``model:principal``) stay one per group. ``resources`` keeps the full list."""
+    groups: dict[tuple, dict[str, Any]] = {}
+    for lk in locks:
+        res = str(lk.get("resource") or "")
+        kind, _, name = res.partition(":")
+        repo = _repo_of(res) if kind in _SCOPED else name
+        key = (lk.get("owner"), lk.get("task_id"), kind, repo if kind in _SCOPED else res)
+        g = groups.setdefault(key, {"owner": lk.get("owner"), "task_id": lk.get("task_id"), "kind": kind,
+                                    "repo": repo if kind in _SCOPED else "", "count": 0, "folders": {},
+                                    "resources": [], "expires": lk.get("expires"), "note": lk.get("note")})
+        g["count"] += 1
+        g["resources"].append(res)
+        g["expires"] = max(g["expires"] or 0, lk.get("expires") or 0)
+        if kind == "path":
+            rest = name.split("/", 1)[1] if "/" in name else ""
+            top = rest.split("/", 1)[0] + "/" if "/" in rest else (rest or "/")
+            g["folders"][top] = g["folders"].get(top, 0) + 1
+    out = []
+    for g in groups.values():
+        if g["kind"] == "path":
+            parts = sorted(g["folders"].items(), key=lambda kv: (-kv[1], kv[0]))
+            folders = ", ".join(f"{k} {v}" for k, v in parts[:4]) + (", …" if len(parts) > 4 else "")
+            g["label"] = (g["resources"][0] if g["count"] == 1 else
+                          f"path:{g['repo']}/ · {g['count']} rutas ({folders})")
+        else:
+            g["label"] = g["resources"][0] if g["count"] == 1 else f"{g['kind']}:{g['repo']} · {g['count']}"
+        out.append(g)
+    out.sort(key=lambda g: (str(g["owner"]), g["task_id"] or 0, g["kind"], g["repo"]))
+    return out
 
 
 # ---- store ---------------------------------------------------------------------------------------------------
@@ -258,6 +303,7 @@ class Agora:
         d["paths"] = _l(d.get("paths"))
         d["commits"] = _l(d.get("commits"))
         d["reviewed"] = bool(d.get("reviewed"))
+        d.setdefault("review_state", None)
         return d
 
     def _msg(self, thread_id: int, author: str, kind: str, body: str, mentions: Optional[list[str]] = None) -> int:
@@ -271,6 +317,14 @@ class Agora:
         """A bookkeeping line in the task's thread, authored by whoever caused it (so it never lands in their own inbox)."""
         if task.get("thread_id"):
             self._msg(int(task["thread_id"]), actor, "system", text)
+
+    def _ack(self, agent: str, thread_id: int, upto: Optional[int] = None) -> None:
+        """The agent has seen this thread up to ``upto`` (default: its last message): its mentions there stop being pending."""
+        if upto is None:
+            upto = int(self.db.scalar("SELECT MAX(id) FROM messages WHERE thread_id=?", (thread_id,), default=0) or 0)
+        self.db.execute("INSERT INTO acks(agent, thread_id, upto, updated) VALUES(?,?,?,?) ON CONFLICT(agent, thread_id) "
+                        "DO UPDATE SET upto=MAX(acks.upto, excluded.upto), updated=excluded.updated",
+                        (agent, thread_id, upto, self.clock()))
 
     def _live_locks(self) -> list[dict[str, Any]]:
         now = self.clock()
@@ -388,7 +442,9 @@ class Agora:
         for r in self.db.query("SELECT * FROM agents ORDER BY last_seen DESC"):
             d = dict(r)
             d["stale"] = (now - float(d.get("last_seen") or 0)) > STALE_AGENT_S
-            d["locks"] = [x["resource"] for x in self.db.query("SELECT resource FROM locks WHERE owner=? AND expires>?", (d["id"], now))]
+            mine = [dict(x) for x in self.db.query("SELECT * FROM locks WHERE owner=? AND expires>?", (d["id"], now))]
+            d["locks"] = [x["resource"] for x in mine]
+            d["lock_groups"] = [{k: g[k] for k in ("task_id", "kind", "repo", "count", "label")} for g in group_locks(mine)]
             out.append(d)
         return {"ok": True, "agents": out}
 
@@ -555,16 +611,32 @@ class Agora:
                                  "or pass force with a reason", 409)
             commits = _list(a.get("commits"), "commits") or task["commits"]
             result = _txt(a.get("result"), 20000, "result")
-            self.db.execute("UPDATE tasks SET status='done', commits=?, result=?, closed_at=?, updated=? WHERE id=?",
-                            (_j(commits), result, now, now, task["id"]))
+            exempt = _txt(a.get("exempt"), 300, "exempt")
+            if task["status"] == "approved":
+                review_state = "approved"
+            elif exempt or (task.get("kind") in EXEMPT_KINDS and task["status"] not in ("review", "changes")):
+                if task.get("kind") not in EXEMPT_KINDS:
+                    raise AgoraError(f"only {', '.join(EXEMPT_KINDS)} tasks can be exempt from review; task {task['id']} "
+                                     f"is {task.get('kind')}: submit it for review or close it with force and a reason", 409)
+                review_state = "exempt"
+            else:
+                review_state = "unreviewed"
+            self.db.execute("UPDATE tasks SET status='done', commits=?, result=?, closed_at=?, updated=?, review_state=? "
+                            "WHERE id=?", (_j(commits), result, now, now, review_state, task["id"]))
             self.db.execute("DELETE FROM locks WHERE task_id=?", (task["id"],))
-            unreviewed = task["status"] != "approved"
-            text = (result or "Hecho.") + ("\n\n(Integrada sin revisión aprobada" +
-                                           (f": {a.get('reason')}" if a.get("reason") else "") + ")" if unreviewed else "")
+            unreviewed = review_state == "unreviewed"
+            if review_state == "exempt":
+                note = f"\n\n(Exenta de revisión: {exempt or task.get('kind')})"
+            elif unreviewed:
+                note = "\n\n(Integrada sin revisión aprobada" + (f": {a.get('reason')}" if a.get("reason") else "") + ")"
+            else:
+                note = ""
+            text = (result or "Hecho.") + note
             self._msg(int(task["thread_id"]), agent, "resolution", text)
             self.db.execute("UPDATE threads SET status='resolved', resolution=?, resolved_by=?, updated=? WHERE id=?",
                             (result or "done", agent, now, task["thread_id"]))
-        self._bump("agora.task.done", {"task_id": task["id"], "agent": agent, "commits": commits, "reviewed": not unreviewed})
+        self._bump("agora.task.done", {"task_id": task["id"], "agent": agent, "commits": commits,
+                                       "reviewed": review_state == "approved", "review_state": review_state})
         return {"ok": True, "task": self._task_row(task["id"])}
 
     def task_release(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -653,6 +725,7 @@ class Agora:
             self._touch(agent)
             th = self._thread_row(a.get("thread_id"))
             mid = self._msg(th["id"], agent, kind, body, _list(a.get("mentions"), "mentions"))
+            self._ack(agent, th["id"], mid)
             if (th["status"] == "resolved" and kind in ("disagree", "proposal")) or \
                     (th["status"] == "escalated" and agent == PERSON):
                 self.db.execute("UPDATE threads SET status='open' WHERE id=?", (th["id"],))
@@ -722,8 +795,23 @@ class Agora:
                " ORDER BY CASE t.status WHEN 'escalated' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, t.updated DESC LIMIT ?")
         return {"ok": True, "threads": [dict(r) for r in self.db.query(sql, (*params, limit))]}
 
+    def ack(self, a: dict[str, Any]) -> dict[str, Any]:
+        """Mark a thread (or every thread with ``all``) as seen: its mentions of the agent stop being pending."""
+        agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+        if a.get("all"):
+            ids = [r["thread_id"] for r in self.db.query(
+                "SELECT DISTINCT thread_id FROM messages WHERE mentions LIKE ?", (f'%"{agent}"%',))]
+        else:
+            ids = [self._thread_row(a.get("thread_id"))["id"]]
+        with self.db.tx():
+            for tid in ids:
+                self._ack(agent, tid)
+        return {"ok": True, "acked": ids}
+
     def thread(self, a: dict[str, Any]) -> dict[str, Any]:
         th = self._thread_row(a.get("thread_id"))
+        if a.get("agent"):
+            self._ack(self._agent(a.get("agent"), allow_person=bool(a.get("_person"))), th["id"])
         stances: dict[str, str] = {}
         msgs = self._messages(th["id"])
         for m in msgs:
@@ -755,7 +843,7 @@ class Agora:
             with self._changed:
                 version = self._version
             out = self._inbox_once(agent, a)
-            if out["counts"]["total"] or wait <= 0 or self.clock() >= deadline:
+            if out["counts"]["messages"] or wait <= 0 or self.clock() >= deadline:
                 break
             with self._changed:
                 if self._version == version:
@@ -796,11 +884,21 @@ class Agora:
             "SELECT t.*, (SELECT body FROM messages m WHERE m.thread_id=t.id AND m.kind='escalation' ORDER BY m.id DESC LIMIT 1) "
             "AS question, (SELECT author FROM messages m WHERE m.thread_id=t.id AND m.kind='escalation' ORDER BY m.id DESC "
             "LIMIT 1) AS escalated_by FROM threads t WHERE t.status='escalated' ORDER BY t.updated")] if agent == PERSON else []
+        pending = []
+        for r in self.db.query(
+                "SELECT m.*, t.title AS thread_title, t.kind AS thread_kind, t.task_id AS task_id FROM messages m "
+                "JOIN threads t ON t.id=m.thread_id LEFT JOIN acks k ON k.agent=? AND k.thread_id=m.thread_id "
+                "WHERE m.author<>? AND m.mentions LIKE ? AND m.id>COALESCE(k.upto, 0) ORDER BY m.id LIMIT 200",
+                (agent, agent, f'%"{agent}"%')):
+            d = dict(r)
+            d["mentions"] = _l(d.get("mentions"))
+            if agent in d["mentions"]:
+                pending.append(d)
         counts = {"messages": len(msgs), "for_you": sum(1 for m in msgs if m["for_you"]), "reviews": len(reviews),
-                  "changes": len(changes), "escalated": len(escalated)}
+                  "changes": len(changes), "escalated": len(escalated), "pending": len(pending)}
         counts["total"] = counts["messages"] + counts["reviews"] + counts["changes"] + counts["escalated"]
         return {"ok": True, "agent": agent, "since_id": since, "counts": counts, "messages": msgs,
-                "reviews": reviews, "changes": changes, "escalated": escalated}
+                "reviews": reviews, "changes": changes, "escalated": escalated, "pending": pending}
 
     # -- board ---------------------------------------------------------------------------------------------------
 
@@ -815,9 +913,52 @@ class Agora:
             [self._task_dict(r) for r in self.db.query(
                 "SELECT * FROM tasks WHERE status IN ('done','dropped') ORDER BY closed_at DESC LIMIT 15")]
         return {"ok": True, "agents": self.agents()["agents"], "counts": counts, "tasks": tasks, "locks": live,
+                "lock_groups": group_locks(live),
                 "threads": self.threads({"limit": 40})["threads"],
                 "escalated": self.db.scalar("SELECT COUNT(*) FROM threads WHERE status='escalated'", default=0),
                 "decisions": self.decisions({"limit": 8})["decisions"]}
+
+
+    def digest(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """What happened in the last ``hours`` (default 12): per agent, tasks opened, claimed, sent to review and
+        finished (with how they were reviewed), reviews given, decisions taken and escalations, plus what waits now."""
+        a = a or {}
+        try:
+            hours = max(0.25, min(float(a.get("hours") or 12), 24 * 14))
+        except (TypeError, ValueError):
+            raise AgoraError("hours must be a number") from None
+        since = self.clock() - hours * 3600
+        per: dict[str, dict[str, int]] = {}
+
+        def bump(agent: Optional[str], key: str) -> None:
+            if agent:
+                per.setdefault(agent, {"opened": 0, "claimed": 0, "submitted": 0, "done": 0, "reviews": 0, "messages": 0})
+                per[agent][key] += 1
+
+        for r in self.db.query("SELECT created_by FROM tasks WHERE created>=?", (since,)):
+            bump(r["created_by"], "opened")
+        for r in self.db.query("SELECT owner FROM tasks WHERE claimed_at>=?", (since,)):
+            bump(r["owner"], "claimed")
+        for r in self.db.query("SELECT owner FROM tasks WHERE submitted_at>=?", (since,)):
+            bump(r["owner"], "submitted")
+        for r in self.db.query("SELECT author, kind FROM messages WHERE created>=? AND author NOT IN ('system')", (since,)):
+            bump(r["author"], "reviews" if r["kind"] in ("approve", "changes") else "messages")
+        done = [self._task_dict(r) for r in self.db.query(
+            "SELECT * FROM tasks WHERE status='done' AND closed_at>=? ORDER BY closed_at", (since,))]
+        for t in done:
+            bump(t.get("owner"), "done")
+        decisions = [dict(r) for r in self.db.query(
+            "SELECT id, title, resolution, resolved_by, updated FROM threads WHERE status='resolved' AND kind<>'task' "
+            "AND updated>=? ORDER BY updated", (since,))]
+        waiting = {
+            "reviews": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='review' ORDER BY submitted_at")],
+            "changes": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='changes'")],
+            "escalated": [dict(r) for r in self.db.query("SELECT id, title, updated FROM threads WHERE status='escalated'")],
+        }
+        by_state = {k: sum(1 for t in done if (t.get("review_state") or ("approved" if t["reviewed"] else "unreviewed")) == k)
+                    for k in ("approved", "exempt", "unreviewed")}
+        return {"ok": True, "hours": hours, "since": since, "agents": per, "done": done, "done_by_review": by_state,
+                "decisions": decisions, "waiting": waiting}
 
 
 # ---- facet ---------------------------------------------------------------------------------------------------
@@ -877,9 +1018,11 @@ TOOLS: list[dict[str, Any]] = [
                             ["agent", "task_id", "verdict", "body"])},
     {"name": "hub_agora_task_done",
      "description": "Your task is integrated: commits and result. Releases its locks. Refused while a review is "
-                    "younger than 2 h or changes were requested, unless force with a reason.",
+                    "younger than 2 h or changes were requested, unless force with a reason. docs, eval, research and "
+                    "chore tasks may close without review (exempt, with the reason); code may not.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "result": {"type": "string"}, "commits": _STRS,
-                             "force": {"type": "boolean"}, "reason": {"type": "string"}}, ["agent", "task_id"])},
+                             "force": {"type": "boolean"}, "reason": {"type": "string"}, "exempt": {"type": "string"}},
+                            ["agent", "task_id"])},
     {"name": "hub_agora_task_release",
      "description": "Give your task back (open again) or drop it (drop=true), with the reason. Releases its locks.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "reason": {"type": "string"}, "drop": {"type": "boolean"}},
@@ -923,14 +1066,24 @@ TOOLS: list[dict[str, Any]] = [
                             ["agent", "thread_id", "question"])},
     {"name": "hub_agora_thread", "read": True,
      "description": "One thread with its messages, each participant's stance and its task.",
-     "inputSchema": _schema({"thread_id": _THREAD}, ["thread_id"])},
+     "inputSchema": _schema({"thread_id": _THREAD, "agent": {"type": "string", "description":
+                                                               "your id: marks the thread as seen for you"}},
+                            ["thread_id"])},
+    {"name": "hub_agora_ack",
+     "description": "Mark a thread as seen (or all=true): its mentions of you stop being pending in your inbox. Opening "
+                    "a thread with hub_agora_thread and your agent id, or replying in it, does the same.",
+     "inputSchema": _schema({"agent": _A, "thread_id": _THREAD, "all": {"type": "boolean"}}, ["agent"])},
+    {"name": "hub_agora_digest", "read": True,
+     "description": "What happened in the last hours (default 12): per agent tasks opened, claimed, sent to review and "
+                    "finished (approved, exempt or unreviewed), reviews given, decisions, and what waits now.",
+     "inputSchema": _schema({"hours": {"type": "number"}}, [])},
     {"name": "hub_agora_decisions", "read": True,
      "description": "The decision log: resolved threads with their resolution, newest first.",
      "inputSchema": _schema({"limit": {"type": "integer"}}, [])},
 ]
 
 _WRITE_OPS = ("heartbeat", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
-              "task_release", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read")
+              "task_release", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack")
 
 
 class AgoraFacet(Facet):
@@ -984,11 +1137,17 @@ class AgoraFacet(Facet):
             q["include_tasks"] = str(q.get("include_tasks", "")).lower() in ("1", "true")
             return self._run(ag.threads, q)
         if p.startswith("/api/agora/threads/"):
-            return self._run(ag.thread, {"thread_id": p.rsplit("/", 1)[1]})
+            who = q.get("agent", "").lower()
+            person = who == PERSON and req.caller() == "ui"
+            if who == PERSON and not person:
+                who = ""
+            return self._run(ag.thread, {"thread_id": p.rsplit("/", 1)[1], "agent": who, "_person": person})
         if p == "/api/agora/locks":
             return self._run(ag.locks, q)
         if p == "/api/agora/decisions":
             return self._run(ag.decisions, q)
+        if p == "/api/agora/digest":
+            return self._run(ag.digest, q)
         if p == "/api/agora/agents":
             return self._run(ag.agents, q)
         return {"ok": False, "status": 404, "error": f"unknown Ágora route {p}"}
@@ -1048,4 +1207,5 @@ class AgoraFacet(Facet):
             "hub_agora_thread_open": wrap(ag.thread_open), "hub_agora_post": wrap(ag.post),
             "hub_agora_resolve": wrap(ag.resolve), "hub_agora_escalate": wrap(ag.escalate),
             "hub_agora_thread": wrap(ag.thread), "hub_agora_decisions": wrap(ag.decisions),
+            "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(ag.digest),
         }
