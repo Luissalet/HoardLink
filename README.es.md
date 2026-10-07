@@ -498,7 +498,9 @@ proceso que arrancó el hub; su salida va a
 haya arrancado él mismo. Por defecto no hay ningún perfil;
 [docs/HUB.md](docs/HUB.md#profiles) trae dos ejemplos completos. HTTP:
 `GET /api/profiles`, `GET /api/profiles/<nombre>`,
-`POST /api/profiles/<nombre>/start|stop`.
+`POST /api/profiles/<nombre>/start|stop`. La importación/exportación JSON
+previsualiza dependencias y rutas locales; importar guarda la configuración,
+pero no inicia sus miembros. Consulta [docs/PROFILE-PORTABILITY.es.md](docs/PROFILE-PORTABILITY.es.md).
 
 ### Reservas de memoria de GPU
 

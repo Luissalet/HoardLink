@@ -127,8 +127,14 @@ No profile ships in the default configuration. Two examples to adapt
 
 HTTP: `GET /api/profiles` (every profile with each member's state),
 `GET /api/profiles/<name>`, `POST /api/profiles/<name>/start`,
-`POST /api/profiles/<name>/stop`. Agent tools: `hub_profile_list`
-(read-only), `hub_profile_start {name}`, `hub_profile_stop {name}`.
+`POST /api/profiles/<name>/stop`. `POST /api/profiles/export` returns a
+portable JSON package; `/api/profiles/import/preview` resolves app-ID
+dependencies and machine-specific command fields; `/api/profiles/import` saves
+the reviewed configuration and never starts it. Agent tools include
+`hub_profile_export`, `hub_profile_import_preview` and `hub_profile_import`,
+as well as `hub_profile_list` (read-only), `hub_profile_start {name}` and
+`hub_profile_stop {name}`. See [PROFILE-PORTABILITY.md](PROFILE-PORTABILITY.md)
+for the format, redaction and import options.
 
 ## GPU memory leases
 

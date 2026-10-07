@@ -176,6 +176,42 @@ def catalogue() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "hub_profile_export",
+            "description": "Export a launch profile as a portable JSON package. Keywords: export profile, compartir perfil.",
+            "inputSchema": {"type": "object", "properties": {"name": _PROFILE}, "required": ["name"],
+                            "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_profile_import_preview",
+            "description": "Preview profile import dependencies and conflicts. Keywords: import preview, revisar perfil.\n"
+                           "Shows app-ID mappings, machine-specific command paths and missing local environment values; does not save or start.",
+            "inputSchema": {"type": "object", "properties": {
+                "document": {"type": "object", "description": "A hoardlink.launch-profile JSON package."},
+                "name": {"type": "string", "description": "Optional imported profile name."},
+                "app_map": {"type": "object", "additionalProperties": {"type": "string"},
+                            "description": "Map package app IDs to registered local app IDs."},
+                "command_overrides": {"type": "object", "additionalProperties": {"type": "object"},
+                                      "description": "Local cmd/cwd/health/env values keyed by command name."},
+                "replace": {"type": "boolean", "default": False, "description": "Replace an existing stopped profile."}},
+                "required": ["document"], "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_profile_import",
+            "description": "Save reviewed profile settings; never start apps or commands. Keywords: import profile, importar perfil.\n"
+                           "Resolve app IDs and review local command paths in hub_profile_import_preview first.",
+            "inputSchema": {"type": "object", "properties": {
+                "document": {"type": "object", "description": "A hoardlink.launch-profile JSON package."},
+                "name": {"type": "string", "description": "Optional imported profile name."},
+                "app_map": {"type": "object", "additionalProperties": {"type": "string"},
+                            "description": "Map package app IDs to registered local app IDs."},
+                "command_overrides": {"type": "object", "additionalProperties": {"type": "object"},
+                                      "description": "Local cmd/cwd/health/env values keyed by command name."},
+                "replace": {"type": "boolean", "default": False, "description": "Replace an existing stopped profile."}},
+                "required": ["document"], "additionalProperties": False},
+        },
+        {
             "name": "hub_profile_start",
             "description": "Start a profile: its apps, commands and windows. Keywords: start profile, arrancar perfil.",
             "inputSchema": {"type": "object", "properties": {"name": _PROFILE}, "required": ["name"],
@@ -443,6 +479,8 @@ def catalogue() -> list[dict[str, Any]]:
 
 
 def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
+    from . import portable_profiles
+
     def list_apps(_: dict[str, Any]) -> Any:
         snap = hub.snapshot()
         return {"apps": [_compact(a) for a in snap["apps"]], "counts": snap["counts"], "faustus": snap["faustus"]}
@@ -590,6 +628,13 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_service_stop": lambda a: hub.service_stop(str(a.get("id") or "")),
         "hub_rescan": lambda _: {"ok": True, "apps": [a.id for a in hub.rescan()]},
         "hub_profile_list": lambda _: _compact_profiles(hub.profiles_status()),
+        "hub_profile_export": lambda a: portable_profiles.export_profile(hub, str(a.get("name") or "")),
+        "hub_profile_import_preview": lambda a: portable_profiles.preview_import(
+            hub, a.get("document"), name=a.get("name"), app_map=a.get("app_map"),
+            command_overrides=a.get("command_overrides"), replace=a.get("replace", False)),
+        "hub_profile_import": lambda a: portable_profiles.import_profile(
+            hub, a.get("document"), name=a.get("name"), app_map=a.get("app_map"),
+            command_overrides=a.get("command_overrides"), replace=a.get("replace", False)),
         "hub_profile_start": lambda a: hub.profile_start(str(a.get("name") or ""), automatic=bool(a.get("_automatic"))),
         "hub_profile_stop": lambda a: hub.profile_stop(str(a.get("name") or "")),
         "hub_lease_status": lambda a: hub.leases.status(force=bool(a.get("force", False))),
