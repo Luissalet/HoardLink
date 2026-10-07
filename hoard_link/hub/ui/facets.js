@@ -46,13 +46,14 @@
     const box = el("div", "tab-body facet-body"); box.id = `tab-${f.id}`; box.hidden = true;
     body.appendChild(box);
     f.mount && f.mount(box, ctx);
-    btn.onclick = () => {
-      if (window.hubShowTab) window.hubShowTab(f.id);
+    f._select = ({ openPanel = true } = {}) => {
+      if (window.hubShowTab) window.hubShowTab(f.id, { openPanel });
       document.querySelectorAll("#family-tabs .tab").forEach((x) => x.classList.toggle("on", x.dataset.tab === f.id));
       document.querySelectorAll("#family-body .tab-body").forEach((x) => { x.hidden = x.id !== `tab-${f.id}`; });
       try { localStorage.setItem("hub.ftab", f.id); } catch (e) { /* ignore */ }
       f.load && f.load(ctx);
     };
+    btn.onclick = () => f._select();
     f._btn = btn; f._label = b;
   }
   function mountTop(f) {
@@ -91,7 +92,8 @@
     let saved = "";
     try { saved = localStorage.getItem("hub.ftab") || ""; } catch (e) { /* ignore */ }
     const mine = registry.find((f) => f.id === saved && f._btn);
-    if (mine) mine._btn.click();
+    if (mine) mine._select({ openPanel: false });
+    else if (saved && !document.getElementById(`tab-${saved}`) && window.hubShowTab) window.hubShowTab('events', { openPanel: false });
     const langBtn = $("#btn-lang");
     if (langBtn) langBtn.addEventListener("click", () => setTimeout(() => { relabel(); ctx.bus.dispatchEvent(new Event("lang")); for (const f of registry) if (f.placement !== "tab" || (f._btn && f._btn.classList.contains("on"))) f.load && f.load(ctx); }, 0));
     // facets poll on their own clock (ctx.every); one shared timer keeps it cheap

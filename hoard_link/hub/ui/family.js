@@ -102,10 +102,18 @@
   // ---- tabs ------------------------------------------------------------------------------
   let tab = (() => { try { return localStorage.getItem("hub.ftab") || "events"; } catch (e) { return "events"; } })();
   const loaders = { events: loadEvents, rules: loadRules, jobs: loadJobs, backups: loadBackups, audit: () => {}, repos: () => loadRepos() };
-  function showTab(name) {
+  function showTab(name, { openPanel = true } = {}) {
+    const panel = document.getElementById(`tab-${name}`);
+    if (!panel) return; // a saved facet may still be mounting asynchronously
     tab = name; try { localStorage.setItem("hub.ftab", name); } catch (e) { /* ignore */ }
     document.querySelectorAll("#family-tabs .tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
-    document.querySelectorAll(".tab-body").forEach((b) => { b.hidden = b.id !== `tab-${name}`; });
+    document.querySelectorAll("#family-body .tab-body").forEach((b) => { b.hidden = b.id !== `tab-${name}`; });
+    if (openPanel) {
+      $("#family-body").hidden = false;
+      $("#family-toggle").textContent = "▾";
+      $("#family-toggle").setAttribute("aria-expanded", "true");
+      try { localStorage.setItem("hub.fopen", "1"); } catch (e) { /* ignore */ }
+    }
     (loaders[name] || (() => {}))();
   }
   document.querySelectorAll("#family-tabs .tab").forEach((b) => { b.onclick = () => showTab(b.dataset.tab); });
@@ -115,7 +123,7 @@
     $("#family-toggle").textContent = open ? "▾" : "▸"; $("#family-toggle").setAttribute("aria-expanded", String(open));
     try { localStorage.setItem("hub.fopen", open ? "1" : "0"); } catch (e) { /* ignore */ }
   };
-  try { if (localStorage.getItem("hub.fopen") === "0") { $("#family-body").hidden = true; $("#family-toggle").textContent = "▸"; } } catch (e) { /* ignore */ }
+  try { if (localStorage.getItem("hub.fopen") === "0") { $("#family-body").hidden = true; $("#family-toggle").textContent = "▸"; $("#family-toggle").setAttribute("aria-expanded", "false"); } } catch (e) { /* ignore */ }
 
   // ---- events ----------------------------------------------------------------------------------
   let events = [], lastId = 0;
@@ -508,7 +516,7 @@
   // ---- boot --------------------------------------------------------------------------------------------------
   localize();
   $("#btn-lang").addEventListener("click", () => setTimeout(() => { localize(); (loaders[tab] || (() => {}))(); }, 0));
-  showTab(tab);
+  showTab(tab, { openPanel: false });
   loadRules(); loadJobs(); loadBackups(); loadRepos();
   connectSse();
 })();
