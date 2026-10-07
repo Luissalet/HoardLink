@@ -126,7 +126,11 @@ def test_review_flow(ag):
         ag.task_done({"agent": "claude", "task_id": tid})
     ag.task_submit({"agent": "claude", "task_id": tid, "summary": "mobile fixed"})
     ag.task_review({"agent": "codex", "task_id": tid, "verdict": "approve", "body": "checked at 390 px"})
-    done = ag.task_done({"agent": "claude", "task_id": tid, "result": "merged", "commits": ["def456"]})["task"]
+    with pytest.raises(AgoraError) as exc:               # def456 is not what codex approved
+        ag.task_done({"agent": "claude", "task_id": tid, "result": "merged", "commits": ["def456"]})
+    assert "were not reviewed" in str(exc.value)
+    done = ag.task_done({"agent": "claude", "task_id": tid, "result": "merged", "commits": ["def456"], "force": True,
+                         "reason": "def456 is abc123 rebased onto main, same diff"})["task"]
     assert done["status"] == "done" and done["reviewed"] and done["commits"] == ["def456"]
     assert ag.locks()["locks"] == []
 
@@ -404,3 +408,18 @@ def test_schema_1_database_migrates(tmp_path):
         assert sorted(states) == ["approved", "unreviewed"]
     finally:
         a.close()
+
+
+def test_resubmitting_new_commits_clears_the_previous_approval(ag):
+    tid = ag.task_add({"agent": "claude", "title": "fix", "repo": "HoardLink", "paths": ["a.py"], "claim": True})["task"]["id"]
+    ag.task_submit({"agent": "claude", "task_id": tid, "summary": "first", "commits": ["aaa111"]})
+    ag.task_review({"agent": "codex", "task_id": tid, "verdict": "approve", "body": "ok"})
+    assert ag._task_row(tid)["reviewed"] is True
+    ag.task_submit({"agent": "claude", "task_id": tid, "summary": "one more fix", "commits": ["aaa111", "bbb222"],
+                    "reviewer": "codex"})
+    task = ag._task_row(tid)
+    assert task["status"] == "review" and task["reviewed"] is False
+    assert [t["id"] for t in ag.inbox({"agent": "codex", "peek": True})["reviews"]] == [tid]
+    ag.task_review({"agent": "codex", "task_id": tid, "verdict": "approve", "body": "bbb222 checked"})
+    done = ag.task_done({"agent": "claude", "task_id": tid, "commits": ["aaa111", "bbb222"]})["task"]
+    assert done["review_state"] == "approved"

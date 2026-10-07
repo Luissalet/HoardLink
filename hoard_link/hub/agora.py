@@ -560,8 +560,10 @@ class Agora:
                 raise AgoraError("the reviewer must be someone else")
             now = self.clock()
             commits = _list(a.get("commits"), "commits")
+            # A new submission asks for a new verdict: an approval given to earlier commits does not carry over to
+            # what is sent now (the old verdict stays in the thread).
             self.db.execute("UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
-                            "submitted_at=?, updated=? WHERE id=?",
+                            "submitted_at=?, updated=?, reviewed=0 WHERE id=?",
                             (reviewer, a.get("branch"), _j(commits or task["commits"]), now, now, task["id"]))
             self._msg(int(task["thread_id"]), agent, "proposal", summary, [reviewer] if reviewer else [])
         self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": reviewer})
@@ -612,7 +614,16 @@ class Agora:
             commits = _list(a.get("commits"), "commits") or task["commits"]
             result = _txt(a.get("result"), 20000, "result")
             exempt = _txt(a.get("exempt"), 300, "exempt")
-            if task["status"] == "approved":
+            unreviewed_commits = [c for c in commits if c not in (task["commits"] or [])]
+            if task["status"] == "approved" and unreviewed_commits:
+                # Closing with commits the reviewer never saw (an integration that rewrote hashes, or new work): say
+                # how they relate to the approved ones, or submit them again.
+                if not (a.get("force") and str(a.get("reason") or "").strip()):
+                    raise AgoraError(f"task {task['id']} was approved on {', '.join(task['commits'] or []) or 'no commits'}; "
+                                     f"{', '.join(unreviewed_commits)} were not reviewed: submit them, or pass force "
+                                     "with a reason that says how they relate to the approved ones", 409)
+                review_state = "approved"
+            elif task["status"] == "approved":
                 review_state = "approved"
             elif exempt or (task.get("kind") in EXEMPT_KINDS and task["status"] not in ("review", "changes")):
                 if task.get("kind") not in EXEMPT_KINDS:
