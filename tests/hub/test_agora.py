@@ -303,3 +303,104 @@ def test_done_over_requested_changes_needs_force_and_reason(ag):
     done = ag.task_done({"agent": "claude", "task_id": tid, "force": True, "reason": "x was a false alarm"})["task"]
     assert done["status"] == "done" and not done["reviewed"]
     assert "x was a false alarm" in ag.task({"task_id": tid})["messages"][-1]["body"]
+
+
+# ---- second round: grouped locks, pending mentions, review exemption, digest, migration ------------------------
+
+def test_group_locks_folds_long_lists():
+    from hoard_link.hub.agora import group_locks
+    locks = [{"resource": f"path:faustus/src/f{i}.py", "owner": "codex", "task_id": 1, "expires": 10} for i in range(13)]
+    locks += [{"resource": f"path:faustus/tests/t{i}.py", "owner": "codex", "task_id": 1, "expires": 20} for i in range(15)]
+    locks += [{"resource": "path:faustus/vite.config.ts", "owner": "codex", "task_id": 1, "expires": 5},
+              {"resource": "model:principal", "owner": "codex", "task_id": None, "expires": 5},
+              {"resource": "path:hoardlink/scripts/agora.py", "owner": "claude", "task_id": 4, "expires": 5}]
+    groups = group_locks(locks)
+    big = [g for g in groups if g["owner"] == "codex" and g["kind"] == "path"][0]
+    assert big["count"] == 29 and big["folders"] == {"src/": 13, "tests/": 15, "vite.config.ts": 1}
+    assert big["label"].startswith("path:faustus/ · 29 rutas (tests/ 15, src/ 13")
+    assert big["expires"] == 20 and len(big["resources"]) == 29
+    single = [g for g in groups if g["owner"] == "claude"][0]
+    assert single["label"] == "path:hoardlink/scripts/agora.py"
+    assert any(g["label"] == "model:principal" for g in groups)
+
+
+def test_mentions_stay_pending_until_seen(ag):
+    th = ag.thread_open({"agent": "claude", "title": "q", "body": "codex?", "mentions": ["codex"]})["thread"]
+    ag.inbox({"agent": "codex"})                                   # e.g. an MCP read moves the cursor
+    again = ag.inbox({"agent": "codex"})
+    assert again["counts"]["messages"] == 0 and again["counts"]["pending"] == 1
+    assert again["pending"][0]["thread_id"] == th["id"]
+    ag.heartbeat({"agent": "codex"})
+    assert ag.inbox({"agent": "codex", "peek": True})["counts"]["pending"] == 1        # renewing locks loses nothing
+    ag.thread({"thread_id": th["id"], "agent": "codex"})                               # opening the thread = seen
+    assert ag.inbox({"agent": "codex"})["counts"]["pending"] == 0
+    ag.post({"agent": "claude", "thread_id": th["id"], "body": "ping", "mentions": ["codex"]})
+    assert ag.inbox({"agent": "codex", "peek": True})["counts"]["pending"] == 1
+    ag.post({"agent": "codex", "thread_id": th["id"], "body": "pong"})                 # replying = seen
+    assert ag.inbox({"agent": "codex", "peek": True})["counts"]["pending"] == 0
+    ag.post({"agent": "claude", "thread_id": th["id"], "body": "again", "mentions": ["codex"]})
+    assert ag.ack({"agent": "codex", "all": True})["acked"] == [th["id"]]
+    assert ag.inbox({"agent": "codex", "peek": True})["counts"]["pending"] == 0
+    with pytest.raises(AgoraError):
+        ag.ack({"agent": "luis", "all": True})                     # only the page acks for the person
+
+
+def test_long_poll_does_not_return_early_for_standing_reviews(tmp_path):
+    a = Agora(tmp_path / "a.db")
+    try:
+        tid = a.task_add({"agent": "codex", "title": "t", "claim": True})["task"]["id"]
+        a.task_submit({"agent": "codex", "task_id": tid, "summary": "s"})
+        a.inbox({"agent": "claude"})
+        start = time.time()
+        out = a.inbox({"agent": "claude", "wait_s": 1})
+        assert out["counts"]["reviews"] == 1 and time.time() - start >= 0.9
+    finally:
+        a.close()
+
+
+def test_review_exemption_only_for_non_code_kinds(ag):
+    docs = ag.task_add({"agent": "codex", "title": "docs", "kind": "docs", "claim": True})["task"]["id"]
+    d = ag.task_done({"agent": "codex", "task_id": docs, "result": "FAUSTUS.md"})["task"]
+    assert d["review_state"] == "exempt" and not d["reviewed"]
+    assert "Exenta de revisión: docs" in ag.task({"task_id": docs})["messages"][-1]["body"]
+    code = ag.task_add({"agent": "codex", "title": "code", "kind": "feature", "claim": True})["task"]["id"]
+    with pytest.raises(AgoraError):
+        ag.task_done({"agent": "codex", "task_id": code, "exempt": "small"})
+    c = ag.task_done({"agent": "codex", "task_id": code, "result": "x"})["task"]
+    assert c["review_state"] == "unreviewed"
+    ev = ag.task_add({"agent": "codex", "title": "probe", "kind": "eval", "claim": True})["task"]["id"]
+    ag.task_submit({"agent": "codex", "task_id": ev, "summary": "s"})
+    ag.task_review({"agent": "claude", "task_id": ev, "verdict": "approve", "body": "ok"})
+    assert ag.task_done({"agent": "codex", "task_id": ev})["task"]["review_state"] == "approved"
+
+
+def test_digest_counts_by_agent_and_review_state(ag):
+    a1 = ag.task_add({"agent": "codex", "title": "a", "kind": "docs", "claim": True})["task"]["id"]
+    ag.task_done({"agent": "codex", "task_id": a1})
+    a2 = ag.task_add({"agent": "claude", "title": "b", "claim": True})["task"]["id"]
+    ag.task_submit({"agent": "claude", "task_id": a2, "summary": "s"})
+    ag.task_review({"agent": "codex", "task_id": a2, "verdict": "approve", "body": "ok"})
+    ag.task_done({"agent": "claude", "task_id": a2})
+    ag.thread_open({"agent": "claude", "title": "d", "body": "b", "kind": "decision"})
+    d = ag.digest({"hours": 1})
+    assert d["agents"]["codex"]["done"] == 1 and d["agents"]["claude"]["submitted"] == 1
+    assert d["agents"]["codex"]["reviews"] == 1
+    assert d["done_by_review"] == {"approved": 1, "exempt": 1, "unreviewed": 0}
+    ag.fake_clock.t += 2 * 3600
+    assert ag.digest({"hours": 1})["done"] == []
+
+
+def test_schema_1_database_migrates(tmp_path):
+    import sqlite3
+    from hoard_link.hub.agora import MIGRATIONS
+    from hoard_link.sqlkit import Database
+    old = Database(tmp_path / "old.db", migrations=MIGRATIONS[:1])
+    old.execute("INSERT INTO tasks(title, status, reviewed, created, updated) VALUES('x','done',1,1,1)")
+    old.execute("INSERT INTO tasks(title, status, reviewed, created, updated) VALUES('y','done',0,1,1)")
+    old.close()
+    a = Agora(tmp_path / "old.db")
+    try:
+        states = [t["review_state"] for t in a.tasks({"status": "done"})["tasks"]]
+        assert sorted(states) == ["approved", "unreviewed"]
+    finally:
+        a.close()
