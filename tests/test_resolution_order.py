@@ -29,13 +29,14 @@ FAUSTUS_LLM_REGISTRY = httpx.Response(
 )
 
 
-def llamacpp_router_with(router: Router) -> Router:
+def llamacpp_router_with(router: Router, model: str = "from-loopback") -> Router:
     router.get(
         8081,
         "/props",
-        httpx.Response(200, json={"model_path": "/m/x.gguf", "default_generation_settings": {}, "modalities": []}),
+        httpx.Response(200, json={"model_path": f"/m/{model}.gguf", "default_generation_settings": {}, "modalities": []}),
     )
-    router.get(8081, "/v1/models", httpx.Response(200, json={"data": [{"id": "from-loopback"}]}))
+    router.get(8081, "/v1/models", httpx.Response(200, json={"data": [{"id": model}]}))
+    router.get(8081, "/slots", httpx.Response(200, json=[]))
     return router
 
 
@@ -62,7 +63,7 @@ async def test_faustus_beats_loopback_when_both_available():
     router = Router()
     router.get(7000, "/api/health", HEALTHY)
     router.get(7000, "/api/models", FAUSTUS_LLM_REGISTRY)
-    llamacpp_router_with(router)
+    llamacpp_router_with(router, model="from-faustus")
 
     cfg = LinkConfig(faustus_token="ody_test")
     link = make_link(router, config=cfg)
