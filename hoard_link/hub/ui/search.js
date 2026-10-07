@@ -71,7 +71,7 @@
       const box2 = el("div", "sr-group");
       const head = el("div", "sr-ghead");
       if (g.own) head.appendChild(el("span", "sr-glyph", GLYPH[g.app] || "·"));
-      else { const img = el("img"); img.src = `/api/apps/${encodeURIComponent(g.app)}/icon`; img.alt = ""; img.onerror = () => img.remove(); head.appendChild(img); }
+      else { const img = el("img"); img.src = (window.hubAppIcon ? window.hubAppIcon(g.app) : `/api/apps/${encodeURIComponent(g.app)}/icon`); img.alt = ""; img.onerror = () => img.remove(); head.appendChild(img); }
       head.appendChild(el("span", "", g.own ? t(OWN[g.app] || "label") : g.name));
       head.appendChild(el("small", "", `${g.tool} · ${g.ms} ms`));
       box2.appendChild(head);

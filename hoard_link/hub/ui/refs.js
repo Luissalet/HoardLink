@@ -61,7 +61,7 @@
 
   function appHead(app, appUrl) {
     const h = el("div", "rf-ghead");
-    const img = el("img"); img.src = `/api/apps/${encodeURIComponent(app)}/icon`; img.alt = ""; img.onerror = () => img.remove();
+    const img = el("img"); img.src = (window.hubAppIcon ? window.hubAppIcon(app) : `/api/apps/${encodeURIComponent(app)}/icon`); img.alt = ""; img.onerror = () => img.remove();
     h.appendChild(img); h.appendChild(el("span", "", app || "?"));
     if (app) { const a = el("a", "", t("open_app")); a.href = "#"; a.onclick = async (e) => { e.preventDefault(); const r = await api(`/api/apps/${encodeURIComponent(app)}/open`, { mode: "window" }); if (!r.ok) toast(r.error || "error", "err"); }; h.appendChild(a); }
     return h;

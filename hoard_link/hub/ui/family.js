@@ -370,7 +370,7 @@
     for (const r of rows) {
       const row = el("tr", "repo-row"); row.tabIndex = 0;
       const nameTd = el("td", "repo-name");
-      if (r.app) { const img = el("img", "repo-icon"); img.src = `/api/apps/${encodeURIComponent(r.app)}/icon`; img.alt = ""; img.width = 20; img.height = 20; nameTd.appendChild(img); }
+      if (r.app) { const img = el("img", "repo-icon"); img.src = (window.hubAppIcon ? window.hubAppIcon(r.app) : `/api/apps/${encodeURIComponent(r.app)}/icon`); img.alt = ""; img.width = 20; img.height = 20; nameTd.appendChild(img); }
       else nameTd.appendChild(el("span", "repo-icon ph", (r.name[0] || "?").toUpperCase()));
       nameTd.appendChild(document.createTextNode(r.name));
       row.appendChild(nameTd);
