@@ -59,7 +59,7 @@
 
   function row(j) {
     const r = el("div", `wk-row ${j.status}${j.stale ? " stale" : ""}`);
-    const img = el("img"); img.src = `/api/apps/${encodeURIComponent(j.app)}/icon`; img.alt = ""; img.onerror = () => { img.style.visibility = "hidden"; };
+    const img = el("img"); img.src = (window.hubAppIcon ? window.hubAppIcon(j.app) : `/api/apps/${encodeURIComponent(j.app)}/icon`); img.alt = ""; img.onerror = () => { img.style.visibility = "hidden"; };
     r.appendChild(img);
     const main = el("div");
     const title = el("div", "wk-title");
