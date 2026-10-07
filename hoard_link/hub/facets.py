@@ -46,6 +46,7 @@ FACET_MODULES = (
     "web",
     "services",
     "workspace",
+    "agora",
 )
 
 
