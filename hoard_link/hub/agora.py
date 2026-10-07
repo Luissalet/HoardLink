@@ -530,6 +530,8 @@ class Agora:
                             (status, agent, 1 if verdict == "approve" else 0, now, task["id"]))
             self._msg(int(task["thread_id"]), agent, "approve" if verdict == "approve" else "changes", body,
                       [task["owner"]] if task.get("owner") else [])
+            if agent == PERSON:
+                self.db.execute("UPDATE threads SET status='open' WHERE id=? AND status='escalated'", (task["thread_id"],))
         self._bump("agora.task.reviewed", {"task_id": task["id"], "agent": agent, "verdict": verdict})
         return {"ok": True, "task": self._task_row(task["id"])}
 
@@ -650,7 +652,8 @@ class Agora:
             self._touch(agent)
             th = self._thread_row(a.get("thread_id"))
             mid = self._msg(th["id"], agent, kind, body, _list(a.get("mentions"), "mentions"))
-            if th["status"] == "resolved" and kind in ("disagree", "proposal"):
+            if (th["status"] == "resolved" and kind in ("disagree", "proposal")) or \
+                    (th["status"] == "escalated" and agent == PERSON):
                 self.db.execute("UPDATE threads SET status='open' WHERE id=?", (th["id"],))
         self._bump("agora.thread.message", {"thread_id": th["id"], "message_id": mid, "author": agent, "kind": kind})
         return {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"])}
@@ -710,7 +713,7 @@ class Agora:
             where.append("t.kind=?")
             params.append(str(a["kind"]))
         elif not a.get("include_tasks"):
-            where.append("t.kind<>'task'")
+            where.append("(t.kind<>'task' OR t.status='escalated')")
         limit = max(1, min(int(a.get("limit") or 100), 500))
         sql = ("SELECT t.*, (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id) AS messages, "
                "(SELECT author FROM messages m WHERE m.thread_id=t.id ORDER BY id DESC LIMIT 1) AS last_author "
@@ -788,8 +791,10 @@ class Agora:
             "ORDER BY submitted_at", (agent, agent))]
         changes = [self._task_dict(r) for r in self.db.query(
             "SELECT * FROM tasks WHERE status='changes' AND owner=?", (agent,))]
-        escalated = [dict(r) for r in self.db.query("SELECT * FROM threads WHERE status='escalated' ORDER BY updated")] \
-            if agent == PERSON else []
+        escalated = [dict(r) for r in self.db.query(
+            "SELECT t.*, (SELECT body FROM messages m WHERE m.thread_id=t.id AND m.kind='escalation' ORDER BY m.id DESC LIMIT 1) "
+            "AS question, (SELECT author FROM messages m WHERE m.thread_id=t.id AND m.kind='escalation' ORDER BY m.id DESC "
+            "LIMIT 1) AS escalated_by FROM threads t WHERE t.status='escalated' ORDER BY t.updated")] if agent == PERSON else []
         counts = {"messages": len(msgs), "for_you": sum(1 for m in msgs if m["for_you"]), "reviews": len(reviews),
                   "changes": len(changes), "escalated": len(escalated)}
         counts["total"] = counts["messages"] + counts["reviews"] + counts["changes"] + counts["escalated"]

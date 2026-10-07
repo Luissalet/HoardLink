@@ -162,6 +162,7 @@ def test_debate_escalation_and_decision_log(ag):
     assert ag.escalations == [(th["id"], "claude", "q8 500k or q4?")]
     person = ag.inbox({"agent": "luis", "peek": True})
     assert [t["id"] for t in person["escalated"]] == [th["id"]]
+    assert person["escalated"][0]["question"] == "q8 500k or q4?" and person["escalated"][0]["escalated_by"] == "claude"
     with pytest.raises(AgoraError) as exc:
         ag.post({"agent": "luis", "thread_id": th["id"], "body": "q4"})
     assert exc.value.status == 403
@@ -254,3 +255,30 @@ def test_http_and_tools(tmp_path):
     finally:
         server.shutdown()
         hub.close()
+
+
+def test_person_answer_takes_thread_out_of_escalation_and_task_threads_show(ag):
+    tid = ag.task_add({"agent": "codex", "title": "t", "claim": True})["task"]["id"]
+    task = ag.task({"task_id": tid})["task"]
+    ag.escalate({"agent": "codex", "thread_id": task["thread_id"], "question": "keep or drop?"})
+    listed = ag.threads()["threads"]
+    assert [t["id"] for t in listed] == [task["thread_id"]]            # escalated task threads are listed
+    ag.post({"agent": "luis", "thread_id": task["thread_id"], "body": "keep", "_person": True})
+    assert ag.thread({"thread_id": task["thread_id"]})["thread"]["status"] == "open"
+    assert ag.threads()["threads"] == []
+    ag.task_submit({"agent": "codex", "task_id": tid, "summary": "s"})
+    ag.escalate({"agent": "codex", "thread_id": task["thread_id"], "question": "approve?"})
+    ag.task_review({"agent": "luis", "task_id": tid, "verdict": "approve", "body": "ok", "_person": True})
+    assert ag.board()["escalated"] == 0
+
+
+def test_cli_repairs_windows_double_encoding():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("agora_cli", Path(__file__).resolve().parents[2] / "scripts" / "agora.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    assert cli.fix_text("Â¿q4 o q8?") == "¿q4 o q8?"
+    assert cli.fix_text("Probando el \u00c3\u0081gora") == "Probando el Ágora"
+    assert cli.fix_text("c├│mo, due├▒o") == "cómo, dueño"
+    assert cli.fix_text("ya bien: ¿Ágora?") == "ya bien: ¿Ágora?"
