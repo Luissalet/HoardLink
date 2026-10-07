@@ -19,6 +19,7 @@ testable with a temporary folder and two JSON files.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -81,6 +82,9 @@ class App:
     #: ``stack`` to override the node/python guess, ``events`` false when it will never emit.
     family: dict[str, Any] = field(default_factory=dict)
     runtime_url_file: str = ""
+    # Search roots retained so ordinary API snapshots can notice icons added
+    # after the initial manifest scan without rescanning applications.
+    icon_dirs: Optional[list[str]] = field(default=None, repr=False)
 
     @property
     def agent_contract(self) -> bool:
@@ -100,6 +104,8 @@ class App:
     @property
     def icon_revision(self) -> Optional[str]:
         """Cheap stable cache key for the current icon; no file-content hashing per poll."""
+        if self.icon_dirs is not None:
+            self.icon_path = _find_icon(self.folder, self.id, self.name, self.icon_dirs)
         if not self.icon_path:
             return None
         try:
@@ -108,7 +114,8 @@ class App:
             return None
         if not stat.S_ISREG(info.st_mode):
             return None
-        return f"{info.st_mtime_ns:x}-{info.st_size:x}"
+        path_key = hashlib.sha256(os.path.normcase(os.path.abspath(self.icon_path)).encode("utf-8")).hexdigest()[:12]
+        return f"{path_key}-{info.st_mtime_ns:x}-{info.st_size:x}"
 
     def health_url(self) -> str:
         return self.url.rstrip("/") + self.health_path
@@ -263,19 +270,29 @@ def apply_launch_override(app: "App", override: Any) -> "App":
 def _find_icon(folder: str, app_id: str, name: str, icon_dirs: Iterable[str]) -> Optional[str]:
     for candidate in ICON_NAMES:
         p = os.path.join(folder, candidate)
-        if os.path.isfile(p):
-            return p
+        try:
+            if os.path.isfile(p) and stat.S_ISREG(os.stat(p).st_mode):
+                return p
+        except OSError:
+            continue
     # A shared icon folder with loosely named files ("Babels hoard.png").
     wanted = {_slug(name), _slug(app_id), _slug(name.replace("'s", "s"))}
     for d in icon_dirs:
-        if not os.path.isdir(d):
+        try:
+            entries = os.listdir(d) if os.path.isdir(d) else ()
+        except OSError:
             continue
-        for entry in os.listdir(d):
+        for entry in entries:
             stem, ext = os.path.splitext(entry)
             if ext.lower() not in (".png", ".svg", ".ico", ".jpg", ".jpeg") :
                 continue
             if _slug(stem) in wanted:
-                return os.path.join(d, entry)
+                candidate_path = os.path.join(d, entry)
+                try:
+                    if os.path.isfile(candidate_path) and stat.S_ISREG(os.stat(candidate_path).st_mode):
+                        return candidate_path
+                except OSError:
+                    continue
     return None
 
 
@@ -329,6 +346,7 @@ def read_manifest(
     expect_service = str(expect.get("service")) if isinstance(expect, dict) and expect.get("service") else None
 
     name = str(raw.get("name") or app_id)
+    icon_dirs = [str(directory) for directory in icon_dirs]
     app = App(
         id=app_id,
         name=name,
@@ -339,6 +357,7 @@ def read_manifest(
         expect_service=expect_service,
         capabilities=[str(c) for c in (raw.get("capabilities") or [])],
         icon_path=_find_icon(folder, app_id, name, icon_dirs),
+        icon_dirs=icon_dirs,
         manifest_path=path,
         notes=str(raw.get("notes") or ""),
         family={str(k): v for k, v in (raw.get("x-family") or raw.get("x_family") or {}).items()} if isinstance(raw.get("x-family") or raw.get("x_family"), dict) else {},
