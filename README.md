@@ -10,6 +10,8 @@ copy of a model.**
 [Hoard Hub](#hoard-hub-the-desktop-launcher) · [Use with Faustus](#use-with-faustus) · [API](#api) ·
 [Portfolio](https://luissalet.github.io/Portfolio/#projects)
 
+Shared native projects through Atlas and the Hub: [workspace guide](docs/commons/workspace.md).
+
 Hoard Link is a small Python library — standard library plus `httpx`, no
 server, no port, no UI — that a set of local apps can each vendor a copy
 of to answer one question: **for capability X (`llm`, `vision`,

@@ -14,6 +14,8 @@ en vez de cargar una segunda copia de un modelo.**
 [Hoard Hub](#hoard-hub-el-lanzador-de-escritorio) · [Uso con Faustus](#uso-con-faustus) · [API](#api) ·
 [Portfolio](https://luissalet.github.io/Portfolio/#projects)
 
+Proyectos y archivos nativos compartidos mediante Atlas y Hub: [guía de espacios compartidos](docs/commons/workspace.es.md).
+
 Hoard Link es una librería de Python pequeña — solo librería estándar más
 `httpx`, sin servidor, sin puerto, sin interfaz — que un conjunto de
 aplicaciones locales pueden incluir (cada una con su propia copia) para

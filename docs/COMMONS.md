@@ -63,6 +63,7 @@ Each area has its own page with the full API, the copies it replaces (with paths
 | App plumbing | `atomic`, `tokens`, `ids`, `sqlkit`, `paths`, `net`, `appconfig`, `lanes`, `waiting`, `guard`, `agentkit`, `service`, `bridge` | `server.js`, `express.js` | [commons/plumbing.md](commons/plumbing.md) |
 
 Family services (who owns what, the tools, arguments, results and polling rules): [commons/services.md](commons/services.md).
+Atlas shared projects through the Hub: [commons/workspace.md](commons/workspace.md).
 The web service in the hub: [commons/web.md](commons/web.md#family-service-hub-facet-web).
 
 The shared test vectors are in `tests/vectors/`; `tests/commons/` runs every vector against the Python module and,

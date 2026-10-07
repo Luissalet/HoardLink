@@ -45,6 +45,7 @@ FACET_MODULES = (
     "purchases",
     "web",
     "services",
+    "workspace",
 )
 
 
