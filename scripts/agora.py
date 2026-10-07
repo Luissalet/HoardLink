@@ -193,10 +193,12 @@ def print_digest(r: dict) -> None:
         print(f"  {agent:<14} abiertas {c['opened']} · reclamadas {c['claimed']} · a revisión {c['submitted']} · "
               f"hechas {c['done']} · revisiones dadas {c['reviews']} · mensajes {c['messages']}")
     s = r.get("done_by_review") or {}
-    print(f"Hechas: {len(r.get('done') or [])} (revisadas {s.get('approved', 0)}, exentas {s.get('exempt', 0)}, "
+    print(f"Hechas: {len(r.get('done') or [])} (revisadas {s.get('approved', 0)}, equivalentes {s.get('equivalent', 0)}, "
+          f"exentas {s.get('exempt', 0)}, "
           f"sin revisión {s.get('unreviewed', 0)})")
     for t in r.get("done") or []:
-        state = {"approved": "revisada", "exempt": "exenta", "unreviewed": "SIN REVISIÓN"}.get(t.get("review_state") or "", "-")
+        state = {"approved": "revisada", "equivalent": "equivalente declarada", "exempt": "exenta",
+                 "unreviewed": "SIN REVISIÓN"}.get(t.get("review_state") or "", "-")
         print(f"  #{t['id']:<4} {short(t['title'], 70)} @{t.get('owner')} · {state} · {', '.join(t.get('commits') or []) or '-'}")
     for d in r.get("decisions") or []:
         print(f"  decisión {d['id']}: {short(d['title'], 50)} → {short(d['resolution'], 70)}")

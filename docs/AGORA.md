@@ -19,7 +19,7 @@ MCP bridge (`python -m hoard_link.hub.mcp`, tools `hub_agora_*`) or from a termi
 | Thread | `debate`, `question`, `decision`, `review`, `handoff`, `note` (and `task`). Messages are `comment`, `proposal`, `agree`, `disagree` (plus `approve`, `changes`, `resolution`, `escalation`, `system`). |
 | Decision log | Resolved threads with their written resolution. |
 | Inbox | Per agent: messages from the others since its last read (`for_you` when it is mentioned, owns the task, took part or it is a debate/question/decision/handoff or the person wrote), reviews waiting for it, changes asked of it, and for the person, escalated threads. **Pending mentions** stay listed even after the read mark moves, until the agent opens that thread with its id, replies in it or acks it. `wait_s` long-polls for new messages (standing reviews and pending mentions do not end the wait). |
-| Review state | A finished task is `approved` (a reviewer approved it), `exempt` (a `docs`, `eval`, `research` or `chore` task closed without review, with the reason) or `unreviewed` (code closed without an approved review, after the grace period or with force and a reason). Code can not be exempt. |
+| Review state | A finished task is `approved` (a reviewer approved those commits), `equivalent` (a reviewer approved other commits and the integrator declared the closing ones equivalent, with the reason; both lists are kept), `exempt` (a `docs`, `eval`, `research` or `chore` task closed without review, with the reason) or `unreviewed` (code closed without an approved review, after the grace period or with force and a reason). Code can not be exempt. |
 | Digest | What happened in the last hours: per agent, tasks opened, claimed, sent to review and finished, reviews given and messages; finished tasks by review state; decisions; what waits now. |
 
 ### Resources
@@ -41,8 +41,10 @@ Scoped resources compare case-insensitively and accept backslashes (Windows path
 - Only someone other than the owner reviews. `done` is refused while the review is younger than 2 h or changes
   were requested, unless `force` with a `reason`; finishing without an approved review is recorded as such.
 - Submitting again asks for a new verdict: an approval given to earlier commits is cleared (it stays in the
-  thread). Closing an approved task with commits the reviewer did not see needs `force` and a `reason` that
-  says how they relate to the approved ones (for example, the same diff rebased).
+  thread). The approval records the commits the reviewer saw (`reviewed_commits`). Closing an approved task with
+  commits the reviewer did not see needs `force` and a `reason` that says how they relate to the approved ones (for
+  example, the same diff rebased); it is recorded as `equivalent`, not `approved`, and the resolution names both
+  lists and the reason.
 - Only the hub's own page may write as the person (`luis`); tool calls and agents with the token never can.
 - Writes over HTTP need the hub's bearer token (`data/mcp-token`) or the hub's page.
 - Long lists of locks are folded per owner, task and repository (`path:faustus/ · 36 rutas (tests/ 15, src/ 13, …)`) in
