@@ -83,6 +83,10 @@ MIGRATIONS = [
     UPDATE tasks SET review_state='approved' WHERE status='done' AND reviewed=1;
     UPDATE tasks SET review_state='unreviewed' WHERE status='done' AND reviewed=0;
     """,
+    """
+    ALTER TABLE tasks ADD COLUMN reviewed_commits TEXT;
+    UPDATE tasks SET reviewed_commits=commits WHERE reviewed=1;
+    """,
 ]
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
@@ -302,6 +306,7 @@ class Agora:
         d = dict(row)
         d["paths"] = _l(d.get("paths"))
         d["commits"] = _l(d.get("commits"))
+        d["reviewed_commits"] = _l(d.get("reviewed_commits"))
         d["reviewed"] = bool(d.get("reviewed"))
         d.setdefault("review_state", None)
         return d
@@ -563,7 +568,7 @@ class Agora:
             # A new submission asks for a new verdict: an approval given to earlier commits does not carry over to
             # what is sent now (the old verdict stays in the thread).
             self.db.execute("UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
-                            "submitted_at=?, updated=?, reviewed=0 WHERE id=?",
+                            "submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL WHERE id=?",
                             (reviewer, a.get("branch"), _j(commits or task["commits"]), now, now, task["id"]))
             self._msg(int(task["thread_id"]), agent, "proposal", summary, [reviewer] if reviewer else [])
         self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": reviewer})
@@ -585,8 +590,9 @@ class Agora:
                 raise AgoraError(f"task {task['id']} is not waiting for review ({task['status']})", 409)
             status = "approved" if verdict == "approve" else "changes"
             now = self.clock()
-            self.db.execute("UPDATE tasks SET status=?, reviewer=?, reviewed=?, updated=? WHERE id=?",
-                            (status, agent, 1 if verdict == "approve" else 0, now, task["id"]))
+            self.db.execute("UPDATE tasks SET status=?, reviewer=?, reviewed=?, reviewed_commits=?, updated=? WHERE id=?",
+                            (status, agent, 1 if verdict == "approve" else 0,
+                             _j(task["commits"]) if verdict == "approve" else None, now, task["id"]))
             self._msg(int(task["thread_id"]), agent, "approve" if verdict == "approve" else "changes", body,
                       [task["owner"]] if task.get("owner") else [])
             if agent == PERSON:
@@ -614,15 +620,18 @@ class Agora:
             commits = _list(a.get("commits"), "commits") or task["commits"]
             result = _txt(a.get("result"), 20000, "result")
             exempt = _txt(a.get("exempt"), 300, "exempt")
-            unreviewed_commits = [c for c in commits if c not in (task["commits"] or [])]
+            seen = task.get("reviewed_commits") or task["commits"] or []
+            unreviewed_commits = [c for c in commits if c not in seen]
             if task["status"] == "approved" and unreviewed_commits:
                 # Closing with commits the reviewer never saw (an integration that rewrote hashes, or new work): say
                 # how they relate to the approved ones, or submit them again.
                 if not (a.get("force") and str(a.get("reason") or "").strip()):
-                    raise AgoraError(f"task {task['id']} was approved on {', '.join(task['commits'] or []) or 'no commits'}; "
+                    raise AgoraError(f"task {task['id']} was approved on {', '.join(seen) or 'no commits'}; "
                                      f"{', '.join(unreviewed_commits)} were not reviewed: submit them, or pass force "
                                      "with a reason that says how they relate to the approved ones", 409)
-                review_state = "approved"
+                # The reviewer approved other hashes; the integrator declares these equivalent. Recorded as such, with
+                # both lists and the reason, so nobody reads it as an approval of hashes the reviewer never saw.
+                review_state = "equivalent"
             elif task["status"] == "approved":
                 review_state = "approved"
             elif exempt or (task.get("kind") in EXEMPT_KINDS and task["status"] not in ("review", "changes")):
@@ -640,6 +649,9 @@ class Agora:
                 note = f"\n\n(Exenta de revisión: {exempt or task.get('kind')})"
             elif unreviewed:
                 note = "\n\n(Integrada sin revisión aprobada" + (f": {a.get('reason')}" if a.get("reason") else "") + ")"
+            elif review_state == "equivalent":
+                note = (f"\n\n(Aprobada por {task.get('reviewer') or 'el revisor'} en {', '.join(seen)}; integrada como "
+                        f"{', '.join(commits)}, equivalencia declarada por {agent}: {a.get('reason')})")
             else:
                 note = ""
             text = (result or "Hecho.") + note
@@ -647,7 +659,8 @@ class Agora:
             self.db.execute("UPDATE threads SET status='resolved', resolution=?, resolved_by=?, updated=? WHERE id=?",
                             (result or "done", agent, now, task["thread_id"]))
         self._bump("agora.task.done", {"task_id": task["id"], "agent": agent, "commits": commits,
-                                       "reviewed": review_state == "approved", "review_state": review_state})
+                                       "reviewed": review_state in ("approved", "equivalent"), "review_state": review_state,
+                                       "reviewed_commits": seen if review_state in ("approved", "equivalent") else []})
         return {"ok": True, "task": self._task_row(task["id"])}
 
     def task_release(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -967,7 +980,7 @@ class Agora:
             "escalated": [dict(r) for r in self.db.query("SELECT id, title, updated FROM threads WHERE status='escalated'")],
         }
         by_state = {k: sum(1 for t in done if (t.get("review_state") or ("approved" if t["reviewed"] else "unreviewed")) == k)
-                    for k in ("approved", "exempt", "unreviewed")}
+                    for k in ("approved", "equivalent", "exempt", "unreviewed")}
         return {"ok": True, "hours": hours, "since": since, "agents": per, "done": done, "done_by_review": by_state,
                 "decisions": decisions, "waiting": waiting}
 
