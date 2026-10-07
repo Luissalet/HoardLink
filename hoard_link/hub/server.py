@@ -31,6 +31,7 @@ POST /api/lease/release        {lease_id}
 GET  /api/profiles             every profile with the state of its apps and commands
 GET  /api/profiles/<name>      one profile
 POST /api/profiles/<name>/start|stop
+POST /api/profiles/export | /api/profiles/import/preview | /api/profiles/import
 GET  /api/config               the effective configuration
 GET  /api/agent/tools          (bearer) tool catalogue
 POST /api/agent/call           (bearer) {"tool": name, "arguments": {...}}
@@ -75,7 +76,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import HUB_VERSION, SERVICE
 from .core import Hub
-from . import desktop, tools, autostart, profile_editor
+from . import desktop, tools, autostart, profile_editor, portable_profiles
 from .lease import LeaseError
 from .rules import example_rules
 from .jobs import example_jobs
@@ -523,6 +524,18 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/autostart":
                 res = profile_editor.startup(hub, body)
                 return self._json(res, 200 if res.get("ok") else 400)
+            if path == "/api/profiles/export":
+                try:
+                    return self._json(portable_profiles.export_profile(hub, str(body.get("name") or "")))
+                except ValueError as exc:
+                    return self._json({"ok": False, "error": str(exc)}, 404 if "unknown profile" in str(exc) else 400)
+            if path in ("/api/profiles/import/preview", "/api/profiles/import"):
+                options = {key: body.get(key) for key in
+                           ("name", "app_map", "command_overrides", "replace")
+                           if key in body}
+                fn = portable_profiles.preview_import if path.endswith("/preview") else portable_profiles.import_profile
+                result = fn(hub, body.get("document"), **options)
+                return self._json(result, 200 if result.get("ok") or path.endswith("/preview") else 400)
             if len(parts) == 5 and parts[1:3] == ["api", "profiles"] and parts[4] in ("save", "remove"):
                 name = unquote(parts[3])
                 res = profile_editor.save(hub, name, body) if parts[4] == "save" else profile_editor.remove(hub, name)

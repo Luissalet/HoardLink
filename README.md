@@ -480,7 +480,9 @@ alive; their output goes to `data/logs/cmd-<profile>--<name>.log`, and the
 hub only ever stops a command it started itself. No profile is defined by
 default; [docs/HUB.md](docs/HUB.md#profiles) has two complete examples.
 HTTP: `GET /api/profiles`, `GET /api/profiles/<name>`,
-`POST /api/profiles/<name>/start|stop`.
+`POST /api/profiles/<name>/start|stop`. Portable JSON export/import has a
+dependency and machine-path preview; import saves configuration but never
+starts members. See [docs/PROFILE-PORTABILITY.md](docs/PROFILE-PORTABILITY.md).
 
 ### GPU memory leases
 
