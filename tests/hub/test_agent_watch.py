@@ -380,3 +380,78 @@ def test_agent_with_several_sessions_shows_the_one_that_needs_attention(roots, c
                    NOW - 5 if i == 0 else NOW - 30, uuid=u)
     a = watch(roots, clock).view(force=True)["agents"]["codex-sparks"]
     assert a["state"] == "waiting" and a["sessions"] == 2 and a["questions"] == 1
+
+
+# ---- stronger redaction and clean titles ------------------------------------------------------------------------
+
+def test_snippet_masks_passwords_numbers_emails_and_sudoers():
+    assert snippet("usuario luis password 20001234") == "usuario luis password ***"
+    assert snippet("mi contraseña es hunter22x, y luego despliega") == "mi contraseña ***, y luego despliega"
+    assert snippet("La clave: abc def. Sigue con el bug") == "La clave ***. Sigue con el bug"
+    assert snippet("el TOKEN de acceso vale zzz; ok") == "el TOKEN ***; ok"
+    assert snippet("llama al 600123456 o al 12345") == "llama al *** o al 12345"       # six digits or more only
+    assert snippet("escribe a luis.m+x@example.co.uk ya") == "escribe a *** ya"
+    assert snippet("usuario luis ALL=(ALL) NOPASSWD: ALL") == ""
+    assert snippet("hecho\nluis ALL=(ALL:ALL) ALL\n/etc/sudoers.d/luis") == "hecho"
+    assert snippet("export HF=hf_" + "a" * 30) == ""
+    assert snippet("curl -H 'Authorization: Bearer abcdef0123456789'") == ""
+    assert snippet("Bearer abcdef0123456789xyz") == ""
+    msg = "mi usuario es luis y la contraseña 20001234\nluis ALL=(ALL) NOPASSWD: ALL\nlevanta el servidor"
+    out = snippet(msg)
+    assert "20001234" not in out and "NOPASSWD" not in out and out.endswith("levanta el servidor")
+
+
+def test_titles_and_snippets_in_every_view_are_masked(roots, clock):
+    secret = "Entra con luis y la contraseña 20001234\nluis ALL=(ALL) NOPASSWD: ALL\nescribe a luis@example.com\nArregla el bucle"
+    codex_file(roots["codex"], cx_head(NOW - 90, prompt=secret) + [
+        cx_start(NOW - 60), cx_exec(NOW - 50, "c1", "ssh root@host.example.org -p 22222222"),
+        cx_msg(NOW - 40, "assistant", "Tu clave 99887766 y el correo a@b.io")], NOW - 40)
+    blob = json.dumps(watch(roots, clock).view(force=True))
+    for leak in ("20001234", "NOPASSWD", "luis@example.com", "root@host.example.org", "22222222", "99887766", "a@b.io"):
+        assert leak not in blob, leak
+    assert "Arregla el bucle" in blob
+
+
+def _wrapped_cursor(path_root, text):
+    return cursor_file(path_root, [{"role": "user", "message": {"content": [{"type": "text", "text": text}]}},
+                                   cur_text("vale")], NOW - 30)
+
+
+def test_cursor_title_is_the_inside_of_user_query(roots, clock):
+    _wrapped_cursor(roots["cursor"], "<timestamp>Thursday, Oct 8, 2026, 1:43 AM (UTC+2)</timestamp>\n"
+                                     "<user_query>\nRevisa el   README\ny arregla los enlaces\n</user_query>")
+    assert one(watch(roots, clock))["title"] == "Revisa el README y arregla los enlaces"
+
+
+def test_title_accepts_user_message_elements_and_unclosed_wrappers(roots, clock):
+    _wrapped_cursor(roots["cursor"], "<timestamp>Oct 8</timestamp> <user_message>Dime la hora</user_message><x>no</x>")
+    assert one(watch(roots, clock))["title"] == "Dime la hora"
+    path = next(roots["cursor"].glob("**/*.jsonl"))
+    path.unlink()
+    _wrapped_cursor(roots["cursor"], "<timestamp>Oct 8</timestamp> <user_query>Se corta el mensaje")
+    assert one(watch(roots, clock))["title"] == "Se corta el mensaje"
+
+
+def test_codex_title_skips_wrapper_blocks_and_stray_tags(roots, clock):
+    plugins = "<recommended_plugins>\n<plugin>git</plugin>\n<plugin>docs</plugin>\n</recommended_plugins>"
+    env = "<environment_context>\n<cwd>/x</cwd>\n</environment_context>"
+    instr = '<user_instructions class="a">usa pytest</user_instructions>'
+    head = cx_head(NOW - 90, prompt=f"{plugins}\n{env} {instr}\nAñade <b>el observador</b> al Ágora")
+    del head[2]                                                        # the helper's own environment message
+    codex_file(roots["codex"], head + [cx_start(NOW - 60)], NOW - 60)
+    assert one(watch(roots, clock))["title"] == "Añade el observador al Ágora"
+
+
+def test_title_falls_back_to_the_next_message_when_only_wrappers_are_left(roots, clock):
+    only_tags = "<recommended_plugins>\n<plugin>git</plugin>\n</recommended_plugins>\n<environment_context><cwd>/x</cwd></environment_context>"
+    lines = cx_head(NOW - 90, prompt=only_tags)
+    lines.insert(4, cx_msg(NOW - 89, "user", "<user_instructions>reglas</user_instructions>"))
+    lines.append(cx_msg(NOW - 80, "user", "Ahora sí: pasa los tests"))
+    codex_file(roots["codex"], lines + [cx_start(NOW - 60)], NOW - 60)
+    assert one(watch(roots, clock))["title"] == "Ahora sí: pasa los tests"
+    claude_file(roots["claude"], [cl_user(NOW - 50, "<command-name>/clear</command-name><command-message>clear</command-message>"),
+                                  cl_user(NOW - 40, "<system-reminder>x</system-reminder>\nImplementa el fix"),
+                                  cl_asst(NOW - 30, cl_text("ok"))], NOW - 30)
+    titles = {s["engine"]: s["title"] for s in watch(roots, clock).view(force=True)["sessions"]}
+    assert titles["claude"] == "Implementa el fix"
+    assert len(titles["codex"]) <= aw.TITLE_MAX

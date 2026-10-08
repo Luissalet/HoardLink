@@ -281,9 +281,13 @@ observed state next to the heartbeat («sin señales · observado: ejecutando ex
 «Sesiones sin asignar» list with a select to assign each one. From a terminal: `agora.py watch` and `agora.py watch-bind <key> <agent>`.
 
 **Privacy.** The view carries only snippets of at most 200 characters (title 120). Reasoning, thinking and encrypted content are
-never read into a snippet, and every line that looks like a secret (`Authorization:`, `password=`, `token:`, `--password`, key
-prefixes such as `sk-`, `ghp_`, `AKIA`, JWTs, private-key headers) is dropped from them. File paths and the working directory are
-shown: the hub answers only to this machine and the people or tools holding its token.
+never read into a snippet. Every line that looks like a secret (`Authorization:`, `password=`, `token:`, `--password`, key
+prefixes such as `sk-`, `ghp_`, `hf_`, `AKIA`, Bearer tokens, JWTs, private-key headers, `NOPASSWD` / sudoers lines) is dropped
+from them; in the lines that stay, whatever follows a word like password, contraseña, clave, token or secret (to the end of the
+clause), e-mail addresses and any run of six or more digits are replaced by `***`. Titles are the user's own words: the inside of
+a `<user_query>` / `<user_message>` element when there is one, otherwise the text without its leading `<tag>…</tag>` blocks
+(environment, plugins, timestamps…) and stray tags; a message with nothing left yields to the next user message. File paths and
+the working directory are shown: the hub answers only to this machine and the people or tools holding its token.
 
 **Configuration** (`hub.json`, key `agent_watch`; all optional): `{"enabled": true, "hours": 48, "max_files": 200, "roots":
 {"codex": ["…"], "cursor": ["…"], "claude": ["…"]}}`. Environment: `HOARD_AGENT_WATCH_HOME` (a different home folder) and
