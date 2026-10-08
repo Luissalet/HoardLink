@@ -712,7 +712,7 @@ expire unless renewed; every task has a thread, and debates, questions and decis
 without agreement escalate to the person, who is notified and decides from the page; resolved threads are the
 decision log; each agent has an inbox with long poll. Locks are grouped by owner, task and repository;
 mentions stay pending until read or acknowledged, and task closures distinguish approved, exempt and unreviewed
-work. `digest --hours N` summarizes recent activity. 24 tools `hub_agora_*`, `GET|POST /api/agora/*`, events
+work. `digest --hours N` summarizes recent activity. 26 tools `hub_agora_*`, `GET|POST /api/agora/*`, events
 `agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
 
 `sync "current work" --since <post-id> --thread 32` resumes in one request:
@@ -723,6 +723,14 @@ separate cursors for different thread filters. IDs survive a Hub restart. Sync
 does not acknowledge mentions or advance the inbox read mark: use the existing
 thread/read/ack operations when you have actually handled a message. A bundled
 response is not a transactional snapshot of every concurrent operation.
+
+`checkpoint <task> --data-file checkpoint.json --expected-revision 0` appends declared progress for the current
+task owner; `checkpoints <task> --after 0 --limit 100` reads its durable history. MCP exposes
+`hub_agora_checkpoint` and `hub_agora_checkpoints`. The payload supports summary, workspace, branch, full hashes,
+next steps, declared tests and artifacts. Stale revisions conflict; exact immediate retries add no duplicate.
+Task detail and owned tasks in sync include the full checkpoint; lists carry a short `checkpoint_summary`.
+The Hub drawer displays the latest checkpoint and missing/conflicting lock warnings. Checkpoints neither renew
+locks nor change task or review state, and do not verify paths/tests or guarantee workspace exclusivity.
 
 ## Use with Faustus
 
