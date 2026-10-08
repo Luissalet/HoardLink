@@ -49,3 +49,19 @@ def test_export_refuses_gap_before_writer_call():
 def test_external_urls_are_rejected():
     with pytest.raises(ValueError):
         workflow.loopback_url("https://example.com")
+
+
+def test_shared_hub_routes_the_complete_chapter_by_app_id_without_sibling_tokens():
+    calls = []
+    def call(app, tool, arguments):
+        calls.append((app, tool, arguments))
+        if app == "scheherazade":
+            return {"ok": True, "result": {"kind": "chapter", "offset": 0, "text": "Chapter", "total_chars": 7, "truncated": False}}
+        return {"ok": True, "result": {"state": "created", "id": "writing_1"}}
+    with patch.object(workflow, "post_json", side_effect=AssertionError("no direct sibling request")):
+        chapter = workflow.export_chapter("unused", "w", "s", call=call)
+        result = workflow.import_chapter("unused", "", project="p", world="w", session="s", title="Title", content=chapter,
+                                         refresh=False, call=call)
+    assert result["state"] == "created"
+    assert [(app, tool) for app, tool, _ in calls] == [("scheherazade", "session_export"), ("writer", "wh_import_story_session")]
+    assert calls[-1][2]["content"] == "Chapter"
