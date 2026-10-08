@@ -1,0 +1,13 @@
+(() => {
+  const H=window.HubFacets;if(!H)return;
+  const {el,api,L}=H.ctx;let box,input,live,result;
+  const word=(es,en)=>L({es,en});
+  async function load(){
+    result.replaceChildren(el('p','hint',word('Buscando…','Searching…')));
+    const data=await api('/api/capabilities?limit=50&query='+encodeURIComponent(input.value)+'&check='+(live.checked?'1':'0'));
+    result.replaceChildren();if(!data?.ok){result.append(el('p','hint',data?.error||word('No disponible','Unavailable')));return;}
+    result.append(el('p','hint',word('Un catálogo conectado prueba qué herramientas ofrece; sus modelos o servicios pueden requerir configuración.','A live catalogue shows available tools; models and services may still need configuration.')));
+    for(const row of data.apps){const details=el('details');details.append(el('summary','',row.name+' · '+(row.reachable===true?word('catálogo conectado','live catalogue'):row.reachable===false?word('sin conexión','unreachable'):word('declarado','declared'))));details.append(el('p','hint',row.purpose));details.append(el('p','',row.capabilities.join(' · ')));for(const tool of row.tools||[]){const t=el('details');t.append(el('summary','',tool.name));t.append(el('p','hint',tool.description));const pre=el('pre','',JSON.stringify(tool.inputSchema,null,2));pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';t.append(pre);details.append(t);}result.append(details);}
+  }
+  H.register('capabilities',{placement:'tab',label:{es:'Capacidades',en:'Capabilities'},order:72,mount(container){box=container;const form=el('form','tab-tools');input=el('input');input.type='search';input.placeholder=word('Voz, 3D, código, agenda…','Voice, 3D, code, calendar…');input.setAttribute('aria-label',word('Buscar capacidades','Find capabilities'));live=el('input');live.type='checkbox';const lab=el('label','hint',word('Comprobar conexión','Check connection'));lab.prepend(live);const search=el('button','ghost',word('Buscar','Search'));search.type='submit';form.append(input,lab,search);form.onsubmit=e=>{e.preventDefault();void load();};box.append(form);result=el('div');box.append(result);const recipes=el('button','ghost',word('Ver flujos de trabajo','Show workflows'));recipes.onclick=async()=>{const data=await api('/api/capabilities/recipes');result.replaceChildren();for(const recipe of data?.recipes||[]){const section=el('details');section.append(el('summary','',recipe.title));for(const stage of recipe.stages)section.append(el('p','',stage.stage+'. '+stage.needs.join(' + ')+' → '+(stage.providers.map(p=>p.name).join(', ')||word('Sin proveedor','No provider'))+(stage.missing.length?' · '+word('Falta: ','Missing: ')+stage.missing.join(', '):'')));result.append(section);}};box.append(recipes);},load});
+})();
