@@ -1,6 +1,8 @@
 /* Hoard Hub UI — Ágora: the shared workspace of the coding agents and the person.
    What each agent is doing, tasks by state with their locks, debates and questions, what waits for the person
-   (escalations), the decision log, and a composer: The person writes, decides, reviews and proposes tasks from here.
+   (escalations), what the agents' own transcripts say they are doing (observed state, pending questions,
+   unassigned sessions), the decision log, and a composer: The person writes, decides, reviews and proposes tasks
+   from here.
    Spanish and English. Deep link: #agora-<thread id>. */
 (() => {
   "use strict";
@@ -54,6 +56,21 @@
     missing_locks: { es: "Bloqueos ausentes o adquiridos de nuevo", en: "Missing or newly acquired locks" },
     conflicting_locks: { es: "Bloqueos en conflicto", en: "Conflicting locks" },
     lock_record: { es: "Bloqueos registrados", en: "Recorded locks" },
+    observed: { es: "observado", en: "observed" },
+    no_transcript: { es: "sin transcripción observada", en: "no transcript observed" },
+    obs_working: { es: "trabajando", en: "working" }, obs_waiting: { es: "esperando respuesta", en: "waiting for an answer" },
+    obs_idle: { es: "libre", en: "idle" }, obs_stale: { es: "parado (sin escrituras)", en: "stuck (no writes)" },
+    obs_tool: { es: "ejecutando", en: "running" }, no_beat: { es: "sin latido", en: "no heartbeat" },
+    pending_q: { es: "Preguntas pendientes", en: "Pending questions" },
+    q_approval: { es: "aprobación", en: "approval" }, q_question: { es: "pregunta", en: "question" },
+    q_probable: { es: "probable", en: "probable" },
+    unbound: { es: "Sesiones sin asignar", en: "Unassigned sessions" },
+    unbound_hint: { es: "Transcripciones de agentes que no se han identificado: asígnalas para ver su estado.", en: "Agent transcripts that were not identified: assign them to see their state." },
+    pick_agent: { es: "Asignar a…", en: "Assign to…" }, other_agent: { es: "otro id…", en: "other id…" },
+    ask_agent: { es: "Id de agente del Ágora", en: "Ágora agent id" },
+    unbind: { es: "Desasignar", en: "Unassign" }, bound_ok: { es: "Sesión asignada", en: "Session assigned" },
+    bound_off: { es: "Asignación quitada", en: "Assignment removed" },
+    ago_s: { es: "hace unos segundos", en: "moments ago" },
     no_workspace_lease: { es: "El checkpoint no garantiza exclusividad de la carpeta de trabajo.", en: "A checkpoint does not guarantee exclusive access to the workspace." },
   };
   const ST = {
@@ -66,10 +83,11 @@
   const MK = { comment: "💬", proposal: "📝", agree: "👍", disagree: "✋", approve: "✅", changes: "🔁", resolution: "🏁", escalation: "🙋", system: "⚙️" };
   const t = (k) => L(S[k]);
   const st = (k) => (ST[k] ? L(ST[k]) : k);
-  let box, waitBox, agentsBox, boardBox, threadsBox, locksBox, decisionsBox, detailBox, mainBox, badge;
+  let box, waitBox, qBox, unboundBox, agentsBox, boardBox, threadsBox, locksBox, decisionsBox, detailBox, mainBox, badge;
   let threadFilter = "open";
   let current = null;            // {type: "thread"|"task", id}
   let lastBoard = null;
+  let lastWatch = null;
 
   function injectCss() {
     if (document.getElementById("css-agora")) return;
@@ -86,6 +104,17 @@
       .ag-agent .ag-doing { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
       .ag-agent.stale { opacity: .55; }
       .ag-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+      .ag-obs { font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+      .ag-obs.waiting { color: var(--amber); } .ag-obs.stale { color: var(--muted); }
+      .ag-agent.noheart { border-style: dashed; }
+      .ag-q { border: 1px solid #7a5a1f; background: rgba(224, 168, 70, .08); border-radius: 12px; padding: 8px 10px; display: grid; gap: 6px; }
+      .ag-q h4 { color: var(--amber); }
+      .ag-qrow { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: baseline; min-width: 0; }
+      .ag-qrow .ag-t { overflow-wrap: anywhere; }
+      .ag-unb { display: grid; gap: 4px; }
+      .ag-unrow { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card-2); min-width: 0; }
+      .ag-unrow .ag-t { overflow-wrap: anywhere; }
+      .ag-unrow select { background: var(--hoard-sunken); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; font: inherit; min-width: 0; max-width: 180px; }
       .ag-dot.working { background: var(--green); } .ag-dot.waiting { background: var(--amber); } .ag-dot.away { background: var(--line); }
       .ag-lockline { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
       details.ag-lockline > summary { cursor: pointer; }
@@ -127,7 +156,7 @@
       .ag-dec { display: grid; gap: 2px; padding: 5px 8px; border-left: 3px solid var(--accent); }
       .ag-dec small { color: var(--muted); }
       @media (max-width: 860px) { .ag-board { grid-template-columns: 1fr 1fr; } }
-      @media (max-width: 560px) { .ag-board, .ag-grid2 { grid-template-columns: 1fr; } .ag-th { grid-template-columns: 1fr; } }
+      @media (max-width: 560px) { .ag-board, .ag-grid2 { grid-template-columns: 1fr; } .ag-th, .ag-qrow, .ag-unrow { grid-template-columns: 1fr; } }
     `;
     document.head.appendChild(css);
   }
@@ -143,23 +172,119 @@
 
   // ---- board -------------------------------------------------------------------------------------------------
 
+  function ago(ts) {
+    if (!ts) return "";
+    const sec = Math.max(0, Math.round(Date.now() / 1000 - Number(ts)));
+    if (sec < 45) return t("ago_s");
+    if (sec < 5400) { const n = Math.max(1, Math.round(sec / 60)); return L({ es: `hace ${n} min`, en: `${n} min ago` }); }
+    if (sec < 172800) { const n = Math.round(sec / 3600); return L({ es: `hace ${n} h`, en: `${n} h ago` }); }
+    const n = Math.round(sec / 86400);
+    return L({ es: `hace ${n} d`, en: `${n} d ago` });
+  }
+
+  // What a transcript shows an agent doing: «ejecutando exec hace 2 min» (never raw transcript text beyond the hub's snippets).
+  function obsText(o) {
+    if (!o) return "";
+    const tool = o.tool && o.tool.name;
+    const what = o.state === "tool" && tool ? `${t("obs_tool")} ${tool}` : (S["obs_" + o.state] ? t("obs_" + o.state) : String(o.state));
+    return `${what} ${ago(o.since)}`.trim();
+  }
+
+  function obsActive(o) { return !!o && ["working", "tool", "waiting"].includes(o.state); }
+
+  async function unbind(key) {
+    const r = await api("/api/agora/watch/bind", { session_key: key, agent: "" });
+    if (r && r.ok) { toast(t("bound_off")); load(); } else toast((r && r.error) || "error", "err");
+  }
+
   function renderAgents(b) {
     agentsBox.replaceChildren();
     const list = (b.agents || []).filter((a) => a.id !== "luis");
-    if (!list.length) { agentsBox.appendChild(el("div", "hint", t("no_agents"))); return; }
+    const only = Object.entries(b.observed_only || {});
+    if (!list.length && !only.length) { agentsBox.appendChild(el("div", "hint", t("no_agents"))); return; }
     for (const a of list) {
-      const c = el("div", `ag-agent${a.stale ? " stale" : ""}`);
+      const o = a.observed;
+      const c = el("div", `ag-agent${a.stale && !obsActive(o) ? " stale" : ""}`);
       const head = el("div");
       head.appendChild(el("span", `ag-dot ${a.state || ""}`));
       head.appendChild(el("b", "", a.name || a.id));
-      head.appendChild(el("span", "hint", `${st(a.state || "idle")} · ${fmtWhen(a.last_seen)}${a.stale ? " · " + t("stale") : ""}`));
+      head.appendChild(el("span", "hint", `${st(a.state || "idle")} · ${fmtWhen(a.last_seen)}${a.stale ? " · " + t("stale") : ""}${o ? " · " + t("observed") + ": " + obsText(o) : ""}`));
       c.appendChild(head);
       if (a.doing) c.appendChild(el("div", "ag-doing", a.doing));
+      if (o) {
+        const line = el("div", `ag-obs ${o.state}`, `${o.engine || ""}${o.title ? " · " + o.title : ""}${o.tool && o.tool.input ? " · " + o.tool.input : ""}`);
+        c.appendChild(line);
+        if (o.binding === "explicit" && o.session_key) {
+          const x = el("button", "small ghost", t("unbind")); x.onclick = () => unbind(o.session_key); c.appendChild(x);
+        }
+      }
       const groups = a.lock_groups || (a.locks || []).map((lk) => ({ label: lk }));
       for (const g of groups.slice(0, 3)) c.appendChild(el("div", "ag-lockline", "🔒 " + g.label + (g.task_id ? ` · #${g.task_id}` : "")));
       if (groups.length > 3) c.appendChild(el("div", "ag-lockline", `+${groups.length - 3} ${t("more_groups")}`));
       agentsBox.appendChild(c);
     }
+    for (const [id, o] of only) {
+      const c = el("div", "ag-agent noheart");
+      const head = el("div");
+      head.appendChild(el("span", `ag-dot ${o.state === "waiting" ? "waiting" : (obsActive(o) ? "working" : "")}`));
+      head.appendChild(el("b", "", id));
+      head.appendChild(el("span", "hint", `${t("no_beat")} · ${t("observed")}: ${obsText(o)}`));
+      c.appendChild(head);
+      c.appendChild(el("div", `ag-obs ${o.state}`, `${o.engine || ""}${o.title ? " · " + o.title : ""}`));
+      agentsBox.appendChild(c);
+    }
+  }
+
+  function renderQuestions(w) {
+    qBox.replaceChildren();
+    const qs = (w && w.questions) || [];
+    if (!qs.length) { qBox.hidden = true; return; }
+    qBox.hidden = false;
+    qBox.appendChild(el("h4", "", `❓ ${t("pending_q")} (${qs.length})`));
+    for (const q of qs) {
+      const row = el("div", "ag-qrow");
+      row.appendChild(pill(q.agent || q.engine, q.confidence === "explicit" ? "" : "warn"));
+      const txt = el("span", "ag-t");
+      txt.appendChild(el("b", "", `${q.engine} · ${S["q_" + q.kind] ? t("q_" + q.kind) : q.kind}${q.confidence === "explicit" ? "" : " (" + t("q_probable") + ")"}`));
+      txt.appendChild(el("div", "hint", [q.title, q.what].filter(Boolean).join(" — ")));
+      row.appendChild(txt);
+      row.appendChild(el("span", "hint", ago(q.since)));
+      qBox.appendChild(row);
+    }
+  }
+
+  async function bindSession(key, agent) {
+    const r = await api("/api/agora/watch/bind", { session_key: key, agent });
+    if (r && r.ok) { toast(t("bound_ok")); load(); } else toast((r && r.error) || "error", "err");
+  }
+
+  function renderUnbound(w, b) {
+    unboundBox.replaceChildren();
+    const un = (w && w.unbound) || [];
+    if (!un.length) { unboundBox.parentNode.hidden = true; return; }
+    unboundBox.parentNode.hidden = false;
+    const ids = [...new Set([...(b.agents || []).map((a) => a.id), ...Object.keys((w && w.agents) || {})])].filter((x) => x !== "luis").sort();
+    unboundBox.appendChild(el("div", "hint", t("unbound_hint")));
+    for (const s of un.slice(0, 12)) {
+      const row = el("div", "ag-unrow");
+      row.appendChild(pill(s.engine));
+      const txt = el("span", "ag-t");
+      txt.appendChild(el("b", "", s.title || s.session_id));
+      txt.appendChild(el("div", "hint", `${s.workspace ? s.workspace + " · " : ""}${obsText(s)} · ${ago(s.last_activity)}`));
+      row.appendChild(txt);
+      const sel = el("select");
+      const first = el("option", "", t("pick_agent")); first.value = ""; sel.appendChild(first);
+      for (const id of ids) { const o = el("option", "", id); o.value = id; sel.appendChild(o); }
+      const other = el("option", "", t("other_agent")); other.value = "__other__"; sel.appendChild(other);
+      sel.onchange = () => {
+        let v = sel.value;
+        if (v === "__other__") v = (window.prompt(t("ask_agent")) || "").trim().toLowerCase();
+        if (v) bindSession(s.key, v); else sel.value = "";
+      };
+      row.appendChild(sel);
+      unboundBox.appendChild(row);
+    }
+    if (un.length > 12) unboundBox.appendChild(el("div", "hint", `+${un.length - 12} ${t("more_groups")}`));
   }
 
   function taskCard(task) {
@@ -276,6 +401,8 @@
     if (!b || !b.ok) return;
     lastBoard = b;
     renderAgents(b); renderBoard(b); renderLocks(b); renderDecisions(b);
+    // the observer is optional (404 when disabled) and must never block the rest of the page
+    api("/api/agora/watch").then((w) => { lastWatch = w && w.ok ? w : null; renderQuestions(lastWatch); renderUnbound(lastWatch, b); }).catch(() => {});
     await Promise.all([renderThreads(), renderWaiting()]);
     if (current) await refreshDetail();
   }
@@ -538,7 +665,9 @@
       box.appendChild(forms);
       mainBox = el("div", "ag-wrap");
       waitBox = el("div", "ag-wait"); waitBox.hidden = true; mainBox.appendChild(waitBox);
+      qBox = el("div", "ag-q"); qBox.hidden = true; mainBox.appendChild(qBox);
       const a = section("agents"); agentsBox = el("div", "ag-agents"); a.appendChild(agentsBox); mainBox.appendChild(a);
+      const un = section("unbound"); un.hidden = true; unboundBox = el("div", "ag-unb"); un.appendChild(unboundBox); mainBox.appendChild(un);
       const b = section("tasks"); boardBox = el("div", "ag-board"); b.appendChild(boardBox); mainBox.appendChild(b);
       const filters = el("span", "ag-filters");
       for (const [k, v] of [["filter_open", "open"], ["filter_all", "all"], ["filter_resolved", "resolved"]]) {
