@@ -18,7 +18,8 @@
       edit_rule_hint: "JSON. when: {type: glob, source?, where?}. then: [{kind: tool, app, tool, args} | {kind: hub, tool, args} | {kind: event, type, data} | {kind: start_app|stop_app|restart_app, app} | {kind: profile_start|profile_stop, name}]. ${event.data.x}, ${today}, ${now} in strings.",
       edit_job_hint: "JSON. every: '30m'|'6h'|'1d' or at: 'HH:MM' (+ days: [mon..sun|weekdays]). then: the same action list as rules.",
       confirm_remove: "Remove?", confirm_restore: (s, a) => `Restore ${a} from ${s} to a side folder next to its data?`,
-      backup_summary: (s) => `${s.snapshots} snapshots · ${fmtBytes(s.store_bytes)} in store · ${s.objects} files${s.last ? " · last " + fmtTs(s.last.ts) : ""}`,
+      backup_summary: (s) => `${s.snapshots} snapshot${s.snapshots === 1 ? "" : "s"} · ${fmtBytes(s.store_bytes)} in store · ${s.objects} files${s.last ? " · last " + fmtTs(s.last.ts) : ""}`,
+      backup_source_error: (issue) => issue.source === "atlas-files" ? "Atlas shared files are unavailable for backup. Check its storage configuration." : `${issue.source}: ${issue.error}`,
       backup_running: "backing up…", backup_done: (r) => `snapshot ${r.snapshot}: ${r.totals.files} files, ${fmtBytes(r.totals.new_bytes)} new`,
       restored: (r) => `restored ${r.files} files to ${r.dest}`, verified: (r) => r.ok ? `verified ${r.objects_checked} files` : `PROBLEM: ${r.corrupt.length} corrupt, ${r.missing.length} missing`,
       pruned: (r) => `dropped ${r.dropped_snapshots.length} snapshots, freed ${fmtBytes(r.bytes_freed)}`,
@@ -53,7 +54,8 @@
       edit_rule_hint: "JSON. when: {type: patrón, source?, where?}. then: [{kind: tool, app, tool, args} | {kind: hub, tool, args} | {kind: event, type, data} | {kind: start_app|stop_app|restart_app, app} | {kind: profile_start|profile_stop, name}]. ${event.data.x}, ${today}, ${now} dentro de cadenas.",
       edit_job_hint: "JSON. every: '30m'|'6h'|'1d' o at: 'HH:MM' (+ days: [mon..sun|weekdays]). then: la misma lista de acciones que las reglas.",
       confirm_remove: "¿Quitar?", confirm_restore: (s, a) => `¿Restaurar ${a} desde ${s} en una carpeta aparte junto a sus datos?`,
-      backup_summary: (s) => `${s.snapshots} copias · ${fmtBytes(s.store_bytes)} en el almacén · ${s.objects} ficheros${s.last ? " · última " + fmtTs(s.last.ts) : ""}`,
+      backup_summary: (s) => `${s.snapshots} copia${s.snapshots === 1 ? "" : "s"} · ${fmtBytes(s.store_bytes)} en el almacén · ${s.objects} ficheros${s.last ? " · última " + fmtTs(s.last.ts) : ""}`,
+      backup_source_error: (issue) => issue.source === "atlas-files" ? "Los archivos compartidos de Atlas no están disponibles para la copia. Revisa su configuración de almacenamiento." : `${issue.source}: ${issue.error}`,
       backup_running: "copiando…", backup_done: (r) => `copia ${r.snapshot}: ${r.totals.files} ficheros, ${fmtBytes(r.totals.new_bytes)} nuevos`,
       restored: (r) => `restaurados ${r.files} ficheros en ${r.dest}`, verified: (r) => r.ok ? `verificados ${r.objects_checked} ficheros` : `PROBLEMA: ${r.corrupt.length} corruptos, ${r.missing.length} ausentes`,
       pruned: (r) => `borradas ${r.dropped_snapshots.length} copias, liberados ${fmtBytes(r.bytes_freed)}`,
@@ -260,8 +262,11 @@
   // ---- backups -----------------------------------------------------------------------------------------
   async function loadBackups() {
     const r = await api("/api/backups"); if (!r.ok) return;
-    $("#backup-summary").textContent = t("backup_summary", r) + ` · ${r.root}`;
+    $("#backup-summary").textContent = t("backup_summary", { ...r, snapshots: r.snapshots.length }) + ` · ${r.root}`;
     const list = $("#backups-list"); list.innerHTML = "";
+    for (const issue of r.source_errors || []) {
+      list.appendChild(el("div", "hint", t("backup_source_error", issue)));
+    }
     const snaps = (r.snapshots || []).slice().reverse();
     if (!snaps.length) list.appendChild(el("div", "hint", t("no_backups")));
     for (const s of snaps) {
@@ -281,7 +286,7 @@
     }
     $("#backups-badge").textContent = r.snapshots.length ? String(r.snapshots.length) : "";
   }
-  $("#backup-run").onclick = async () => { const btn = $("#backup-run"); btn.disabled = true; toast(t("backup_running")); const r = await api("/api/backups/run", {}); btn.disabled = false; toast(r.ok ? t("backup_done", r) : (r.error || (r.errors || []).join("; ")), r.ok ? "ok" : "err"); loadBackups(); };
+  $("#backup-run").onclick = async () => { const btn = $("#backup-run"); btn.disabled = true; toast(t("backup_running")); const r = await api("/api/backups/run", {}); btn.disabled = false; const error = r.source_errors?.length ? r.source_errors.map((issue) => t("backup_source_error", issue)).join(" ") : (r.error || (r.errors || []).join("; ")); toast(r.ok ? t("backup_done", r) : error, r.ok ? "ok" : "err"); loadBackups(); };
   $("#backup-verify").onclick = async () => { const v = await api("/api/backups/verify", {}); toast(v.ok ? t("verified", v) : (v.error || t("verified", v)), v.ok ? "ok" : "err"); };
   $("#backup-prune").onclick = async () => { const v = await api("/api/backups/prune", { keep: 14 }); toast(v.ok ? t("pruned", v) : v.error, v.ok ? "ok" : "err"); loadBackups(); };
 

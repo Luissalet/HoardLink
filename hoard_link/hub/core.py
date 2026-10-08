@@ -615,14 +615,21 @@ class Hub:
         return contract.token_owner(token, self.apps, self.token)
 
     def backup_sources(self, only: Optional[list[str]] = None) -> dict[str, str]:
-        wanted = set(only or [])
-        src = {a.id: a.data_dir for a in self.apps if a.data_dir and (not wanted or a.id in wanted)}
-        if not wanted or "hub" in wanted:
-            src["hub"] = self.config.data_dir
-        return src
+        plan = self.backup_source_inventory(only)
+        if plan["source_errors"]:
+            raise ValueError("; ".join(e["error"] for e in plan["source_errors"]))
+        return plan["sources"]
+
+    def backup_source_inventory(self, only: Optional[list[str]] = None) -> dict[str, Any]:
+        from .backup_sources import inventory
+        return inventory(self.apps, self.config.data_dir, only)
 
     def backup_run(self, apps: Optional[list[str]] = None, label: str = "") -> dict[str, Any]:
-        sources = self.backup_sources(apps)
+        plan = self.backup_source_inventory(apps)
+        if plan["source_errors"]:
+            return {"ok": False, "error": "; ".join(e["error"] for e in plan["source_errors"]),
+                    "source_errors": plan["source_errors"]}
+        sources = plan["sources"]
         unknown = [a for a in (apps or []) if a not in sources]
         if unknown:
             return {"ok": False, "error": "unknown apps: " + ", ".join(unknown)}
@@ -634,6 +641,8 @@ class Hub:
         return res
 
     def backup_restore(self, snapshot: str, app_id: str, *, dest: Optional[str] = None, in_place: bool = False) -> dict[str, Any]:
+        if app_id == "atlas-files" and in_place:
+            return {"ok": False, "error": "restore shared files into a separate folder and review them before replacing live originals"}
         running: Optional[bool] = None
         if in_place:
             app = self.get(app_id)
