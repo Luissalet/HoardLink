@@ -32,7 +32,8 @@ def test_sync_returns_work_and_does_not_consume_messages_or_mentions(tmp_path):
         own = ag.task_add({"agent": "codex", "title": "Keep the current work", "repo": "HoardLink",
                            "paths": ["hoard_link/hub/agora.py"], "claim": True})["task"]
         ag.task_submit({"agent": "codex", "task_id": own["id"], "summary": "needs review"})
-        ag.task_review({"agent": "claude", "task_id": own["id"], "verdict": "changes", "body": "keep working"})
+        ag.task_review({"agent": "claude", "task_id": own["id"], "expected_submission_revision": 1,
+                        "verdict": "changes", "body": "keep working"})
 
         review = ag.task_add({"agent": "claude", "title": "Review the resume call", "repo": "HoardLink",
                               "paths": ["tests/hub/test_agora_sync.py"], "claim": True})["task"]

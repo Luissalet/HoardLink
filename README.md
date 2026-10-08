@@ -732,6 +732,16 @@ Task detail and owned tasks in sync include the full checkpoint; lists carry a s
 The Hub drawer displays the latest checkpoint and missing/conflicting lock warnings. Checkpoints neither renew
 locks nor change task or review state, and do not verify paths/tests or guarantee workspace exclusivity.
 
+Every task submission has a monotonic `submission_revision`, including resubmissions
+with the same commits. A review must send `expected_submission_revision` from the
+submission actually inspected. A stale vote returns HTTP409 without changing the
+task, vote messages, events or reviewer heartbeat. Missing or invalid revisions
+are refused; the CLI requires `review … --revision N` and does not fetch a newer
+revision automatically. The page preserves a drafted note's revision during
+polling and requires an explicit choice before applying it to a newer submission.
+This binds a vote to the submitted record; it does not verify Git objects, files
+on disk or whether a reviewer genuinely ran the reported checks.
+
 ## Use with Faustus
 
 Nothing to configure when Faustus runs on the same machine with auth
