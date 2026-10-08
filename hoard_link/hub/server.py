@@ -367,7 +367,7 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/backups":
                 st = hub.backups.status()
                 st["snapshots"] = hub.backups.list_snapshots()[-50:]
-                st["sources"] = hub.backup_sources()
+                st.update(hub.backup_source_inventory())
                 return self._json({"ok": True, **st})
             if path.startswith("/api/backups/"):
                 sid = unquote(path[len("/api/backups/"):])
