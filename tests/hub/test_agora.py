@@ -119,13 +119,16 @@ def test_review_flow(ag):
         ag.task_done({"agent": "claude", "task_id": tid})
     assert "waiting for review" in str(exc.value)
     with pytest.raises(AgoraError):
-        ag.task_review({"agent": "claude", "task_id": tid, "verdict": "approve", "body": "self"})
-    ag.task_review({"agent": "codex", "task_id": tid, "verdict": "changes", "body": "missing mobile layout"})
+        ag.task_review({"agent": "claude", "task_id": tid, "expected_submission_revision": 1,
+                        "verdict": "approve", "body": "self"})
+    ag.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
+                    "verdict": "changes", "body": "missing mobile layout"})
     assert ag.inbox({"agent": "claude", "peek": True})["counts"]["changes"] == 1
     with pytest.raises(AgoraError):
         ag.task_done({"agent": "claude", "task_id": tid})
     ag.task_submit({"agent": "claude", "task_id": tid, "summary": "mobile fixed"})
-    ag.task_review({"agent": "codex", "task_id": tid, "verdict": "approve", "body": "checked at 390 px"})
+    ag.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 2,
+                    "verdict": "approve", "body": "checked at 390 px"})
     with pytest.raises(AgoraError) as exc:               # def456 is not what codex approved
         ag.task_done({"agent": "claude", "task_id": tid, "result": "merged", "commits": ["def456"]})
     assert "were not reviewed" in str(exc.value)
@@ -276,7 +279,8 @@ def test_person_answer_takes_thread_out_of_escalation_and_task_threads_show(ag):
     assert ag.threads()["threads"] == []
     ag.task_submit({"agent": "codex", "task_id": tid, "summary": "s"})
     ag.escalate({"agent": "codex", "thread_id": task["thread_id"], "question": "approve?"})
-    ag.task_review({"agent": "luis", "task_id": tid, "verdict": "approve", "body": "ok", "_person": True})
+    ag.task_review({"agent": "luis", "task_id": tid, "expected_submission_revision": 1,
+                    "verdict": "approve", "body": "ok", "_person": True})
     assert ag.board()["escalated"] == 0
 
 
@@ -303,7 +307,8 @@ def test_own_bookkeeping_never_reaches_own_inbox(ag):
 def test_done_over_requested_changes_needs_force_and_reason(ag):
     tid = ag.task_add({"agent": "claude", "title": "t", "claim": True})["task"]["id"]
     ag.task_submit({"agent": "claude", "task_id": tid, "summary": "s"})
-    ag.task_review({"agent": "codex", "task_id": tid, "verdict": "changes", "body": "fix x"})
+    ag.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
+                    "verdict": "changes", "body": "fix x"})
     with pytest.raises(AgoraError):
         ag.task_done({"agent": "claude", "task_id": tid, "force": True})            # force alone is not enough
     with pytest.raises(AgoraError):
@@ -378,7 +383,8 @@ def test_review_exemption_only_for_non_code_kinds(ag):
     assert c["review_state"] == "unreviewed"
     ev = ag.task_add({"agent": "codex", "title": "probe", "kind": "eval", "claim": True})["task"]["id"]
     ag.task_submit({"agent": "codex", "task_id": ev, "summary": "s"})
-    ag.task_review({"agent": "claude", "task_id": ev, "verdict": "approve", "body": "ok"})
+    ag.task_review({"agent": "claude", "task_id": ev, "expected_submission_revision": 1,
+                    "verdict": "approve", "body": "ok"})
     assert ag.task_done({"agent": "codex", "task_id": ev})["task"]["review_state"] == "approved"
 
 
@@ -387,7 +393,8 @@ def test_digest_counts_by_agent_and_review_state(ag):
     ag.task_done({"agent": "codex", "task_id": a1})
     a2 = ag.task_add({"agent": "claude", "title": "b", "claim": True})["task"]["id"]
     ag.task_submit({"agent": "claude", "task_id": a2, "summary": "s"})
-    ag.task_review({"agent": "codex", "task_id": a2, "verdict": "approve", "body": "ok"})
+    ag.task_review({"agent": "codex", "task_id": a2, "expected_submission_revision": 1,
+                    "verdict": "approve", "body": "ok"})
     ag.task_done({"agent": "claude", "task_id": a2})
     ag.thread_open({"agent": "claude", "title": "d", "body": "b", "kind": "decision"})
     d = ag.digest({"hours": 1})
@@ -417,13 +424,15 @@ def test_schema_1_database_migrates(tmp_path):
 def test_resubmitting_new_commits_clears_the_previous_approval(ag):
     tid = ag.task_add({"agent": "claude", "title": "fix", "repo": "HoardLink", "paths": ["a.py"], "claim": True})["task"]["id"]
     ag.task_submit({"agent": "claude", "task_id": tid, "summary": "first", "commits": ["aaa111"]})
-    ag.task_review({"agent": "codex", "task_id": tid, "verdict": "approve", "body": "ok"})
+    ag.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
+                    "verdict": "approve", "body": "ok"})
     assert ag._task_row(tid)["reviewed"] is True
     ag.task_submit({"agent": "claude", "task_id": tid, "summary": "one more fix", "commits": ["aaa111", "bbb222"],
                     "reviewer": "codex"})
     task = ag._task_row(tid)
     assert task["status"] == "review" and task["reviewed"] is False
     assert [t["id"] for t in ag.inbox({"agent": "codex", "peek": True})["reviews"]] == [tid]
-    ag.task_review({"agent": "codex", "task_id": tid, "verdict": "approve", "body": "bbb222 checked"})
+    ag.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 2,
+                    "verdict": "approve", "body": "bbb222 checked"})
     done = ag.task_done({"agent": "claude", "task_id": tid, "commits": ["aaa111", "bbb222"]})["task"]
     assert done["review_state"] == "approved" and done["reviewed_commits"] == ["aaa111", "bbb222"]

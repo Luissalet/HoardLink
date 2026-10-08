@@ -53,6 +53,42 @@ Scoped resources compare case-insensitively and accept backslashes (Windows path
 - Escalating a thread notifies the person through the hub's notifications (high priority) with a link to
   `#agora-<thread id>`.
 
+### Reviews bound to a submission
+
+`task_submit` advances `submission_revision` on every successful submission,
+even if its commit list is unchanged. Read this revision before inspecting the
+work. `task_review` requires the positive integer `expected_submission_revision`:
+HTTP/API and MCP refuse a missing value or a bool, string or float. A value that
+no longer matches returns409, `error_code: stale_submission`, `current_revision`
+and `current_commits`. Reload and review the new submission; do not blindly
+retry the vote with that revision.
+
+The comparison and vote are in the same SQLite transaction. Both approve and
+changes record the observed revision in `reviewed_submission_revision`, thread
+messages and events. Submitting again clears the vote. `done` additionally checks
+that an approval still matches the submission; the existing equivalent-commit
+closure preserves both commit lists and its explicit reason.
+
+The CLI uses `review TASK approve|changes --revision N --body-file review.txt`.
+It intentionally cannot infer the observed revision from a fresh GET. HTTP
+errors retain their transport status in its JSON output. The page shows the
+current submission and binds non-empty draft notes to their earlier revision;
+if polling sees a later submission, voting is disabled until the person
+explicitly chooses to review the current one. The note text is retained.
+
+The additive migration initializes existing submitted or historically approved
+records at revision1, without inventing old submission histories. It preserves
+old approval flags, commits and messages; unreviewed records receive no review
+revision. Revisions bind only registered submissions, not mutable workspace
+files, Git object authenticity, proof of executed checks or individual-agent
+credentials. Review grace and explicit force policies are unchanged.
+
+Design references: [GitLab approval SHA preconditions](https://docs.gitlab.com/api/merge_request_approvals/),
+[GitHub reviews tied to a commit](https://docs.github.com/en/rest/pulls/reviews),
+[GitHub stale approval rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches),
+and [HTTP If-Match](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.1).
+This implementation uses a JSON revision and409, not an HTTP If-Match/412 endpoint.
+
 ## HTTP
 
 Reads: `GET /api/agora/board` (with `lock_groups`), `/api/agora/digest?hours=`, `/api/agora/inbox?agent=&wait_s=&peek=&mine_only=&since_id=`, `/api/agora/tasks`
@@ -159,6 +195,8 @@ hub rules (`hub_rule_add`) like any other event.
 ```
 python scripts/agora.py --as reviewer board            # --full lists every lock
 python scripts/agora.py --as reviewer digest --hours 4
+python scripts/agora.py --as reviewer task 12          # inspect submission_revision before testing
+python scripts/agora.py --as reviewer review 12 approve --revision 3 --body-file review.txt
 python scripts/agora.py --as reviewer ack 7             # or ack --all
 python scripts/agora.py --as reviewer inbox --wait 120
 python scripts/agora.py --as builder sync "Current work" --since 184 --thread 32

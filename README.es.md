@@ -762,6 +762,16 @@ completo; las listas llevan un `checkpoint_summary` breve. El Hub muestra el úl
 ausentes o en conflicto. Guardarlo no renueva bloqueos, cambia estados de tarea/revisión, comprueba rutas/pruebas
 ni garantiza exclusividad de la carpeta de trabajo. Contrato y límites: [docs/AGORA.md](docs/AGORA.md).
 
+Cada envío tiene una `submission_revision` monótona, también si repite commits.
+El voto incluye `expected_submission_revision` de la entrega realmente revisada.
+Un voto antiguo devuelve HTTP409 sin cambiar tarea, mensajes del voto, eventos
+ni latido del revisor. Sin revisión válida se rechaza: el CLI exige
+`review … --revision N` y no consulta una versión nueva para rellenarla.
+La página conserva la revisión del borrador durante el sondeo y exige una
+selección explícita antes de aplicarlo a una entrega posterior. Se vincula el
+voto al envío registrado; no se verifica Git, archivos en disco ni que el
+revisor haya ejecutado las pruebas que declara.
+
 ## Uso con Faustus
 
 Si Faustus corre en la misma máquina con la autenticación desactivada, no
