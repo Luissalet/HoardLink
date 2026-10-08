@@ -11,6 +11,12 @@ from hoard_link.docs import chunking as ck
 PARA = "Primera frase del texto. Segunda frase, con una coma. ¿Tercera frase? ¡Cuarta! "
 
 
+def test_short_slides_keep_physical_numbers_and_separate_boundaries():
+    units = [ck.Unit('slide', 2, 'Cost', 'Mango 12.50'), ck.Unit('slide', 3, 'Next', 'Other 8.00')]
+    chunks = ck.chunk_units(units)
+    assert [(c.page, c.section, c.text) for c in chunks] == [(2, 'Cost', 'Mango 12.50'), (3, 'Next', 'Other 8.00')]
+
+
 def _check_invariants(text, chunks, size, min_tail=200):
     for i, c in enumerate(chunks):
         assert c.ordinal == i
@@ -126,8 +132,8 @@ def test_units_accept_dicts_objects_and_missing_keys():
     assert ck.chunk_units([]) == []
 
 
-def test_chunk_version_is_three():
-    assert ck.CHUNK_VERSION == 3
+def test_chunk_version_includes_physical_slide_boundaries():
+    assert ck.CHUNK_VERSION == 4
 
 
 # ---- markdown -------------------------------------------------------------------------------------
