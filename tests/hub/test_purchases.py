@@ -4,6 +4,7 @@ stage track, refs links, the two actions (stop watching, "where do you keep it?"
 from __future__ import annotations
 
 import time
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,10 @@ from hoard_link.hub.purchases import PurchasesFacet, merchant_similar, order_key
 from ._hub_fakes import FakeApp, RecordingNotify, http, make_hub, serve, wait_for
 
 _n = [0]
+# Anchor fixture dates to "today" so undated shipments (event ts = now) stay inside the
+# 5-day fuzzy window; hard-coded calendar days drift and falsely create extra purchases.
+_DAY0 = date.today()
+_D = lambda n=0: (_DAY0 + timedelta(days=n)).isoformat()
 
 
 def ev(type_, data, source="ledger", ts=None):
@@ -23,7 +28,7 @@ def ev(type_, data, source="ledger", ts=None):
 
 
 def ledger_ev(tx=12, **kw):
-    data = {"tx_id": tx, "merchant": "Amazon", "amount": 23.90, "currency": "EUR", "date": "2026-10-01",
+    data = {"tx_id": tx, "merchant": "Amazon", "amount": 23.90, "currency": "EUR", "date": _D(0),
             "order_ref": "#123-4567890", "items": ["Kettle"], **kw}
     return ev("ledger.mail.recorded", data)
 
@@ -52,9 +57,9 @@ def test_normalisers():
     assert order_key("12") == "" and order_key(None) == ""
     assert merchant_similar("Amazon", "AMAZON EU S.a.r.l.") and merchant_similar("Café Müller", "cafe muller shop")
     assert merchant_similar("Mercadona", "MERCADONA S.A.") and not merchant_similar("Amazon", "Zalando") and not merchant_similar("", "x")
-    purchase = {"id": 4, "items": ["Kettle 1.7 L"], "merchant": "Amazon", "amount": 23.9, "date": "2026-10-01"}
+    purchase = {"id": 4, "items": ["Kettle 1.7 L"], "merchant": "Amazon", "amount": 23.9, "date": _D(0)}
     assert quick_add_url("http://127.0.0.1:5196/", purchase) == (
-        "http://127.0.0.1:5196/#/add?name=Kettle%201.7%20L&source_ref=hoard://hub/purchase/4&price=23.9&merchant=Amazon&date=2026-10-01")
+        f"http://127.0.0.1:5196/#/add?name=Kettle%201.7%20L&source_ref=hoard://hub/purchase/4&price=23.9&merchant=Amazon&date={_D(0)}")
     assert quick_add_url("http://h", {"id": 1, "items": [], "merchant": "", "amount": None, "date": ""}) == "http://h/#/add?source_ref=hoard://hub/purchase/1"
 
 
@@ -63,7 +68,7 @@ def test_normalisers():
 def test_a_purchase_from_payment_to_shelf(world):
     hub, p, notify = world.hub, world.p, world.notify
     e = hub.events.emit
-    e("ledger.mail.recorded", {"tx_id": 12, "merchant": "Amazon", "amount": 23.9, "currency": "EUR", "date": "2026-10-01",
+    e("ledger.mail.recorded", {"tx_id": 12, "merchant": "Amazon", "amount": 23.9, "currency": "EUR", "date": _D(0),
                                "order_ref": "#123-4567890", "items": ["Kettle"], "message_id": "<m1@amazon>"}, source="ledger")
     assert p.wait_idle()
     [one] = p.list()["purchases"]
@@ -86,13 +91,13 @@ def test_a_purchase_from_payment_to_shelf(world):
     assert one["merchant"] == "Amazon"                                                   # the first name stays
 
     # arrival: the person is asked where it goes, once
-    e("phileas.shipment.delivered", {"shipment_id": "s1", "delivered_at": "2026-10-04T10:00:00"}, source="phileas")
+    e("phileas.shipment.delivered", {"shipment_id": "s1", "delivered_at": f"{_D(3)}T10:00:00"}, source="phileas")
     assert p.wait_idle()
     assert p.get_purchase(1)["stage"] == "delivered"
     arrived = notify.sent[-1]
     home = hub.get("homehoard").url
     assert arrived["title"] == "Ha llegado Kettle. ¿Dónde lo guardas?"
-    assert arrived["url"] == f"{home}/#/add?name=Kettle&source_ref=hoard://hub/purchase/1&price=23.9&merchant=Amazon&date=2026-10-01"
+    assert arrived["url"] == f"{home}/#/add?name=Kettle&source_ref=hoard://hub/purchase/1&price=23.9&merchant=Amazon&date={_D(0)}"
     n_before = len(notify.sent)
     e("phileas.update", {"shipment_id": "s1", "status": "delivered", "title": "Delivered"}, source="phileas")    # the same news again
     e("phileas.shipment.delivered", {"shipment_id": "s1"}, source="phileas")
@@ -100,7 +105,7 @@ def test_a_purchase_from_payment_to_shelf(world):
     assert len(notify.sent) == n_before and len(p.list()["purchases"]) == 1
 
     # the invoice is archived (no order ref: merchant + amount + date), a warranty arrives for the parcel
-    e("kafka.document.archived", {"doc_id": 7, "kind": "invoice", "merchant": "amazon", "amount": "23,90", "date": "2026-10-02"}, source="kafka")
+    e("kafka.document.archived", {"doc_id": 7, "kind": "invoice", "merchant": "amazon", "amount": "23,90", "date": _D(1)}, source="kafka")
     assert p.wait_idle()
     assert p.get_purchase(1)["stage"] == "filed" and p.get_purchase(1)["refs"]["invoice"]["uri"] == "hoard://kafka/document/7"
     e("kafka.warranty.created", {"doc_id": 8, "shipment_id": "s1", "until": "2028-10-04"}, source="kafka")
@@ -165,12 +170,12 @@ def test_matching_by_order_ref_message_id_and_fuzzy(bare):
 
 
 @pytest.mark.parametrize("second, same", [
-    ({"merchant": "AMAZON EU", "amount": 23.9, "date": "2026-10-03"}, True),            # similar merchant, same amount, 2 days
-    ({"merchant": "Amazon", "amount": 24.1, "date": "2026-10-01"}, True),               # +0.8 %
-    ({"merchant": "Amazon", "amount": 25.2, "date": "2026-10-01"}, False),              # +5 %
-    ({"merchant": "Amazon", "amount": 23.9, "date": "2026-10-08"}, False),              # 7 days later
-    ({"merchant": "Zalando", "amount": 23.9, "date": "2026-10-01"}, False),             # other merchant
-    ({"merchant": "Amazon", "date": "2026-10-02"}, True),                               # no amount on one side: merchant + dates
+    ({"merchant": "AMAZON EU", "amount": 23.9, "date": _D(2)}, True),            # similar merchant, same amount, 2 days
+    ({"merchant": "Amazon", "amount": 24.1, "date": _D(0)}, True),               # +0.8 %
+    ({"merchant": "Amazon", "amount": 25.2, "date": _D(0)}, False),              # +5 %
+    ({"merchant": "Amazon", "amount": 23.9, "date": _D(7)}, False),              # 7 days later
+    ({"merchant": "Zalando", "amount": 23.9, "date": _D(0)}, False),             # other merchant
+    ({"merchant": "Amazon", "date": _D(1)}, True),                               # no amount on one side: merchant + dates
 ])
 def test_fuzzy_matching(bare, second, same):
     p = bare
@@ -256,12 +261,12 @@ def test_events_are_followed_on_the_worker_and_missed_ones_after_a_restart(tmp_p
     p = PurchasesFacet(hub)
     p.start()
     try:
-        hub.events.emit("ledger.mail.recorded", {"tx_id": 2, "merchant": "Live shop", "amount": 7, "date": "2026-10-01"}, source="ledger")
+        hub.events.emit("ledger.mail.recorded", {"tx_id": 2, "merchant": "Live shop", "amount": 7, "date": _D(0)}, source="ledger")
         assert wait_for(lambda: len(p.list()["purchases"]) == 1)
         assert p.list()["purchases"][0]["merchant"] == "Live shop"            # a first run does not replay history
     finally:
         p.close()
-    hub.events.emit("ledger.mail.recorded", {"tx_id": 3, "merchant": "While away", "amount": 9, "date": "2026-10-01"}, source="ledger")
+    hub.events.emit("ledger.mail.recorded", {"tx_id": 3, "merchant": "While away", "amount": 9, "date": _D(0)}, source="ledger")
     p2 = PurchasesFacet(hub)
     p2.start()
     try:
@@ -321,14 +326,14 @@ def test_enrich_finds_the_shipment_and_the_payment_that_went_by_before(tmp_path)
     phileas = FakeApp("phileas", handlers={"shipments_list": lambda a: {"shipments": [
         {"id": "s_9", "order_ref": "3481958", "merchant": "PC Maker", "carrier": "ups", "tracking_number": "1Z", "status": "in_transit"},
         {"id": "s_8", "order_ref": "999999", "merchant": "Other"}]}})
-    ledger = FakeApp("ledger", handlers={"tx_find": lambda a: {"matches": [{"tx_id": 77, "score": 0.95, "date": "2026-10-01", "amount": 1719.85}]}})
+    ledger = FakeApp("ledger", handlers={"tx_find": lambda a: {"matches": [{"tx_id": 77, "score": 0.95, "date": _D(0), "amount": 1719.85}]}})
     hub = make_hub(tmp_path, [phileas, ledger], extra_apps=["kafka"])
     try:
         p = hub.facet("purchases")
         p.background_enrich = False
         hub._facets_by_id["notify"] = RecordingNotify()
         got = p.ingest(ev("kafka.document.archived", {"doc_id": "d_1", "kind": "invoice", "merchant": "PC Maker", "amount": 1719.85,
-                                                      "currency": "EUR", "date": "2026-10-01", "order_ref": "3481958"}, source="kafka"))
+                                                      "currency": "EUR", "date": _D(0), "order_ref": "3481958"}, source="kafka"))
         res = p.enrich(got["id"], force=True)
         assert sorted(res["found"]) == ["hoard://ledger/tx/77", "hoard://phileas/shipment/s_9"]
         v = p.view(p._fetch(got["id"]))
