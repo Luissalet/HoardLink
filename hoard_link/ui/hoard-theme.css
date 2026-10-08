@@ -626,6 +626,26 @@ html[data-hoard-app="platos"] {
   --hoard-accent-line: rgba(131, 120, 232, 0.38);
 }
 
+html[data-hoard-app="prometheus"] {
+  --hoard-deep: #191c14;
+  --hoard-sunken: #141610;
+  --hoard-surface: #21241b;
+  --hoard-elevated: #2c2f25;
+  --hoard-hover: #33382b;
+  --hoard-border: #3e4335;
+  --hoard-border-hover: #636a58;
+  --hoard-text: #e8ece1;
+  --hoard-text-muted: #babeb4;
+  --hoard-text-dim: #a2a69b;
+  --hoard-accent: #76b900;
+  --hoard-accent-strong: #90e200;
+  --hoard-accent-dim: #5d8a0f;
+  --hoard-accent-ink: #181b13;
+  --hoard-accent-rgb: 118, 185, 0;
+  --hoard-accent-soft: rgba(118, 185, 0, 0.14);
+  --hoard-accent-line: rgba(118, 185, 0, 0.38);
+}
+
 html[data-hoard-app="prospero"] {
   --hoard-deep: #1d141a;
   --hoard-sunken: #170f14;

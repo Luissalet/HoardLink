@@ -41,6 +41,7 @@ PALETTES: dict[str, tuple[str, float | None, float]] = {
     "people":       ("#d6905f", None, 0.16),
     "phileas":      ("#3fbfae", None, 0.16),
     "platos":       ("#8378e8", None, 0.192),
+    "prometheus":   ("#76b900", None, 0.16),
     "prospero":     ("#e65db6", None, 0.192),
     "pygmalion":    ("#c46a8a", None, 0.16),
     "scheherazade": ("#6c82ec", None, 0.22),
