@@ -259,6 +259,36 @@ def test_read_pptx():
         rl.read_pptx(make_zip([("ppt/presentation.xml", "<p/>")]))
 
 
+def test_pptx_uses_presentation_order_and_keeps_numbers_after_empty_slides():
+    ns_r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    presentation = f'<p:presentation xmlns:p="{NS_P}" xmlns:r="{ns_r}"><p:sldIdLst><p:sldId id="1" r:id="blank"/><p:sldId id="2" r:id="third"/><p:sldId id="3" r:id="first"/></p:sldIdLst></p:presentation>'
+    rels = f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + ''.join(
+        f'<Relationship Id="{id}" Type="{ns_r}/slide" Target="slides/slide{n}.xml"/>'
+        for id, n in [('blank', 2), ('third', 3), ('first', 1)]) + '</Relationships>'
+    raw = make_zip([('ppt/presentation.xml', presentation), ('ppt/_rels/presentation.xml.rels', rels),
+        ('ppt/slides/slide1.xml', _slide('Title only', [])), ('ppt/slides/slide2.xml', _slide('', [])),
+        ('ppt/slides/slide3.xml', _slide('Table', [], [['Mango', '12.50']])) ,
+        ('ppt/slides/slide99.xml', _slide('Orphan', ['Must not be indexed']))])
+    units = rl.read_pptx(raw)
+    assert [(u['number'], u['title']) for u in units] == [(2, 'Table'), (3, 'Title only')]
+    assert units[0]['text'] == 'Mango | 12.50' and units[1]['text'] == 'Title only'
+
+
+def test_numeric_speaker_notes_are_not_mistaken_for_slide_numbering():
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(_pptx_bytes())) as z:
+        parts = [(n, z.read(n)) for n in z.namelist()]
+    number = '<p:sp><p:nvSpPr><p:nvPr><p:ph type="sldNum"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>99</a:t></a:r></a:p></p:txBody></p:sp>'
+    fixed = []
+    for name, raw in parts:
+        if name.endswith('notesSlide1.xml'):
+            raw = raw.decode().replace('Decir esto en voz alta', '1234').replace('</p:spTree>', number + '</p:spTree>')
+        fixed.append((name, raw))
+    units = rl.read_pptx(make_zip(fixed))
+    assert units[0]['text'].endswith('(notes) 1234')
+
+
 # ---- xlsx ------------------------------------------------------------------------------------------
 
 def _xlsx_bytes():

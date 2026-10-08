@@ -152,7 +152,7 @@ export function snippet(text, terms = [], { window: windowSize = 160 } = {}) {
 
 // ================================================================================== chunking
 
-export const CHUNK_VERSION = 3;
+export const CHUNK_VERSION = 4;
 const BREAKS = /\n\n|\n|(?<=[.!?…;:])\s+|(?<=,)\s+|\s+/g;
 
 function splitPoint(text, start, limit) {
@@ -191,7 +191,7 @@ function absorb(main, others, before) {
 }
 
 export function mergeSmallUnits(units, minimum = 200) {
-  if (units.length <= 1 || units.some((u) => u.kind === "page")) return [...units];
+  if (units.length <= 1 || units.some((u) => u.kind === "page" || u.kind === "slide")) return [...units];
   let pending = [];
   const out = [];
   for (let unit of units) {
@@ -217,7 +217,7 @@ function countNl(text, end) {
 
 function chunkUnit(unit, unitIndex, firstOrdinal, size, overlap, minTail) {
   const text = unit.text;
-  const page = unit.kind === "page" ? unit.number : null;
+  const page = unit.kind === "page" || unit.kind === "slide" ? unit.number : null;
   const chunks = [];
   let start = 0;
   const n = text.length;

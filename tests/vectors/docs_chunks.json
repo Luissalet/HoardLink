@@ -1,5 +1,13 @@
 [
  {
+  "mod": "chunking", "fn": "chunk_units",
+  "args": [[{"kind":"slide","number":2,"title":"Costes","text":"Mango 12.50"}, {"kind":"slide","number":3,"title":"Plan","text":"Other 8.00"}]],
+  "expect": [
+   {"unit_index":0,"ordinal":0,"page":2,"section":"Costes","line":null,"char_start":0,"char_end":11,"text":"Mango 12.50"},
+   {"unit_index":1,"ordinal":1,"page":3,"section":"Plan","line":null,"char_start":0,"char_end":10,"text":"Other 8.00"}
+  ]
+ },
+ {
   "mod": "chunking",
   "fn": "chunk_text",
   "args": [
