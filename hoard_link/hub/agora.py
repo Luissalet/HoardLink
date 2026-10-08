@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import math
 import re
 import threading
 import time
@@ -44,6 +45,10 @@ from .facets import Facet, Request
 
 PERSON = "luis"
 STALE_AGENT_S = 6 * 3600.0
+#: Silence (no heartbeat) after which another agent may take over the work of an agent that stopped answering.
+HANDOVER_IDLE_S = 30 * 60.0
+#: The coordination thread where a handover is announced (a new note thread is opened when it does not exist).
+HANDOVER_THREAD_ID = 32
 DEFAULT_LOCK_TTL_S = 3 * 3600
 MAX_LOCK_TTL_S = 24 * 3600
 REVIEW_GRACE_S = 2 * 3600
@@ -306,8 +311,11 @@ class Agora:
     def __init__(self, path: Any, *, clock: Callable[[], float] = time.time,
                  emit: Optional[Callable[[str, dict[str, Any]], Any]] = None,
                  escalate_hook: Optional[Callable[[dict[str, Any], str, str], Any]] = None,
-                 review_grace_s: float = REVIEW_GRACE_S):
+                 review_grace_s: float = REVIEW_GRACE_S, handover_idle_s: float = HANDOVER_IDLE_S,
+                 handover_thread_id: Optional[int] = HANDOVER_THREAD_ID):
         self.clock = clock
+        self.handover_idle_s = float(handover_idle_s)
+        self.handover_thread_id = handover_thread_id
         self.emit = emit or (lambda t, d: None)
         self.escalate_hook = escalate_hook
         self.review_grace_s = review_grace_s
@@ -939,6 +947,174 @@ class Agora:
         self._bump("agora.task.released", {"task_id": task["id"], "agent": agent, "dropped": drop})
         return {"ok": True, "task": self._task_row(task["id"])}
 
+    # -- handover ------------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _flag(value: Any, default: bool) -> bool:
+        if value is None or value == "":
+            return default
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off")
+        return bool(value)
+
+    @staticmethod
+    def _handover_agent(value: Any, field: str) -> str:
+        agent = str(value or "").strip().lower()
+        if agent == PERSON:
+            raise AgoraError(f"{field} must be an agent: {PERSON!r} does not own tasks to hand over")
+        if not _AGENT_RE.match(agent) or agent in ("hub", "ui", "system"):
+            raise AgoraError(f"{field} is required: the id of an agent such as codex-relevo")
+        return agent
+
+    def handover(self, a: dict[str, Any]) -> dict[str, Any]:
+        """Move the half-done work of one agent to another one (a chat that died, a context that ran out).
+
+        Moves the ownership of every task of ``from_agent`` that is not done (status, review state, submission
+        revision, reviewed commits, checkpoints and history stay as they are), the ``from_agent`` locks attached to
+        those tasks (same resources, TTL renewed) and, with ``include_reviews`` (default), the reviewer role of the
+        tasks waiting for it (``review`` / ``changes``). ``tasks`` limits the operation to those ids.
+
+        Allowed for the person (the hub's page), for ``from_agent`` itself, and for any registered agent once
+        ``from_agent`` has sent no heartbeat for ``handover_idle_s`` (30 min). ``to_agent`` must be registered and,
+        unless the person asks, have a fresh heartbeat. One transaction; running it again changes nothing."""
+        caller = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+        source = self._handover_agent(a.get("from_agent"), "from_agent")
+        target = self._handover_agent(a.get("to_agent"), "to_agent")
+        if source == target:
+            raise AgoraError("from_agent and to_agent must be different agents")
+        reason = _txt(a.get("reason"), 2000, "reason", required=True)
+        include_reviews = self._flag(a.get("include_reviews"), True)
+        wanted: Optional[list[int]] = None
+        if a.get("tasks") not in (None, "", []):
+            wanted = []
+            for value in _list(a.get("tasks"), "tasks", 200):
+                try:
+                    tid = int(str(value).lstrip("#"))
+                except ValueError:
+                    raise AgoraError(f"tasks must be task numbers: {value!r}") from None
+                if tid < 1:
+                    raise AgoraError(f"tasks must be task numbers: {value!r}")
+                if tid not in wanted:
+                    wanted.append(tid)
+        final_sql = ",".join("?" * len(FINAL))
+        with self.db.tx():
+            now = self.clock()
+            # -- who may do it
+            if caller != PERSON and self.db.one("SELECT id FROM agents WHERE id=?", (caller,)) is None:
+                raise AgoraError(f"{caller} is not registered in the Agora: send a heartbeat first", 403)
+            if caller not in (PERSON, source):
+                seen = self.db.one("SELECT last_seen FROM agents WHERE id=?", (source,))
+                idle = now - float(seen["last_seen"] or 0) if seen is not None else None
+                if idle is not None and idle < self.handover_idle_s:
+                    left = self.handover_idle_s - idle
+                    raise AgoraError(
+                        f"{source} sent a heartbeat {int(idle // 60)} min ago: another agent can take its work over after "
+                        f"{int(self.handover_idle_s // 60)} min without one (about {math.ceil(left / 60)} min from now); "
+                        f"{PERSON} can do it right away from the Hub", 409, idle_s=int(idle), retry_after_s=math.ceil(left),
+                        required_idle_s=int(self.handover_idle_s))
+            # -- who receives it
+            row = self.db.one("SELECT last_seen FROM agents WHERE id=?", (target,))
+            if row is None:
+                raise AgoraError(f"{target} is not registered in the Agora: it must send a heartbeat before it takes work over", 409)
+            if caller != PERSON and (now - float(row["last_seen"] or 0)) > STALE_AGENT_S:
+                raise AgoraError(f"{target} has no recent heartbeat (more than {int(STALE_AGENT_S // 3600)} h): "
+                                 "hand over to an agent that is working now", 409)
+            # -- what moves
+            if wanted is None:
+                review_sql = " OR (reviewer=? AND status IN ('review','changes'))" if include_reviews else ""
+                candidates = self.db.query(
+                    f"SELECT * FROM tasks WHERE status NOT IN ({final_sql}) AND (owner=?{review_sql}) ORDER BY id",
+                    (*FINAL, source, *((source,) if include_reviews else ())))
+            else:
+                candidates = []
+                for tid in wanted:
+                    found = self.db.one("SELECT * FROM tasks WHERE id=?", (tid,))
+                    if found is None:
+                        raise AgoraError(f"no task {tid}", 404)
+                    candidates.append(found)
+            plan: list[dict[str, Any]] = []
+            skipped: list[dict[str, Any]] = []
+            for task in candidates:
+                task = dict(task)
+                if task["status"] in FINAL:
+                    skipped.append({"task_id": task["id"], "reason": f"{task['status']}: final tasks are never touched"})
+                    continue
+                new_owner = target if task.get("owner") == source else task.get("owner")
+                new_reviewer = task.get("reviewer")
+                if include_reviews and new_reviewer == source and task["status"] in ("review", "changes"):
+                    new_reviewer = target
+                if task["status"] in ("review", "changes") and new_reviewer and new_reviewer == new_owner \
+                        and (new_owner != task.get("owner") or new_reviewer != task.get("reviewer")):
+                    new_reviewer = None                      # an owner can not review its own task: any other agent can
+                if new_owner == task.get("owner") and new_reviewer == task.get("reviewer"):
+                    if target in (task.get("owner"), task.get("reviewer")):
+                        skipped.append({"task_id": task["id"], "reason": f"already with {target}"})
+                        continue
+                    raise AgoraError(f"task {task['id']} is not held or reviewed by {source} (owner "
+                                     f"{task.get('owner') or 'nobody'}, reviewer {task.get('reviewer') or 'nobody'})", 409)
+                plan.append({"task": task, "owner": new_owner, "reviewer": new_reviewer,
+                             "owner_moved": new_owner != task.get("owner"),
+                             "reviewer_moved": new_reviewer != task.get("reviewer")})
+            if not plan:
+                return {"ok": True, "noop": True, "by": caller, "from": source, "to": target, "reason": reason,
+                        "tasks": [], "owner_moved": [], "reviewer_moved": [], "locks_moved": [], "skipped": skipped,
+                        "thread_id": None}
+            if caller != PERSON:
+                self._touch(caller)
+            # -- apply
+            owner_moved = [p["task"]["id"] for p in plan if p["owner_moved"]]
+            reviewer_moved = [p["task"]["id"] for p in plan if p["reviewer_moved"]]
+            for p in plan:
+                self.db.execute("UPDATE tasks SET owner=?, reviewer=?, updated=? WHERE id=?",
+                                (p["owner"], p["reviewer"], now, p["task"]["id"]))
+            locks_moved: list[str] = []
+            locks_by_task: dict[int, list[str]] = {}
+            if owner_moved:
+                marks = ",".join("?" * len(owner_moved))
+                live = self.db.query(
+                    f"SELECT resource, ttl_s, task_id FROM locks WHERE owner=? AND expires>? AND task_id IN ({marks}) "
+                    "ORDER BY acquired, resource", (source, now, *owner_moved))
+                for lk in live:
+                    self.db.execute("UPDATE locks SET owner=?, expires=? WHERE resource=?",
+                                    (target, now + float(lk["ttl_s"] or DEFAULT_LOCK_TTL_S), lk["resource"]))
+                    locks_moved.append(lk["resource"])
+                    locks_by_task.setdefault(int(lk["task_id"]), []).append(lk["resource"])
+            for p in plan:
+                task = p["task"]
+                lines = [f"{caller} traspasa de {source} a {target}: {reason}"]
+                if p["owner_moved"]:
+                    lines.append(f"Propiedad: {source} → {target} (estado {task['status']}, entrega r{task.get('submission_revision', 0)})")
+                if p["reviewer_moved"]:
+                    lines.append(f"Revisión: {task.get('reviewer')} → {p['reviewer'] or 'cualquier otro agente'}")
+                held = locks_by_task.get(task["id"], [])
+                if held:
+                    lines.append("Bloqueos: " + ", ".join(held))
+                self._system(task, "\n".join(lines), caller)
+            summary = [f"{caller} traspasa de {source} a {target}: {reason}"]
+            if owner_moved:
+                summary.append("Tareas con nuevo propietario: " + ", ".join(f"#{i}" for i in owner_moved))
+            only_review = [i for i in reviewer_moved if i not in owner_moved]
+            if only_review:
+                summary.append("Revisiones traspasadas: " + ", ".join(f"#{i}" for i in only_review))
+            summary.append(f"Bloqueos movidos: {len(locks_moved)}")
+            summary.append(f"@{target}: retoma con sync; los hilos de cada tarea llevan el detalle.")
+            body = "\n".join(summary)
+            thread_id = self.handover_thread_id
+            if thread_id is None or self.db.one("SELECT id FROM threads WHERE id=?", (thread_id,)) is None:
+                thread_id = self.db.insert("threads", {"title": f"Traspaso de tareas: {source} → {target}", "kind": "note",
+                                                       "task_id": None, "status": "open", "created_by": caller,
+                                                       "created": now, "updated": now})
+                self._msg(thread_id, caller, "proposal", body, [target])
+            else:
+                self._msg(thread_id, caller, "comment", body, [target])
+            result_tasks = [self._task_dict(self.db.one("SELECT * FROM tasks WHERE id=?", (p["task"]["id"],))) for p in plan]
+        self._bump("agora.handover", {"by": caller, "from": source, "to": target, "reason": reason,
+                                       "tasks": owner_moved, "reviews": reviewer_moved, "locks": locks_moved,
+                                       "thread_id": thread_id})
+        return {"ok": True, "noop": False, "by": caller, "from": source, "to": target, "reason": reason,
+                "tasks": result_tasks, "owner_moved": owner_moved, "reviewer_moved": reviewer_moved,
+                "locks_moved": locks_moved, "skipped": skipped, "thread_id": thread_id}
+
     def tasks(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         a = a or {}
         where, params = [], []
@@ -1346,6 +1522,18 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Give your task back (open again) or drop it (drop=true), with the reason. Releases its locks.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "reason": {"type": "string"}, "drop": {"type": "boolean"}},
                             ["agent", "task_id"])},
+    {"name": "hub_agora_handover",
+     "description": "Move the unfinished work of an agent that died (its context ran out, its chat closed) to its successor: "
+                    "tasks it owns that are not done (status, review state, submission revision and history stay), their live "
+                    "locks (renewed) and, with include_reviews (default), the reviewer role of tasks in review/changes. "
+                    "tasks limits it to those ids; reason is required. Allowed for from_agent itself, and for any registered "
+                    "agent once from_agent sent no heartbeat for 30 min; to_agent must have a recent heartbeat. "
+                    "Announced in the tasks' threads and thread 32. Running it twice changes nothing.",
+     "inputSchema": _schema({"agent": _A, "from_agent": {"type": "string", "description": "the agent that stopped"},
+                             "to_agent": {"type": "string", "description": "its successor, with a recent heartbeat"},
+                             "reason": {"type": "string", "minLength": 1},
+                             "tasks": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 200},
+                             "include_reviews": {"type": "boolean"}}, ["agent", "from_agent", "to_agent", "reason"])},
     {"name": "hub_agora_tasks", "read": True,
      "description": "List tasks: status (or 'active'), owner, repo, kind.",
      "inputSchema": _schema({"status": {"type": "string"}, "owner": {"type": "string"}, "repo": {"type": "string"},
@@ -1402,7 +1590,7 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 _WRITE_OPS = ("checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
-              "task_release", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack")
+              "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack")
 
 
 class AgoraFacet(Facet):
@@ -1533,6 +1721,7 @@ class AgoraFacet(Facet):
             "hub_agora_task_claim": wrap(ag.task_claim), "hub_agora_task_update": wrap(ag.task_update),
             "hub_agora_task_submit": wrap(ag.task_submit), "hub_agora_task_review": wrap(ag.task_review),
             "hub_agora_task_done": wrap(ag.task_done), "hub_agora_task_release": wrap(ag.task_release),
+            "hub_agora_handover": wrap(ag.handover),
             "hub_agora_tasks": wrap(ag.tasks), "hub_agora_task": wrap(ag.task), "hub_agora_lock": wrap(ag.lock),
             "hub_agora_unlock": wrap(ag.unlock), "hub_agora_locks": wrap(ag.locks),
             "hub_agora_thread_open": wrap(ag.thread_open), "hub_agora_post": wrap(ag.post),
