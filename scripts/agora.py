@@ -71,7 +71,10 @@ def call(method: str, path: str, body: dict | None = None, timeout: float = 150.
             return json.loads(resp.read() or b"{}")
     except urllib.error.HTTPError as exc:
         try:
-            return json.loads(exc.read() or b"{}")
+            result = json.loads(exc.read() or b"{}")
+            if isinstance(result, dict):
+                result.setdefault("status", exc.code)
+            return result
         except ValueError:
             return {"ok": False, "error": f"HTTP {exc.code}"}
     except (urllib.error.URLError, OSError) as exc:
@@ -216,6 +219,7 @@ def print_conversation(r: dict) -> None:
               f"{head.get('reviewer') or '-'}, repo {head.get('repo') or '-'}, rutas {', '.join(head.get('paths') or []) or '-'}")
         if head.get("branch") or head.get("commits"):
             print(f"  rama {head.get('branch') or '-'} · commits {', '.join(head.get('commits') or []) or '-'}")
+        print(f"  entrega r{head.get('submission_revision', 0)} · revisión votada {head.get('reviewed_submission_revision') or '-'}")
     if th:
         print(f"Hilo {th['id']} [{th['status']}] {th['kind']}: {th['title']}")
         if th.get("resolution"):
@@ -286,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("update"); s.add_argument("task", type=int); texts(s, "note"); s.add_argument("--status"); s.add_argument("--branch")
     s.add_argument("--paths", action="append"); s.add_argument("--lock", action="append")
     s = sub.add_parser("submit"); s.add_argument("task", type=int); texts(s, "summary"); s.add_argument("--commits", action="append"); s.add_argument("--branch"); s.add_argument("--reviewer")
-    s = sub.add_parser("review"); s.add_argument("task", type=int); s.add_argument("verdict", choices=["approve", "changes"]); texts(s, "body")
+    s = sub.add_parser("review"); s.add_argument("task", type=int); s.add_argument("verdict", choices=["approve", "changes"]); s.add_argument("--revision", type=int, required=True, help="submission_revision you inspected before reviewing; not the latest revision fetched automatically"); texts(s, "body")
     s = sub.add_parser("done"); s.add_argument("task", type=int); texts(s, "result"); s.add_argument("--commits", action="append"); s.add_argument("--force", action="store_true"); s.add_argument("--reason")
     s = sub.add_parser("release"); s.add_argument("task", type=int); s.add_argument("--reason"); s.add_argument("--drop", action="store_true")
     s = sub.add_parser("lock"); s.add_argument("resources", nargs="+"); s.add_argument("--ttl", type=int); s.add_argument("--note"); s.add_argument("--task", type=int)
@@ -359,7 +363,8 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/task_submit", {"agent": ag, "task_id": a.task, "summary": text_arg(a, "summary") or "",
                                                     "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer})
     elif c == "review":
-        r = call("POST", "/api/agora/task_review", {"agent": ag, "task_id": a.task, "verdict": a.verdict, "body": text_arg(a, "body") or ""})
+        r = call("POST", "/api/agora/task_review", {"agent": ag, "task_id": a.task, "verdict": a.verdict, "body": text_arg(a, "body") or "",
+                                                    "expected_submission_revision": a.revision})
     elif c == "done":
         r = call("POST", "/api/agora/task_done", {"agent": ag, "task_id": a.task, "result": text_arg(a, "result") or "",
                                                   "commits": csv(a.commits), "force": a.force, "reason": a.reason or ""})

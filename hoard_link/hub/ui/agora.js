@@ -37,6 +37,10 @@
     resolution: { es: "Resolución", en: "Resolution" }, stances: { es: "Posturas", en: "Stances" },
     k_debate: { es: "debate", en: "debate" }, k_question: { es: "pregunta", en: "question" }, k_decision: { es: "decisión", en: "decision" },
     k_review: { es: "revisión", en: "review" }, k_handoff: { es: "relevo", en: "handoff" }, k_note: { es: "nota", en: "note" }, k_task: { es: "tarea", en: "task" },
+    submission: { es: "entrega", en: "submission" },
+    review_draft: { es: "Nota de revisión de", en: "Review note for" },
+    stale_review: { es: "Hay una entrega nueva. Comprueba sus cambios antes de revisar de nuevo.", en: "There is a new submission. Check its changes before reviewing again." },
+    review_latest: { es: "Revisar la entrega actual", en: "Review the current submission" },
     need_text: { es: "Escribe algo primero.", en: "Write something first." },
     checkpoint: { es: "Último checkpoint", en: "Latest checkpoint" },
     declared: { es: "Progreso y pruebas declarados por el agente", en: "Progress and tests declared by the agent" },
@@ -328,9 +332,11 @@
     return wrap;
   }
 
-  function composer(thread, task) {
+  function composer(thread, task, draftRevision) {
     const wrap = el("div", "ag-compose");
     const ta = el("textarea"); ta.placeholder = t("write");
+    let reviewRevision = draftRevision ?? (task && task.submission_revision);
+    if (task && reviewRevision != null) ta.dataset.reviewRevision = String(reviewRevision);
     const row = el("div", "ag-row");
     const kind = el("select");
     for (const k of ["comment", "proposal", "agree", "disagree"]) { const o = el("option", "", t("kind_" + k)); o.value = k; kind.appendChild(o); }
@@ -362,14 +368,31 @@
       }
     }
     if (task && ["review", "approved", "changes"].includes(task.status)) {
+      const noteRevision = el("span", "hint", `${t("review_draft")} r${reviewRevision}`);
+      row.appendChild(noteRevision);
+      const stale = reviewRevision !== task.submission_revision;
+      const voteButtons = [];
+      const notice = el("div", "hint", t("stale_review"));
+      const latest = el("button", "small", `${t("review_latest")} r${task.submission_revision}`);
+      if (stale) {
+        wrap.appendChild(notice); row.appendChild(latest);
+        latest.onclick = () => {
+          // Never silently retarget a note when polling discovers a new submission.
+          reviewRevision = task.submission_revision;
+          ta.dataset.reviewRevision = String(reviewRevision);
+          noteRevision.textContent = `${t("review_draft")} r${reviewRevision}`;
+          voteButtons.forEach(button => { button.disabled = false; });
+          notice.remove(); latest.remove();
+        };
+      }
       for (const verdict of ["approve", "changes"]) {
         const b = el("button", "small", t(verdict));
         b.onclick = async () => {
           const body = need(); if (!body) return;
-          const r = await api("/api/agora/task_review", { agent: "luis", task_id: task.id, verdict, body });
+          const r = await api("/api/agora/task_review", { agent: "luis", task_id: task.id, verdict, body, expected_submission_revision: reviewRevision });
           if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
         };
-        row.appendChild(b);
+        b.disabled = stale; voteButtons.push(b); row.appendChild(b);
       }
     }
     ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send.click(); });
@@ -382,13 +405,14 @@
     const keep = detailBox.querySelector("textarea");
     const draft = keep ? keep.value : "";
     const focused = keep && document.activeElement === keep;
+    const draftRevision = draft.trim() && keep.dataset.reviewRevision ? Number(keep.dataset.reviewRevision) : undefined;
     const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}?agent=luis`);
     if (!r || !r.ok) return;
     const task = r.task || null;
     const thread = r.thread || { id: task && task.thread_id, kind: "task", status: task && task.status, title: task && task.title };
     const cp = task && task.latest_checkpoint;
     const lockStatus = cp && cp.current_lock_status;
-    const sig = JSON.stringify([(r.messages || []).length, task && task.status, thread.status,
+    const sig = JSON.stringify([(r.messages || []).length, task && task.status, task && task.submission_revision, task && task.commits, thread.status,
       cp && cp.revision, lockStatus && [lockStatus.owner, lockStatus.missing, lockStatus.conflicts, lockStatus.owner_changed]]);
     if (detailBox.dataset.sig === sig && detailBox.dataset.key === `${current.type}-${current.id}`) return;
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
@@ -406,6 +430,7 @@
       if ((task.paths || []).length) m.appendChild(el("span", "", task.paths.join(", ")));
       if (task.owner) m.appendChild(el("span", "", `${t("owner")}: ${task.owner}`));
       if (task.reviewer) m.appendChild(el("span", "", `${t("reviewer")}: ${task.reviewer}`));
+      if (task.submission_revision) m.appendChild(el("span", "", `${t("submission")} r${task.submission_revision}`));
       if (task.branch) m.appendChild(el("span", "", "⎇ " + task.branch));
       if ((task.commits || []).length) m.appendChild(el("span", "", task.commits.join(" ")));
       detailBox.appendChild(m);
@@ -420,7 +445,7 @@
     for (const m of r.messages || []) msgs.appendChild(msgView(m));
     detailBox.appendChild(msgs);
     if (thread.id) {
-      const c = composer(thread, task);
+      const c = composer(thread, task, draftRevision);
       detailBox.appendChild(c);
       const ta = c.querySelector("textarea"); ta.value = draft; if (focused) ta.focus();
     }

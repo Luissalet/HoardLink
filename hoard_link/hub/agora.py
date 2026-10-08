@@ -94,6 +94,14 @@ MIGRATIONS = [
                                   author TEXT NOT NULL, created REAL NOT NULL, payload TEXT NOT NULL,
                                   PRIMARY KEY(task_id, revision));
     """,
+    """
+    ALTER TABLE tasks ADD COLUMN submission_revision INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tasks ADD COLUMN reviewed_submission_revision INTEGER;
+    UPDATE tasks SET submission_revision=1
+        WHERE submitted_at IS NOT NULL OR (reviewed=1 AND status IN ('approved', 'done'));
+    UPDATE tasks SET reviewed_submission_revision=1
+        WHERE reviewed=1 AND status IN ('approved', 'done');
+    """,
 ]
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
@@ -803,19 +811,25 @@ class Agora:
             # A new submission asks for a new verdict: an approval given to earlier commits does not carry over to
             # what is sent now (the old verdict stays in the thread).
             self.db.execute("UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
-                            "submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL WHERE id=?",
+                            "submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL, "
+                            "reviewed_submission_revision=NULL, submission_revision=submission_revision+1 WHERE id=?",
                             (reviewer, a.get("branch"), _j(commits or task["commits"]), now, now, task["id"]))
-            self._msg(int(task["thread_id"]), agent, "proposal", summary, [reviewer] if reviewer else [])
-        self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": reviewer})
+            task = self._task_row(task["id"])
+            revision = task["submission_revision"]
+            details = f"\n\nSubmission revision: {revision}\nCommits: {', '.join(task['commits']) or '(none)'}"
+            self._msg(int(task["thread_id"]), agent, "proposal", summary + details, [reviewer] if reviewer else [])
+        self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": reviewer,
+                                          "submission_revision": revision, "commits": task["commits"]})
         return {"ok": True, "task": self._task_row(task["id"])}
 
     def task_review(self, a: dict[str, Any]) -> dict[str, Any]:
-        """``verdict: approve`` or ``changes``, with the reasons. Only someone other than the owner reviews."""
+        """Vote on the observed submission revision using expected_submission_revision."""
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
         verdict = str(a.get("verdict") or "").lower()
         if verdict not in ("approve", "changes"):
             raise AgoraError("verdict must be approve or changes")
         body = _txt(a.get("body"), 20000, "body", required=True)
+        expected_revision = a.get("expected_submission_revision")
         with self.db.tx():
             self._touch(agent)
             task = self._task_row(a.get("task_id"))
@@ -823,16 +837,24 @@ class Agora:
                 raise AgoraError("you can not review your own task", 403)
             if task["status"] not in ("review", "approved", "changes"):
                 raise AgoraError(f"task {task['id']} is not waiting for review ({task['status']})", 409)
+            if type(expected_revision) is not int or expected_revision < 1:
+                raise AgoraError("expected_submission_revision must be an integer >= 1; read submission_revision from the task you inspected (CLI: task N, then review N --revision R)")
+            if expected_revision != task["submission_revision"]:
+                raise AgoraError("the submission changed after it was observed", 409, error_code="stale_submission",
+                                 current_revision=task["submission_revision"], current_commits=task["commits"])
             status = "approved" if verdict == "approve" else "changes"
             now = self.clock()
-            self.db.execute("UPDATE tasks SET status=?, reviewer=?, reviewed=?, reviewed_commits=?, updated=? WHERE id=?",
+            self.db.execute("UPDATE tasks SET status=?, reviewer=?, reviewed=?, reviewed_commits=?, "
+                            "reviewed_submission_revision=?, updated=? WHERE id=?",
                             (status, agent, 1 if verdict == "approve" else 0,
-                             _j(task["commits"]) if verdict == "approve" else None, now, task["id"]))
-            self._msg(int(task["thread_id"]), agent, "approve" if verdict == "approve" else "changes", body,
-                      [task["owner"]] if task.get("owner") else [])
+                             _j(task["commits"]) if verdict == "approve" else None, expected_revision, now, task["id"]))
+            details = f"Reviewed submission revision: {expected_revision}\nCommits: {', '.join(task['commits']) or '(none)'}"
+            self._msg(int(task["thread_id"]), agent, "approve" if verdict == "approve" else "changes",
+                      details + "\n\n" + body, [task["owner"]] if task.get("owner") else [])
             if agent == PERSON:
                 self.db.execute("UPDATE threads SET status='open' WHERE id=? AND status='escalated'", (task["thread_id"],))
-        self._bump("agora.task.reviewed", {"task_id": task["id"], "agent": agent, "verdict": verdict})
+        self._bump("agora.task.reviewed", {"task_id": task["id"], "agent": agent, "verdict": verdict,
+                                            "submission_revision": expected_revision, "commits": task["commits"]})
         return {"ok": True, "task": self._task_row(task["id"])}
 
     def task_done(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -857,6 +879,8 @@ class Agora:
             exempt = _txt(a.get("exempt"), 300, "exempt")
             seen = task.get("reviewed_commits") or task["commits"] or []
             unreviewed_commits = [c for c in commits if c not in seen]
+            if task["status"] == "approved" and task.get("reviewed_submission_revision") != task.get("submission_revision"):
+                raise AgoraError(f"task {task['id']} approval does not match its current submission revision", 409)
             if task["status"] == "approved" and unreviewed_commits:
                 # Closing with commits the reviewer never saw (an integration that rewrote hashes, or new work): say
                 # how they relate to the approved ones, or submit them again.
@@ -1306,9 +1330,11 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "summary": {"type": "string"}, "branch": {"type": "string"},
                              "commits": _STRS, "reviewer": {"type": "string"}}, ["agent", "task_id", "summary"])},
     {"name": "hub_agora_task_review",
-     "description": "Review someone else's task: verdict approve|changes and the reasons (what you checked).",
-     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "verdict": {"type": "string"}, "body": {"type": "string"}},
-                            ["agent", "task_id", "verdict", "body"])},
+     "description": "Review someone else's observed submission: read its submission_revision, inspect and test that "
+                    "revision, then send expected_submission_revision with verdict approve|changes and the reasons.",
+     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "expected_submission_revision": {"type": "integer", "minimum": 1},
+                             "verdict": {"type": "string"}, "body": {"type": "string"}},
+                            ["agent", "task_id", "expected_submission_revision", "verdict", "body"])},
     {"name": "hub_agora_task_done",
      "description": "Your task is integrated: commits and result. Releases its locks. Refused while a review is "
                     "younger than 2 h or changes were requested, unless force with a reason. docs, eval, research and "

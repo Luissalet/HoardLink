@@ -46,10 +46,11 @@ def test_migration_preserves_existing_reviewed_tasks(tmp_path):
     old.close()
     ag = Agora(path)
     try:
-        assert dict(ag.db.one("SELECT * FROM tasks WHERE id=1")) == before
+        migrated = dict(ag.db.one("SELECT * FROM tasks WHERE id=1"))
+        assert {key: migrated[key] for key in before} == before
         assert ag.db.schema_version == len(MIGRATIONS)
         assert write(ag, 1)["checkpoint"]["revision"] == 1
-        assert dict(ag.db.one("SELECT * FROM tasks WHERE id=1")) == before
+        assert dict(ag.db.one("SELECT * FROM tasks WHERE id=1")) == migrated
     finally:
         ag.close()
 
@@ -171,7 +172,7 @@ def test_owner_change_final_tasks_and_review_state_independence(tmp_path):
         task_id = claimed(ag)
         ag.task_submit({"agent": "codex", "task_id": task_id, "summary": "Review", "branch": "review-branch",
                         "commits": ["c" * 40]})
-        ag.task_review({"agent": "claude", "task_id": task_id, "verdict": "approve", "body": "Checked"})
+        ag.task_review({"agent": "claude", "task_id": task_id, "verdict": "approve", "body": "Checked", "expected_submission_revision": 1})
         before = dict(ag.db.one("SELECT * FROM tasks WHERE id=?", (task_id,)))
         write(ag, task_id, payload={"summary": "Ready", "branch": "different", "head": "d" * 40})
         assert dict(ag.db.one("SELECT * FROM tasks WHERE id=?", (task_id,))) == before
