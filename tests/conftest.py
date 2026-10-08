@@ -108,3 +108,11 @@ def _private_hoard_home(tmp_path, monkeypatch):
     """hoard_link.launch keeps family-wide files in ~/.hoard: never the real one in tests."""
     monkeypatch.setenv("HOARD_HOME", str(tmp_path / "hoard-home"))
     monkeypatch.delenv("COMFYUI_DIR", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_registry_memory(monkeypatch):
+    """hoard_link.link remembers the last Faustus registry per process: never across tests."""
+    import hoard_link.link as link_mod
+
+    monkeypatch.setattr(link_mod, "_last_registry", None)

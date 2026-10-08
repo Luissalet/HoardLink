@@ -318,3 +318,50 @@ async def test_only_a_network_server_answers_and_it_is_used_without_any_lease():
     router = sparks_serving(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(SPARKS_ITEM)))
     res = await make_link(router).resolve("llm")
     assert res.resolved and res.provider == "unknown" and res.api == "openai" and res.details["resident"] is True
+
+
+# ---- a busy Faustus: the registry it gave a moment ago still keeps work off this PC's GPUs -------------------------
+
+
+def _timeout(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("busy", request=request)
+
+
+@pytest.mark.asyncio
+async def test_a_registry_timeout_uses_the_registry_faustus_gave_recently():
+    first = sparks_serving(llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(LLAMA_ITEM, SPARKS_ITEM))))
+    assert (await make_link(first).resolve("llm")).url == SPARKS_ITEM["url"]
+    busy = sparks_serving(llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", _timeout)))
+    res = await make_link(busy).resolve("llm")
+    assert res.url == SPARKS_ITEM["url"]
+
+
+@pytest.mark.asyncio
+async def test_a_faustus_too_busy_for_its_health_check_still_routes_to_the_sparks():
+    first = sparks_serving(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(SPARKS_ITEM)))
+    assert (await make_link(first).resolve("llm")).url == SPARKS_ITEM["url"]
+    silent = sparks_serving(llama_ready(Router().get(7000, "/api/health", _timeout)))
+    res = await make_link(silent).resolve("llm")
+    assert res.url == SPARKS_ITEM["url"]
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_server_that_stopped_is_not_trusted_and_an_old_registry_expires(monkeypatch):
+    import hoard_link.link as link_mod
+
+    first = sparks_serving(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(SPARKS_ITEM)))
+    await make_link(first).resolve("llm")
+    stopped = llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", _timeout))
+    assert (await make_link(stopped).resolve("llm")).url == LLAMA_ITEM["url"]  # the Sparks no longer answer
+    data, at = link_mod._last_registry
+    monkeypatch.setattr(link_mod, "_last_registry", (data, at - link_mod._REGISTRY_MEMORY_TTL_S - 1))
+    assert link_mod._remembered_registry() is None
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_remembered_before_faustus_answers_once():
+    import hoard_link.link as link_mod
+
+    assert link_mod._remembered_registry() is None
+    res = await make_link(llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", _timeout))).resolve("llm")
+    assert res.url == LLAMA_ITEM["url"]

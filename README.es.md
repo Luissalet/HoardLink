@@ -158,7 +158,11 @@ flowchart LR
    registro de Faustus se ignora para que los datos nunca salgan de casa.
    Un modelo que otra máquina ya está sirviendo va antes que cualquiera que
    este PC tenga o deba cargar en sus GPU, y solo se elige mientras su
-   `/v1/models` lo siga listando. Una
+   `/v1/models` lo siga listando. Si Faustus está tan ocupado que no
+   responde a `/api/health` o `/api/models` en 1,5 s, se usa el registro
+   que dio en los últimos 15 minutos (cada entrada se sigue comprobando),
+   para que un turno largo de Faustus no lleve a la familia a las GPU de
+   este PC. Una
    entrada de Ollama se contrasta con el `/api/ps` de ese Ollama antes de
    declararla residente. Sin token configurado la petición va sin él (un
    Faustus con la autenticación desactivada responde igual); un 401
