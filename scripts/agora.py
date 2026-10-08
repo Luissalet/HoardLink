@@ -283,6 +283,14 @@ def print_conversation(r: dict) -> None:
         if head.get("branch") or head.get("commits"):
             print(f"  rama {head.get('branch') or '-'} · commits {', '.join(head.get('commits') or []) or '-'}")
         print(f"  entrega r{head.get('submission_revision', 0)} · revisión votada {head.get('reviewed_submission_revision') or '-'}")
+        for b in head.get("submission_blocks") or []:
+            kind = b.get("kind")
+            label = f"  ▸ [{b.get('id')}] {kind}" + (f" — {b.get('title')}" if b.get("title") else "")
+            if kind == "code_peek" and isinstance(b.get("peek"), dict):
+                peek = b["peek"]
+                print(f"{label}: {peek.get('ref')} ({'ok' if peek.get('verified') else '??'})")
+            else:
+                print(label)
     if th:
         print(f"Hilo {th['id']} [{th['status']}] {th['kind']}: {th['title']}")
         if th.get("resolution"):
@@ -371,7 +379,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("update"); s.add_argument("task", type=int); texts(s, "note"); s.add_argument("--status"); s.add_argument("--branch")
     s.add_argument("--paths", action="append"); s.add_argument("--lock", action="append")
     s = sub.add_parser("submit"); s.add_argument("task", type=int); texts(s, "summary"); s.add_argument("--commits", action="append"); s.add_argument("--branch"); s.add_argument("--reviewer")
+    s.add_argument("--blocks-file", help="JSON UTF-8 list of structured review blocks (what_why, paths, code_peek, flow, sequence)")
     s = sub.add_parser("review"); s.add_argument("task", type=int); s.add_argument("verdict", choices=["approve", "changes"]); s.add_argument("--revision", type=int, required=True, help="submission_revision you inspected before reviewing; not the latest revision fetched automatically"); texts(s, "body")
+    s.add_argument("--block-comments-file", help="JSON UTF-8 list of {block_id, body} notes on structured blocks")
     s = sub.add_parser("done"); s.add_argument("task", type=int); texts(s, "result"); s.add_argument("--commits", action="append"); s.add_argument("--force", action="store_true"); s.add_argument("--reason")
     s = sub.add_parser("release"); s.add_argument("task", type=int); s.add_argument("--reason"); s.add_argument("--drop", action="store_true")
     s = sub.add_parser("lock"); s.add_argument("resources", nargs="+"); s.add_argument("--ttl", type=int); s.add_argument("--note"); s.add_argument("--task", type=int)
@@ -458,11 +468,26 @@ def main(argv: list[str] | None = None) -> int:
             body["paths"] = csv(a.paths)
         r = call("POST", "/api/agora/task_update", body)
     elif c == "submit":
-        r = call("POST", "/api/agora/task_submit", {"agent": ag, "task_id": a.task, "summary": text_arg(a, "summary") or "",
-                                                    "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer})
+        body = {"agent": ag, "task_id": a.task, "summary": text_arg(a, "summary") or "",
+                "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer}
+        if getattr(a, "blocks_file", None):
+            try:
+                raw = sys.stdin.read() if a.blocks_file == "-" else Path(a.blocks_file).read_text(encoding="utf-8-sig")
+                body["blocks"] = json.loads(raw)
+            except (OSError, ValueError) as exc:
+                p.error(f"--blocks-file necesita JSON UTF-8 válido: {exc}")
+        r = call("POST", "/api/agora/task_submit", body)
     elif c == "review":
-        r = call("POST", "/api/agora/task_review", {"agent": ag, "task_id": a.task, "verdict": a.verdict, "body": text_arg(a, "body") or "",
-                                                    "expected_submission_revision": a.revision})
+        body = {"agent": ag, "task_id": a.task, "verdict": a.verdict, "body": text_arg(a, "body") or "",
+                "expected_submission_revision": a.revision}
+        if getattr(a, "block_comments_file", None):
+            try:
+                raw = (sys.stdin.read() if a.block_comments_file == "-"
+                       else Path(a.block_comments_file).read_text(encoding="utf-8-sig"))
+                body["block_comments"] = json.loads(raw)
+            except (OSError, ValueError) as exc:
+                p.error(f"--block-comments-file necesita JSON UTF-8 válido: {exc}")
+        r = call("POST", "/api/agora/task_review", body)
     elif c == "done":
         r = call("POST", "/api/agora/task_done", {"agent": ag, "task_id": a.task, "result": text_arg(a, "result") or "",
                                                   "commits": csv(a.commits), "force": a.force, "reason": a.reason or ""})

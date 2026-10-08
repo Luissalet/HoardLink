@@ -21,7 +21,7 @@ def test_review_binding_after_checkpoint_migration_and_reopen(tmp_path, previous
     old.close()
     ag = Agora(path)
     try:
-        assert ag.db.schema_version == len(MIGRATIONS) == 5
+        assert ag.db.schema_version == len(MIGRATIONS) == 6
         current = ag.task({"task_id": 1})["task"]
         assert current["submission_revision"] == current["reviewed_submission_revision"] == 1
         raw = dict(ag.db.one("SELECT * FROM tasks WHERE id=1"))
@@ -43,7 +43,7 @@ def test_review_binding_after_checkpoint_migration_and_reopen(tmp_path, previous
         ag.close()
     reopened = Agora(path)
     try:
-        assert reopened.db.schema_version == 5
+        assert reopened.db.schema_version == 6
         current = reopened.task({"task_id": 1})["task"]
         assert current["submission_revision"] == current["reviewed_submission_revision"] == 2
         assert current["latest_checkpoint"]["payload"]["summary"] == "Next checkpoint"
