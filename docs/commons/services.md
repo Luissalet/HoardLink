@@ -45,8 +45,12 @@ app --fam_*--> hub  POST /api/apps/<owner>/call  {tool, arguments, timeout_s}   
 * **Owner tools must be listed in the owner's `/api/agent/tools`** and routed by `/api/agent/call` (`family.install_fastapi` does both for FastAPI
   apps; Links has `server/agent-tools.js`). Tool errors are HTTP 4xx with `{"ok": false, "error": "<message in the user's language>"}`: 400 bad
   arguments, 404 something asked for does not exist (a job id, a subtitle language), 409 wrong state, 503 not ready.
-* **Paths, never bytes.** Files travel as absolute paths on the shared disk; the owner reads and writes them. No base64 over the hub (16 MB cap).
+* **Paths, never bytes.** Files travel as absolute paths on the shared disk; the owner reads and writes them. No base64 over the service proxy.
   Relative paths are made absolute by the client (`os.path.abspath` / `path.resolve`).
+  Authenticated proxy/agent calls accept at most 4 MiB of JSON (enough for chapter
+  handoffs); ordinary metadata routes retain 256 KiB. Authentication and size are
+  checked before reading larger bodies. Model chat has its separate 12 MiB limit.
+  Family API clients never follow redirects to another service with credentials.
 
 ### Failure vocabulary (all clients, both languages)
 
@@ -312,10 +316,48 @@ Borges is asked to add/watch the folder and reindex its transcript files.
 `status=done, stage=index_requested` means Borges accepted the indexing request,
 not that indexing has finished. Confirm the document in Borges before claiming it
 is searchable. Owner errors, empty speech and unsafe paths stop the workflow.
-The Hub holds at most two running imports and retains finished jobs for one hour
-in memory. Restarting the Hub interrupts tracking; owner jobs can still be followed
-by their returned download/transcription identifiers. A transcription has a ten-minute
-polling limit, and terminal Funes `error` states are reported immediately.
+The Hub holds at most two running imports. The atomic local journal
+`<data>/media-imports.json` retains finished jobs for seven days, preserves paused
+jobs, and refuses new work at 100 retained jobs. Restart changes running imports
+to `paused`; nothing resumes automatically. `hub_media_imports` lists them and
+`hub_media_import_resume({job_id})` follows saved Links/Funes job IDs and skips
+completed steps. Repeated `download_id` + folder + language/model requests reuse
+the retained running, paused or completed import. URL-only requests are fresh work.
+A provider poll has a ten-minute limit and all common terminal states stop polling.
+
+Before each mutation the journal records the intent. If its reply is lost, resume
+requires reconciliation with the owner: `download_id`, `transcribe_job_id`,
+`collection_id`, or `index_requested: true` as appropriate. This avoids blindly
+duplicating work; it is not an exactly-once transaction across HTTP services.
+Funes's stateless job retention still applies: an expired job may need a new,
+explicit import. Closing the Hub cannot cancel a provider request already in flight.
+
+Each transcript has a `*.transcript.provenance.json` sidecar with the provider IDs,
+model/language when reported, a source URL without credentials/query/fragment,
+and the transcript SHA-256. Resume checks the hash before indexing and preserves
+edited evidence. The private journal retains the original URL to resume the task;
+public job views omit it. It belongs in the existing private data/backup policy.
+Started, progress, paused, done and failed events feed the existing family jobs
+view; paused imports are not falsely reported as running or swept away as stale.
+
+HTTP operator routes: `GET /api/services/imports`,
+`POST /api/services/imports/resume`. They require the Hub operator or its token.
+
+### Machine-readable ownership and cohesion
+
+`hoard_link/_data/family-services.json` is the canonical owner/tool contract.
+Python clients and the Hub consume it; Node consumes a byte-identical mirror in
+`js/hoard-commons/family-services.json`, regenerated before vendoring. Discovery
+checks status/cancellation tools as well as job starters. `workflows` checks
+the Links/Funes/Borges import prerequisites separately: a working embedding
+service does not prove that collection registration and reindexing exist.
+
+`hub_cohesion` / `GET /api/services/cohesion` reports the actual registry,
+declared capability overlaps, Python/Node shared-code drift, owner catalogues,
+workflow prerequisites and import states. Overlaps mean review responsibilities;
+they do not prove identical implementations. Models are checked on execution.
+The read-only source inventory is `scripts/audit_cohesion.py`; see
+[the cohesion audit](cohesion.md) for boundaries and remaining gaps.
 
 The recommended rule `rule-download-transcribe-index` listens for
 `links.job.done` with `data.media_kind=audio` and reuses `data.job_id` / `data.dir`.
@@ -335,3 +377,47 @@ native runtime. Memory pressure does not disable CUDA, and explicit `cuda` remai
 an explicit choice. Restart after installing the missing libraries to retry automatic GPU use.
 
 Windows validation and known limitations: [validation record](windows-validation.md).
+
+### Shared live storage (Atlas)
+
+Atlas owns ordinary shared project folders, file revisions and references to
+reusable results. It does not replace the Hub's coordination or Borges's index.
+Python `fam_workspace` and Node `fam-workspace.js` use Atlas through the Hub with
+the caller's own credential. `hub_workspace` exposes the same operations to the
+operator. Native programs open the returned path directly; registering it never
+copies or modifies its content. Existing copying importers still copy unless
+they explicitly adopt live references. Lumiere adds `media_shared(file_id)`.
+
+Projects contain `shared/` and `hoards/<app>/` folders. Membership and sphere
+scope API access and task context; they are not operating-system ACLs. Files
+stay accessible in native tools when Atlas stops. Project renames/archive keep
+paths stable. No automatic migration of existing files or private app databases.
+
+`lookup(project_id, source_ids, recipe)` refreshes source hashes and checks any
+output hash. Publish requires `source_revisions` from the lookup: edits during
+processing reject publication. Recipes need operation/version, options and the
+actual model revision where applicable. Results remain normal files in that
+project; editing them invalidates reuse rather than overwriting human work.
+Context contains a goal, sphere and at most twenty explicit file references;
+source text is never promoted to agent instructions. Mutation request IDs have
+durable receipts, not cross-owner exactly-once guarantees.
+
+Hub backups include Atlas's configured shared root as `atlas-files` as well as
+its private data. Shared-file restores require a separate review destination.
+Existing backup size limits/exclusions and concurrent-file snapshot limits apply.
+
+### Cooperative CPU, RAM and disk admission
+
+The resources facet complements the GPU lease arbiter. Authenticated siblings
+request/release claims through `/api/resources/request` and `/api/resources/release`.
+`hub_resource_status` reports capacity and claims. Python's
+`fam_resources.claim(cpu_slots=1, ram_mb=..., io_slots=..., mode='background')`
+waits for admission, renews the claim and releases it on exit. A Hub failure stops
+admission; long work should check the yielded lost-reservation event between chunks.
+The consumer must honor its budget; this mechanism does not throttle native
+processes or change every application's worker count automatically.
+
+Claims persist across Hub restart until expiry, belong to the authenticated
+caller and reserve foreground capacity. Config lives in `hub.json.resources`:
+`cpu_slots`, `interactive_reserve` and `io_slots`. RAM uses live availability
+with headroom. No available-memory reading means no positive-RAM grant.

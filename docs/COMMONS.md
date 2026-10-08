@@ -34,6 +34,11 @@ The Hub's **Services** tab checks the owners' tool catalogues without loading th
 An optional, initially disabled rule connects completed audio downloads to Funes and a transcript collection in Borges.
 See [the service contract](commons/services.md#11-hub-service-discovery-and-media-imports).
 
+The cohesion follow-up adds one Python/Node owner contract, `hub_cohesion`,
+checkpointed media imports with explicit resume, provenance and deduplication,
+paused work in the family jobs view, and authenticated text handoffs through the
+Hub. See [responsibility boundaries and remaining gaps](commons/cohesion.md).
+
 1. **Importing never needs more than the standard library.** Optional dependencies (`httpx`, `bs4`,
    `playwright`, `PIL`, `numpy`, `faster_whisper` …) are imported inside the functions that need them, and a
    missing one raises `hoard_link.errors.missing_dependency(package, feature)` (an `Unavailable`), never `ImportError` at import

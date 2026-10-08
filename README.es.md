@@ -1,5 +1,10 @@
 # Hoard Link
 
+Cohesión de la familia: [responsabilidades, solapes y carencias](docs/commons/cohesion.md).
+El Hub comprueba diferencias del código común y requisitos de los flujos;
+las importaciones de audio conservan checkpoints y se reanudan expresamente
+por sus identificadores, sin repetir trabajos ya conocidos.
+
 Hoard Hub descubre HomeHoard y Mercator por sus manifiestos locales y muestra
 sus iconos en las fichas. Scribe se fusionó con Funes y ya no aparece como
 aplicación ni como regla recomendada. Hypatia conserva su icono existente.
@@ -988,3 +993,7 @@ que la CI (`.github/workflows/ci.yml`: Ubuntu y Windows, Python 3.11 a
 ## Licencia
 
 MIT — ver [LICENSE](LICENSE).
+
+## Ampliación de la familia · 2026-10-04
+
+`hub_capability_find` busca en todos los manifiestos de la familia, incluidos plugins MCP que sólo tienen stdio, como GamerHoard. Con `check=true` consulta hasta ocho catálogos HTTP reales, devuelve esquemas y distingue declaraciones de conexión; no arranca apps ni da modelos por preparados. `hub_recipe_plan` relaciona quince flujos con capacidades declaradas y muestra huecos, incluidos CAD medido, memoria personal y biblioteca de juegos. La pestaña Capacidades expone ambos; la ejecución usa los servicios existentes. Los plugins de stdio se llaman mediante MCP en Faustus, sin inventarles un servidor HTTP. Esta búsqueda no cambia el inventario de aplicaciones web del lanzador.
