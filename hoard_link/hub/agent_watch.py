@@ -85,14 +85,31 @@ _SECRET_RES = [re.compile(p, re.I) for p in (
     r"\bAIza[0-9A-Za-z_\-]{20,}",
     r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,}",
     r"-----BEGIN [A-Z ]*PRIVATE KEY",
+    r"\bhf_[A-Za-z0-9]{20,}",
+    r"\bNOPASSWD\b",                                   # sudoers lines
+    r"\bsudoers\b",
+    r"^\s*[%\w.\-]+\s+ALL\s*=\s*\(",
 )]
+#: Inside a kept line: whatever follows a «password / contraseña / clave / token / secret» word up to the end of the
+#: clause, e-mail addresses, and any run of six or more digits (numeric passwords, PINs, account numbers).
+_MASK = "***"
+_AFTER_WORD_RE = re.compile(r"(?i)\b(pass(?:word|wd|phrase)\w*|contrase[ñn]a\w*|clave\w*|token\w*|secret\w*|secreto\w*)\b[^.;,!?\n]*")
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+_DIGITS_RE = re.compile(r"\d{6,}")
+
+
+def _mask(line: str) -> str:
+    line = _AFTER_WORD_RE.sub(lambda m: f"{m.group(1)} {_MASK}", line)
+    line = _EMAIL_RE.sub(_MASK, line)
+    return _DIGITS_RE.sub(_MASK, line)
 
 
 def snippet(text: Any, limit: int = SNIPPET) -> str:
-    """One short, single-spaced piece of ``text`` without any line that looks like a secret."""
+    """One short, single-spaced piece of ``text``: lines that look like a secret are dropped, and what follows a
+    password-like word, e-mail addresses and long digit runs are masked in the others."""
     if not isinstance(text, str):
         return ""
-    kept = [ln for ln in text.splitlines() if ln.strip() and not any(rx.search(ln) for rx in _SECRET_RES)]
+    kept = [_mask(ln) for ln in text.splitlines() if ln.strip() and not any(rx.search(ln) for rx in _SECRET_RES)]
     out = " ".join(" ".join(kept).split())
     return out if len(out) <= limit else out[: limit - 1].rstrip() + "…"
 
@@ -144,12 +161,26 @@ def _is_boilerplate(text: str) -> bool:
     return any(t.startswith(b) for b in _BOILERPLATE)
 
 
+_WRAPPED_RE = re.compile(r"<(user_query|user_message)\b[^>]*>(.*?)(?:</\1\s*>|$)", re.S | re.I)
+_LEADING_BLOCK_RE = re.compile(r"\A\s*<([A-Za-z_][\w.:\-]*)(?:\s[^>]*)?>.*?</\1\s*>", re.S)
+_ANY_TAG_RE = re.compile(r"</?[A-Za-z_][\w.:\-]*(?:\s[^<>]*)?/?>")
+
+
 def _title_from(text: str) -> str:
-    t = text.strip()
-    m = re.match(r"^<user_query>\s*(.*?)\s*(?:</user_query>|$)", t, re.S)
+    """The user's own words: the inside of a ``<user_query>`` / ``<user_message>`` element when there is one, else the
+    text without its leading ``<tag>…</tag>`` blocks (environment, plugins, timestamps…) and stray tags. May be empty."""
+    m = _WRAPPED_RE.search(text)
     if m:
-        t = m.group(1)
-    return snippet(t, TITLE_MAX)
+        t = m.group(2)
+    else:
+        t = text
+        while True:
+            n = _LEADING_BLOCK_RE.sub("", t, count=1)
+            if n == t:
+                break
+            t = n
+        t = _ANY_TAG_RE.sub(" ", t)
+    return snippet(t.strip(), TITLE_MAX)
 
 
 def _input_summary(value: Any, _depth: int = 0) -> str:
@@ -315,8 +346,10 @@ class Session:
         getattr(self, f"_feed_{self.engine}")(obj, ts)
 
     def _set_title(self, text: str) -> None:
-        if not self.title and text and not _is_boilerplate(text):
-            self.title = _title_from(text)
+        """The first user message that says something becomes the title; wrapper-only ones fall through to the next."""
+        if self.title or not text or text.lstrip().startswith(("# AGENTS.md", "Caveat:")):
+            return
+        self.title = _title_from(text)
 
     def _set_cwd(self, cwd: Any) -> None:
         if isinstance(cwd, str) and cwd and not self.cwd:
