@@ -20,6 +20,7 @@ def test_owner_catalogues_and_missing_services_do_not_start_models(monkeypatch):
     assert rows["stt"]["state"] == "down"
     assert rows["tts"]["state"] == "incompatible" and rows["tts"]["missing_tools"] == ["voice_tts"]
     assert rows["embed"]["state"] == "missing"
-    assert facet.status()["services"] == list(rows.values()) and len(calls) == 4
+    assert rows["storage"]["available"] and rows["storage"]["owner"] == "atlas"
+    assert facet.status()["services"] == list(rows.values()) and len(calls) == len(apps)
     facet.status(refresh=True)
-    assert len(calls) == 8
+    assert len(calls) == 2 * len(apps)

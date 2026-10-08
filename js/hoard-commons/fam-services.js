@@ -19,7 +19,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { call, status as familyStatus } from "../hoard-link.js";
 
-export const OWNERS = { media: "links", stt: "funes", tts: "prospero", docs: "kafka", embed: "borges" };
+const serviceContract = JSON.parse(fs.readFileSync(new URL("./family-services.json", import.meta.url), "utf8"));
+export const OWNERS = Object.freeze(Object.fromEntries(Object.entries(serviceContract.services).map(([name, spec]) => [name, spec.owner])));
 export const HUB_MAX_S = 900;
 export const HUB_MARGIN_S = 20;
 export const MAX_WAIT_S = 150;
@@ -28,7 +29,7 @@ const CACHE_MS = 30000;
 const UNAVAILABLE = new Set(["hub_down", "app_down", "app_missing", "tool_missing"]);
 const DONE_STATES = ["done", "error", "cancelled", "interrupted", "failed"];
 const ACTIVE_DOWNLOAD = ["queued", "downloading", "processing"];
-const LINKS = "links", FUNES = "funes", PROSPERO = "prospero", KAFKA = "kafka", BORGES = "borges";
+const { media: LINKS, stt: FUNES, tts: PROSPERO, docs: KAFKA, embed: BORGES } = OWNERS;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
