@@ -1,0 +1,3150 @@
+{
+  "schema": 1,
+  "scope": "registered manifests; source signals need review",
+  "probe": true,
+  "apps": [
+    {
+      "id": "argus",
+      "name": "Argus's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Argus's Hoard",
+      "purpose": "Private screen memory: periodic screenshots of the user's own PC, OCR'd and searchable by text, app, window and time, stored only on the machine.",
+      "capabilities": [
+        "screen-history",
+        "ocr",
+        "timeline",
+        "full-text-search",
+        "activity-by-app",
+        "recent-screen",
+        "pause",
+        "private-mode",
+        "exclusions",
+        "retention",
+        "delete-range"
+      ],
+      "signals": {
+        "shared_services": [
+          "argus/ocr/family.py:15",
+          "argus/ocr/family.py:31",
+          "argus/ocr/family.py:42"
+        ],
+        "hub_calls": [],
+        "shared_model": [
+          "mcp_server.py:7",
+          "mcp_server.py:14",
+          "argus/__main__.py:1",
+          "argus/__main__.py:6",
+          "argus/agent_tools.py:10",
+          "argus/config.py:8",
+          "argus/config.py:9",
+          "argus/db.py:1",
+          "argus/db.py:7",
+          "argus/db.py:85",
+          "argus/images.py:4",
+          "argus/main.py:2",
+          "argus/main.py:15",
+          "argus/main.py:16",
+          "argus/main.py:17",
+          "argus/main.py:41",
+          "argus/queries.py:8",
+          "argus/recorder.py:13",
+          "argus/search.py:7",
+          "argus/search.py:21",
+          "argus/services.py:13",
+          "argus/api/agent.py:7",
+          "argus/api/status.py:1",
+          "argus/ocr/family.py:15",
+          "scripts/launch.py:13"
+        ],
+        "events": [],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [
+          "argus/settings.py:12",
+          "argus/ocr/__init__.py:9",
+          "argus/ocr/__init__.py:18",
+          "argus/ocr/family.py:3",
+          "argus/ocr/rapid.py:15",
+          "argus/ocr/rapid.py:17",
+          "argus/ocr/rapid.py:18",
+          "argus/ocr/rapid.py:21",
+          "argus/ocr/rapid.py:28",
+          "argus/ocr/rapid.py:29",
+          "argus/ocr/rapid.py:34",
+          "argus/ocr/rapid.py:39",
+          "scripts/selftest.py:5",
+          "scripts/selftest.py:6"
+        ],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "argus\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "babel",
+      "name": "Babel's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Babel's Hoard",
+      "purpose": "Gives the model the exact, version-installed API signatures and docs for this project instead of its training-data guesses, and can check code it wrote for hallucinated APIs.",
+      "capabilities": [
+        "api-lookup",
+        "code-check",
+        "docs-search",
+        "docsets",
+        "environments",
+        "localization-audit"
+      ],
+      "signals": {
+        "shared_services": [
+          "babels_hoard/backend.py:22",
+          "babels_hoard/backend.py:181",
+          "babels_hoard/backend.py:184"
+        ],
+        "hub_calls": [],
+        "shared_model": [
+          "babels_hoard/api.py:21",
+          "babels_hoard/api.py:22",
+          "babels_hoard/api.py:23",
+          "babels_hoard/api.py:314",
+          "babels_hoard/backend.py:10",
+          "babels_hoard/backend.py:22",
+          "babels_hoard/backend.py:23",
+          "babels_hoard/docsets.py:14",
+          "babels_hoard/docsets.py:15",
+          "babels_hoard/docsets.py:58",
+          "babels_hoard/environments.py:21",
+          "babels_hoard/node_indexing.py:14"
+        ],
+        "events": [],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [
+          "babels_hoard/mcp_server.py:20",
+          "scripts/agent_walkthrough.py:338",
+          "scripts/screenshots.py:40"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "babels_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "borges",
+      "name": "Borges's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Borges's Hoard",
+      "purpose": "The user's personal library: folders of their own documents, and their own Faustus conversations and the links they saved in Links Hoard, indexed locally so the assistant can answer 'where did I read/write/decide X' with exact page, section and chat-turn citations.",
+      "capabilities": [
+        "library",
+        "documents",
+        "hybrid-search",
+        "citations",
+        "passages",
+        "pdf",
+        "docx",
+        "markdown",
+        "epub",
+        "html",
+        "collections",
+        "folder-watch",
+        "reindex",
+        "similar-passages",
+        "local-embeddings",
+        "faustus-conversations",
+        "saved-links",
+        "sources",
+        "date-range-search"
+      ],
+      "signals": {
+        "shared_services": [
+          "borges/agent_tools.py:174",
+          "borges/extract/pdf.py:10",
+          "borges/extract/pdf.py:23",
+          "borges/extract/pdf.py:33"
+        ],
+        "hub_calls": [
+          "borges/links_source.py:6",
+          "borges/links_source.py:84"
+        ],
+        "shared_model": [
+          "mcp_server.py:7",
+          "mcp_server.py:14",
+          "borges/__main__.py:1",
+          "borges/__main__.py:6",
+          "borges/agent_tools.py:10",
+          "borges/agent_tools.py:174",
+          "borges/chunking.py:1",
+          "borges/chunking.py:7",
+          "borges/config.py:9",
+          "borges/config.py:10",
+          "borges/db.py:1",
+          "borges/db.py:7",
+          "borges/db.py:123",
+          "borges/links_source.py:30",
+          "borges/main.py:2",
+          "borges/main.py:15",
+          "borges/main.py:16",
+          "borges/main.py:17",
+          "borges/main.py:41",
+          "borges/queries.py:9",
+          "borges/queries.py:37",
+          "borges/search.py:15",
+          "borges/services.py:15",
+          "borges/services.py:16",
+          "borges/store.py:16",
+          "borges/api/agent.py:7",
+          "borges/api/status.py:1",
+          "borges/extract/base.py:7",
+          "borges/extract/base.py:8",
+          "borges/extract/docx.py:1"
+        ],
+        "events": [
+          "borges/links_source.py:264"
+        ],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [
+          "borges/api/sources.py:28"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "borges\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "cassandra",
+      "name": "Cassandra's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Cassandra's Hoard",
+      "purpose": "Observability for the local AI stack: which local services (the workspace, llama-server, Ollama, ComfyUI, the launcher and every Hoard app) are up, what went down and when, what else changed at that moment, what the logs said, what the GPUs were doing, whether the user's public websites are up (HTTP, TLS certificate, DNS, domain expiry), and opt-in restarts.",
+      "capabilities": [
+        "service-status",
+        "health-checks",
+        "incidents",
+        "probable-cause",
+        "uptime-history",
+        "log-search",
+        "log-tailing",
+        "gpu-timeline",
+        "vram",
+        "restart-policies",
+        "restart",
+        "watch-list",
+        "reboot-detection",
+        "audit-trail",
+        "agent-calls",
+        "secrets-audit",
+        "event-bus",
+        "public-sites",
+        "site-uptime",
+        "tls-certificates",
+        "domain-expiry",
+        "faustus-attention",
+        "faustus-farm",
+        "running-agents",
+        "period-budget"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "mcp_server.py:14",
+          "cassandra_hoard/__main__.py:5",
+          "cassandra_hoard/agent_tools.py:11",
+          "cassandra_hoard/agent_tools.py:12",
+          "cassandra_hoard/audit.py:16",
+          "cassandra_hoard/audit.py:39",
+          "cassandra_hoard/config.py:9",
+          "cassandra_hoard/config.py:10",
+          "cassandra_hoard/db.py:7",
+          "cassandra_hoard/gpu.py:8",
+          "cassandra_hoard/logs.py:31",
+          "cassandra_hoard/main.py:15",
+          "cassandra_hoard/main.py:16",
+          "cassandra_hoard/main.py:17",
+          "cassandra_hoard/main.py:41",
+          "cassandra_hoard/procs.py:19",
+          "cassandra_hoard/registry.py:38",
+          "cassandra_hoard/services.py:15",
+          "cassandra_hoard/services.py:74",
+          "cassandra_hoard/sites.py:31",
+          "cassandra_hoard/sites_net.py:30",
+          "cassandra_hoard/api/agent.py:10",
+          "scripts/launch.py:14"
+        ],
+        "events": [
+          "cassandra_hoard/services.py:75"
+        ],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [
+          "cassandra_hoard/config.py:14",
+          "cassandra_hoard/registry.py:150"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "cassandra_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "cicero",
+      "name": "Cicero's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Cicero's Hoard",
+      "purpose": "A local workspace that turns a brief and source documents into an editable presentation: outline, slides with speaker notes, per-slide review and revisions, themes, and export to PPTX (native text and charts), PDF, HTML and Markdown, for assistants over MCP.",
+      "capabilities": [
+        "presentation-decks",
+        "source-documents",
+        "outline-generation",
+        "slide-generation",
+        "per-slide-review",
+        "slide-revisions",
+        "number-check-against-sources",
+        "native-pptx-export",
+        "pdf-export",
+        "html-export",
+        "markdown-export",
+        "themes",
+        "theme-from-design-system",
+        "image-studio"
+      ],
+      "signals": {
+        "shared_services": [
+          "cicero_hoard/extract.py:18",
+          "cicero_hoard/extract.py:72"
+        ],
+        "hub_calls": [],
+        "shared_model": [
+          "mcp_server.py:15",
+          "cicero_hoard/__main__.py:5",
+          "cicero_hoard/agent_tools.py:14",
+          "cicero_hoard/agent_tools.py:15",
+          "cicero_hoard/config.py:9",
+          "cicero_hoard/config.py:10",
+          "cicero_hoard/custom_themes.py:105",
+          "cicero_hoard/db.py:7",
+          "cicero_hoard/decks.py:22",
+          "cicero_hoard/decks.py:23",
+          "cicero_hoard/errors.py:5",
+          "cicero_hoard/errors.py:11",
+          "cicero_hoard/export_pdf.py:3",
+          "cicero_hoard/export_pdf.py:14",
+          "cicero_hoard/extract.py:3",
+          "cicero_hoard/extract.py:18",
+          "cicero_hoard/extract.py:19",
+          "cicero_hoard/generate.py:26",
+          "cicero_hoard/images.py:24",
+          "cicero_hoard/main.py:16",
+          "cicero_hoard/main.py:17",
+          "cicero_hoard/main.py:18",
+          "cicero_hoard/main.py:19",
+          "cicero_hoard/services.py:20",
+          "cicero_hoard/services.py:21",
+          "cicero_hoard/services.py:71",
+          "cicero_hoard/util.py:1",
+          "cicero_hoard/util.py:10",
+          "cicero_hoard/util.py:35",
+          "cicero_hoard/api/agent.py:10"
+        ],
+        "events": [
+          "cicero_hoard/services.py:88"
+        ],
+        "refs": [
+          "cicero_hoard/custom_themes.py:75",
+          "cicero_hoard/custom_themes.py:79",
+          "cicero_hoard/decks.py:55",
+          "cicero_hoard/services.py:20",
+          "cicero_hoard/services.py:160"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [
+          "cicero_hoard/images.py:29"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "cicero_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "cookhoard",
+      "name": "CookHoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\CookHoard",
+      "purpose": "Local cooking assistant for recipes, fridge-aware recommendations, a weekly menu and a unified shopping list. It imports recipes from video links (Instagram, TikTok, YouTube, Facebook) and pasted text into reviewable drafts, keeps a pantry with places and expiry dates, reads supermarket tickets into prices, costs recipes and menus against a weekly budget and warns every morning about food that is about to expire. Everything stays on the computer.",
+      "capabilities": [
+        "recipes",
+        "cooking steps",
+        "fridge",
+        "shopping list",
+        "seasonal recommendations",
+        "weekly menu",
+        "daily servings",
+        "scaled menu ingredient totals",
+        "pantry stock deficits",
+        "video-recipe-import",
+        "reel-import",
+        "recipe-text-import",
+        "recipe-drafts",
+        "ingredient-dictionary",
+        "pantry-places",
+        "expiry-tracking",
+        "leftovers",
+        "what-to-cook",
+        "tickets",
+        "ticket-ocr",
+        "mail-receipts",
+        "price-book",
+        "recipe-cost",
+        "menu-cost",
+        "food-spending",
+        "price-watch",
+        "cooking-mode",
+        "shopping-sections",
+        "daily-reminders",
+        "dashboard"
+      ],
+      "signals": {
+        "shared_services": [
+          "server/app.mjs:18",
+          "server/app.mjs:46",
+          "server/media.mjs:11",
+          "server/media.mjs:192",
+          "server/tickets.mjs:10",
+          "server/tickets.mjs:142",
+          "server/tools/system.mjs:7",
+          "server/tools/system.mjs:24"
+        ],
+        "hub_calls": [
+          "server/hoard-link.js:13"
+        ],
+        "shared_model": [
+          "apps/mcp/server.mjs:14",
+          "server/api-docs.mjs:43",
+          "server/app.mjs:15",
+          "server/app.mjs:46",
+          "server/hoard-link.js:1",
+          "server/hoard-link.js:3",
+          "server/hoard-link.js:6",
+          "server/hoard-link.js:10",
+          "server/hoard-link.js:15",
+          "server/hoard-link.js:184",
+          "server/hoard-link.js:208",
+          "server/hoard-link.js:278",
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:455",
+          "server/hoard-link.js:457",
+          "server/hoard-link.js:619",
+          "server/hoard-link.js:887",
+          "server/hoard-link.js:889",
+          "server/hoard-link.js:1038",
+          "server/hub.mjs:3",
+          "server/test/app.test.mjs:10",
+          "server/test/app.test.mjs:37",
+          "server/test/app.test.mjs:38",
+          "server/test/helpers.mjs:9",
+          "server/test/helpers.mjs:26"
+        ],
+        "events": [
+          "server/hoard-link.js:12",
+          "server/hub.mjs:9"
+        ],
+        "refs": [
+          "server/hoard-link.js:469",
+          "server/hoard-link.js:583",
+          "server/hoard-link.js:628",
+          "server/hoard-link.js:1041",
+          "server/hoard-link.js:1042"
+        ],
+        "notifications": [
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:396"
+        ],
+        "direct_sibling_http": [
+          "server/hoard-link.js:34",
+          "server/test/helpers.mjs:70",
+          "server/test/helpers.mjs:87"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [],
+      "node_drift": false,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "daguerre",
+      "name": "Daguerre's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Daguerre's Hoard",
+      "purpose": "Lets the assistant search, look at and organize the user's local photo library by content, place and time.",
+      "capabilities": [
+        "photo search",
+        "visual similarity",
+        "duplicate detection",
+        "EXIF and places",
+        "albums",
+        "contact sheets"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "daguerre_hoard/api.py:23",
+          "daguerre_hoard/api.py:24",
+          "daguerre_hoard/api.py:229",
+          "daguerre_hoard/backend.py:4",
+          "daguerre_hoard/backend.py:13",
+          "daguerre_hoard/backend.py:27",
+          "daguerre_hoard/backend.py:28",
+          "daguerre_hoard/captions.py:31",
+          "daguerre_hoard/captions.py:146",
+          "daguerre_hoard/captions.py:157",
+          "daguerre_hoard/embeddings.py:29",
+          "daguerre_hoard/formats.py:3",
+          "daguerre_hoard/formats.py:7",
+          "daguerre_hoard/hashing.py:5",
+          "daguerre_hoard/library.py:37",
+          "daguerre_hoard/metadata.py:1",
+          "daguerre_hoard/metadata.py:10",
+          "daguerre_hoard/phash.py:17",
+          "daguerre_hoard/phash.py:18",
+          "daguerre_hoard/thumbnails.py:1",
+          "daguerre_hoard/thumbnails.py:8",
+          "daguerre_hoard/thumbnails.py:9"
+        ],
+        "events": [],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [
+          "daguerre_hoard/mcp_server.py:9",
+          "daguerre_hoard/mcp_server.py:28",
+          "scripts/agent_walkthrough.py:11",
+          "scripts/agent_walkthrough.py:321"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "daguerre_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "diskhoard",
+      "name": "DiskHoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Disk Hoard",
+      "purpose": "Measures what fills the user's disks, knows which folders are regenerable junk (caches, node_modules, build output, temp files) and can clean them: to the Recycle Bin, permanently with explicit confirmation, or through a reviewable PowerShell script. It also splits a folder into ZIPs that each stay under a size limit (upload sites with a per-file cap), cutting a file bigger than the limit into raw .zip.001 volumes.",
+      "capabilities": [
+        "disk-usage",
+        "scan",
+        "hotspots",
+        "junk-catalog",
+        "stale-folders",
+        "largest-files",
+        "file-types",
+        "find-files",
+        "explain-folder",
+        "cleanup-script",
+        "delete-to-recycle-bin",
+        "delete-permanent",
+        "rescan",
+        "zip-split",
+        "split-archives"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "diskhoard/scanner.py:20",
+          "diskhoard/server.py:22",
+          "diskhoard/server.py:23",
+          "diskhoard/server.py:24",
+          "diskhoard/server.py:25",
+          "diskhoard/server.py:26",
+          "diskhoard/server.py:685",
+          "diskhoard/zipsplit.py:30"
+        ],
+        "events": [],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [
+          "mcp_server.py:14",
+          "mcp_server.py:52"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "diskhoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "dorian",
+      "name": "Dorian's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Dorian's Hoard",
+      "purpose": "Consult the user's reviewed personal context and reflection with source attribution, and submit new information for the user's review through Dorian's Hoard's permissioned MCP server.",
+      "capabilities": [
+        "personal-context",
+        "reflection",
+        "source-evidence",
+        "reviewed-updates"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "selfhoard/api.py:15"
+        ],
+        "events": [],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [
+          "scripts/connect_codex.py:25",
+          "scripts/connect_codex.py:39",
+          "scripts/connect_faustus.py:20",
+          "scripts/connect_faustus.py:34",
+          "scripts/mcp_call.py:26",
+          "scripts/smoke_reflection_local.py:13",
+          "selfhoard/mcp_server.py:133"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "selfhoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "echo",
+      "name": "Echo's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Echo's Hoard",
+      "purpose": "Everything the user copies, kept on their own PC, searchable, with frequent copies pinned; the assistant can search the clipboard history and set the clipboard.",
+      "capabilities": [
+        "clipboard-history",
+        "search",
+        "pin",
+        "sensitive-detection",
+        "images"
+      ],
+      "signals": {
+        "shared_services": [
+          "echo/ocr.py:3",
+          "echo/ocr.py:19",
+          "echo/ocr.py:59",
+          "echo/ocr.py:88"
+        ],
+        "hub_calls": [],
+        "shared_model": [
+          "mcp_server.py:7",
+          "mcp_server.py:14",
+          "echo/__main__.py:1",
+          "echo/__main__.py:6",
+          "echo/agent_tools.py:9",
+          "echo/agent_tools.py:10",
+          "echo/config.py:9",
+          "echo/config.py:10",
+          "echo/db.py:1",
+          "echo/db.py:7",
+          "echo/db.py:72",
+          "echo/main.py:2",
+          "echo/main.py:15",
+          "echo/main.py:16",
+          "echo/main.py:17",
+          "echo/main.py:41",
+          "echo/ocr.py:5",
+          "echo/ocr.py:19",
+          "echo/search.py:13",
+          "echo/services.py:18",
+          "echo/api/agent.py:8",
+          "echo/api/status.py:1",
+          "scripts/launch.py:13"
+        ],
+        "events": [],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "echo\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "funes",
+      "name": "Funes's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Funes's Hoard",
+      "purpose": "Gives the assistant a local memory of desktop activity and audio sessions. Records and transcribes meetings and voice notes, searches transcripts, and merges them with screen and clipboard memory in one citable timeline.",
+      "capabilities": [
+        "activity timeline",
+        "day summaries",
+        "resume context",
+        "recent files",
+        "git commits",
+        "activity search",
+        "audio recording",
+        "live and final transcription",
+        "meeting search and notes",
+        "audio import and export",
+        "meeting minutes with action items",
+        "import audio by file path",
+        "federated recall (screen, clipboard, audio)"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "funes_hoard/api.py:34",
+          "funes_hoard/api.py:35",
+          "funes_hoard/api.py:36",
+          "funes_hoard/api.py:37",
+          "funes_hoard/api.py:396",
+          "funes_hoard/backend.py:1",
+          "funes_hoard/backend.py:8",
+          "funes_hoard/backend.py:17",
+          "funes_hoard/git_watch.py:19",
+          "funes_hoard/sources.py:235",
+          "funes_hoard/audio_memory/agent_tools.py:11",
+          "funes_hoard/audio_memory/agent_tools.py:12",
+          "funes_hoard/audio_memory/config.py:9",
+          "funes_hoard/audio_memory/due_dates.py:5",
+          "funes_hoard/audio_memory/due_dates.py:12",
+          "funes_hoard/audio_memory/export.py:7",
+          "funes_hoard/audio_memory/importer.py:8",
+          "funes_hoard/audio_memory/importer.py:9",
+          "funes_hoard/audio_memory/importer.py:10",
+          "funes_hoard/audio_memory/main.py:15",
+          "funes_hoard/audio_memory/main.py:16",
+          "funes_hoard/audio_memory/minutes.py:662",
+          "funes_hoard/audio_memory/services.py:20",
+          "funes_hoard/audio_memory/services.py:21",
+          "funes_hoard/audio_memory/services.py:28",
+          "funes_hoard/audio_memory/store.py:13",
+          "funes_hoard/audio_memory/stt_jobs.py:5",
+          "funes_hoard/audio_memory/stt_jobs.py:19",
+          "funes_hoard/audio_memory/stt_jobs.py:20",
+          "funes_hoard/audio_memory/stt_jobs.py:21"
+        ],
+        "events": [
+          "funes_hoard/audio_memory/main.py:22"
+        ],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [
+          "funes_hoard/mcp_server.py:28"
+        ],
+        "native_engine": [
+          "funes_hoard/audio_memory/importer.py:58",
+          "funes_hoard/audio_memory/transcribe/__init__.py:15",
+          "funes_hoard/audio_memory/transcribe/fake.py:51"
+        ],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "funes_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "galton",
+      "name": "Galton's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Galton's Hoard",
+      "purpose": "A local test bench for the language and vision models on this computer: it asks each model tasks whose answers can be checked (reasoning, maths, Python with hidden tests, JSON extraction, tool calling, instruction following, long-context retrieval, citations, vision, translation, summaries, Spanish writing, and cases you add), stores every answer with its timing and memory use, compares models with confidence intervals and paired tests, watches for new or changed models and regressions, and publishes a routing table (routes.json) that Hoard Link reads so every app of the family uses the measured best model for each task. GGUF files run on a llama-server of its own on the GPUs you allow, under a lease; running servers and Ollama models are called as they are. Everything stays on the computer.",
+      "capabilities": [
+        "model-benchmarks",
+        "model-evaluation",
+        "model-comparison",
+        "model-routing",
+        "leaderboard",
+        "regression-watch",
+        "gguf",
+        "llama-cpp",
+        "ollama",
+        "long-context",
+        "tool-calling",
+        "vision-benchmarks",
+        "code-benchmarks",
+        "spanish",
+        "statistics",
+        "arena",
+        "gpu-leases",
+        "job-events",
+        "dashboard"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "galton_hoard/services.py:47"
+        ],
+        "shared_model": [
+          "mcp_server.py:14",
+          "galton_hoard/__main__.py:5",
+          "galton_hoard/agent_tools.py:18",
+          "galton_hoard/agent_tools.py:19",
+          "galton_hoard/backends.py:21",
+          "galton_hoard/config.py:9",
+          "galton_hoard/config.py:10",
+          "galton_hoard/cpu.py:15",
+          "galton_hoard/db.py:7",
+          "galton_hoard/discovery.py:22",
+          "galton_hoard/errors.py:7",
+          "galton_hoard/errors.py:14",
+          "galton_hoard/fakes.py:17",
+          "galton_hoard/fakes.py:165",
+          "galton_hoard/gpus.py:21",
+          "galton_hoard/gpus.py:22",
+          "galton_hoard/gpus.py:23",
+          "galton_hoard/main.py:17",
+          "galton_hoard/main.py:18",
+          "galton_hoard/main.py:19",
+          "galton_hoard/main.py:20",
+          "galton_hoard/procs.py:2",
+          "galton_hoard/procs.py:11",
+          "galton_hoard/routes.py:17",
+          "galton_hoard/runner.py:28",
+          "galton_hoard/scheduler.py:18",
+          "galton_hoard/servers.py:23",
+          "galton_hoard/servers.py:24",
+          "galton_hoard/servers.py:25",
+          "galton_hoard/services.py:25"
+        ],
+        "events": [
+          "galton_hoard/services.py:129"
+        ],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "galton_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "gepetto",
+      "name": "Gepetto's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Gepetto's Hoard",
+      "purpose": "Drive Gepetto's Hoard's 3D projects, analysis and jobs through its REST API.",
+      "capabilities": [
+        "projects",
+        "analysis",
+        "jobs"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "backend/app.py:33",
+          "backend/app.py:34",
+          "backend/closed_loop.py:19",
+          "backend/closed_loop.py:20",
+          "backend/external_mcp.py:20",
+          "backend/family_events.py:14",
+          "backend/family_events.py:15",
+          "backend/project_history.py:6",
+          "backend/reference_pose.py:20"
+        ],
+        "events": [
+          "backend/family_events.py:55"
+        ],
+        "refs": [
+          "backend/family_events.py:35"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [
+          "start.py:11",
+          "start.py:79",
+          "vite.config.ts:5",
+          "blender/relief_bridge.py:25",
+          "scripts/check_evaluation_ui.mjs:19",
+          "scripts/check_history_ui.mjs:14",
+          "scripts/check_history_ui.mjs:17",
+          "scripts/check_operations_ui.mjs:19",
+          "scripts/check_scene_reading.mjs:19",
+          "scripts/check_vision.py:7",
+          "scripts/export_validation.py:7",
+          "scripts/prepare_validation.py:7",
+          "scripts/production-check.mjs:31",
+          "scripts/repeat_recorded_views.py:21"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "backend\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "hoardhub",
+      "name": "Hoard Hub",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\HoardLink",
+      "purpose": "Desktop hub for the family of local apps: lists them with their state, starts and stops their servers, opens them as their own desktop windows, reports which local model servers Hoard Link resolves and arbitrates GPU memory between the apps with a single lease queue.",
+      "capabilities": [
+        "app-inventory",
+        "app-status",
+        "start-app",
+        "stop-app",
+        "restart-app",
+        "open-window",
+        "close-window",
+        "start-all",
+        "stop-all",
+        "model-backends",
+        "gpu-leases",
+        "profiles",
+        "rescan",
+        "event-bus",
+        "rules",
+        "jobs",
+        "backups",
+        "app-proxy",
+        "family-audit"
+      ],
+      "signals": {
+        "shared_services": [
+          "scripts/audit_cohesion.py:25"
+        ],
+        "hub_calls": [
+          "js/hoard-link.js:13"
+        ],
+        "shared_model": [
+          "examples/status.py:15",
+          "js/hoard-link.js:1",
+          "js/hoard-link.js:3",
+          "js/hoard-link.js:6",
+          "js/hoard-link.js:10",
+          "js/hoard-link.js:15",
+          "js/hoard-link.js:184",
+          "js/hoard-link.js:208",
+          "js/hoard-link.js:278",
+          "js/hoard-link.js:319",
+          "js/hoard-link.js:455",
+          "js/hoard-link.js:457",
+          "js/hoard-link.js:619",
+          "js/hoard-link.js:887",
+          "js/hoard-link.js:889",
+          "js/hoard-link.js:1038",
+          "scripts/audit_cohesion.py:20",
+          "scripts/audit_cohesion.py:22",
+          "scripts/audit_cohesion.py:27",
+          "scripts/audit_cohesion.py:55",
+          "scripts/audit_cohesion.py:58",
+          "scripts/audit_cohesion.py:64",
+          "scripts/hoard_palettes.py:1",
+          "scripts/hoard_palettes.py:7",
+          "scripts/sync_theme.py:1",
+          "scripts/sync_theme.py:20",
+          "scripts/sync_theme.py:24",
+          "scripts/sync_theme.py:26",
+          "scripts/sync_vendored.py:2",
+          "scripts/sync_vendored.py:6"
+        ],
+        "events": [
+          "js/hoard-link.js:12"
+        ],
+        "refs": [
+          "js/hoard-link.js:469",
+          "js/hoard-link.js:583",
+          "js/hoard-link.js:628",
+          "js/hoard-link.js:1041",
+          "js/hoard-link.js:1042",
+          "scripts/audit_cohesion.py:29"
+        ],
+        "notifications": [
+          "js/hoard-link.js:319",
+          "js/hoard-link.js:396",
+          "scripts/audit_cohesion.py:30"
+        ],
+        "direct_sibling_http": [
+          "js/hoard-link.js:34",
+          "scripts/story_to_writer.py:88",
+          "scripts/story_to_writer.py:89"
+        ],
+        "native_engine": [
+          "scripts/audit_cohesion.py:32"
+        ],
+        "cloud_storage": [
+          "scripts/audit_cohesion.py:33"
+        ]
+      },
+      "vendored": [],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "homehoard",
+      "name": "HomeHoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\HomeHoard",
+      "purpose": "Inventario doméstico local que guarda la casa en el ordenador: dónde está cada objeto, la ficha de cada aparato (marca, modelo, compra, garantía, recambios, papeles en Kafka's Hoard) y las tareas de mantenimiento con su base legal o recomendación, avisadas a través de Kafka.",
+      "capabilities": [
+        "household-inventory",
+        "item-location",
+        "local-search",
+        "appliance-card",
+        "warranty",
+        "maintenance",
+        "maintenance-reminders",
+        "home-sync",
+        "papers-link",
+        "purchase-intake",
+        "family-agenda",
+        "prefilled-add-form"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "bridge/inventory.py:69",
+          "bridge/mcp_server.py:17",
+          "bridge/test_commons.py:13",
+          "bridge/test_commons.py:122",
+          "bridge/test_http_sync.py:59",
+          "bridge/homehoard_server/__init__.py:2",
+          "bridge/homehoard_server/__init__.py:10",
+          "bridge/homehoard_server/agenda.py:13",
+          "bridge/homehoard_server/app.py:22",
+          "bridge/homehoard_server/app.py:23",
+          "bridge/homehoard_server/app.py:24",
+          "bridge/homehoard_server/app.py:170",
+          "bridge/homehoard_server/kafka.py:20",
+          "bridge/homehoard_server/kafka.py:21",
+          "bridge/homehoard_server/store.py:21",
+          "bridge/homehoard_server/tools.py:16"
+        ],
+        "events": [],
+        "refs": [
+          "bridge/test_purchase.py:38",
+          "bridge/test_purchase.py:39",
+          "bridge/test_purchase.py:47",
+          "bridge/test_purchase.py:49",
+          "bridge/test_purchase.py:51",
+          "bridge/test_purchase.py:79",
+          "bridge/test_purchase.py:80",
+          "bridge/test_purchase.py:83",
+          "bridge/test_purchase.py:115",
+          "bridge/test_purchase.py:149",
+          "bridge/test_purchase.py:150",
+          "bridge/test_purchase.py:151",
+          "bridge/test_purchase.py:152",
+          "bridge/test_purchase.py:160",
+          "bridge/homehoard_server/app.py:22",
+          "bridge/homehoard_server/app.py:146",
+          "bridge/homehoard_server/tools.py:16",
+          "bridge/homehoard_server/tools.py:368",
+          "bridge/homehoard_server/tools.py:369",
+          "bridge/homehoard_server/tools.py:374",
+          "bridge/homehoard_server/tools.py:379",
+          "bridge/homehoard_server/tools.py:789",
+          "bridge/homehoard_server/tools.py:790",
+          "bridge/homehoard_server/tools.py:804",
+          "bridge/homehoard_server/tools.py:829",
+          "bridge/homehoard_server/tools.py:832",
+          "src/db/schema.ts:119",
+          "src/db/types.ts:134",
+          "src/db/types.ts:135",
+          "src/features/addPrefill.ts:6"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [
+          "bridge/helpers_test.py:65"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "bridge\\homehoard_server\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "hypatia",
+      "name": "Hypatia's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Hypatia's Hoard",
+      "purpose": "The user's exam-prep bank (Exam Coach) on their PC: subjects, topics and questions with spaced repetition, quizzes and mock exams in chat, answer grading, and a notebook of their own sources with cited answers, study guides, podcast, mind maps and a Socratic tutor. A teacher role adds classes, exams generated from the teacher's bank and sources with citations and versions, rubrics, batch correction with model proposals the teacher confirms, grades and class analysis (student data stays local). The Exam Coach PWA served by the same app shows and syncs the same data.",
+      "capabilities": [
+        "exam-prep",
+        "question-bank",
+        "spaced-repetition",
+        "quiz",
+        "mock-exams",
+        "answer-grading",
+        "weak-topics",
+        "key-concepts",
+        "deliverables",
+        "question-suggestions",
+        "notebook-sources",
+        "citations",
+        "study-guides",
+        "podcast",
+        "mind-map",
+        "tutor",
+        "search",
+        "stats",
+        "symbolic-math",
+        "teacher-classes",
+        "exam-generation",
+        "rubrics",
+        "batch-grading",
+        "class-analysis",
+        "family-agenda",
+        "job-events",
+        "card-source-refs"
+      ],
+      "signals": {
+        "shared_services": [
+          "hypatia/voice.py:4",
+          "hypatia/voice.py:15",
+          "hypatia/voice.py:23",
+          "hypatia/voice.py:27",
+          "hypatia/voice.py:51",
+          "hypatia/notebook/llm.py:16",
+          "hypatia/notebook/llm.py:99",
+          "hypatia/notebook/llm.py:119",
+          "hypatia/notebook/sources.py:23",
+          "hypatia/notebook/sources.py:90"
+        ],
+        "hub_calls": [],
+        "shared_model": [
+          "mcp_server.py:28",
+          "hypatia/__main__.py:20",
+          "hypatia/__main__.py:21",
+          "hypatia/agenda.py:16",
+          "hypatia/ai.py:15",
+          "hypatia/ai.py:16",
+          "hypatia/ai.py:17",
+          "hypatia/ai.py:18",
+          "hypatia/ai.py:43",
+          "hypatia/backend.py:1",
+          "hypatia/backend.py:3",
+          "hypatia/backend.py:12",
+          "hypatia/bank.py:12",
+          "hypatia/config.py:9",
+          "hypatia/db.py:8",
+          "hypatia/familyevents.py:58",
+          "hypatia/main.py:18",
+          "hypatia/main.py:19",
+          "hypatia/main.py:73",
+          "hypatia/resources.py:17",
+          "hypatia/services.py:15",
+          "hypatia/services.py:59",
+          "hypatia/voice.py:15",
+          "hypatia/api/agent.py:13",
+          "hypatia/api/status.py:8",
+          "hypatia/api/status.py:17",
+          "hypatia/notebook/llm.py:16",
+          "hypatia/notebook/podcast.py:12",
+          "hypatia/notebook/podcast.py:13",
+          "hypatia/notebook/podcast.py:14"
+        ],
+        "events": [
+          "hypatia/familyevents.py:69",
+          "hypatia/teacher/assess.py:364",
+          "hypatia/teacher/generate.py:157"
+        ],
+        "refs": [
+          "hypatia/agent_tools.py:220",
+          "hypatia/agent_tools.py:510",
+          "hypatia/bank.py:134",
+          "src/domain/models.ts:177",
+          "src/ui/components/QuestionForm.tsx:27"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "hypatia\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "jobhunter",
+      "name": "Jobhunter's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\JobHunter's Hoard",
+      "purpose": "Track job searches, applications, answers and context through the Jobhunter MCP bridge.",
+      "capabilities": [
+        "contexts",
+        "jobs",
+        "applications",
+        "answers"
+      ],
+      "signals": {
+        "shared_services": [
+          "server/pdf-text.js:4",
+          "server/pdf-text.js:18"
+        ],
+        "hub_calls": [
+          "server/hoard-link.js:13"
+        ],
+        "shared_model": [
+          "server/hoard-link.js:1",
+          "server/hoard-link.js:3",
+          "server/hoard-link.js:6",
+          "server/hoard-link.js:10",
+          "server/hoard-link.js:15",
+          "server/hoard-link.js:184",
+          "server/hoard-link.js:208",
+          "server/hoard-link.js:278",
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:455",
+          "server/hoard-link.js:457",
+          "server/hoard-link.js:619",
+          "server/hoard-link.js:887",
+          "server/hoard-link.js:889",
+          "server/hoard-link.js:1038",
+          "server/index.js:18",
+          "server/index.js:50",
+          "server/workspace-routes.js:23",
+          "server/workspace-routes.js:44"
+        ],
+        "events": [
+          "server/hoard-link.js:12"
+        ],
+        "refs": [
+          "server/hoard-link.js:469",
+          "server/hoard-link.js:583",
+          "server/hoard-link.js:628",
+          "server/hoard-link.js:1041",
+          "server/hoard-link.js:1042"
+        ],
+        "notifications": [
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:396"
+        ],
+        "direct_sibling_http": [
+          "server/hoard-link.js:34"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [],
+      "node_drift": false,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "kafka",
+      "name": "Kafka's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Kafka's Hoard",
+      "purpose": "A local paperwork keeper: it reads invoices, contracts, insurance policies, receipts and warranties, letters from the tax office, the traffic authority or the town hall, fines, ITV and ID documents from uploads, watched folders and the mail account configured in Faustus (attachments included), extracts who issued them, the amounts and every date that matters, turns those dates into deadlines (payments, renewals, the last day to cancel a renewal, end of warranty, end of a commitment period, deadlines to appeal or pay a fine with discount, expiry of IDs, next ITV) counting Spanish working days where the law does, reminds you before each one (the family hub, Windows toast, ntfy, Telegram, email), shows its deadlines in the family agenda, reads paperwork mail through the hub's mail gateway, links invoices to the matching ledger movement, turns meeting action items into deadlines and prepares a tax-return folder and answers questions with citations to the document and page. It also has a workshop for the files themselves: merge, split, reorder, rotate, compress, password-protect, watermark and describe PDFs, turn photos or Word documents into PDF, render pages as images and shrink PNG, JPEG and WEBP images under a size limit, always into new files. Everything stays on the computer.",
+      "capabilities": [
+        "paperwork",
+        "documents",
+        "deadlines",
+        "invoices",
+        "contracts",
+        "insurance",
+        "warranties",
+        "fines",
+        "renewals",
+        "working-days",
+        "ocr",
+        "pdf",
+        "pdf-tools",
+        "pdf-merge",
+        "pdf-compress",
+        "image-compress",
+        "mail-import",
+        "folder-watch",
+        "reminders",
+        "notifications",
+        "windows-toast",
+        "ntfy",
+        "telegram",
+        "email",
+        "price-changes",
+        "search",
+        "citations",
+        "dashboard",
+        "family-agenda",
+        "hub-notifications",
+        "hub-mail",
+        "tax-pack",
+        "ledger-link",
+        "minutes-deadlines"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "kafka_hoard/services.py:97"
+        ],
+        "shared_model": [
+          "mcp_server.py:13",
+          "kafka_hoard/__main__.py:7",
+          "kafka_hoard/agenda.py:3",
+          "kafka_hoard/agenda.py:14",
+          "kafka_hoard/agenda.py:15",
+          "kafka_hoard/agent_tools.py:19",
+          "kafka_hoard/agent_tools.py:20",
+          "kafka_hoard/agent_tools.py:27",
+          "kafka_hoard/agent_tools.py:28",
+          "kafka_hoard/bizdays.py:4",
+          "kafka_hoard/bizdays.py:13",
+          "kafka_hoard/config.py:9",
+          "kafka_hoard/docsvc.py:5",
+          "kafka_hoard/docsvc.py:19",
+          "kafka_hoard/docsvc.py:20",
+          "kafka_hoard/docsvc.py:21",
+          "kafka_hoard/docsvc.py:22",
+          "kafka_hoard/docsvc.py:262",
+          "kafka_hoard/engine.py:40",
+          "kafka_hoard/engine.py:41",
+          "kafka_hoard/engine.py:42",
+          "kafka_hoard/engine.py:43",
+          "kafka_hoard/errors.py:7",
+          "kafka_hoard/main.py:17",
+          "kafka_hoard/main.py:18",
+          "kafka_hoard/main.py:19",
+          "kafka_hoard/main.py:20",
+          "kafka_hoard/paths.py:3",
+          "kafka_hoard/paths.py:13",
+          "kafka_hoard/privacy.py:4"
+        ],
+        "events": [
+          "kafka_hoard/services.py:194",
+          "kafka_hoard/notify/__init__.py:330"
+        ],
+        "refs": [
+          "kafka_hoard/agent_tools.py:92",
+          "kafka_hoard/agent_tools.py:524",
+          "kafka_hoard/db.py:154",
+          "kafka_hoard/engine.py:109",
+          "kafka_hoard/engine.py:207",
+          "kafka_hoard/engine.py:295",
+          "kafka_hoard/engine.py:346",
+          "kafka_hoard/services.py:117",
+          "kafka_hoard/services.py:118"
+        ],
+        "notifications": [
+          "kafka_hoard/notify/__init__.py:5",
+          "kafka_hoard/notify/__init__.py:28",
+          "kafka_hoard/notify/__init__.py:52",
+          "kafka_hoard/notify/__init__.py:96",
+          "kafka_hoard/notify/__init__.py:97"
+        ],
+        "direct_sibling_http": [],
+        "native_engine": [
+          "kafka_hoard/config.py:69",
+          "kafka_hoard/docsvc.py:285",
+          "kafka_hoard/ocr/__init__.py:2",
+          "kafka_hoard/ocr/__init__.py:6",
+          "kafka_hoard/ocr/__init__.py:21",
+          "kafka_hoard/ocr/__init__.py:33",
+          "kafka_hoard/ocr/__init__.py:89",
+          "kafka_hoard/ocr/__init__.py:115",
+          "kafka_hoard/ocr/__init__.py:133",
+          "kafka_hoard/ocr/rapid.py:11",
+          "kafka_hoard/ocr/rapid.py:15",
+          "kafka_hoard/ocr/rapid.py:17",
+          "kafka_hoard/ocr/rapid.py:20",
+          "kafka_hoard/ocr/rapid.py:38",
+          "kafka_hoard/ocr/rapid.py:39"
+        ],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "kafka_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [
+        " M README.es.md",
+        " M README.md",
+        " M docs/ARCHITECTURE.md",
+        " M docs/RULES.md",
+        " M kafka_hoard/config.py",
+        " M kafka_hoard/ocr/__init__.py",
+        " M package-lock.json",
+        " M package.json"
+      ],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "laplace",
+      "name": "Laplace's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Laplace's Hoard",
+      "purpose": "Gives the model exact arithmetic, symbolic math, unit conversion, statistics, date arithmetic and read-only SQL over local files, with every computation logged and citable.",
+      "capabilities": [
+        "arithmetic",
+        "symbolic-math",
+        "units",
+        "statistics",
+        "dates",
+        "sql-over-files"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "laplaces_hoard/api.py:509"
+        ],
+        "shared_model": [
+          "laplaces_hoard/api.py:41",
+          "laplaces_hoard/api.py:42",
+          "laplaces_hoard/api.py:43",
+          "laplaces_hoard/api.py:427",
+          "laplaces_hoard/backend.py:7",
+          "laplaces_hoard/backend.py:20",
+          "laplaces_hoard/backend.py:21",
+          "laplaces_hoard/engines/ask.py:17",
+          "laplaces_hoard/engines/ask.py:18"
+        ],
+        "events": [],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [
+          "laplaces_hoard/mcp_server.py:11",
+          "laplaces_hoard/mcp_server.py:28",
+          "scripts/demo_agent_session.py:61"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "laplaces_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "ledger",
+      "name": "Ledger's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Ledger's Hoard",
+      "purpose": "Household money ledger: accounts, categorised entries, monthly budgets, reports, bank CSV imports, and payments and subscriptions read from the mail account connected to Faustus, shared expenses split among people, a month-end balance forecast, income booked from sales, documents of other apps attached to movements, and a place on the family agenda (subscription renewals, trial ends, expected charges, money owed), all stored locally.",
+      "capabilities": [
+        "accounts",
+        "entries",
+        "categories",
+        "budgets",
+        "summary",
+        "reports",
+        "csv-import",
+        "transfers",
+        "mail-import",
+        "subscriptions",
+        "payment-receipts",
+        "auto-categorisation",
+        "notifications",
+        "windows-toast",
+        "family-agenda",
+        "hub-mail",
+        "tx-find",
+        "document-links",
+        "forecast",
+        "shared-expenses",
+        "income-from-sales",
+        "year-report"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "server/hoard-link.js:13"
+        ],
+        "shared_model": [
+          "server/app.js:17",
+          "server/app.js:38",
+          "server/family.js:3",
+          "server/family.js:8",
+          "server/hoard-link.js:1",
+          "server/hoard-link.js:3",
+          "server/hoard-link.js:6",
+          "server/hoard-link.js:10",
+          "server/hoard-link.js:15",
+          "server/hoard-link.js:184",
+          "server/hoard-link.js:208",
+          "server/hoard-link.js:278",
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:455",
+          "server/hoard-link.js:457",
+          "server/hoard-link.js:619",
+          "server/hoard-link.js:887",
+          "server/hoard-link.js:889",
+          "server/hoard-link.js:1038",
+          "server/mail-source.js:12",
+          "server/mail-source.js:15",
+          "server/notifications.js:7",
+          "server/notifications.js:11",
+          "server/routes.js:15",
+          "server/routes.js:39",
+          "server/mail/mail_helper.py:7",
+          "server/mail/mail_helper.py:9"
+        ],
+        "events": [
+          "server/hoard-link.js:12",
+          "server/notifications.js:22"
+        ],
+        "refs": [
+          "server/family-tools.js:15",
+          "server/family-tools.js:27",
+          "server/family.js:43",
+          "server/hoard-link.js:469",
+          "server/hoard-link.js:583",
+          "server/hoard-link.js:628",
+          "server/hoard-link.js:1041",
+          "server/hoard-link.js:1042",
+          "server/sales.js:76",
+          "server/splits.js:24",
+          "server/splits.js:33",
+          "server/splits.js:40",
+          "server/tx-links.js:2",
+          "server/tx-links.js:54"
+        ],
+        "notifications": [
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:396"
+        ],
+        "direct_sibling_http": [
+          "server/hoard-link.js:34"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [],
+      "node_drift": false,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "links",
+      "name": "Links Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Links Hoard",
+      "purpose": "Read-later bookmark library with extracted article text, tags and highlights, stored locally; also downloads the video, audio or photos behind a link (YouTube, X, Instagram, TikTok…) to disk.",
+      "capabilities": [
+        "bookmarks",
+        "read-later",
+        "extraction",
+        "tags",
+        "highlights",
+        "search",
+        "digest",
+        "import",
+        "watches",
+        "feeds",
+        "github-releases",
+        "page-changes",
+        "event-bus",
+        "media-download",
+        "video-download",
+        "audio-download",
+        "highlights-to-flashcards",
+        "resurface",
+        "daily-digest",
+        "job-events"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "server/cards.js:71",
+          "server/cards.js:74",
+          "server/hoard-link.js:13"
+        ],
+        "shared_model": [
+          "server/agent-routes.js:9",
+          "server/app.js:11",
+          "server/app.js:31",
+          "server/cards.js:6",
+          "server/highlights.js:6",
+          "server/hoard-link.js:1",
+          "server/hoard-link.js:3",
+          "server/hoard-link.js:6",
+          "server/hoard-link.js:10",
+          "server/hoard-link.js:15",
+          "server/hoard-link.js:184",
+          "server/hoard-link.js:208",
+          "server/hoard-link.js:278",
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:455",
+          "server/hoard-link.js:457",
+          "server/hoard-link.js:619",
+          "server/hoard-link.js:887",
+          "server/hoard-link.js:889",
+          "server/hoard-link.js:1038",
+          "server/media.js:33",
+          "server/resurface.js:11",
+          "server/routes.js:11",
+          "server/routes.js:19",
+          "server/since.js:4",
+          "server/since.js:6",
+          "server/watches.js:18"
+        ],
+        "events": [
+          "server/highlights.js:30",
+          "server/hoard-link.js:12",
+          "server/media.js:369",
+          "server/resurface.js:145",
+          "server/watches.js:173",
+          "server/watches.js:209"
+        ],
+        "refs": [
+          "server/agent-tools.js:306",
+          "server/cards.js:9",
+          "server/hoard-link.js:469",
+          "server/hoard-link.js:583",
+          "server/hoard-link.js:628",
+          "server/hoard-link.js:1041",
+          "server/hoard-link.js:1042"
+        ],
+        "notifications": [
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:396"
+        ],
+        "direct_sibling_http": [
+          "server/hoard-link.js:34"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [],
+      "node_drift": false,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "lumiere",
+      "name": "Lumiere's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Lumiere's Hoard",
+      "purpose": "A local video editor: media library with proxies, a multitrack timeline (cuts, ripple edits, speed and speed curves, nested sequences, shape masks, transitions, titles, picture-in-picture, keyframes, effects, multicam synced by sound), text-based editing on word-level transcripts with speaker separation, automatic tools (silence and filler-word removal, scene cuts, vertical reframing that follows faces, captions, cuts on the beat, highlights of long videos read by the local model, background music picking, b-roll suggestions, loudness matching, stabilization), project templates with slots, edit plans written from plain language, translated subtitles, several formats in one export and frame-exact ffmpeg renders with GPU encoding, for people and for assistants over MCP.",
+      "capabilities": [
+        "video-editing",
+        "multitrack-timeline",
+        "media-library",
+        "proxies",
+        "ripple-edit",
+        "speed-ramp",
+        "speed-curves",
+        "nested-sequences",
+        "shape-masks",
+        "transitions",
+        "titles",
+        "picture-in-picture",
+        "keyframes",
+        "color-effects",
+        "audio-effects",
+        "text-based-editing",
+        "transcription",
+        "word-timestamps",
+        "filler-word-removal",
+        "silence-removal",
+        "jump-cuts",
+        "scene-detection",
+        "auto-reframe",
+        "vertical-video",
+        "captions",
+        "burned-subtitles",
+        "srt-export",
+        "beat-sync",
+        "highlights",
+        "shorts-from-long-video",
+        "loudness-normalization",
+        "audio-ducking",
+        "stabilization",
+        "freeze-frame",
+        "natural-language-edit-plans",
+        "undo-history",
+        "gpu-encoding",
+        "lossless-cut",
+        "gif-export",
+        "audio-export",
+        "edl-export",
+        "frame-snapshot",
+        "multicam",
+        "audio-sync",
+        "speaker-diarization",
+        "project-templates",
+        "music-picker",
+        "b-roll-suggestions",
+        "subtitle-translation",
+        "multi-format-export",
+        "webgl-preview",
+        "face-detection",
+        "model-highlights",
+        "timeline-import",
+        "fcp7-xml-import",
+        "edl-import",
+        "family-job-events",
+        "hub-notifications"
+      ],
+      "signals": {
+        "shared_services": [
+          "lumiere_hoard/analysis/speech.py:15",
+          "lumiere_hoard/analysis/speech.py:47",
+          "lumiere_hoard/analysis/speech.py:99",
+          "lumiere_hoard/analysis/speech.py:103",
+          "lumiere_hoard/analysis/speech.py:110"
+        ],
+        "hub_calls": [],
+        "shared_model": [
+          "lumiere_hoard/agent_tools.py:19",
+          "lumiere_hoard/agent_tools.py:20",
+          "lumiere_hoard/agent_tools.py:21",
+          "lumiere_hoard/ffmpeg.py:1",
+          "lumiere_hoard/ffmpeg.py:21",
+          "lumiere_hoard/ffmpeg.py:22",
+          "lumiere_hoard/ffmpeg.py:23",
+          "lumiere_hoard/ffmpeg.py:24",
+          "lumiere_hoard/guard.py:2",
+          "lumiere_hoard/jobevents.py:23",
+          "lumiere_hoard/jobevents.py:129",
+          "lumiere_hoard/main.py:20",
+          "lumiere_hoard/port.py:2",
+          "lumiere_hoard/port.py:3",
+          "lumiere_hoard/services.py:27",
+          "lumiere_hoard/services.py:28",
+          "lumiere_hoard/services.py:119",
+          "lumiere_hoard/analysis/speech.py:15",
+          "lumiere_hoard/analysis/speech.py:16",
+          "lumiere_hoard/analysis/speech.py:17",
+          "lumiere_hoard/api/agent.py:14",
+          "lumiere_hoard/api/health.py:8",
+          "lumiere_hoard/api/health.py:19",
+          "lumiere_hoard/render/ass.py:13"
+        ],
+        "events": [
+          "lumiere_hoard/services.py:154"
+        ],
+        "refs": [
+          "lumiere_hoard/family_events.py:35",
+          "lumiere_hoard/jobevents.py:7",
+          "lumiere_hoard/jobevents.py:36"
+        ],
+        "notifications": [
+          "lumiere_hoard/jobevents.py:23",
+          "lumiere_hoard/jobevents.py:129",
+          "lumiere_hoard/jobevents.py:131"
+        ],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "lumiere_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [
+        " M README.es.md",
+        " M README.md",
+        " M lumiere_hoard/agent_tools.py"
+      ],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "mercator",
+      "name": "Mercator's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Mercator's Hoard",
+      "purpose": "Panel local de WatchHoard y BookHoard, catálogo y ventas de Cults, y calendario de publicación (posts, métricas, mejores horas).",
+      "capabilities": [
+        "project-metrics",
+        "user-growth",
+        "worker-traffic",
+        "product-catalog",
+        "sales-import",
+        "catalog-search",
+        "sales-query",
+        "posts",
+        "publishing-calendar",
+        "post-metrics",
+        "metrics-csv-import",
+        "best-hours",
+        "caption-counter",
+        "cults-catalog-sync"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "mercator_family.py:41"
+        ],
+        "shared_model": [
+          "agent_tools.py:13",
+          "agent_tools.py:161",
+          "agent_tools.py:162",
+          "mcp_server.py:11",
+          "mercator.py:33",
+          "mercator.py:34",
+          "mercator.py:35",
+          "mercator.py:595",
+          "mercator_family.py:3",
+          "mercator_family.py:12",
+          "mercator_family.py:13",
+          "post_csv.py:16",
+          "publishing.py:5",
+          "publishing.py:16",
+          "publishing.py:17"
+        ],
+        "events": [
+          "mercator_family.py:33"
+        ],
+        "refs": [
+          "agent_tools.py:57",
+          "mercator.py:508",
+          "mercator_family.py:12",
+          "mercator_family.py:48",
+          "mercator_family.py:53",
+          "publishing.py:212"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": [
+          "mercator.py:175",
+          "mercator.py:178",
+          "mercator.py:179",
+          "mercator.py:196",
+          "mercator.py:197",
+          "mercator.py:198",
+          "mercator.py:200"
+        ]
+      },
+      "vendored": [
+        {
+          "path": "hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "midas",
+      "name": "Midas's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Midas's Hoard",
+      "purpose": "A local market-research lab: frozen, provenance-tagged market snapshots from free providers, falsifiable investment theses with invalidation rules, an honest backtester with sealed holdout and overfitting checks, a number-checked advocate/risk/arbiter committee, and portfolio analysis. Research only: no trading, no advice.",
+      "capabilities": [
+        "market-data-snapshots",
+        "provider-search",
+        "series-compare",
+        "fx-conversion",
+        "investment-theses",
+        "invalidation-rules",
+        "thesis-checks",
+        "strategy-spec",
+        "backtest",
+        "sealed-holdout",
+        "walk-forward",
+        "permutation-test",
+        "bootstrap-ci",
+        "multiple-testing-log",
+        "committee-review",
+        "number-ledger",
+        "portfolio-analysis",
+        "report-export"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "mcp_server.py:14",
+          "midas_hoard/__main__.py:5",
+          "midas_hoard/agent_tools.py:11",
+          "midas_hoard/agent_tools.py:12",
+          "midas_hoard/config.py:8",
+          "midas_hoard/config.py:9",
+          "midas_hoard/db.py:7",
+          "midas_hoard/errors.py:7",
+          "midas_hoard/lab.py:25",
+          "midas_hoard/lab.py:26",
+          "midas_hoard/ledger.py:16",
+          "midas_hoard/main.py:15",
+          "midas_hoard/main.py:16",
+          "midas_hoard/main.py:17",
+          "midas_hoard/main.py:18",
+          "midas_hoard/services.py:24",
+          "midas_hoard/services.py:25",
+          "midas_hoard/services.py:26",
+          "midas_hoard/services.py:62",
+          "midas_hoard/services.py:112",
+          "midas_hoard/snapshots.py:24",
+          "midas_hoard/theses.py:23",
+          "midas_hoard/api/agent.py:10",
+          "midas_hoard/providers/base.py:14",
+          "scripts/launch.py:14"
+        ],
+        "events": [
+          "midas_hoard/services.py:113"
+        ],
+        "refs": [
+          "midas_hoard/agent_tools.py:138",
+          "midas_hoard/agent_tools.py:446",
+          "midas_hoard/theses.py:316"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "midas_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "nightingale",
+      "name": "Nightingale's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Nightingale's Hoard",
+      "purpose": "The user's own data workbench: ingest files/folders/URLs into a local DuckDB workbench, clean data with versioned steps (undo/redo, lineage, replay), run quality rules, build charts and dashboards, and train quick models — every operation recorded and explained.",
+      "capabilities": [
+        "ingest",
+        "transform",
+        "quality-rules",
+        "charts",
+        "dashboards",
+        "dashboards-as-code",
+        "models",
+        "forecasting",
+        "sql-query",
+        "analysis-log",
+        "ask-your-data"
+      ],
+      "signals": {
+        "shared_services": [
+          "nightingale/services.py:24",
+          "nightingale/services.py:393",
+          "nightingale/services.py:401"
+        ],
+        "hub_calls": [
+          "nightingale/hoard_source.py:248"
+        ],
+        "shared_model": [
+          "mcp_server.py:13",
+          "nightingale/__main__.py:16",
+          "nightingale/agent_tools.py:14",
+          "nightingale/agent_tools.py:15",
+          "nightingale/backend.py:18",
+          "nightingale/backend.py:19",
+          "nightingale/config.py:8",
+          "nightingale/config.py:9",
+          "nightingale/db.py:19",
+          "nightingale/hoard_source.py:15",
+          "nightingale/main.py:14",
+          "nightingale/main.py:15",
+          "nightingale/main.py:16",
+          "nightingale/services.py:24",
+          "nightingale/services.py:25",
+          "nightingale/services.py:26",
+          "nightingale/services.py:101",
+          "nightingale/api/agent.py:12",
+          "nightingale/dac/semantic.py:39",
+          "nightingale/dac/store.py:22",
+          "nightingale/workbench/ask.py:18",
+          "nightingale/workbench/ask.py:19",
+          "nightingale/workbench/charts.py:22",
+          "scripts/launch.py:14"
+        ],
+        "events": [],
+        "refs": [
+          "nightingale/services.py:475",
+          "nightingale/services.py:483"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "nightingale\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "people",
+      "name": "People's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\People's Hoard",
+      "purpose": "Personal CRM: who people are, what to remember about them, when you last talked and what to follow up on, all stored locally.",
+      "capabilities": [
+        "people",
+        "aliases",
+        "facts",
+        "interactions",
+        "reminders",
+        "birthdays",
+        "circles",
+        "search",
+        "conversation_brief",
+        "commitments",
+        "commitments_from_meetings",
+        "commitments_from_text",
+        "commitments_digest",
+        "people_from_minutes",
+        "last_contact_from_mail",
+        "gift_ideas",
+        "gift_watch",
+        "family_agenda",
+        "duplicate_people"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "server/commitments.js:446",
+          "server/gifts.js:90",
+          "server/hoard-link.js:13",
+          "server/meetings.js:45",
+          "server/meetings.js:50"
+        ],
+        "shared_model": [
+          "server/app.js:11",
+          "server/app.js:31",
+          "server/commitments-poller.js:9",
+          "server/commitments.js:19",
+          "server/gifts.js:7",
+          "server/hoard-link.js:1",
+          "server/hoard-link.js:3",
+          "server/hoard-link.js:6",
+          "server/hoard-link.js:10",
+          "server/hoard-link.js:15",
+          "server/hoard-link.js:184",
+          "server/hoard-link.js:208",
+          "server/hoard-link.js:278",
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:455",
+          "server/hoard-link.js:457",
+          "server/hoard-link.js:619",
+          "server/hoard-link.js:887",
+          "server/hoard-link.js:889",
+          "server/hoard-link.js:1038",
+          "server/interactions.js:7",
+          "server/mailsync.js:11",
+          "server/meetings.js:8",
+          "server/routes.js:16",
+          "server/routes.js:38"
+        ],
+        "events": [
+          "server/commitments.js:132",
+          "server/commitments.js:137",
+          "server/commitments.js:141",
+          "server/commitments.js:143",
+          "server/commitments.js:171",
+          "server/commitments.js:195",
+          "server/commitments.js:197",
+          "server/commitments.js:625",
+          "server/gifts.js:142",
+          "server/hoard-link.js:12"
+        ],
+        "refs": [
+          "server/commitments.js:127",
+          "server/commitments.js:358",
+          "server/gifts.js:30",
+          "server/hoard-link.js:469",
+          "server/hoard-link.js:583",
+          "server/hoard-link.js:628",
+          "server/hoard-link.js:1041",
+          "server/hoard-link.js:1042",
+          "server/interactions.js:74",
+          "server/meetings.js:10"
+        ],
+        "notifications": [
+          "server/hoard-link.js:319",
+          "server/hoard-link.js:396"
+        ],
+        "direct_sibling_http": [
+          "server/hoard-link.js:34"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [],
+      "node_drift": false,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "phileas",
+      "name": "Phileas's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Phileas's Hoard",
+      "purpose": "A local shipment and trip tracker: reads shipping mail from the inbox configured in Faustus (shops, Amazon, carriers), turns it into shipments, follows each one with its carrier (UPS, Correos, DHL, 17TRACK for the rest) and estimates the arrival day from the carrier's date, the shop's date and promise and your own past parcels, with notifications by Windows toast, the family bus, ntfy, Telegram or email. It also reads travel bookings from the same mail (flights, trains, buses, ferries, car rental, stays), groups them into trips, reminds about online check-in, checks identity-document expiry through Kafka, shares trip expenses with balances and passes a person's share to Ledger, and exports trips to the calendar.",
+      "capabilities": [
+        "shipment-tracking",
+        "parcel-tracking",
+        "mail-import",
+        "order-tracking",
+        "tracking-number-detection",
+        "carrier-detection",
+        "ups",
+        "correos",
+        "dhl",
+        "17track",
+        "amazon-orders",
+        "pickup-points",
+        "delivery-estimates",
+        "eta-explanations",
+        "delivery-history",
+        "delivery-statistics",
+        "business-days",
+        "notifications",
+        "windows-toast",
+        "ntfy",
+        "telegram",
+        "email",
+        "dashboard",
+        "travel-bookings",
+        "trips",
+        "flight-check-in",
+        "booking-mail-import",
+        "trip-reminders",
+        "trip-expenses",
+        "expense-splitting",
+        "calendar-export",
+        "document-expiry-check",
+        "ledger-handoff",
+        "hub-notifications",
+        "hub-mail-gateway",
+        "family-agenda",
+        "shipment-events"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "phileas_hoard/services.py:162"
+        ],
+        "shared_model": [
+          "mcp_server.py:7",
+          "mcp_server.py:14",
+          "phileas_hoard/__main__.py:1",
+          "phileas_hoard/__main__.py:7",
+          "phileas_hoard/agent_tools.py:11",
+          "phileas_hoard/bizdays.py:3",
+          "phileas_hoard/bizdays.py:13",
+          "phileas_hoard/config.py:9",
+          "phileas_hoard/config.py:10",
+          "phileas_hoard/db.py:7",
+          "phileas_hoard/db.py:264",
+          "phileas_hoard/errors.py:7",
+          "phileas_hoard/main.py:15",
+          "phileas_hoard/main.py:16",
+          "phileas_hoard/main.py:17",
+          "phileas_hoard/numbers.py:3",
+          "phileas_hoard/numbers.py:9",
+          "phileas_hoard/scheduler.py:7",
+          "phileas_hoard/scheduler.py:19",
+          "phileas_hoard/services.py:22",
+          "phileas_hoard/services.py:161",
+          "phileas_hoard/services.py:166",
+          "phileas_hoard/store.py:11",
+          "phileas_hoard/api/agent.py:11",
+          "phileas_hoard/api/health.py:8",
+          "phileas_hoard/api/ui.py:18",
+          "phileas_hoard/carriers/__init__.py:21",
+          "phileas_hoard/carriers/browser.py:13",
+          "phileas_hoard/mail/parse.py:20",
+          "phileas_hoard/mail/source.py:3"
+        ],
+        "events": [
+          "phileas_hoard/services.py:167",
+          "phileas_hoard/notify/__init__.py:329"
+        ],
+        "refs": [
+          "phileas_hoard/engine.py:126",
+          "phileas_hoard/engine.py:132"
+        ],
+        "notifications": [
+          "phileas_hoard/notify/__init__.py:4",
+          "phileas_hoard/notify/__init__.py:28",
+          "phileas_hoard/notify/__init__.py:65",
+          "phileas_hoard/notify/__init__.py:151"
+        ],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "phileas_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "platos",
+      "name": "Plato's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Plato's Hoard",
+      "purpose": "Create, edit and export documents through Plato's Hoard's editor API.",
+      "capabilities": [
+        "documents",
+        "editor",
+        "exports"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "plato_family.py:8",
+          "plato_family.py:45",
+          "plato_family.py:96",
+          "plato_family.py:105"
+        ],
+        "events": [
+          "plato_family.py:88"
+        ],
+        "refs": [
+          "plato_family.py:111"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "healthy",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": "/api/agent/tools answered 404"
+    },
+    {
+      "id": "prospero",
+      "name": "Prospero's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Prospero's Hoard",
+      "purpose": "Directs a media studio (ComfyUI, ffmpeg, TTS) to produce consistent characters (model sheets, local LoRA training, portable character packs), photocards, album art, beat-cut music videos as resumable productions and reusable recipes, narrated vertical shorts from a topic or a script (voice-over, word-by-word captions, stock or generated pictures, ducked music), cloned voices, audiobooks and dubbed video.",
+      "capabilities": [
+        "image generation",
+        "video editing",
+        "graphic design",
+        "audio analysis",
+        "text-to-speech",
+        "music composition",
+        "speech-to-text",
+        "voice cloning",
+        "dubbing",
+        "audiobooks",
+        "timeline export to the video editor",
+        "storyboard to production",
+        "cast import",
+        "job events",
+        "hub notifications",
+        "music video production pipeline",
+        "production recipes",
+        "quality assurance",
+        "animatic previews",
+        "character consistency",
+        "lora training",
+        "character library",
+        "narrated shorts",
+        "stock footage",
+        "script writing",
+        "captions"
+      ],
+      "signals": {
+        "shared_services": [
+          "prosperos_hoard/media_download.py:5",
+          "prosperos_hoard/media_download.py:17",
+          "prosperos_hoard/media_download.py:57",
+          "prosperos_hoard/media_download.py:61",
+          "prosperos_hoard/voice_engines.py:28",
+          "prosperos_hoard/voice_engines.py:369",
+          "prosperos_hoard/voice_engines.py:372"
+        ],
+        "hub_calls": [
+          "prosperos_hoard/family_api.py:256"
+        ],
+        "shared_model": [
+          "prosperos_hoard/__main__.py:15",
+          "prosperos_hoard/api.py:51",
+          "prosperos_hoard/api.py:52",
+          "prosperos_hoard/api.py:53",
+          "prosperos_hoard/api.py:54",
+          "prosperos_hoard/api.py:69",
+          "prosperos_hoard/api.py:1304",
+          "prosperos_hoard/api.py:4293",
+          "prosperos_hoard/audio.py:19",
+          "prosperos_hoard/backend.py:3",
+          "prosperos_hoard/backend.py:20",
+          "prosperos_hoard/backend.py:21",
+          "prosperos_hoard/backend.py:22",
+          "prosperos_hoard/backend.py:23",
+          "prosperos_hoard/backend.py:302",
+          "prosperos_hoard/backend.py:567",
+          "prosperos_hoard/backend.py:757",
+          "prosperos_hoard/backend.py:919",
+          "prosperos_hoard/charkit.py:825",
+          "prosperos_hoard/dubbing.py:3",
+          "prosperos_hoard/dubbing.py:23",
+          "prosperos_hoard/dubbing.py:218",
+          "prosperos_hoard/engine.py:36",
+          "prosperos_hoard/engine.py:557",
+          "prosperos_hoard/family_api.py:32",
+          "prosperos_hoard/gpu_lease.py:19",
+          "prosperos_hoard/ids.py:2",
+          "prosperos_hoard/ids.py:6",
+          "prosperos_hoard/jobevents.py:24",
+          "prosperos_hoard/media_download.py:5"
+        ],
+        "events": [],
+        "refs": [
+          "prosperos_hoard/family_api.py:69",
+          "prosperos_hoard/jobevents.py:98",
+          "prosperos_hoard/mcp_server.py:1747"
+        ],
+        "notifications": [
+          "prosperos_hoard/jobevents.py:24",
+          "prosperos_hoard/jobevents.py:188",
+          "prosperos_hoard/jobevents.py:193"
+        ],
+        "direct_sibling_http": [
+          "prosperos_hoard/mcp_server.py:10",
+          "prosperos_hoard/mcp_server.py:29",
+          "scripts/productions/no_mires_atras.py:14",
+          "scripts/productions/no_mires_atras.py:987"
+        ],
+        "native_engine": [
+          "prosperos_hoard/voice_engines.py:369",
+          "prosperos_hoard/voices.py:101",
+          "prosperos_hoard/voices.py:114"
+        ],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "prosperos_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "pygmalion",
+      "name": "Pygmalion's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Pygmalion's Hoard",
+      "purpose": "A local model tuning and extension studio: it prepares datasets (from files, the family's other apps or synthetic generation with a teacher model), trains LoRA and QLoRA adapters on the allowed GPUs, merges adapters and whole models (linear, slerp, ties, dare), extends the context length with YaRN, converts to GGUF, builds importance matrices, quantizes, measures perplexity, evaluates every result against its baseline through Galton's Hoard, and publishes the winner to Ollama or as a llama.cpp backend for Faustus. Every artifact keeps its lineage and a recipe that can be exported and replayed. All jobs queue on two lanes (gpu and cpu), hold a GPU lease from the hub while they run, can be cancelled and resumed, and everything stays on the computer.",
+      "capabilities": [
+        "fine-tuning",
+        "lora",
+        "qlora",
+        "datasets",
+        "synthetic-data",
+        "dedupe",
+        "pii-scan",
+        "model-merge",
+        "slerp",
+        "ties",
+        "dare",
+        "context-extension",
+        "yarn",
+        "gguf",
+        "quantization",
+        "imatrix",
+        "perplexity",
+        "evaluation",
+        "lineage",
+        "recipes",
+        "ollama-publish",
+        "llama-cpp-backend",
+        "huggingface-download",
+        "vram-estimate",
+        "gpu-lease",
+        "job-queue",
+        "job-events",
+        "dashboard"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "pygmalion_hoard/evaluate.py:3",
+          "pygmalion_hoard/services.py:59"
+        ],
+        "shared_model": [
+          "mcp_server.py:14",
+          "pygmalion_hoard/__main__.py:5",
+          "pygmalion_hoard/agent_tools.py:13",
+          "pygmalion_hoard/agent_tools.py:14",
+          "pygmalion_hoard/config.py:10",
+          "pygmalion_hoard/config.py:11",
+          "pygmalion_hoard/db.py:7",
+          "pygmalion_hoard/errors.py:7",
+          "pygmalion_hoard/errors.py:14",
+          "pygmalion_hoard/evaluate.py:21",
+          "pygmalion_hoard/gpus.py:18",
+          "pygmalion_hoard/main.py:17",
+          "pygmalion_hoard/main.py:18",
+          "pygmalion_hoard/main.py:19",
+          "pygmalion_hoard/main.py:20",
+          "pygmalion_hoard/ops.py:15",
+          "pygmalion_hoard/paths.py:3",
+          "pygmalion_hoard/paths.py:11",
+          "pygmalion_hoard/paths.py:12",
+          "pygmalion_hoard/procs.py:4",
+          "pygmalion_hoard/procs.py:22",
+          "pygmalion_hoard/procs.py:23",
+          "pygmalion_hoard/publish.py:14",
+          "pygmalion_hoard/services.py:25",
+          "pygmalion_hoard/services.py:26",
+          "pygmalion_hoard/services.py:58",
+          "pygmalion_hoard/services.py:140",
+          "pygmalion_hoard/services.py:146",
+          "pygmalion_hoard/services.py:163",
+          "pygmalion_hoard/util.py:10"
+        ],
+        "events": [
+          "pygmalion_hoard/services.py:147"
+        ],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "pygmalion_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "scheherazade",
+      "name": "Scheherazade's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Scheherazade's Hoard",
+      "purpose": "Keeps a story world's state (entities, facts, threads, dice) outside the model and hands the narrator exactly the slice it needs for the next scene.",
+      "capabilities": [
+        "storytelling",
+        "world-state",
+        "continuity",
+        "dice",
+        "tabletop",
+        "narration"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [
+          "scheherazades_hoard/hub_bridge.py:19"
+        ],
+        "shared_model": [
+          "scheherazades_hoard/api.py:26",
+          "scheherazades_hoard/api.py:27",
+          "scheherazades_hoard/api.py:449",
+          "scheherazades_hoard/backend.py:4",
+          "scheherazades_hoard/backend.py:26",
+          "scheherazades_hoard/backend.py:27",
+          "scheherazades_hoard/backend.py:118",
+          "scheherazades_hoard/consistency.py:25",
+          "scheherazades_hoard/context.py:18",
+          "scheherazades_hoard/hub_bridge.py:11",
+          "scheherazades_hoard/hub_bridge.py:12",
+          "scheherazades_hoard/store.py:14",
+          "scheherazades_hoard/store.py:15"
+        ],
+        "events": [],
+        "refs": [
+          "scheherazades_hoard/exchange.py:21",
+          "scheherazades_hoard/exchange.py:185",
+          "scheherazades_hoard/hub_bridge.py:11",
+          "scheherazades_hoard/hub_bridge.py:25"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [
+          "scheherazades_hoard/mcp_server.py:33",
+          "scheherazades_hoard/prospero.py:16"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "scheherazades_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "tantalus",
+      "name": "Tantalus's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Tantalus's Hoard",
+      "purpose": "A local product watcher: restocks, price drops, pre-orders and new SKUs at retailers (typed events with a confidence score, revalidation and cooldown), shop-by-shop stock (chains such as Carrefour included) and release days of trading-card products from public stock aggregators, second-hand finds on Wallapop and Facebook Marketplace scored by explainable packs, material news from official pages, feeds and searches, and the sale mails of game stores and book retailers read (read-only) from the Faustus mailbox and matched to wishlists and watchers, plus a mail noise report, with a dashboard of what is new and notifications by Windows toast, the family bus, ntfy, Telegram or email.",
+      "capabilities": [
+        "restock-watch",
+        "price-tracking",
+        "price-threshold-alerts",
+        "preorder-detection",
+        "new-sku-detection",
+        "retailer-search-watch",
+        "confidence-scoring",
+        "revalidation",
+        "anti-scalper-policy",
+        "fetch-ladder",
+        "headless-browser-fallback",
+        "needs-human-handoff",
+        "product-extraction",
+        "json-ld",
+        "nvidia-marketplace-api",
+        "secondhand-search",
+        "wallapop",
+        "facebook-marketplace",
+        "listing-scoring",
+        "free-books-radar",
+        "information-sentry",
+        "page-diff",
+        "feed-watch",
+        "web-search",
+        "url-discovery",
+        "notifications",
+        "windows-toast",
+        "ntfy",
+        "telegram",
+        "email",
+        "dashboard",
+        "declarative-config",
+        "mail-deals",
+        "mailbox-read-only",
+        "wishlist-match",
+        "game-store-deals",
+        "book-retailer-deals",
+        "mail-noise-report",
+        "aggregator-radar",
+        "release-calendar",
+        "shop-stock-by-chain",
+        "visible-window-tier",
+        "hub-notifications",
+        "hub-mail-gateway",
+        "family-agenda",
+        "purchase-matching",
+        "gift-idea-watchers",
+        "budget-in-alerts"
+      ],
+      "signals": {
+        "shared_services": [
+          "tantalus_hoard/fetch/__init__.py:38",
+          "tantalus_hoard/fetch/__init__.py:112",
+          "tantalus_hoard/fetch/__init__.py:113",
+          "tantalus_hoard/fetch/__init__.py:157",
+          "tantalus_hoard/fetch/__init__.py:169"
+        ],
+        "hub_calls": [
+          "tantalus_hoard/budget.py:26"
+        ],
+        "shared_model": [
+          "mcp_server.py:7",
+          "mcp_server.py:14",
+          "scripts/launch.py:16",
+          "tantalus_hoard/__main__.py:1",
+          "tantalus_hoard/__main__.py:7",
+          "tantalus_hoard/agent_tools.py:12",
+          "tantalus_hoard/budget.py:25",
+          "tantalus_hoard/config.py:9",
+          "tantalus_hoard/config.py:10",
+          "tantalus_hoard/db.py:7",
+          "tantalus_hoard/db.py:351",
+          "tantalus_hoard/errors.py:7",
+          "tantalus_hoard/info.py:19",
+          "tantalus_hoard/info.py:20",
+          "tantalus_hoard/info.py:21",
+          "tantalus_hoard/main.py:15",
+          "tantalus_hoard/main.py:16",
+          "tantalus_hoard/main.py:17",
+          "tantalus_hoard/model.py:13",
+          "tantalus_hoard/purchase_match.py:21",
+          "tantalus_hoard/rules.py:13",
+          "tantalus_hoard/scheduler.py:6",
+          "tantalus_hoard/scheduler.py:23",
+          "tantalus_hoard/search.py:13",
+          "tantalus_hoard/search.py:14",
+          "tantalus_hoard/search.py:15",
+          "tantalus_hoard/services.py:20",
+          "tantalus_hoard/services.py:75",
+          "tantalus_hoard/services.py:76",
+          "tantalus_hoard/services.py:141"
+        ],
+        "events": [
+          "tantalus_hoard/services.py:156",
+          "tantalus_hoard/notify/__init__.py:324"
+        ],
+        "refs": [
+          "tantalus_hoard/agent_tools.py:611",
+          "tantalus_hoard/agent_tools.py:621",
+          "tantalus_hoard/agent_tools.py:656",
+          "tantalus_hoard/agent_tools.py:657",
+          "tantalus_hoard/agent_tools.py:698",
+          "tantalus_hoard/agent_tools.py:699",
+          "tantalus_hoard/services.py:140",
+          "tantalus_hoard/services.py:141",
+          "tantalus_hoard/services.py:142",
+          "tantalus_hoard/mail/deals.py:191"
+        ],
+        "notifications": [
+          "tantalus_hoard/notify/__init__.py:4",
+          "tantalus_hoard/notify/__init__.py:28",
+          "tantalus_hoard/notify/__init__.py:65",
+          "tantalus_hoard/notify/__init__.py:151"
+        ],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": [
+          "tantalus_hoard/mail/stores.py:94"
+        ]
+      },
+      "vendored": [
+        {
+          "path": "tantalus_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "vitruvius",
+      "name": "Vitruvius's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Vitruvius's Hoard",
+      "purpose": "A local frontend-design workbench: a criterion library ingested from open design-skill repos, a render-capture-critique loop on real Chromium, a design-system (tokens) generator with a live playground, and a reference gallery of captured websites.",
+      "capabilities": [
+        "design-criterion-library",
+        "design-rules",
+        "style-catalog",
+        "palette-catalog",
+        "font-pairing-catalog",
+        "html-render",
+        "url-render",
+        "screenshot-capture",
+        "scroll-video-capture",
+        "design-lint",
+        "design-critique",
+        "vision-critique",
+        "render-diff",
+        "design-tokens",
+        "oklch-palettes",
+        "tailwind-export",
+        "css-export",
+        "reference-gallery",
+        "source-ingestion"
+      ],
+      "signals": {
+        "shared_services": [
+          "vitruvius_hoard/dense.py:8",
+          "vitruvius_hoard/dense.py:34",
+          "vitruvius_hoard/dense.py:207",
+          "vitruvius_hoard/dense.py:227",
+          "vitruvius_hoard/dense.py:228",
+          "vitruvius_hoard/dense.py:286",
+          "vitruvius_hoard/dense.py:300",
+          "vitruvius_hoard/services.py:25",
+          "vitruvius_hoard/services.py:387",
+          "vitruvius_hoard/services.py:398"
+        ],
+        "hub_calls": [],
+        "shared_model": [
+          "mcp_server.py:7",
+          "mcp_server.py:14",
+          "scripts/launch.py:13",
+          "vitruvius_hoard/__main__.py:1",
+          "vitruvius_hoard/__main__.py:6",
+          "vitruvius_hoard/agent_tools.py:10",
+          "vitruvius_hoard/assay.py:27",
+          "vitruvius_hoard/browser.py:9",
+          "vitruvius_hoard/browser.py:10",
+          "vitruvius_hoard/browser.py:11",
+          "vitruvius_hoard/browser.py:27",
+          "vitruvius_hoard/browser.py:28",
+          "vitruvius_hoard/browser.py:29",
+          "vitruvius_hoard/browser.py:30",
+          "vitruvius_hoard/browser.py:275",
+          "vitruvius_hoard/browser.py:316",
+          "vitruvius_hoard/config.py:8",
+          "vitruvius_hoard/config.py:9",
+          "vitruvius_hoard/config.py:33",
+          "vitruvius_hoard/critique.py:65",
+          "vitruvius_hoard/db.py:1",
+          "vitruvius_hoard/db.py:5",
+          "vitruvius_hoard/db.py:204",
+          "vitruvius_hoard/dense.py:8",
+          "vitruvius_hoard/dense.py:14",
+          "vitruvius_hoard/dense.py:15",
+          "vitruvius_hoard/dense.py:34",
+          "vitruvius_hoard/dense.py:35",
+          "vitruvius_hoard/library.py:11",
+          "vitruvius_hoard/library.py:12"
+        ],
+        "events": [
+          "vitruvius_hoard/services.py:101"
+        ],
+        "refs": [],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "vitruvius_hoard\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "vulcan",
+      "name": "Vulcan's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Vulcan's Hoard",
+      "purpose": "The user's personal library of 3D-printable models: folders of STL, 3MF and OBJ files scanned locally (dimensions, triangles, watertightness, thumbnails, duplicates) so the assistant can find models and write their marketplace listings. It also sorts a loose folder into one folder per group from a list the user pastes (plan, apply, undo; never deletes or overwrites) and drafts the sheet of every folder in one call.",
+      "capabilities": [
+        "3d-models",
+        "stl",
+        "3mf",
+        "obj",
+        "mesh-metrics",
+        "thumbnails",
+        "duplicates",
+        "near-duplicates",
+        "listings",
+        "tags",
+        "notes",
+        "collections",
+        "albums",
+        "folder-scan",
+        "folder-watch",
+        "fts-search",
+        "stats",
+        "folder-listings",
+        "cults3d",
+        "listing-validator",
+        "listing-drafting",
+        "listing-export",
+        "collection-organizer",
+        "organize-plan",
+        "organize-undo",
+        "sheets-batch",
+        "skeleton-listings"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "mcp_server.py:7",
+          "mcp_server.py:14",
+          "scripts/launch.py:13",
+          "vulcan/__main__.py:1",
+          "vulcan/__main__.py:6",
+          "vulcan/agent_tools.py:9",
+          "vulcan/config.py:9",
+          "vulcan/config.py:10",
+          "vulcan/db.py:1",
+          "vulcan/db.py:7",
+          "vulcan/db.py:131",
+          "vulcan/family_tools.py:16",
+          "vulcan/folder_listings.py:31",
+          "vulcan/main.py:2",
+          "vulcan/main.py:15",
+          "vulcan/main.py:16",
+          "vulcan/main.py:17",
+          "vulcan/main.py:41",
+          "vulcan/model_backend.py:1",
+          "vulcan/model_backend.py:8",
+          "vulcan/model_backend.py:18",
+          "vulcan/organize.py:33",
+          "vulcan/search.py:8",
+          "vulcan/services.py:15",
+          "vulcan/services.py:16",
+          "vulcan/store.py:12",
+          "vulcan/thumbnail.py:18",
+          "vulcan/api/agent.py:7",
+          "vulcan/api/status.py:1"
+        ],
+        "events": [
+          "vulcan/family_tools.py:91"
+        ],
+        "refs": [
+          "vulcan/agent_tools.py:181",
+          "vulcan/agent_tools.py:470",
+          "vulcan/agent_tools.py:471",
+          "vulcan/db.py:110",
+          "vulcan/family_tools.py:16",
+          "vulcan/family_tools.py:30",
+          "vulcan/family_tools.py:71",
+          "vulcan/family_tools.py:72",
+          "vulcan/family_tools.py:101",
+          "vulcan/family_tools.py:132"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [
+        {
+          "path": "vulcan\\hoard_link",
+          "changed": [
+            "launch.py"
+          ],
+          "removed": []
+        }
+      ],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    },
+    {
+      "id": "writer",
+      "name": "Writer's Hoard",
+      "folder": "C:\\Users\\luism\\Desktop\\Proyectos independientes\\Writers hoard desktop",
+      "purpose": "Draft, edit and query manuscripts through the Writer's Hoard AI bridge: projects, chapters, notes, outline, search, worldbuilding.",
+      "capabilities": [
+        "documents",
+        "notes",
+        "outline",
+        "search",
+        "manuscripts",
+        "worldbuilding",
+        "ai-bridge"
+      ],
+      "signals": {
+        "shared_services": [],
+        "hub_calls": [],
+        "shared_model": [
+          "electron/aibridge/family.ts:6",
+          "electron/aibridge/server.ts:13",
+          "electron/aibridge/server.ts:282"
+        ],
+        "events": [],
+        "refs": [
+          "electron/familyCall.ts:21",
+          "electron/familyCall.ts:177",
+          "src/electron-env.d.ts:432",
+          "src/engines/inquiry/familySearch.ts:39",
+          "src/engines/inquiry/familySearch.ts:96",
+          "src/engines/inquiry/familySearch.ts:100",
+          "src/engines/inquiry/familySearch.ts:103",
+          "src/engines/inquiry/library.ts:124",
+          "src/engines/inquiry/library.ts:130",
+          "src/services/aiBridge/manifestInquiry.ts:307",
+          "src/services/aiBridge/tools/writings.ts:187",
+          "src/services/familyBridge/actions.ts:116",
+          "src/services/familyBridge/actions.ts:148",
+          "src/services/familyBridge/protocol.ts:38",
+          "src/services/familyBridge/worldExport.ts:45",
+          "src/services/familyBridge/worldSchema.ts:18",
+          "src/services/familyBridge/worldSchema.ts:19",
+          "src/services/familyBridge/worldSchema.ts:105",
+          "src/services/familyBridge/worldSchema.ts:111",
+          "src/services/familyBridge/worldSchema.ts:113",
+          "src/types/index.ts:56",
+          "src/types/index.ts:64"
+        ],
+        "notifications": [],
+        "direct_sibling_http": [
+          "electron/familySearch.ts:46",
+          "electron/aibridge/family.ts:10",
+          "electron/aibridge/family.ts:26",
+          "electron/aibridge/mcpStdio.ts:12",
+          "electron/aibridge/mcpStdio.ts:30",
+          "scripts/wh-bridge.mjs:24",
+          "src/services/mediaDownloader.ts:21"
+        ],
+        "native_engine": [],
+        "cloud_storage": []
+      },
+      "vendored": [],
+      "node_drift": null,
+      "tracked_changes": [],
+      "state": "down",
+      "catalogue_ok": false,
+      "tools": [],
+      "catalogue_error": null
+    }
+  ],
+  "summary": {
+    "apps": 35,
+    "healthy": 1,
+    "copies_with_drift": 28
+  }
+}
