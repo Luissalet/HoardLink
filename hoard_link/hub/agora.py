@@ -265,23 +265,51 @@ def _list(value: Any, field: str, limit: int = 50) -> list[str]:
     return [str(v).strip() for v in value if str(v).strip()]
 
 
-def _git_show(repo: Path, commit: str, rel_path: str) -> str:
-    """Read ``rel_path`` at ``commit`` from ``repo`` (read-only)."""
+# Optional test hook run inside ``_git_show`` (e.g. concurrent writes while verify is slow).
+_GIT_SHOW_HOOK: Optional[Callable[[], None]] = None
+
+
+def _git_run(repo: Path, *args: str, timeout: float = _GIT_TIMEOUT_S) -> subprocess.CompletedProcess[str]:
     git = shutil.which("git") or "git"
-    argv = [git, "--no-optional-locks", "-c", "core.quotepath=off", "-C", str(repo),
-            "show", f"{commit}:{rel_path.replace(chr(92), '/')}"]
-    kw: dict[str, Any] = {"capture_output": True, "text": True, "timeout": _GIT_TIMEOUT_S,
-                          "env": {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}}
+    argv = [git, "--no-optional-locks", "-c", "core.quotepath=off", "-c", "i18n.logOutputEncoding=utf-8",
+            "-C", str(repo), *args]
+    kw: dict[str, Any] = {
+        "capture_output": True, "timeout": timeout,
+        "encoding": "utf-8", "errors": "strict",
+        "env": {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "PYTHONIOENCODING": "utf-8", "LANG": "C.UTF-8"},
+    }
     if hasattr(subprocess, "CREATE_NO_WINDOW"):
         kw["creationflags"] = CREATE_NO_WINDOW
+    return subprocess.run(argv, **kw)
+
+
+def _git_show(repo: Path, commit: str, rel_path: str) -> str:
+    """Read ``rel_path`` at ``commit`` from ``repo`` (read-only, UTF-8)."""
+    if _GIT_SHOW_HOOK is not None:
+        _GIT_SHOW_HOOK()
     try:
-        res = subprocess.run(argv, **kw)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        res = _git_run(repo, "show", f"{commit}:{rel_path.replace(chr(92), '/')}")
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as exc:
         raise AgoraError(f"code_peek: git failed for {rel_path}@{commit}: {exc}") from exc
     if res.returncode != 0:
-        err = (res.stderr or res.stdout or "git show failed").strip().splitlines()
+        err = ((res.stderr or res.stdout or "git show failed") or "").strip().splitlines()
         raise AgoraError(f"code_peek: cannot read {rel_path}@{commit}: {err[0] if err else 'unknown'}")
+    if res.stdout is None:
+        raise AgoraError(f"code_peek: empty git output for {rel_path}@{commit}")
     return res.stdout
+
+
+def _normalize_repo_relpath(raw: str) -> str:
+    """Normalize a repo-relative path without ``str.lstrip('./')`` (which eats ``...`` prefixes)."""
+    rel = str(raw or "").strip().replace("\\", "/")
+    if not rel or rel.startswith("/") or rel.startswith("../") or "/../" in f"/{rel}/":
+        raise AgoraError(f"code_peek path is invalid: {raw!r}")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        raise AgoraError(f"code_peek path is invalid: {raw!r}")
+    return "/".join(parts)
 
 
 def _slice_lines(text: str, start: int, end: int) -> str:
@@ -299,39 +327,147 @@ def _resolve_peek_commit(explicit: Optional[str], commits: list[str]) -> str:
     return commits[0]
 
 
-def verify_code_peek(ref: str, *, repo: Path, commits: list[str]) -> dict[str, Any]:
-    """Verify ``path#Lx-Ly@commit`` against the git object at ``repo``; return the peek payload."""
+def _is_git_checkout(path: Path) -> bool:
+    return path.is_dir() and ((path / ".git").exists() or (path / ".git").is_file())
+
+
+def _git_common_dir(repo: Path) -> Optional[Path]:
+    try:
+        res = _git_run(repo, "rev-parse", "--git-common-dir", timeout=5.0)
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+        return None
+    if res.returncode != 0 or not (res.stdout or "").strip():
+        return None
+    raw = res.stdout.strip()
+    p = Path(raw)
+    return (repo / p).resolve() if not p.is_absolute() else p.resolve()
+
+
+def _git_origin(repo: Path) -> Optional[str]:
+    try:
+        res = _git_run(repo, "remote", "get-url", "origin", timeout=5.0)
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+        return None
+    if res.returncode != 0 or not (res.stdout or "").strip():
+        return None
+    return res.stdout.strip().rstrip("/").lower()
+
+
+def _same_repo_identity(primary: Path, other: Path) -> bool:
+    """True when ``other`` is the same repository as ``primary`` (common dir or same origin URL)."""
+    if not _is_git_checkout(other):
+        return False
+    ca, cb = _git_common_dir(primary), _git_common_dir(other)
+    if ca and cb and ca == cb:
+        return True
+    oa, ob = _git_origin(primary), _git_origin(other)
+    return bool(oa and ob and oa == ob)
+
+
+def _git_worktrees(primary: Path) -> list[Path]:
+    try:
+        res = _git_run(primary, "worktree", "list", "--porcelain", timeout=10.0)
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+        return []
+    if res.returncode != 0 or not res.stdout:
+        return []
+    out: list[Path] = []
+    for line in res.stdout.splitlines():
+        if line.startswith("worktree "):
+            p = Path(line.split(" ", 1)[1].strip())
+            if p.is_dir():
+                out.append(p.resolve())
+    return out
+
+
+def resolve_code_peek_roots(name: str, *, primary: Optional[Path], checkout: Optional[str],
+                            repo_roots: Optional[Callable[[str], list[Path]]] = None) -> list[Path]:
+    """Roots that may hold the commit object: registered checkout, its worktrees, optional verified clone."""
+    roots: list[Path] = []
+    if repo_roots is not None:
+        for p in repo_roots(name) or []:
+            if p and _is_git_checkout(Path(p)):
+                roots.append(Path(p).resolve())
+    if primary and _is_git_checkout(primary):
+        roots.append(Path(primary).resolve())
+        roots.extend(_git_worktrees(Path(primary)))
+    # Deduplicate preserving order
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for r in roots:
+        key = str(r)
+        if key not in seen:
+            seen.add(key)
+            ordered.append(r)
+    if not ordered:
+        raise AgoraError(f"code_peek: unknown repo {name!r}")
+    primary_root = ordered[0]
+    if checkout:
+        hint = Path(str(checkout).strip()).expanduser()
+        if not hint.is_absolute():
+            raise AgoraError("code_peek checkout must be an absolute path")
+        hint = hint.resolve()
+        if not _same_repo_identity(primary_root, hint):
+            raise AgoraError(
+                f"code_peek: checkout {hint} is not the same repository as {name!r} "
+                "(common git dir or origin URL must match)")
+        ordered = [hint] + [r for r in ordered if r != hint]
+    return ordered
+
+
+def verify_code_peek(ref: str, *, roots: list[Path], commits: list[str]) -> dict[str, Any]:
+    """Verify ``path#Lx-Ly@commit`` against the first root that has the object; return the peek payload."""
     m = _CODE_PEEK_RE.match(str(ref or "").strip())
     if not m:
         raise AgoraError("code_peek must look like path/file.py#L10-L24@commit")
-    rel = m.group("path").strip().replace("\\", "/").lstrip("./")
-    if not rel or ".." in rel.split("/"):
-        raise AgoraError(f"code_peek path is invalid: {rel!r}")
+    rel = _normalize_repo_relpath(m.group("path"))
     start = int(m.group("start"))
     end = int(m.group("end") or start)
     commit = _resolve_peek_commit(m.group("commit"), commits)
-    if not repo.is_dir() or not ((repo / ".git").exists() or (repo / ".git").is_file()):
-        raise AgoraError(f"code_peek: repository not found at {repo}")
-    text = _slice_lines(_git_show(repo, commit, rel), start, end)
+    if not roots:
+        raise AgoraError("code_peek: no repository roots to search")
+    last: Optional[AgoraError] = None
+    used: Optional[Path] = None
+    text = ""
+    for root in roots:
+        if not _is_git_checkout(root):
+            continue
+        try:
+            text = _slice_lines(_git_show(root, commit, rel), start, end)
+            used = root
+            break
+        except AgoraError as exc:
+            last = exc
+            continue
+    if used is None:
+        raise last or AgoraError(f"code_peek: cannot read {rel}@{commit} in any registered checkout")
     return {"ref": f"{rel}#L{start}-L{end}@{commit}", "path": rel, "start": start, "end": end,
-            "commit": commit, "text": text, "verified": True}
+            "commit": commit, "text": text, "verified": True, "checkout": str(used)}
 
 
-def normalize_submission_blocks(raw: Any, *, repo_name: str, commits: list[str],
-                                repo_lookup: Optional[Callable[[str], Optional[Path]]]) -> Optional[list[dict[str, Any]]]:
-    """Validate optional structured submission blocks; verify every ``code_peek`` against git."""
+def normalize_submission_blocks(
+        raw: Any, *, repo_name: str, commits: list[str],
+        repo_lookup: Optional[Callable[[str], Optional[Path]]] = None,
+        repo_roots: Optional[Callable[[str], list[Path]]] = None) -> Optional[list[dict[str, Any]]]:
+    """Validate optional structured submission blocks; verify every ``code_peek`` against git (no DB lock)."""
     if raw is None or raw == "" or raw == []:
         return None
     if not isinstance(raw, list) or len(raw) > 40:
         raise AgoraError("blocks must be a list of at most 40 objects")
     out: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for i, item in enumerate(raw):
         if not isinstance(item, dict):
             raise AgoraError(f"blocks[{i}] must be an object")
         kind = str(item.get("kind") or "").strip()
         if kind not in _BLOCK_KINDS:
             raise AgoraError(f"blocks[{i}].kind must be one of {sorted(_BLOCK_KINDS)}")
+        if "id" in item and not str(item.get("id") or "").strip():
+            raise AgoraError(f"blocks[{i}].id is empty")
         bid = str(item.get("id") or f"b{i + 1}").strip()[:80]
+        if not bid or bid in seen_ids:
+            raise AgoraError(f"blocks[{i}].id must be unique and non-empty (got {bid!r})")
+        seen_ids.add(bid)
         title = _txt(item.get("title"), 200, f"blocks[{i}].title")
         block: dict[str, Any] = {"id": bid, "kind": kind, "title": title}
         if kind == "what_why":
@@ -355,14 +491,18 @@ def normalize_submission_blocks(raw: Any, *, repo_name: str, commits: list[str],
             name = str(item.get("repo") or repo_name or "").strip()
             if not name:
                 raise AgoraError(f"blocks[{i}]: set repo on the task or on the block for code_peek")
-            if repo_lookup is None:
+            if repo_lookup is None and repo_roots is None:
                 raise AgoraError("code_peek verification needs a repository lookup (hub repos)")
-            root = repo_lookup(name)
-            if root is None:
-                raise AgoraError(f"code_peek: unknown repo {name!r}")
-            peek = verify_code_peek(str(ref), repo=Path(root), commits=commits)
+            primary = repo_lookup(name) if repo_lookup else None
+            roots = resolve_code_peek_roots(
+                name, primary=Path(primary) if primary else None,
+                checkout=str(item["checkout"]) if item.get("checkout") else None,
+                repo_roots=repo_roots)
+            peek = verify_code_peek(str(ref), roots=roots, commits=commits)
             block["repo"] = name
             block["peek"] = peek
+            if item.get("checkout"):
+                block["checkout"] = str(Path(str(item["checkout"]).strip()).expanduser().resolve())
             if item.get("body"):
                 block["body"] = _txt(item.get("body"), 4000, f"blocks[{i}].body")
         out.append(block)
@@ -455,7 +595,8 @@ class Agora:
                  escalate_hook: Optional[Callable[[dict[str, Any], str, str], Any]] = None,
                  review_grace_s: float = REVIEW_GRACE_S, handover_idle_s: float = HANDOVER_IDLE_S,
                  handover_thread_id: Optional[int] = HANDOVER_THREAD_ID,
-                 repo_lookup: Optional[Callable[[str], Optional[Path]]] = None):
+                 repo_lookup: Optional[Callable[[str], Optional[Path]]] = None,
+                 repo_roots: Optional[Callable[[str], list[Path]]] = None):
         self.clock = clock
         self.handover_idle_s = float(handover_idle_s)
         self.handover_thread_id = handover_thread_id
@@ -463,6 +604,7 @@ class Agora:
         self.escalate_hook = escalate_hook
         self.review_grace_s = review_grace_s
         self.repo_lookup = repo_lookup
+        self.repo_roots = repo_roots
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = Database(path, migrations=MIGRATIONS)
         self.db.migrate()
@@ -956,10 +1098,11 @@ class Agora:
         """Ask for review: what changed, where (branch/commits) and how it was verified.
 
         Optional ``blocks``: structured review sections (what_why, paths, code_peek, flow, sequence).
-        Each ``code_peek`` is verified against the task's repo (or the block's ``repo``) at the named commit.
-        Plain text summaries stay valid without blocks.
+        Each ``code_peek`` is verified with ``git show`` outside the write transaction (isolated clones via
+        ``checkout`` when identity matches the registered repo). Plain text summaries stay valid without blocks.
         """
         summary = _txt(a.get("summary"), 20000, "summary", required=True)
+        # Phase 1: authorize under a short write lock (no external I/O).
         with self.db.tx():
             agent, task = self._owned(a, allow_person=False)
             self._touch(agent)
@@ -968,18 +1111,38 @@ class Agora:
             reviewer = str(a.get("reviewer") or "").strip().lower() or None
             if reviewer == agent:
                 raise AgoraError("the reviewer must be someone else")
-            now = self.clock()
             commits = _list(a.get("commits"), "commits") or list(task["commits"] or [])
-            blocks = normalize_submission_blocks(
-                a.get("blocks"), repo_name=str(task.get("repo") or ""), commits=commits,
-                repo_lookup=self.repo_lookup)
-            # A new submission asks for a new verdict: an approval given to earlier commits does not carry over to
-            # what is sent now (the old verdict stays in the thread).
+            snap = {
+                "id": int(task["id"]), "owner": agent, "status": task["status"],
+                "submission_revision": int(task.get("submission_revision") or 0),
+                "repo": str(task.get("repo") or ""), "thread_id": int(task["thread_id"]),
+                "commits": commits, "branch": a.get("branch"), "reviewer": reviewer,
+            }
+        # Phase 2: verify peeks without holding the database write lock.
+        blocks = normalize_submission_blocks(
+            a.get("blocks"), repo_name=snap["repo"], commits=snap["commits"],
+            repo_lookup=self.repo_lookup, repo_roots=self.repo_roots)
+        # Phase 3: re-check owner/status/revision, then publish.
+        with self.db.tx():
+            self._touch(agent)
+            task = self._task_row(snap["id"])
+            if task.get("owner") != agent:
+                raise AgoraError("task owner changed during code_peek verification", 409,
+                                 error_code="submit_conflict")
+            if task["status"] not in ACTIVE:
+                raise AgoraError(f"task {task['id']} is {task['status']}", 409, error_code="submit_conflict")
+            if int(task.get("submission_revision") or 0) != snap["submission_revision"]:
+                raise AgoraError("submission changed during code_peek verification", 409,
+                                 error_code="submit_conflict",
+                                 current_revision=task["submission_revision"],
+                                 current_commits=task["commits"])
+            now = self.clock()
+            # A new submission asks for a new verdict: an approval given to earlier commits does not carry over.
             self.db.execute(
                 "UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
                 "submission_blocks=?, submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL, "
                 "reviewed_submission_revision=NULL, submission_revision=submission_revision+1 WHERE id=?",
-                (reviewer, a.get("branch"), _j(commits or task["commits"]),
+                (snap["reviewer"], snap["branch"], _j(snap["commits"] or task["commits"]),
                  json.dumps(blocks, ensure_ascii=False) if blocks is not None else None,
                  now, now, task["id"]))
             task = self._task_row(task["id"])
@@ -987,8 +1150,9 @@ class Agora:
             details = f"\n\nSubmission revision: {revision}\nCommits: {', '.join(task['commits']) or '(none)'}"
             if blocks:
                 details += _format_blocks_for_message(blocks)
-            self._msg(int(task["thread_id"]), agent, "proposal", summary + details, [reviewer] if reviewer else [])
-        self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": reviewer,
+            self._msg(int(task["thread_id"]), agent, "proposal", summary + details,
+                      [snap["reviewer"]] if snap["reviewer"] else [])
+        self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": snap["reviewer"],
                                           "submission_revision": revision, "commits": task["commits"],
                                           "blocks": len(blocks or [])})
         return {"ok": True, "task": self._task_row(task["id"])}
@@ -1031,9 +1195,13 @@ class Agora:
                         raise AgoraError(f"block_comments[{i}] must be an object")
                     bid = str(note.get("block_id") or note.get("id") or "").strip()
                     text = _txt(note.get("body"), 4000, f"block_comments[{i}].body", required=True)
-                    if known and bid and bid not in known:
+                    if not bid:
+                        raise AgoraError(f"block_comments[{i}].block_id is required")
+                    if known and bid not in known:
                         raise AgoraError(f"block_comments[{i}]: unknown block_id {bid!r}")
-                    extra.append(f"- [{bid or '?'}] {text}")
+                    if not known:
+                        raise AgoraError("block_comments require a structured submission with blocks")
+                    extra.append(f"- [{bid}] {text}")
                 details += "\n" + "\n".join(extra)
             self._msg(int(task["thread_id"]), agent, "approve" if verdict == "approve" else "changes",
                       details + "\n\n" + body, [task["owner"]] if task.get("owner") else [])
@@ -1682,7 +1850,8 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_task_submit",
      "description": "Ask for review of your task before integrating it: summary of what changed, how it was "
                     "verified, branch/commits; optionally name the reviewer. Optional blocks: structured review "
-                    "(what_why, paths, code_peek with path#Lx-Ly@commit verified against the task repo, flow, sequence).",
+                    "(what_why, paths, code_peek with path#Lx-Ly@commit verified against the task repo or an "
+                    "identity-checked absolute checkout for isolated clones, flow, sequence). Block ids must be unique.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "summary": {"type": "string"}, "branch": {"type": "string"},
                              "commits": _STRS, "reviewer": {"type": "string"},
                              "blocks": {"type": "array", "items": {"type": "object"}, "maxItems": 40}},
@@ -1787,7 +1956,8 @@ def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
 
 class AgoraFacet(Facet):
     id = "agora"
-    ui_scripts = ("agora.js",)
+    # agora_blocks.js paints submission_blocks / per-block comments without editing agora.js (#116 lock).
+    ui_scripts = ("agora.js", "agora_blocks.js")
 
     def __init__(self, hub: Any):
         super().__init__(hub)
@@ -1807,9 +1977,25 @@ class AgoraFacet(Facet):
             path = rec.get("path")
             return Path(path) if path else None
 
+        def repo_roots(name: str) -> list[Path]:
+            primary = repo_lookup(name)
+            if primary is None:
+                return []
+            roots = [Path(primary).resolve()]
+            roots.extend(_git_worktrees(Path(primary)))
+            # Deduplicate
+            seen: set[str] = set()
+            out: list[Path] = []
+            for r in roots:
+                k = str(r)
+                if k not in seen:
+                    seen.add(k)
+                    out.append(r)
+            return out
+
         self.agora = Agora(Path(hub.config.data_dir) / "agora.db",
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
-                           escalate_hook=self._notify_person, repo_lookup=repo_lookup)
+                           escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
 
         self._watch: Optional[agent_watch.AgentWatch] = None
         self._watch_lock = threading.Lock()
