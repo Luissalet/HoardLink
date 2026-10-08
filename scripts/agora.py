@@ -15,6 +15,8 @@ Standard library only, so any agent with a terminal can use it (no MCP needed)::
     python scripts/agora.py --as reviewer open "q8 or q4 for live tests?" --kind debate --body-file prop.md --mention builder
     python scripts/agora.py --as builder post 7 --kind disagree --body-file answer.md
     python scripts/agora.py --as reviewer escalate 7 --question "q8 at 500k (slow, faithful) or q4 (fast)?"
+    python scripts/agora.py watch                         # what each agent is really doing, from its own transcripts
+    python scripts/agora.py watch-bind codex:<session id> codex-sparks   # assign a transcript session to an agent ("-" unbinds)
     python scripts/agora.py --as successor handover --from dead-agent --to successor --reason "context exhausted" [--tasks 1,2] [--no-reviews]
 
 Every long text accepts ``--<name>-file PATH`` (``-`` reads stdin): PowerShell eats ``$`` and nested quotes.
@@ -28,6 +30,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -163,6 +166,65 @@ def print_board(b: dict, full: bool = False) -> None:
         print("\nDECISIONES RECIENTES")
         for d in b["decisions"]:
             print(f"  {d['id']:<4} {short(d['title'], 50)} → {short(d['resolution'], 80)} ({d.get('resolved_by')})")
+
+
+OBSERVED = {"working": "trabajando", "waiting": "esperando respuesta", "idle": "libre", "stale": "parado (sin escrituras)"}
+
+
+def ago(ts, now: float | None = None) -> str:
+    try:
+        s = max(0, int((now if now is not None else time.time()) - float(ts)))
+    except (TypeError, ValueError):
+        return ""
+    if s < 90:
+        return f"hace {s} s"
+    if s < 5400:
+        return f"hace {round(s / 60)} min"
+    if s < 172800:
+        return f"hace {round(s / 3600)} h"
+    return f"hace {round(s / 86400)} d"
+
+
+def observed_text(o: dict | None, now: float | None = None) -> str:
+    """«ejecutando exec hace 2 min»: the state a transcript shows, with the tool and since when."""
+    if not o:
+        return "sin transcripción observada"
+    state = o.get("state")
+    tool = (o.get("tool") or {}).get("name")
+    what = f"ejecutando {tool}" if state == "tool" and tool else OBSERVED.get(state, str(state))
+    if state == "waiting" and tool:
+        what += f" ({tool})"
+    return f"{what} {ago(o.get('since'), now)}".strip()
+
+
+def print_watch(board: dict, w: dict) -> None:
+    now = time.time()
+    seen = set()
+    print("AGENTES (latido del Ágora · estado observado en su transcripción)")
+    rows = [a for a in board.get("agents", []) if a.get("id") != "luis"]
+    for a in rows:
+        seen.add(a["id"])
+        o = (w.get("agents") or {}).get(a["id"])
+        flag = " (sin señales)" if a.get("stale") else ""
+        print(f"  {a['id']:<16} latido {when(a.get('last_seen'))}{flag} · observado: {observed_text(o, now)}")
+        if o:
+            extra = [x for x in (o.get("engine"), o.get("binding")) if x]
+            print(f"      {short(o.get('title'), 90)}" + (f"  [{', '.join(extra)}]" if extra else ""))
+    for aid, o in sorted((w.get("agents") or {}).items()):
+        if aid in seen:
+            continue
+        print(f"  {aid:<16} sin latido · observado: {observed_text(o, now)}")
+        print(f"      {short(o.get('title'), 90)}  [{o.get('engine')}, {o.get('binding')}]")
+    qs = w.get("questions") or []
+    print(f"\nPREGUNTAS PENDIENTES ({len(qs)})")
+    for q in qs:
+        who = q.get("agent") or q.get("session_key")
+        guess = "" if q.get("confidence") == "explicit" else " (probable)"
+        print(f"  {who} · {q.get('engine')} · {q.get('kind')}{guess} {ago(q.get('since'), now)}: {short(q.get('what'), 110)}")
+    un = w.get("unbound") or []
+    print(f"\nSESIONES SIN ASIGNAR ({len(un)}; agora watch-bind <clave> <agente>)")
+    for s in un[:20]:
+        print(f"  {s['key']:<48} {s.get('state'):<8} {ago(s.get('last_activity'), now):<12} {short(s.get('title'), 60)}")
 
 
 def print_inbox(r: dict) -> None:
@@ -333,6 +395,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("digest"); s.add_argument("--hours", type=float, default=12)
     s = sub.add_parser("tasks"); s.add_argument("--status"); s.add_argument("--owner"); s.add_argument("--repo")
     sub.add_parser("decisions")
+    sub.add_parser("watch", help="estado real de cada agente según su transcripción, preguntas pendientes y sesiones sin asignar")
+    s = sub.add_parser("watch-bind", help="asigna una sesión observada a un agente (agente '-' o vacío la desasigna)")
+    s.add_argument("session_key", help="clave que da 'watch', p. ej. codex:<id de sesión>"); s.add_argument("agent_id")
     a = p.parse_args(argv)
     for key, value in list(vars(a).items()):
         if isinstance(value, str) and not key.endswith("_file"):
@@ -340,13 +405,21 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(value, list):
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
-    reads = {"board", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints"}
+    reads = {"board", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "watch", "watch-bind"}
     if a.cmd not in reads and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
     c = a.cmd
     if c == "board":
         r = call("GET", "/api/agora/board")
+    elif c == "watch":
+        r = call("GET", "/api/agora/watch")
+        if r.get("ok", True):
+            b = call("GET", "/api/agora/board")
+            r = {**r, "board": b if b.get("ok", True) else {}}
+    elif c == "watch-bind":
+        who = a.agent_id.strip()
+        r = call("POST", "/api/agora/watch/bind", {"session_key": a.session_key, "agent": "" if who == "-" else who})
     elif c == "checkpoint":
         try:
             raw = sys.stdin.read() if a.data_file == "-" else Path(a.data_file).read_text(encoding="utf-8-sig")
@@ -444,6 +517,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if r.get("ok", True) else 1
     if c == "board":
         print_board(r, full=a.full)
+    elif c == "watch":
+        print_watch(r.get("board") or {}, r)
+    elif c == "watch-bind":
+        print(f"ok · {r.get('session_key')} → " + (f"{r.get('agent')} (asignación explícita)" if r.get("agent") else "sin agente (vuelve la inferencia)"))
     elif c in ("checkpoint", "checkpoints"):
         for cp in ([r["checkpoint"]] if c == "checkpoint" else r.get("checkpoints", [])):
             print(f"#{cp['task_id']} r{cp['revision']} · {cp['author']} · {when(cp['created'])}")
