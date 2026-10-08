@@ -24,6 +24,12 @@ def _no_auto_rules(monkeypatch):
     monkeypatch.setenv("HOARD_HUB_AUTO_RULES", "0")
 
 
+@pytest.fixture(autouse=True)
+def _agent_watch_sees_no_transcripts(monkeypatch, tmp_path_factory):
+    """The Ágora's observer reads ~/.codex, ~/.cursor and ~/.claude: tests must never see the real ones."""
+    monkeypatch.setenv("HOARD_AGENT_WATCH_HOME", str(tmp_path_factory.mktemp("no-home")))
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

@@ -63,6 +63,9 @@ class HubConfig:
     # For an app this machine runs differently from how it is shipped (a developer build, a
     # different install folder) without editing the app's own manifest.
     launch_overrides: dict[str, Any] = field(default_factory=dict)
+    # The Ágora's passive observer of the coding agents' transcripts (agent_watch.py): {enabled, hours, max_files,
+    # roots: {"codex": [...], "cursor": [...], "claude": [...]}}; every key optional (defaults: the user's home).
+    agent_watch: dict[str, Any] = field(default_factory=dict)
 
     @property
     def protected_gpus(self) -> list[int]:
@@ -185,6 +188,8 @@ class HubConfig:
             cfg.repos = {}
         if not isinstance(cfg.web, dict):
             cfg.web = {}
+        if not isinstance(cfg.agent_watch, dict):
+            cfg.agent_watch = {}
         cfg.roots = [os.path.abspath(os.path.expanduser(r)) for r in cfg.roots]
         cfg.icon_dirs = [os.path.abspath(os.path.expanduser(r)) for r in cfg.icon_dirs]
         if not isinstance(cfg.window_size, list) or len(cfg.window_size) != 2:
