@@ -278,7 +278,8 @@ class BackupStore:
 
     # -- restore --------------------------------------------------------------
     def restore(self, snapshot_id: str, app_id: str, *, dest: Optional[str] = None, in_place: bool = False,
-                app_running: Optional[bool] = None) -> dict[str, Any]:
+                app_running: Optional[bool] = None,
+                destination_guard: Optional[Callable[[str, str], Optional[str]]] = None) -> dict[str, Any]:
         m = self.load_snapshot(snapshot_id)
         if m is None:
             return {"ok": False, "error": f"unknown snapshot: {snapshot_id}"}
@@ -297,6 +298,10 @@ class BackupStore:
             target = dest or (os.path.join(os.path.dirname(live.rstrip("/\\")), os.path.basename(live.rstrip("/\\")) + f".restored-{stamp}")
                               if live else os.path.join(self.root, "restored", f"{app_id}-{stamp}"))
         target = os.path.abspath(target)
+        if destination_guard:
+            problem = destination_guard(target, live)
+            if problem:
+                return {"ok": False, "error": problem}
         if os.path.abspath(self.root) in (target, os.path.dirname(target)) and not dest:
             pass
         if target.startswith(self.objects_dir) or target.startswith(self.snapshots_dir):
