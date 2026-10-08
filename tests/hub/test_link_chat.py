@@ -386,9 +386,12 @@ def test_vision_decodes_images_and_needs_the_vision_capability(lhub):
 def test_concurrency_is_capped_and_the_rest_queue(lhub):
     hub, url = lhub
     assert hub.link.gate.limit == 2                    # the default of link_chat_concurrency
+    release = threading.Event()
 
     async def work(kw):
-        await asyncio.sleep(0.3)
+        # Hold the two active slots until the rest are visibly queued. A fixed
+        # sleep + queued_ms>=500 races under suite load (historical 430 < 500).
+        await asyncio.get_running_loop().run_in_executor(None, release.wait)
         return "ok"
 
     hub.link._link("hub").script = work
@@ -397,16 +400,22 @@ def test_concurrency_is_capped_and_the_rest_queue(lhub):
     def ask() -> None:
         results.append(_http(url + "/api/link/chat", {"messages": _msgs(), "timeout_s": 30}, headers=_auth(hub)))
 
-    t0 = time.monotonic()
     threads = [threading.Thread(target=ask) for _ in range(5)]
     for t in threads:
         t.start()
-    for t in threads:
-        t.join(30)
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not (hub.link.gate.active == 2 and hub.link.gate.waiting >= 3):
+            time.sleep(0.02)
+        assert hub.link.gate.active == 2 and hub.link.gate.waiting >= 3
+    finally:
+        # Always unblock FakeLink holders so a failed wait does not leave pytest hanging.
+        release.set()
+        for t in threads:
+            t.join(30)
     assert [s for s, _ in results] == [200] * 5
     assert hub.fake_links["hub"].peak == 2             # never more than two model calls at once
-    assert time.monotonic() - t0 >= 0.85               # 5 calls / 2 at a time x 0.3 s = three waves
-    assert max(r["queued_ms"] for _, r in results) >= 500
+    assert max(r["queued_ms"] for _, r in results) > 0  # at least one caller waited behind the gate
 
 
 def test_a_caller_that_waits_too_long_in_the_queue_gets_504(tmp_path):
