@@ -354,8 +354,8 @@ def test_http_cli_and_real_stdio_mcp(tmp_path):
         evidence_path(tmp_path, "stdio-mcp.json").write_text(
             json.dumps({"requests": requests, "responses": replies, "returncode": mcp.returncode}, ensure_ascii=False, indent=2),
             encoding="utf-8")
-        assert len(TOOLS) == 26
-        assert len([t for t in tools.all_tools() if t["name"].startswith("hub_agora_")]) == 26
+        assert len(TOOLS) == 27
+        assert len([t for t in tools.all_tools() if t["name"].startswith("hub_agora_")]) == 27
     finally:
         server.shutdown()
         server.server_close()

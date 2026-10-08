@@ -15,6 +15,7 @@ Standard library only, so any agent with a terminal can use it (no MCP needed)::
     python scripts/agora.py --as reviewer open "q8 or q4 for live tests?" --kind debate --body-file prop.md --mention builder
     python scripts/agora.py --as builder post 7 --kind disagree --body-file answer.md
     python scripts/agora.py --as reviewer escalate 7 --question "q8 at 500k (slow, faithful) or q4 (fast)?"
+    python scripts/agora.py --as successor handover --from dead-agent --to successor --reason "context exhausted" [--tasks 1,2] [--no-reviews]
 
 Every long text accepts ``--<name>-file PATH`` (``-`` reads stdin): PowerShell eats ``$`` and nested quotes.
 Agent id: ``--as`` or ``AGORA_AGENT``. Hub: ``HOARD_HUB_URL`` or ``data/url``; token ``HOARD_HUB_TOKEN_FILE`` or
@@ -233,6 +234,24 @@ def print_conversation(r: dict) -> None:
         print(m.get("body") or "")
 
 
+def print_handover(r: dict) -> None:
+    if r.get("noop"):
+        print(f"Sin cambios: {r.get('from')} ya no tiene tareas ni revisiones que traspasar a {r.get('to')}.")
+    else:
+        print(f"Traspaso de {r.get('from')} a {r.get('to')} (por {r.get('by')}): {r.get('reason')}")
+        for t in r.get("tasks", []):
+            what = []
+            if t["id"] in r.get("owner_moved", []):
+                what.append("propietario")
+            if t["id"] in r.get("reviewer_moved", []):
+                what.append("revisor")
+            print(f"  #{t['id']:<4} [{t['status']:<11}] {short(t['title'], 60)} -> {'+'.join(what)}"
+                  f" (owner {t.get('owner') or '-'}, revisor {t.get('reviewer') or '-'})")
+        print(f"  bloqueos movidos: {len(r.get('locks_moved', []))}; anuncio en el hilo {r.get('thread_id')}")
+    for sk in r.get("skipped", []):
+        print(f"  omitida #{sk['task_id']}: {sk['reason']}")
+
+
 def print_sync(r: dict) -> None:
     state = r.get("agent_state") or {}
     cursor = r.get("cursor") or {}
@@ -302,6 +321,12 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("resolve"); s.add_argument("thread", type=int); texts(s, "text")
     s = sub.add_parser("escalate"); s.add_argument("thread", type=int); texts(s, "question")
     s = sub.add_parser("reopen"); s.add_argument("thread", type=int); s.add_argument("--reason", required=True)
+    s = sub.add_parser("handover", help="traspasa las tareas (bloqueos y revisiones) de un agente caido a su relevo")
+    s.add_argument("--from", dest="from_agent", required=True, help="agente que ya no responde")
+    s.add_argument("--to", dest="to_agent", required=True, help="agente que retoma el trabajo (con latido reciente)")
+    texts(s, "reason")
+    s.add_argument("--tasks", action="append", help="solo estas tareas (ids separados por comas; repetible)")
+    s.add_argument("--no-reviews", action="store_true", help="no traspasa el papel de revisor")
     s = sub.add_parser("task"); s.add_argument("task", type=int)
     s = sub.add_parser("thread"); s.add_argument("thread", type=int)
     s = sub.add_parser("ack"); s.add_argument("thread", type=int, nargs="?"); s.add_argument("--all", action="store_true")
@@ -370,6 +395,16 @@ def main(argv: list[str] | None = None) -> int:
                                                   "commits": csv(a.commits), "force": a.force, "reason": a.reason or ""})
     elif c == "release":
         r = call("POST", "/api/agora/task_release", {"agent": ag, "task_id": a.task, "reason": a.reason or "", "drop": a.drop})
+    elif c == "handover":
+        try:
+            ids = [int(x.lstrip("#")) for x in csv(a.tasks)]
+        except ValueError:
+            p.error("--tasks necesita numeros de tarea separados por comas")
+        body = {"agent": ag, "from_agent": a.from_agent, "to_agent": a.to_agent,
+                "reason": text_arg(a, "reason") or "", "include_reviews": not a.no_reviews}
+        if ids:
+            body["tasks"] = ids
+        r = call("POST", "/api/agora/handover", body)
     elif c == "lock":
         r = call("POST", "/api/agora/lock", {"agent": ag, "resources": a.resources, "ttl_s": a.ttl, "note": a.note or "", "task_id": a.task})
     elif c == "unlock":
@@ -423,6 +458,8 @@ def main(argv: list[str] | None = None) -> int:
         print_inbox(r)
     elif c == "sync":
         print_sync(r)
+    elif c == "handover":
+        print_handover(r)
     elif c in ("task", "thread"):
         print_conversation(r)
     elif c == "tasks":

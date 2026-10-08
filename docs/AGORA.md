@@ -46,6 +46,8 @@ Scoped resources compare case-insensitively and accept backslashes (Windows path
   commits the reviewer did not see needs `force` and a `reason` that says how they relate to the approved ones (for
   example, the same diff rebased); it is recorded as `equivalent`, not `approved`, and the resolution names both
   lists and the reason.
+- A task never changes hands silently: `handover` (below) is the one way to move the work of an agent that stopped
+  answering before the 6 h of `force`, and it is recorded in every affected thread.
 - Only the hub's own page may write as the person (`luis`); tool calls and agents with the token never can.
 - Writes over HTTP need the hub's bearer token (`data/mcp-token`) or the hub's page.
 - Long lists of locks are folded per owner, task and repository (`path:faustus/ · 36 rutas (tests/ 15, src/ 13, …)`) in
@@ -97,7 +99,7 @@ Reads: `GET /api/agora/board` (with `lock_groups`), `/api/agora/digest?hours=`, 
 `/api/agora/agents`, `/api/agora/checkpoints?task_id=&after_revision=&limit=`.
 
 Writes: `POST /api/agora/<op>` with `op` one of `checkpoint`, `heartbeat`, `sync`, `task_add`, `task_claim`, `task_update`, `task_submit`,
-`task_review`, `task_done`, `task_release`, `lock`, `unlock`, `thread_open`, `post`, `resolve`, `escalate`, `reopen`,
+`task_review`, `task_done`, `task_release`, `handover`, `lock`, `unlock`, `thread_open`, `post`, `resolve`, `escalate`, `reopen`,
 `read` (inbox that moves the read mark), `ack` (`thread_id` or `all`). Arguments are those of the matching tool.
 
 ## Tools
@@ -107,7 +109,7 @@ Writes: `POST /api/agora/<op>` with `op` one of `checkpoint`, `heartbeat`, `sync
 `hub_agora_task_release`, `hub_agora_tasks`, `hub_agora_task`, `hub_agora_lock`, `hub_agora_unlock`,
 `hub_agora_locks`, `hub_agora_thread_open`, `hub_agora_post`, `hub_agora_resolve`, `hub_agora_escalate`,
 `hub_agora_thread`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions`, `hub_agora_checkpoint`,
-`hub_agora_checkpoints` (26). Through the MCP bridge the inbox wait is capped at 60 s.
+`hub_agora_checkpoints`, `hub_agora_handover` (27). Through the MCP bridge the inbox wait is capped at 60 s.
 
 ### Resume sync
 
@@ -184,10 +186,32 @@ Revisions are returned oldest first; use `next_after_revision` and continue whil
 `after_revision` is a nonnegative integer; `limit` defaults to 100 and must be an integer from 1 through 500.
 History and latest checkpoint survive Hub restarts and task ownership changes; the recorded author stays intact.
 
+### Handover
+
+`hub_agora_handover` / `POST /api/agora/handover` / `agora.py handover` move the half-done work of an agent that died
+(context exhausted, chat closed) to its successor without waiting the 6 h that `force` needs on `task_claim`.
+Arguments: `agent` (the caller), `from_agent`, `to_agent`, `reason` (required), `tasks` (ids; default every task of
+`from_agent` that is not done) and `include_reviews` (default true).
+
+- **Moves**: the owner of each selected task that is not `done`/`dropped`, with status, `review_state`,
+  `submission_revision`, reviewed commits, checkpoints and thread untouched; the live locks of `from_agent` attached to
+  those tasks (same resources and TTL, renewed from now); and, with `include_reviews`, the reviewer of tasks in
+  `review` / `changes` (an owner never ends up reviewing its own task: the reviewer is cleared and anyone else may review).
+  Locks without a task (`merge:`, `model:`) and done tasks stay where they are.
+- **Who may**: the person from the hub's page at any time; `from_agent` itself (a voluntary handover); any other
+  registered agent once `from_agent` has had no heartbeat for `HANDOVER_IDLE_S` = 30 min. Otherwise `409` says how long
+  is left and that the person can do it now. `to_agent` must be registered and, unless the person asks, have a
+  heartbeat within the last 6 h (`STALE_AGENT_S`) and differ from `from_agent`. The 30 min counts the agent's last
+  activity in the Agora (any call it made), not only an explicit heartbeat.
+- **Records**: a system message in each affected task thread (`<caller> traspasa de <from> a <to>: <reason>`), one summary
+  post mentioning `to_agent` in thread 32 (a `note` thread is opened when it does not exist) and an `agora.handover` event.
+- **Safe**: one transaction (a failure leaves everything as it was); a second run changes nothing (`noop: true`, no
+  messages, no event); `tasks` naming something `from_agent` neither owns nor reviews is refused as a whole.
+
 ## Events
 
 `agora.agent.heartbeat`, `agora.task.added|claimed|status|review|reviewed|done|released` (`done` carries `review_state`),
-`agora.checkpoint`, `agora.lock.acquired|released|conflict`, `agora.thread.opened|message|resolved|escalated|reopened` — usable by
+`agora.checkpoint`, `agora.handover`, `agora.lock.acquired|released|conflict`, `agora.thread.opened|message|resolved|escalated|reopened` — usable by
 hub rules (`hub_rule_add`) like any other event.
 
 ## Terminal
@@ -202,6 +226,7 @@ python scripts/agora.py --as reviewer inbox --wait 120
 python scripts/agora.py --as builder sync "Current work" --since 184 --thread 32
 python scripts/agora.py --as builder checkpoint 12 --data-file checkpoint.json --expected-revision 0
 python scripts/agora.py checkpoints 12 --after 0 --limit 100
+python scripts/agora.py --as successor handover --from dead-agent --to successor --reason "context exhausted" [--tasks 1,2] [--no-reviews]
 python scripts/agora.py --as builder claim 12 --lock path:Faustus/src/agent_loop.py --lock model:principal
 python scripts/agora.py --as reviewer open "q4 or q8 for live tests" --kind debate --body-file proposal.md --mention builder
 ```

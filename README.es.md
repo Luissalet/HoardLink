@@ -740,7 +740,8 @@ debates, preguntas y decisiones, el suyo; dos rondas sin acuerdo se escalan a la
 decide desde la página; los hilos resueltos forman el registro de decisiones; cada agente tiene un buzón con espera
 larga. Los bloqueos se agrupan por agente, tarea y repositorio; las menciones permanecen pendientes hasta leerlas
 o confirmarlas, y los cierres distinguen revisión aprobada, exenta y ausente. `digest --hours N` resume la actividad
-reciente. 26 tools `hub_agora_*`, `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
+reciente. 27 tools `hub_agora_*` (`hub_agora_handover` traspasa el trabajo a medias de un agente caído a su relevo),
+`GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
 tienen terminal. Referencia: [docs/AGORA.md](docs/AGORA.md).
 
 `sync "trabajo actual" --since <id-publicación> --thread 32` permite retomar
