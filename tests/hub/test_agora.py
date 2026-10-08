@@ -3,15 +3,38 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
 from hoard_link.hub import tools
-from hoard_link.hub.agora import Agora, AgoraError, conflicts, normalize_resource
+from hoard_link.hub.agora import (
+    Agora,
+    AgoraError,
+    conflicts,
+    normalize_resource,
+    verify_code_peek,
+)
 
 from ._hub_fakes import http, make_hub, serve
+
+
+def _git_repo(root: Path, files: dict[str, str]) -> str:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True, capture_output=True)
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, capture_output=True)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True)
+    return sha.stdout.strip()
 
 
 class Clock:
@@ -436,3 +459,57 @@ def test_resubmitting_new_commits_clears_the_previous_approval(ag):
                     "verdict": "approve", "body": "bbb222 checked"})
     done = ag.task_done({"agent": "claude", "task_id": tid, "commits": ["aaa111", "bbb222"]})["task"]
     assert done["review_state"] == "approved" and done["reviewed_commits"] == ["aaa111", "bbb222"]
+
+
+def test_submit_without_blocks_stays_compatible(ag):
+    tid = ag.task_add({"agent": "claude", "title": "plain", "claim": True})["task"]["id"]
+    task = ag.task_submit({"agent": "claude", "task_id": tid, "summary": "text only", "commits": ["abc"]})["task"]
+    assert task["submission_blocks"] is None and task["submission_revision"] == 1
+
+
+def test_structured_submit_verifies_code_peek(tmp_path):
+    repo = tmp_path / "DemoRepo"
+    sha = _git_repo(repo, {"src/hello.py": "a = 1\nb = 2\nc = 3\n"})
+    clock = Clock()
+    events = []
+    ag = Agora(tmp_path / "agora.db", clock=clock, emit=lambda t, d: events.append((t, d)),
+               repo_lookup=lambda name: repo if name.lower() == "demorepo" else None)
+    try:
+        tid = ag.task_add({"agent": "claude", "title": "peek", "repo": "DemoRepo", "paths": ["src/hello.py"],
+                           "claim": True})["task"]["id"]
+        with pytest.raises(AgoraError):
+            ag.task_submit({"agent": "claude", "task_id": tid, "summary": "bad lines", "commits": [sha],
+                            "blocks": [{"kind": "code_peek", "peek": f"src/hello.py#L1-L99@{sha}"}]})
+        submitted = ag.task_submit({
+            "agent": "claude", "task_id": tid, "summary": "with peek", "commits": [sha],
+            "blocks": [
+                {"id": "why", "kind": "what_why", "title": "Why", "body": "Keep the constant exact."},
+                {"kind": "paths", "paths": ["src/hello.py"]},
+                {"id": "peek1", "kind": "code_peek", "title": "Constant",
+                 "peek": f"src/hello.py#L2-L2@{sha[:12]}"},
+                {"kind": "sequence", "steps": ["edit", "verify", "submit"]},
+            ],
+        })["task"]
+        blocks = submitted["submission_blocks"]
+        assert len(blocks) == 4
+        peek = next(b for b in blocks if b["kind"] == "code_peek")["peek"]
+        assert peek["verified"] and peek["text"] == "b = 2" and peek["start"] == 2
+        msg = ag.task({"task_id": tid})["messages"][-1]["body"]
+        assert "Structured review blocks:" in msg and "b = 2" in msg
+        reviewed = ag.task_review({
+            "agent": "codex", "task_id": tid, "expected_submission_revision": 1,
+            "verdict": "approve", "body": "peek matches",
+            "block_comments": [{"block_id": "peek1", "body": "line 2 is correct"}],
+        })["task"]
+        assert reviewed["status"] == "approved"
+        note = ag.task({"task_id": tid})["messages"][-1]["body"]
+        assert "Per-block notes:" in note and "peek1" in note
+    finally:
+        ag.close()
+
+
+def test_verify_code_peek_helper(tmp_path):
+    repo = tmp_path / "R"
+    sha = _git_repo(repo, {"f.txt": "one\ntwo\nthree\n"})
+    out = verify_code_peek(f"f.txt#L1-L2@{sha}", repo=repo, commits=[])
+    assert out["text"] == "one\ntwo" and out["verified"]

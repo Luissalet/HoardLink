@@ -34,7 +34,10 @@ from __future__ import annotations
 import fnmatch
 import json
 import math
+import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -43,6 +46,14 @@ from typing import Any, Callable, Optional
 from ..sqlkit import Database
 from . import agent_watch
 from .facets import Facet, Request
+
+# code_peek refs: path/to/file.py#L10-L24@abc1234 (commit optional when the submission lists commits)
+_CODE_PEEK_RE = re.compile(
+    r"^(?P<path>[^#]+)#L(?P<start>\d+)(?:-L(?P<end>\d+))?(?:@(?P<commit>[0-9a-fA-F]{7,40}))?$"
+)
+_BLOCK_KINDS = frozenset({"what_why", "paths", "code_peek", "flow", "sequence"})
+_GIT_TIMEOUT_S = 15.0
+CREATE_NO_WINDOW = 0x08000000
 
 PERSON = "luis"
 STALE_AGENT_S = 6 * 3600.0
@@ -107,6 +118,9 @@ MIGRATIONS = [
         WHERE submitted_at IS NOT NULL OR (reviewed=1 AND status IN ('approved', 'done'));
     UPDATE tasks SET reviewed_submission_revision=1
         WHERE reviewed=1 AND status IN ('approved', 'done');
+    """,
+    """
+    ALTER TABLE tasks ADD COLUMN submission_blocks TEXT;
     """,
 ]
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -251,6 +265,133 @@ def _list(value: Any, field: str, limit: int = 50) -> list[str]:
     return [str(v).strip() for v in value if str(v).strip()]
 
 
+def _git_show(repo: Path, commit: str, rel_path: str) -> str:
+    """Read ``rel_path`` at ``commit`` from ``repo`` (read-only)."""
+    git = shutil.which("git") or "git"
+    argv = [git, "--no-optional-locks", "-c", "core.quotepath=off", "-C", str(repo),
+            "show", f"{commit}:{rel_path.replace(chr(92), '/')}"]
+    kw: dict[str, Any] = {"capture_output": True, "text": True, "timeout": _GIT_TIMEOUT_S,
+                          "env": {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}}
+    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+        kw["creationflags"] = CREATE_NO_WINDOW
+    try:
+        res = subprocess.run(argv, **kw)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise AgoraError(f"code_peek: git failed for {rel_path}@{commit}: {exc}") from exc
+    if res.returncode != 0:
+        err = (res.stderr or res.stdout or "git show failed").strip().splitlines()
+        raise AgoraError(f"code_peek: cannot read {rel_path}@{commit}: {err[0] if err else 'unknown'}")
+    return res.stdout
+
+
+def _slice_lines(text: str, start: int, end: int) -> str:
+    lines = text.splitlines()
+    if start < 1 or end < start or end > len(lines):
+        raise AgoraError(f"code_peek: lines L{start}-L{end} out of range (file has {len(lines)} lines)")
+    return "\n".join(lines[start - 1:end])
+
+
+def _resolve_peek_commit(explicit: Optional[str], commits: list[str]) -> str:
+    if explicit:
+        return explicit
+    if not commits:
+        raise AgoraError("code_peek needs @commit or submission commits")
+    return commits[0]
+
+
+def verify_code_peek(ref: str, *, repo: Path, commits: list[str]) -> dict[str, Any]:
+    """Verify ``path#Lx-Ly@commit`` against the git object at ``repo``; return the peek payload."""
+    m = _CODE_PEEK_RE.match(str(ref or "").strip())
+    if not m:
+        raise AgoraError("code_peek must look like path/file.py#L10-L24@commit")
+    rel = m.group("path").strip().replace("\\", "/").lstrip("./")
+    if not rel or ".." in rel.split("/"):
+        raise AgoraError(f"code_peek path is invalid: {rel!r}")
+    start = int(m.group("start"))
+    end = int(m.group("end") or start)
+    commit = _resolve_peek_commit(m.group("commit"), commits)
+    if not repo.is_dir() or not ((repo / ".git").exists() or (repo / ".git").is_file()):
+        raise AgoraError(f"code_peek: repository not found at {repo}")
+    text = _slice_lines(_git_show(repo, commit, rel), start, end)
+    return {"ref": f"{rel}#L{start}-L{end}@{commit}", "path": rel, "start": start, "end": end,
+            "commit": commit, "text": text, "verified": True}
+
+
+def normalize_submission_blocks(raw: Any, *, repo_name: str, commits: list[str],
+                                repo_lookup: Optional[Callable[[str], Optional[Path]]]) -> Optional[list[dict[str, Any]]]:
+    """Validate optional structured submission blocks; verify every ``code_peek`` against git."""
+    if raw is None or raw == "" or raw == []:
+        return None
+    if not isinstance(raw, list) or len(raw) > 40:
+        raise AgoraError("blocks must be a list of at most 40 objects")
+    out: list[dict[str, Any]] = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise AgoraError(f"blocks[{i}] must be an object")
+        kind = str(item.get("kind") or "").strip()
+        if kind not in _BLOCK_KINDS:
+            raise AgoraError(f"blocks[{i}].kind must be one of {sorted(_BLOCK_KINDS)}")
+        bid = str(item.get("id") or f"b{i + 1}").strip()[:80]
+        title = _txt(item.get("title"), 200, f"blocks[{i}].title")
+        block: dict[str, Any] = {"id": bid, "kind": kind, "title": title}
+        if kind == "what_why":
+            block["body"] = _txt(item.get("body"), 8000, f"blocks[{i}].body", required=True)
+        elif kind == "paths":
+            paths = _list(item.get("paths"), f"blocks[{i}].paths", 80)
+            if not paths:
+                raise AgoraError(f"blocks[{i}].paths is required")
+            block["paths"] = paths
+        elif kind in ("flow", "sequence"):
+            steps = item.get("steps")
+            if not isinstance(steps, list) or not steps or len(steps) > 40:
+                raise AgoraError(f"blocks[{i}].steps must be a non-empty list (at most 40)")
+            block["steps"] = [_txt(s, 500, f"blocks[{i}].steps") for s in steps]
+            if item.get("body"):
+                block["body"] = _txt(item.get("body"), 4000, f"blocks[{i}].body")
+        else:  # code_peek
+            ref = item.get("peek") or item.get("ref")
+            if not ref:
+                raise AgoraError(f"blocks[{i}].peek is required (path#Lx-Ly@commit)")
+            name = str(item.get("repo") or repo_name or "").strip()
+            if not name:
+                raise AgoraError(f"blocks[{i}]: set repo on the task or on the block for code_peek")
+            if repo_lookup is None:
+                raise AgoraError("code_peek verification needs a repository lookup (hub repos)")
+            root = repo_lookup(name)
+            if root is None:
+                raise AgoraError(f"code_peek: unknown repo {name!r}")
+            peek = verify_code_peek(str(ref), repo=Path(root), commits=commits)
+            block["repo"] = name
+            block["peek"] = peek
+            if item.get("body"):
+                block["body"] = _txt(item.get("body"), 4000, f"blocks[{i}].body")
+        out.append(block)
+    return out
+
+
+def _format_blocks_for_message(blocks: list[dict[str, Any]]) -> str:
+    lines = ["", "Structured review blocks:"]
+    for b in blocks:
+        head = f"- [{b['id']}] {b['kind']}" + (f": {b['title']}" if b.get("title") else "")
+        lines.append(head)
+        if b["kind"] == "code_peek":
+            p = b["peek"]
+            lines.append(f"  peek {p['ref']} ({'verified' if p.get('verified') else 'unverified'})")
+            preview = "\n".join((p.get("text") or "").splitlines()[:12])
+            if preview:
+                lines.append("  ```")
+                lines.append(preview)
+                lines.append("  ```")
+        elif b["kind"] == "paths":
+            lines.append("  " + ", ".join(b.get("paths") or []))
+        elif b["kind"] in ("flow", "sequence"):
+            for step in b.get("steps") or []:
+                lines.append(f"  → {step}")
+        elif b.get("body"):
+            lines.append("  " + b["body"][:500].replace("\n", "\n  "))
+    return "\n".join(lines)
+
+
 CHECKPOINT_MAX_BYTES = 65536
 CHECKPOINT_FIELDS = {"summary": 8000, "workspace": 2000, "branch": 500, "base_head": 64, "head": 64}
 
@@ -313,13 +454,15 @@ class Agora:
                  emit: Optional[Callable[[str, dict[str, Any]], Any]] = None,
                  escalate_hook: Optional[Callable[[dict[str, Any], str, str], Any]] = None,
                  review_grace_s: float = REVIEW_GRACE_S, handover_idle_s: float = HANDOVER_IDLE_S,
-                 handover_thread_id: Optional[int] = HANDOVER_THREAD_ID):
+                 handover_thread_id: Optional[int] = HANDOVER_THREAD_ID,
+                 repo_lookup: Optional[Callable[[str], Optional[Path]]] = None):
         self.clock = clock
         self.handover_idle_s = float(handover_idle_s)
         self.handover_thread_id = handover_thread_id
         self.emit = emit or (lambda t, d: None)
         self.escalate_hook = escalate_hook
         self.review_grace_s = review_grace_s
+        self.repo_lookup = repo_lookup
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = Database(path, migrations=MIGRATIONS)
         self.db.migrate()
@@ -388,6 +531,11 @@ class Agora:
         d["reviewed_commits"] = _l(d.get("reviewed_commits"))
         d["reviewed"] = bool(d.get("reviewed"))
         d.setdefault("review_state", None)
+        try:
+            blocks = json.loads(d["submission_blocks"]) if d.get("submission_blocks") else None
+        except (TypeError, ValueError):
+            blocks = None
+        d["submission_blocks"] = blocks if isinstance(blocks, list) else None
         latest = self.db.one("SELECT * FROM task_checkpoints WHERE task_id=? ORDER BY revision DESC LIMIT 1", (d["id"],))
         d["checkpoint_summary"] = None
         if latest:
@@ -805,7 +953,12 @@ class Agora:
         return {"ok": True, "task": self._task_row(task["id"])}
 
     def task_submit(self, a: dict[str, Any]) -> dict[str, Any]:
-        """Ask for review: what changed, where (branch/commits) and how it was verified."""
+        """Ask for review: what changed, where (branch/commits) and how it was verified.
+
+        Optional ``blocks``: structured review sections (what_why, paths, code_peek, flow, sequence).
+        Each ``code_peek`` is verified against the task's repo (or the block's ``repo``) at the named commit.
+        Plain text summaries stay valid without blocks.
+        """
         summary = _txt(a.get("summary"), 20000, "summary", required=True)
         with self.db.tx():
             agent, task = self._owned(a, allow_person=False)
@@ -816,19 +969,28 @@ class Agora:
             if reviewer == agent:
                 raise AgoraError("the reviewer must be someone else")
             now = self.clock()
-            commits = _list(a.get("commits"), "commits")
+            commits = _list(a.get("commits"), "commits") or list(task["commits"] or [])
+            blocks = normalize_submission_blocks(
+                a.get("blocks"), repo_name=str(task.get("repo") or ""), commits=commits,
+                repo_lookup=self.repo_lookup)
             # A new submission asks for a new verdict: an approval given to earlier commits does not carry over to
             # what is sent now (the old verdict stays in the thread).
-            self.db.execute("UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
-                            "submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL, "
-                            "reviewed_submission_revision=NULL, submission_revision=submission_revision+1 WHERE id=?",
-                            (reviewer, a.get("branch"), _j(commits or task["commits"]), now, now, task["id"]))
+            self.db.execute(
+                "UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
+                "submission_blocks=?, submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL, "
+                "reviewed_submission_revision=NULL, submission_revision=submission_revision+1 WHERE id=?",
+                (reviewer, a.get("branch"), _j(commits or task["commits"]),
+                 json.dumps(blocks, ensure_ascii=False) if blocks is not None else None,
+                 now, now, task["id"]))
             task = self._task_row(task["id"])
             revision = task["submission_revision"]
             details = f"\n\nSubmission revision: {revision}\nCommits: {', '.join(task['commits']) or '(none)'}"
+            if blocks:
+                details += _format_blocks_for_message(blocks)
             self._msg(int(task["thread_id"]), agent, "proposal", summary + details, [reviewer] if reviewer else [])
         self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": reviewer,
-                                          "submission_revision": revision, "commits": task["commits"]})
+                                          "submission_revision": revision, "commits": task["commits"],
+                                          "blocks": len(blocks or [])})
         return {"ok": True, "task": self._task_row(task["id"])}
 
     def task_review(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -858,6 +1020,21 @@ class Agora:
                             (status, agent, 1 if verdict == "approve" else 0,
                              _j(task["commits"]) if verdict == "approve" else None, expected_revision, now, task["id"]))
             details = f"Reviewed submission revision: {expected_revision}\nCommits: {', '.join(task['commits']) or '(none)'}"
+            block_notes = a.get("block_comments")
+            if block_notes:
+                if not isinstance(block_notes, list) or len(block_notes) > 40:
+                    raise AgoraError("block_comments must be a list of at most 40 objects")
+                known = {b.get("id") for b in (task.get("submission_blocks") or []) if isinstance(b, dict)}
+                extra = ["", "Per-block notes:"]
+                for i, note in enumerate(block_notes):
+                    if not isinstance(note, dict):
+                        raise AgoraError(f"block_comments[{i}] must be an object")
+                    bid = str(note.get("block_id") or note.get("id") or "").strip()
+                    text = _txt(note.get("body"), 4000, f"block_comments[{i}].body", required=True)
+                    if known and bid and bid not in known:
+                        raise AgoraError(f"block_comments[{i}]: unknown block_id {bid!r}")
+                    extra.append(f"- [{bid or '?'}] {text}")
+                details += "\n" + "\n".join(extra)
             self._msg(int(task["thread_id"]), agent, "approve" if verdict == "approve" else "changes",
                       details + "\n\n" + body, [task["owner"]] if task.get("owner") else [])
             if agent == PERSON:
@@ -1504,14 +1681,19 @@ TOOLS: list[dict[str, Any]] = [
                             ["agent", "task_id"])},
     {"name": "hub_agora_task_submit",
      "description": "Ask for review of your task before integrating it: summary of what changed, how it was "
-                    "verified, branch/commits; optionally name the reviewer.",
+                    "verified, branch/commits; optionally name the reviewer. Optional blocks: structured review "
+                    "(what_why, paths, code_peek with path#Lx-Ly@commit verified against the task repo, flow, sequence).",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "summary": {"type": "string"}, "branch": {"type": "string"},
-                             "commits": _STRS, "reviewer": {"type": "string"}}, ["agent", "task_id", "summary"])},
+                             "commits": _STRS, "reviewer": {"type": "string"},
+                             "blocks": {"type": "array", "items": {"type": "object"}, "maxItems": 40}},
+                            ["agent", "task_id", "summary"])},
     {"name": "hub_agora_task_review",
      "description": "Review someone else's observed submission: read its submission_revision, inspect and test that "
-                    "revision, then send expected_submission_revision with verdict approve|changes and the reasons.",
+                    "revision, then send expected_submission_revision with verdict approve|changes and the reasons. "
+                    "Optional block_comments: [{block_id, body}] for per-block notes on structured submissions.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "expected_submission_revision": {"type": "integer", "minimum": 1},
-                             "verdict": {"type": "string"}, "body": {"type": "string"}},
+                             "verdict": {"type": "string"}, "body": {"type": "string"},
+                             "block_comments": {"type": "array", "items": {"type": "object"}, "maxItems": 40}},
                             ["agent", "task_id", "expected_submission_revision", "verdict", "body"])},
     {"name": "hub_agora_task_done",
      "description": "Your task is integrated: commits and result. Releases its locks. Refused while a review is "
@@ -1610,9 +1792,24 @@ class AgoraFacet(Facet):
     def __init__(self, hub: Any):
         super().__init__(hub)
         events = getattr(hub, "events", None)
+
+        def repo_lookup(name: str) -> Optional[Path]:
+            repos = getattr(hub, "repos", None)
+            if repos is None:
+                return None
+            try:
+                detail = repos.detail(name)
+            except Exception:
+                return None
+            if not detail.get("ok"):
+                return None
+            rec = detail.get("repo") or {}
+            path = rec.get("path")
+            return Path(path) if path else None
+
         self.agora = Agora(Path(hub.config.data_dir) / "agora.db",
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
-                           escalate_hook=self._notify_person)
+                           escalate_hook=self._notify_person, repo_lookup=repo_lookup)
 
         self._watch: Optional[agent_watch.AgentWatch] = None
         self._watch_lock = threading.Lock()
