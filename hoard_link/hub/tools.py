@@ -538,7 +538,7 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
                                                           for k, v in (m.get("apps") or {}).items()}}}
         st = hub.backups.status()
         st["snapshots"] = hub.backups.list_snapshots()[-20:]
-        st["sources"] = hub.backup_sources()
+        st.update(hub.backup_source_inventory())
         return {"ok": True, **st}
 
     def audit_(a: dict[str, Any]) -> Any:
