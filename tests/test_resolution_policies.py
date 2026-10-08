@@ -263,3 +263,58 @@ async def test_busy_llama_server_is_still_resolved_and_flagged():
     )
     res = await make_link(router).resolve("llm")
     assert res.provider == "llamacpp" and res.details["busy"] is True
+
+
+# ---- the person's own network: a model the Sparks already serve beats loading one on this PC ----------------------
+
+SPARKS_ITEM = {
+    "url": "http://192.168.0.185:8003/v1/chat/completions",
+    "models": ["qwen3.8-27b-nvfp4"],
+    "endpoint_id": "sparks1",
+    "endpoint_name": "Sparks · qwen38-27b-1m",
+    "category": "local",
+    "model_type": "llm",
+    "backend": "unknown",
+}
+
+
+def sparks_serving(router: Router, models=("qwen3.8-27b-nvfp4",)) -> Router:
+    return router.get(8003, "/v1/models", httpx.Response(200, json={"object": "list", "data": [{"id": m} for m in models]}))
+
+
+def test_host_scope_tells_this_machine_the_home_network_and_the_internet_apart():
+    from hoard_link._faustus import host_scope, is_local_item
+
+    assert host_scope("http://127.0.0.1:8081/v1") == "loopback" and host_scope("http://[::1]:8081") == "loopback"
+    for url in ("http://192.168.0.185:8003/v1", "http://10.100.32.2:8000", "http://172.20.1.5", "http://spark-c680.local:8003",
+                "http://nas.home.arpa", "http://[fe80::1]:80"):
+        assert host_scope(url) == "lan", url
+    for url in ("https://api.example.com/v1", "http://8.8.8.8", "http://100.64.0.1", "", None):
+        assert host_scope(url) == "remote", url
+    assert is_local_item(SPARKS_ITEM) and not is_local_item(dict(SPARKS_ITEM, category="cloud"))
+
+
+@pytest.mark.asyncio
+async def test_a_model_served_on_the_local_network_goes_before_this_pcs_gpus():
+    router = sparks_serving(llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(LLAMA_ITEM, SPARKS_ITEM))))
+    res = await make_link(router).resolve("llm")
+    assert res.resolved and res.url == SPARKS_ITEM["url"] and res.model == "qwen3.8-27b-nvfp4"
+    assert res.details["resident"] is True and res.details["endpoint_id"] == "sparks1"
+
+
+@pytest.mark.asyncio
+async def test_a_silent_or_changed_network_server_falls_back_to_this_pc():
+    base = llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(SPARKS_ITEM, LLAMA_ITEM)))
+    res = await make_link(base).resolve("llm")             # the Sparks do not answer
+    assert res.resolved and res.url == LLAMA_ITEM["url"]
+    changed = sparks_serving(llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(SPARKS_ITEM, LLAMA_ITEM))),
+                             models=("glm-5.3-flash-nvfp4",))
+    res = await make_link(changed).resolve("llm")          # they serve something else now
+    assert res.url == LLAMA_ITEM["url"]
+
+
+@pytest.mark.asyncio
+async def test_only_a_network_server_answers_and_it_is_used_without_any_lease():
+    router = sparks_serving(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(SPARKS_ITEM)))
+    res = await make_link(router).resolve("llm")
+    assert res.resolved and res.provider == "unknown" and res.api == "openai" and res.details["resident"] is True

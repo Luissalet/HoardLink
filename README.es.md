@@ -147,9 +147,13 @@ flowchart LR
    obtener el registro de servidores de modelos que usa el propio
    Faustus, y habla con ese servidor **directamente** — el mismo
    servidor, el mismo modelo residente, que es la forma real de
-   compartir. Solo se usan entradas locales (categoría `local`, URL de
-   loopback): un endpoint en la nube del registro de Faustus se ignora
-   para que los datos de la aplicación nunca salgan de la máquina. Una
+   compartir. Solo se usan entradas locales (categoría `local`) de esta
+   máquina o de la red propia (direcciones privadas y nombres `.local`,
+   como un clúster de DGX Spark junto al PC): un endpoint en la nube del
+   registro de Faustus se ignora para que los datos nunca salgan de casa.
+   Un modelo que otra máquina ya está sirviendo va antes que cualquiera que
+   este PC tenga o deba cargar en sus GPU, y solo se elige mientras su
+   `/v1/models` lo siga listando. Una
    entrada de Ollama se contrasta con el `/api/ps` de ese Ollama antes de
    declararla residente. Sin token configurado la petición va sin él (un
    Faustus con la autenticación desactivada responde igual); un 401

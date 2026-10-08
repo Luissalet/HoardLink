@@ -140,9 +140,12 @@ flowchart LR
    `GET /api/models` (with a bearer token when one is configured) for the
    model-server registry Faustus itself uses, and talks to that server
    **directly** — same server, same resident model, which is the actual
-   sharing. Only local entries (category `local`, loopback URL) are used:
-   a cloud endpoint in Faustus's registry is skipped so the app's data
-   never leaves the machine. An Ollama entry is cross-checked against
+   sharing. Only local entries (category `local`) on this machine or on the
+   person's own network (private addresses and `.local` names, such as a
+   DGX Spark cluster next to the PC) are used: a cloud endpoint in Faustus's
+   registry is skipped so the app's data never leaves home. A model another
+   machine is already serving goes before anything this PC would hold or load
+   on its own GPUs, and is only chosen while its `/v1/models` still lists it. An Ollama entry is cross-checked against
    that Ollama's `/api/ps` before it is called resident. With no token
    configured the request is sent without one (a Faustus with auth
    disabled still answers); a 401 then says a token is needed. For `tts`/`stt` it also tries Faustus's own
