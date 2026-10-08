@@ -1069,11 +1069,12 @@ class Agora:
                                 (p["owner"], p["reviewer"], now, p["task"]["id"]))
             locks_moved: list[str] = []
             locks_by_task: dict[int, list[str]] = {}
-            if owner_moved:
-                marks = ",".join("?" * len(owner_moved))
+            affected = [p["task"]["id"] for p in plan]          # owner moves and reviewer-only moves alike
+            if affected:
+                marks = ",".join("?" * len(affected))
                 live = self.db.query(
                     f"SELECT resource, ttl_s, task_id FROM locks WHERE owner=? AND expires>? AND task_id IN ({marks}) "
-                    "ORDER BY acquired, resource", (source, now, *owner_moved))
+                    "ORDER BY acquired, resource", (source, now, *affected))
                 for lk in live:
                     self.db.execute("UPDATE locks SET owner=?, expires=? WHERE resource=?",
                                     (target, now + float(lk["ttl_s"] or DEFAULT_LOCK_TTL_S), lk["resource"]))
