@@ -24,6 +24,25 @@ def test_archived_apps_are_not_synced(tmp_path):
     assert "_archivo" not in out.stdout and "Old Hoard" not in out.stdout
     assert "Tmp Hoard" not in out.stdout
 
+
+def test_temporary_checkouts_are_not_synced(tmp_path):
+    _vendored(tmp_path / "Live Hoard")
+    _vendored(tmp_path / "tmp" / "theirs")
+    out = _run("--roots", str(tmp_path), "--dry-run")
+    assert "Live Hoard" in out and "theirs" not in out
+
+
+def test_check_exits_nonzero_on_drift_without_modifying_a_copy(tmp_path):
+    folder = tmp_path / "Live Hoard"
+    _vendored(folder)
+    original = (folder / "pkg/hoard_link/__init__.py").read_bytes()
+    check = subprocess.run([sys.executable, str(SCRIPT), "--roots", str(tmp_path), "--check"], capture_output=True, text=True)
+    assert check.returncode == 1
+    assert (folder / "pkg/hoard_link/__init__.py").read_bytes() == original
+    _run("--roots", str(tmp_path))
+    check = subprocess.run([sys.executable, str(SCRIPT), "--roots", str(tmp_path), "--check"], capture_output=True, text=True)
+    assert check.returncode == 0, check.stdout
+
 def _run(*args):
     out = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stderr
