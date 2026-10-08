@@ -17,6 +17,7 @@
     none_finished: { es: "Aún no hay trabajos terminados.", en: "No finished jobs yet." },
     queued: { es: "en cola", en: "queued" }, running: { es: "en marcha", en: "running" },
     done: { es: "hecho", en: "done" }, failed: { es: "fallido", en: "failed" }, cancelled: { es: "cancelado", en: "cancelled" },
+    paused: { es: "en pausa", en: "paused" },
     stale: { es: "sin noticias", en: "stale" },
     eta: { es: "faltan", en: "left" },
     all_apps: { es: "Todas las apps", en: "All apps" },
