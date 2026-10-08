@@ -26,7 +26,10 @@ async def test_wait_idle_becomes_true_once_slot_frees_up():
         busy = calls["n"] <= 2
         return httpx.Response(200, json=[{"id": 0, "is_processing": busy}])
 
+    from tests.conftest import llama_health
+
     router = Router()
+    llama_health(8081, router=router)
     router.get(8081, "/props", props())
     router.get(8081, "/v1/models", v1_models())
     router.get(8081, "/slots", slots)
@@ -42,7 +45,10 @@ async def test_wait_idle_becomes_true_once_slot_frees_up():
 
 @pytest.mark.asyncio
 async def test_wait_idle_returns_false_after_timeout_when_always_busy():
+    from tests.conftest import llama_health
+
     router = Router()
+    llama_health(8081, router=router)
     router.get(8081, "/props", props())
     router.get(8081, "/v1/models", v1_models())
     router.get(8081, "/slots", httpx.Response(200, json=[{"id": 0, "is_processing": True}]))

@@ -48,6 +48,17 @@ def json_response(status_code: int, data) -> httpx.Response:
     return httpx.Response(status_code, json=data)
 
 
+def llama_health(port: Optional[int] = 8081, *, router: Optional["Router"] = None) -> httpx.Response:
+    """200 ``/health`` body used by fake llama-server routes.
+
+    When ``router`` is given, register ``GET {port}/health`` and return the response.
+    """
+    response = httpx.Response(200, json={"status": "ok"})
+    if router is not None:
+        router.get(port, "/health", response)
+    return response
+
+
 def refused(request: httpx.Request) -> httpx.Response:
     raise httpx.ConnectError("connection refused", request=request)
 

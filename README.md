@@ -2,6 +2,10 @@
 
 ### One shared answer to "which model server do I use right now?"
 
+Family cohesion: [ownership, overlaps and remaining gaps](docs/commons/cohesion.md).
+The Hub now audits shared-code drift and workflow prerequisites; media imports
+keep checkpoints across restarts and resume explicitly without resubmitting known jobs.
+
 **The shared model backend for agent-controlled apps: pick the
 already-loaded local server for a capability instead of loading a second
 copy of a model.**
@@ -152,13 +156,15 @@ flowchart LR
 3. **Shared servers on loopback**, probed in parallel with a 1s
    wall-clock timeout per request and cached for 30s (single-flight:
    concurrent resolutions share one probe; the probing client ignores
-   `HTTP(S)_PROXY`): llama.cpp (`8080`–`8090`, via `/props`,
+   `HTTP(S)_PROXY`): llama.cpp (`8080`–`8090`, via `/health`, `/props`,
    `/v1/models`, `/slots`), Ollama (`11434`, via `/api/ps` for **resident**
    models, `/api/tags`, `/api/show` for capabilities), a generic
    OpenAI-compatible chat server on `1234` (`llm` only), and
    ComfyUI (`8188`, `image`/`video`). A port only counts as a
-   llama-server if its `/props` carries llama-server keys. No probe ever
-   raises, whatever JSON a port answers with.
+   llama-server if `/health` returns 200 and its `/props` carries
+   llama-server keys (`/health` alone never proves identity). Per-URL
+   residency probes also use a short single-flight cache (~2.5s). No probe
+   ever raises, whatever JSON a port answers with.
 4. **Nothing** — the capability comes back `unavailable`, with the list of
    reasons collected along the way (why Faustus didn't answer, why no
    loopback server matched, etc.) so an app's Settings screen can show a
@@ -936,3 +942,7 @@ Python 3.11 to 3.13) runs the same suite with no GPU and no network.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Family expansion · 2026-10-04
+
+`hub_capability_find` searches all installed sibling manifests, including stdio-only MCP plugins such as GamerHoard. With `check=true` it checks at most eight HTTP catalogues, returns real schemas/annotations and distinguishes declarations from connectivity. It never starts apps or infers model readiness from a catalogue. `hub_recipe_plan` maps 15 cross-family workflows to actual declared capabilities and lists uncovered stages, including measured CAD, personal continuity and the games library. The Capabilities tab exposes both. These plans use existing family execution and resource services; stdio-only tools are called through Faustus MCP, not through a fabricated HTTP endpoint. Discovery does not change the Hub's web-app launcher inventory.

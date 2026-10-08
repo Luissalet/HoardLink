@@ -30,6 +30,9 @@ FAUSTUS_LLM_REGISTRY = httpx.Response(
 
 
 def llamacpp_router_with(router: Router, model: str = "from-loopback") -> Router:
+    from tests.conftest import llama_health
+
+    llama_health(8081, router=router)
     router.get(
         8081,
         "/props",
