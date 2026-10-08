@@ -679,9 +679,21 @@ def _compact(a: dict[str, Any]) -> dict[str, Any]:
 
 
 def all_tools() -> list[dict[str, Any]]:
-    """The hub's own tools plus every facet's."""
+    """The hub's own tools plus every facet's, with one schema per MCP name."""
     from . import facets as _facets
-    return catalogue() + _facets.catalogue()
+    out = catalogue() + _facets.catalogue()
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for tool in out:
+        name = str(tool.get("name") or "").strip()
+        if not name:
+            raise ValueError("agent tool catalogue contains a tool without a name")
+        if name in seen:
+            duplicates.add(name)
+        seen.add(name)
+    if duplicates:
+        raise ValueError("duplicate agent tool names: " + ", ".join(sorted(duplicates)))
+    return out
 
 
 def call(hub: Hub, name: str, arguments: dict[str, Any]) -> Any:
