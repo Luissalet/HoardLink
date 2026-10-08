@@ -135,10 +135,22 @@ def main() -> int:
     ap.add_argument("--apps", nargs="*", help="only these app ids (folder names or manifest ids)")
     ap.add_argument("--install", nargs="*", help="vendor the package into these apps where missing")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--check", action="store_true", help="read-only verification; exit 1 when copies differ")
     args = ap.parse_args()
+    args.dry_run = args.dry_run or args.check
+    # The Python contract is canonical. Mirror it before copying Node commons;
+    # dry runs report drift but never write the source or destination.
+    contract_src = SRC_PY / "_data" / "family-services.json"
+    contract_dst = SRC_JS_COMMONS / "family-services.json"
+    contract_stale = not contract_dst.is_file() or contract_src.read_bytes() != contract_dst.read_bytes()
+    if contract_stale:
+        if not args.dry_run:
+            shutil.copy2(contract_src, contract_dst)
+        else:
+            print("Node family-services.json needs regeneration [dry run]")
     wanted = {a.lower() for a in (args.apps or [])}
     install = {a.lower() for a in (args.install or [])}
-    total = 0
+    total = int(contract_stale)
     for root in args.roots:
         for folder in sorted(Path(root).iterdir()):
             if not folder.is_dir() or folder.resolve() == REPO.resolve():
@@ -146,6 +158,8 @@ def main() -> int:
             if folder.name.startswith(("_", ".")):  # _archivo, _tmp, .cache: archived or scratch, never an app
                 continue
             manifest = folder / "faustus-plugin.json"
+            if not manifest.is_file() and folder.name.lower() in {"tmp", "temp", "scratch", "discontinued"}:
+                continue  # a temporary checkout is never an installed app
             app_id = folder.name.lower()
             if manifest.is_file():
                 try:
@@ -185,7 +199,7 @@ def main() -> int:
                     print(f"  {folder.name}: server/hoard-link.js updated" + (" [dry run]" if args.dry_run else ""))
                 total += _sync_js_commons(folder, args.dry_run)
     print(f"{total} change(s)" + (" (dry run)" if args.dry_run else ""))
-    return 0
+    return int(args.check and total > 0)
 
 
 if __name__ == "__main__":
