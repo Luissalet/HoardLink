@@ -45,6 +45,7 @@ class HubConfig:
     # GPU lease settings: {"protected_gpus": [0, 1]} keeps those GPUs out of every "any" request (only a
     # request that names them gets them). Empty by default: nothing is protected until it is set.
     lease: dict[str, Any] = field(default_factory=dict)
+    resources: dict[str, Any] = field(default_factory=dict)  # cooperative CPU/RAM/IO budgets; GPU uses lease
     profiles: dict[str, Any] = field(default_factory=dict)   # name -> {apps, commands, desktop}
     backup: dict[str, Any] = field(default_factory=dict)     # {dir, exclude: [...], max_file_mb, keep, include_hub}
     events_keep: int = 20000       # rows kept in events.db after a prune
