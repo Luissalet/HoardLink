@@ -505,3 +505,81 @@ def test_http_tool_cli_and_mcp_smoke(tmp_path):
         server.shutdown()
         server.server_close()
         hub.close()
+
+
+# ---- locks that follow the reviewer role ---------------------------------------------------------------------------
+
+def _review_world(ag, n=2):
+    """claude owns n tasks (own lock each) under review by codex-bucle, who holds a notes lock tied to each; plus a
+    task-less lock of codex-bucle and an unrelated lock of the successor."""
+    for who in (OLD, NEW, "claude"):
+        ag.heartbeat({"agent": who})
+    ids = []
+    for i in range(n):
+        tid = _add(ag, "claude", f"authored {i}", f"author{i}.py")
+        ag.task_submit({"agent": "claude", "task_id": tid, "summary": "s", "commits": [f"c{i}"], "reviewer": OLD})
+        assert ag.lock({"agent": OLD, "resources": [f"path:HoardLink/review-notes{i}.md"], "task_id": tid})["ok"]
+        ids.append(tid)
+    assert ag.lock({"agent": OLD, "resources": ["merge:HoardLink"]})["ok"]
+    assert ag.lock({"agent": NEW, "resources": ["model:principal"]})["ok"]
+    ag.fake_clock.t += 31 * MIN
+    ag.heartbeat({"agent": NEW})
+    ag.heartbeat({"agent": "claude"})
+    return ids
+
+
+def _owners(ag):
+    return {lk["resource"]: lk["owner"] for lk in ag.locks()["locks"]}
+
+
+def test_reviewer_only_move_transfers_the_source_lock_tied_to_the_task(ag):
+    (tid, other) = _review_world(ag)
+    before = {lk["resource"]: lk for lk in ag.locks()["locks"]}
+    ag.fake_clock.t += 5 * MIN
+    r = ag.handover(_args(tasks=[tid]))
+    assert r["owner_moved"] == [] and r["reviewer_moved"] == [tid]
+    assert r["locks_moved"] == ["path:hoardlink/review-notes0.md"]
+    owners = _owners(ag)
+    assert owners["path:hoardlink/review-notes0.md"] == NEW
+    moved = next(lk for lk in ag.locks()["locks"] if lk["resource"] == "path:hoardlink/review-notes0.md")
+    old = before["path:hoardlink/review-notes0.md"]
+    assert moved["task_id"] == tid and moved["acquired"] == old["acquired"] and moved["expires"] == ag.fake_clock.t + moved["ttl_s"]
+    # the author's locks, the successor's own, task-less locks and other tasks' locks stay where they were
+    assert owners["path:hoardlink/author0.py"] == "claude" and owners["path:hoardlink/author1.py"] == "claude"
+    assert owners["model:principal"] == NEW and owners["merge:hoardlink"] == OLD
+    assert owners["path:hoardlink/review-notes1.md"] == OLD
+    assert _task(ag, tid)["task"]["owner"] == "claude" and _task(ag, other)["task"]["reviewer"] == OLD
+    assert "Bloqueos: path:hoardlink/review-notes0.md" in _task(ag, tid)["messages"][-1]["body"]
+    # everything at once moves the rest of the task-bound locks too, never the author's
+    ag.handover(_args())
+    owners = _owners(ag)
+    assert owners["path:hoardlink/review-notes1.md"] == NEW and owners["merge:hoardlink"] == OLD
+    assert owners["path:hoardlink/author1.py"] == "claude"
+
+
+def test_without_reviews_reviewer_only_tasks_and_their_locks_stay(ag):
+    (tid, other) = _review_world(ag)
+    before = _owners(ag)
+    r = ag.handover(_args(include_reviews=False))
+    assert r["noop"] and r["locks_moved"] == []
+    assert _owners(ag) == before and _task(ag, tid)["task"]["reviewer"] == OLD
+    # an explicit list with --no-reviews on a reviewer-only task is refused: nothing to move for it
+    with pytest.raises(AgoraError) as err:
+        ag.handover(_args(tasks=[tid], include_reviews=False))
+    assert err.value.status == 409 and _owners(ag) == before
+
+
+def test_task_subset_moves_only_the_locks_of_that_subset(ag):
+    (tid, other) = _review_world(ag)
+    mine = _add(ag, OLD, "owned by the source", "owned.py")
+    third = _add(ag, OLD, "also owned", "owned2.py")
+    ag.fake_clock.t += 31 * MIN
+    ag.heartbeat({"agent": NEW})
+    ag.heartbeat({"agent": "claude"})
+    r = ag.handover(_args(tasks=[other, mine]))
+    assert r["owner_moved"] == [mine] and r["reviewer_moved"] == [other]
+    assert sorted(r["locks_moved"]) == ["path:hoardlink/owned.py", "path:hoardlink/review-notes1.md"]
+    owners = _owners(ag)
+    assert owners["path:hoardlink/owned.py"] == NEW and owners["path:hoardlink/review-notes1.md"] == NEW
+    assert owners["path:hoardlink/owned2.py"] == OLD and owners["path:hoardlink/review-notes0.md"] == OLD
+    assert _task(ag, third)["task"]["owner"] == OLD and _task(ag, tid)["task"]["reviewer"] == OLD
