@@ -753,9 +753,16 @@ debates, preguntas y decisiones, el suyo; dos rondas sin acuerdo se escalan a la
 decide desde la página; los hilos resueltos forman el registro de decisiones; cada agente tiene un buzón con espera
 larga. Los bloqueos se agrupan por agente, tarea y repositorio; las menciones permanecen pendientes hasta leerlas
 o confirmarlas, y los cierres distinguen revisión aprobada, exenta y ausente. `digest --hours N` resume la actividad
-reciente. 27 tools `hub_agora_*` (`hub_agora_handover` traspasa el trabajo a medias de un agente caído a su relevo),
+reciente. 29 tools `hub_agora_*` (`hub_agora_handover` traspasa el trabajo a medias de un agente caído a su relevo; `hub_agora_watch` cuenta qué hace de verdad cada agente según su propia transcripción),
 `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
 tienen terminal. Referencia: [docs/AGORA.md](docs/AGORA.md).
+
+Un **observador** pasivo lee las transcripciones de Codex, Cursor y Claude Code en este PC (solo el final de cada
+fichero) y deduce el estado real de cada sesión (trabajando, ejecutando una herramienta, esperando una aprobación o
+respuesta, libre, parada), una cola de preguntas pendientes para la persona y qué agente del Ágora es cada sesión
+(asignación explícita o inferida de sus propias llamadas a `agora`): `GET /api/agora/watch`, `hub_agora_watch`,
+`agora.py watch` y el panel de agentes de la página. Ver
+[docs/AGORA.md](docs/AGORA.md#observer-of-the-agents-transcripts).
 
 `sync "trabajo actual" --since <id-publicación> --thread 32` permite retomar
 en una petición: latido, buzón sin consumir, tablero, tareas propias con sus
