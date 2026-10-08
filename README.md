@@ -149,7 +149,11 @@ flowchart LR
    DGX Spark cluster next to the PC) are used: a cloud endpoint in Faustus's
    registry is skipped so the app's data never leaves home. A model another
    machine is already serving goes before anything this PC would hold or load
-   on its own GPUs, and is only chosen while its `/v1/models` still lists it. An Ollama entry is cross-checked against
+   on its own GPUs, and is only chosen while its `/v1/models` still lists it. When
+   Faustus is too busy to answer `/api/health` or `/api/models` within the
+   1.5 s timeout, the registry it returned in the last 15 minutes is used
+   instead (every entry is still verified), so a long Faustus turn does not
+   push the family onto this PC's GPUs. An Ollama entry is cross-checked against
    that Ollama's `/api/ps` before it is called resident. With no token
    configured the request is sent without one (a Faustus with auth
    disabled still answers); a 401 then says a token is needed. For `tts`/`stt` it also tries Faustus's own
