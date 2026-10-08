@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from hoard_link.config import CapabilityConfig, LinkConfig
-from tests.conftest import Router, make_link
+from tests.conftest import Router, llama_health, make_link
 
 
 def props(model_path: str = "/models/qwen3.8-27b-q8.gguf", modalities=None, n_ctx=8192):
@@ -29,6 +29,7 @@ def slots(processing: bool):
 @pytest.mark.asyncio
 async def test_llamacpp_resolves_llm():
     router = Router()
+    llama_health(8081, router=router)
     router.get(8081, "/props", props())
     router.get(8081, "/v1/models", v1_models("qwen3.8-27b-q8-llamacpp"))
     router.get(8081, "/slots", slots(False))
@@ -47,6 +48,7 @@ async def test_llamacpp_resolves_llm():
 @pytest.mark.asyncio
 async def test_llamacpp_falls_back_to_model_path_basename_without_v1_models():
     router = Router()
+    llama_health(8085, router=router)
     router.get(8085, "/props", props(model_path="/models/qwen3.8-27b-q8.gguf"))
     link = make_link(router)
 
@@ -58,6 +60,7 @@ async def test_llamacpp_falls_back_to_model_path_basename_without_v1_models():
 @pytest.mark.asyncio
 async def test_llamacpp_busy_slot_is_reflected_in_reason():
     router = Router()
+    llama_health(8081, router=router)
     router.get(8081, "/props", props())
     router.get(8081, "/v1/models", v1_models("m"))
     router.get(8081, "/slots", slots(True))
@@ -72,6 +75,7 @@ async def test_llamacpp_busy_slot_is_reflected_in_reason():
 @pytest.mark.asyncio
 async def test_llamacpp_without_vision_modality_is_skipped_for_vision():
     router = Router()
+    llama_health(8081, router=router)
     router.get(8081, "/props", props(modalities=[]))
     router.get(8081, "/v1/models", v1_models("m"))
     link = make_link(router)
@@ -84,6 +88,7 @@ async def test_llamacpp_without_vision_modality_is_skipped_for_vision():
 @pytest.mark.asyncio
 async def test_llamacpp_with_vision_modality_resolves_vision():
     router = Router()
+    llama_health(8081, router=router)
     router.get(8081, "/props", props(modalities=["vision"]))
     router.get(8081, "/v1/models", v1_models("vl-model"))
     link = make_link(router)
@@ -235,6 +240,7 @@ async def test_llamacpp_probe_is_cached_across_resolves():
         return props()
 
     router = Router()
+    llama_health(8081, router=router)
     router.get(8081, "/props", handler)
     link = make_link(router)
 
