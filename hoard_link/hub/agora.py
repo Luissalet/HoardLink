@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..sqlkit import Database
+from . import agent_watch
 from .facets import Facet, Request
 
 PERSON = "luis"
@@ -1594,6 +1595,14 @@ _WRITE_OPS = ("checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack")
 
 
+def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """The few fields of an agent's best observed session that the board carries."""
+    if not rec:
+        return None
+    return {k: rec.get(k) for k in ("state", "since", "tool", "title", "engine", "session_key", "last_activity",
+                                    "binding", "questions")}
+
+
 class AgoraFacet(Facet):
     id = "agora"
     ui_scripts = ("agora.js",)
@@ -1605,8 +1614,72 @@ class AgoraFacet(Facet):
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person)
 
+        self._watch: Optional[agent_watch.AgentWatch] = None
+        self._watch_lock = threading.Lock()
+
     def close(self) -> None:
         self.agora.close()
+
+    @property
+    def watch(self) -> agent_watch.AgentWatch:
+        """The transcript observer (built on first use: it needs no thread, reads refresh it at most every 5 s)."""
+        with self._watch_lock:
+            if self._watch is None:
+                cfg = getattr(self.hub.config, "agent_watch", None)
+                cfg = cfg if isinstance(cfg, dict) else {}
+                kw: dict[str, Any] = {}
+                for key, cast in (("hours", float), ("max_files", int)):
+                    try:
+                        if cfg.get(key) is not None:
+                            kw[key] = cast(cfg[key])
+                    except (TypeError, ValueError):
+                        pass
+                self._watch = agent_watch.AgentWatch(
+                    roots=cfg.get("roots") if isinstance(cfg.get("roots"), dict) else None,
+                    store_path=Path(self.hub.config.data_dir) / "agent_watch.json", **kw)
+            return self._watch
+
+    def _watch_enabled(self) -> bool:
+        cfg = getattr(self.hub.config, "agent_watch", None)
+        return not (isinstance(cfg, dict) and cfg.get("enabled") is False)
+
+    def _watch_view(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        a = a or {}
+        if not self._watch_enabled():
+            return {"ok": False, "status": 404, "error": "the agent observer is disabled (hub.json agent_watch.enabled)"}
+        agent = str(a.get("agent") or "").strip().lower() or None
+        try:
+            limit = int(a.get("limit") or agent_watch.MAX_SESSIONS_OUT)
+        except (TypeError, ValueError):
+            limit = agent_watch.MAX_SESSIONS_OUT
+        force = str(a.get("refresh", "")).lower() in ("1", "true", "yes")
+        return {"ok": True, **self.watch.view(force=force, agent=agent, limit=max(1, min(limit, agent_watch.MAX_SESSIONS_OUT)))}
+
+    def _watch_bind(self, a: dict[str, Any]) -> dict[str, Any]:
+        if not self._watch_enabled():
+            return {"ok": False, "status": 404, "error": "the agent observer is disabled (hub.json agent_watch.enabled)"}
+        try:
+            return self.watch.bind(a.get("session_key"), a.get("agent"))
+        except agent_watch.WatchError as exc:
+            return {"ok": False, "status": exc.status, "error": str(exc)}
+
+    def _board(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """The Ágora board plus, per agent, what its transcripts say it is doing (``observed``)."""
+        out = self._run(self.agora.board, a or {})
+        if not out.get("ok") or not self._watch_enabled():
+            return out
+        try:
+            view = self.watch.view()
+        except Exception as exc:  # noqa: BLE001 - the board must not depend on the filesystem being readable
+            out["watch_error"] = str(exc)[:200]
+            return out
+        for ag in out.get("agents", []):
+            ag["observed"] = _observed(view["agents"].get(ag.get("id")))
+        known = {x.get("id") for x in out.get("agents", [])}
+        out["observed_only"] = {k: _observed(v) for k, v in view["agents"].items() if k not in known}
+        out["watch"] = {"questions": len(view["questions"]), "unbound": len(view["unbound"]),
+                        "sessions": len(view["sessions"])}
+        return out
 
     def _notify_person(self, thread: dict[str, Any], agent: str, question: str) -> None:
         notify = self.hub.facet("notify") if hasattr(self.hub, "facet") else None
@@ -1630,7 +1703,9 @@ class AgoraFacet(Facet):
         q = {k: v[0] for k, v in req.query.items() if v}
         ag = self.agora
         if p in ("/api/agora", "/api/agora/board"):
-            return self._run(ag.board, q)
+            return self._board(q)
+        if p == "/api/agora/watch":
+            return self._watch_view(q)
         if p == "/api/agora/inbox":
             if q.get("agent", "").lower() == PERSON and req.caller() != "ui":
                 q["peek"] = "1"
@@ -1674,6 +1749,10 @@ class AgoraFacet(Facet):
         if not p.startswith("/api/agora/"):
             return None
         op = p[len("/api/agora/"):].strip("/")
+        if op == "watch/bind":
+            if not req.caller():
+                return {"ok": False, "status": 401, "error": "send the hub's bearer token (data/mcp-token) or use the hub's page"}
+            return self._watch_bind(dict(req.body or {}))
         if op not in _WRITE_OPS:
             return {"ok": False, "status": 404, "error": f"unknown Ágora operation {op}"}
         caller = req.caller()
@@ -1694,7 +1773,7 @@ class AgoraFacet(Facet):
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
         out = []
-        for t in TOOLS:
+        for t in [*TOOLS, *agent_watch.TOOLS]:
             d = {k: v for k, v in t.items() if k != "read"}
             d["annotations"] = {"readOnlyHint": bool(t.get("read"))}
             out.append(d)
@@ -1717,7 +1796,7 @@ class AgoraFacet(Facet):
 
         return {
             "hub_agora_checkpoint": wrap(ag.checkpoint), "hub_agora_checkpoints": wrap(ag.checkpoints),
-            "hub_agora_board": wrap(ag.board), "hub_agora_inbox": wrap(ag.inbox, cap_wait=True),
+            "hub_agora_board": wrap(self._board), "hub_agora_inbox": wrap(ag.inbox, cap_wait=True),
             "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(ag.sync), "hub_agora_task_add": wrap(ag.task_add),
             "hub_agora_task_claim": wrap(ag.task_claim), "hub_agora_task_update": wrap(ag.task_update),
             "hub_agora_task_submit": wrap(ag.task_submit), "hub_agora_task_review": wrap(ag.task_review),
@@ -1729,4 +1808,5 @@ class AgoraFacet(Facet):
             "hub_agora_resolve": wrap(ag.resolve), "hub_agora_escalate": wrap(ag.escalate),
             "hub_agora_thread": wrap(ag.thread), "hub_agora_decisions": wrap(ag.decisions),
             "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(ag.digest),
+            "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
         }
