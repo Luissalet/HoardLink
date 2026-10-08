@@ -36,6 +36,12 @@ def test_run_input_and_utf8():
     assert done.stdout == "ÑANDÚ CAFÉ"
 
 
+def test_explicit_child_environment_stays_authoritative():
+    env = dict(os.environ, PYTHONIOENCODING="ascii", PYTHONUTF8="0")
+    done = proc.run([PY, "-c", "import sys; print(sys.stdout.encoding)"], env=env, timeout=20)
+    assert done.stdout.strip() == "ascii"
+
+
 def test_run_bad_bytes_are_replaced_not_raised():
     done = proc.run([PY, "-c", "import sys; sys.stdout.buffer.write(b'a\\xffb')"], timeout=20)
     assert done.stdout == "a�b"
