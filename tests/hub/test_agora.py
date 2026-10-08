@@ -11,11 +11,14 @@ from pathlib import Path
 import pytest
 
 from hoard_link.hub import tools
+from hoard_link.hub import agora as agora_mod
 from hoard_link.hub.agora import (
     Agora,
     AgoraError,
+    _normalize_repo_relpath,
     conflicts,
     normalize_resource,
+    normalize_submission_blocks,
     verify_code_peek,
 )
 
@@ -484,10 +487,10 @@ def test_structured_submit_verifies_code_peek(tmp_path):
             "agent": "claude", "task_id": tid, "summary": "with peek", "commits": [sha],
             "blocks": [
                 {"id": "why", "kind": "what_why", "title": "Why", "body": "Keep the constant exact."},
-                {"kind": "paths", "paths": ["src/hello.py"]},
+                {"id": "paths1", "kind": "paths", "paths": ["src/hello.py"]},
                 {"id": "peek1", "kind": "code_peek", "title": "Constant",
                  "peek": f"src/hello.py#L2-L2@{sha[:12]}"},
-                {"kind": "sequence", "steps": ["edit", "verify", "submit"]},
+                {"id": "seq1", "kind": "sequence", "steps": ["edit", "verify", "submit"]},
             ],
         })["task"]
         blocks = submitted["submission_blocks"]
@@ -511,5 +514,120 @@ def test_structured_submit_verifies_code_peek(tmp_path):
 def test_verify_code_peek_helper(tmp_path):
     repo = tmp_path / "R"
     sha = _git_repo(repo, {"f.txt": "one\ntwo\nthree\n"})
-    out = verify_code_peek(f"f.txt#L1-L2@{sha}", repo=repo, commits=[])
+    out = verify_code_peek(f"f.txt#L1-L2@{sha}", roots=[repo], commits=[])
     assert out["text"] == "one\ntwo" and out["verified"]
+
+
+def test_reject_duplicate_and_empty_block_ids(tmp_path):
+    with pytest.raises(AgoraError, match="unique"):
+        normalize_submission_blocks(
+            [{"id": "same", "kind": "what_why", "body": "a"},
+             {"id": "same", "kind": "what_why", "body": "b"}],
+            repo_name="X", commits=[], repo_lookup=lambda n: None)
+    with pytest.raises(AgoraError, match="empty"):
+        normalize_submission_blocks(
+            [{"id": "  ", "kind": "what_why", "body": "a"}],
+            repo_name="X", commits=[], repo_lookup=lambda n: None)
+    with pytest.raises(AgoraError, match="unknown block_id"):
+        repo = tmp_path / "R"
+        sha = _git_repo(repo, {"a.py": "x = 1\n"})
+        ag = Agora(tmp_path / "a.db", repo_lookup=lambda name: repo)
+        try:
+            tid = ag.task_add({"agent": "claude", "title": "t", "repo": "R", "claim": True})["task"]["id"]
+            ag.task_submit({"agent": "claude", "task_id": tid, "summary": "s", "commits": [sha],
+                            "blocks": [{"id": "why", "kind": "what_why", "body": "because"}]})
+            ag.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
+                            "verdict": "changes", "body": "no",
+                            "block_comments": [{"block_id": "missing", "body": "x"}]})
+        finally:
+            ag.close()
+
+
+def test_submit_conflict_when_revision_changes_during_slow_verify(tmp_path):
+    repo = tmp_path / "R"
+    sha = _git_repo(repo, {"a.py": "ok\n"})
+    ag = Agora(tmp_path / "a.db", repo_lookup=lambda name: repo if name.lower() == "r" else None)
+    gate = threading.Event()
+    entered = threading.Event()
+
+    def hook():
+        entered.set()
+        gate.wait(5)
+
+    agora_mod._GIT_SHOW_HOOK = hook
+    try:
+        tid = ag.task_add({"agent": "claude", "title": "race", "repo": "R", "claim": True})["task"]["id"]
+        result = {"err": None, "ok": None}
+
+        def slow_submit():
+            try:
+                result["ok"] = ag.task_submit({
+                    "agent": "claude", "task_id": tid, "summary": "slow", "commits": [sha],
+                    "blocks": [{"id": "p", "kind": "code_peek", "peek": f"a.py#L1-L1@{sha}"}],
+                })
+            except AgoraError as exc:
+                result["err"] = exc
+
+        th = threading.Thread(target=slow_submit)
+        th.start()
+        assert entered.wait(3)
+        # Concurrent plain submit bumps submission_revision while peek verify is paused.
+        ag.task_submit({"agent": "claude", "task_id": tid, "summary": "fast plain", "commits": [sha]})
+        gate.set()
+        th.join(5)
+        assert result["ok"] is None and result["err"] is not None
+        assert getattr(result["err"], "extra", {}).get("error_code") == "submit_conflict"
+        assert ag._task_row(tid)["submission_revision"] == 1
+        assert ag._task_row(tid)["submission_blocks"] is None
+    finally:
+        agora_mod._GIT_SHOW_HOOK = None
+        ag.close()
+
+
+def test_isolated_clone_checkout_with_matching_origin(tmp_path):
+    primary = tmp_path / "primary"
+    sha = _git_repo(primary, {"src/x.py": "valor = 'café'\n"})
+    # Bare remote so a second clone shares origin URL identity without being a worktree.
+    bare = tmp_path / "remote.git"
+    subprocess.run(["git", "clone", "--bare", str(primary), str(bare)], check=True, capture_output=True)
+    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=primary, check=True, capture_output=True)
+    isolated = tmp_path / "isolated"
+    subprocess.run(["git", "clone", str(bare), str(isolated)], check=True, capture_output=True)
+    # Commit only exists as object in both (same history); ensure accented file verifies with UTF-8.
+    ag = Agora(tmp_path / "a.db", repo_lookup=lambda name: primary if name.lower() == "demo" else None)
+    try:
+        tid = ag.task_add({"agent": "claude", "title": "iso", "repo": "Demo", "claim": True})["task"]["id"]
+        # Without checkout, primary can read the object (shared history via clone from bare).
+        # Force isolated path: make primary miss the tip by using only isolated for a new commit.
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=isolated, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=isolated, check=True, capture_output=True)
+        (isolated / "src" / "y.py").write_text("# sólo en el clon\n", encoding="utf-8")
+        subprocess.run(["git", "add", "src/y.py"], cwd=isolated, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "isolated only"], cwd=isolated, check=True, capture_output=True)
+        iso_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=isolated, check=True,
+                                 capture_output=True, text=True).stdout.strip()
+        with pytest.raises(AgoraError, match="cannot read|unknown"):
+            ag.task_submit({"agent": "claude", "task_id": tid, "summary": "no checkout", "commits": [iso_sha],
+                            "blocks": [{"id": "p", "kind": "code_peek", "peek": f"src/y.py#L1-L1@{iso_sha}"}]})
+        submitted = ag.task_submit({
+            "agent": "claude", "task_id": tid, "summary": "with checkout", "commits": [iso_sha],
+            "blocks": [{"id": "p", "kind": "code_peek", "peek": f"src/y.py#L1-L1@{iso_sha}",
+                        "checkout": str(isolated)}],
+        })["task"]
+        peek = submitted["submission_blocks"][0]["peek"]
+        assert peek["verified"] and "clon" in peek["text"] and peek["checkout"] == str(isolated.resolve())
+        # Accents from primary history still round-trip as UTF-8.
+        utf = verify_code_peek(f"src/x.py#L1-L1@{sha}", roots=[primary], commits=[])
+        assert "café" in utf["text"]
+    finally:
+        ag.close()
+
+
+def test_path_normalize_rejects_lstrip_trap():
+    # str.lstrip("./") would turn ".../secret.py" into "secret.py"; keep the prefix.
+    assert _normalize_repo_relpath(".../secret.py") == ".../secret.py"
+    assert _normalize_repo_relpath("./scripts/agora.py") == "scripts/agora.py"
+    with pytest.raises(AgoraError, match="invalid"):
+        _normalize_repo_relpath("../secret.py")
+    with pytest.raises(AgoraError, match="invalid"):
+        _normalize_repo_relpath("foo/../../secret.py")
