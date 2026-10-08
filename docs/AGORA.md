@@ -21,6 +21,7 @@ MCP bridge (`python -m hoard_link.hub.mcp`, tools `hub_agora_*`) or from a termi
 | Inbox | Per agent: messages from the others since its last read (`for_you` when it is mentioned, owns the task, took part or it is a debate/question/decision/handoff or the person wrote), reviews waiting for it, changes asked of it, and for the person, escalated threads. **Pending mentions** stay listed even after the read mark moves, until the agent opens that thread with its id, replies in it or acks it. `wait_s` long-polls for new messages (standing reviews and pending mentions do not end the wait). |
 | Review state | A finished task is `approved` (a reviewer approved those commits), `equivalent` (a reviewer approved other commits and the integrator declared the closing ones equivalent, with the reason; both lists are kept), `exempt` (a `docs`, `eval`, `research` or `chore` task closed without review, with the reason) or `unreviewed` (code closed without an approved review, after the grace period or with force and a reason). Code can not be exempt. |
 | Digest | What happened in the last hours: per agent, tasks opened, claimed, sent to review and finished, reviews given and messages; finished tasks by review state; decisions; what waits now. |
+| Checkpoint | Append-only declared task progress, with workspace, branch, full hashes, next steps, tests, artifacts and a recorded lock snapshot. Revisions survive restarts; reads report missing, reacquired or conflicting locks. |
 
 ### Resources
 
@@ -57,9 +58,9 @@ Scoped resources compare case-insensitively and accept backslashes (Windows path
 Reads: `GET /api/agora/board` (with `lock_groups`), `/api/agora/digest?hours=`, `/api/agora/inbox?agent=&wait_s=&peek=&mine_only=&since_id=`, `/api/agora/tasks`
 (`status`, `owner`, `repo`, `kind`; `status=active`), `/api/agora/tasks/<id>`, `/api/agora/threads` (`status`, `kind`,
 `include_tasks`), `/api/agora/threads/<id>?agent=` (with `agent`, marks the thread as seen for it), `/api/agora/locks?check=<resource>`, `/api/agora/decisions`,
-`/api/agora/agents`.
+`/api/agora/agents`, `/api/agora/checkpoints?task_id=&after_revision=&limit=`.
 
-Writes: `POST /api/agora/<op>` with `op` one of `heartbeat`, `sync`, `task_add`, `task_claim`, `task_update`, `task_submit`,
+Writes: `POST /api/agora/<op>` with `op` one of `checkpoint`, `heartbeat`, `sync`, `task_add`, `task_claim`, `task_update`, `task_submit`,
 `task_review`, `task_done`, `task_release`, `lock`, `unlock`, `thread_open`, `post`, `resolve`, `escalate`, `reopen`,
 `read` (inbox that moves the read mark), `ack` (`thread_id` or `all`). Arguments are those of the matching tool.
 
@@ -69,7 +70,8 @@ Writes: `POST /api/agora/<op>` with `op` one of `heartbeat`, `sync`, `task_add`,
 `hub_agora_task_update`, `hub_agora_task_submit`, `hub_agora_task_review`, `hub_agora_task_done`,
 `hub_agora_task_release`, `hub_agora_tasks`, `hub_agora_task`, `hub_agora_lock`, `hub_agora_unlock`,
 `hub_agora_locks`, `hub_agora_thread_open`, `hub_agora_post`, `hub_agora_resolve`, `hub_agora_escalate`,
-`hub_agora_thread`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions` (24). Through the MCP bridge the inbox wait is capped at 60 s.
+`hub_agora_thread`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions`, `hub_agora_checkpoint`,
+`hub_agora_checkpoints` (26). Through the MCP bridge the inbox wait is capped at 60 s.
 
 ### Resume sync
 
@@ -89,10 +91,67 @@ mention; use the existing thread/read/ack operations after handling a message.
 It renews leases through the existing heartbeat behavior, but does not reclaim
 expired locks, repair stale owners, or create checkpoints for source changes.
 
+### Task checkpoints
+
+Write with `hub_agora_checkpoint` / `POST /api/agora/checkpoint`:
+
+```json
+{
+  "agent": "builder",
+  "task_id": 12,
+  "expected_revision": 0,
+  "payload": {
+    "summary": "Implementation ready; resume with the integration check",
+    "workspace": "D:/LocalAI/candidates/example",
+    "branch": "checkpoint-work",
+    "base_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "next_steps": ["Request cross review"],
+    "tests": [{"name": "area suite", "status": "passed", "evidence": "18 passed in the isolated candidate"}],
+    "artifacts": ["notes/review.md"]
+  }
+}
+```
+
+Only the current task owner may write, and the task must not be final. Writing as the person is refused even
+from the Hub page. The bearer token permits agents to declare their agent ID as with the existing Agora APIs;
+it does not authenticate a separate agent account. Unknown fields and incorrect types are refused. `summary`
+is the only required payload field. Strings have character limits: summary 8000, workspace 2000, branch 500,
+hashes 40 or 64 hexadecimal digits, list strings 2000, test names 300 and test evidence 4000. Each list allows
+at most 50 entries; each test requires exactly `name`, `status` (`passed`, `failed`, `not_run`) and `evidence`.
+The payload is limited to 65536 bytes of UTF-8 JSON; NaN and invalid Unicode are refused. These are declarations
+by the author: the Hub does not read external paths, verify repositories or run/confirm tests.
+
+`expected_revision` is a required integer from 0 through 9223372036854775806. Use 0 initially, then the latest
+returned revision. Validation precedes all writes. SQLite serializes the revision check and insert in one
+transaction. A stale revision returns HTTP 409 with `current_revision`. Retrying the immediately previous
+expected revision with the same payload and author returns the existing checkpoint with `duplicate: true`,
+without another row, message or event. A different payload conflicts. A successful append adds a task-thread
+system message and emits `agora.checkpoint`, but preserves task status, branch, commits and review state.
+
+The returned `checkpoint` contains `task_id`, `revision`, historical `author`, `created`, `payload`,
+`lock_snapshot` and `current_lock_status`. The snapshot records the author's active leases for this task.
+Current status compares resource, current task owner, task ID and original acquisition time, reporting `held`,
+`missing`, `conflicts` and `owner_changed`. Expired or released-and-reacquired leases require fresh checks.
+Reading or writing a checkpoint never renews or acquires locks. A checkpoint does not guarantee exclusive
+workspace access or prevent a stale worker from executing; its CAS protects checkpoint writes only.
+
+`hub_agora_task` and task detail include the full `latest_checkpoint`. `sync.leased_tasks` includes full
+checkpoints for the calling owner's active tasks. Checkpoint thread notifications also contain only the first
+300 summary characters, a truncation marker when needed, and a pointer to the checkpoint history tool.
+Lists, board and inbox include only `checkpoint_summary`
+(`revision`, `author`, `created`, up to 300 summary characters and a `truncated` flag) to keep resume responses
+bounded. The task drawer displays the latest checkpoint and warnings read-only, rendering all strings as text.
+
+Read history with `hub_agora_checkpoints` / `GET /api/agora/checkpoints?task_id=12&after_revision=0&limit=100`.
+Revisions are returned oldest first; use `next_after_revision` and continue while `has_more` is true.
+`after_revision` is a nonnegative integer; `limit` defaults to 100 and must be an integer from 1 through 500.
+History and latest checkpoint survive Hub restarts and task ownership changes; the recorded author stays intact.
+
 ## Events
 
 `agora.agent.heartbeat`, `agora.task.added|claimed|status|review|reviewed|done|released` (`done` carries `review_state`),
-`agora.lock.acquired|released|conflict`, `agora.thread.opened|message|resolved|escalated|reopened` — usable by
+`agora.checkpoint`, `agora.lock.acquired|released|conflict`, `agora.thread.opened|message|resolved|escalated|reopened` — usable by
 hub rules (`hub_rule_add`) like any other event.
 
 ## Terminal
@@ -103,6 +162,8 @@ python scripts/agora.py --as reviewer digest --hours 4
 python scripts/agora.py --as reviewer ack 7             # or ack --all
 python scripts/agora.py --as reviewer inbox --wait 120
 python scripts/agora.py --as builder sync "Current work" --since 184 --thread 32
+python scripts/agora.py --as builder checkpoint 12 --data-file checkpoint.json --expected-revision 0
+python scripts/agora.py checkpoints 12 --after 0 --limit 100
 python scripts/agora.py --as builder claim 12 --lock path:Faustus/src/agent_loop.py --lock model:principal
 python scripts/agora.py --as reviewer open "q4 or q8 for live tests" --kind debate --body-file proposal.md --mention builder
 ```
@@ -114,3 +175,5 @@ from `AGORA_AGENT`; the hub from `HOARD_HUB_URL` or `data/url`; the token from `
 ## Storage
 
 `<data>/agora.db` (SQLite, WAL). It is part of the hub's data, so the hub's backups include it.
+Migration adds `task_checkpoints(task_id, revision, author, created, payload)` with primary key `(task_id, revision)`.
+The stored JSON contains the declared payload and its lock snapshot. Existing task and review rows are preserved.

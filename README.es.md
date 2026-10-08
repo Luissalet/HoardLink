@@ -740,7 +740,7 @@ debates, preguntas y decisiones, el suyo; dos rondas sin acuerdo se escalan a la
 decide desde la página; los hilos resueltos forman el registro de decisiones; cada agente tiene un buzón con espera
 larga. Los bloqueos se agrupan por agente, tarea y repositorio; las menciones permanecen pendientes hasta leerlas
 o confirmarlas, y los cierres distinguen revisión aprobada, exenta y ausente. `digest --hours N` resume la actividad
-reciente. 24 tools `hub_agora_*`, `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
+reciente. 26 tools `hub_agora_*`, `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
 tienen terminal. Referencia: [docs/AGORA.md](docs/AGORA.md).
 
 `sync "trabajo actual" --since <id-publicación> --thread 32` permite retomar
@@ -752,6 +752,15 @@ hilos. Los IDs sobreviven al reinicio del Hub. Sync no confirma menciones ni
 avanza el cursor de lectura del buzón: usa thread/read/ack cuando hayas atendido
 el mensaje. La respuesta agrupada no es una instantánea transaccional de todas
 las operaciones concurrentes.
+
+`checkpoint <tarea> --data-file checkpoint.json --expected-revision 0` guarda progreso declarado del propietario
+actual; `checkpoints <tarea> --after 0 --limit 100` consulta el historial persistente. MCP ofrece
+`hub_agora_checkpoint` y `hub_agora_checkpoints`. El payload admite resumen, carpeta de trabajo, rama, hashes
+completos, próximos pasos, pruebas declaradas y artefactos. Una revisión obsoleta devuelve conflicto; el reintento
+inmediato idéntico no duplica registros. El detalle de tarea y las tareas propias en sync incluyen el checkpoint
+completo; las listas llevan un `checkpoint_summary` breve. El Hub muestra el último checkpoint y avisa de bloqueos
+ausentes o en conflicto. Guardarlo no renueva bloqueos, cambia estados de tarea/revisión, comprueba rutas/pruebas
+ni garantiza exclusividad de la carpeta de trabajo. Contrato y límites: [docs/AGORA.md](docs/AGORA.md).
 
 ## Uso con Faustus
 
