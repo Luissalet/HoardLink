@@ -22,6 +22,7 @@ from hoard_link.hub.server import make_server
 
 from .conftest import free_port
 from .test_lease import FakeGpus
+from ._hub_fakes import wait_for
 
 
 @pytest.fixture
@@ -85,16 +86,19 @@ async def test_async_wait_and_cancel(live_hub):
     hub, url = live_hub
     hub.leases.request(owner="comfy", vram_mb=22000, gpu=0)
     task = asyncio.ensure_future(lease(vram_mb=20000, gpu=0, hub_url=url).aacquire())
-    await asyncio.sleep(0.5)
-    assert len(hub.leases.status()["queue"]) == 1
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    for _ in range(40):
-        if not hub.leases.status()["queue"]:
-            break
-        await asyncio.sleep(0.05)
-    assert hub.leases.status()["queue"] == []
+    try:
+        # aacquire does health + request over HTTP; under suite load a fixed 0.5s sleep can
+        # observe an empty queue before the first POST lands. Wait for the queued state.
+        assert await asyncio.to_thread(wait_for, lambda: len(hub.leases.status()["queue"]) == 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert await asyncio.to_thread(wait_for, lambda: hub.leases.status()["queue"] == [])
+    finally:
+        if not task.done():
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
 
 
 def _fake_gpus():
