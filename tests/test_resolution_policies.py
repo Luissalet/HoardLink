@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from hoard_link.config import CapabilityConfig, LinkConfig
-from tests.conftest import FakeClock, Router, make_link
+from tests.conftest import FakeClock, Router, llama_health, make_link
 
 HEALTHY = httpx.Response(200, json={"status": "healthy"})
 
@@ -26,6 +26,7 @@ LLAMA_ITEM = {
 
 
 def llama_ready(router: Router, model: str = "qwen3.8-27b-q8-llamacpp") -> Router:
+    llama_health(8081, router=router)
     router.get(8081, "/props", httpx.Response(200, json={
         "model_path": f"C:/models/{model}.gguf",
         "default_generation_settings": {},
@@ -140,6 +141,7 @@ async def test_wait_idle_works_for_a_llama_server_from_faustus_registry():
         Router()
         .get(7000, "/api/health", HEALTHY)
         .get(7000, "/api/models", registry(LLAMA_ITEM))
+        .get(8081, "/health", llama_health())
         .get(8081, "/props", httpx.Response(200, json={"model_path": "m.gguf"}))
         .get(8081, "/slots", httpx.Response(200, json=[{"is_processing": True}]))
     )
@@ -153,6 +155,7 @@ async def test_wait_idle_works_for_a_llama_server_from_faustus_registry():
 async def test_wait_idle_works_for_explicit_llamacpp_url():
     router = (
         Router()
+        .get(8083, "/health", llama_health())
         .get(8083, "/props", httpx.Response(200, json={"model_path": "m.gguf"}))
         .get(8083, "/slots", httpx.Response(200, json=[{"is_processing": False}]))
     )
@@ -162,7 +165,11 @@ async def test_wait_idle_works_for_explicit_llamacpp_url():
 
 @pytest.mark.asyncio
 async def test_windows_model_path_gives_file_name():
-    router = Router().get(8081, "/props", httpx.Response(200, json={"model_path": "C:\\models\\qwen-27b.gguf"}))
+    router = (
+        Router()
+        .get(8081, "/health", llama_health())
+        .get(8081, "/props", httpx.Response(200, json={"model_path": "C:\\models\\qwen-27b.gguf"}))
+    )
     res = await make_link(router).resolve("llm")
     assert res.model == "qwen-27b.gguf"
 
@@ -250,6 +257,7 @@ async def test_preferred_model_not_resident_falls_back_and_says_so():
 async def test_busy_llama_server_is_still_resolved_and_flagged():
     router = (
         Router()
+        .get(8081, "/health", llama_health())
         .get(8081, "/props", httpx.Response(200, json={"model_path": "m.gguf"}))
         .get(8081, "/slots", httpx.Response(200, json=[{"is_processing": False}, {"is_processing": True}]))
     )

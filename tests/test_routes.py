@@ -14,7 +14,7 @@ from hoard_link import routes as routes_mod
 from hoard_link.config import CapabilityConfig, LinkConfig
 from hoard_link.link import _prefer_many
 from hoard_link.routes import Routes, load_routes, names_match
-from tests.conftest import Router, make_link
+from tests.conftest import Router, llama_health, make_link
 from tests.test_resolution_policies import HEALTHY, ollama_router, registry
 from tests.test_resolve_loopback import props, v1_models
 
@@ -286,8 +286,11 @@ async def test_explicit_url_is_never_overridden(tmp_path):
 # ---- Link: several llama.cpp servers ----------------------------------------------------------
 
 def two_llamas(modalities=(None, None)):
+    from tests.conftest import llama_health
+
     router = Router()
     for port, name, mods in ((8081, "model-a", modalities[0]), (8082, "model-b", modalities[1])):
+        llama_health(port, router=router)
         router.get(port, "/props", props(model_path=f"/models/{name}-q8.gguf", modalities=mods))
         router.get(port, "/v1/models", v1_models(name))
     return router

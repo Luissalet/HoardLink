@@ -29,6 +29,9 @@ EMPTY_REGISTRY = httpx.Response(200, json={"items": []})
 
 
 def llamacpp_ready(router: Router, port: int = 8081, model: str = "qwen3.8-27b-q8-llamacpp") -> Router:
+    from tests.conftest import llama_health
+
+    llama_health(port, router=router)
     router.get(port, "/props", httpx.Response(200, json={
         "model_path": f"C:/models/{model}.gguf",
         "default_generation_settings": {},

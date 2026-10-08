@@ -75,6 +75,9 @@ def _llamacpp_registry(url: str = "http://127.0.0.1:8081/v1/chat/completions", m
 
 
 def _llamacpp_probe_routes(router: Router, port: int = 8081, *, model: str = "model.gguf") -> Router:
+    from tests.conftest import llama_health
+
+    llama_health(port, router=router)
     router.get(port, "/props", httpx.Response(200, json={
         "model_path": f"C:/models/{model}",
         "default_generation_settings": {},
@@ -167,6 +170,8 @@ async def test_faustus_registry_llamacpp_probe_uses_real_http_and_custom_v1_url(
             seen.append(self.path)
             if self.path == "/api/models":
                 payload = _llamacpp_registry(f"{base}/v1/chat/completions", "served.gguf")
+            elif self.path == "/health":
+                payload = {"status": "ok"}
             elif self.path == "/props":
                 payload = {"model_path": "C:/models/served.gguf", "default_generation_settings": {}}
             elif self.path == "/v1/models":
@@ -211,7 +216,7 @@ async def test_faustus_registry_llamacpp_probe_uses_real_http_and_custom_v1_url(
             assert result["llm"]["provider"] == "llamacpp"
             service.close()
         assert links
-        assert {"/api/models", "/props", "/v1/models", "/slots"}.issubset(set(seen))
+        assert {"/api/models", "/health", "/props", "/v1/models", "/slots"}.issubset(set(seen))
     finally:
         server.shutdown()
         server.server_close()

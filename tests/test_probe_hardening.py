@@ -126,6 +126,7 @@ async def test_status_probes_each_server_once_single_flight():
 
     link = make_link(counting)
     await link.status()
+    assert hits.get("8081/health", 0) + hits.get("8081/props", 0) >= 1
     assert hits["8081/props"] == 1
     assert hits["11434/api/ps"] == 1
     assert hits["7000/api/health"] == 1
