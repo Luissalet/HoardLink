@@ -89,6 +89,11 @@ MIGRATIONS = [
     ALTER TABLE tasks ADD COLUMN reviewed_commits TEXT;
     UPDATE tasks SET reviewed_commits=commits WHERE reviewed=1 AND status='approved';
     """,
+    """
+    CREATE TABLE task_checkpoints (task_id INTEGER NOT NULL REFERENCES tasks(id), revision INTEGER NOT NULL,
+                                  author TEXT NOT NULL, created REAL NOT NULL, payload TEXT NOT NULL,
+                                  PRIMARY KEY(task_id, revision));
+    """,
 ]
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
@@ -232,6 +237,61 @@ def _list(value: Any, field: str, limit: int = 50) -> list[str]:
     return [str(v).strip() for v in value if str(v).strip()]
 
 
+CHECKPOINT_MAX_BYTES = 65536
+CHECKPOINT_FIELDS = {"summary": 8000, "workspace": 2000, "branch": 500, "base_head": 64, "head": 64}
+
+
+def _checkpoint_int(value: Any, field: str, minimum: int = 0, maximum: int = 9_223_372_036_854_775_807) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise AgoraError(f"{field} must be an integer in {minimum}..{maximum}")
+    return value
+
+
+def _checkpoint_text(value: Any, field: str, limit: int, *, required: bool = False) -> str:
+    if not isinstance(value, str) or len(value) > limit or (required and not value.strip()):
+        raise AgoraError(f"{field} must be a string of at most {limit} characters" + (" (non-empty)" if required else ""))
+    return value
+
+
+def _checkpoint_payload(value: Any) -> dict[str, Any]:
+    """Declared evidence only: paths, hashes and tests are never inspected or executed."""
+    if not isinstance(value, dict) or set(value) - (set(CHECKPOINT_FIELDS) | {"next_steps", "tests", "artifacts"}):
+        raise AgoraError("payload must be an object with only checkpoint fields")
+    out = {"summary": _checkpoint_text(value.get("summary"), "summary", 8000, required=True)}
+    for key, limit in CHECKPOINT_FIELDS.items():
+        if key in value:
+            out[key] = _checkpoint_text(value[key], key, limit)
+            if key in ("base_head", "head") and not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", out[key]):
+                raise AgoraError(f"{key} must be a full 40 or 64 digit hexadecimal SHA")
+    for key in ("next_steps", "artifacts"):
+        if key in value:
+            items = value[key]
+            if not isinstance(items, list) or len(items) > 50:
+                raise AgoraError(f"{key} must be a list of at most 50 strings")
+            out[key] = [_checkpoint_text(item, key, 2000) for item in items]
+    if "tests" in value:
+        tests = value["tests"]
+        if not isinstance(tests, list) or len(tests) > 50:
+            raise AgoraError("tests must be a list of at most 50 objects")
+        out["tests"] = []
+        for test in tests:
+            if not isinstance(test, dict) or set(test) != {"name", "status", "evidence"}:
+                raise AgoraError("each test requires exactly name, status and evidence")
+            name = _checkpoint_text(test["name"], "test.name", 300, required=True)
+            status = _checkpoint_text(test["status"], "test.status", 20)
+            if status not in ("passed", "failed", "not_run"):
+                raise AgoraError("test.status must be passed, failed or not_run")
+            out["tests"].append({"name": name, "status": status,
+                                 "evidence": _checkpoint_text(test["evidence"], "test.evidence", 4000)})
+    try:
+        size = len(json.dumps(out, ensure_ascii=False, allow_nan=False).encode("utf-8"))
+    except (ValueError, UnicodeError):
+        raise AgoraError("payload must be valid UTF-8 JSON without NaN") from None
+    if size > CHECKPOINT_MAX_BYTES:
+        raise AgoraError(f"payload exceeds {CHECKPOINT_MAX_BYTES} UTF-8 JSON bytes")
+    return out
+
+
 class Agora:
     """The store and every operation. Thread-safe; ``clock`` is injectable for tests."""
 
@@ -292,7 +352,7 @@ class Agora:
         row = self.db.one("SELECT * FROM tasks WHERE id=?", (tid,))
         if row is None:
             raise AgoraError(f"no task {tid}", 404)
-        return self._task_dict(row)
+        return self._task_dict(row, full_checkpoint=True)
 
     def _thread_row(self, thread_id: Any) -> dict[str, Any]:
         try:
@@ -304,14 +364,97 @@ class Agora:
             raise AgoraError(f"no thread {tid}", 404)
         return dict(row)
 
-    def _task_dict(self, row: Any) -> dict[str, Any]:
+    def _task_dict(self, row: Any, *, full_checkpoint: bool = False) -> dict[str, Any]:
         d = dict(row)
         d["paths"] = _l(d.get("paths"))
         d["commits"] = _l(d.get("commits"))
         d["reviewed_commits"] = _l(d.get("reviewed_commits"))
         d["reviewed"] = bool(d.get("reviewed"))
         d.setdefault("review_state", None)
+        latest = self.db.one("SELECT * FROM task_checkpoints WHERE task_id=? ORDER BY revision DESC LIMIT 1", (d["id"],))
+        d["checkpoint_summary"] = None
+        if latest:
+            summary = json.loads(latest["payload"])["payload"]["summary"]
+            d["checkpoint_summary"] = {"revision": latest["revision"], "author": latest["author"],
+                                       "created": latest["created"], "summary": summary[:300], "truncated": len(summary) > 300}
+        if full_checkpoint:
+            d["latest_checkpoint"] = self._checkpoint_dict(latest, d.get("owner")) if latest else None
         return d
+
+    def _checkpoint_dict(self, row: Any, current_owner: Optional[str]) -> dict[str, Any]:
+        d = dict(row)
+        stored = json.loads(d.pop("payload"))
+        d.update(stored)
+        live = [dict(r) for r in self.db.query("SELECT * FROM locks WHERE expires>?", (self.clock(),))]
+        held, missing, clashes = [], [], []
+        for snapshot in d["lock_snapshot"]:
+            resource = snapshot["resource"]
+            exact = next((lk for lk in live if lk["resource"] == resource and lk["owner"] == current_owner
+                          and lk["task_id"] == d["task_id"] and lk["acquired"] == snapshot["acquired"]
+                          and lk["owner"] == snapshot["owner"]), None)
+            if exact:
+                held.append(exact)
+            else:
+                missing.append(resource)
+            for lk in live:
+                if conflicts(resource, lk["resource"]) and (lk["owner"] != current_owner or lk["task_id"] != d["task_id"]):
+                    clashes.append({"resource": resource, "held": lk["resource"], "owner": lk["owner"],
+                                    "task_id": lk["task_id"], "expires": lk["expires"]})
+        d["current_lock_status"] = {"owner": current_owner, "held": held, "missing": missing, "conflicts": clashes,
+                                    "owner_changed": current_owner != d["author"], "checked_at": self.clock()}
+        return d
+
+    def checkpoint(self, a: dict[str, Any]) -> dict[str, Any]:
+        agent = self._agent(a.get("agent"))
+        if set(a) - {"agent", "task_id", "expected_revision", "payload"}:
+            raise AgoraError("unknown checkpoint argument")
+        task_id = _checkpoint_int(a.get("task_id"), "task_id", 1)
+        expected = _checkpoint_int(a.get("expected_revision"), "expected_revision", maximum=9_223_372_036_854_775_806)
+        payload = _checkpoint_payload(a.get("payload"))
+        duplicate = False
+        with self.db.tx():
+            task = self._task_row(task_id)
+            if task["owner"] != agent:
+                raise AgoraError("only the current task owner may checkpoint", 403)
+            if task["status"] in FINAL:
+                raise AgoraError("a final task cannot receive checkpoints", 409)
+            latest = task["latest_checkpoint"]
+            revision = latest["revision"] if latest else 0
+            if expected != revision:
+                if latest and expected == revision - 1 and latest["author"] == agent and latest["payload"] == payload:
+                    duplicate = True
+                else:
+                    raise AgoraError("checkpoint revision conflict", 409, current_revision=revision)
+            if not duplicate:
+                snapshot = [dict(r) for r in self.db.query(
+                    "SELECT * FROM locks WHERE owner=? AND task_id=? AND expires>? ORDER BY resource",
+                    (agent, task_id, self.clock()))]
+                self.db.execute("INSERT INTO task_checkpoints(task_id,revision,author,created,payload) VALUES(?,?,?,?,?)",
+                                (task_id, revision + 1, agent, self.clock(),
+                                 json.dumps({"payload": payload, "lock_snapshot": snapshot}, ensure_ascii=False, allow_nan=False)))
+                preview = payload['summary'][:300]
+                if len(payload['summary']) > 300:
+                    preview += "…"
+                self._system(task, f"Checkpoint r{revision + 1}: {preview} "
+                             f"[hub_agora_checkpoints task_id={task_id}]", agent)
+            row = self.db.one("SELECT * FROM task_checkpoints WHERE task_id=? ORDER BY revision DESC LIMIT 1", (task_id,))
+            result = self._checkpoint_dict(row, task["owner"])
+        if not duplicate:
+            self._bump("agora.checkpoint", {"task_id": task_id, "revision": result["revision"], "author": agent})
+        return {"ok": True, "checkpoint": result, "duplicate": duplicate}
+
+    def checkpoints(self, a: dict[str, Any]) -> dict[str, Any]:
+        if set(a) - {"task_id", "after_revision", "limit"}:
+            raise AgoraError("unknown checkpoints argument")
+        task_id = _checkpoint_int(a.get("task_id"), "task_id", 1)
+        after = _checkpoint_int(a.get("after_revision", 0), "after_revision")
+        limit = _checkpoint_int(a.get("limit", 100), "limit", 1, 500)
+        task = self._task_row(task_id)
+        rows = self.db.query("SELECT * FROM task_checkpoints WHERE task_id=? AND revision>? ORDER BY revision LIMIT ?",
+                             (task_id, after, limit + 1))
+        items = [self._checkpoint_dict(row, task["owner"]) for row in rows[:limit]]
+        return {"ok": True, "task_id": task_id, "checkpoints": items, "has_more": len(rows) > limit,
+                "next_after_revision": items[-1]["revision"] if items else after}
 
     def _msg(self, thread_id: int, author: str, kind: str, body: str, mentions: Optional[list[str]] = None) -> int:
         now = self.clock()
@@ -502,6 +645,8 @@ class Agora:
         leased_tasks = self.tasks({"owner": agent, "status": "active", "limit": 500})["tasks"]
         now = self.clock()
         for task in leased_tasks:
+            latest = self.db.one("SELECT * FROM task_checkpoints WHERE task_id=? ORDER BY revision DESC LIMIT 1", (task["id"],))
+            task["latest_checkpoint"] = self._checkpoint_dict(latest, agent) if latest else None
             task["locks"] = [dict(r) for r in self.db.query(
                 "SELECT resource, note, expires FROM locks WHERE task_id=? AND owner=? AND expires>? ORDER BY acquired",
                 (task["id"], agent, now))]
@@ -1087,7 +1232,32 @@ def _schema(props: dict[str, Any], required: list[str]) -> dict[str, Any]:
     return {"type": "object", "properties": props, "required": required, "additionalProperties": False}
 
 
+_CHECKPOINT_SCHEMA = _schema({
+    **{key: {"type": "string", "maxLength": limit, **({"minLength": 1} if key == "summary" else {}),
+              **({"pattern": "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"} if key in ("base_head", "head") else {})}
+       for key, limit in CHECKPOINT_FIELDS.items()},
+    "next_steps": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
+    "artifacts": {"type": "array", "maxItems": 50, "items": {"type": "string", "maxLength": 2000}},
+    "tests": {"type": "array", "maxItems": 50, "items": _schema({
+        "name": {"type": "string", "minLength": 1, "maxLength": 300},
+        "status": {"type": "string", "enum": ["passed", "failed", "not_run"]},
+        "evidence": {"type": "string", "maxLength": 4000}}, ["name", "status", "evidence"])}}, ["summary"])
+
+
 TOOLS: list[dict[str, Any]] = [
+    {"name": "hub_agora_checkpoint",
+     "description": "Append declared task progress for its current owner. expected_revision is required (0 initially); "
+                    "stale writes conflict, exact immediate retries are idempotent. No paths or tests are verified, "
+                    "no locks renewed or task/review state changed. Payload <=65536 UTF-8 JSON bytes.",
+     "inputSchema": _schema({"agent": _A, "task_id": {"type": "integer", "minimum": 1},
+                             "expected_revision": {"type": "integer", "minimum": 0, "maximum": 9_223_372_036_854_775_806},
+                             "payload": _CHECKPOINT_SCHEMA}, ["agent", "task_id", "expected_revision", "payload"])},
+    {"name": "hub_agora_checkpoints", "read": True,
+     "description": "Read append-only task checkpoints after a revision, oldest first, with current lock warnings. "
+                    "Persist next_after_revision for pagination. Evidence is declared by the author.",
+     "inputSchema": _schema({"task_id": {"type": "integer", "minimum": 1},
+                             "after_revision": {"type": "integer", "minimum": 0},
+                             "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, ["task_id"])},
     {"name": "hub_agora_board", "read": True,
      "description": "Ágora (shared workspace of the coding agents and the person): agents and what they do, tasks by status, "
                     "active locks, open/escalated threads and recent decisions. Read this when you start a session.",
@@ -1205,7 +1375,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _schema({"limit": {"type": "integer"}}, [])},
 ]
 
-_WRITE_OPS = ("heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
+_WRITE_OPS = ("checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack")
 
 
@@ -1254,6 +1424,15 @@ class AgoraFacet(Facet):
             return self._run(ag.inbox, q)
         if p == "/api/agora/tasks":
             return self._run(ag.tasks, q)
+        if p == "/api/agora/checkpoints":
+            # HTTP query parameters are text; the store/MCP contract remains strictly typed.
+            for key in ("task_id", "after_revision", "limit"):
+                if key in q and re.fullmatch(r"[0-9]+", q[key]):
+                    try:
+                        q[key] = int(q[key])
+                    except ValueError:
+                        pass
+            return self._run(ag.checkpoints, q)
         if p.startswith("/api/agora/tasks/"):
             return self._run(ag.task, {"task_id": p.rsplit("/", 1)[1]})
         if p == "/api/agora/threads":
@@ -1290,6 +1469,8 @@ class AgoraFacet(Facet):
         if caller == "ui":
             args.setdefault("agent", PERSON)
             args["_person"] = str(args.get("agent", "")).lower() == PERSON
+        if op == "checkpoint":
+            args.pop("_person", None)
         if op == "read":
             args["peek"] = False
             return self._run(self.agora.inbox, args)
@@ -1320,6 +1501,7 @@ class AgoraFacet(Facet):
             return call
 
         return {
+            "hub_agora_checkpoint": wrap(ag.checkpoint), "hub_agora_checkpoints": wrap(ag.checkpoints),
             "hub_agora_board": wrap(ag.board), "hub_agora_inbox": wrap(ag.inbox, cap_wait=True),
             "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(ag.sync), "hub_agora_task_add": wrap(ag.task_add),
             "hub_agora_task_claim": wrap(ag.task_claim), "hub_agora_task_update": wrap(ag.task_update),

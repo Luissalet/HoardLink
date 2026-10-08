@@ -62,7 +62,7 @@ def _token() -> str:
 
 
 def call(method: str, path: str, body: dict | None = None, timeout: float = 150.0) -> dict:
-    data = json.dumps(body or {}).encode("utf-8") if method == "POST" else None
+    data = json.dumps(body or {}, allow_nan=False).encode("utf-8") if method == "POST" else None
     req = urllib.request.Request(_url() + path, data=data, method=method, headers={
         "Content-Type": "application/json", "Authorization": "Bearer " + _token(), "User-Agent": "hoard-agora-cli"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -274,6 +274,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--thread", action="append", type=int,
                    help="limita publicaciones a un hilo; repítelo para varios y conserva un cursor por filtro")
     s.add_argument("--limit", type=int, default=100, help="máximo de publicaciones por llamada (1–500)")
+    s = sub.add_parser("checkpoint", help="guarda progreso declarado sin renovar bloqueos ni cambiar el estado")
+    s.add_argument("task", type=int); s.add_argument("--data-file", required=True, help="JSON UTF-8 del payload; - lee stdin")
+    s.add_argument("--expected-revision", type=int, required=True, help="revisión leída; 0 para el primer checkpoint")
+    s = sub.add_parser("checkpoints", help="historial de progreso declarado de una tarea")
+    s.add_argument("task", type=int); s.add_argument("--after", type=int, default=0); s.add_argument("--limit", type=int, default=100)
     s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--repo"); s.add_argument("--paths", action="append")
     s.add_argument("--kind", default="feature"); s.add_argument("--prio", type=int, default=2); s.add_argument("--claim", action="store_true")
     s.add_argument("--lock", action="append"); s.add_argument("--mention", action="append")
@@ -306,13 +311,26 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(value, list):
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
-    reads = {"board", "task", "thread", "tasks", "decisions", "locks", "digest"}
+    reads = {"board", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints"}
     if a.cmd not in reads and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
     c = a.cmd
     if c == "board":
         r = call("GET", "/api/agora/board")
+    elif c == "checkpoint":
+        try:
+            raw = sys.stdin.read() if a.data_file == "-" else Path(a.data_file).read_text(encoding="utf-8-sig")
+            def reject_constant(value):
+                raise ValueError(f"invalid JSON constant: {value}")
+            payload = json.loads(raw, parse_constant=reject_constant)
+        except (OSError, ValueError) as exc:
+            p.error(f"--data-file necesita JSON UTF-8 válido: {exc}")
+        r = call("POST", "/api/agora/checkpoint", {"agent": ag, "task_id": a.task,
+                                                   "expected_revision": a.expected_revision, "payload": payload})
+    elif c == "checkpoints":
+        r = call("GET", "/api/agora/checkpoints?" + urllib.parse.urlencode(
+            {"task_id": a.task, "after_revision": a.after, "limit": a.limit}))
     elif c == "inbox":
         q = {"agent": ag, "wait_s": a.wait, "peek": "1" if a.peek else "", "mine_only": "1" if a.mine else ""}
         r = call("GET", "/api/agora/inbox?" + urllib.parse.urlencode(q), timeout=max(30.0, a.wait + 30))
@@ -386,6 +404,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if r.get("ok", True) else 1
     if c == "board":
         print_board(r, full=a.full)
+    elif c in ("checkpoint", "checkpoints"):
+        for cp in ([r["checkpoint"]] if c == "checkpoint" else r.get("checkpoints", [])):
+            print(f"#{cp['task_id']} r{cp['revision']} · {cp['author']} · {when(cp['created'])}")
+            print(json.dumps(cp["payload"], ensure_ascii=False, indent=2))
+            locks = cp["current_lock_status"]
+            if locks["missing"] or locks["conflicts"] or locks["owner_changed"]:
+                print("AVISO: revisa propietario y bloqueos antes de retomar")
+                print(json.dumps(locks, ensure_ascii=False, indent=2))
     elif c == "digest":
         print_digest(r)
     elif c == "inbox":

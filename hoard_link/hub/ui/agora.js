@@ -38,6 +38,19 @@
     k_debate: { es: "debate", en: "debate" }, k_question: { es: "pregunta", en: "question" }, k_decision: { es: "decisión", en: "decision" },
     k_review: { es: "revisión", en: "review" }, k_handoff: { es: "relevo", en: "handoff" }, k_note: { es: "nota", en: "note" }, k_task: { es: "tarea", en: "task" },
     need_text: { es: "Escribe algo primero.", en: "Write something first." },
+    checkpoint: { es: "Último checkpoint", en: "Latest checkpoint" },
+    declared: { es: "Progreso y pruebas declarados por el agente", en: "Progress and tests declared by the agent" },
+    workspace: { es: "Carpeta de trabajo", en: "Workspace" }, branch: { es: "Rama", en: "Branch" },
+    base_head: { es: "Commit de base", en: "Base commit" }, head: { es: "Commit actual", en: "Current commit" },
+    next_steps: { es: "Próximos pasos", en: "Next steps" }, tests: { es: "Pruebas declaradas", en: "Declared tests" },
+    artifacts: { es: "Artefactos", en: "Artifacts" },
+    passed: { es: "pasada", en: "passed" }, failed: { es: "fallida", en: "failed" }, not_run: { es: "sin ejecutar", en: "not run" },
+    lock_warning: { es: "Revisa los bloqueos antes de retomar: faltan o han cambiado desde el checkpoint.", en: "Check locks before resuming: some are missing or changed since the checkpoint." },
+    owner_changed: { es: "El propietario de la tarea ha cambiado.", en: "The task owner has changed." },
+    missing_locks: { es: "Bloqueos ausentes o adquiridos de nuevo", en: "Missing or newly acquired locks" },
+    conflicting_locks: { es: "Bloqueos en conflicto", en: "Conflicting locks" },
+    lock_record: { es: "Bloqueos registrados", en: "Recorded locks" },
+    no_workspace_lease: { es: "El checkpoint no garantiza exclusividad de la carpeta de trabajo.", en: "A checkpoint does not guarantee exclusive access to the workspace." },
   };
   const ST = {
     open: { es: "abierta", en: "open" }, claimed: { es: "reclamada", en: "claimed" }, in_progress: { es: "en curso", en: "in progress" },
@@ -280,6 +293,41 @@
     return d;
   }
 
+  function checkpointView(cp) {
+    const wrap = el("section", "ag-msg ag-checkpoint");
+    // Treat every checkpoint string as text, including paths and artifact references.
+    const text = (tag, value, cls = "") => {
+      const node = el(tag, cls); node.textContent = String(value); wrap.appendChild(node); return node;
+    };
+    text("h4", `${t("checkpoint")} · r${cp.revision}`);
+    text("small", `${cp.author} · ${fmtWhen(cp.created)} · ${t("declared")}`);
+    const p = cp.payload || {};
+    text("pre", p.summary || "");
+    for (const key of ["workspace", "branch", "base_head", "head"]) {
+      if (p[key]) text("pre", `${t(key)}: ${p[key]}`);
+    }
+    for (const key of ["next_steps", "tests", "artifacts"]) {
+      if (!(p[key] || []).length) continue;
+      text("b", t(key));
+      for (const value of p[key]) {
+        text("pre", key === "tests" ? `${value.name} · ${t(value.status)}\n${value.evidence}` : value);
+      }
+    }
+    if ((cp.lock_snapshot || []).length) {
+      text("b", t("lock_record"));
+      for (const lk of cp.lock_snapshot) text("pre", `${lk.resource} · ${lk.owner} · ${fmtWhen(lk.expires)}`);
+    }
+    const status = cp.current_lock_status || {};
+    if (status.owner_changed) text("div", t("owner_changed"), "hint");
+    if ((status.missing || []).length || (status.conflicts || []).length) {
+      text("div", t("lock_warning"), "hint");
+      if ((status.missing || []).length) text("pre", `${t("missing_locks")}:\n${status.missing.join("\n")}`);
+      for (const lk of status.conflicts || []) text("pre", `${t("conflicting_locks")}: ${lk.resource} → ${lk.held} · ${lk.owner} · #${lk.task_id || "—"}`);
+    }
+    text("small", t("no_workspace_lease"));
+    return wrap;
+  }
+
   function composer(thread, task) {
     const wrap = el("div", "ag-compose");
     const ta = el("textarea"); ta.placeholder = t("write");
@@ -338,7 +386,10 @@
     if (!r || !r.ok) return;
     const task = r.task || null;
     const thread = r.thread || { id: task && task.thread_id, kind: "task", status: task && task.status, title: task && task.title };
-    const sig = JSON.stringify([(r.messages || []).length, task && task.status, thread.status]);
+    const cp = task && task.latest_checkpoint;
+    const lockStatus = cp && cp.current_lock_status;
+    const sig = JSON.stringify([(r.messages || []).length, task && task.status, thread.status,
+      cp && cp.revision, lockStatus && [lockStatus.owner, lockStatus.missing, lockStatus.conflicts, lockStatus.owner_changed]]);
     if (detailBox.dataset.sig === sig && detailBox.dataset.key === `${current.type}-${current.id}`) return;
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
     detailBox.replaceChildren();
@@ -359,6 +410,7 @@
       if ((task.commits || []).length) m.appendChild(el("span", "", task.commits.join(" ")));
       detailBox.appendChild(m);
       for (const lk of r.locks || []) detailBox.appendChild(el("div", "ag-lockline", `🔒 ${lk.resource} — ${lk.owner}`));
+      if (task.latest_checkpoint) detailBox.appendChild(checkpointView(task.latest_checkpoint));
     }
     if (r.stances && Object.keys(r.stances).length) {
       detailBox.appendChild(el("div", "hint", `${t("stances")}: ` + Object.entries(r.stances).map(([k, v]) => `${k} ${MK[v] || ""}`).join(" · ")));
