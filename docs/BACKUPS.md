@@ -21,5 +21,8 @@ backup after silently omitting Atlas originals. An explicitly selected unrelated
 app can still be backed up normally. An empty app selection means the full family.
 
 Shared originals can be restored to a separate review folder. An in-place
-restore of `atlas-files` is refused to protect the live shared disk. Source
+restore of `atlas-files` is refused to protect the live shared disk. An explicit
+destination also must be outside both the snapshot's original storage root and
+the currently configured root, including their descendants and ancestors;
+resolved aliases cannot turn a review restore into a write to shared storage. Source
 listing does not repair Atlas configuration or change the user's originals.

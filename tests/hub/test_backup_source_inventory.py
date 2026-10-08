@@ -66,3 +66,40 @@ def test_valid_root_includes_original_files_and_keeps_selection_scoped(hub, tmp_
     assert restored['ok']
     assert (tmp_path / 'restored-originals' / 'original.txt').read_text(encoding='utf-8') == 'original'
     assert hub.backup_sources(['other']) == {'other': hub.get('other').data_dir}
+
+
+def test_explicit_destination_cannot_restore_into_old_or_current_shared_roots(hub, tmp_path):
+    original = tmp_path / 'old-originals'
+    current = tmp_path / 'new-originals'
+    original.mkdir()
+    current.mkdir()
+    config = Path(hub.get('atlas').data_dir, 'storage.json')
+    config.write_text(json.dumps({'root': str(original)}), encoding='utf-8')
+    (original / 'valuable.txt').write_text('historical original', encoding='utf-8')
+    snapshot = hub.backup_run(['atlas-files'])['snapshot']
+    # Emptying the old root would make BackupStore accept it as a normal empty destination.
+    (original / 'valuable.txt').unlink()
+    config.write_text(json.dumps({'root': str(current)}), encoding='utf-8')
+    for dest in (original, original / 'child', original.parent, current, current / 'child'):
+        blocked = hub.backup_restore(snapshot, 'atlas-files', dest=str(dest), in_place=False)
+        assert not blocked['ok'] and 'outside the original storage roots' in blocked['error']
+    assert list(original.iterdir()) == [] and list(current.iterdir()) == []
+    safe = tmp_path / 'review-copy'
+    assert hub.backup_restore(snapshot, 'atlas-files', dest=str(safe))['ok']
+    assert (safe / 'valuable.txt').read_text(encoding='utf-8') == 'historical original'
+
+
+def test_default_destination_is_also_checked_against_current_shared_storage(hub, tmp_path):
+    from hoard_link.hub.backup import _stamp
+    original = tmp_path / 'originals'
+    original.mkdir()
+    (original / 'file.txt').write_text('original', encoding='utf-8')
+    config = Path(hub.get('atlas').data_dir, 'storage.json')
+    config.write_text(json.dumps({'root': str(original)}), encoding='utf-8')
+    snapshot = hub.backup_run(['atlas-files'])['snapshot']
+    hub.backups._now = lambda: 1800000000
+    # A configured but currently missing root must not be created by a default restore.
+    current = original.with_name(original.name + '.restored-' + _stamp(hub.backups._now()))
+    config.write_text(json.dumps({'root': str(current)}), encoding='utf-8')
+    blocked = hub.backup_restore(snapshot, 'atlas-files')
+    assert not blocked['ok'] and not current.exists()
