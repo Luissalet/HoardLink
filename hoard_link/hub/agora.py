@@ -25,6 +25,8 @@ Only the hub's own page may write as the person (``luis``); agents use their own
 
 HTTP (reads): ``GET /api/agora/board|inbox|tasks|tasks/<id>|threads|threads/<id>|locks|decisions|agents``.
 HTTP (writes): ``POST /api/agora/<op>`` with the same arguments as the tool ``hub_agora_<op>``.
+``POST /api/agora/sync`` is the agent resume call: it heartbeats, peeks without acknowledging, and returns posts after
+the caller's durable message-id cursor. The caller stores ``next_since_id`` and sends it back on the next call.
 """
 
 from __future__ import annotations
@@ -440,6 +442,94 @@ class Agora:
         self._bump("agora.agent.heartbeat", {"agent": agent, "state": state})
         inbox = self.inbox({"agent": agent, "peek": True})
         return {"ok": True, "agent": agent, "inbox": inbox["counts"]}
+
+    def sync(self, a: dict[str, Any]) -> dict[str, Any]:
+        """Resume an agent in one call without consuming inbox messages or mentions.
+
+        ``since_id`` is a durable messages.id cursor, not the process-local long-poll version. Only the last post
+        returned advances ``next_since_id``; when a thread filter is used, the cursor is scoped to those threads.
+        The caller persists that value and sends it on the next call. A post arriving after the query therefore has
+        an id above the returned cursor and is replayed on the next sync. Inbox peek and pending mentions retain
+        their existing explicit read/ack behavior.
+        """
+        agent = self._agent(a.get("agent"))
+        state = str(a.get("state") or "working").lower()
+        if state not in AGENT_STATES:
+            raise AgoraError(f"state must be one of {', '.join(AGENT_STATES)}")
+        raw_since = a.get("since_id", 0)
+        if isinstance(raw_since, bool):
+            raise AgoraError("since_id must be a non-negative message id")
+        if isinstance(raw_since, float) and not raw_since.is_integer():
+            raise AgoraError("since_id must be a non-negative message id")
+        try:
+            since_id = int(raw_since)
+        except (TypeError, ValueError):
+            raise AgoraError("since_id must be a non-negative message id") from None
+        if since_id < 0 or since_id > 9_223_372_036_854_775_807:
+            raise AgoraError("since_id must be a non-negative message id")
+        raw_limit = a.get("limit")
+        if isinstance(raw_limit, bool) or (isinstance(raw_limit, float) and not raw_limit.is_integer()):
+            raise AgoraError("limit must be an integer")
+        try:
+            limit = max(1, min(int(100 if raw_limit is None else raw_limit), 500))
+        except (TypeError, ValueError):
+            raise AgoraError("limit must be an integer") from None
+        thread_ids = []
+        for value in _list(a.get("thread_ids"), "thread_ids", 100):
+            try:
+                thread_id = int(value)
+            except (TypeError, ValueError):
+                raise AgoraError("thread_ids must contain positive thread ids") from None
+            if thread_id < 1:
+                raise AgoraError("thread_ids must contain positive thread ids")
+            if thread_id not in thread_ids:
+                if self.db.one("SELECT id FROM threads WHERE id=?", (thread_id,)) is None:
+                    raise AgoraError(f"no thread {thread_id}", 404)
+                thread_ids.append(thread_id)
+        thread_ids.sort()
+
+        doing = _txt(a.get("doing"), 300, "doing")
+        heartbeat_args: dict[str, Any] = {"agent": agent, "doing": doing, "state": state}
+        if a.get("name"):
+            heartbeat_args["name"] = a.get("name")
+        if a.get("note") is not None:
+            heartbeat_args["note"] = a.get("note")
+        heartbeat = self.heartbeat(heartbeat_args)
+
+        # Peek by design. This preserves the inbox read mark and pending mention acknowledgements.
+        inbox = self.inbox({"agent": agent, "peek": True})
+        board = self.board()
+        leased_tasks = self.tasks({"owner": agent, "status": "active", "limit": 500})["tasks"]
+        now = self.clock()
+        for task in leased_tasks:
+            task["locks"] = [dict(r) for r in self.db.query(
+                "SELECT resource, note, expires FROM locks WHERE task_id=? AND owner=? AND expires>? ORDER BY acquired",
+                (task["id"], agent, now))]
+
+        filters = ""
+        params: list[Any] = [since_id]
+        if thread_ids:
+            filters = f" AND m.thread_id IN ({','.join('?' for _ in thread_ids)})"
+            params.extend(thread_ids)
+        params.append(limit + 1)
+        rows = self.db.query(
+            "SELECT m.*, t.title AS thread_title, t.kind AS thread_kind, t.status AS thread_status, "
+            "t.task_id AS task_id FROM messages m JOIN threads t ON t.id=m.thread_id "
+            "WHERE m.id>?" + filters + " ORDER BY m.id LIMIT ?", params)
+        has_more = len(rows) > limit
+        posts = []
+        for row in rows[:limit]:
+            post = dict(row)
+            post["mentions"] = _l(post.get("mentions"))
+            posts.append(post)
+        next_since_id = int(posts[-1]["id"]) if posts else since_id
+        agent_row = self.db.one("SELECT id, name, kind, note, state, doing, last_seen FROM agents WHERE id=?", (agent,))
+        cursor = {"since_id": since_id, "next_since_id": next_since_id, "thread_ids": thread_ids or None,
+                  "has_more": has_more, "limit": limit}
+        return {"ok": True, "heartbeat": heartbeat, "agent_state": dict(agent_row) if agent_row else None,
+                "inbox": inbox, "pending_reviews": inbox["reviews"], "requested_changes": inbox["changes"],
+                "board": board, "leased_tasks": leased_tasks, "posts": posts, "cursor": cursor,
+                "next_since_id": next_since_id}
 
     def agents(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         now = self.clock()
@@ -1011,8 +1101,17 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_heartbeat",
      "description": "Tell the Ágora you are here and what you are doing (state working|idle|waiting|away). "
                     "Renews every lock you hold; call it at least every hour while working.",
+      "inputSchema": _schema({"agent": _A, "doing": {"type": "string"}, "state": {"type": "string"},
+                              "name": {"type": "string"}, "note": {"type": "string"}}, ["agent"])},
+    {"name": "hub_agora_sync",
+     "description": "Resume the Ágora session / retomar Ágora: heartbeat, inbox peek, board and posts after since_id.\n"
+                    "Does not acknowledge. Store next_since_id and pass it back; thread_ids scopes the cursor.",
      "inputSchema": _schema({"agent": _A, "doing": {"type": "string"}, "state": {"type": "string"},
-                             "name": {"type": "string"}, "note": {"type": "string"}}, ["agent"])},
+                             "name": {"type": "string"}, "note": {"type": "string"},
+                             "since_id": {"type": "integer", "minimum": 0},
+                             "thread_ids": {"type": "array", "items": {"type": "integer", "minimum": 1},
+                                            "maxItems": 100},
+                             "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, ["agent"])},
     {"name": "hub_agora_task_add",
      "description": "Propose a task (kind feature|bug|research|review|chore|eval|docs, priority 0 urgent..3 someday, "
                     "repo and paths it touches). claim=true also claims it with locks.",
@@ -1106,7 +1205,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _schema({"limit": {"type": "integer"}}, [])},
 ]
 
-_WRITE_OPS = ("heartbeat", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
+_WRITE_OPS = ("heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack")
 
 
@@ -1222,7 +1321,7 @@ class AgoraFacet(Facet):
 
         return {
             "hub_agora_board": wrap(ag.board), "hub_agora_inbox": wrap(ag.inbox, cap_wait=True),
-            "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_task_add": wrap(ag.task_add),
+            "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(ag.sync), "hub_agora_task_add": wrap(ag.task_add),
             "hub_agora_task_claim": wrap(ag.task_claim), "hub_agora_task_update": wrap(ag.task_update),
             "hub_agora_task_submit": wrap(ag.task_submit), "hub_agora_task_review": wrap(ag.task_review),
             "hub_agora_task_done": wrap(ag.task_done), "hub_agora_task_release": wrap(ag.task_release),

@@ -59,17 +59,35 @@ Reads: `GET /api/agora/board` (with `lock_groups`), `/api/agora/digest?hours=`, 
 `include_tasks`), `/api/agora/threads/<id>?agent=` (with `agent`, marks the thread as seen for it), `/api/agora/locks?check=<resource>`, `/api/agora/decisions`,
 `/api/agora/agents`.
 
-Writes: `POST /api/agora/<op>` with `op` one of `heartbeat`, `task_add`, `task_claim`, `task_update`, `task_submit`,
+Writes: `POST /api/agora/<op>` with `op` one of `heartbeat`, `sync`, `task_add`, `task_claim`, `task_update`, `task_submit`,
 `task_review`, `task_done`, `task_release`, `lock`, `unlock`, `thread_open`, `post`, `resolve`, `escalate`, `reopen`,
 `read` (inbox that moves the read mark), `ack` (`thread_id` or `all`). Arguments are those of the matching tool.
 
 ## Tools
 
-`hub_agora_board`, `hub_agora_inbox`, `hub_agora_heartbeat`, `hub_agora_task_add`, `hub_agora_task_claim`,
+`hub_agora_board`, `hub_agora_inbox`, `hub_agora_heartbeat`, `hub_agora_sync`, `hub_agora_task_add`, `hub_agora_task_claim`,
 `hub_agora_task_update`, `hub_agora_task_submit`, `hub_agora_task_review`, `hub_agora_task_done`,
 `hub_agora_task_release`, `hub_agora_tasks`, `hub_agora_task`, `hub_agora_lock`, `hub_agora_unlock`,
 `hub_agora_locks`, `hub_agora_thread_open`, `hub_agora_post`, `hub_agora_resolve`, `hub_agora_escalate`,
-`hub_agora_thread`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions` (23). Through the MCP bridge the inbox wait is capped at 60 s.
+`hub_agora_thread`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions` (24). Through the MCP bridge the inbox wait is capped at 60 s.
+
+### Resume sync
+
+`hub_agora_sync` / `POST /api/agora/sync` combines a heartbeat with inbox peek,
+board, the agent's active tasks and leases, and posts after `since_id`. It
+returns `next_since_id`, `has_more` and the effective `thread_ids` filter.
+The message ID is persisted in SQLite and remains valid after a Hub restart.
+Store the returned cursor only after receiving and processing the response;
+repeating the same request replays posts instead of silently consuming them.
+Paginate while `has_more` is true. A bundled response is not a transactional
+snapshot of every concurrent operation.
+
+Keep separate cursors for different thread filters: reusing a cursor from one
+filter with another can skip older posts. With no filter the cursor applies
+to all threads. Sync does not advance the inbox read mark or acknowledge any
+mention; use the existing thread/read/ack operations after handling a message.
+It renews leases through the existing heartbeat behavior, but does not reclaim
+expired locks, repair stale owners, or create checkpoints for source changes.
 
 ## Events
 
@@ -84,6 +102,7 @@ python scripts/agora.py --as reviewer board            # --full lists every lock
 python scripts/agora.py --as reviewer digest --hours 4
 python scripts/agora.py --as reviewer ack 7             # or ack --all
 python scripts/agora.py --as reviewer inbox --wait 120
+python scripts/agora.py --as builder sync "Current work" --since 184 --thread 32
 python scripts/agora.py --as builder claim 12 --lock path:Faustus/src/agent_loop.py --lock model:principal
 python scripts/agora.py --as reviewer open "q4 or q8 for live tests" --kind debate --body-file proposal.md --mention builder
 ```
