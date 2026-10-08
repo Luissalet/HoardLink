@@ -2,10 +2,6 @@
 
 ### One shared answer to "which model server do I use right now?"
 
-Family cohesion: [ownership, overlaps and remaining gaps](docs/commons/cohesion.md).
-The Hub now audits shared-code drift and workflow prerequisites; media imports
-keep checkpoints across restarts and resume explicitly without resubmitting known jobs.
-
 **The shared model backend for agent-controlled apps: pick the
 already-loaded local server for a capability instead of loading a second
 copy of a model.**
@@ -942,7 +938,3 @@ Python 3.11 to 3.13) runs the same suite with no GPU and no network.
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-## Family expansion · 2026-10-04
-
-`hub_capability_find` searches all installed sibling manifests, including stdio-only MCP plugins such as GamerHoard. With `check=true` it checks at most eight HTTP catalogues, returns real schemas/annotations and distinguishes declarations from connectivity. It never starts apps or infers model readiness from a catalogue. `hub_recipe_plan` maps 15 cross-family workflows to actual declared capabilities and lists uncovered stages, including measured CAD, personal continuity and the games library. The Capabilities tab exposes both. These plans use existing family execution and resource services; stdio-only tools are called through Faustus MCP, not through a fabricated HTTP endpoint. Discovery does not change the Hub's web-app launcher inventory.
