@@ -6,6 +6,7 @@ Standard library only, so any agent with a terminal can use it (no MCP needed)::
     python scripts/agora.py --as reviewer board
     python scripts/agora.py --as reviewer inbox --wait 60
     python scripts/agora.py --as builder hb "Lumiere: contact sheet" --state working
+    python scripts/agora.py --as builder sync "Lumiere: contact sheet" --since 184 --thread 32
     python scripts/agora.py --as builder add "Fix stream cancel" --repo Faustus --paths src/agent_loop.py --claim
     python scripts/agora.py --as builder claim 12 --lock path:Faustus/src/ --lock model:principal
     python scripts/agora.py --as builder submit 12 --summary-file notes.md --commits abc123
@@ -228,6 +229,27 @@ def print_conversation(r: dict) -> None:
         print(m.get("body") or "")
 
 
+def print_sync(r: dict) -> None:
+    state = r.get("agent_state") or {}
+    cursor = r.get("cursor") or {}
+    scope = cursor.get("thread_ids")
+    scope_label = "hilo(s) " + ",".join(str(i) for i in scope) if scope else "todos los hilos"
+    print(f"Ágora sincronizada: {state.get('id')} · {state.get('state')} · {short(state.get('doing'), 100)}")
+    print(f"Cursor de publicaciones ({scope_label}): {cursor.get('next_since_id')} "
+          f"(pasa --since {cursor.get('next_since_id')} con el mismo filtro; guarda cursores aparte si cambias de filtro)"
+          + (" · quedan más publicaciones" if cursor.get("has_more") else ""))
+    inbox = r.get("inbox") or {}
+    counts = inbox.get("counts") or {}
+    print(f"Buzón en vista previa: {counts.get('messages', 0)} mensajes, {counts.get('reviews', 0)} revisiones, "
+          f"{counts.get('changes', 0)} cambios, {counts.get('pending', 0)} menciones sin ver")
+    for task in r.get("leased_tasks") or []:
+        print(f"  Tarea propia #{task['id']} [{task['status']}] {short(task['title'], 100)} · "
+              f"{len(task.get('locks') or [])} bloqueos activos")
+    for post in r.get("posts") or []:
+        print(f"  hilo {post['thread_id']} · {post['author']} ({post['kind']}) · {post.get('thread_title')}: "
+              f"{short(post.get('body'), 240)}")
+
+
 # ---- commands ---------------------------------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -244,6 +266,14 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("board"); s.add_argument("--full", action="store_true", help="todos los bloqueos, uno a uno")
     s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true")
     s = sub.add_parser("hb"); s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
+    s = sub.add_parser("sync", help="un latido y snapshot del Ágora; --since usa el id durable de publicación")
+    s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
+    s.add_argument("--note", help="nota breve del agente que se guarda en su heartbeat")
+    s.add_argument("--since", dest="since_id", type=int, default=0,
+                   help="id de mensaje devuelto en la última consulta del mismo filtro (por defecto: 0)")
+    s.add_argument("--thread", action="append", type=int,
+                   help="limita publicaciones a un hilo; repítelo para varios y conserva un cursor por filtro")
+    s.add_argument("--limit", type=int, default=100, help="máximo de publicaciones por llamada (1–500)")
     s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--repo"); s.add_argument("--paths", action="append")
     s.add_argument("--kind", default="feature"); s.add_argument("--prio", type=int, default=2); s.add_argument("--claim", action="store_true")
     s.add_argument("--lock", action="append"); s.add_argument("--mention", action="append")
@@ -286,6 +316,10 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "inbox":
         q = {"agent": ag, "wait_s": a.wait, "peek": "1" if a.peek else "", "mine_only": "1" if a.mine else ""}
         r = call("GET", "/api/agora/inbox?" + urllib.parse.urlencode(q), timeout=max(30.0, a.wait + 30))
+    elif c == "sync":
+        r = call("POST", "/api/agora/sync", {"agent": ag, "doing": a.doing, "state": a.state,
+                                                   "name": a.name, "note": a.note, "since_id": a.since_id,
+                                                   "thread_ids": a.thread or [], "limit": a.limit})
     elif c == "hb":
         r = call("POST", "/api/agora/heartbeat", {"agent": ag, "doing": a.doing, "state": a.state, **({"name": a.name} if a.name else {})})
     elif c == "add":
@@ -356,6 +390,8 @@ def main(argv: list[str] | None = None) -> int:
         print_digest(r)
     elif c == "inbox":
         print_inbox(r)
+    elif c == "sync":
+        print_sync(r)
     elif c in ("task", "thread"):
         print_conversation(r)
     elif c == "tasks":
