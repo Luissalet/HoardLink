@@ -641,13 +641,37 @@ class Hub:
         return res
 
     def backup_restore(self, snapshot: str, app_id: str, *, dest: Optional[str] = None, in_place: bool = False) -> dict[str, Any]:
-        if app_id == "atlas-files" and in_place:
-            return {"ok": False, "error": "restore shared files into a separate folder and review them before replacing live originals"}
+        restore_options = {}
+        if app_id == "atlas-files":
+            error = "restore shared files into a separate folder outside the original storage roots"
+            if in_place:
+                return {"ok": False, "error": error}
+            from pathlib import Path
+            from .backup_sources import read_shared_root
+            atlas = self.get("atlas")
+            try:
+                current = read_shared_root(atlas.data_dir) if atlas and atlas.data_dir else None
+            except (OSError, ValueError, TypeError):
+                current = None
+
+            def destination_guard(destination, original):
+                try:
+                    target = Path(destination).resolve()
+                    for folder in (original, current):
+                        if folder and Path(folder).is_absolute():
+                            root = Path(folder).resolve()
+                            if target.is_relative_to(root) or root.is_relative_to(target):
+                                return error
+                except (OSError, ValueError, RuntimeError):
+                    return "invalid restore destination"
+                return None
+
+            restore_options["destination_guard"] = destination_guard
         running: Optional[bool] = None
         if in_place:
             app = self.get(app_id)
             running = app is not None and procs.health(app).state == "healthy"
-        res = self.backups.restore(snapshot, app_id, dest=dest, in_place=in_place, app_running=running)
+        res = self.backups.restore(snapshot, app_id, dest=dest, in_place=in_place, app_running=running, **restore_options)
         self._safe_emit("hub.backup.restored" if res.get("ok") else "hub.backup.restore_failed",
                         {"snapshot": snapshot, "app": app_id, "dest": res.get("dest"), "in_place": in_place, "error": res.get("error")})
         return res
