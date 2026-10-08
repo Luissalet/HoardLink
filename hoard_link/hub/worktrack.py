@@ -32,9 +32,9 @@ from .facets import Facet, Request
 STALE_AFTER_S = 6 * 3600.0
 STALE_DROP_S = 7 * 86400.0
 KEEP_FINISHED = 500
-_JOB_RE = re.compile(r"^(?P<app>[a-z0-9_\-]+)\.job\.(?P<state>queued|started|progress|done|failed|cancelled)$")
+_JOB_RE = re.compile(r"^(?P<app>[a-z0-9_\-]+)\.job\.(?P<state>queued|started|progress|paused|done|failed|cancelled)$")
 _STATUS = {"queued": "queued", "started": "running", "progress": "running", "done": "done", "failed": "failed",
-           "cancelled": "cancelled"}
+           "cancelled": "cancelled", "paused": "paused"}
 _FINAL = ("done", "failed", "cancelled", "stale")
 
 
@@ -209,6 +209,11 @@ class WorkFacet(Facet):
                 job["progress"] = prog
             job["updated_ts"] = ts
             job["status"] = _STATUS[state]
+            if state == "paused":
+                job["eta_s"] = None
+                job["error"] = str(data.get("error") or "")[:300]
+            elif state in ("started", "progress"):
+                job["error"] = ""
             if state in ("started", "progress") and not job["started_ts"]:
                 job["started_ts"] = ts
             if state in _FINAL:
@@ -283,7 +288,7 @@ class WorkFacet(Facet):
         """A job stale for a week is archived as ``stale`` instead of lingering in the active list."""
         with self._lock:
             for key, j in list(self._active.items()):
-                if now - float(j.get("updated_ts") or 0) > STALE_DROP_S:
+                if j["status"] != "paused" and now - float(j.get("updated_ts") or 0) > STALE_DROP_S:
                     j["status"] = "stale"
                     j["finished_ts"] = j.get("updated_ts")
                     self._active.pop(key, None)
