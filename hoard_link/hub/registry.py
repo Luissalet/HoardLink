@@ -306,6 +306,7 @@ def read_manifest(
     faustus_dir: Optional[str] = None,
     faustus_python: Optional[str] = None,
     icon_dirs: Iterable[str] = (),
+    include_mcp_only: bool = False,
 ) -> Optional[App]:
     """One ``faustus-plugin.json`` → an :class:`App`, or None when the file
     is not a usable manifest (malformed JSON, no ``id``, no ``app`` block).
@@ -321,7 +322,14 @@ def read_manifest(
         return None
     app_id = str(raw.get("id") or "").strip()
     app_block = raw.get("app")
-    if not app_id or not isinstance(app_block, dict):
+    if not app_id:
+        return None
+    if not isinstance(app_block, dict):
+        bridge=raw.get('mcp')
+        if include_mcp_only and isinstance(bridge,dict) and bridge.get('transport','stdio')=='stdio' and isinstance(bridge.get('command'),str) and bridge['command'].strip():
+            return App(id=app_id,name=str(raw.get('name') or app_id),purpose=str(raw.get('purpose') or ''),folder=folder,url='',health_path='',expect_service=None,
+                capabilities=[str(c) for c in raw.get('capabilities',[])],manifest_path=path,notes=str(raw.get('notes') or ''),kind='mcp-only',
+                launch_reason='Stdio MCP tools; connect through Faustus. No web service to start.',family={'agent_contract':False,'transport':'stdio'})
         return None
     if int(raw.get("schema") or 1) > 1:
         return None
@@ -428,6 +436,7 @@ def scan(
     icon_dirs: Iterable[str] = (),
     exclude_ids: Iterable[str] = (),
     launch_overrides: Optional[dict[str, Any]] = None,
+    include_mcp_only: bool = False,
 ) -> list[App]:
     """Every ``<root>/*/faustus-plugin.json`` (one level deep) plus any root
     that is itself an app folder, sorted by name. A duplicate ``id`` keeps
@@ -453,7 +462,7 @@ def scan(
                 if os.path.isfile(p):
                     candidates.append(p)
         for path in candidates:
-            app = read_manifest(path, faustus_dir=faustus_dir, faustus_python=faustus_python, icon_dirs=icon_dirs)
+            app = read_manifest(path, faustus_dir=faustus_dir, faustus_python=faustus_python, icon_dirs=icon_dirs,include_mcp_only=include_mcp_only)
             if app is None or app.id in excluded or app.id in seen:
                 continue
             if launch_overrides and app.id in launch_overrides:
