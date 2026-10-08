@@ -30,6 +30,7 @@ from typing import Any, Optional
 
 from . import procs
 from .registry import App
+from .._hubclient import NoRedirect
 
 TOKEN_CACHE_S = 3.0
 _token_cache: dict[str, tuple[float, str]] = {}
@@ -76,7 +77,7 @@ def _post(url: str, body: dict[str, Any], token: str, timeout: float) -> tuple[O
     req = urllib.request.Request(url, data=json.dumps(body, default=str).encode("utf-8"), method="POST",
                                  headers={"Content-Type": "application/json", "Accept": "application/json",
                                           "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw, status = resp.read(), resp.status
@@ -100,7 +101,7 @@ def _get(url: str, token: str, timeout: float) -> tuple[Optional[int], Any]:
     import urllib.request
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "hoard-hub",
                                                **({"Authorization": "Bearer " + token} if token else {})})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw, status = resp.read(), resp.status

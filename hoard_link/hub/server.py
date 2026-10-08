@@ -88,6 +88,11 @@ UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 #: The family's shared theme (hoard_link/ui/hoard-theme.css), served as /ui/hoard-theme.css.
 THEME_CSS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "hoard-theme.css")
 MAX_BODY = 256 * 1024
+PROXY_MAX_BODY = 4 * 1024 * 1024  # authenticated chapter/document handoffs
+
+
+class _BodyTooLarge(ValueError):
+    pass
 
 
 def make_server(hub: Hub, host: str = "127.0.0.1", port: Optional[int] = None) -> ThreadingHTTPServer:
@@ -136,12 +141,13 @@ class _HubHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _read_body(self) -> dict[str, Any]:
+    def _read_body(self, limit: int = MAX_BODY) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             return {}
-        if length > MAX_BODY:
-            raise ValueError("body too large")
+        if length > limit:
+            self.close_connection = True
+            raise _BodyTooLarge("body too large")
         raw = self.rfile.read(length)
         try:
             data = json.loads(raw.decode("utf-8"))
@@ -442,7 +448,18 @@ class _HubHandler(BaseHTTPRequestHandler):
                 logger.exception("POST %s failed", path)
                 return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
         try:
-            body = self._read_body()
+            limit = MAX_BODY
+            if path == "/api/agent/call":
+                if not self._agent_ok():
+                    self.close_connection = True
+                    return None
+                limit = PROXY_MAX_BODY
+            elif path.startswith("/api/apps/") and path.endswith("/call"):
+                if self._family_ok() is None:
+                    self.close_connection = True
+                    return None
+                limit = PROXY_MAX_BODY
+            body = self._read_body(limit)
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 413)
         try:
@@ -606,6 +623,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return self._json({"ok": False, "error": "unknown action"}, 404)
                 return self._json(res, 200 if res.get("ok", True) else 409)
             return self._json({"ok": False, "error": "not found"}, 404)
+        except _BodyTooLarge:
+            return self._json({"ok": False, "error": "body too large"}, 413)
         except Exception as exc:  # noqa: BLE001
             logger.exception("POST %s failed", path)
             return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
