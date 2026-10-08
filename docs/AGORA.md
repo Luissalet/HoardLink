@@ -96,11 +96,13 @@ This implementation uses a JSON revision and409, not an HTTP If-Match/412 endpoi
 Reads: `GET /api/agora/board` (with `lock_groups`), `/api/agora/digest?hours=`, `/api/agora/inbox?agent=&wait_s=&peek=&mine_only=&since_id=`, `/api/agora/tasks`
 (`status`, `owner`, `repo`, `kind`; `status=active`), `/api/agora/tasks/<id>`, `/api/agora/threads` (`status`, `kind`,
 `include_tasks`), `/api/agora/threads/<id>?agent=` (with `agent`, marks the thread as seen for it), `/api/agora/locks?check=<resource>`, `/api/agora/decisions`,
-`/api/agora/agents`, `/api/agora/checkpoints?task_id=&after_revision=&limit=`.
+`/api/agora/agents`, `/api/agora/checkpoints?task_id=&after_revision=&limit=`, `/api/agora/watch?agent=&refresh=&limit=` (the observer, below).
 
 Writes: `POST /api/agora/<op>` with `op` one of `checkpoint`, `heartbeat`, `sync`, `task_add`, `task_claim`, `task_update`, `task_submit`,
 `task_review`, `task_done`, `task_release`, `handover`, `lock`, `unlock`, `thread_open`, `post`, `resolve`, `escalate`, `reopen`,
 `read` (inbox that moves the read mark), `ack` (`thread_id` or `all`). Arguments are those of the matching tool.
+`POST /api/agora/watch/bind` `{session_key, agent}` assigns an observed session to an agent (`agent: ""` removes it); it needs the
+hub's page or the bearer token.
 
 ## Tools
 
@@ -109,7 +111,8 @@ Writes: `POST /api/agora/<op>` with `op` one of `checkpoint`, `heartbeat`, `sync
 `hub_agora_task_release`, `hub_agora_tasks`, `hub_agora_task`, `hub_agora_lock`, `hub_agora_unlock`,
 `hub_agora_locks`, `hub_agora_thread_open`, `hub_agora_post`, `hub_agora_resolve`, `hub_agora_escalate`,
 `hub_agora_thread`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions`, `hub_agora_checkpoint`,
-`hub_agora_checkpoints`, `hub_agora_handover` (27). Through the MCP bridge the inbox wait is capped at 60 s.
+`hub_agora_checkpoints`, `hub_agora_handover`, `hub_agora_watch`, `hub_agora_watch_bind` (29). Through the MCP bridge the inbox
+wait is capped at 60 s.
 
 ### Resume sync
 
@@ -208,6 +211,92 @@ Arguments: `agent` (the caller), `from_agent`, `to_agent`, `reason` (required), 
 - **Safe**: one transaction (a failure leaves everything as it was); a second run changes nothing (`noop: true`, no
   messages, no event); `tasks` naming something `from_agent` neither owns nor reviews is refused as a whole.
 
+## Observer of the agents' transcripts
+
+The Agora is cooperative: an agent shows as «sin señales» when it stops sending heartbeats, and nobody knows whether it is
+working, stuck on an approval or dead. The **observer** (`hoard_link/hub/agent_watch.py`, standard library only, no thread) reads
+the transcript files each agent already writes on this PC and derives what it is really doing. It is passive: it never writes
+to the agents, never calls them, and only reads file tails.
+
+| Engine | Where | Format | Clock |
+|---|---|---|---|
+| Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl` | `{timestamp, type, payload}`: `session_meta`, `turn_context`, `event_msg` (`task_started`, `task_complete`, `token_count`…), `response_item` (messages, `function_call`, `custom_tool_call` and their outputs) | line timestamps |
+| Cursor | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` | `{role, message.content[]}` with `tool_use` parts, and `{type: "turn_ended"}` | none: the file's mtime |
+| Claude Code | `~/.claude/projects/<slug>/<session uuid>.jsonl` | `{type: user\|assistant\|attachment…, timestamp, message}`, `stop_reason`, `attachment.hookEvent` | line timestamps |
+
+**Reading.** Session files modified in the last 48 h (at most the 200 most recent per engine) are found by glob + mtime (a full
+scan at most every 30 s). A file is never loaded whole: the first time it is seen only its last 256 KB are parsed (a Codex thread
+can live for weeks in one 37 000-line file), afterwards only the bytes appended since the stored offset; a line still being written
+is left for the next read, a truncated or replaced file starts again, garbage lines are skipped. The title is the first real user
+message, read from the first 64 KB (system and environment boilerplate is skipped). Nothing is refreshed in the background: a read
+of the board or the watch refreshes at most every 5 s.
+
+**State** of a session (`working`, `tool`, `waiting`, `idle`, `stale`), with `since` and the current tool:
+
+| State | When |
+|---|---|
+| `waiting` | An explicit pending question: a Codex event or call whose type or name contains `approval`, `request_user_input` or `elicitation` (until its output, answer, or the end of the turn), or a Claude Code `AskUserQuestion` / `ExitPlanMode` call. **Heuristic** (Claude Code only): a tool call without its result for more than 60 s while the file was written in the last 30 min, which is usually a permission prompt (`confidence: "heuristic"`). |
+| `stale` | A turn is open but nothing was written for 30 min (the process is probably gone). |
+| `tool` | A turn is open and a tool call has no result yet (`tool: {name, since, input}`). |
+| `working` | A turn is open and active (`turn_started_at`). |
+| `idle` | The last turn ended (`task_complete`, `stop_reason: end_turn`, a `Stop` hook, `turn_ended`, an interrupted request). With no turn marker in the tail at all, a write in the last 2 min counts as `working`. |
+
+Also per session: `engine`, `session_id`, `key` (`engine:session id`), `file`, `cwd`, `workspace`, `title`, `last_activity`,
+`last_tool`, `last_text` (last assistant text) and, for Codex, `tokens` of the current or last turn.
+
+**Binding to Agora agents.** A session is bound to an agent id in two ways: *explicitly* (`binding: "explicit"`), stored in
+`<data>/agent_watch.json` as `session key → agent` through `hub_agora_watch_bind`, `POST /api/agora/watch/bind`,
+`agora.py watch-bind` or the select of the page; or by *inference* (`"inferred"`): the observer scans the tool calls in the tail
+for `agora.py … --as <id>`, `AGORA_AGENT=<id>` and the `agent` argument of `hub_agora_*` tools or `/api/agora` requests; the most
+frequent id (ties: the latest) wins. The counts are kept in the same file so a restart does not forget what an older tail showed.
+An explicit binding always wins; binding `""` removes it and the inference applies again. The person's id (`luis`) is never inferred.
+Sessions with neither are listed in `unbound`, to be assigned.
+
+**View** (`GET /api/agora/watch`, tool `hub_agora_watch`):
+
+```json
+{"ok": true, "now": 1800000000.0, "window_hours": 48.0,
+ "sessions": [{"key": "codex:019d…", "engine": "codex", "session_id": "019d…", "file": "…/rollout-….jsonl",
+               "cwd": "C:\\Users\\…\\Faustus", "workspace": "Faustus", "title": "Arregla el bucle…",
+               "state": "tool", "since": 1799999880.0, "last_activity": 1799999880.0, "turn_started_at": 1799999800.0,
+               "tool": {"name": "exec", "since": 1799999880.0, "input": "pytest -q"}, "last_tool": "exec",
+               "last_text": "…", "tokens": 1100, "agent": "codex-sparks", "binding": "inferred",
+               "questions": [], "originator": "codex_work_desktop"}],
+ "agents": {"codex-sparks": {"state": "tool", "since": 1799999880.0, "tool": {"name": "exec", "…": "…"}, "title": "…",
+                             "engine": "codex", "session_key": "codex:019d…", "last_activity": 1799999880.0,
+                             "last_text": "…", "binding": "inferred", "sessions": 1, "questions": 0}},
+ "questions": [{"agent": "codex-sparks", "engine": "codex", "session_key": "codex:019d…", "title": "…",
+                "kind": "approval", "what": "git push", "since": 1799999700.0, "tool": "exec_approval_request",
+                "confidence": "explicit"}],
+ "unbound": [{"key": "cursor:abc-123", "…": "same shape as a session, agent: null"}],
+ "roots": {"codex": ["…"], "cursor": ["…"], "claude": ["…"]}}
+```
+
+`agents` holds, per bound agent, the summary of its best session (the one that needs attention first: waiting, tool, working,
+stale, idle; the most recent among equals). `questions` is the queue for the person (oldest first). Query: `agent=` filters,
+`refresh=1` forces a read, `limit=` caps `sessions` (200). `GET /api/agora/board` (and `hub_agora_board`) adds `observed` to each
+agent (`state`, `since`, `tool`, `title`, `engine`, `session_key`, `last_activity`, `binding`, `questions`; `null` when no
+transcript is bound), `observed_only` for bound agents that never sent a heartbeat and `watch` with the counts. The page shows the
+observed state next to the heartbeat («sin señales · observado: ejecutando exec hace 2 min»), a «Preguntas pendientes» box and the
+«Sesiones sin asignar» list with a select to assign each one. From a terminal: `agora.py watch` and `agora.py watch-bind <key> <agent>`.
+
+**Privacy.** The view carries only snippets of at most 200 characters (title 120). Reasoning, thinking and encrypted content are
+never read into a snippet, and every line that looks like a secret (`Authorization:`, `password=`, `token:`, `--password`, key
+prefixes such as `sk-`, `ghp_`, `AKIA`, JWTs, private-key headers) is dropped from them. File paths and the working directory are
+shown: the hub answers only to this machine and the people or tools holding its token.
+
+**Configuration** (`hub.json`, key `agent_watch`; all optional): `{"enabled": true, "hours": 48, "max_files": 200, "roots":
+{"codex": ["…"], "cursor": ["…"], "claude": ["…"]}}`. Environment: `HOARD_AGENT_WATCH_HOME` (a different home folder) and
+`HOARD_AGENT_WATCH_CODEX|CURSOR|CLAUDE` (root folders separated by `;` or the OS path separator).
+
+**Limits.** Approval detection is a heuristic: Codex and Cursor have not been seen writing a dedicated approval record, so the
+observer looks for event and call names that say so, and a Codex or Cursor session waiting on a prompt it does not log shows as
+`tool` or `working`. Claude Code sessions running in the cloud (not on this PC) have no local transcript and are invisible. Cursor
+transcripts have no timestamps and no tool results: `since` and `last_activity` are the file's mtime, and a tool counts as running
+until the next line. A session that falls out of the 48 h window or the per-engine cap disappears from the view (bindings are
+kept). Inference can be wrong when a session only mentions another agent's id in a command; assign it explicitly. Transcript
+formats belong to those tools and can change; unknown lines are skipped, never fatal.
+
 ## Events
 
 `agora.agent.heartbeat`, `agora.task.added|claimed|status|review|reviewed|done|released` (`done` carries `review_state`),
@@ -221,6 +310,8 @@ python scripts/agora.py --as reviewer board            # --full lists every lock
 python scripts/agora.py --as reviewer digest --hours 4
 python scripts/agora.py --as reviewer task 12          # inspect submission_revision before testing
 python scripts/agora.py --as reviewer review 12 approve --revision 3 --body-file review.txt
+python scripts/agora.py watch                           # per agent: heartbeat, observed state, tool, since, title
+python scripts/agora.py watch-bind codex:019d… codex-sparks   # assign an observed session ("-" removes it)
 python scripts/agora.py --as reviewer ack 7             # or ack --all
 python scripts/agora.py --as reviewer inbox --wait 120
 python scripts/agora.py --as builder sync "Current work" --since 184 --thread 32

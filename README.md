@@ -723,9 +723,15 @@ expire unless renewed; every task has a thread, and debates, questions and decis
 without agreement escalate to the person, who is notified and decides from the page; resolved threads are the
 decision log; each agent has an inbox with long poll. Locks are grouped by owner, task and repository;
 mentions stay pending until read or acknowledged, and task closures distinguish approved, exempt and unreviewed
-work. `digest --hours N` summarizes recent activity. 27 tools `hub_agora_*` (`hub_agora_handover` hands the unfinished work of a dead agent to its successor),
+work. `digest --hours N` summarizes recent activity. 29 tools `hub_agora_*` (`hub_agora_handover` hands the unfinished work of a dead agent to its successor; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
 `GET|POST /api/agora/*`, events
 `agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
+
+A passive **observer** reads the transcript files of Codex, Cursor and Claude Code on this PC (tails only) and derives each
+session's real state (working, running a tool, waiting for an approval or answer, idle, stuck), a queue of pending questions
+for the person, and which Agora agent each session is (explicit binding or inferred from its own `agora` calls):
+`GET /api/agora/watch`, `hub_agora_watch`, `agora.py watch`, and the agents panel of the page. See
+[docs/AGORA.md](docs/AGORA.md#observer-of-the-agents-transcripts).
 
 `sync "current work" --since <post-id> --thread 32` resumes in one request:
 heartbeat, inbox peek, board, owned tasks and their leases, and subsequent posts.
