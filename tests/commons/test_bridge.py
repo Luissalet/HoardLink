@@ -512,6 +512,24 @@ def _stop_verified_windows_fixture(root: Path, port: int, venv_python: Path, sta
         except (psutil.Error, OSError, ValueError):
             return False
 
+    def is_own_helper(process):
+        """A descendant of a verified fixture process that is part of it on Windows: the console host the OS attaches to a
+        detached console program, or the real interpreter a venv redirector starts for the same module in the same folder
+        (its command line may name the base interpreter instead of the venv one, depending on the Python build)."""
+        try:
+            info = process.as_dict(attrs=["name", "cmdline", "cwd"])
+        except (psutil.Error, OSError):
+            return False
+        if str(info.get("name") or "").casefold() == "conhost.exe":
+            return True
+        argv = info.get("cmdline") or []
+        try:
+            same_folder = str(Path(info.get("cwd") or "").resolve()).casefold() == expected_cwd
+        except (OSError, ValueError):
+            same_folder = False
+        return (len(argv) >= 3 and argv[1:3] == ["-m", "fake_pkg"] and same_folder
+                and Path(argv[0]).name.casefold().startswith("python"))
+
     matches = [p for p in psutil.process_iter() if is_fixture(p)]
     match_pids = {p.pid for p in matches}
     unexpected_descendants = []
@@ -520,6 +538,9 @@ def _stop_verified_windows_fixture(root: Path, port: int, venv_python: Path, sta
             descendants = process.children(recursive=True)
         except psutil.Error:
             descendants = []
+        for child in descendants:
+            if child.pid not in match_pids and is_own_helper(child):
+                match_pids.add(child.pid)
         for child in reversed(descendants):
             if child.pid not in match_pids and child.is_running():
                 unexpected_descendants.append((process.pid, child.pid))
@@ -569,8 +590,9 @@ def test_windows_fixture_cleanup_stops_verified_processes_before_reporting_unkno
     python.parent.mkdir(parents=True)
     python.touch()
     known = _FakeCleanupProcess(41001, python, root, children=[])
-    unknown = _FakeCleanupProcess(41002, Path(sys.executable), root, children=[])
-    known._children = [unknown]
+    unknown = _FakeCleanupProcess(41002, Path(sys.executable), root, children=[], argv=["notepad.exe", "notes.txt"])
+    helper = _FakeCleanupProcess(41003, Path(sys.executable), root, children=[])   # the venv redirector's real interpreter
+    known._children = [helper, unknown]
     scans = 0
 
     def process_iter():
@@ -585,19 +607,22 @@ def test_windows_fixture_cleanup_stops_verified_processes_before_reporting_unkno
         _stop_verified_windows_fixture(root, 59435, python, started_at=1)
 
     assert known.killed is True
+    assert helper.killed is True
     assert unknown.killed is False
 
 
 class _FakeCleanupProcess:
-    def __init__(self, pid, executable, cwd, *, children):
+    def __init__(self, pid, executable, cwd, *, children, argv=None):
         self.pid = pid
         self.executable = executable
         self.cwd_path = cwd
         self._children = children
+        self.argv = argv
         self.killed = False
 
     def as_dict(self, attrs):
-        return {"create_time": 2, "cmdline": [str(self.executable), "-m", "fake_pkg"], "cwd": str(self.cwd_path)}
+        argv = self.argv or [str(self.executable), "-m", "fake_pkg"]
+        return {"create_time": 2, "cmdline": argv, "cwd": str(self.cwd_path), "name": Path(argv[0]).name}
 
     def children(self, recursive=False):
         assert recursive is True
