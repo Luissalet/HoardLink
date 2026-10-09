@@ -373,10 +373,25 @@
         new MutationObserver(() => setSphere(document.documentElement.dataset.sphere || "")).observe(document.documentElement, { attributes: true, attributeFilter: ["data-sphere"] });
       } catch (e) { /* ignore */ }
       state.sphere = (document.documentElement.dataset && document.documentElement.dataset.sphere) || "";
-      // The digest notification links here (#today): open the box and bring it into view.
+      // The digest notification links here (#today): open the box and bring it into view, below the sticky
+      // header (scrollIntoView alone left the heading and "Send digest now" hidden under it). Once more after
+      // the page settles, unless the person has scrolled in the meantime.
       if (location.hash === "#today") {
         state.open = true;
-        setTimeout(() => { try { root.scrollIntoView({ block: "start" }); } catch (e) { /* ignore */ } }, 300);
+        const reveal = () => {
+          try {
+            const hdr = document.querySelector("header.top");
+            const off = hdr && getComputedStyle(hdr).position !== "static" ? hdr.offsetHeight : 0;
+            window.scrollTo({ top: Math.max(0, root.getBoundingClientRect().top + window.scrollY - off - 8) });
+          } catch (e) { /* ignore */ }
+        };
+        let moved = false;
+        const onWheel = () => { moved = true; };
+        window.addEventListener("wheel", onWheel, { once: true, passive: true });
+        window.addEventListener("touchstart", onWheel, { once: true, passive: true });
+        window.addEventListener("keydown", onWheel, { once: true });
+        setTimeout(reveal, 300);
+        setTimeout(() => { if (!moved) reveal(); }, 1500);
       }
       renderHead(); renderBody();
     },
