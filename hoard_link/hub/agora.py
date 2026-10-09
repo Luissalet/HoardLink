@@ -1660,6 +1660,55 @@ class Agora:
         return {"ok": True, "thread": th, "messages": msgs, "stances": stances,
                 "task": self._task_row(th["task_id"]) if th.get("task_id") else None}
 
+    def thread_recent(self, a: dict[str, Any]) -> dict[str, Any]:
+        """A bounded newest-first page, returned chronologically, without ACK.
+
+        This is separate from the legacy full-thread reader: callers must not
+        mistake a recent page for coverage of the unrequested older history.
+        """
+        if not isinstance(a, dict) or set(a) - {"thread_id", "limit", "before_id"}:
+            raise AgoraError("recent thread reading accepts only thread_id, limit and before_id")
+        thread_id = a.get("thread_id")
+        limit = a.get("limit", 20)
+        before = a.get("before_id")
+        if type(thread_id) is not int or thread_id < 1:
+            raise AgoraError("thread_id must be a positive integer")
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise AgoraError("limit must be an integer between 1 and 200")
+        if before is not None and (type(before) is not int or before < 1):
+            raise AgoraError("before_id must be a positive integer")
+        th = self._thread_row(thread_id)
+        where, params = "thread_id=?", [thread_id]
+        if before is not None:
+            where += " AND id<?"
+            params.append(before)
+        rows = self.db.query("SELECT * FROM messages WHERE " + where + " ORDER BY id DESC LIMIT ?",
+                             (*params, limit + 1))
+        has_more = len(rows) > limit
+        import hashlib
+        msgs, stances = [], {}
+        body_budget = 200_000
+        for row in rows[:limit]:
+            message = dict(row)
+            message["mentions"] = _l(message.get("mentions"))
+            body = str(message.get("body") or "")
+            body_limit = min(20_000, body_budget)
+            message.update(body=body[:body_limit], body_chars=len(body),
+                           body_digest=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                           body_truncated=len(body) > body_limit)
+            body_budget -= len(message["body"])
+            msgs.append(message)
+        msgs.reverse()
+        for message in msgs:
+            if message["kind"] in ("agree", "disagree", "proposal"):
+                stances[message["author"]] = message["kind"]
+        return {"ok": True, "thread": th, "messages": msgs, "stances": stances, "stances_scope": "page",
+                "task": self._task_row(th["task_id"]) if th.get("task_id") else None,
+                "pagination": {"limit": limit, "before_id": before, "has_more": has_more,
+                               "next_before_id": msgs[0]["id"] if has_more else None,
+                               "body_char_limit": 20_000, "page_body_char_limit": 200_000},
+                "hub_acknowledged": False}
+
     def decisions(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         limit = max(1, min(int((a or {}).get("limit") or 50), 500))
         rows = self.db.query("SELECT id, title, kind, resolution, resolved_by, updated FROM threads "
@@ -1963,6 +2012,16 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _schema({"thread_id": _THREAD, "agent": {"type": "string", "description":
                                                                "your id: marks the thread as seen for you"}},
                             ["thread_id"])},
+    {"name": "hub_agora_thread_recent", "read": True,
+     "description": "Read the latest bounded page of a thread, in chronological order, without marking it seen. "
+                    "limit defaults to 20 (maximum 200); before_id reads strictly older messages. "
+                    "Follow pagination.next_before_id while has_more to read older history. "
+                    "Bodies are capped at 20000 characters each and 200000 per page; body_chars, "
+                    "body_digest and body_truncated describe the original body. A truncated body is not a complete read. "
+                    "A recent page never acknowledges unseen messages; stances describe only this page.",
+     "inputSchema": _schema({"thread_id": _THREAD,
+                             "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
+                             "before_id": {"type": "integer", "minimum": 1}}, ["thread_id"])},
     {"name": "hub_agora_ack",
      "description": "Mark a thread as seen (or all=true): its mentions of you stop being pending in your inbox. Opening "
                     "a thread with hub_agora_thread and your agent id, or replying in it, does the same.",
@@ -2145,6 +2204,16 @@ class AgoraFacet(Facet):
         if p == "/api/agora/threads":
             q["include_tasks"] = str(q.get("include_tasks", "")).lower() in ("1", "true")
             return self._run(ag.threads, q)
+        recent = re.fullmatch(r"/api/agora/threads/([0-9]+)/recent", p)
+        if recent:
+            q["thread_id"] = int(recent.group(1))
+            for key in ("limit", "before_id"):
+                if key in q and re.fullmatch(r"[0-9]+", q[key]):
+                    try:
+                        q[key] = int(q[key])
+                    except ValueError:
+                        pass
+            return self._run(ag.thread_recent, q)
         if p.startswith("/api/agora/threads/"):
             who = q.get("agent", "").lower()
             person = who == PERSON and req.caller() == "ui"
@@ -2223,7 +2292,8 @@ class AgoraFacet(Facet):
             "hub_agora_unlock": wrap(ag.unlock), "hub_agora_locks": wrap(ag.locks),
             "hub_agora_thread_open": wrap(ag.thread_open), "hub_agora_post": wrap(ag.post),
             "hub_agora_resolve": wrap(ag.resolve), "hub_agora_escalate": wrap(ag.escalate),
-            "hub_agora_thread": wrap(ag.thread), "hub_agora_decisions": wrap(ag.decisions),
+            "hub_agora_thread": wrap(ag.thread), "hub_agora_thread_recent": wrap(ag.thread_recent),
+            "hub_agora_decisions": wrap(ag.decisions),
             "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(ag.digest),
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
         }
