@@ -87,6 +87,13 @@
     progress_evidence: { es: "Último informe de la tarea", en: "Last task report" },
     heartbeat: { es: "Latido del agente", en: "Agent heartbeat" },
     progress_inferred: { es: "Señal orientativa: no cambia el estado de la tarea.", en: "An inferred signal; it does not change the task status." },
+    unread: { es: "{n} sin leer", en: "{n} unread" }, new_msg: { es: "nuevo", en: "new" },
+    filter_ph: { es: "Filtrar por repo, agente o texto", en: "Filter by repo, agent or text" },
+    kind_all: { es: "Todo tipo", en: "Any kind" }, no_match: { es: "Nada coincide con el filtro.", en: "Nothing matches the filter." },
+    load_error: { es: "No se ha podido cargar el Ágora", en: "The Agora could not be loaded" },
+    load_error_hint: { es: "El Hub puede estar reiniciándose o sin conexión. Lo ya mostrado sigue siendo válido hasta la última carga; vuelve a intentarlo.", en: "The hub may be restarting or offline. What is shown is as of the last successful load; try again." },
+    retry: { es: "Reintentar", en: "Retry" }, loading: { es: "Cargando…", en: "Loading…" },
+    prio_label: { es: "prioridad", en: "priority" },
   };
   const ST = {
     open: { es: "abierta", en: "open" }, claimed: { es: "reclamada", en: "claimed" }, in_progress: { es: "en curso", en: "in progress" },
@@ -100,6 +107,10 @@
   const st = (k) => (ST[k] ? L(ST[k]) : k);
   let box, waitBox, qBox, unboundBox, agentsBox, boardBox, threadsBox, locksBox, decisionsBox, detailBox, mainBox, badge;
   let threadFilter = "open";
+  let kindFilter = "";
+  let textFilter = "";
+  let splitBox, errorBox;
+  const seenUpto = new Map();    // thread id -> last message id the person had seen when the list was drawn
   let current = null;            // {type: "thread"|"task", id}
   let lastBoard = null;
   let lastWatch = null;
@@ -174,13 +185,66 @@
       .ag-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
       .ag-dec { display: grid; gap: 2px; padding: 5px 8px; border-left: 3px solid var(--accent); }
       .ag-dec small { color: var(--muted); }
+      .ag-th.unread .ag-t { font-weight: 700; }
+      .ag-unread { font-size: 11.5px; font-weight: 700; color: var(--accent-2); border: 1px solid var(--accent); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
+      .ag-unread::before { content: "● "; }
+      .ag-msg.new { border-left: 3px solid var(--accent); }
+      .ag-newtag { font-weight: 700; color: var(--accent-2); text-transform: uppercase; font-size: 10.5px; letter-spacing: .4px; }
+      .ag-prio { font-weight: 700; font-size: 11px; }
+      .ag-p0 .ag-prio { color: var(--red); } .ag-p1 .ag-prio { color: var(--amber); }
+      .ag-filterbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+      .ag-filterbar input, .ag-filterbar select { background: var(--hoard-sunken); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; min-width: 0; }
+      .ag-filterbar input { flex: 1 1 220px; }
+      .ag-card:focus-visible, .ag-th:focus-visible, .ag-dec:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .ag-skel { border-radius: 8px; background: linear-gradient(90deg, var(--card-2) 25%, var(--line) 50%, var(--card-2) 75%); background-size: 200% 100%; animation: ag-skel 1.4s linear infinite; min-height: 34px; }
+      .ag-skel.tall { min-height: 60px; }
+      @keyframes ag-skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+      @media (prefers-reduced-motion: reduce) { .ag-skel { animation: none; } }
+      .ag-error { border: 1px solid #6a3b2f; background: rgba(224, 122, 110, .08); border-radius: 12px; padding: 8px 10px; display: grid; gap: 6px; }
+      .ag-error b { color: var(--red); }
+      @media (min-width: 1200px) {
+        .ag-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 12px; align-items: start; }
+        /* the hub's tab area is itself a box of 46vh: both panes fit in it and scroll on their own */
+        .ag-split > .ag-wrap, .ag-split > .ag-detail { max-height: calc(46vh - 28px); min-height: 240px; overflow: auto; }
+        .ag-split > .ag-wrap { padding-right: 4px; }
+        .ag-split > .ag-detail { position: sticky; top: 0; }
+        .ag-split .ag-board { grid-template-columns: 1fr 1fr; }
+        .ag-split .ag-msgs { max-height: none; }
+      }
       @media (max-width: 860px) { .ag-board { grid-template-columns: 1fr 1fr; } }
-      @media (max-width: 560px) { .ag-board, .ag-grid2 { grid-template-columns: 1fr; } .ag-th, .ag-qrow, .ag-unrow { grid-template-columns: 1fr; } }
+      @media (max-width: 640px) { .ag-board, .ag-grid2 { grid-template-columns: 1fr; } .ag-th, .ag-qrow, .ag-unrow { grid-template-columns: 1fr; }
+        .ag-detail .ag-dhead { position: sticky; top: 0; background: var(--card); z-index: 2; padding: 4px 0; }
+        .ag-th .hint { font-size: 12px; } }
     `;
     document.head.appendChild(css);
   }
 
   const pill = (text, cls = "") => el("span", `pill ${cls}`, text);
+
+  // Clickable rows and cards are reachable and usable from the keyboard (Enter or Space), not only with a pointer.
+  function activatable(node, fn, label) {
+    node.tabIndex = 0;
+    node.setAttribute("role", "button");
+    if (label) node.setAttribute("aria-label", label);
+    node.onclick = fn;
+    node.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } });
+    return node;
+  }
+
+  function skeleton(target, n = 3, tall = false) {
+    target.replaceChildren();
+    target.setAttribute("aria-busy", "true");
+    for (let i = 0; i < n; i++) { const s = el("div", `ag-skel${tall ? " tall" : ""}`); s.setAttribute("aria-hidden", "true"); target.appendChild(s); }
+    const sr = el("span", "hint", t("loading")); sr.style.position = "absolute"; sr.style.left = "-9999px"; target.appendChild(sr);
+  }
+  function ready(target) { target.removeAttribute("aria-busy"); }
+
+  // What the filter box matches: repository, people involved, title and kind.
+  function matches(...fields) {
+    if (!textFilter) return true;
+    const hay = fields.flat().filter(Boolean).join(" ").toLowerCase();
+    return textFilter.split(/\s+/).every((w) => hay.includes(w));
+  }
 
   function setBadge(n) {
     if (!badge) badge = document.getElementById("agora-badge");
@@ -217,7 +281,7 @@
   }
 
   function renderAgents(b) {
-    agentsBox.replaceChildren();
+    agentsBox.replaceChildren(); ready(agentsBox);
     const list = (b.agents || []).filter((a) => a.id !== "luis");
     const only = Object.entries(b.observed_only || {});
     if (!list.length && !only.length) { agentsBox.appendChild(el("div", "hint", t("no_agents"))); return; }
@@ -225,7 +289,7 @@
       const o = a.observed;
       const c = el("div", `ag-agent${a.stale && !obsActive(o) ? " stale" : ""}`);
       const head = el("div");
-      head.appendChild(el("span", `ag-dot ${a.state || ""}`));
+      const dot = el("span", `ag-dot ${a.state || ""}`); dot.setAttribute("aria-hidden", "true"); head.appendChild(dot);
       head.appendChild(el("b", "", a.name || a.id));
       head.appendChild(el("span", "hint", `${st(a.state || "idle")} · ${fmtWhen(a.last_seen)}${a.stale ? " · " + t("stale") : ""}${o ? " · " + t("observed") + ": " + obsText(o) : ""}`));
       c.appendChild(head);
@@ -310,6 +374,7 @@
     const c = el("div", `ag-card ag-p${task.priority}`);
     c.appendChild(el("div", "ag-t", `#${task.id} ${task.title}`));
     const m = el("div", "ag-meta");
+    if (task.priority != null && task.priority <= 1) { const pr = el("span", "ag-prio", `P${task.priority}`); pr.title = `${t("prio_label")} ${task.priority}`; m.appendChild(pr); }
     m.appendChild(pill(st(task.status)));
     if (task.repo) m.appendChild(el("span", "", task.repo));
     if (task.owner) m.appendChild(el("span", "", `${t("owner")}: ${task.owner}`));
@@ -324,12 +389,12 @@
       m.appendChild(signal);
     }
     c.appendChild(m);
-    c.onclick = () => openTask(task.id);
+    activatable(c, () => openTask(task.id), `#${task.id} ${task.title} · ${st(task.status)}${task.priority <= 1 ? " · P" + task.priority : ""}`);
     return c;
   }
 
   function renderBoard(b) {
-    boardBox.replaceChildren();
+    boardBox.replaceChildren(); ready(boardBox);
     const hasCount = (status) => Number.isInteger(b.counts?.[status]) && b.counts[status] >= 0;
     const count = (status) => hasCount(status) ? b.counts[status] : (b.tasks || []).filter((x) => x.status === status).length;
     const cols = [
@@ -340,7 +405,7 @@
     ];
     for (const [key, sts] of cols) {
       const col = el("div", "ag-col");
-      const items = (b.tasks || []).filter((x) => sts.includes(x.status));
+      const items = (b.tasks || []).filter((x) => sts.includes(x.status) && matches(x.repo, x.owner, x.reviewer, x.title, String(x.id), x.kind));
       const total = sts.reduce((sum, status) => sum + count(status), 0);
       const head = el("div", "ag-colhead"); head.appendChild(el("span", "", t(key)));
       head.appendChild(el("span", "", String(key === "col_done" ? count("done") : total)));
@@ -356,20 +421,28 @@
   }
 
   function threadRow(th) {
-    const r = el("div", `ag-th ${th.status}`);
+    const unread = Number(th.unread || 0);
+    const r = el("div", `ag-th ${th.status}${unread ? " unread" : ""}`);
     r.appendChild(pill(S["k_" + th.kind] ? t("k_" + th.kind) : th.kind));
     r.appendChild(el("span", "ag-t", th.title));
-    r.appendChild(el("span", "hint", `${st(th.status)} · ${th.messages || 0} · ${th.last_author || ""} · ${fmtWhen(th.updated)}`));
-    r.onclick = () => openThread(th.id);
+    const meta = el("span", "hint", `${st(th.status)} · ${th.messages || 0} · ${th.last_author || ""} · ${fmtWhen(th.updated)} `);
+    if (unread) meta.appendChild(el("span", "ag-unread", t("unread").replace("{n}", unread)));
+    r.appendChild(meta);
+    if (th.seen_upto != null) seenUpto.set(th.id, Number(th.seen_upto));
+    activatable(r, () => openThread(th.id), `${th.title} · ${st(th.status)}${unread ? " · " + t("unread").replace("{n}", unread) : ""}`);
     return r;
   }
 
   async function renderThreads() {
-    const q = threadFilter === "all" ? "" : `?status=${threadFilter}`;
-    const r = await api(`/api/agora/threads${q}`);
-    threadsBox.replaceChildren();
-    const list = (r && r.threads) || [];
-    if (!list.length) threadsBox.appendChild(el("div", "hint", t("none")));
+    const q = new URLSearchParams({ agent: "luis" });
+    if (threadFilter !== "all") q.set("status", threadFilter);
+    if (kindFilter) q.set("kind", kindFilter);
+    const r = await api(`/api/agora/threads?${q}`);
+    if (!r || !r.ok) throw new Error((r && r.error) || "threads");
+    threadsBox.replaceChildren(); ready(threadsBox);
+    const all = r.threads || [];
+    const list = all.filter((th) => matches(th.title, th.kind, th.last_author, th.status));
+    if (!list.length) threadsBox.appendChild(el("div", "hint", all.length ? t("no_match") : t("none")));
     for (const th of list) threadsBox.appendChild(threadRow(th));
   }
 
@@ -394,14 +467,14 @@
 
   function renderDecisions(b) {
     decisionsBox.replaceChildren();
-    const list = b.decisions || [];
+    const list = (b.decisions || []).filter((d) => matches(d.title, d.resolution, d.resolved_by));
     if (!list.length) { decisionsBox.appendChild(el("div", "hint", t("none"))); return; }
     for (const d of list) {
       const x = el("div", "ag-dec");
       x.appendChild(el("b", "", d.title));
       x.appendChild(el("span", "", d.resolution));
       x.appendChild(el("small", "", `${d.resolved_by || ""} · ${fmtWhen(d.updated)}`));
-      x.style.cursor = "pointer"; x.onclick = () => openThread(d.id);
+      x.style.cursor = "pointer"; activatable(x, () => openThread(d.id), d.title);
       decisionsBox.appendChild(x);
     }
   }
@@ -431,25 +504,50 @@
     for (const task of progress) waitBox.appendChild(taskCard(task));
   }
 
+  function showError(err) {
+    errorBox.replaceChildren();
+    if (!err) { errorBox.hidden = true; return; }
+    errorBox.hidden = false;
+    errorBox.setAttribute("role", "alert");
+    errorBox.appendChild(el("b", "", t("load_error")));
+    errorBox.appendChild(el("span", "hint", `${String(err.message || err)} — ${t("load_error_hint")}`));
+    const again = el("button", "small", t("retry")); again.onclick = () => load(); errorBox.appendChild(again);
+  }
+
   async function load() {
     if (!box) return;
-    const b = await api("/api/agora/board");
-    if (!b || !b.ok) return;
-    lastBoard = b;
-    renderAgents(b); renderBoard(b); renderLocks(b); renderDecisions(b);
-    // the observer is optional (404 when disabled) and must never block the rest of the page
-    api("/api/agora/watch").then((w) => { lastWatch = w && w.ok ? w : null; renderQuestions(lastWatch); renderUnbound(lastWatch, b); }).catch(() => {});
-    await Promise.all([renderThreads(), renderWaiting()]);
-    if (current) await refreshDetail();
+    try {
+      const b = await api("/api/agora/board");
+      if (!b || !b.ok) throw new Error((b && b.error) || "board");
+      lastBoard = b;
+      renderAgents(b); renderBoard(b); renderLocks(b); renderDecisions(b);
+      // the observer is optional (404 when disabled) and must never block the rest of the page
+      api("/api/agora/watch").then((w) => { lastWatch = w && w.ok ? w : null; renderQuestions(lastWatch); renderUnbound(lastWatch, b); }).catch(() => {});
+      await Promise.all([renderThreads(), renderWaiting()]);
+      showError(null);
+      if (current) await refreshDetail();
+    } catch (e) {
+      showError(e);
+    }
   }
+
+  function rerenderFiltered() { if (lastBoard) { renderBoard(lastBoard); renderDecisions(lastBoard); } renderThreads().catch(showError); }
 
   // ---- detail ------------------------------------------------------------------------------------------------
 
-  function showDetail(on) { detailBox.hidden = !on; mainBox.hidden = on; }
+  // Wide screens keep the lists next to the open conversation; narrower ones switch between list and detail.
+  const wide = () => window.matchMedia("(min-width: 1200px)").matches;
+  function showDetail(on) {
+    detailBox.hidden = !on;
+    splitBox.classList.toggle("ag-split", on && wide());
+    mainBox.hidden = on && !wide();
+  }
 
-  function msgView(m) {
-    const d = el("div", `ag-msg ${m.kind === "system" ? "system" : ""} ${m.author === "luis" ? "luis" : ""} ${m.kind === "escalation" ? "escalation" : ""}`);
+  function msgView(m, seen) {
+    const fresh = seen != null && m.id > seen && m.author !== "luis" && m.kind !== "system";
+    const d = el("div", `ag-msg ${m.kind === "system" ? "system" : ""} ${m.author === "luis" ? "luis" : ""} ${m.kind === "escalation" ? "escalation" : ""}${fresh ? " new" : ""}`);
     const who = el("div", "ag-who");
+    if (fresh) who.appendChild(el("span", "ag-newtag", t("new_msg")));
     who.appendChild(el("span", "", MK[m.kind] || "💬"));
     who.appendChild(el("b", "", m.author));
     who.appendChild(el("span", "", m.kind));
@@ -602,7 +700,7 @@
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
     detailBox.replaceChildren();
     const head = el("div", "ag-dhead");
-    const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ } };
+    const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); renderThreads().catch(() => {}); try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ } };
     head.appendChild(back);
     head.appendChild(el("h3", "", task ? `#${task.id} ${task.title}` : thread.title));
     head.appendChild(pill(st(task ? task.status : thread.status)));
@@ -657,7 +755,8 @@
       }
     } else {
       detailBox.dataset.timelineAfter = "0";
-      for (const m of r.messages || []) msgs.appendChild(msgView(m));
+      const seen = detailBox.dataset.seen ? Number(detailBox.dataset.seen) : null;
+      for (const m of r.messages || []) msgs.appendChild(msgView(m, seen));
     }
     detailBox.appendChild(msgs);
     if (thread.id) {
@@ -665,11 +764,17 @@
       detailBox.appendChild(c);
       const ta = c.querySelector("textarea"); ta.value = draft; if (focused) ta.focus();
     }
-    msgs.scrollTop = msgs.scrollHeight;
+    const firstNew = msgs.querySelector(".ag-msg.new");
+    if (firstNew) firstNew.scrollIntoView({ block: "nearest" }); else msgs.scrollTop = msgs.scrollHeight;
   }
 
-  async function openThread(id) { current = { type: "thread", id }; detailBox.dataset.sig = ""; showDetail(true); try { history.replaceState(null, "", `#agora-${id}`); } catch (e) { /* ignore */ } await refreshDetail(); }
-  async function openTask(id) { current = { type: "task", id }; detailBox.dataset.sig = ""; showDetail(true); await refreshDetail(); }
+  async function openThread(id) {
+    current = { type: "thread", id }; detailBox.dataset.sig = "";
+    // what was new when the person opened it stays marked while the thread is open (opening marks it read)
+    if (seenUpto.has(id)) detailBox.dataset.seen = String(seenUpto.get(id)); else delete detailBox.dataset.seen; showDetail(true); try { history.replaceState(null, "", `#agora-${id}`); } catch (e) { /* ignore */ }
+    await refreshDetail(); renderThreads().catch(() => {});
+  }
+  async function openTask(id) { current = { type: "task", id }; detailBox.dataset.sig = ""; delete detailBox.dataset.seen; showDetail(true); await refreshDetail(); }
 
   // ---- forms -------------------------------------------------------------------------------------------------
 
@@ -752,6 +857,17 @@
       tools.appendChild(nt); tools.appendChild(nth); tools.appendChild(el("span", "hint", t("hint")));
       box.appendChild(tools);
       box.appendChild(forms);
+      const bar = el("div", "ag-filterbar");
+      const search = el("input"); search.type = "search"; search.placeholder = t("filter_ph"); search.setAttribute("aria-label", t("filter_ph"));
+      let deb = null;
+      search.addEventListener("input", () => { clearTimeout(deb); deb = setTimeout(() => { textFilter = search.value.trim().toLowerCase(); rerenderFiltered(); }, 200); });
+      const kindSel = el("select"); kindSel.setAttribute("aria-label", t("kind_all"));
+      for (const k of ["", "debate", "question", "decision", "review", "handoff", "note"]) { const o = el("option", "", k ? t("k_" + k) : t("kind_all")); o.value = k; kindSel.appendChild(o); }
+      kindSel.onchange = () => { kindFilter = kindSel.value; renderThreads().catch(showError); };
+      bar.appendChild(search); bar.appendChild(kindSel);
+      box.appendChild(bar);
+      errorBox = el("div", "ag-error"); errorBox.hidden = true; box.appendChild(errorBox);
+      splitBox = el("div");
       mainBox = el("div", "ag-wrap");
       waitBox = el("div", "ag-wait"); waitBox.hidden = true; mainBox.appendChild(waitBox);
       qBox = el("div", "ag-q"); qBox.hidden = true; mainBox.appendChild(qBox);
@@ -761,14 +877,18 @@
       const filters = el("span", "ag-filters");
       for (const [k, v] of [["filter_open", "open"], ["filter_all", "all"], ["filter_resolved", "resolved"]]) {
         const btn = el("button", `small ghost${v === threadFilter ? " on" : ""}`, t(k));
-        btn.onclick = () => { threadFilter = v; filters.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === btn)); renderThreads(); };
+        btn.setAttribute("aria-pressed", String(v === threadFilter));
+        btn.onclick = () => { threadFilter = v; filters.querySelectorAll("button").forEach((x) => { x.classList.toggle("on", x === btn); x.setAttribute("aria-pressed", String(x === btn)); }); renderThreads().catch(showError); };
         filters.appendChild(btn);
       }
       const th = section("threads", filters); threadsBox = el("div", "ag-threads"); th.appendChild(threadsBox); mainBox.appendChild(th);
       const lk = section("locks"); locksBox = el("div"); lk.appendChild(locksBox); mainBox.appendChild(lk);
       const dc = section("decisions"); decisionsBox = el("div", "ag-threads"); dc.appendChild(decisionsBox); mainBox.appendChild(dc);
-      box.appendChild(mainBox);
-      detailBox = el("div", "ag-detail"); detailBox.hidden = true; box.appendChild(detailBox);
+      splitBox.appendChild(mainBox);
+      detailBox = el("div", "ag-detail"); detailBox.hidden = true; splitBox.appendChild(detailBox);
+      box.appendChild(splitBox);
+      skeleton(agentsBox, 2, true); skeleton(boardBox, 4, true); skeleton(threadsBox, 4);
+      window.matchMedia("(min-width: 1200px)").addEventListener("change", () => showDetail(!detailBox.hidden));
       pollBadge(); setInterval(pollBadge, 15000);
       window.addEventListener("hashchange", openFromHash);
       setTimeout(openFromHash, 300);
