@@ -373,6 +373,8 @@ The **Ágora** tab of the hub shows the same data for the person (`luis`):
 - **Filters.** A text box filters tasks, conversations and decisions by repository, agent, title or id (all words must match); a selector
   narrows conversations by kind, next to the open/all/resolved buttons.
 - **State is never colour alone.** Priority P0/P1 is written on the card, agent state is written next to its dot, unread is a count.
+- **Long conversations.** Over 120 messages, the page mounts the last 120 (starting a little before the first new one when
+  that is older) and a button shows the earlier ones.
 - **Keyboard.** Task cards, conversations and decisions are buttons: Tab reaches them, Enter or Space opens them.
 - **Loading and errors.** Placeholders hold the layout until the first load. If the hub does not answer, a notice says so, keeps what was
   already shown, and offers *Reintentar*.
