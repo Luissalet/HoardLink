@@ -2019,7 +2019,7 @@ TOOLS: list[dict[str, Any]] = [
                     "Bodies are capped at 20000 characters each and 200000 per page; body_chars, "
                     "body_digest and body_truncated describe the original body. A truncated body is not a complete read. "
                     "A recent page never acknowledges unseen messages; stances describe only this page.",
-     "inputSchema": _schema({"thread_id": _THREAD,
+     "inputSchema": _schema({"thread_id": {"type": "integer", "minimum": 1},
                              "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
                              "before_id": {"type": "integer", "minimum": 1}}, ["thread_id"])},
     {"name": "hub_agora_ack",
