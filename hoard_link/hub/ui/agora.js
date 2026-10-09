@@ -45,6 +45,7 @@
     review_latest: { es: "Revisar la entrega actual", en: "Review the current submission" },
     need_text: { es: "Escribe algo primero.", en: "Write something first." },
     checkpoint: { es: "Último checkpoint", en: "Latest checkpoint" },
+    checkpoint_record: { es: "Checkpoint", en: "Checkpoint" },
     declared: { es: "Progreso y pruebas declarados por el agente", en: "Progress and tests declared by the agent" },
     workspace: { es: "Carpeta de trabajo", en: "Workspace" }, branch: { es: "Rama", en: "Branch" },
     base_head: { es: "Commit de base", en: "Base commit" }, head: { es: "Commit actual", en: "Current commit" },
@@ -72,6 +73,17 @@
     bound_off: { es: "Asignación quitada", en: "Assignment removed" },
     ago_s: { es: "hace unos segundos", en: "moments ago" },
     no_workspace_lease: { es: "El checkpoint no garantiza exclusividad de la carpeta de trabajo.", en: "A checkpoint does not guarantee exclusive access to the workspace." },
+    chronology: { es: "Cronología de la tarea", en: "Task chronology" },
+    more_events: { es: "Cargar más actividad", en: "Load more activity" },
+    activity_error: { es: "No se ha podido cargar la actividad. Puedes volver a intentarlo.", en: "Activity could not be loaded. You can retry." },
+    progress_recent: { es: "Progreso registrado", en: "Progress reported" },
+    progress_stalled: { es: "Revisar progreso", en: "Check progress" },
+    progress_quiet: { es: "Agente sin señales recientes", en: "No recent agent signal" },
+    progress_unconfirmed: { es: "Agente activo; tarea sin informe reciente", en: "Agent active; task has no recent report" },
+    progress_waiting: { es: "En espera", en: "Waiting" },
+    progress_evidence: { es: "Último informe de la tarea", en: "Last task report" },
+    heartbeat: { es: "Latido del agente", en: "Agent heartbeat" },
+    progress_inferred: { es: "Señal orientativa: no cambia el estado de la tarea.", en: "An inferred signal; it does not change the task status." },
   };
   const ST = {
     open: { es: "abierta", en: "open" }, claimed: { es: "reclamada", en: "claimed" }, in_progress: { es: "en curso", en: "in progress" },
@@ -139,6 +151,10 @@
       .ag-dhead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
       .ag-dhead h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
       .ag-msgs { display: grid; gap: 8px; max-height: 60vh; overflow: auto; padding-right: 2px; }
+      .ag-progress { display: grid; gap: 4px; font-size: 14px; overflow-wrap: anywhere; padding: 8px 0; }
+      .ag-progress > strong { color: var(--text); } .ag-progress.stalled > strong { color: var(--amber); }
+      .ag-progress small { color: var(--muted); }
+      .ag-event { min-width: 0; } .ag-event > small { display: block; color: var(--muted); margin-bottom: 4px; }
       .ag-msg { border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; background: var(--card-2); min-width: 0; }
       .ag-msg.system { background: transparent; border-style: dashed; color: var(--muted); font-size: 12px; }
       .ag-msg.luis { border-color: var(--accent); }
@@ -298,6 +314,12 @@
     if (task.status === "done" && task.review_state === "exempt") m.appendChild(pill(t("exempt")));
     else if (task.status === "done" && task.review_state === "equivalent") m.appendChild(pill(t("equivalent")));
     else if (task.status === "done" && !task.reviewed) m.appendChild(pill(t("unreviewed"), "warn"));
+    const activity = task.activity;
+    if (activity && ["stalled", "quiet", "unconfirmed"].includes(activity.state)) {
+      const signal = el("span", "", t("progress_" + activity.state));
+      signal.title = `${t("progress_evidence")}: ${fmtWhen(activity.last_progress_at)} · ${t("progress_inferred")}`;
+      m.appendChild(signal);
+    }
     c.appendChild(m);
     c.onclick = () => openTask(task.id);
     return c;
@@ -377,10 +399,11 @@
     waitBox.replaceChildren();
     const esc = (r && r.escalated) || [];
     const reviews = ((r && r.reviews) || []).filter((x) => x.reviewer === "luis");
+    const progress = (r && r.progress_alerts) || [];
     setBadge(esc.length);
-    if (!esc.length && !reviews.length) { waitBox.hidden = true; return; }
+    if (!esc.length && !reviews.length && !progress.length) { waitBox.hidden = true; return; }
     waitBox.hidden = false;
-    waitBox.appendChild(el("h4", "", `🙋 ${t("waiting")} (${esc.length + reviews.length})`));
+    waitBox.appendChild(el("h4", "", `${t("waiting")} (${esc.length + reviews.length + progress.length})`));
     for (const th of esc) {
       const row = el("div", "ag-th escalated");
       row.appendChild(pill(S["k_" + th.kind] ? t("k_" + th.kind) : th.kind));
@@ -393,6 +416,7 @@
       waitBox.appendChild(row);
     }
     for (const task of reviews) waitBox.appendChild(taskCard(task));
+    for (const task of progress) waitBox.appendChild(taskCard(task));
   }
 
   async function load() {
@@ -424,13 +448,13 @@
     return d;
   }
 
-  function checkpointView(cp) {
-    const wrap = el("section", "ag-msg ag-checkpoint");
+  function checkpointView(cp, historical = false) {
+    const wrap = el("section", "ag-msg " + (historical ? "ag-checkpoint-history" : "ag-checkpoint"));
     // Treat every checkpoint string as text, including paths and artifact references.
     const text = (tag, value, cls = "") => {
       const node = el(tag, cls); node.textContent = String(value); wrap.appendChild(node); return node;
     };
-    text("h4", `${t("checkpoint")} · r${cp.revision}`);
+    text("h4", `${t(historical ? "checkpoint_record" : "checkpoint")} · r${cp.revision}`);
     text("small", `${cp.author} · ${fmtWhen(cp.created)} · ${t("declared")}`);
     const p = cp.payload || {};
     text("pre", p.summary || "");
@@ -527,20 +551,41 @@
     return wrap;
   }
 
+  function activityView(activity) {
+    const wrap = el("section", `ag-progress ${activity.state}`);
+    wrap.appendChild(el("strong", "", S["progress_" + activity.state] ? t("progress_" + activity.state) : st(activity.state)));
+    wrap.appendChild(el("span", "", `${t("progress_evidence")}: ${fmtWhen(activity.last_progress_at)} · ${t("heartbeat")}: ${activity.heartbeat_at ? fmtWhen(activity.heartbeat_at) : t("no_beat")}`));
+    if (["stalled", "quiet", "unconfirmed"].includes(activity.state)) wrap.appendChild(el("small", "", t("progress_inferred")));
+    return wrap;
+  }
+
+  function timelineEvent(event, task) {
+    if (event.event_kind !== "checkpoint") return msgView(event);
+    const wrap = el("div", "ag-event");
+    wrap.appendChild(el("small", "", `${event.author} · ${fmtWhen(event.created)}`));
+    wrap.appendChild(checkpointView(event.checkpoint, true));
+    return wrap;
+  }
+
   async function refreshDetail() {
     if (!current) return;
     const keep = detailBox.querySelector("textarea");
     const draft = keep ? keep.value : "";
     const focused = keep && document.activeElement === keep;
+    const selectionKey = `${current.type}-${current.id}`;
+    const previousAfter = detailBox.dataset.key === selectionKey ? Number(detailBox.dataset.timelineAfter || 0) : 0;
     const draftRevision = draft.trim() && keep.dataset.reviewRevision ? Number(keep.dataset.reviewRevision) : undefined;
     const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}?agent=luis`);
+    if (!current || `${current.type}-${current.id}` !== selectionKey) return;
     if (!r || !r.ok) return;
     const task = r.task || null;
     const thread = r.thread || { id: task && task.thread_id, kind: "task", status: task && task.status, title: task && task.title };
     const cp = task && task.latest_checkpoint;
     const lockStatus = cp && cp.current_lock_status;
     const sig = JSON.stringify([(r.messages || []).length, task && task.status, task && task.submission_revision, task && task.commits, thread.status,
-      cp && cp.revision, lockStatus && [lockStatus.owner, lockStatus.missing, lockStatus.conflicts, lockStatus.owner_changed]]);
+      cp && cp.revision, task && task.activity && task.activity.state,
+      r.timeline && r.timeline.last_event_id,
+      lockStatus && [lockStatus.owner, lockStatus.missing, lockStatus.conflicts, lockStatus.owner_changed]]);
     if (detailBox.dataset.sig === sig && detailBox.dataset.key === `${current.type}-${current.id}`) return;
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
     detailBox.replaceChildren();
@@ -561,6 +606,7 @@
       if (task.branch) m.appendChild(el("span", "", "⎇ " + task.branch));
       if ((task.commits || []).length) m.appendChild(el("span", "", task.commits.join(" ")));
       detailBox.appendChild(m);
+      if (task.activity && !["final", "unclaimed"].includes(task.activity.state)) detailBox.appendChild(activityView(task.activity));
       for (const lk of r.locks || []) detailBox.appendChild(el("div", "ag-lockline", `🔒 ${lk.resource} — ${lk.owner}`));
       if (task.latest_checkpoint) detailBox.appendChild(checkpointView(task.latest_checkpoint));
     }
@@ -569,7 +615,38 @@
     }
     if (thread.resolution) detailBox.appendChild(el("div", "ag-dec", `${t("resolution")}: ${thread.resolution}`));
     const msgs = el("div", "ag-msgs");
-    for (const m of r.messages || []) msgs.appendChild(msgView(m));
+    if (r.timeline && task) {
+      detailBox.appendChild(el("h4", "", t("chronology")));
+      let page = r.timeline;
+      for (const event of page.events) msgs.appendChild(timelineEvent(event, task));
+      while (page.has_more && page.next_after_id < previousAfter) {
+        const next = await api(`/api/agora/timeline?task_id=${task.id}&after_id=${page.next_after_id}&limit=100`);
+        if (!current || `${current.type}-${current.id}` !== selectionKey) return;
+        if (!next || !next.ok || next.next_after_id <= page.next_after_id) break;
+        for (const event of next.events) msgs.appendChild(timelineEvent(event, task));
+        page = next;
+      }
+      detailBox.dataset.timelineAfter = String(page.next_after_id);
+      if (page.has_more) {
+        const more = el("button", "small", t("more_events"));
+        more.onclick = async () => {
+          more.disabled = true;
+          try {
+            const next = await api(`/api/agora/timeline?task_id=${task.id}&after_id=${page.next_after_id}&limit=100`);
+            if (!current || `${current.type}-${current.id}` !== selectionKey) return;
+            if (!next || !next.ok) { toast(t("activity_error"), "err"); return; }
+            for (const event of next.events) msgs.insertBefore(timelineEvent(event, task), more);
+            page = next; detailBox.dataset.timelineAfter = String(page.next_after_id);
+            if (!page.has_more) more.remove();
+          } catch (e) { toast(t("activity_error"), "err"); }
+          finally { more.disabled = false; }
+        };
+        msgs.appendChild(more);
+      }
+    } else {
+      detailBox.dataset.timelineAfter = "0";
+      for (const m of r.messages || []) msgs.appendChild(msgView(m));
+    }
     detailBox.appendChild(msgs);
     if (thread.id) {
       const c = composer(thread, task, draftRevision);
