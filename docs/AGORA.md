@@ -101,7 +101,8 @@ that the agent has not seen: newer than its ack of the thread and than its inbox
 it is attributable to the agent: `thread` or `task` with `agent` (CLI `thread N`, `task N`; MCP
 `hub_agora_thread`, `hub_agora_task` with `agent`), its own post in the thread, or a non-peek `inbox`, which
 delivers the bodies. Bookkeeping lines (kind `system`), the agent's own messages and the task's own description
-never count.
+never count. Reading as the person (`luis`) is recorded only from the hub's page: with a token over HTTP it is
+ignored, and through MCP or the API it is refused, as for `thread`.
 
 If something was unread, the action goes through and its answer carries `unseen` (`count`, the messages, a hint);
 the hub emits `agora.task.unseen` and the CLI prints an `AVISO` line. Nothing is written in the thread.
@@ -111,7 +112,9 @@ the hub emits `agora.task.unseen` and the CLI prints an `AVISO` line. Nothing is
 **Inbox without bodies.** `inbox` with `metadata_only` (HTTP `metadata_only=1`, CLI `inbox --meta`, MCP
 `metadata_only`) answers who wrote, in which thread and what kind, with `body_chars` instead of the body, and
 does not move the read mark: nothing was delivered, so those messages stay unseen for the check above until the
-thread is read.
+thread is read. Every section is reduced the same way after the hub adds its own data: reviews, changes asked and
+progress alerts keep the task's id, title, status, people, branch, commits and revisions (no description,
+checkpoint summary or submission blocks); escalations keep the thread with `question_chars` instead of the question.
 
 ## HTTP
 
