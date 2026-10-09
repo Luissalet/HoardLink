@@ -16,6 +16,7 @@ from hoard_link.hub.registry import App, LaunchSpec
 from hoard_link.hub.server import make_server
 from .conftest import free_port
 from .test_hub_and_server import _http
+from ._hub_fakes import wait_for
 
 
 @pytest.fixture
@@ -37,7 +38,8 @@ def test_groups_http_persist_start_and_windows_roundtrip(hub, windows):
         assert _http(base+'/save', {'apps':['ghost']})[0] == 400
         assert _http(base+'/save', {'apps':['launch'], 'commands':[{'cmd':'bad'}]})[0] == 400
         assert _http(base+'/start', {})[1]['ok']
-        assert procs.health(hub.get('launch')).state == 'healthy'
+        # Starting a group does not wait for its apps, so poll until the spawned one answers.
+        assert wait_for(lambda: procs.health(hub.get('launch')).state == 'healthy', timeout=20)
         assert _http(url+'/api/autostart', {'enabled':True, 'profile':'unknown'})[0] == 400
         assert not windows.exists()
         assert _http(url+'/api/autostart', {'enabled':True, 'profile':name})[1]['ok']
