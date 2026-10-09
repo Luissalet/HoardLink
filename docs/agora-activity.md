@@ -28,6 +28,9 @@ Advance a cursor only after processing the events. `last_event_id` identifies th
 task, letting the interface refresh when an associated debate changes beyond the first page. This is a read of
 current records, not a transactionally frozen snapshot of concurrent posts.
 
+Plain terminal `inbox` and `digest` display inferred progress warnings with the task report and heartbeat
+timestamps; the warning disappears when a new owner report arrives. `--json` retains the structured evidence.
+
 Each event includes `event_id`, `thread_id`, `thread_title`, author, kind, body, mentions and creation timestamp.
 Structured checkpoint events additionally include the full checkpoint. Database migration 7 records their
 message IDs without altering historical tasks or votes. For checkpoints created before migration 7, a matching
