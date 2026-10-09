@@ -1,6 +1,7 @@
 """Bounded recent thread reading through real SQLite, HTTP and stdio MCP."""
 import json
 import hashlib
+import asyncio
 import os
 from pathlib import Path
 import subprocess
@@ -157,11 +158,66 @@ def test_real_http_and_stdio_mcp_recent_contract(tmp_path):
         assert schema['annotations']['readOnlyHint'] is True
         assert schema['inputSchema']['additionalProperties'] is False
         assert 'agent' not in schema['inputSchema']['properties']
+        assert schema['inputSchema']['properties']['thread_id']['minimum'] == 1
         assert schema['inputSchema']['properties']['limit']['maximum'] == 200
         payload = json.loads(replies[3]['result']['content'][0]['text'])
         assert payload == first
         assert ag.db.scalar("SELECT count(*) FROM acks WHERE agent='qa-reader'") == 0
         assert ag.db.scalar('SELECT count(*) FROM reads') == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        hub.close()
+
+
+@pytest.mark.skipif(not os.environ.get('FAUSTUS_COORDINATION_QA_ROOT'),
+                    reason='Cross-repo native contract QA requires an explicit isolated Faustus checkout')
+def test_real_faustus_mcp_manager_and_client_read_latest_without_skipping_history(tmp_path, monkeypatch):
+    root = Path(os.environ['FAUSTUS_COORDINATION_QA_ROOT'])
+    monkeypatch.syspath_prepend(str(root))
+    monkeypatch.setenv('ODYSSEUS_DATA_DIR', str(tmp_path / 'faustus-data'))
+    monkeypatch.setenv('DATABASE_URL', 'sqlite:///:memory:')
+    from src.mcp_manager import McpManager
+    from src.coordination.client import Client
+    from src.coordination.store import Store
+    from src.coordination.bindings import Binding, READ_OPERATIONS
+    hub = make_hub(tmp_path / 'native-hub', [])
+    server = serve(hub)
+    ag = hub.facet('agora').agora
+    tid = populate(ag)
+    for n in range(101):
+        ag._msg(tid, 'qa-author', 'comment', f'Synthetic backlog {n}', [])
+    ag._msg(tid, 'qa-author', 'comment', 'Synthetic current reparto: 133 done at revision 2', [])
+    async def run():
+        manager = McpManager()
+        try:
+            connected = await manager.connect_server('qa-hub', 'QA Hub recent', 'stdio', command=sys.executable,
+                args=['-m', 'hoard_link.hub.mcp'], inherit_env=False,
+                env={'PYTHONPATH': str(Path(__file__).resolve().parents[2]), 'HOARD_HUB_URL': hub.config.url.rstrip('/'),
+                     'HOARD_HUB_TOKEN_FILE': str(hub.config.token_file), 'HOARD_HUB_DATA_DIR': str(hub.config.data_dir),
+                     'HOARD_HUB_AUTOSTART': '0'})
+            assert connected
+            catalog = next(t for t in manager.get_all_tools() if t['name'] == 'hub_agora_thread_recent')
+            assert catalog['input_schema']['properties']['thread_id']['minimum'] == 1
+            store = Store(tmp_path / 'coordination')
+            binding = store.save(Binding(id='qa-contract', owner='qa-owner', project_id='qa-project', session_id='qa-chat',
+                connector_id='qa-hub', actor='faustus-qa-contract', operations=tuple(READ_OPERATIONS),
+                repos=('Writer',), thread_ids=(tid,)))
+            # Full product session validation has its own API tests. This
+            # exercises the actual manager/stdio/server/catalog/client seam.
+            client = Client(store, binding, manager, revalidate=lambda _: None, read_only=True)
+            result = await client.execute('poll', {})
+            assert result['cursor'] == 100 and result['has_more']
+            assert result['recent_unavailable'] == [] and len(result['recent']) == 5
+            latest = result['recent'][-1]
+            detail = await client.execute('detail', {'message_id': latest['id'], 'digest': latest['digest']})
+            assert detail['body'] == 'Synthetic current reparto: 133 done at revision 2'
+            assert ag.db.scalar("SELECT count(*) FROM acks WHERE agent='faustus-qa-contract'") == 0
+            assert ag.db.scalar("SELECT count(*) FROM reads WHERE agent='faustus-qa-contract'") == 0
+        finally:
+            await manager.disconnect_all()
+    try:
+        asyncio.run(run())
     finally:
         server.shutdown()
         server.server_close()
