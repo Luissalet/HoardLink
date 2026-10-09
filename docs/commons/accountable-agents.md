@@ -75,7 +75,9 @@ that reached the tool (successful or not; refused calls did not write anything) 
   any opaque string of 40+ characters that mixes letters and digits. `reason` and `error` are masked the same way.
 * `ids`: the identifiers in the result (`id`, `*_id`, `*_ids` at the top level), plus what the tool's `track` hook adds.
 * `objects`: slash-separated paths the write touched (`deck:A/slide:B`). Two writes touch the same object when the paths are equal or one is an
-  ancestor of the other. Without a `track` hook the paths are guessed from `*_id` arguments and the result's ids (flat).
+  ancestor of the other. Without a `track` hook the paths are guessed from `*_id` arguments and the result's ids (flat); a `track` that
+  returns `objects: []` means "touched nothing that can conflict" and nothing is guessed. `track(args, result, ctx=None)` receives the app
+  context when it declares `ctx` (the result it sees is already trimmed to about 20 KB, so read big state from `ctx`).
 * `before`: what the tool's `capture` hook returned before the write (at most 256 KB; larger and the write is marked not undoable).
 * The file is append-only and rotated at 5 MB: `.jsonl` -> `.jsonl.1` -> `.2` -> `.3`, older lines are dropped. Readers (and undo) see the whole chain.
 * Each write also emits the family event **`agent.write`** `{journal_id, tool, ok, agent, session, reason, undoable, objects}` (never the arguments).

@@ -101,7 +101,8 @@ class Tool:
 
     * ``capture(ctx, args) -> dict | None`` runs just *before* the write and returns whatever is needed to take it back
       (the previous state of the object); it is kept in the journal line as ``before`` (JSON, at most 256 KB).
-    * ``track(args, result) -> dict`` runs just *after* it and says what the write touched: ``objects`` (slash-separated
+    * ``track(args, result[, ctx=]) -> dict`` (``ctx`` only when it declares that parameter; the result it sees is already
+      trimmed, so read the live state from ``ctx`` for anything big) runs just *after* it and says what the write touched: ``objects`` (slash-separated
       paths such as ``["deck:ID/slide:ID"]``; two writes conflict when their paths overlap), ``ids`` (extra identifiers)
       and ``etag`` (a string that identifies the state of the object right after the write). Without it the objects are
       guessed from ``*_id`` arguments and the result's ids.
@@ -600,7 +601,10 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
             try:
                 if validated is None:
                     validated = validate_arguments(tool, arguments)
-                tracked = dict(tool.track(validated, result) or {})
+                if _declares(tool.track, "ctx"):
+                    tracked = dict(tool.track(validated, result, ctx=context(request)) or {})
+                else:
+                    tracked = dict(tool.track(validated, result) or {})
             except Exception:  # noqa: BLE001
                 agent_log.exception("track hook of %s failed", name)
         ids = agent_journal.result_ids(result) + [str(i)[:100] for i in (tracked.get("ids") or [])]
@@ -609,7 +613,8 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
         entry: dict[str, Any] = {
             "kind": "write", "tool": name, "agent": agent, "session": session, "reason": agent_journal.mask_text(reason),
             "args_digest": agent_journal.digest_args(arguments), "args_summary": agent_journal.summarize_args(arguments),
-            "ids": list(dict.fromkeys(ids))[:30], "objects": list(tracked.get("objects") or agent_journal.default_objects(arguments, result))[:30],
+            "ids": list(dict.fromkeys(ids))[:30], "objects": list(tracked["objects"] if "objects" in tracked and tracked["objects"] is not None
+                         else agent_journal.default_objects(arguments, result))[:30],
             "etag": str(tracked.get("etag") or ""), "ok": bool(outcome["ok"]), "error": agent_journal.mask_text(str(outcome["error"]))[:300],
             "ms": ms, "profile": access.profile, "token": access.token_id, "undoable": undoable}
         if before is not None:
