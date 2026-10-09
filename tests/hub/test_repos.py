@@ -1144,8 +1144,8 @@ def test_config_carries_repos_settings(tmp_path):
 def test_versions_agree():
     root = Path(__file__).resolve().parents[2]
     pyproject = re.search(r'^version\s*=\s*"([^"]+)"', (root / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
-    assert pyproject == hoard_link.__version__ == HUB_VERSION == "0.8.1"
+    assert pyproject == hoard_link.__version__ == HUB_VERSION == "0.8.2"
     from hoard_link import family
-    assert family.FAMILY_VERSION == "0.8.1"
+    assert family.FAMILY_VERSION == "0.8.2"
     js = (root / "js" / "hoard-link.js").read_text(encoding="utf-8")
-    assert re.search(r'FAMILY_VERSION\s*=\s*"0\.8\.1"', js)
+    assert re.search(r'FAMILY_VERSION\s*=\s*"0\.8\.2"', js)
