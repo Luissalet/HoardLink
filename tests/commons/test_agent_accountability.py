@@ -462,6 +462,18 @@ def test_dry_run_changes_nothing_and_records_nothing(tmp_path):
     assert c.ctx.notes["n9"]["text"] == "changed" and (tmp_path / "agent_journal.jsonl").read_text() == before
 
 
+def test_dry_run_plans_chained_edits_of_one_object_as_a_real_run_would_do_them(tmp_path):
+    c = build(tmp_path)
+    c.ctx.notes["n9"] = {"text": "original", "folder": ""}
+    call(c, "note_edit", {"note_id": "n9", "text": "one"}, session="s")
+    call(c, "note_edit", {"note_id": "n9", "text": "two"}, session="s")
+    plan = undo(c, "s", dry_run=True).json()
+    assert len(plan["would_undo"]) == 2 and plan["conflicts"] == [] and plan["complete"] is True
+    assert plan["would_undo"][1]["detail"] == {"after_newer_writes_of_this_session": True}
+    done = undo(c, "s", confirm=True, reason="roll back").json()
+    assert len(done["undone"]) == 2 and c.ctx.notes["n9"]["text"] == "original"
+
+
 def test_undo_needs_confirmation_and_a_known_session(tmp_path):
     c = build(tmp_path)
     call(c, "note_add", {"text": "a"}, session="s")

@@ -361,6 +361,7 @@ def undo_session(journal: Journal, handlers: Mapping[str, Callable[..., Any]], c
         result["counts"] = {"writes": 0}
         return result
     undone_now: set[str] = set()
+    would_objects: list[Any] = []                              # objects of the writes a dry run has already planned to take back
     for index, row in reversed(mine):
         wid = str(row.get("id"))
         if not row.get("ok", True):
@@ -392,6 +393,14 @@ def undo_session(journal: Journal, handlers: Mapping[str, Callable[..., Any]], c
                                         "with": {"id": rival.get("id"), "tool": rival.get("tool"), "agent": rival.get("agent") or "",
                                                  "session": rival.get("session") or "", "ts": rival.get("ts")}})
             continue
+        if dry_run and any(objects_overlap(row.get("objects") or [], objs) for objs in would_objects):
+            # a dry run changes nothing, so the handler would see the state *before* this session's newer write on the same
+            # object is taken back and could not match; a real run takes that one back first, so it is reported as planned
+            item = {**_brief(row), "detail": {"after_newer_writes_of_this_session": True}}
+            result[key].append(item)
+            would_objects.append(row.get("objects") or [])
+            undone_now.add(wid)
+            continue
         try:
             detail = _call_undo(handler, ctx, dict(row), dry_run)
         except Exception as error:  # noqa: BLE001 - one failing handler must not stop the rest of the report
@@ -409,6 +418,7 @@ def undo_session(journal: Journal, handlers: Mapping[str, Callable[..., Any]], c
         item = {**_brief(row), "detail": detail if isinstance(detail, Mapping) else ({"result": detail} if detail is not None else {})}
         result[key].append(item)
         undone_now.add(wid)
+        would_objects.append(row.get("objects") or [])
         if not dry_run:
             journal.append({"kind": "undo", "undoes": wid, "tool": tool, "agent": row.get("agent") or "", "session": session,
                             "reason": reason, "actor": actor, "ok": True, "objects": row.get("objects") or [],
