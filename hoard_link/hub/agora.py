@@ -1825,11 +1825,22 @@ class Agora:
         elif not a.get("include_tasks"):
             where.append("(t.kind<>'task' OR t.status='escalated')")
         limit = max(1, min(int(a.get("limit") or 100), 500))
+        # With an agent, each thread also says what that agent has not seen: messages by others (bookkeeping lines
+        # aside) newer than its ack of the thread and its inbox read mark. Reading the list marks nothing.
+        viewer = str(a.get("agent") or "").strip().lower()
+        unread_sql, unread_params = "", []
+        if viewer and _AGENT_RE.match(viewer):
+            mark = self.db.one("SELECT last_msg_id FROM reads WHERE agent=?", (viewer,))
+            seen = ("MAX(COALESCE((SELECT upto FROM acks k WHERE k.agent=? AND k.thread_id=t.id), 0), ?)")
+            unread_sql = (f", {seen} AS seen_upto, (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id "
+                          f"AND m.author<>? AND m.kind<>'system' AND m.id > {seen}) AS unread")
+            last = int(mark["last_msg_id"]) if mark else 0
+            unread_params = [viewer, last, viewer, viewer, last]
         sql = ("SELECT t.*, (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id) AS messages, "
-               "(SELECT author FROM messages m WHERE m.thread_id=t.id ORDER BY id DESC LIMIT 1) AS last_author "
-               "FROM threads t" + (" WHERE " + " AND ".join(where) if where else "") +
+               "(SELECT author FROM messages m WHERE m.thread_id=t.id ORDER BY id DESC LIMIT 1) AS last_author"
+               + unread_sql + " FROM threads t" + (" WHERE " + " AND ".join(where) if where else "") +
                " ORDER BY CASE t.status WHEN 'escalated' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, t.updated DESC LIMIT ?")
-        return {"ok": True, "threads": [dict(r) for r in self.db.query(sql, (*params, limit))]}
+        return {"ok": True, "threads": [dict(r) for r in self.db.query(sql, (*unread_params, *params, limit))]}
 
     def ack(self, a: dict[str, Any]) -> dict[str, Any]:
         """Mark a thread (or every thread with ``all``) as seen: its mentions of the agent stop being pending."""
@@ -2250,6 +2261,13 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_decisions", "read": True,
      "description": "The decision log: resolved threads with their resolution, newest first.",
      "inputSchema": _schema({"limit": {"type": "integer"}}, [])},
+    {"name": "hub_agora_threads", "read": True,
+     "description": "List threads (escalated first, then open, newest first), filtered by status or kind; task threads "
+                    "only with include_tasks. With agent, each thread says how many messages by others that agent "
+                    "has not seen (unread) and up to which message id it has (seen_upto). Listing marks nothing read.",
+     "inputSchema": _schema({"agent": _A, "status": {"type": "string"}, "kind": {"type": "string"},
+                             "include_tasks": {"type": "boolean"},
+                             "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
 ]
 
 _WRITE_OPS = ("checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
@@ -2592,7 +2610,7 @@ class AgoraFacet(Facet):
             "hub_agora_thread_open": wrap(ag.thread_open), "hub_agora_post": wrap(ag.post),
             "hub_agora_resolve": wrap(ag.resolve), "hub_agora_escalate": wrap(ag.escalate),
             "hub_agora_thread": wrap(self._thread), "hub_agora_thread_recent": wrap(ag.thread_recent),
-            "hub_agora_decisions": wrap(ag.decisions),
+            "hub_agora_decisions": wrap(ag.decisions), "hub_agora_threads": wrap(ag.threads),
             "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(self._digest),
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
         }
