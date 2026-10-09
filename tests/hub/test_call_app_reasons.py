@@ -92,3 +92,12 @@ def test_hub_gives_default_reason_but_not_to_agents(app, monkeypatch):
     assert res["ok"] is False and res["status"] == 400
     res = core.Hub.call_app(hub, "demo", "note_add", {"text": "x", "reason": "From the arguments"}, caller="hub-tool", timeout=5)
     assert res["ok"] is True and _Recorder.seen[-1]["body"]["reason"] == "From the arguments"
+
+
+def test_default_reason_names_the_agent_behind_a_hub_token(app):
+    from hoard_link.hub import core
+    hub = SimpleNamespace(get=lambda _id: app, _safe_emit=lambda *a, **k: None)
+    res = core.Hub.call_app(hub, "demo", "note_add", {"text": "x"}, caller="hub", agent="claude-live", session="s1", timeout=5)
+    assert res["ok"] is True
+    assert _Recorder.seen[-1]["body"]["reason"] == "Requested by claude-live through the Hub"
+    assert _Recorder.seen[-1]["agent"] == "claude-live" and _Recorder.seen[-1]["session"] == "s1"

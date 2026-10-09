@@ -613,15 +613,15 @@ class Hub:
 
         Apps with accountable agents refuse writes without a ``reason``. The hub's own steps (rules, jobs, purchases,
         search, media flows) and the calls other apps make through the hub get a default reason that names the
-        caller; an agent using ``hub_call_app`` (caller ``hub-tool``) must give its own, so it is told why it is
-        asked when it forgets."""
+        caller (or the agent named by ``X-Agent-Id``); an agent using ``hub_call_app`` (caller ``hub-tool``) must give its
+        own, so it is told why it is asked when it forgets."""
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}", "apps": [a.id for a in self.apps]}
         args = arguments if isinstance(arguments, dict) else {}
         given = reason if isinstance(reason, str) and reason.strip() else args.get("reason")
         if not (isinstance(given, str) and given.strip()) and caller != "hub-tool":
-            given = default_call_reason(caller)
+            given = default_call_reason(agent if agent and agent != caller else caller)
         res = contract.call_app(app, tool, args, timeout=timeout, caller=caller,
                                 reason=given if isinstance(given, str) else None,
                                 agent=agent or caller, session=session)
