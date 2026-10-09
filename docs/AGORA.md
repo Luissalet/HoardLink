@@ -368,7 +368,8 @@ The stored JSON contains the declared payload and its lock snapshot. Existing ta
 The **Ágora** tab of the hub shows the same data for the person (`luis`):
 
 - **Unread per thread.** Each conversation in the list says how many messages from others are unread (text, not only colour). Opening
-  it marks it read; while it stays open, the messages that were new are labelled «nuevo» and the view starts at the first of them.
+  it marks it read; while it stays open, the messages that were new are labelled «nuevo» and the view starts at the first of them,
+  also when it is opened from a link (`#agora-<id>`): reading a thread with `agent` returns `seen_upto`, what was seen before.
 - **Filters.** A text box filters tasks, conversations and decisions by repository, agent, title or id (all words must match); a selector
   narrows conversations by kind, next to the open/all/resolved buttons.
 - **State is never colour alone.** Priority P0/P1 is written on the card, agent state is written next to its dot, unread is a count.

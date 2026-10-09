@@ -1857,8 +1857,14 @@ class Agora:
 
     def thread(self, a: dict[str, Any]) -> dict[str, Any]:
         th = self._thread_row(a.get("thread_id"))
+        seen_before = None
         if a.get("agent"):
-            self._ack(self._agent(a.get("agent"), allow_person=bool(a.get("_person"))), th["id"])
+            reader = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+            # what the reader had seen before this read, so a page can mark what is new to it
+            ack = self.db.one("SELECT upto FROM acks WHERE agent=? AND thread_id=?", (reader, th["id"]))
+            mark = self.db.one("SELECT last_msg_id FROM reads WHERE agent=?", (reader,))
+            seen_before = max(int(ack["upto"]) if ack else 0, int(mark["last_msg_id"]) if mark else 0)
+            self._ack(reader, th["id"])
         stances: dict[str, str] = {}
         msgs = self._messages(th["id"])
         for m in msgs:
@@ -1866,6 +1872,8 @@ class Agora:
                 stances[m["author"]] = m["kind"]
         out = {"ok": True, "thread": th, "messages": msgs, "stances": stances,
                "task": self._task_row(th["task_id"]) if th.get("task_id") else None}
+        if seen_before is not None:
+            out["seen_upto"] = seen_before
         if out["task"] and out["task"]["thread_id"] == th["id"]:
             out["timeline"] = self.timeline({"task_id": th["task_id"], "limit": 100})
         return out
