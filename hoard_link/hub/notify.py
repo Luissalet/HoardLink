@@ -663,8 +663,11 @@ class NotifyFacet(Facet):
     def _send_windows(self, note: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         if not self._is_windows():
             return {"ok": False, "unsupported": True, "error": "unsupported"}
+        if self.powershell_runner in (None, subprocess.run) and nc.dry_run():
+            # Decided here, not in the toast thread: a test's teardown may restore the environment before it runs.
+            return {"ok": True, "dry_run": True}
         name, icon_path = self._toast_identity(str(note.get("icon_app") or note.get("app") or "hub"))
-        script = build_toast_ps1(note["title"], note.get("body", ""), note.get("url", ""), None,
+        script = build_toast_ps1(note["title"], nc.toast_text(note.get("body", "")), note.get("url", ""), None,
                                  nc.toast_app_id(note.get("icon_app") or note.get("app") or "hub"),
                                  display_name=name, icon=icon_path)
         if not self.toast_async:

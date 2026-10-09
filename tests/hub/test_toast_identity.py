@@ -80,3 +80,75 @@ def test_hub_toasts_show_the_sending_app(hub):
     f.send("Aviso", "x", app=some.id, channels_override=["windows"])
     assert f"CreateToastNotifier('{nc.toast_app_id(some.id)}')" in scripts[-1]
     assert f"DisplayName -Value {nc.ps_quote(some.name[:60])}" in scripts[-1]
+
+
+def test_hub_toasts_show_markdown_as_plain_lines(hub):
+    f = hub.facet("notify")
+    f.platform = "win32"
+    f.toast_async = False
+    scripts = []
+
+    class Done:
+        returncode = 0
+
+    f.powershell_runner = lambda cmd, **kw: (scripts.append(open(cmd[-1], encoding="utf-8-sig").read()), Done())[1]
+    f.send("Resumen — Personal", "## Hoy\nNada pendiente.\n\n## Atención\n- **2** correos\n\n## Sistema\n",
+           app="hub", channels_override=["windows"])
+    assert "<text>Hoy: Nada pendiente.\nAtención: 2 correos</text>" in scripts[-1]
+    assert "##" not in scripts[-1] and "**" not in scripts[-1]
+
+
+def test_toast_text():
+    assert nc.toast_text("## Hoy\nNada pendiente.\n\n## Atención\n") == "Hoy: Nada pendiente."
+    assert nc.toast_text("- uno\n- [dos](http://x)\n`tres`") == "• uno\n• dos\ntres"
+    assert nc.toast_text("cuerpo simple") == "cuerpo simple"
+    assert nc.toast_text("\n".join(f"l{i}" for i in range(6)), max_lines=3) == "l0\nl1\nl2\n…"
+    assert nc.toast_text("") == ""
+
+
+def test_dry_run_never_starts_powershell(monkeypatch):
+    """The whole suite runs with HOARD_NOTIFY_DRY_RUN=1 (tests/conftest.py): a test hub once put a real toast in front of
+    the person, and its click opened a test port that was already gone."""
+    import subprocess
+
+    def boom(*a, **k):
+        raise AssertionError("a real PowerShell was started")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert os.environ.get("HOARD_NOTIFY_DRY_RUN") == "1"
+    assert nc.run_ps1("Write-Output 1") == {"ok": True, "dry_run": True}
+    assert nc.send_toast("t", "b", platform="win32") == {"ok": True, "dry_run": True}
+    assert nc.run_ps1("x", runner=subprocess.run) == {"ok": True, "dry_run": True}  # the default runner, spelled out
+    # An injected runner is still called: tests that check the PowerShell call keep working.
+    seen = []
+
+    class Done:
+        returncode = 0
+
+    assert nc.run_ps1("x", runner=lambda cmd, **kw: (seen.append(cmd), Done())[1]) == {"ok": True}
+    assert seen
+    monkeypatch.setenv("HOARD_NOTIFY_DRY_RUN", "0")
+    assert not nc.dry_run()
+
+
+def test_node_twin_honours_the_dry_run():
+    from tests.commons.test_notify_router import run_link_js
+
+    out = run_link_js("return [fam.notifyDryRun(), await fam.runPs1('Write-Output 1')];")
+    assert out == [True, {"ok": True, "dry_run": True}]
+
+
+def test_hub_dry_run_is_decided_before_the_toast_thread(hub, monkeypatch):
+    """A test's teardown can restore the environment before an async toast thread runs: the hub must decide first."""
+    f = hub.facet("notify")
+    f.platform = "win32"
+    f.toast_async = True
+    import subprocess
+    assert f.powershell_runner is subprocess.run  # the hub's real default
+    started = []
+    monkeypatch.setattr(nc, "run_ps1", lambda *a, **k: started.append(a) or {"ok": True})
+    res = f.send("Resumen", "## Hoy\nNada.", app="hub", channels_override=["windows"])
+    assert res["delivered"] == ["windows"], res
+    import time
+    time.sleep(0.2)
+    assert started == []
