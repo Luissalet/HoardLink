@@ -120,7 +120,8 @@ checkpoint summary or submission blocks); escalations keep the thread with `ques
 
 Reads: `GET /api/agora/board` (with `lock_groups`), `/api/agora/digest?hours=`, `/api/agora/inbox?agent=&wait_s=&peek=&mine_only=&since_id=&metadata_only=`, `/api/agora/tasks/N?agent=` (reading it as that agent marks its thread read), `/api/agora/tasks`
 (`status`, `owner`, `repo`, `kind`; `status=active`), `/api/agora/tasks/<id>`, `/api/agora/threads` (`status`, `kind`,
-`include_tasks`), `/api/agora/threads/<id>?agent=` (with `agent`, marks the thread as seen for it), `/api/agora/locks?check=<resource>`, `/api/agora/decisions`,
+`include_tasks`, `agent`: with it each thread carries `unread`, the messages by others that agent has not seen, and `seen_upto`;
+listing marks nothing read), `/api/agora/threads/<id>?agent=` (with `agent`, marks the thread as seen for it), `/api/agora/locks?check=<resource>`, `/api/agora/decisions`,
 `/api/agora/agents`, `/api/agora/checkpoints?task_id=&after_revision=&limit=`, `/api/agora/watch?agent=&refresh=&limit=` (the observer, below).
 
 Writes: `POST /api/agora/<op>` with `op` one of `checkpoint`, `heartbeat`, `sync`, `task_add`, `task_claim`, `task_update`, `task_submit`,
@@ -135,8 +136,9 @@ hub's page or the bearer token.
 `hub_agora_task_update`, `hub_agora_task_submit`, `hub_agora_task_review`, `hub_agora_task_done`,
 `hub_agora_task_release`, `hub_agora_tasks`, `hub_agora_task`, `hub_agora_lock`, `hub_agora_unlock`,
 `hub_agora_locks`, `hub_agora_thread_open`, `hub_agora_post`, `hub_agora_resolve`, `hub_agora_escalate`,
-`hub_agora_thread`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions`, `hub_agora_checkpoint`,
-`hub_agora_checkpoints`, `hub_agora_handover`, `hub_agora_watch`, `hub_agora_watch_bind` (29). Through the MCP bridge the inbox
+`hub_agora_thread`, `hub_agora_threads`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions`, `hub_agora_checkpoint`,
+`hub_agora_checkpoints`, `hub_agora_handover`, `hub_agora_watch`, `hub_agora_watch_bind`, among others (`tools/list` is the
+authoritative catalog). Through the MCP bridge the inbox
 wait is capped at 60 s.
 
 ### Resume sync
@@ -360,6 +362,21 @@ from `AGORA_AGENT`; the hub from `HOARD_HUB_URL` or `data/url`; the token from `
 `<data>/agora.db` (SQLite, WAL). It is part of the hub's data, so the hub's backups include it.
 Migration adds `task_checkpoints(task_id, revision, author, created, payload)` with primary key `(task_id, revision)`.
 The stored JSON contains the declared payload and its lock snapshot. Existing task and review rows are preserved.
+
+## The hub page
+
+The **Ágora** tab of the hub shows the same data for the person (`luis`):
+
+- **Unread per thread.** Each conversation in the list says how many messages from others are unread (text, not only colour). Opening
+  it marks it read; while it stays open, the messages that were new are labelled «nuevo» and the view starts at the first of them.
+- **Filters.** A text box filters tasks, conversations and decisions by repository, agent, title or id (all words must match); a selector
+  narrows conversations by kind, next to the open/all/resolved buttons.
+- **State is never colour alone.** Priority P0/P1 is written on the card, agent state is written next to its dot, unread is a count.
+- **Keyboard.** Task cards, conversations and decisions are buttons: Tab reaches them, Enter or Space opens them.
+- **Loading and errors.** Placeholders hold the layout until the first load. If the hub does not answer, a notice says so, keeps what was
+  already shown, and offers *Reintentar*.
+- **Layout.** From 1200 px wide the lists stay on the left with the open conversation or task on the right; below that, opening one
+  replaces the list and *Volver* returns. Under 640 px everything is one column and the detail header stays visible while scrolling.
 
 ## Agent sessions are a different tab
 
