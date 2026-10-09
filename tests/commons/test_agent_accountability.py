@@ -585,6 +585,21 @@ def test_a_tool_whose_capture_fails_is_not_undoable(tmp_path):
     assert undo(c, "s", dry_run=True).json()["not_undoable"][0]["reason"] == "capture_failed"
 
 
+def test_track_may_read_the_live_state_through_ctx_and_an_empty_objects_list_is_kept(tmp_path):
+    seen = {}
+
+    def ctx_track(args, result, ctx=None):
+        seen["ctx"] = ctx
+        return {"objects": [], "etag": "x"}
+
+    tools = [t if t.name != "note_add" else Tool(t.name, t.description, t.input_model, t.annotations, t.run, track=ctx_track, undo=t.undo)
+             for t in TOOLS]
+    c = build(tmp_path, tools=tools)
+    assert call(c, "note_add", {"text": "hi"}, session="s").status_code == 200
+    assert seen["ctx"] is c.ctx
+    assert journal(c).json()["entries"][0]["objects"] == []         # explicit empty list: nothing guessed from the result ids
+
+
 # ------------------------------------------------------------------------------------------------ tokens and profiles
 
 def test_profiles_limit_what_a_token_may_call(tmp_path):
