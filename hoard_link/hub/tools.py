@@ -258,6 +258,10 @@ def catalogue() -> list[dict[str, Any]]:
                            "this is for apps that are not, and for rules.",
             "inputSchema": {"type": "object", "properties": {"app": _APP_ID, "tool": {"type": "string"},
                                                             "arguments": {"type": "object"},
+                                                            "reason": {"type": "string", "minLength": 3, "maxLength": 300,
+                                                                       "description": "Why: one sentence for the app's "
+                                                                       "history. Apps with accountable agents refuse a "
+                                                                       "write without it (reason_required)."},
                                                             "timeout_s": {"type": "number", "default": 120}},
                             "required": ["app", "tool"], "additionalProperties": False},
         },
@@ -516,7 +520,9 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         except (TypeError, ValueError):
             timeout = 120.0
         return hub.call_app(str(a.get("app") or ""), str(a.get("tool") or ""), a.get("arguments") or {},
-                            caller="hub-tool", timeout=max(1.0, min(timeout, 900.0)))
+                            caller="hub-tool", timeout=max(1.0, min(timeout, 900.0)),
+                            reason=a.get("reason") if isinstance(a.get("reason"), str) else None,
+                            agent="hub-tool")
 
     def rule_run(a: dict[str, Any]) -> Any:
         rule = hub.rules.get(str(a.get("id") or ""))
