@@ -631,3 +631,47 @@ def test_path_normalize_rejects_lstrip_trap():
         _normalize_repo_relpath("../secret.py")
     with pytest.raises(AgoraError, match="invalid"):
         _normalize_repo_relpath("foo/../../secret.py")
+
+
+def test_code_peek_without_at_uses_unique_tip_not_commits_zero(tmp_path):
+    repo = tmp_path / "R"
+    sha1 = _git_repo(repo, {"f.txt": "one\n"})
+    (repo / "f.txt").write_text("two\n", encoding="utf-8")
+    subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "two"], cwd=repo, check=True, capture_output=True)
+    sha2 = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    # Old-first and new-first lists must both resolve to the tip content.
+    for commits in ([sha1, sha2], [sha2, sha1]):
+        peek = verify_code_peek("f.txt#L1-L1", roots=[repo], commits=commits)
+        assert peek["commit"] == sha2 and peek["commit_source"] == "tip" and peek["text"] == "two"
+    explicit = verify_code_peek(f"f.txt#L1-L1@{sha1[:12]}", roots=[repo], commits=[sha1, sha2])
+    assert explicit["commit"].startswith(sha1[:12]) and explicit["commit_source"] == "explicit"
+    assert explicit["text"] == "one"
+
+
+def test_code_peek_without_at_rejects_parallel_tips(tmp_path):
+    bare = tmp_path / "bare.git"
+    a = tmp_path / "a"
+    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    sha0 = _git_repo(a, {"f.txt": "base\n"})
+    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=a, check=True, capture_output=True)
+    subprocess.run(["git", "push", "-u", "origin", "HEAD:main"], cwd=a, check=True, capture_output=True)
+    # Two divergent commits from the same parent.
+    subprocess.run(["git", "checkout", "-b", "left"], cwd=a, check=True, capture_output=True)
+    (a / "f.txt").write_text("left\n", encoding="utf-8")
+    subprocess.run(["git", "add", "f.txt"], cwd=a, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "left"], cwd=a, check=True, capture_output=True)
+    left = subprocess.run(["git", "rev-parse", "HEAD"], cwd=a, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    subprocess.run(["git", "checkout", "main"], cwd=a, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "-b", "right"], cwd=a, check=True, capture_output=True)
+    (a / "f.txt").write_text("right\n", encoding="utf-8")
+    subprocess.run(["git", "add", "f.txt"], cwd=a, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "right"], cwd=a, check=True, capture_output=True)
+    right = subprocess.run(["git", "rev-parse", "HEAD"], cwd=a, check=True,
+                           capture_output=True, text=True).stdout.strip()
+    with pytest.raises(AgoraError, match="unique tip|@commit"):
+        verify_code_peek("f.txt#L1-L1", roots=[a], commits=[left, right])
+    # Silence unused in some linters
+    assert sha0 and left != right
