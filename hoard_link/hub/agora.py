@@ -122,6 +122,9 @@ MIGRATIONS = [
     """
     ALTER TABLE tasks ADD COLUMN submission_blocks TEXT;
     """,
+    """
+    ALTER TABLE task_checkpoints ADD COLUMN message_id INTEGER;
+    """,
 ]
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
@@ -629,9 +632,11 @@ class Agora:
                  escalate_hook: Optional[Callable[[dict[str, Any], str, str], Any]] = None,
                  review_grace_s: float = REVIEW_GRACE_S, handover_idle_s: float = HANDOVER_IDLE_S,
                  handover_thread_id: Optional[int] = HANDOVER_THREAD_ID,
+                 task_idle_s: int = 3600,
                  repo_lookup: Optional[Callable[[str], Optional[Path]]] = None,
                  repo_roots: Optional[Callable[[str], list[Path]]] = None):
         self.clock = clock
+        self.task_idle_s = _checkpoint_int(task_idle_s, "task_idle_s", 60, 7 * 86400)
         self.handover_idle_s = float(handover_idle_s)
         self.handover_thread_id = handover_thread_id
         self.emit = emit or (lambda t, d: None)
@@ -720,7 +725,95 @@ class Agora:
                                        "created": latest["created"], "summary": summary[:300], "truncated": len(summary) > 300}
         if full_checkpoint:
             d["latest_checkpoint"] = self._checkpoint_dict(latest, d.get("owner")) if latest else None
+        d["activity"] = self._task_activity(d, volatile=False)
         return d
+
+    def _task_activity(self, task: dict[str, Any], *, idle_s: Optional[int] = None,
+                       observed: Optional[dict[str, Any]] = None, volatile: bool = True) -> dict[str, Any]:
+        """A read-only inference from task reports; an agent heartbeat is not task progress."""
+        now = self.clock()
+        threshold = self.task_idle_s if idle_s is None else idle_s
+        owner = task.get("owner")
+        agent = self.db.one("SELECT state,last_seen FROM agents WHERE id=?", (owner,)) if owner else None
+        since = float(task.get("claimed_at") or task.get("created") or 0)
+        cp = self.db.one("SELECT revision,created FROM task_checkpoints WHERE task_id=? AND author=? "
+                         "AND created>=? ORDER BY revision DESC LIMIT 1", (task["id"], owner, since))
+        note = self.db.one("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
+                           "WHERE t.task_id=? AND m.author=? AND m.created>=? "
+                           "ORDER BY m.id DESC LIMIT 1", (task["id"], owner, since))
+        last_progress = max(since, float(cp["created"]) if cp else since, float(note["created"]) if note else since)
+        heartbeat = float(agent["last_seen"]) if agent else None
+        fresh = heartbeat is not None and now - heartbeat <= DEFAULT_LOCK_TTL_S
+        elapsed = max(0.0, now - last_progress)
+        state, reason = "recent", "recent_task_report"
+        status = task["status"]
+        if status in FINAL:
+            state, reason = "final", "task_closed"
+        elif not owner:
+            state, reason = "unclaimed", "no_owner"
+        elif status in ("review", "approved", "blocked"):
+            state, reason = "waiting", "task_" + status
+        elif agent and agent["state"] in ("waiting", "idle", "away"):
+            state, reason = "waiting", "owner_" + agent["state"]
+        elif elapsed >= threshold:
+            state, reason = ("stalled", "heartbeat_without_task_report") if fresh else ("quiet", "owner_unreachable")
+        observation = None
+        if observed:
+            observation = {k: observed.get(k) for k in ("state", "last_activity", "session_key")}
+            observation["scope"] = "agent"
+            at = observed.get("last_activity")
+            recent = isinstance(at, (float, int)) and not isinstance(at, bool) and now - at <= threshold
+            if state == "stalled" and recent and observed.get("state") in ("working", "tool"):
+                state, reason = "unconfirmed", "owner_observed_running"
+            elif state == "stalled" and observed.get("state") == "waiting":
+                state, reason = "waiting", "owner_observed_waiting"
+        result = {"state": state, "reason": reason, "inferred": True,
+                "idle_after_s": threshold, "last_progress_at": last_progress,
+                "heartbeat_at": heartbeat, "heartbeat_recent": fresh,
+                "checkpoint_revision": cp["revision"] if cp else None,
+                "message_id": note["id"] if note else None, "owner_observed": observation}
+        if volatile:
+            result.update(checked_at=now, idle_s=elapsed)
+        return result
+
+    def activity(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        a = a or {}
+        if set(a) - {"task_id", "idle_after_s"}:
+            raise AgoraError("unknown activity argument")
+        threshold = _checkpoint_int(a.get("idle_after_s", self.task_idle_s), "idle_after_s", 60, 7 * 86400)
+        task = self._task_row(_checkpoint_int(a.get("task_id"), "task_id", 1))
+        return {"ok": True, "task_id": task["id"], "activity": self._task_activity(task, idle_s=threshold)}
+
+    def timeline(self, a: dict[str, Any]) -> dict[str, Any]:
+        """Chronology is stable across equal timestamps and process restarts: cursor = message ID."""
+        if set(a) - {"task_id", "after_id", "limit"}:
+            raise AgoraError("unknown timeline argument")
+        tid = _checkpoint_int(a.get("task_id"), "task_id", 1)
+        after = _checkpoint_int(a.get("after_id", 0), "after_id")
+        limit = _checkpoint_int(a.get("limit", 100), "limit", 1, 500)
+        task = self._task_row(tid)
+        rows = self.db.query("SELECT m.*,t.title AS thread_title FROM messages m JOIN threads t ON t.id=m.thread_id "
+                             "WHERE t.task_id=? AND m.id>? ORDER BY m.id LIMIT ?", (tid, after, limit + 1))
+        events = []
+        for row in rows[:limit]:
+            event = dict(row)
+            event["mentions"] = _l(event.get("mentions"))
+            event["event_id"] = event["id"]
+            event["event_kind"] = "message"
+            match = re.match(r"^Checkpoint r([0-9]+):", event["body"]) if event["kind"] == "system" else None
+            if match and f"[hub_agora_checkpoints task_id={tid}]" in event["body"] and event["thread_id"] == task["thread_id"]:
+                cp = self.db.one("SELECT * FROM task_checkpoints WHERE task_id=? AND revision=? AND author=? "
+                                 "AND (message_id=? OR (message_id IS NULL AND created<=? AND created>=?))",
+                                 (tid, int(match[1]), event["author"], event["id"], event["created"], event["created"] - 5))
+                if cp:
+                    event["event_kind"] = "checkpoint"
+                    event["checkpoint"] = self._checkpoint_dict(cp, task.get("owner"))
+                    event["checkpoint_link"] = "recorded" if cp["message_id"] else "legacy_inferred"
+            events.append(event)
+        return {"ok": True, "task_id": tid, "events": events, "has_more": len(rows) > limit,
+                "next_after_id": events[-1]["event_id"] if events else after,
+                "last_event_id": self.db.scalar("SELECT COALESCE(MAX(m.id),0) FROM messages m "
+                                               "JOIN threads t ON t.id=m.thread_id WHERE t.task_id=?", (tid,))}
 
     def _checkpoint_dict(self, row: Any, current_owner: Optional[str]) -> dict[str, Any]:
         d = dict(row)
@@ -776,8 +869,10 @@ class Agora:
                 preview = payload['summary'][:300]
                 if len(payload['summary']) > 300:
                     preview += "…"
-                self._system(task, f"Checkpoint r{revision + 1}: {preview} "
-                             f"[hub_agora_checkpoints task_id={task_id}]", agent)
+                message_id = self._system(task, f"Checkpoint r{revision + 1}: {preview} "
+                                          f"[hub_agora_checkpoints task_id={task_id}]", agent)
+                self.db.execute("UPDATE task_checkpoints SET message_id=? WHERE task_id=? AND revision=?",
+                                (message_id, task_id, revision + 1))
             row = self.db.one("SELECT * FROM task_checkpoints WHERE task_id=? ORDER BY revision DESC LIMIT 1", (task_id,))
             result = self._checkpoint_dict(row, task["owner"])
         if not duplicate:
@@ -804,10 +899,11 @@ class Agora:
         self.db.execute("UPDATE threads SET updated=? WHERE id=?", (now, thread_id))
         return mid
 
-    def _system(self, task: dict[str, Any], text: str, actor: str = "system") -> None:
+    def _system(self, task: dict[str, Any], text: str, actor: str = "system") -> Optional[int]:
         """A bookkeeping line in the task's thread, authored by whoever caused it (so it never lands in their own inbox)."""
         if task.get("thread_id"):
-            self._msg(int(task["thread_id"]), actor, "system", text)
+            return self._msg(int(task["thread_id"]), actor, "system", text)
+        return None
 
     def _ack(self, agent: str, thread_id: int, upto: Optional[int] = None) -> None:
         """The agent has seen this thread up to ``upto`` (default: its last message): its mentions there stop being pending."""
@@ -1519,7 +1615,8 @@ class Agora:
         task = self._task_row(a.get("task_id"))
         msgs = self._messages(int(task["thread_id"])) if task.get("thread_id") else []
         locks = [dict(r) for r in self.db.query("SELECT * FROM locks WHERE task_id=? AND expires>?", (task["id"], self.clock()))]
-        return {"ok": True, "task": task, "messages": msgs, "locks": locks}
+        return {"ok": True, "task": task, "messages": msgs, "locks": locks,
+                "timeline": self.timeline({"task_id": task["id"], "limit": 100})}
 
     # -- threads -------------------------------------------------------------------------------------------------
 
@@ -1657,8 +1754,11 @@ class Agora:
         for m in msgs:
             if m["kind"] in ("agree", "disagree", "proposal"):
                 stances[m["author"]] = m["kind"]
-        return {"ok": True, "thread": th, "messages": msgs, "stances": stances,
-                "task": self._task_row(th["task_id"]) if th.get("task_id") else None}
+        out = {"ok": True, "thread": th, "messages": msgs, "stances": stances,
+               "task": self._task_row(th["task_id"]) if th.get("task_id") else None}
+        if out["task"] and out["task"]["thread_id"] == th["id"]:
+            out["timeline"] = self.timeline({"task_id": th["task_id"], "limit": 100})
+        return out
 
     def thread_recent(self, a: dict[str, Any]) -> dict[str, Any]:
         """A bounded newest-first page, returned chronologically, without ACK.
@@ -1786,8 +1886,13 @@ class Agora:
         counts = {"messages": len(msgs), "for_you": sum(1 for m in msgs if m["for_you"]), "reviews": len(reviews),
                   "changes": len(changes), "escalated": len(escalated), "pending": len(pending)}
         counts["total"] = counts["messages"] + counts["reviews"] + counts["changes"] + counts["escalated"]
+        progress_alerts = [self._task_dict(r) for r in self.db.query(
+            "SELECT * FROM tasks WHERE created_by=? AND status IN ('claimed','in_progress','changes')", (agent,))]
+        progress_alerts = [t for t in progress_alerts if t["activity"]["state"] == "stalled"]
+        counts["progress_alerts"] = len(progress_alerts)
         return {"ok": True, "agent": agent, "since_id": since, "counts": counts, "messages": msgs,
-                "reviews": reviews, "changes": changes, "escalated": escalated, "pending": pending}
+                "reviews": reviews, "changes": changes, "escalated": escalated, "pending": pending,
+                "progress_alerts": progress_alerts}
 
     # -- board ---------------------------------------------------------------------------------------------------
 
@@ -1843,6 +1948,7 @@ class Agora:
             "reviews": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='review' ORDER BY submitted_at")],
             "changes": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='changes'")],
             "escalated": [dict(r) for r in self.db.query("SELECT id, title, updated FROM threads WHERE status='escalated'")],
+            "progress": [t for t in self.tasks({"status": "active"})["tasks"] if t["activity"]["state"] == "stalled"],
         }
         by_state = {k: sum(1 for t in done if (t.get("review_state") or ("approved" if t["reviewed"] else "unreviewed")) == k)
                     for k in ("approved", "equivalent", "exempt", "unreviewed")}
@@ -1875,6 +1981,13 @@ _CHECKPOINT_SCHEMA = _schema({
 
 
 TOOLS: list[dict[str, Any]] = [
+    {"name": "hub_agora_activity", "read": True,
+     "description": "Task progress evidence: task notes/checkpoints versus heartbeat and agent observation. Read-only inference; never changes status or wakes agents.",
+     "inputSchema": _schema({"task_id": _TASK, "idle_after_s": {"type": "integer", "minimum": 60, "maximum": 604800}}, ["task_id"])},
+    {"name": "hub_agora_timeline", "read": True,
+     "description": "Durable task chronology including associated thread messages, state/lock/review records and versioned checkpoints. Oldest first; pass next_after_id as after_id.",
+     "inputSchema": _schema({"task_id": _TASK, "after_id": {"type": "integer", "minimum": 0},
+                             "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, ["task_id"])},
     {"name": "hub_agora_checkpoint",
      "description": "Append declared task progress for its current owner. expected_revision is required (0 initially); "
                     "stale writes conflict, exact immediate retries are idempotent. No paths or tests are verified, "
@@ -2086,7 +2199,9 @@ class AgoraFacet(Facet):
                     out.append(r)
             return out
 
-        self.agora = Agora(Path(hub.config.data_dir) / "agora.db",
+        watch_cfg = getattr(hub.config, "agent_watch", None)
+        task_idle_s = watch_cfg.get("task_idle_s", 3600) if isinstance(watch_cfg, dict) else 3600
+        self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
 
@@ -2151,10 +2266,71 @@ class AgoraFacet(Facet):
             return out
         for ag in out.get("agents", []):
             ag["observed"] = _observed(view["agents"].get(ag.get("id")))
+        self._apply_observations(out.get("tasks", []), view)
         known = {x.get("id") for x in out.get("agents", [])}
         out["observed_only"] = {k: _observed(v) for k, v in view["agents"].items() if k not in known}
         out["watch"] = {"questions": len(view["questions"]), "unbound": len(view["unbound"]),
                         "sessions": len(view["sessions"])}
+        return out
+
+    def _apply_observations(self, tasks: list[dict[str, Any]], view: dict[str, Any], *, volatile: bool = False) -> None:
+        for task in tasks:
+            activity = task.get("activity") or {}
+            task["activity"] = self.agora._task_activity(
+                task, idle_s=activity.get("idle_after_s"), observed=view.get("agents", {}).get(task.get("owner")),
+                volatile=volatile)
+
+    def _enrich(self, out: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, Any]:
+        if out.get("ok") and self._watch_enabled():
+            try:
+                self._apply_observations(tasks, self.watch.view())
+            except Exception as exc:
+                out["watch_error"] = str(exc)[:200]
+        return out
+
+    def _task(self, a: dict[str, Any]) -> dict[str, Any]:
+        out = self.agora.task(a)
+        return self._enrich(out, [out["task"]])
+
+    def _tasks(self, a: dict[str, Any]) -> dict[str, Any]:
+        out = self.agora.tasks(a)
+        return self._enrich(out, out["tasks"])
+
+    def _sync(self, a: dict[str, Any]) -> dict[str, Any]:
+        out = self.agora.sync(a)
+        inbox = out["inbox"]
+        self._enrich(out, out["leased_tasks"] + out["board"].get("tasks", []) + inbox["progress_alerts"])
+        inbox["progress_alerts"] = [t for t in inbox["progress_alerts"] if t["activity"]["state"] == "stalled"]
+        inbox["counts"]["progress_alerts"] = len(inbox["progress_alerts"])
+        return out
+
+    def _thread(self, a: dict[str, Any]) -> dict[str, Any]:
+        out = self.agora.thread(a)
+        return self._enrich(out, [out["task"]] if out.get("task") else [])
+
+    def _activity(self, a: dict[str, Any]) -> dict[str, Any]:
+        out = self.agora.activity(a)
+        task = self.agora._task_row(out["task_id"])
+        task["activity"] = out["activity"]
+        if self._watch_enabled():
+            try:
+                self._apply_observations([task], self.watch.view(), volatile=True)
+            except Exception as exc:
+                out["watch_error"] = str(exc)[:200]
+        out["activity"] = task["activity"]
+        return out
+
+    def _inbox(self, a: dict[str, Any]) -> dict[str, Any]:
+        out = self.agora.inbox(a)
+        self._enrich(out, out["progress_alerts"])
+        out["progress_alerts"] = [t for t in out["progress_alerts"] if t["activity"]["state"] == "stalled"]
+        out["counts"]["progress_alerts"] = len(out["progress_alerts"])
+        return out
+
+    def _digest(self, a: dict[str, Any]) -> dict[str, Any]:
+        out = self.agora.digest(a)
+        self._enrich(out, out["waiting"]["progress"])
+        out["waiting"]["progress"] = [t for t in out["waiting"]["progress"] if t["activity"]["state"] == "stalled"]
         return out
 
     def _notify_person(self, thread: dict[str, Any], agent: str, question: str) -> None:
@@ -2187,9 +2363,17 @@ class AgoraFacet(Facet):
                 q["peek"] = "1"
             q["peek"] = str(q.get("peek", "")).lower() in ("1", "true", "yes")
             q["mine_only"] = str(q.get("mine_only", "")).lower() in ("1", "true", "yes")
-            return self._run(ag.inbox, q)
+            return self._run(self._inbox, q)
         if p == "/api/agora/tasks":
-            return self._run(ag.tasks, q)
+            return self._run(self._tasks, q)
+        if p in ("/api/agora/activity", "/api/agora/timeline"):
+            for key in ("task_id", "after_id", "idle_after_s", "limit"):
+                if key in q and re.fullmatch(r"[0-9]+", q[key]):
+                    try:
+                        q[key] = int(q[key])
+                    except ValueError:
+                        pass
+            return self._run(self._activity if p.endswith("/activity") else ag.timeline, q)
         if p == "/api/agora/checkpoints":
             # HTTP query parameters are text; the store/MCP contract remains strictly typed.
             for key in ("task_id", "after_revision", "limit"):
@@ -2200,7 +2384,7 @@ class AgoraFacet(Facet):
                         pass
             return self._run(ag.checkpoints, q)
         if p.startswith("/api/agora/tasks/"):
-            return self._run(ag.task, {"task_id": p.rsplit("/", 1)[1]})
+            return self._run(self._task, {"task_id": p.rsplit("/", 1)[1]})
         if p == "/api/agora/threads":
             q["include_tasks"] = str(q.get("include_tasks", "")).lower() in ("1", "true")
             return self._run(ag.threads, q)
@@ -2219,13 +2403,13 @@ class AgoraFacet(Facet):
             person = who == PERSON and req.caller() == "ui"
             if who == PERSON and not person:
                 who = ""
-            return self._run(ag.thread, {"thread_id": p.rsplit("/", 1)[1], "agent": who, "_person": person})
+            return self._run(self._thread, {"thread_id": p.rsplit("/", 1)[1], "agent": who, "_person": person})
         if p == "/api/agora/locks":
             return self._run(ag.locks, q)
         if p == "/api/agora/decisions":
             return self._run(ag.decisions, q)
         if p == "/api/agora/digest":
-            return self._run(ag.digest, q)
+            return self._run(self._digest, q)
         if p == "/api/agora/agents":
             return self._run(ag.agents, q)
         return {"ok": False, "status": 404, "error": f"unknown Ágora route {p}"}
@@ -2253,7 +2437,9 @@ class AgoraFacet(Facet):
             args.pop("_person", None)
         if op == "read":
             args["peek"] = False
-            return self._run(self.agora.inbox, args)
+            return self._run(self._inbox, args)
+        if op == "sync":
+            return self._run(self._sync, args)
         return self._run(getattr(self.agora, op), args)
 
     @classmethod
@@ -2282,18 +2468,19 @@ class AgoraFacet(Facet):
 
         return {
             "hub_agora_checkpoint": wrap(ag.checkpoint), "hub_agora_checkpoints": wrap(ag.checkpoints),
-            "hub_agora_board": wrap(self._board), "hub_agora_inbox": wrap(ag.inbox, cap_wait=True),
-            "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(ag.sync), "hub_agora_task_add": wrap(ag.task_add),
+            "hub_agora_activity": wrap(self._activity), "hub_agora_timeline": wrap(ag.timeline),
+            "hub_agora_board": wrap(self._board), "hub_agora_inbox": wrap(self._inbox, cap_wait=True),
+            "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(self._sync), "hub_agora_task_add": wrap(ag.task_add),
             "hub_agora_task_claim": wrap(ag.task_claim), "hub_agora_task_update": wrap(ag.task_update),
             "hub_agora_task_submit": wrap(ag.task_submit), "hub_agora_task_review": wrap(ag.task_review),
             "hub_agora_task_done": wrap(ag.task_done), "hub_agora_task_release": wrap(ag.task_release),
             "hub_agora_handover": wrap(ag.handover),
-            "hub_agora_tasks": wrap(ag.tasks), "hub_agora_task": wrap(ag.task), "hub_agora_lock": wrap(ag.lock),
+            "hub_agora_tasks": wrap(self._tasks), "hub_agora_task": wrap(self._task), "hub_agora_lock": wrap(ag.lock),
             "hub_agora_unlock": wrap(ag.unlock), "hub_agora_locks": wrap(ag.locks),
             "hub_agora_thread_open": wrap(ag.thread_open), "hub_agora_post": wrap(ag.post),
             "hub_agora_resolve": wrap(ag.resolve), "hub_agora_escalate": wrap(ag.escalate),
-            "hub_agora_thread": wrap(ag.thread), "hub_agora_thread_recent": wrap(ag.thread_recent),
+            "hub_agora_thread": wrap(self._thread), "hub_agora_thread_recent": wrap(ag.thread_recent),
             "hub_agora_decisions": wrap(ag.decisions),
-            "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(ag.digest),
+            "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(self._digest),
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
         }

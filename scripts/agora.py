@@ -372,6 +372,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--expected-revision", type=int, required=True, help="revisión leída; 0 para el primer checkpoint")
     s = sub.add_parser("checkpoints", help="historial de progreso declarado de una tarea")
     s.add_argument("task", type=int); s.add_argument("--after", type=int, default=0); s.add_argument("--limit", type=int, default=100)
+    s = sub.add_parser("activity", help="evidencia de progreso de una tarea, separada del latido")
+    s.add_argument("task", type=int); s.add_argument("--idle-after", type=int)
+    s = sub.add_parser("timeline", help="cronología de tarea con mensajes, cambios y checkpoints")
+    s.add_argument("task", type=int); s.add_argument("--after", type=int, default=0); s.add_argument("--limit", type=int, default=100)
     s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--repo"); s.add_argument("--paths", action="append")
     s.add_argument("--kind", default="feature"); s.add_argument("--prio", type=int, default=2); s.add_argument("--claim", action="store_true")
     s.add_argument("--lock", action="append"); s.add_argument("--mention", action="append")
@@ -415,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(value, list):
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
-    reads = {"board", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "watch", "watch-bind"}
+    reads = {"board", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind"}
     if a.cmd not in reads and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
@@ -446,6 +450,14 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "inbox":
         q = {"agent": ag, "wait_s": a.wait, "peek": "1" if a.peek else "", "mine_only": "1" if a.mine else ""}
         r = call("GET", "/api/agora/inbox?" + urllib.parse.urlencode(q), timeout=max(30.0, a.wait + 30))
+    elif c == "activity":
+        q = {"task_id": a.task}
+        if a.idle_after is not None:
+            q["idle_after_s"] = a.idle_after
+        r = call("GET", "/api/agora/activity?" + urllib.parse.urlencode(q))
+    elif c == "timeline":
+        r = call("GET", "/api/agora/timeline?" + urllib.parse.urlencode(
+            {"task_id": a.task, "after_id": a.after, "limit": a.limit}))
     elif c == "sync":
         r = call("POST", "/api/agora/sync", {"agent": ag, "doing": a.doing, "state": a.state,
                                                    "name": a.name, "note": a.note, "since_id": a.since_id,
@@ -542,6 +554,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if r.get("ok", True) else 1
     if c == "board":
         print_board(r, full=a.full)
+    elif c == "activity":
+        print(json.dumps(r["activity"], ensure_ascii=False, indent=2))
+    elif c == "timeline":
+        for event in r["events"]:
+            print(f"{event['event_id']} · {when(event['created'])} · {event['author']} · {event['event_kind']}")
+            print(event["checkpoint"]["payload"]["summary"] if event["event_kind"] == "checkpoint" else event["body"])
+        print(f"Cursor: {r['next_after_id']}" + (" · quedan más (usa --after)" if r["has_more"] else ""))
     elif c == "watch":
         print_watch(r.get("board") or {}, r)
     elif c == "watch-bind":

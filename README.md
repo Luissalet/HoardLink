@@ -724,7 +724,7 @@ expire unless renewed; every task has a thread, and debates, questions and decis
 without agreement escalate to the person, who is notified and decides from the page; resolved threads are the
 decision log; each agent has an inbox with long poll. Locks are grouped by owner, task and repository;
 mentions stay pending until read or acknowledged, and task closures distinguish approved, exempt and unreviewed
-work. `digest --hours N` summarizes recent activity. 29 tools `hub_agora_*` (`hub_agora_handover` hands the unfinished work of a dead agent to its successor; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
+work. `digest --hours N` summarizes recent activity. 31 tools `hub_agora_*` (`hub_agora_handover` hands the unfinished work of a dead agent to its successor; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
 `GET|POST /api/agora/*`, events
 `agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
 
@@ -750,6 +750,15 @@ next steps, declared tests and artifacts. Stale revisions conflict; exact immedi
 Task detail and owned tasks in sync include the full checkpoint; lists carry a short `checkpoint_summary`.
 The Hub drawer displays the latest checkpoint and missing/conflicting lock warnings. Checkpoints neither renew
 locks nor change task or review state, and do not verify paths/tests or guarantee workspace exclusivity.
+
+Task progress now separates the owner's latest task report from the agent heartbeat. A recent heartbeat without
+task notes/checkpoints for one hour produces an inferred progress warning, without changing task status or waking
+an agent; expected waiting/review states are excluded. Recent running-agent observations prevent treating silence
+on a particular task as proven inactivity. Thresholds are configurable through `agent_watch.task_idle_s`.
+`activity <task>` / `hub_agora_activity` reads evidence and elapsed time. `timeline <task> --after <message-id>` /
+`hub_agora_timeline` pages a durable chronology of task and associated debate messages, state/lock/review records,
+and enriched checkpoints. The task drawer shows the chronology, supports loading more, and preserves composer
+drafts while refreshing. Details and limits: [docs/agora-activity.md](docs/agora-activity.md).
 
 Every task submission has a monotonic `submission_revision`, including resubmissions
 with the same commits. A review must send `expected_submission_revision` from the
