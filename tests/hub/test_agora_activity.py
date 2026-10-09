@@ -216,6 +216,21 @@ def test_http_cli_and_real_stdio_mcp_share_new_contracts(tmp_path):
         assert json.loads(replies[3]["result"]["content"][0]["text"])["activity"]["state"] == "recent"
         events = json.loads(replies[4]["result"]["content"][0]["text"])["events"]
         assert any(e["event_kind"] == "checkpoint" for e in events)
+        future = ag.clock() + 61
+        ag.clock = lambda: future
+        ag.task_idle_s = 60
+        ag.heartbeat({"agent": "builder", "doing": "No new task evidence"})
+        plain = subprocess.run([sys.executable, str(root / "scripts/agora.py"), "--as", "requester", "inbox", "--peek"],
+                               cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert plain.returncode == 0, plain.stderr
+        assert f"REVISAR PROGRESO #{task['id']}" in plain.stdout
+        digest = subprocess.run([sys.executable, str(root / "scripts/agora.py"), "digest"],
+                                cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert digest.returncode == 0 and f"REVISAR PROGRESO #{task['id']}" in digest.stdout
+        ag.post({"agent": "builder", "thread_id": task["thread_id"], "body": "New progress evidence"})
+        recovered = subprocess.run([sys.executable, str(root / "scripts/agora.py"), "--as", "requester", "inbox", "--peek"],
+                                   cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert recovered.returncode == 0 and "REVISAR PROGRESO" not in recovered.stdout
     finally:
         server.shutdown()
         server.server_close()

@@ -227,6 +227,14 @@ def print_watch(board: dict, w: dict) -> None:
         print(f"  {s['key']:<48} {s.get('state'):<8} {ago(s.get('last_activity'), now):<12} {short(s.get('title'), 60)}")
 
 
+def print_progress(tasks: list[dict]) -> None:
+    for task in tasks:
+        activity = task.get("activity") or {}
+        print(f"  REVISAR PROGRESO #{task['id']} {task['title']} (de {task.get('owner') or '-'})")
+        print(f"    Último informe: {when(activity.get('last_progress_at'))} · "
+              f"latido: {when(activity.get('heartbeat_at'))} · señal orientativa; no cambia el estado")
+
+
 def print_inbox(r: dict) -> None:
     c = r.get("counts", {})
     print(f"Buzón de {r.get('agent')}: {c.get('messages', 0)} mensajes ({c.get('for_you', 0)} para ti), "
@@ -235,6 +243,7 @@ def print_inbox(r: dict) -> None:
         print(f"  REVISAR  #{t['id']} {t['title']} (de {t.get('owner')}, rama {t.get('branch') or '-'}, commits {', '.join(t.get('commits') or []) or '-'})")
     for t in r.get("changes", []):
         print(f"  CAMBIOS  #{t['id']} {t['title']} (revisor {t.get('reviewer')})")
+    print_progress(r.get("progress_alerts", []))
     if r.get("pending"):
         print(f"  MENCIONES SIN VER ({len(r['pending'])}; se quitan al abrir el hilo con thread, contestar o con ack):")
         seen = set()
@@ -272,6 +281,7 @@ def print_digest(r: dict) -> None:
     w = r.get("waiting") or {}
     print(f"Esperando: {len(w.get('reviews') or [])} revisiones, {len(w.get('changes') or [])} con cambios pedidos, "
           f"{len(w.get('escalated') or [])} escaladas a Luis")
+    print_progress(w.get("progress", []))
 
 
 def print_conversation(r: dict) -> None:
