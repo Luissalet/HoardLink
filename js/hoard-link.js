@@ -344,14 +344,48 @@ export function httpUrl(url) {
   return ["http", "https"].includes(urlScheme(u)) ? u : "";
 }
 
-/** PowerShell that shows one toast through Windows.UI.Notifications. Byte-for-byte the output of notify_channels.build_toast_ps1. */
-export function buildToastPs1(title, body = "", url = null, { appName = null, appId = POWERSHELL_APP_ID } = {}) {
+/** The AppUserModelId a Hoard app's toasts use: "Hoard.<app id>" (twin of notify_channels.toast_app_id). */
+export function toastAppId(app) {
+  const slug = Array.from(String(app ?? "").trim().replace(/[^A-Za-z0-9.-]+/g, "")).slice(0, 60).join("");
+  return slug ? `Hoard.${slug}` : POWERSHELL_APP_ID;
+}
+
+/** file:///C:/a%20b/c.png for an absolute path (twin of notify_channels.file_uri). */
+export function fileUri(p) {
+  const s = String(p).replace(/\\/g, "/").replace(/^\/+/, "");
+  let out = "";
+  for (const byte of Buffer.from(s, "utf8")) {
+    const ch = String.fromCharCode(byte);
+    out += /[A-Za-z0-9_.~\-\/:]/.test(ch) && byte < 128 ? ch : `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+  }
+  return `file:///${out}`;
+}
+
+/** A PowerShell single-quoted literal (twin of notify_channels.ps_quote). */
+export function psQuote(text) {
+  return `'${String(text ?? "").replace(/[\x00-\x1f]/g, "").replace(/'/g, "''")}'`;
+}
+
+/** PowerShell that shows one toast through Windows.UI.Notifications. Byte-for-byte the output of notify_channels.build_toast_ps1.
+ *  With displayName (and a custom appId) it first registers the application id for the current user, so the toast shows the
+ *  app's name and icon instead of PowerShell's. */
+export function buildToastPs1(title, body = "", url = null, { appName = null, appId = POWERSHELL_APP_ID, displayName = null, icon = null } = {}) {
   const launch = httpUrl(url);
   const attrs = launch ? ` activationType="protocol" launch="${xmlEscape(launch)}"` : "";
   const attribution = appName ? `<text placement="attribution">${xmlEscape(cutChars(appName, 60))}</text>` : "";
+  const iconPath = String(icon ?? "").trim();
+  const logo = iconPath ? `<image placement="appLogoOverride" src="${xmlEscape(fileUri(iconPath))}"/>` : "";
   const xml = `<toast${attrs}><visual><binding template="ToastGeneric"><text>${xmlEscape(cutChars(title, 120))}</text>`
-    + `<text>${xmlEscape(cutChars(body, 300))}</text>${attribution}</binding></visual></toast>`;
-  return "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null\n"
+    + `<text>${xmlEscape(cutChars(body, 300))}</text>${attribution}${logo}</binding></visual></toast>`;
+  let register = "";
+  if (displayName && appId !== POWERSHELL_APP_ID) {
+    register = `$k = ${psQuote(`HKCU:\\Software\\Classes\\AppUserModelId\\${appId}`)}\n`
+      + "if (-not (Test-Path -LiteralPath $k)) { New-Item -Path $k -Force | Out-Null }\n"
+      + `Set-ItemProperty -LiteralPath $k -Name DisplayName -Value ${psQuote(cutChars(displayName, 60))}\n`
+      + (iconPath ? `Set-ItemProperty -LiteralPath $k -Name IconUri -Value ${psQuote(iconPath)}\n` : "");
+  }
+  return register
+    + "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null\n"
     + "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null\n"
     + `$xml = @'\n${xml}\n'@\n`
     + "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument\n"
@@ -388,9 +422,12 @@ export async function runPs1(script, { runner = null, timeoutMs = TOAST_TIMEOUT_
 }
 
 /** Show one Windows toast and wait for PowerShell. Off Windows: { ok: false, unsupported: true, error: "unsupported" }. Never rejects. */
-export async function showToast(title, body = "", url = null, { appName = null, runner = null, platform = process.platform, timeoutMs = TOAST_TIMEOUT_MS } = {}) {
+export async function showToast(title, body = "", url = null, { appName = null, runner = null, platform = process.platform, timeoutMs = TOAST_TIMEOUT_MS, app = null, icon = null } = {}) {
   if (!String(platform).startsWith("win")) return { ok: false, unsupported: true, error: "unsupported" };
-  return runPs1(buildToastPs1(title, body, url, { appName }), { runner, timeoutMs });
+  const script = app && appName
+    ? buildToastPs1(title, body, url, { appId: toastAppId(app), displayName: appName, icon })
+    : buildToastPs1(title, body, url, { appName });
+  return runPs1(script, { runner, timeoutMs });
 }
 
 /** The auto | hub | own switch in front of the hub's notification facet (twin of fam_notify.Router).

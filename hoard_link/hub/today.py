@@ -922,7 +922,7 @@ class TodayFacet(Facet):
         kwargs: dict[str, Any] = {"app": "hub", "sphere": sph, "priority": "normal", "group": "digest",
                                   "dedupe_key": f"digest:{comp['sphere']}:{int(self.clock())}"}
         if "url" in params or takes_any:
-            kwargs["url"] = self.hub.config.url
+            kwargs["url"] = self.hub.config.url.rstrip("/") + "/#today"
         if channels and ("channels_override" in params or takes_any):
             kwargs["channels_override"] = channels
         else:

@@ -373,6 +373,11 @@
         new MutationObserver(() => setSphere(document.documentElement.dataset.sphere || "")).observe(document.documentElement, { attributes: true, attributeFilter: ["data-sphere"] });
       } catch (e) { /* ignore */ }
       state.sphere = (document.documentElement.dataset && document.documentElement.dataset.sphere) || "";
+      // The digest notification links here (#today): open the box and bring it into view.
+      if (location.hash === "#today") {
+        state.open = true;
+        setTimeout(() => { try { root.scrollIntoView({ block: "start" }); } catch (e) { /* ignore */ } }, 300);
+      }
       renderHead(); renderBody();
     },
     load() { return load(true); },

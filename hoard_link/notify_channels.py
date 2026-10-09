@@ -114,19 +114,54 @@ def http_json(url: str, payload: Optional[dict[str, Any]] = None, headers: Optio
 
 # -- Windows toast -------------------------------------------------------------------------------------------------
 
+def toast_app_id(app: Any) -> str:
+    """The AppUserModelId a Hoard app's toasts use: ``Hoard.<app id>`` with only letters, digits, dots and dashes."""
+    slug = re.sub(r"[^A-Za-z0-9.-]+", "", str(app or "").strip())[:60]
+    return f"Hoard.{slug}" if slug else POWERSHELL_APP_ID
+
+
+def file_uri(path: str) -> str:
+    """``file:///C:/a%20b/c.png`` for a Windows (or POSIX) absolute path."""
+    from urllib.parse import quote
+    return "file:///" + quote(str(path).replace("\\", "/").lstrip("/"), safe="/:")
+
+
+def ps_quote(text: Any) -> str:
+    """A PowerShell single-quoted string literal (``'`` doubled; control characters dropped)."""
+    text = re.sub(r"[\x00-\x1f]", "", str(text or ""))
+    return "'" + text.replace("'", "''") + "'"
+
+
 def build_toast_ps1(title: str, body: str = "", url: Optional[str] = None, app_name: Optional[str] = None,
-                    app_id: str = POWERSHELL_APP_ID) -> str:
+                    app_id: str = POWERSHELL_APP_ID, *, display_name: Optional[str] = None,
+                    icon: Optional[str] = None) -> str:
     """PowerShell that shows one toast through Windows.UI.Notifications (no module needed). Only an http(s) ``url`` becomes the
-    click target. ``app_name`` adds a small attribution line under the text (the toast's source stays PowerShell: a custom
-    application id needs a Start-menu shortcut). Title is cut at 120 characters, body at 300."""
+    click target. ``app_name`` adds a small attribution line under the text. Title is cut at 120 characters, body at 300.
+
+    With ``display_name`` (and a custom ``app_id``) the script first registers that application id for the current user
+    (``HKCU\\Software\\Classes\\AppUserModelId\\<app_id>``: ``DisplayName`` and, with ``icon``, ``IconUri``), so Windows shows the
+    toast as coming from the app, with its name and icon, instead of from PowerShell; no Start-menu shortcut is needed.
+    ``icon`` (an absolute image path) also becomes the toast's logo."""
     title, body = str(title or ""), str(body or "")
     launch = http_url(url)
     attrs = f' activationType="protocol" launch="{xml_escape(launch)}"' if launch else ""
     attribution = f'<text placement="attribution">{xml_escape(str(app_name)[:60])}</text>' if app_name else ""
+    icon = str(icon or "").strip()
+    logo = f'<image placement="appLogoOverride" src="{xml_escape(file_uri(icon))}"/>' if icon else ""
     xml = (f'<toast{attrs}><visual><binding template="ToastGeneric"><text>{xml_escape(title[:120])}</text>'
-           f'<text>{xml_escape(body[:300])}</text>{attribution}</binding></visual></toast>')
+           f'<text>{xml_escape(body[:300])}</text>{attribution}{logo}</binding></visual></toast>')
+    register = ""
+    if display_name and app_id != POWERSHELL_APP_ID:
+        key = ps_quote("HKCU:\\Software\\Classes\\AppUserModelId\\" + app_id)
+        register = (
+            f"$k = {key}\n"
+            "if (-not (Test-Path -LiteralPath $k)) { New-Item -Path $k -Force | Out-Null }\n"
+            f"Set-ItemProperty -LiteralPath $k -Name DisplayName -Value {ps_quote(str(display_name)[:60])}\n"
+            + (f"Set-ItemProperty -LiteralPath $k -Name IconUri -Value {ps_quote(icon)}\n" if icon else "")
+        )
     return (
-        "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null\n"
+        register
+        + "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null\n"
         "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null\n"
         f"$xml = @'\n{xml}\n'@\n"
         "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument\n"
@@ -160,11 +195,16 @@ def run_ps1(script: str, *, runner: Optional[Callable[..., Any]] = None, timeout
 
 def send_toast(title: str, body: str = "", url: Optional[str] = None, *, app_name: Optional[str] = None,
                runner: Optional[Callable[..., Any]] = None, platform: Optional[str] = None,
-               timeout: float = TOAST_TIMEOUT_S) -> dict[str, Any]:
-    """Show one Windows toast and wait for PowerShell. Off Windows: ``{"ok": False, "unsupported": True, "error": "unsupported"}``."""
+               timeout: float = TOAST_TIMEOUT_S, app: Optional[str] = None, icon: Optional[str] = None) -> dict[str, Any]:
+    """Show one Windows toast and wait for PowerShell. Off Windows: ``{"ok": False, "unsupported": True, "error": "unsupported"}``.
+    With ``app`` (the app id) and ``app_name`` the toast carries the app's own identity (name and ``icon``), not PowerShell's."""
     if not str(platform or sys.platform).startswith("win"):
         return {"ok": False, "unsupported": True, "error": "unsupported"}
-    return run_ps1(build_toast_ps1(title, body, url, app_name), runner=runner, timeout=timeout)
+    if app and app_name:
+        script = build_toast_ps1(title, body, url, None, toast_app_id(app), display_name=app_name, icon=icon)
+    else:
+        script = build_toast_ps1(title, body, url, app_name)
+    return run_ps1(script, runner=runner, timeout=timeout)
 
 
 # -- ntfy ----------------------------------------------------------------------------------------------------------

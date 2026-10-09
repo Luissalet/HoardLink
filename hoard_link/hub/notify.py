@@ -564,7 +564,7 @@ class NotifyFacet(Facet):
                 if dup:
                     out["duplicate_of"] = dup
             return out
-        note = {**base, "title": title, "body": body, "url": url, "group": group, "tags": tag_list, "ts": ts}
+        note = {**base, "title": title, "body": body, "url": url, "group": group, "tags": tag_list, "ts": ts, "icon_app": icon}
         results = self._dispatch(note, channels, cfg)
         delivered = [r["channel"] for r in results if r.get("ok")]
         self._emit("notify.sent", {**base, "title": title, "channels": [r["channel"] for r in results], "delivered": delivered})
@@ -663,7 +663,10 @@ class NotifyFacet(Facet):
     def _send_windows(self, note: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         if not self._is_windows():
             return {"ok": False, "unsupported": True, "error": "unsupported"}
-        script = build_toast_ps1(note["title"], note.get("body", ""), note.get("url", ""))
+        name, icon_path = self._toast_identity(str(note.get("icon_app") or note.get("app") or "hub"))
+        script = build_toast_ps1(note["title"], note.get("body", ""), note.get("url", ""), None,
+                                 nc.toast_app_id(note.get("icon_app") or note.get("app") or "hub"),
+                                 display_name=name, icon=icon_path)
         if not self.toast_async:
             return self._run_toast(script)
         nid = note.get("id")
@@ -675,6 +678,26 @@ class NotifyFacet(Facet):
 
         threading.Thread(target=run, name="hoard-hub-toast", daemon=True).start()
         return {"ok": True, "async": True}
+
+    def _toast_identity(self, app_id: str) -> tuple[str, Optional[str]]:
+        """Name and icon a toast shows as its source: the app's own (from the registry), the hub's for the hub itself.
+        Without them Windows would attribute every toast to PowerShell."""
+        app = None
+        try:
+            app = self.hub.get(app_id) if hasattr(self.hub, "get") else None
+        except Exception:  # noqa: BLE001 - identity is cosmetic; the toast still goes out
+            app = None
+        if app is not None:
+            icon = app.icon_path if app.icon_path and str(app.icon_path).lower().endswith((".png", ".ico", ".jpg", ".jpeg")) else None
+            return app.name or app_id, os.path.abspath(icon) if icon else None
+        if app_id == "hub":
+            for d in getattr(getattr(self.hub, "config", None), "icon_dirs", None) or ():
+                for name in ("Hoard link.png", "Hoard link.ico", "hoard-hub.png"):
+                    p = os.path.join(d, name)
+                    if os.path.isfile(p):
+                        return "Hoard Hub", os.path.abspath(p)
+            return "Hoard Hub", None
+        return app_id, None
 
     def _run_toast(self, script: str) -> dict[str, Any]:
         return nc.run_ps1(script, runner=self.powershell_runner, timeout=TOAST_TIMEOUT_S)
