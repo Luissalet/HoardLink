@@ -383,14 +383,16 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")   DEV_ORIGINS (Vite 5173 / 517
 ## `hoard_link.agentkit`
 
 ```python
-@dataclass(frozen=True) Tool(name, description, input_model, annotations, run, timeout_s=None, capped=True)   # run(ctx, args)
-ann(read_only=False, destructive=False, idempotent=None, open_world=False) -> dict    # idempotent defaults to read_only
+@dataclass(frozen=True) Tool(name, description, input_model, annotations, run, timeout_s=None, capped=True,
+                              undo=None, capture=None, track=None)   # run(ctx, args); the last three: accountable agents (0.8.2)
+ann(read_only=False, destructive=False, idempotent=None, open_world=False, draft_safe=False) -> dict    # idempotent defaults to read_only
 Empty                                      # a pydantic model without fields (built on first access)
 tool_catalog(tools) -> [{name, description, annotations, inputSchema[, "x-timeout-s"]}]
 call_tool(tools, ctx, name, arguments, *, cap=True, post=None) -> dict   # UnknownTool (a KeyError), ValidationError, ValueError
 cap_result(data, limit=20_000)    uncapped()    is_uncapped()    confirm(flag, what)
 class AppError(code, message, *, hint="", status=None, details=None)  .to_dict()  .STATUS  (subclass it)
-make_agent_router(*, tools_fn, call_fn, token_fn, instructions, app_name, error_types=()) -> APIRouter
+make_agent_router(*, tools_fn, call_fn, token_fn, instructions, app_name, error_types=(),
+                  reasons=False, data_dir=None, tools=None, ctx_fn=None) -> APIRouter   # the last four: accountable agents (0.8.2)
 issues_of(error) / format_issues(error)     # pydantic or fastapi validation errors as [{loc, msg}] / "loc: msg; ..."
 ```
 
@@ -409,6 +411,11 @@ issues_of(error) / format_issues(error)     # pydantic or fastapi validation err
   `error_types` (any class with `.status` and `.to_dict()`) use their own; unknown tool 404 `unknown_tool`; a `KeyError` from the tool
   404 `not_found`; pydantic `ValidationError` 400 `invalid_arguments` with `issues`; `ValueError` 400 `invalid`; anything else 500
   `internal` (logged). Every call ends in `family.record_call` (the `agent.call` audit event).
+* **Accountable agents (0.8.2, opt-in).** `X-Agent-Id` / `X-Agent-Session` headers (the bridge sends them from `HOARD_AGENT_ID` /
+  `HOARD_AGENT_SESSION`), `reasons=True` (a `reason` of 3-300 characters on every write, else 400 `reason_required`), `data_dir=` (a write
+  journal at `agent_journal.jsonl`, `GET /api/agent/journal`, `POST /api/agent/undo` with the per-tool `undo` / `capture` / `track`
+  hooks, extra tokens with a `read_only` / `drafts` / `all` profile and their admin routes). See
+  [accountable-agents.md](accountable-agents.md). With none of these arguments the router behaves exactly as before.
 * **Bugs fixed:** 11 apps (Argus, Borges, Echo, Vulcan, Vitruvius, Nightingale, Funes-audio, Cassandra, Hypatia, Mercator, Cicero
   without `uncapped`) had no result cap, so a listing could put hundreds of KB into the model's context, and only 6 had `_confirm`;
   `agent.py` compared `Bearer ` case-sensitively while `family.py` did not; an unexpected exception became an HTML/plain-text 500 that

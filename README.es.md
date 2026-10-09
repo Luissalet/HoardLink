@@ -737,6 +737,7 @@ Nueve *facetas* viven en el hub, cada una con sus rutas, herramientas y pestaña
 | Búsqueda | Una consulta sobre las herramientas de búsqueda de todas las apps en marcha, más correo y referencias | [docs/facets/search.md](docs/facets/search.md) |
 | Trabajos | Los trabajos largos de cada app (eventos `<app>.job.*`) con progreso y GPU; los fallos avisan | [docs/facets/work.md](docs/facets/work.md) |
 | Compras | Pago en Ledger → envío en Phileas → factura y garantía en Kafka → objeto en HomeHoard; deja de vigilar en Tantalus lo que ya compraste | [docs/facets/purchases.md](docs/facets/purchases.md) |
+| Sesiones de agente (0.8.2) | Lo que han escrito los agentes en las apps que llevan diario de escrituras, agrupado por agente y sesión; deshacer una sesión entera (primero en simulación); tokens por agente con perfil `read_only` / `drafts` / `all` | [docs/facets/agent-sessions.md](docs/facets/agent-sessions.md), [docs/commons/accountable-agents.md](docs/commons/accountable-agents.md) |
 
 Lado de las apps (va con la librería copiada): `hoard_link.fam_notify`, `fam_mail`, `fam_agenda`, `fam_refs`
 (solo biblioteca estándar); las apps Node tienen las mismas funciones en `hoard-link.js` (`notify`, `mail*`,

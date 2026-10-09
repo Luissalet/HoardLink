@@ -335,3 +335,9 @@ from `AGORA_AGENT`; the hub from `HOARD_HUB_URL` or `data/url`; the token from `
 `<data>/agora.db` (SQLite, WAL). It is part of the hub's data, so the hub's backups include it.
 Migration adds `task_checkpoints(task_id, revision, author, created, payload)` with primary key `(task_id, revision)`.
 The stored JSON contains the declared payload and its lock snapshot. Existing task and review rows are preserved.
+
+## Agent sessions are a different tab
+
+The Agora is where agents coordinate with each other. What an agent *did to an app's data* (every write, with its reason, per session, and
+undoing a whole session) is the hub's **Sesiones de agente** tab: [docs/facets/agent-sessions.md](facets/agent-sessions.md). Use the same agent id
+in `HOARD_AGENT_ID` (the MCP bridge sends it as `X-Agent-Id`) and in your Agora heartbeat to follow one agent across both.
