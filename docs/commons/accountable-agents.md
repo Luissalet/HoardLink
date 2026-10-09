@@ -161,6 +161,21 @@ or, from the Hub page (**Sesiones de agente** -> *Tokens por agente*), through t
 The agent then runs its MCP server with `<APP>_TOKEN` (for Cicero, `CICERO_TOKEN`; or `<APP>_TOKEN_FILE`, see `bridge_token`) set to that token instead of reading
 `mcp-token`, and with `HOARD_AGENT_ID` / `HOARD_AGENT_SESSION`.
 
+
+## Writes made through the hub
+
+The hub's proxy (`hub_call_app`, `POST /api/apps/<id>/call` and every hub step that calls an app: rules, jobs, purchases,
+search, media flows) forwards a `reason` and the caller's identity to `/api/agent/call` (body `reason`, `agent`,
+`session` and the `X-Agent-Id` / `X-Agent-Session` headers), so an app with reasons on journals those writes instead of
+refusing them:
+
+| Caller | Reason sent when none is given | Agent id |
+|---|---|---|
+| a hub rule or job (`rule:<id>`, `job:<id>`) | `Automatic step of the Hub rule <id>` / `... job <id>` | the caller |
+| another hub step (`hub`) | `Automatic step run by the Hub` | `hub` |
+| another app through `POST /api/apps/<id>/call` | `Requested by <app> through the Hub` (a `reason` in the body wins) | `X-Agent-Id`, body `agent`, or the app |
+| an agent using `hub_call_app` | none: the agent must pass `reason` (or put it in `arguments`); without it the app answers `reason_required` | `hub-tool` |
+
 ## 6. Adopting it in an app
 
 ```python
@@ -176,6 +191,8 @@ without hooks still gets a journal line and can be reported as "not undoable".
 |---|---|---|---|---|---|
 | Cicero's Hoard | yes | on | yes | deck_create, deck_update, deck_theme, source_add, source_remove, outline_generate, outline_update, slides_generate, slide_add, slides_add, slide_update, slide_edit_text, slide_set_image, slide_regenerate, slide_approve, slide_revert, slide_delete, slides_reorder | create/add/edit tools, never delete or export |
 | Prospero's Hoard | yes | on (`/api/agent/call`; its per-tool routes and web UI are the person's way in and are exempt) | yes | studio_create_project, studio_delete_project, studio_delete_assets, studio_import, studio_trash (restore), studio_cast, studio_style_cards, studio_production_shots, studio_graphic_shot, studio_production_segments, studio_production_settings, studio_production_finishing, studio_production_script, studio_production_create; renders and other GPU jobs are not undoable | project, import, generation, voice and render tools, graphic shot, production create / segments / settings / finishing / script; never delete or send to another app |
+| Lumiere's Hoard | yes | on (`/api/agent/call`; the editor UI and its per-tool routes are exempt) | yes | project_create, project_from_timeline, timeline_edit, timeline_history, timeline_nest, edit_command, text_cut, plan_create, plan_apply, clip_freeze, short_from_range, multicam_create / multicam_switch / multicam_auto, media_import, media_receive, media_shared, media_tag, transcript_fix, speakers_edit, subtitles_translate, broll_suggest, music_pick, template_save, settings; exports and renders are not undoable | editing, import, tagging, plan, multicam, transcript and template tools, plus analysis snapshots; never delete, export or send to another app |
+| Kafka's Hoard | yes | on (`/api/agent/call`; the web UI and its per-tool routes are exempt) | yes | doc_add_file, doc_add_text, doc_update, doc_reprocess, deadline_add, deadline_update, deadline_update_by_key, deadline_delete, deadlines_from_minutes, folder_add, folder_remove, mail_ignore, settings_set | document and deadline create / edit, mail_ignore and the PDF / image tools that write new files; never delete, remove a folder or change settings |
 | every other app | not yet (the next `sync_vendored.py` run brings the library; the router flags are off until the app turns them on) | | | | |
 
 Update this table when an app adopts it.
