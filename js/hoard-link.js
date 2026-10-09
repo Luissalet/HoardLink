@@ -30,7 +30,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-export const FAMILY_VERSION = "0.8.1";
+export const FAMILY_VERSION = "0.8.2";
 const DEFAULT_URL = "http://127.0.0.1:8810";
 
 const state = { app: "", tokenFile: "", hub: null, enabled: true, sent: 0, dropped: 0, lastError: "" };
