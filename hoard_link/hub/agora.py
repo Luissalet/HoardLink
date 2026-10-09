@@ -629,6 +629,35 @@ def _checkpoint_payload(value: Any) -> dict[str, Any]:
     return out
 
 
+# What a metadata-only inbox keeps of each section: who, where, what kind and state, never text written by someone.
+_META_MESSAGE = ("id", "thread_id", "author", "kind", "created", "mentions", "for_you", "thread_title", "thread_kind",
+                 "thread_status", "task_id", "task_owner", "thread_by")
+_META_TASK = ("id", "title", "status", "repo", "kind", "priority", "owner", "reviewer", "created_by", "thread_id",
+              "submission_revision", "review_revision", "branch", "commits", "paths", "created", "updated",
+              "submitted_at", "closed_at", "reviewed", "review_state")
+_META_THREAD = ("id", "title", "kind", "status", "task_id", "created_by", "created", "updated", "escalated_by")
+
+
+def project_inbox_metadata(out: dict[str, Any]) -> dict[str, Any]:
+    """Reduce an inbox answer to metadata: message and task bodies, checkpoint summaries, submission blocks and
+    escalation questions become their length. Applied after any enrichment, so nothing added later leaks text."""
+    def keep(item: dict[str, Any], fields: tuple[str, ...], texts: dict[str, Any]) -> dict[str, Any]:
+        slim = {k: item[k] for k in fields if k in item}
+        for name, value in texts.items():
+            slim[name] = len(str(value or ""))
+        return slim
+    for key in ("messages", "pending"):
+        out[key] = [keep(m, _META_MESSAGE, {"body_chars": m.get("body")}) for m in out.get(key) or []]
+    for key in ("reviews", "changes", "progress_alerts"):
+        out[key] = [dict(keep(t, _META_TASK, {"body_chars": t.get("body")}),
+                         **({"activity": {k: t["activity"].get(k) for k in ("state", "last_progress_at", "heartbeat_at")}}
+                            if isinstance(t.get("activity"), dict) else {}))
+                    for t in out.get(key) or []]
+    out["escalated"] = [keep(th, _META_THREAD, {"question_chars": th.get("question")}) for th in out.get("escalated") or []]
+    out["metadata_only"] = True
+    return out
+
+
 class Agora:
     """The store and every operation. Thread-safe; ``clock`` is injectable for tests."""
 
@@ -1676,7 +1705,8 @@ class Agora:
         msgs = self._messages(int(task["thread_id"])) if task.get("thread_id") else []
         if a.get("agent") and task.get("thread_id"):
             # Reading the task with its whole conversation counts as reading its thread (A1).
-            reader = self._agent(a.get("agent"), allow_person=True)
+            # as the person only from the hub's page, like thread(); agents read with their own id
+            reader = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
             with self.db.tx():
                 self._ack(reader, int(task["thread_id"]), max((m["id"] for m in msgs), default=0) or None)
         locks = [dict(r) for r in self.db.query("SELECT * FROM locks WHERE task_id=? AND expires>?", (task["id"], self.clock()))]
@@ -1909,11 +1939,7 @@ class Agora:
         if a.get("metadata_only"):
             # A2: who wrote, where and what kind, without bodies; the body is read with thread/task (which marks it
             # seen). The read mark does not move: nothing was delivered.
-            for m in out["messages"] + out["pending"]:
-                body = str(m.pop("body", "") or "")
-                m["body_chars"] = len(body)
-            out["metadata_only"] = True
-            return out
+            return project_inbox_metadata(out)
         if not a.get("peek") and out["messages"]:
             upto = max(m["id"] for m in out["messages"])
             self.db.execute("INSERT INTO reads(agent, last_msg_id, updated) VALUES(?,?,?) ON CONFLICT(agent) DO "
@@ -2403,9 +2429,10 @@ class AgoraFacet(Facet):
     def _inbox(self, a: dict[str, Any]) -> dict[str, Any]:
         out = self.agora.inbox(a)
         self._enrich(out, out["progress_alerts"])
-        out["progress_alerts"] = [t for t in out["progress_alerts"] if t["activity"]["state"] == "stalled"]
+        out["progress_alerts"] = [t for t in out["progress_alerts"] if (t.get("activity") or {}).get("state") == "stalled"]
         out["counts"]["progress_alerts"] = len(out["progress_alerts"])
-        return out
+        # the enrichment above may add text again: project last
+        return project_inbox_metadata(out) if a.get("metadata_only") else out
 
     def _digest(self, a: dict[str, Any]) -> dict[str, Any]:
         out = self.agora.digest(a)
@@ -2465,7 +2492,11 @@ class AgoraFacet(Facet):
                         pass
             return self._run(ag.checkpoints, q)
         if p.startswith("/api/agora/tasks/"):
-            return self._run(self._task, {"task_id": p.rsplit("/", 1)[1], **({"agent": q["agent"]} if q.get("agent") else {})})
+            who = q.get("agent", "").lower()
+            person = who == PERSON and req.caller() == "ui"
+            if who == PERSON and not person:
+                who = ""   # the person's read is recorded only from the hub's page
+            return self._run(self._task, {"task_id": p.rsplit("/", 1)[1], **({"agent": who, "_person": person} if who else {})})
         if p == "/api/agora/threads":
             q["include_tasks"] = str(q.get("include_tasks", "")).lower() in ("1", "true")
             return self._run(ag.threads, q)
