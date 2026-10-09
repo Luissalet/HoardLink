@@ -19,6 +19,9 @@
     tasks: { es: "Tareas", en: "Tasks" },
     col_open: { es: "Abiertas", en: "Open" }, col_work: { es: "En curso", en: "In progress" },
     col_review: { es: "En revisión", en: "In review" }, col_done: { es: "Hechas", en: "Done" },
+    dropped_total: { es: "Descartadas: {count}", en: "Dropped: {count}" },
+    recent_final: { es: "Mostrando {shown} finalizadas recientes de {total}.", en: "Showing {shown} recent finalized tasks of {total}." },
+    recent_final_unknown: { es: "Mostrando {shown} finalizadas recientes; total no disponible.", en: "Showing {shown} recent finalized tasks; total unavailable." },
     threads: { es: "Conversaciones", en: "Threads" }, decisions: { es: "Decisiones", en: "Decisions" },
     locks: { es: "Bloqueos", en: "Locks" }, no_locks: { es: "Nada bloqueado.", en: "Nothing locked." },
     none: { es: "Nada.", en: "Nothing." },
@@ -327,6 +330,8 @@
 
   function renderBoard(b) {
     boardBox.replaceChildren();
+    const hasCount = (status) => Number.isInteger(b.counts?.[status]) && b.counts[status] >= 0;
+    const count = (status) => hasCount(status) ? b.counts[status] : (b.tasks || []).filter((x) => x.status === status).length;
     const cols = [
       ["col_open", ["open"]],
       ["col_work", ["claimed", "in_progress", "blocked", "changes"]],
@@ -336,8 +341,15 @@
     for (const [key, sts] of cols) {
       const col = el("div", "ag-col");
       const items = (b.tasks || []).filter((x) => sts.includes(x.status));
-      const head = el("div", "ag-colhead"); head.appendChild(el("span", "", t(key))); head.appendChild(el("span", "", String(items.length)));
+      const total = sts.reduce((sum, status) => sum + count(status), 0);
+      const head = el("div", "ag-colhead"); head.appendChild(el("span", "", t(key)));
+      head.appendChild(el("span", "", String(key === "col_done" ? count("done") : total)));
       col.appendChild(head);
+      if (key === "col_done") {
+        col.appendChild(el("div", "hint", t("dropped_total").replace("{count}", count("dropped"))));
+        const message = sts.every(hasCount) ? t("recent_final").replace("{total}", total) : t("recent_final_unknown");
+        col.appendChild(el("div", "hint", message.replace("{shown}", items.length)));
+      }
       for (const x of items) col.appendChild(taskCard(x));
       boardBox.appendChild(col);
     }
