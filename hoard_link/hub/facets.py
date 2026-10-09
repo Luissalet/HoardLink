@@ -49,6 +49,7 @@ FACET_MODULES = (
     "resources",
     "capabilities",
     "agora",
+    "agent_sessions",
 )
 
 

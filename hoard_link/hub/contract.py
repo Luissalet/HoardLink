@@ -119,6 +119,35 @@ def _get(url: str, token: str, timeout: float) -> tuple[Optional[int], Any]:
         return status, None
 
 
+def app_request(app: App, method: str, path: str, body: Optional[dict[str, Any]] = None, *, timeout: float = 5.0) -> tuple[Optional[int], Any]:
+    """One request to ``app`` with its own token: ``(status, json)``, or ``(None, {"error"})`` when it is not reachable. For the
+    routes that are not tool calls (``GET /api/agent/journal``, ``POST /api/agent/undo``, ``/api/agent/tokens``)."""
+    import json
+    import urllib.error
+    import urllib.request
+    token = read_token(app.token_file)
+    data = None if body is None else json.dumps(body, default=str).encode("utf-8")
+    headers = {"Accept": "application/json", "User-Agent": "hoard-hub", **({"Content-Type": "application/json"} if data is not None else {}),
+               **({"Authorization": "Bearer " + token} if token else {})}
+    req = urllib.request.Request(app.url + path, data=data, method=method.upper(), headers=headers)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as exc:
+        try:
+            raw = exc.read()
+        except Exception:  # noqa: BLE001
+            raw = b""
+        status = exc.code
+    except Exception as exc:  # noqa: BLE001
+        return None, {"error": f"{type(exc).__name__}: {exc}"}
+    try:
+        return status, json.loads(raw.decode("utf-8", "replace")) if raw else None
+    except ValueError:
+        return status, {"error": raw.decode("utf-8", "replace")[:300]}
+
+
 def app_tools(app: App, timeout: float = 5.0) -> dict[str, Any]:
     """The app's tool catalogue (``/api/agent/tools``), or why not."""
     token = read_token(app.token_file)
@@ -207,4 +236,4 @@ def data_dir_size(path: str, *, limit_files: int = 200000) -> dict[str, Any]:
     return {"bytes": total, "files": files, "truncated": False}
 
 
-__all__ = ["read_token", "token_owner", "app_tools", "call_app", "data_dir_size", "procs"]
+__all__ = ["read_token", "token_owner", "app_tools", "app_request", "call_app", "data_dir_size", "procs"]

@@ -264,7 +264,9 @@ class EventLog:
 def event_types_help() -> list[dict[str, str]]:
     """The conventions, for the UI and the docs (not enforced)."""
     return [
-        {"type": "agent.call", "who": "every app", "data": "tool, ok, ms, caller — one per /api/agent/call"},
+        {"type": "agent.call", "who": "every app", "data": "tool, ok, ms, caller, session — one per /api/agent/call"},
+        {"type": "agent.write", "who": "apps with the agent journal", "data": "journal_id, tool, ok, agent, session, reason, undoable, objects — one per agent write (ids only)"},
+        {"type": "agent.undo", "who": "apps with the agent journal", "data": "session, agent, undone, conflicts, not_undoable, complete, reason — after a session was undone"},
         {"type": "<app>.<thing>.<verb>", "who": "the app", "data": "ids only: links.watch.new {watch, title, url}"},
         {"type": "hub.app.started|stopped", "who": "hub", "data": "app, pid"},
         {"type": "<app>.job.queued|started|progress|done|failed|cancelled", "who": "the app",
