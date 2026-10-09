@@ -66,6 +66,9 @@ class HubConfig:
     # The Ágora's passive observer of the coding agents' transcripts (agent_watch.py): {enabled, hours, max_files,
     # roots: {"codex": [...], "cursor": [...], "claude": [...]}}; every key optional (defaults: the user's home).
     agent_watch: dict[str, Any] = field(default_factory=dict)
+    # The Ágora: {"freshness": "warn" | "enforce" | "off"} — acting on a task without having read what others wrote
+    # there since (see docs/facets/agora.md). Default warn.
+    agora: dict[str, Any] = field(default_factory=dict)
 
     @property
     def protected_gpus(self) -> list[int]:
@@ -190,6 +193,8 @@ class HubConfig:
             cfg.web = {}
         if not isinstance(cfg.agent_watch, dict):
             cfg.agent_watch = {}
+        if not isinstance(cfg.agora, dict):
+            cfg.agora = {}
         cfg.roots = [os.path.abspath(os.path.expanduser(r)) for r in cfg.roots]
         cfg.icon_dirs = [os.path.abspath(os.path.expanduser(r)) for r in cfg.icon_dirs]
         if not isinstance(cfg.window_size, list) or len(cfg.window_size) != 2:

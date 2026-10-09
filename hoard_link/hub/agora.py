@@ -130,6 +130,10 @@ MIGRATIONS = [
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
 
 
+UNSEEN_OK_MIN = 8   # characters of reason needed to act on a task with unread messages (A1)
+FRESHNESS_MODES = ("off", "warn", "enforce")
+
+
 class AgoraError(ValueError):
     """A refused operation (bad argument, conflict, not allowed): the caller gets ``ok: False`` and the reason."""
 
@@ -634,8 +638,13 @@ class Agora:
                  handover_thread_id: Optional[int] = HANDOVER_THREAD_ID,
                  task_idle_s: int = 3600,
                  repo_lookup: Optional[Callable[[str], Optional[Path]]] = None,
-                 repo_roots: Optional[Callable[[str], list[Path]]] = None):
+                 repo_roots: Optional[Callable[[str], list[Path]]] = None,
+                 freshness: Optional[str] = None):
         self.clock = clock
+        # A1: what to do when an agent acts on a task without having read what others wrote there since.
+        # "warn" (default): act, and say so in the answer and an event; "enforce": refuse; "off": nothing.
+        mode = str(freshness or os.environ.get("HOARD_AGORA_FRESHNESS") or "warn").strip().lower()
+        self.freshness = mode if mode in FRESHNESS_MODES else "warn"
         self.task_idle_s = _checkpoint_int(task_idle_s, "task_idle_s", 60, 7 * 86400)
         self.handover_idle_s = float(handover_idle_s)
         self.handover_thread_id = handover_thread_id
@@ -913,6 +922,58 @@ class Agora:
                         "DO UPDATE SET upto=MAX(acks.upto, excluded.upto), updated=excluded.updated",
                         (agent, thread_id, upto, self.clock()))
 
+    # -- freshness (A1): act on a task only after reading what others wrote there --------------------------------
+
+    def _unseen(self, agent: str, task_id: int) -> list[dict[str, Any]]:
+        """Messages from others in this task's threads that the agent has not seen yet: newer than its ack of that
+        thread (thread/task reads with the agent, its own posts) and than its inbox read mark (a non-peek inbox
+        delivers the bodies). Bookkeeping lines (kind ``system``) and the task's own description do not count."""
+        row = self.db.one("SELECT last_msg_id FROM reads WHERE agent=?", (agent,))
+        read_upto = int(row["last_msg_id"]) if row else 0
+        return [dict(r) for r in self.db.query(
+            "SELECT m.id, m.thread_id, m.author, m.kind, m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
+            "LEFT JOIN acks k ON k.agent=? AND k.thread_id=m.thread_id "
+            "WHERE t.task_id=? AND m.author<>? AND m.kind<>'system' AND m.id>COALESCE(k.upto, 0) AND m.id>? "
+            # the task's own description (first message of its thread) is what the board and task listings show
+            "AND NOT (t.kind='task' AND m.id=(SELECT MIN(id) FROM messages WHERE thread_id=t.id)) "
+            "ORDER BY m.id", (agent, task_id, agent, read_upto))]
+
+    def _require_fresh(self, agent: str, task: dict[str, Any], a: dict[str, Any], action: str) -> Optional[str]:
+        """A1, before claim/submit/review/done/post on a task: has the agent seen what others wrote there since?
+
+        Nothing unseen, mode ``off`` or the person acting from the hub page: None. ``unseen_ok`` with a reason: act,
+        and return the line to record in the thread. Otherwise ``enforce`` refuses with the list (409,
+        ``unseen_messages``) and ``warn`` lets it through: the unseen list goes in the answer (``unseen``) and in an
+        ``agora.task.unseen`` event, without writing in the thread."""
+        if self.freshness == "off" or agent == PERSON or a.get("_person"):
+            return None
+        unseen = self._unseen(agent, int(task["id"]))
+        if not unseen:
+            return None
+        ids = ", ".join("#%s" % m["id"] for m in unseen[:8]) + (" ..." if len(unseen) > 8 else "")
+        reason = str(a.get("unseen_ok") or "").strip()
+        if len(reason) >= UNSEEN_OK_MIN:
+            return f"{agent} hace «{action}» sin haber leído {len(unseen)} mensaje(s) ({ids}): {reason[:300]}"
+        if self.freshness == "enforce":
+            listed = ", ".join("#%s %s %s" % (m["id"], m["author"], m["kind"]) for m in unseen[:5])
+            more = " ..." if len(unseen) > 5 else ""
+            raise AgoraError(
+                f"task {task['id']}: {len(unseen)} message(s) from others you have not read yet ({listed}{more}). "
+                f"Read the thread first (thread <id> or task <id> with your agent), or pass unseen_ok with the "
+                f"reason ({UNSEEN_OK_MIN}+ characters)", 409,
+                error_code="unseen_messages", unseen=unseen[:20], unseen_count=len(unseen))
+        a["_unseen_warning"] = {"count": len(unseen), "messages": unseen[:20], "action": action,
+                                "hint": "read the task thread (thread/task with your agent) before acting on it"}
+        self._bump("agora.task.unseen", {"task_id": task["id"], "agent": agent, "action": action, "count": len(unseen),
+                                         "message_ids": [m["id"] for m in unseen[:20]]})
+        return None
+
+    @staticmethod
+    def _with_unseen(a: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
+        if a.get("_unseen_warning"):
+            out["unseen"] = a["_unseen_warning"]
+        return out
+
     def _live_locks(self) -> list[dict[str, Any]]:
         now = self.clock()
         self.db.execute("DELETE FROM locks WHERE expires <= ?", (now,))
@@ -1167,6 +1228,7 @@ class Agora:
             task = self._task_row(a.get("task_id"))
             if task["status"] in FINAL:
                 raise AgoraError(f"task {task['id']} is {task['status']}", 409)
+            stale_note = self._require_fresh(agent, task, a, "claim")
             owner = task.get("owner")
             if owner and owner != agent and task["status"] in ACTIVE:
                 if not (a.get("force") and self._agent_stale(owner)):
@@ -1185,8 +1247,10 @@ class Agora:
                             (agent, status, now, now, task["id"]))
             if owner != agent:
                 self._system(task, f"{agent} reclama la tarea" + (f" con {', '.join(got['locks'])}" if got["locks"] else "") + ".", agent)
+            if stale_note:
+                self._system(task, stale_note, agent)
         self._bump("agora.task.claimed", {"task_id": task["id"], "agent": agent, "locks": got["locks"]})
-        return {"ok": True, "task": self._task_row(task["id"]), "locks": got["locks"]}
+        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"]), "locks": got["locks"]})
 
     def _owned(self, a: dict[str, Any], *, allow_person: bool = True) -> tuple[str, dict[str, Any]]:
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")) and allow_person)
@@ -1238,6 +1302,8 @@ class Agora:
             self._touch(agent)
             if task["status"] not in ACTIVE:
                 raise AgoraError(f"task {task['id']} is {task['status']}", 409)
+            if self.freshness == "enforce":
+                self._require_fresh(agent, task, a, "submit")   # fail before the code_peek verification
             reviewer = str(a.get("reviewer") or "").strip().lower() or None
             if reviewer == agent:
                 raise AgoraError("the reviewer must be someone else")
@@ -1266,6 +1332,7 @@ class Agora:
                                  error_code="submit_conflict",
                                  current_revision=task["submission_revision"],
                                  current_commits=task["commits"])
+            stale_note = self._require_fresh(agent, task, a, "submit")
             now = self.clock()
             # A new submission asks for a new verdict: an approval given to earlier commits does not carry over.
             self.db.execute(
@@ -1280,12 +1347,14 @@ class Agora:
             details = f"\n\nSubmission revision: {revision}\nCommits: {', '.join(task['commits']) or '(none)'}"
             if blocks:
                 details += _format_blocks_for_message(blocks)
+            if stale_note:
+                self._system(task, stale_note, agent)
             self._msg(int(task["thread_id"]), agent, "proposal", summary + details,
                       [snap["reviewer"]] if snap["reviewer"] else [])
         self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": snap["reviewer"],
                                           "submission_revision": revision, "commits": task["commits"],
                                           "blocks": len(blocks or [])})
-        return {"ok": True, "task": self._task_row(task["id"])}
+        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"])})
 
     def task_review(self, a: dict[str, Any]) -> dict[str, Any]:
         """Vote on the observed submission revision using expected_submission_revision."""
@@ -1307,6 +1376,9 @@ class Agora:
             if expected_revision != task["submission_revision"]:
                 raise AgoraError("the submission changed after it was observed", 409, error_code="stale_submission",
                                  current_revision=task["submission_revision"], current_commits=task["commits"])
+            stale_note = self._require_fresh(agent, task, a, "review")
+            if stale_note:
+                self._system(task, stale_note, agent)
             status = "approved" if verdict == "approve" else "changes"
             now = self.clock()
             self.db.execute("UPDATE tasks SET status=?, reviewer=?, reviewed=?, reviewed_commits=?, "
@@ -1339,7 +1411,7 @@ class Agora:
                 self.db.execute("UPDATE threads SET status='open' WHERE id=? AND status='escalated'", (task["thread_id"],))
         self._bump("agora.task.reviewed", {"task_id": task["id"], "agent": agent, "verdict": verdict,
                                             "submission_revision": expected_revision, "commits": task["commits"]})
-        return {"ok": True, "task": self._task_row(task["id"])}
+        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"])})
 
     def task_done(self, a: dict[str, Any]) -> dict[str, Any]:
         """Integrated: commits and result. Releases the task's locks. Refused while a review is younger than 2 h
@@ -1349,6 +1421,9 @@ class Agora:
             self._touch(agent)
             if task["status"] in FINAL:
                 raise AgoraError(f"task {task['id']} is already {task['status']}", 409)
+            stale_note = self._require_fresh(agent, task, a, "done")
+            if stale_note:
+                self._system(task, stale_note, agent)
             now = self.clock()
             if task["status"] == "review" and agent != PERSON:
                 waited = now - float(task.get("submitted_at") or now)
@@ -1404,7 +1479,7 @@ class Agora:
         self._bump("agora.task.done", {"task_id": task["id"], "agent": agent, "commits": commits,
                                        "reviewed": review_state in ("approved", "equivalent"), "review_state": review_state,
                                        "reviewed_commits": seen if review_state in ("approved", "equivalent") else []})
-        return {"ok": True, "task": self._task_row(task["id"])}
+        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"])})
 
     def task_release(self, a: dict[str, Any]) -> dict[str, Any]:
         """Give the task back (``open``) or drop it (``drop: true``) with a reason. Releases its locks."""
@@ -1614,6 +1689,11 @@ class Agora:
     def task(self, a: dict[str, Any]) -> dict[str, Any]:
         task = self._task_row(a.get("task_id"))
         msgs = self._messages(int(task["thread_id"])) if task.get("thread_id") else []
+        if a.get("agent") and task.get("thread_id"):
+            # Reading the task with its whole conversation counts as reading its thread (A1).
+            reader = self._agent(a.get("agent"), allow_person=True)
+            with self.db.tx():
+                self._ack(reader, int(task["thread_id"]), max((m["id"] for m in msgs), default=0) or None)
         locks = [dict(r) for r in self.db.query("SELECT * FROM locks WHERE task_id=? AND expires>?", (task["id"], self.clock()))]
         return {"ok": True, "task": task, "messages": msgs, "locks": locks,
                 "timeline": self.timeline({"task_id": task["id"], "limit": 100})}
@@ -1661,13 +1741,17 @@ class Agora:
         with self.db.tx():
             self._touch(agent)
             th = self._thread_row(a.get("thread_id"))
+            if th.get("task_id"):
+                stale_note = self._require_fresh(agent, self._task_row(th["task_id"]), a, "post")
+                if stale_note:
+                    self._msg(th["id"], agent, "system", stale_note)
             mid = self._msg(th["id"], agent, kind, body, _list(a.get("mentions"), "mentions"))
             self._ack(agent, th["id"], mid)
             if (th["status"] == "resolved" and kind in ("disagree", "proposal")) or \
                     (th["status"] == "escalated" and agent == PERSON):
                 self.db.execute("UPDATE threads SET status='open' WHERE id=?", (th["id"],))
         self._bump("agora.thread.message", {"thread_id": th["id"], "message_id": mid, "author": agent, "kind": kind})
-        return {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"])}
+        return self._with_unseen(a, {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"])})
 
     def resolve(self, a: dict[str, Any]) -> dict[str, Any]:
         """Close a thread with the resolution in writing. Resolved debates and decisions are the decision log."""
@@ -1837,6 +1921,14 @@ class Agora:
             with self._changed:
                 if self._version == version:
                     self._changed.wait(timeout=max(0.05, min(5.0, deadline - self.clock())))
+        if a.get("metadata_only"):
+            # A2: who wrote, where and what kind, without bodies; the body is read with thread/task (which marks it
+            # seen). The read mark does not move: nothing was delivered.
+            for m in out["messages"] + out["pending"]:
+                body = str(m.pop("body", "") or "")
+                m["body_chars"] = len(body)
+            out["metadata_only"] = True
+            return out
         if not a.get("peek") and out["messages"]:
             upto = max(m["id"] for m in out["messages"])
             self.db.execute("INSERT INTO reads(agent, last_msg_id, updated) VALUES(?,?,?) ON CONFLICT(agent) DO "
@@ -2008,9 +2100,10 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_inbox", "read": True,
      "description": "Your Ágora inbox: messages from the others since your last read (for_you when it concerns you), "
                     "reviews waiting for you and changes asked of you. wait_s (<=60 here) waits for something new; "
-                    "peek keeps the read mark.",
+                    "peek keeps the read mark. metadata_only returns who/where/what kind without bodies and keeps "
+                    "the read mark: read the bodies with hub_agora_thread or hub_agora_task (with agent).",
      "inputSchema": _schema({"agent": _A, "wait_s": {"type": "number"}, "peek": {"type": "boolean"},
-                             "mine_only": {"type": "boolean"}, "since_id": {"type": "integer"}}, ["agent"])},
+                             "metadata_only": {"type": "boolean"}, "mine_only": {"type": "boolean"}, "since_id": {"type": "integer"}}, ["agent"])},
     {"name": "hub_agora_heartbeat",
      "description": "Tell the Ágora you are here and what you are doing (state working|idle|waiting|away). "
                     "Renews every lock you hold; call it at least every hour while working.",
@@ -2036,7 +2129,7 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Claim a task and take its locks all-or-nothing (path:Repo/file-or-dir, repo:Repo, merge:Repo, "
                     "model:principal, gpu:N, port:N, app:id). Default locks: path:<repo>/<each path>. On conflict "
                     "you get who holds what. force takes a task whose owner has been silent for 6 h.",
-     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "locks": _STRS, "ttl_s": {"type": "integer"},
+     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "task_id": _TASK, "locks": _STRS, "ttl_s": {"type": "integer"},
                              "force": {"type": "boolean"}}, ["agent", "task_id"])},
     {"name": "hub_agora_task_update",
      "description": "Progress on your task: note, status in_progress|blocked, branch, more paths and locks.",
@@ -2048,7 +2141,7 @@ TOOLS: list[dict[str, Any]] = [
                     "verified, branch/commits; optionally name the reviewer. Optional blocks: structured review "
                     "(what_why, paths, code_peek with path#Lx-Ly@commit verified against the task repo or an "
                     "identity-checked absolute checkout for isolated clones, flow, sequence). Block ids must be unique.",
-     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "summary": {"type": "string"}, "branch": {"type": "string"},
+     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "task_id": _TASK, "summary": {"type": "string"}, "branch": {"type": "string"},
                              "commits": _STRS, "reviewer": {"type": "string"},
                              "blocks": {"type": "array", "items": {"type": "object"}, "maxItems": 40}},
                             ["agent", "task_id", "summary"])},
@@ -2056,7 +2149,7 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Review someone else's observed submission: read its submission_revision, inspect and test that "
                     "revision, then send expected_submission_revision with verdict approve|changes and the reasons. "
                     "Optional block_comments: [{block_id, body}] for per-block notes on structured submissions.",
-     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "expected_submission_revision": {"type": "integer", "minimum": 1},
+     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "task_id": _TASK, "expected_submission_revision": {"type": "integer", "minimum": 1},
                              "verdict": {"type": "string"}, "body": {"type": "string"},
                              "block_comments": {"type": "array", "items": {"type": "object"}, "maxItems": 40}},
                             ["agent", "task_id", "expected_submission_revision", "verdict", "body"])},
@@ -2064,7 +2157,7 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Your task is integrated: commits and result. Releases its locks. Refused while a review is "
                     "younger than 2 h or changes were requested, unless force with a reason. docs, eval, research and "
                     "chore tasks may close without review (exempt, with the reason); code may not.",
-     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "result": {"type": "string"}, "commits": _STRS,
+     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "task_id": _TASK, "result": {"type": "string"}, "commits": _STRS,
                              "force": {"type": "boolean"}, "reason": {"type": "string"}, "exempt": {"type": "string"}},
                             ["agent", "task_id"])},
     {"name": "hub_agora_task_release",
@@ -2089,7 +2182,7 @@ TOOLS: list[dict[str, Any]] = [
                              "kind": {"type": "string"}, "limit": {"type": "integer"}}, [])},
     {"name": "hub_agora_task", "read": True,
      "description": "One task with its whole conversation and its locks.",
-     "inputSchema": _schema({"task_id": _TASK}, ["task_id"])},
+     "inputSchema": _schema({"task_id": _TASK, "agent": {"type": "string", "description": "who reads; marks the task thread as read"}}, ["task_id"])},
     {"name": "hub_agora_lock",
      "description": "Take or renew locks outside a task: model:principal before a live evaluation, merge:Repo before "
                     "integrating into the shared checkout. Conflicts say who holds what.",
@@ -2109,7 +2202,7 @@ TOOLS: list[dict[str, Any]] = [
                              "escalate": {"type": "boolean"}}, ["agent", "title", "body"])},
     {"name": "hub_agora_post",
      "description": "Reply in a thread: kind comment|proposal|agree|disagree (state your position with arguments).",
-     "inputSchema": _schema({"agent": _A, "thread_id": _THREAD, "body": {"type": "string"}, "kind": {"type": "string"},
+     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "thread_id": _THREAD, "body": {"type": "string"}, "kind": {"type": "string"},
                              "mentions": _STRS}, ["agent", "thread_id", "body"])},
     {"name": "hub_agora_resolve",
      "description": "Close a thread with the agreed resolution in writing (it enters the decision log).",
@@ -2201,7 +2294,9 @@ class AgoraFacet(Facet):
 
         watch_cfg = getattr(hub.config, "agent_watch", None)
         task_idle_s = watch_cfg.get("task_idle_s", 3600) if isinstance(watch_cfg, dict) else 3600
-        self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s,
+        agora_cfg = getattr(hub.config, "agora", None)
+        freshness = agora_cfg.get("freshness") if isinstance(agora_cfg, dict) else None
+        self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
 
@@ -2363,6 +2458,7 @@ class AgoraFacet(Facet):
                 q["peek"] = "1"
             q["peek"] = str(q.get("peek", "")).lower() in ("1", "true", "yes")
             q["mine_only"] = str(q.get("mine_only", "")).lower() in ("1", "true", "yes")
+            q["metadata_only"] = str(q.get("metadata_only", "")).lower() in ("1", "true", "yes")
             return self._run(self._inbox, q)
         if p == "/api/agora/tasks":
             return self._run(self._tasks, q)
@@ -2384,7 +2480,7 @@ class AgoraFacet(Facet):
                         pass
             return self._run(ag.checkpoints, q)
         if p.startswith("/api/agora/tasks/"):
-            return self._run(self._task, {"task_id": p.rsplit("/", 1)[1]})
+            return self._run(self._task, {"task_id": p.rsplit("/", 1)[1], **({"agent": q["agent"]} if q.get("agent") else {})})
         if p == "/api/agora/threads":
             q["include_tasks"] = str(q.get("include_tasks", "")).lower() in ("1", "true")
             return self._run(ag.threads, q)

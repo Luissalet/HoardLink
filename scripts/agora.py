@@ -259,6 +259,9 @@ def print_inbox(r: dict) -> None:
         mark = "→" if m.get("for_you") else " "
         where = f"tarea #{m['task_id']}" if m.get("thread_kind") == "task" else f"hilo {m['thread_id']}"
         print(f"{mark} [{where} · {m['thread_kind']}] {m['author']} ({m['kind']}, {when(m['created'])}) — {m.get('thread_title')}")
+        if "body" not in m and "body_chars" in m:      # inbox --meta: the body is read with thread/task
+            print(f"      ({m['body_chars']} caracteres; léelo con thread {m['thread_id']})")
+            continue
         for line in str(m.get("body") or "").splitlines() or [""]:
             print("      " + line)
 
@@ -367,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument(f"--{n}-file", dest=f"{n}_file")
 
     s = sub.add_parser("board"); s.add_argument("--full", action="store_true", help="todos los bloqueos, uno a uno")
-    s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true")
+    s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true"); s.add_argument("--meta", action="store_true", help="solo metadatos (quién, dónde, tipo), sin cuerpos ni mover la marca")
     s = sub.add_parser("hb"); s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
     s = sub.add_parser("sync", help="un latido y snapshot del Ágora; --since usa el id durable de publicación")
     s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
@@ -389,21 +392,21 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--repo"); s.add_argument("--paths", action="append")
     s.add_argument("--kind", default="feature"); s.add_argument("--prio", type=int, default=2); s.add_argument("--claim", action="store_true")
     s.add_argument("--lock", action="append"); s.add_argument("--mention", action="append")
-    s = sub.add_parser("claim"); s.add_argument("task", type=int); s.add_argument("--lock", action="append"); s.add_argument("--ttl", type=int); s.add_argument("--force", action="store_true")
+    s = sub.add_parser("claim"); s.add_argument("task", type=int); s.add_argument("--lock", action="append"); s.add_argument("--ttl", type=int); s.add_argument("--force", action="store_true"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
     s = sub.add_parser("update"); s.add_argument("task", type=int); texts(s, "note"); s.add_argument("--status"); s.add_argument("--branch")
     s.add_argument("--paths", action="append"); s.add_argument("--lock", action="append")
-    s = sub.add_parser("submit"); s.add_argument("task", type=int); texts(s, "summary"); s.add_argument("--commits", action="append"); s.add_argument("--branch"); s.add_argument("--reviewer")
+    s = sub.add_parser("submit"); s.add_argument("task", type=int); texts(s, "summary"); s.add_argument("--commits", action="append"); s.add_argument("--branch"); s.add_argument("--reviewer"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
     s.add_argument("--blocks-file", help="JSON UTF-8 list of structured review blocks (what_why, paths, code_peek, flow, sequence)")
-    s = sub.add_parser("review"); s.add_argument("task", type=int); s.add_argument("verdict", choices=["approve", "changes"]); s.add_argument("--revision", type=int, required=True, help="submission_revision you inspected before reviewing; not the latest revision fetched automatically"); texts(s, "body")
+    s = sub.add_parser("review"); s.add_argument("task", type=int); s.add_argument("verdict", choices=["approve", "changes"]); s.add_argument("--revision", type=int, required=True, help="submission_revision you inspected before reviewing; not the latest revision fetched automatically"); texts(s, "body"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
     s.add_argument("--block-comments-file", help="JSON UTF-8 list of {block_id, body} notes on structured blocks")
-    s = sub.add_parser("done"); s.add_argument("task", type=int); texts(s, "result"); s.add_argument("--commits", action="append"); s.add_argument("--force", action="store_true"); s.add_argument("--reason")
+    s = sub.add_parser("done"); s.add_argument("task", type=int); texts(s, "result"); s.add_argument("--commits", action="append"); s.add_argument("--force", action="store_true"); s.add_argument("--reason"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
     s = sub.add_parser("release"); s.add_argument("task", type=int); s.add_argument("--reason"); s.add_argument("--drop", action="store_true")
     s = sub.add_parser("lock"); s.add_argument("resources", nargs="+"); s.add_argument("--ttl", type=int); s.add_argument("--note"); s.add_argument("--task", type=int)
     s = sub.add_parser("unlock"); s.add_argument("resources", nargs="+")
     s = sub.add_parser("locks"); s.add_argument("--check")
     s = sub.add_parser("open"); s.add_argument("title"); texts(s, "body"); s.add_argument("--kind", default="debate"); s.add_argument("--task", type=int)
     s.add_argument("--mention", action="append"); s.add_argument("--escalate", action="store_true")
-    s = sub.add_parser("post"); s.add_argument("thread", type=int); texts(s, "body"); s.add_argument("--kind", default="comment"); s.add_argument("--mention", action="append")
+    s = sub.add_parser("post"); s.add_argument("thread", type=int); texts(s, "body"); s.add_argument("--kind", default="comment"); s.add_argument("--mention", action="append"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
     s = sub.add_parser("resolve"); s.add_argument("thread", type=int); texts(s, "text")
     s = sub.add_parser("escalate"); s.add_argument("thread", type=int); texts(s, "question")
     s = sub.add_parser("reopen"); s.add_argument("thread", type=int); s.add_argument("--reason", required=True)
@@ -458,7 +461,8 @@ def main(argv: list[str] | None = None) -> int:
         r = call("GET", "/api/agora/checkpoints?" + urllib.parse.urlencode(
             {"task_id": a.task, "after_revision": a.after, "limit": a.limit}))
     elif c == "inbox":
-        q = {"agent": ag, "wait_s": a.wait, "peek": "1" if a.peek else "", "mine_only": "1" if a.mine else ""}
+        q = {"agent": ag, "wait_s": a.wait, "peek": "1" if a.peek else "", "mine_only": "1" if a.mine else "",
+             "metadata_only": "1" if a.meta else ""}
         r = call("GET", "/api/agora/inbox?" + urllib.parse.urlencode(q), timeout=max(30.0, a.wait + 30))
     elif c == "activity":
         q = {"task_id": a.task}
@@ -479,7 +483,8 @@ def main(argv: list[str] | None = None) -> int:
                                                  "paths": csv(a.paths), "kind": a.kind, "priority": a.prio, "claim": a.claim,
                                                  "locks": csv(a.lock), "mentions": csv(a.mention)})
     elif c == "claim":
-        r = call("POST", "/api/agora/task_claim", {"agent": ag, "task_id": a.task, "locks": csv(a.lock), "ttl_s": a.ttl, "force": a.force})
+        r = call("POST", "/api/agora/task_claim", {"agent": ag, "task_id": a.task, "locks": csv(a.lock), "ttl_s": a.ttl, "force": a.force,
+                                                   "unseen_ok": a.unseen_ok})
     elif c == "update":
         body = {"agent": ag, "task_id": a.task, "note": text_arg(a, "note") or "", "locks": csv(a.lock)}
         if a.status:
@@ -491,7 +496,7 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/task_update", body)
     elif c == "submit":
         body = {"agent": ag, "task_id": a.task, "summary": text_arg(a, "summary") or "",
-                "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer}
+                "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer, "unseen_ok": a.unseen_ok}
         if getattr(a, "blocks_file", None):
             try:
                 raw = sys.stdin.read() if a.blocks_file == "-" else Path(a.blocks_file).read_text(encoding="utf-8-sig")
@@ -501,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/task_submit", body)
     elif c == "review":
         body = {"agent": ag, "task_id": a.task, "verdict": a.verdict, "body": text_arg(a, "body") or "",
-                "expected_submission_revision": a.revision}
+                "expected_submission_revision": a.revision, "unseen_ok": a.unseen_ok}
         if getattr(a, "block_comments_file", None):
             try:
                 raw = (sys.stdin.read() if a.block_comments_file == "-"
@@ -512,7 +517,8 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/task_review", body)
     elif c == "done":
         r = call("POST", "/api/agora/task_done", {"agent": ag, "task_id": a.task, "result": text_arg(a, "result") or "",
-                                                  "commits": csv(a.commits), "force": a.force, "reason": a.reason or ""})
+                                                  "commits": csv(a.commits), "force": a.force, "reason": a.reason or "",
+                                                  "unseen_ok": a.unseen_ok})
     elif c == "release":
         r = call("POST", "/api/agora/task_release", {"agent": ag, "task_id": a.task, "reason": a.reason or "", "drop": a.drop})
     elif c == "handover":
@@ -536,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
                                                     "task_id": a.task, "mentions": csv(a.mention), "escalate": a.escalate})
     elif c == "post":
         r = call("POST", "/api/agora/post", {"agent": ag, "thread_id": a.thread, "body": text_arg(a, "body") or "", "kind": a.kind,
-                                             "mentions": csv(a.mention)})
+                                             "mentions": csv(a.mention), "unseen_ok": a.unseen_ok})
     elif c == "resolve":
         r = call("POST", "/api/agora/resolve", {"agent": ag, "thread_id": a.thread, "resolution": text_arg(a, "text") or ""})
     elif c == "escalate":
@@ -544,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "reopen":
         r = call("POST", "/api/agora/reopen", {"agent": ag, "thread_id": a.thread, "reason": a.reason})
     elif c == "task":
-        r = call("GET", f"/api/agora/tasks/{a.task}")
+        r = call("GET", f"/api/agora/tasks/{a.task}" + (f"?agent={urllib.parse.quote(ag)}" if ag else ""))
     elif c == "thread":
         r = call("GET", f"/api/agora/threads/{a.thread}" + (f"?agent={urllib.parse.quote(ag)}" if ag else ""))
     elif c == "ack":
@@ -620,6 +626,11 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(r.get("inbox"), dict):
             i = r["inbox"]
             print(f"  buzón: {i.get('messages', 0)} mensajes ({i.get('for_you', 0)} para ti), {i.get('reviews', 0)} revisiones, {i.get('changes', 0)} cambios")
+        if isinstance(r.get("unseen"), dict):
+            u = r["unseen"]
+            ids = ", ".join(f"#{m.get('id')} {m.get('author')} {m.get('kind')}" for m in (u.get("messages") or [])[:6])
+            print(f"  AVISO: hecho sin haber leído {u.get('count')} mensaje(s) de otros en el hilo de la tarea ({ids}). "
+                  "Léelos con: task <id> o thread <id>.")
     return 0
 
 
