@@ -23,8 +23,9 @@ Tests: `tests/commons/test_notify_channels.py`, `test_notify_router.py`, `test_m
 ```python
 xml_escape(text) -> str                     http_url(url) -> str          clean_url(url) -> str
 scrub(text, secrets) -> str                 # removes every secret from an error text
-build_toast_ps1(title, body="", url=None, app_name=None, app_id=POWERSHELL_APP_ID) -> str
-send_toast(title, body="", url=None, *, app_name=None, runner=None, platform=None, timeout=20) -> {ok, error?, unsupported?}
+build_toast_ps1(title, body="", url=None, app_name=None, app_id=POWERSHELL_APP_ID, *, display_name=None, icon=None) -> str
+send_toast(title, body="", url=None, *, app_name=None, runner=None, platform=None, timeout=20, app=None, icon=None) -> {ok, error?, unsupported?}
+toast_app_id(app) -> "Hoard.<app>"          file_uri(path) -> str        ps_quote(text) -> str
 send_ntfy(server, topic, title, body="", *, priority="normal", url=None, token=None, timeout=10, tags=None, attach=None, http=None) -> {ok, error?}
 send_telegram(token, chat_id, text, *, timeout=10, api_base=TELEGRAM_API, parse_mode="HTML", http=None) -> {ok, error?}
 telegram_text(title, body="", url=None, link_label=None) -> str
@@ -33,6 +34,13 @@ send_smtp(cfg, to, subject, body="", *, html=None, smtp_factory=None, default_fr
 send_via_helper(run, subject, body="", *, html=None, to=None, timeout=60) -> {ok, error?}   # run = FaustusHelper(...).run
 in_quiet_hours(now, start, end, *, priority="normal", allow_high=True, days=None) -> bool
 ```
+
+**Whose toast it is.** With `display_name` and a custom `app_id` (what `send_toast(..., app=, app_name=, icon=)` and the
+hub do), the script first registers that application id for the current user (`HKCU\Software\Classes\AppUserModelId\<id>`,
+`DisplayName` and `IconUri`) and shows the icon as the toast's logo, so Windows lists the toast under the app's own name and
+icon instead of «Windows PowerShell»; no Start-menu shortcut is needed. Without them the script is the old one, under
+PowerShell's id. The Node twin `buildToastPs1(..., { appId, displayName, icon })` / `showToast(..., { app, appName, icon })`
+writes the same bytes.
 
 `cfg` for SMTP: `host, port, user, password, tls, from` (SSL on 465, STARTTLS otherwise). `start` / `end` are `"HH:MM"`
 or minutes since midnight; a window may cross midnight; `urgent` is never held and `high` only when `allow_high=False`.

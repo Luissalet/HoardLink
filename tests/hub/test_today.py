@@ -680,7 +680,7 @@ def test_send_digest_stores_notifies_and_emits(env):
     call = env.notify.calls[0]
     assert (call["app"], call["sphere"], call["priority"], call["group"]) == ("hub", "personal", "normal", "digest")
     assert call["channels_override"] == ["windows"] and call["title"] == res["title"] and call["body"] == res["markdown"]
-    assert call["url"] == env.hub.config.url and call["dedupe_key"].startswith("digest:personal:")
+    assert call["url"] == env.hub.config.url + "/#today" and call["dedupe_key"].startswith("digest:personal:")
     saved = Path(env.hub.config.data_dir) / "digests" / "2026-10-05-personal.json"
     assert res["file"] == str(saved) and saved.is_file()
     record = json.loads(saved.read_text(encoding="utf-8"))

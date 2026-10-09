@@ -235,13 +235,20 @@ TOAST_CASES = [
     ["x", "y", None, {"app_name": "Kafka's Hoard"}],
     ["x", "y", "http://a.test", {"app_name": "N" * 100, "app_id": "My.App"}],
     ["", "", None, {}],
+    ["Pago", "Amazon 18,35 €", "http://127.0.0.1:5180/#/x", {"app_id": "Hoard.ledger", "display_name": "Ledger's Hoard",
+                                                            "icon": "C:\\Icons\\Ledger's hoard ñ.png"}],
+    ["x", "y", None, {"app_id": "Hoard.hub", "display_name": "Hoard Hub" * 10}],
+    ["x", "y", None, {"display_name": "Not registered without an app id"}],
+    ["x", "y", None, {"icon": "/home/a b/i.png"}],
 ]
 
 
 def test_node_build_toast_ps1_is_identical_to_python():
-    py = [nc.build_toast_ps1(t, b, u, **o) for t, b, u, o in TOAST_CASES]
+    py = [nc.build_toast_ps1(t, b, u, o.get("app_name"), o.get("app_id", nc.POWERSHELL_APP_ID),
+                             display_name=o.get("display_name"), icon=o.get("icon")) for t, b, u, o in TOAST_CASES]
     js = run_link_js("""
-      return input.map(([t, b, u, o]) => fam.buildToastPs1(t, b, u, { appName: o.app_name ?? null, ...(o.app_id ? { appId: o.app_id } : {}) }));
+      return input.map(([t, b, u, o]) => fam.buildToastPs1(t, b, u, { appName: o.app_name ?? null, ...(o.app_id ? { appId: o.app_id } : {}),
+        displayName: o.display_name ?? null, icon: o.icon ?? null }));
     """, TOAST_CASES)
     assert js == py
 

@@ -28,7 +28,7 @@ the rate limit; duplicates are only checked when `dedupe_key` is given.
 
 | channel | config | notes |
 |---|---|---|
-| `windows` | `enabled` | PowerShell toast (`Windows.UI.Notifications`), run on its own thread with a 20 s timeout; a late failure is written to the row. Off Windows: `{"ok": false, "unsupported": true}` |
+| `windows` | `enabled` | Windows toast (`Windows.UI.Notifications`, run through PowerShell on its own thread with a 20 s timeout; a late failure is written to the row). It shows as the app that sent it — its registry name and icon under the application id `Hoard.<app>` (`icon_app` when given), and «Hoard Hub» with the Hoard Link icon for the hub's own notices such as the digest — not as «Windows PowerShell». Off Windows: `{"ok": false, "unsupported": true}` |
 | `ntfy` | `server` (https://ntfy.sh), `topic`, `token` | JSON POST to the server root; priority 2..5, `click` = url |
 | `telegram` | `bot_token`, `chat_id`, `api_base` | `sendMessage` HTML; "Detectar chat" calls `getUpdates` |
 | `email` | `via: "faustus"\|"smtp"`, `to`, and for smtp `host, port, user, password, tls, from` | `faustus` = the mail gateway facet's `send_mail(subject, text, to=None, html="")`; without it `{"ok": false, "error": "mail gateway not available"}`. `smtp` = smtplib (port 465 → SSL, else STARTTLS when `tls`) |
