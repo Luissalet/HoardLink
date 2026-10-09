@@ -669,8 +669,8 @@
     return wrap;
   }
 
-  function timelineEvent(event, task) {
-    if (event.event_kind !== "checkpoint") return msgView(event);
+  function timelineEvent(event, task, seen) {
+    if (event.event_kind !== "checkpoint") return msgView(event, seen);
     const wrap = el("div", "ag-event");
     wrap.appendChild(el("small", "", `${event.author} · ${fmtWhen(event.created)}`));
     wrap.appendChild(checkpointView(event.checkpoint, true));
@@ -688,6 +688,11 @@
     const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}?agent=luis`);
     if (!current || `${current.type}-${current.id}` !== selectionKey) return;
     if (!r || !r.ok) return;
+    // a thread opened straight from a link: what was new comes from the read itself
+    if (current.type === "thread" && detailBox.dataset.seenFor !== selectionKey) {
+      detailBox.dataset.seenFor = selectionKey;
+      if (detailBox.dataset.seen === undefined && r.seen_upto != null) detailBox.dataset.seen = String(r.seen_upto);
+    }
     const task = r.task || null;
     const thread = r.thread || { id: task && task.thread_id, kind: "task", status: task && task.status, title: task && task.title };
     const cp = task && task.latest_checkpoint;
@@ -698,7 +703,7 @@
       lockStatus && [lockStatus.owner, lockStatus.missing, lockStatus.conflicts, lockStatus.owner_changed]]);
     if (detailBox.dataset.sig === sig && detailBox.dataset.key === `${current.type}-${current.id}`) return;
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
-    detailBox.replaceChildren();
+    detailBox.replaceChildren(); ready(detailBox);
     const head = el("div", "ag-dhead");
     const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); renderThreads().catch(() => {}); try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ } };
     head.appendChild(back);
@@ -725,15 +730,16 @@
     }
     if (thread.resolution) detailBox.appendChild(el("div", "ag-dec", `${t("resolution")}: ${thread.resolution}`));
     const msgs = el("div", "ag-msgs");
+    const seen = detailBox.dataset.seen ? Number(detailBox.dataset.seen) : null;
     if (r.timeline && task) {
       detailBox.appendChild(el("h4", "", t("chronology")));
       let page = r.timeline;
-      for (const event of page.events) msgs.appendChild(timelineEvent(event, task));
+      for (const event of page.events) msgs.appendChild(timelineEvent(event, task, seen));
       while (page.has_more && page.next_after_id < previousAfter) {
         const next = await api(`/api/agora/timeline?task_id=${task.id}&after_id=${page.next_after_id}&limit=100`);
         if (!current || `${current.type}-${current.id}` !== selectionKey) return;
         if (!next || !next.ok || next.next_after_id <= page.next_after_id) break;
-        for (const event of next.events) msgs.appendChild(timelineEvent(event, task));
+        for (const event of next.events) msgs.appendChild(timelineEvent(event, task, seen));
         page = next;
       }
       detailBox.dataset.timelineAfter = String(page.next_after_id);
@@ -745,7 +751,7 @@
             const next = await api(`/api/agora/timeline?task_id=${task.id}&after_id=${page.next_after_id}&limit=100`);
             if (!current || `${current.type}-${current.id}` !== selectionKey) return;
             if (!next || !next.ok) { toast(t("activity_error"), "err"); return; }
-            for (const event of next.events) msgs.insertBefore(timelineEvent(event, task), more);
+            for (const event of next.events) msgs.insertBefore(timelineEvent(event, task, seen), more);
             page = next; detailBox.dataset.timelineAfter = String(page.next_after_id);
             if (!page.has_more) more.remove();
           } catch (e) { toast(t("activity_error"), "err"); }
@@ -755,7 +761,6 @@
       }
     } else {
       detailBox.dataset.timelineAfter = "0";
-      const seen = detailBox.dataset.seen ? Number(detailBox.dataset.seen) : null;
       for (const m of r.messages || []) msgs.appendChild(msgView(m, seen));
     }
     detailBox.appendChild(msgs);
@@ -770,11 +775,17 @@
 
   async function openThread(id) {
     current = { type: "thread", id }; detailBox.dataset.sig = "";
+    if (detailBox.dataset.key !== `thread-${id}`) { detailBox.dataset.key = ""; skeleton(detailBox, 3, true); }
     // what was new when the person opened it stays marked while the thread is open (opening marks it read)
-    if (seenUpto.has(id)) detailBox.dataset.seen = String(seenUpto.get(id)); else delete detailBox.dataset.seen; showDetail(true); try { history.replaceState(null, "", `#agora-${id}`); } catch (e) { /* ignore */ }
+    if (seenUpto.has(id)) detailBox.dataset.seen = String(seenUpto.get(id)); else delete detailBox.dataset.seen;
+    delete detailBox.dataset.seenFor; showDetail(true); try { history.replaceState(null, "", `#agora-${id}`); } catch (e) { /* ignore */ }
     await refreshDetail(); renderThreads().catch(() => {});
   }
-  async function openTask(id) { current = { type: "task", id }; detailBox.dataset.sig = ""; delete detailBox.dataset.seen; showDetail(true); await refreshDetail(); }
+  async function openTask(id) {
+    current = { type: "task", id }; detailBox.dataset.sig = "";
+    if (detailBox.dataset.key !== `task-${id}`) { detailBox.dataset.key = ""; skeleton(detailBox, 3, true); }
+    delete detailBox.dataset.seen; showDetail(true); await refreshDetail();
+  }
 
   // ---- forms -------------------------------------------------------------------------------------------------
 
