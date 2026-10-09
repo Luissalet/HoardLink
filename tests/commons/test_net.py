@@ -73,7 +73,17 @@ def test_find_available_port_skips_busy_ones():
         assert found != first and first < found <= first + 20
         with pytest.raises(RuntimeError):
             net.find_available_port(first, span=0)
-        assert net.find_available_port(first) == found           # the same answer while nothing changes
+        again = net.find_available_port(first)                   # other processes may take a port meanwhile (CI runs in parallel)
+        assert again != first and first < again <= first + 20
+
+
+def test_find_available_port_gives_the_same_answer_while_nothing_changes(monkeypatch):
+    busy = {50000, 50001}
+    monkeypatch.setattr(net, "can_listen", lambda port, host="127.0.0.1": port not in busy)
+    assert net.find_available_port(50000) == 50002
+    assert net.find_available_port(50000) == 50002
+    busy.add(50002)
+    assert net.find_available_port(50000) == 50003
 
 
 def test_find_available_port_errors():
