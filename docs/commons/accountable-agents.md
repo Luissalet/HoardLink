@@ -111,7 +111,8 @@ Tool("slide_update", "...", SlideUpdateArgs, ann(False, False, True), run,
   its handler raises `conflict`. It is **not undoable** when its tool has no handler, no snapshot was kept (`capture_failed`, `snapshot_too_large`) or
   the handler failed (`undo_failed`). One problem does not stop the rest.
 * `dry_run: true` changes and records nothing and says what would happen. Without it `confirm: true` is required (`400 confirm_required`), and
-  `reason` too when the app asks for reasons. Unknown session: `404 session_not_found`.
+  `reason` too when the app asks for reasons. Unknown session: `404 session_not_found`. A dry run checks each write against the current state,
+  except that a write on an object the same session wrote again later is planned as "after the newer ones are taken back" (as a real run does).
 * Every real attempt appends a line `kind: "undo"` (`undoes` = the write's id, `ok`, `error`, `reason`, `actor`) to the journal, and the event
   `agent.undo` is emitted once.
 
