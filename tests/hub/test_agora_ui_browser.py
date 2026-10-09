@@ -88,6 +88,12 @@ def test_agora_tab_unread_filters_keyboard_errors_and_layout(tmp_path, width, he
                 page.unroute("**/api/agora/board")
                 page.get_by_role("button", name=retry_name).click()
                 page.locator("#tab-agora .ag-error").wait_for(state="hidden")
+                # a deep link opens the thread before any list is drawn: what is new still comes marked
+                other = ag.thread_open({"agent": "codex", "title": "Enlace directo", "body": "Abierto por enlace"})["thread"]["id"]
+                page.goto(base + f"/#agora-{other}")
+                page.locator("#tab-agora .ag-detail .ag-msg.new").first.wait_for()
+                news = page.locator("#tab-agora .ag-detail .ag-msg.new").all_inner_texts()
+                assert len(news) == 1, news
                 assert not errors, errors
                 evidence_path(tmp_path, f"agora-ui-{width}.json").write_text(json.dumps({
                     "viewport": [width, height], "language": language, "side_by_side": side_by_side,
