@@ -319,12 +319,46 @@ def _slice_lines(text: str, start: int, end: int) -> str:
     return "\n".join(lines[start - 1:end])
 
 
-def _resolve_peek_commit(explicit: Optional[str], commits: list[str]) -> str:
+def _git_is_ancestor(repo: Path, maybe_ancestor: str, commit: str) -> bool:
+    try:
+        res = _git_run(repo, "merge-base", "--is-ancestor", maybe_ancestor, commit, timeout=5.0)
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+        return False
+    return res.returncode == 0
+
+
+def _resolve_peek_commit(
+        explicit: Optional[str], commits: list[str], *, roots: Optional[list[Path]] = None
+) -> tuple[str, str]:
+    """Return ``(commit, how)`` where ``how`` is ``explicit``, ``sole`` or ``tip``.
+
+    Without ``@commit``, a multi-commit submission uses the unique tip (every other commit is an
+    ancestor). Parallel tips require an explicit ``@commit``.
+    """
     if explicit:
-        return explicit
+        return explicit, "explicit"
     if not commits:
         raise AgoraError("code_peek needs @commit or submission commits")
-    return commits[0]
+    if len(commits) == 1:
+        return commits[0], "sole"
+    roots = [Path(r) for r in (roots or []) if r and _is_git_checkout(Path(r))]
+    if not roots:
+        raise AgoraError("code_peek without @commit needs a git checkout to resolve the tip among commits")
+
+    def reachable(cand: str, other: str) -> bool:
+        return any(_git_is_ancestor(root, other, cand) for root in roots)
+
+    tips = [
+        cand for cand in commits
+        if all(c == cand or reachable(cand, c) for c in commits)
+    ]
+    # Prefer the first tip in list order only when unique.
+    if len(tips) != 1:
+        raise AgoraError(
+            "code_peek without @commit needs a unique tip among submission commits "
+            "(every other commit an ancestor); pass path#Lx-Ly@commit explicitly"
+        )
+    return tips[0], "tip"
 
 
 def _is_git_checkout(path: Path) -> bool:
@@ -423,9 +457,9 @@ def verify_code_peek(ref: str, *, roots: list[Path], commits: list[str]) -> dict
     rel = _normalize_repo_relpath(m.group("path"))
     start = int(m.group("start"))
     end = int(m.group("end") or start)
-    commit = _resolve_peek_commit(m.group("commit"), commits)
     if not roots:
         raise AgoraError("code_peek: no repository roots to search")
+    commit, how = _resolve_peek_commit(m.group("commit"), commits, roots=roots)
     last: Optional[AgoraError] = None
     used: Optional[Path] = None
     text = ""
@@ -442,7 +476,7 @@ def verify_code_peek(ref: str, *, roots: list[Path], commits: list[str]) -> dict
     if used is None:
         raise last or AgoraError(f"code_peek: cannot read {rel}@{commit} in any registered checkout")
     return {"ref": f"{rel}#L{start}-L{end}@{commit}", "path": rel, "start": start, "end": end,
-            "commit": commit, "text": text, "verified": True, "checkout": str(used)}
+            "commit": commit, "commit_source": how, "text": text, "verified": True, "checkout": str(used)}
 
 
 def normalize_submission_blocks(
