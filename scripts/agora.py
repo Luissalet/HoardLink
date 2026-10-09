@@ -372,6 +372,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("board"); s.add_argument("--full", action="store_true", help="todos los bloqueos, uno a uno")
     s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true"); s.add_argument("--meta", action="store_true", help="solo metadatos (quién, dónde, tipo), sin cuerpos ni mover la marca")
     s = sub.add_parser("hb"); s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
+    renewal = s.add_mutually_exclusive_group()
+    renewal.add_argument("--renew-resource", action="append", help="renueva solo estos recursos exactos; repetible")
+    renewal.add_argument("--no-renew-locks", action="store_true", help="registra estado sin renovar bloqueos")
     s = sub.add_parser("sync", help="un latido y snapshot del Ágora; --since usa el id durable de publicación")
     s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
     s.add_argument("--note", help="nota breve del agente que se guarda en su heartbeat")
@@ -380,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--thread", action="append", type=int,
                    help="limita publicaciones a un hilo; repítelo para varios y conserva un cursor por filtro")
     s.add_argument("--limit", type=int, default=100, help="máximo de publicaciones por llamada (1–500)")
+    renewal = s.add_mutually_exclusive_group()
+    renewal.add_argument("--renew-resource", action="append", help="renueva solo estos recursos exactos; repetible")
+    renewal.add_argument("--no-renew-locks", action="store_true", help="registra estado sin renovar bloqueos")
     s = sub.add_parser("checkpoint", help="guarda progreso declarado sin renovar bloqueos ni cambiar el estado")
     s.add_argument("task", type=int); s.add_argument("--data-file", required=True, help="JSON UTF-8 del payload; - lee stdin")
     s.add_argument("--expected-revision", type=int, required=True, help="revisión leída; 0 para el primer checkpoint")
@@ -475,9 +481,13 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "sync":
         r = call("POST", "/api/agora/sync", {"agent": ag, "doing": a.doing, "state": a.state,
                                                    "name": a.name, "note": a.note, "since_id": a.since_id,
-                                                   "thread_ids": a.thread or [], "limit": a.limit})
+                                                   "thread_ids": a.thread or [], "limit": a.limit,
+                                                   **({"renew_resources": [] if a.no_renew_locks else a.renew_resource}
+                                                      if a.no_renew_locks or a.renew_resource is not None else {})})
     elif c == "hb":
-        r = call("POST", "/api/agora/heartbeat", {"agent": ag, "doing": a.doing, "state": a.state, **({"name": a.name} if a.name else {})})
+        r = call("POST", "/api/agora/heartbeat", {"agent": ag, "doing": a.doing, "state": a.state, **({"name": a.name} if a.name else {}),
+                  **({"renew_resources": [] if a.no_renew_locks else a.renew_resource}
+                     if a.no_renew_locks or a.renew_resource is not None else {})})
     elif c == "add":
         r = call("POST", "/api/agora/task_add", {"agent": ag, "title": a.title, "body": text_arg(a, "body") or "", "repo": a.repo or "",
                                                  "paths": csv(a.paths), "kind": a.kind, "priority": a.prio, "claim": a.claim,

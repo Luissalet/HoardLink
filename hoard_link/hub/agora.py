@@ -1075,16 +1075,22 @@ class Agora:
             res = normalize_resource(probe)
             clash = [lk for lk in live if conflicts(res, lk["resource"])]
             return {"ok": True, "resource": res, "free": not clash, "held_by": clash}
-        return {"ok": True, "locks": live}
+        return {"ok": True, "locks": live, "capabilities": {"heartbeat_selective_renewal": True}}
 
     # -- agents --------------------------------------------------------------------------------------------------
 
     def heartbeat(self, a: dict[str, Any]) -> dict[str, Any]:
-        """I am here, this is what I am doing. Renews every lock the agent holds."""
+        """Report state; renew all owned locks by default, or an exact selection."""
         agent = self._agent(a.get("agent"))
         state = str(a.get("state") or "working").lower()
         if state not in AGENT_STATES:
             raise AgoraError(f"state must be one of {', '.join(AGENT_STATES)}")
+        selected = None
+        if "renew_resources" in a:
+            raw = a["renew_resources"]
+            if not isinstance(raw, list) or not all(isinstance(r, str) and r.strip() for r in raw):
+                raise AgoraError("renew_resources must be an array of resource names; [] renews no locks")
+            selected = sorted({normalize_resource(r) for r in raw})
         now = self.clock()
         with self.db.tx():
             self._touch(agent)
@@ -1095,10 +1101,17 @@ class Agora:
                 fields["note"] = _txt(a.get("note"), 500, "note")
             sets = ", ".join(f"{k}=?" for k in fields)
             self.db.execute(f"UPDATE agents SET {sets} WHERE id=?", (*fields.values(), agent))
-            self.db.execute("UPDATE locks SET expires = ? + ttl_s WHERE owner=? AND expires > ?", (now, agent, now))
+            live = [dict(row) for row in self.db.query(
+                "SELECT resource FROM locks WHERE owner=? AND expires>? ORDER BY resource", (agent, now))]
+            renewed = [row["resource"] for row in live if selected is None or row["resource"] in selected]
+            for res in renewed:
+                self.db.execute("UPDATE locks SET expires = ? + ttl_s WHERE owner=? AND resource=? AND expires > ?",
+                                (now, agent, res, now))
         self._bump("agora.agent.heartbeat", {"agent": agent, "state": state})
         inbox = self.inbox({"agent": agent, "peek": True})
-        return {"ok": True, "agent": agent, "inbox": inbox["counts"]}
+        return {"ok": True, "agent": agent, "inbox": inbox["counts"],
+                "lock_renewal": {"mode": "all" if selected is None else "selected",
+                                 "renewed_resources": renewed}}
 
     def sync(self, a: dict[str, Any]) -> dict[str, Any]:
         """Resume an agent in one call without consuming inbox messages or mentions.
@@ -1151,6 +1164,8 @@ class Agora:
             heartbeat_args["name"] = a.get("name")
         if a.get("note") is not None:
             heartbeat_args["note"] = a.get("note")
+        if "renew_resources" in a:
+            heartbeat_args["renew_resources"] = a["renew_resources"]
         heartbeat = self.heartbeat(heartbeat_args)
 
         # Peek by design. This preserves the inbox read mark and pending mention acknowledgements.
@@ -2136,14 +2151,16 @@ TOOLS: list[dict[str, Any]] = [
                              "metadata_only": {"type": "boolean"}, "mine_only": {"type": "boolean"}, "since_id": {"type": "integer"}}, ["agent"])},
     {"name": "hub_agora_heartbeat",
      "description": "Tell the Ágora you are here and what you are doing (state working|idle|waiting|away). "
-                    "Renews every lock you hold; call it at least every hour while working.",
+                    "Renews every owned lock by default. Optional renew_resources selects exact live owned locks; [] reports state without renewal.",
       "inputSchema": _schema({"agent": _A, "doing": {"type": "string"}, "state": {"type": "string"},
-                              "name": {"type": "string"}, "note": {"type": "string"}}, ["agent"])},
+                              "name": {"type": "string"}, "note": {"type": "string"},
+                              "renew_resources": {"type": "array", "items": {"type": "string", "minLength": 1}}}, ["agent"])},
     {"name": "hub_agora_sync",
      "description": "Resume the Ágora session / retomar Ágora: heartbeat, inbox peek, board and posts after since_id.\n"
                     "Does not acknowledge. Store next_since_id and pass it back; thread_ids scopes the cursor.",
      "inputSchema": _schema({"agent": _A, "doing": {"type": "string"}, "state": {"type": "string"},
                              "name": {"type": "string"}, "note": {"type": "string"},
+                             "renew_resources": {"type": "array", "items": {"type": "string", "minLength": 1}},
                              "since_id": {"type": "integer", "minimum": 0},
                              "thread_ids": {"type": "array", "items": {"type": "integer", "minimum": 1},
                                             "maxItems": 100},
