@@ -175,6 +175,7 @@ without hooks still gets a journal line and can be reported as "not undoable".
 | App | Vendors 0.8.2 | Reasons | Journal | Undo handlers | draft_safe tools |
 |---|---|---|---|---|---|
 | Cicero's Hoard | yes | on | yes | deck_create, deck_update, deck_theme, source_add, source_remove, outline_generate, outline_update, slides_generate, slide_add, slides_add, slide_update, slide_edit_text, slide_set_image, slide_regenerate, slide_approve, slide_revert, slide_delete, slides_reorder | create/add/edit tools, never delete or export |
+| Prospero's Hoard | yes | on (`/api/agent/call`; its per-tool routes and web UI are the person's way in and are exempt) | yes | studio_create_project, studio_delete_project, studio_delete_assets, studio_import, studio_trash (restore), studio_cast, studio_style_cards, studio_production_shots, studio_graphic_shot, studio_production_segments, studio_production_settings, studio_production_finishing, studio_production_script, studio_production_create; renders and other GPU jobs are not undoable | project, import, generation, voice and render tools, graphic shot, production create / segments / settings / finishing / script; never delete or send to another app |
 | every other app | not yet (the next `sync_vendored.py` run brings the library; the router flags are off until the app turns them on) | | | | |
 
 Update this table when an app adopts it.
