@@ -42,6 +42,17 @@ icon instead of «Windows PowerShell»; no Start-menu shortcut is needed. Withou
 PowerShell's id. The Node twin `buildToastPs1(..., { appId, displayName, icon })` / `showToast(..., { app, appName, icon })`
 writes the same bytes.
 
+**Dry run.** With `HOARD_NOTIFY_DRY_RUN=1` in the environment, `run_ps1` / `runPs1` (and so `send_toast` / `showToast`)
+build the toast but never start PowerShell, and answer `{"ok": true, "dry_run": true}`; a runner passed explicitly is still
+called. The HoardLink test suite turns it on for every test (`tests/conftest.py`): a test hub once put a real «Resumen —
+Personal» toast in front of the person, and its click opened a test port that was already gone. Set it as well for QA
+copies of the hub or of an app that must not notify.
+
+**Plain text on the toast.** `toast_text(markdown, max_lines=4)` turns markdown into the few lines a toast shows: a heading
+followed by one line becomes `Heading: line`, a heading with nothing under it is dropped, bullets become `•`, emphasis,
+code marks and link targets go away, then `…` past `max_lines`. The hub's Windows channel uses it, so the digest shows
+«Hoy: Nada pendiente.» instead of `## Hoy`.
+
 `cfg` for SMTP: `host, port, user, password, tls, from` (SSL on 465, STARTTLS otherwise). `start` / `end` are `"HH:MM"`
 or minutes since midnight; a window may cross midnight; `urgent` is never held and `high` only when `allow_high=False`.
 Nothing here raises. The hub's own channel code (`hub/notify.py`) now imports these functions, so the hub and the apps

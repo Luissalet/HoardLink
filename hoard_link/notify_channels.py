@@ -171,9 +171,45 @@ def build_toast_ps1(title: str, body: str = "", url: Optional[str] = None, app_n
     )
 
 
+def dry_run() -> bool:
+    """``HOARD_NOTIFY_DRY_RUN=1`` (test suites, QA copies of the hub): toasts are built but never shown. Without it a test
+    run on Windows pops real notifications whose click opens a test server that is already gone."""
+    return str(os.environ.get("HOARD_NOTIFY_DRY_RUN", "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+_MD_HEADING = re.compile(r"^#{1,6}\s*(.*)$")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+
+
+def toast_text(body: str, max_lines: int = 4) -> str:
+    """Markdown (a digest, a report) as the few plain lines a toast can show: a heading followed by one line becomes
+    ``Heading: line``, a heading with nothing under it is dropped, bullets become ``•``, emphasis, code marks and link
+    targets go away. At most ``max_lines`` lines, then ``…``."""
+    out: list[str] = []
+    head: Optional[str] = None
+    for raw in str(body or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = _MD_HEADING.match(line)
+        if m:
+            head = m.group(1).strip().rstrip(":") or None
+            continue
+        line = re.sub(r"^[-*+]\s+", "• ", line)
+        line = _MD_LINK.sub(r"\1", line)
+        line = line.replace("**", "").replace("__", "").replace("`", "")
+        out.append(f"{head}: {line[2:] if line.startswith('• ') else line}" if head else line)
+        head = None
+    if len(out) > max_lines:
+        out = out[:max_lines] + ["…"]
+    return "\n".join(out)
+
+
 def run_ps1(script: str, *, runner: Optional[Callable[..., Any]] = None, timeout: float = TOAST_TIMEOUT_S) -> dict[str, Any]:
     """Run a PowerShell script from a temporary ``.ps1`` (UTF-8 with BOM, which Windows PowerShell 5.1 needs to read accents),
     without a console window. ``{"ok": True}`` or ``{"ok": False, "error": "powershell exit N" | "<ExceptionName>"}``."""
+    if (runner is None or runner is subprocess.run) and dry_run():
+        return {"ok": True, "dry_run": True}
     fd, path = tempfile.mkstemp(suffix=".ps1", prefix="hoard-toast-")
     try:
         with os.fdopen(fd, "w", encoding="utf-8-sig") as fh:

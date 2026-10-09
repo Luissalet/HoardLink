@@ -80,7 +80,7 @@ prompt forbids inventing; "NADA" means none). On any error or when no model is r
 
 `send_digest(sphere)` stores `<data>/digests/<YYYY-MM-DD>-<sphere>.json`, sends it through `notify.send(...,
 group="digest", priority="normal", channels_override=<the sphere's digest.channels>, url="<hub>/#today")` (clicking it
-opens the hub with the «Hoy» box unfolded and in view) and emits
+opens the hub with the «Hoy» box unfolded and in view; on a Windows toast the markdown shows as plain lines, «Hoy: Nada pendiente.», through `notify_channels.toast_text`) and emits
 `hub.today.digest {sphere, items, date, summary}`. A notify facet without `channels_override` still gets it (priority
 `high` when the sphere routes "normal" to the digest only, otherwise it would never be pushed).
 

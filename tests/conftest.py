@@ -4,6 +4,8 @@ import asyncio
 from typing import Callable, Optional
 
 import httpx
+import os
+
 import pytest
 
 from hoard_link.config import LinkConfig
@@ -92,6 +94,21 @@ class Router:
         if callable(entry):
             return entry(request)
         return entry
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_toasts():
+    """Never pop a real Windows notification from the suite: a test hub's toast reached the person, and its click
+    opened a test port that no longer existed. Set for the whole session (not per test) so a toast sent from a
+    background thread after a test's teardown is still a dry run. Tests that check the PowerShell call inject their
+    own runner."""
+    old = os.environ.get("HOARD_NOTIFY_DRY_RUN")
+    os.environ["HOARD_NOTIFY_DRY_RUN"] = "1"
+    yield
+    if old is None:
+        os.environ.pop("HOARD_NOTIFY_DRY_RUN", None)
+    else:
+        os.environ["HOARD_NOTIFY_DRY_RUN"] = old
 
 
 @pytest.fixture(autouse=True)

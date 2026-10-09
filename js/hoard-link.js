@@ -407,7 +407,13 @@ function spawnRun({ command, args, timeoutMs }) {
 }
 
 /** Run a PowerShell script from a temporary .ps1 (UTF-8 with BOM) without a console window. Resolves { ok } or { ok: false, error }. */
+/** HOARD_NOTIFY_DRY_RUN=1 (test suites, QA copies): toasts are built but never shown (same switch as the Python twin). */
+export function notifyDryRun() {
+  return ["1", "true", "yes", "on"].includes(String(process.env.HOARD_NOTIFY_DRY_RUN || "").trim().toLowerCase());
+}
+
 export async function runPs1(script, { runner = null, timeoutMs = TOAST_TIMEOUT_MS } = {}) {
+  if (!runner && notifyDryRun()) return { ok: true, dry_run: true };
   const file = path.join(os.tmpdir(), `hoard-toast-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.ps1`);
   try {
     fs.writeFileSync(file, "﻿" + script, "utf8");
