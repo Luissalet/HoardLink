@@ -260,6 +260,19 @@ class BridgeResult:
     body: Any = None
 
 
+def agent_headers(env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
+    """``X-Agent-Id`` / ``X-Agent-Session`` from ``HOARD_AGENT_ID`` / ``HOARD_AGENT_SESSION``: whoever launches the MCP
+    server (an editor, a coding agent, the Hub) sets them so the app can tell which agent and which session a call came from
+    (journal, reasons, undo of a whole session). Printable ASCII only, 80 / 120 characters at most; empty values are left out."""
+    env = os.environ if env is None else env
+    out: dict[str, str] = {}
+    for name, header, limit in (("HOARD_AGENT_ID", "X-Agent-Id", 80), ("HOARD_AGENT_SESSION", "X-Agent-Session", 120)):
+        value = "".join(c for c in str(env.get(name) or "") if " " <= c <= "~").strip()[:limit]
+        if value:
+            out[header] = value
+    return out
+
+
 def _text(payload: Any) -> dict[str, Any]:
     return {"type": "text", "text": payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)}
 
@@ -450,8 +463,12 @@ class CatalogBridge:
             return self._error({"error": self.message(NOT_RUNNING), "code": "not_running"})
         beat = asyncio.create_task(self._heartbeat(name, progress)) if progress is not None else None
         try:
-            status, body, raw = await _post(f"{self.base_url}/api/agent/call", {"name": name, "arguments": arguments},
-                                            {"Authorization": f"Bearer {token}"}, timeout)
+            who = agent_headers()
+            payload: dict[str, Any] = {"name": name, "arguments": arguments}
+            if who.get("X-Agent-Id"):
+                payload["caller"] = who["X-Agent-Id"]            # apps that predate the headers still log who called
+            status, body, raw = await _post(f"{self.base_url}/api/agent/call", payload,
+                                            {"Authorization": f"Bearer {token}", **who}, timeout)
         except _ConnectFailed:
             if retry and await asyncio.to_thread(self.start_app):
                 return await self._call(name, arguments, progress, retry=False)
