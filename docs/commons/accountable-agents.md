@@ -173,7 +173,7 @@ refusing them:
 |---|---|---|
 | a hub rule or job (`rule:<id>`, `job:<id>`) | `Automatic step of the Hub rule <id>` / `... job <id>` | the caller |
 | another hub step (`hub`) | `Automatic step run by the Hub` | `hub` |
-| another app through `POST /api/apps/<id>/call` | `Requested by <app> through the Hub` (a `reason` in the body wins) | `X-Agent-Id`, body `agent`, or the app |
+| another app or an agent through `POST /api/apps/<id>/call` | `Requested by <X-Agent-Id or app> through the Hub` (a `reason` in the body wins) | `X-Agent-Id`, body `agent`, or the app |
 | an agent using `hub_call_app` | none: the agent must pass `reason` (or put it in `arguments`); without it the app answers `reason_required` | `hub-tool` |
 
 ## 6. Adopting it in an app
