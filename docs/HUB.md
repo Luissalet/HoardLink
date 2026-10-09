@@ -454,7 +454,7 @@ and may race with the Hub. No unsupported command-line option is guessed.
 
 ## Facets (0.7)
 
-Spheres, notifications, mail, chats, Today, references, search, work and purchases are *facets*: one module
+Spheres, notifications, mail, chats, Today, references, search, work, purchases and agent sessions are *facets*: one module
 each under `hoard_link/hub/`, with its own routes, `hub_*` tools and tab (loaded by `ui/facets.js` from
 `GET /api/facets`). A facet that fails to load is logged and skipped; the rest of the hub runs.
 Their settings live next to the others in the hub's data folder:
@@ -470,4 +470,5 @@ Their settings live next to the others in the hub's data folder:
 | `rules_meta.json` | recommended rules | removing a recommended rule records it as dismissed; `{"auto_install": false}` stops the automatic install (`HOARD_HUB_AUTO_RULES=0` too) |
 
 `mail.db` holds mail text for `retention_days` (60): add `mail.db` to `backup.exclude` if mail should not be
-copied by backups. The references for every route and tool are in [docs/facets/](facets/).
+copied by backups. The references for every route and tool are in [docs/facets/](facets/). The **Sesiones de agente** facet
+([agent-sessions.md](facets/agent-sessions.md)) has no file of its own: it reads the write journals of the apps.

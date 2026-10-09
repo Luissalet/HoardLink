@@ -1,4 +1,4 @@
-# The commons (HoardLink 0.8.1)
+# The commons (HoardLink 0.8.2)
 
 The Hoard apps grew by copying each other: a page fetcher here, an ffmpeg finder there, a money parser in
 four flavours. Since 0.8 that code lives once, in this repository, and every app vendors it with the rest of
@@ -27,6 +27,10 @@ Two shapes:
 | Mail, notifications, agenda, references | — | hub facets | `fam_mail`, `fam_notify`, `fam_agenda`, `fam_refs` |
 
 ## Rules for code in the commons
+
+0.8.2 adds [accountable agents](commons/accountable-agents.md): who called (agent and session), a mandatory `reason` on writes, a
+write journal, undo of a whole agent session and per-agent tokens with permission profiles, all opt-in in `agentkit.make_agent_router`; the
+Hub's **Sesiones de agente** tab shows and undoes them ([facet](facets/agent-sessions.md)).
 
 The Windows follow-up in 0.8.1 adds per-tool result cap opt-out, explicit direct-route authentication,
 http.server and WSGI guard adapters, agenda deduplication by owner, and Windows-safe test helpers.
@@ -65,7 +69,7 @@ Each area has its own page with the full API, the copies it replaces (with paths
 | Documents and search | `docs.textsearch`, `docs.chunking`, `docs.sniff`, `docs.pageranges`, `docs.vecmath`, `docs.citations`, `docs.textclean`, `docs.readers_lite`, `docs.imaging`, `docs.archives` | `docs.js` | [commons/docs.md](commons/docs.md) |
 | Money, dates and personal data | `text`, `money`, `dates`, `idcheck`, `tracking`, `merchants`, `ics`, `bizdays` | `text.js`, `money.js`, `dates.js`, `idcheck.js`, `tracking.js`, `merchants.js`, `ics.js` | [commons/commerce.md](commons/commerce.md) |
 | Notifications and mail | `notify_channels`, `fam_notify.Router`, `mail_helper`, `fam_mail.FaustusHelper`, `fam_mail.MailRouter` | in `hoard-link.js` | [commons/notify-mail.md](commons/notify-mail.md) |
-| App plumbing | `atomic`, `tokens`, `ids`, `sqlkit`, `paths`, `net`, `appconfig`, `lanes`, `waiting`, `guard`, `agentkit`, `service`, `bridge` | `server.js`, `express.js` | [commons/plumbing.md](commons/plumbing.md) |
+| App plumbing | `atomic`, `tokens`, `ids`, `sqlkit`, `paths`, `net`, `appconfig`, `lanes`, `waiting`, `guard`, `agentkit` (+ `agent_journal`), `service`, `bridge` | `server.js`, `express.js` | [commons/plumbing.md](commons/plumbing.md) |
 
 Family services (who owns what, the tools, arguments, results and polling rules): [commons/services.md](commons/services.md).
 Atlas shared projects through the Hub: [commons/workspace.md](commons/workspace.md).
