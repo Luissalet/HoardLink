@@ -42,7 +42,9 @@ def test_unread_counts_others_messages_since_the_last_read_and_listing_marks_not
     assert row["unread"] == 2 and row["seen_upto"] == 0
     assert _row(ag, th, "luis")["unread"] == 2           # listing twice changes nothing
 
-    ag.thread({"thread_id": th, "agent": "luis", "_person": True})   # reading the thread acks it
+    first = ag.thread({"thread_id": th, "agent": "luis", "_person": True})   # reading the thread acks it
+    assert first["seen_upto"] == 0                       # and says what the reader had seen before this read
+    assert "seen_upto" not in ag.thread({"thread_id": th})
     row = _row(ag, th, "luis")
     assert row["unread"] == 0 and row["seen_upto"] > 0
     ag.post({"agent": "claude", "thread_id": th, "body": "update"})
