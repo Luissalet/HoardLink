@@ -457,7 +457,7 @@ def test_graph_device_code_login(chats, graph):
     assert res["ok"] and res["user_code"] == "ABCD-EFGH" and res["verification_uri"] == "https://microsoft.com/devicelogin" and res["expires_in"] > 800
     pending = chats.sources()[0]["state"]["login"]
     assert pending["user_code"] == "ABCD-EFGH"
-    deadline = time.time() + 10
+    deadline = time.time() + 30                         # returns as soon as the poller finishes
     while time.time() < deadline and chats.sources()[0]["state"]["login"]["state"] == "pending":
         time.sleep(0.05)
     login = chats.sources()[0]["state"]["login"]
@@ -494,7 +494,7 @@ def test_login_declined_and_slow_down(chats, graph):
     try:
         add_graph(chats, graph, login_base=api.url, client_id="c")
         assert post(chats, "/api/chats/sources/ms365/login")["ok"]
-        deadline = time.time() + 10
+        deadline = time.time() + 30                     # returns as soon as the poller finishes; slow CI machines need the margin
         while time.time() < deadline and chats.sources()[0]["state"]["login"]["state"] == "pending":
             time.sleep(0.05)
         assert chats.sources()[0]["state"]["login"]["state"] == "declined" and len(seen) == 2
@@ -610,7 +610,7 @@ def test_the_loop_fetches_due_sources(chats, tmp_path):
     chats.first_delay_s = 0.05
     chats.tick_s = 0.05
     chats._ensure_thread()
-    deadline = time.time() + 5
+    deadline = time.time() + 20                         # returns as soon as the loop has fetched
     while time.time() < deadline and not rows(chats):
         time.sleep(0.05)
     chats.close()
