@@ -70,13 +70,15 @@ def token_owner(token: str, apps: list[App], hub_token: str) -> Optional[str]:
     return None
 
 
-def _post(url: str, body: dict[str, Any], token: str, timeout: float) -> tuple[Optional[int], Any]:
+def _post(url: str, body: dict[str, Any], token: str, timeout: float,
+          extra_headers: Optional[dict[str, str]] = None) -> tuple[Optional[int], Any]:
     import json
     import urllib.error
     import urllib.request
     req = urllib.request.Request(url, data=json.dumps(body, default=str).encode("utf-8"), method="POST",
                                  headers={"Content-Type": "application/json", "Accept": "application/json",
-                                          "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})})
+                                          "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {}),
+                                          **(extra_headers or {})})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(req, timeout=timeout) as resp:
@@ -161,18 +163,40 @@ def app_tools(app: App, timeout: float = 5.0) -> dict[str, Any]:
             "status": status, "error": f"/api/agent/tools answered {status}"}
 
 
+def _identity(value: Any, limit: int) -> str:
+    text = "".join(ch for ch in str(value or "") if ch.isprintable()).strip()
+    return text[:limit]
+
+
 def call_app(app: App, tool: str, arguments: Optional[dict[str, Any]] = None, *, timeout: float = 120.0,
-             caller: str = "hub") -> dict[str, Any]:
+             caller: str = "hub", reason: Optional[str] = None, agent: Optional[str] = None,
+             session: Optional[str] = None) -> dict[str, Any]:
     """Run ``tool`` on ``app`` with its own token. Result:
-    ``{ok, app, tool, status, result|error, contract, ms}``."""
+    ``{ok, app, tool, status, result|error, contract, ms}``.
+
+    ``reason``, ``agent`` and ``session`` are forwarded to the shared route (body fields and the ``X-Agent-Id`` /
+    ``X-Agent-Session`` headers) so that an app with accountable agents (0.8.2, ``reasons=True``) can journal and undo
+    a write made through the hub instead of refusing it with ``reason_required``."""
     tool = str(tool or "").strip()
     args = arguments if isinstance(arguments, dict) else {}
     if not tool:
         return {"ok": False, "app": app.id, "error": "tool name is required"}
     token = read_token(app.token_file)
     t0 = time.monotonic()
-    status, body = _post(app.url + "/api/agent/call", {"name": tool, "tool": tool, "arguments": args, "caller": caller},
-                         token, timeout)
+    payload: dict[str, Any] = {"name": tool, "tool": tool, "arguments": args, "caller": caller}
+    headers: dict[str, str] = {}
+    reason_text = str(reason).strip()[:300] if reason is not None else ""
+    if reason_text:
+        payload["reason"] = reason_text
+    agent_id = _identity(agent, 80)
+    if agent_id:
+        payload["agent"] = agent_id
+        headers["X-Agent-Id"] = agent_id
+    session_id = _identity(session, 120)
+    if session_id:
+        payload["session"] = session_id
+        headers["X-Agent-Session"] = session_id
+    status, body = _post(app.url + "/api/agent/call", payload, token, timeout, headers)
     contract = "shared"
     if status == 404 and not (isinstance(body, dict) and _is_unknown_tool(body)):
         # No shared route: the per-tool shape of the first six apps.

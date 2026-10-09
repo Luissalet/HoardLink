@@ -604,8 +604,12 @@ class _HubHandler(BaseHTTPRequestHandler):
                         timeout = float(body.get("timeout_s") or 120.0)
                     except (TypeError, ValueError):
                         timeout = 120.0
+                    reason = body.get("reason")
                     res = hub.call_app(app_id, name, args if isinstance(args, dict) else {}, caller=who,
-                                       timeout=max(1.0, min(timeout, 900.0)))
+                                       timeout=max(1.0, min(timeout, 900.0)),
+                                       reason=reason if isinstance(reason, str) else None,
+                                       agent=self.headers.get("X-Agent-Id") or (body.get("agent") if isinstance(body.get("agent"), str) else None),
+                                       session=self.headers.get("X-Agent-Session") or (body.get("session") if isinstance(body.get("session"), str) else None))
                     return self._json(res, 200 if res.get("ok") else (int(res.get("status") or 502) if res.get("status") else 502))
                 if action == "start":
                     res = hub.start(app_id, wait=bool(body.get("wait", True)))
