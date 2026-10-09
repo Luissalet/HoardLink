@@ -94,6 +94,7 @@
     load_error_hint: { es: "El Hub puede estar reiniciándose o sin conexión. Lo ya mostrado sigue siendo válido hasta la última carga; vuelve a intentarlo.", en: "The hub may be restarting or offline. What is shown is as of the last successful load; try again." },
     retry: { es: "Reintentar", en: "Retry" }, loading: { es: "Cargando…", en: "Loading…" },
     prio_label: { es: "prioridad", en: "priority" },
+    earlier: { es: "Mostrar {n} mensajes anteriores", en: "Show {n} earlier messages" },
   };
   const ST = {
     open: { es: "abierta", en: "open" }, claimed: { es: "reclamada", en: "claimed" }, in_progress: { es: "en curso", en: "in progress" },
@@ -102,6 +103,7 @@
     resolved: { es: "resuelta", en: "resolved" }, escalated: { es: "escalada", en: "escalated" },
     working: { es: "trabajando", en: "working" }, idle: { es: "libre", en: "idle" }, waiting: { es: "esperando", en: "waiting" }, away: { es: "fuera", en: "away" },
   };
+  const LONG_THREAD = 120;          // messages mounted at once in a long conversation
   const MK = { comment: "💬", proposal: "📝", agree: "👍", disagree: "✋", approve: "✅", changes: "🔁", resolution: "🏁", escalation: "🙋", system: "⚙️" };
   const t = (k) => L(S[k]);
   const st = (k) => (ST[k] ? L(ST[k]) : k);
@@ -761,7 +763,19 @@
       }
     } else {
       detailBox.dataset.timelineAfter = "0";
-      for (const m of r.messages || []) msgs.appendChild(msgView(m, seen));
+      // long conversations mount the recent part (and everything new); older messages come on request
+      const all = r.messages || [];
+      let start = 0;
+      if (all.length > LONG_THREAD && detailBox.dataset.showAll !== selectionKey) {
+        const firstNew = seen == null ? -1 : all.findIndex((m) => m.id > seen && m.author !== "luis" && m.kind !== "system");
+        start = Math.max(0, Math.min(all.length - LONG_THREAD, firstNew >= 0 ? firstNew - 5 : all.length));
+      }
+      if (start > 0) {
+        const earlier = el("button", "small", t("earlier").replace("{n}", start));
+        earlier.onclick = () => { detailBox.dataset.showAll = selectionKey; detailBox.dataset.sig = ""; refreshDetail(); };
+        msgs.appendChild(earlier);
+      }
+      for (const m of all.slice(start)) msgs.appendChild(msgView(m, seen));
     }
     detailBox.appendChild(msgs);
     if (thread.id) {
