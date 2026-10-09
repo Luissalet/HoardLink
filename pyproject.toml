@@ -17,7 +17,7 @@ Repository = "https://github.com/Luissalet/HoardLink"
 Homepage = "https://github.com/Luissalet/HoardLink"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "psutil>=5.9", "fastapi>=0.110", "python-docx>=1.1"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "psutil>=5.9", "fastapi>=0.110", "python-docx>=1.1", "pillow>=10"]
 hub = ["psutil>=5.9"]
 desktop = ["psutil>=5.9", "pywebview>=5.0"]
 
