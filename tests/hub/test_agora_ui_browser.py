@@ -88,6 +88,20 @@ def test_agora_tab_unread_filters_keyboard_errors_and_layout(tmp_path, width, he
                 page.unroute("**/api/agora/board")
                 page.get_by_role("button", name=retry_name).click()
                 page.locator("#tab-agora .ag-error").wait_for(state="hidden")
+                # a long conversation mounts its recent part and the rest on request
+                longer = ag.thread_open({"agent": "codex", "title": "Hilo largo", "body": "inicio"})["thread"]["id"]
+                ag.thread({"thread_id": longer, "agent": "luis", "_person": True})
+                for n in range(149):
+                    ag.post({"agent": "codex", "thread_id": longer, "body": f"mensaje {n:03}"})
+                ag.thread({"thread_id": longer, "agent": "luis", "_person": True})   # all read
+                page.goto(base + f"/#agora-{longer}")
+                earlier = page.locator("#tab-agora .ag-detail .ag-msgs > button")
+                earlier.wait_for()
+                assert page.locator("#tab-agora .ag-detail .ag-msg").count() == 120
+                earlier.click()
+                page.locator("#tab-agora .ag-detail").get_by_text("inicio", exact=True).wait_for()
+                assert page.locator("#tab-agora .ag-detail .ag-msg").count() == 150
+
                 # a deep link opens the thread before any list is drawn: what is new still comes marked
                 other = ag.thread_open({"agent": "codex", "title": "Enlace directo", "body": "Abierto por enlace"})["thread"]["id"]
                 page.goto(base + f"/#agora-{other}")
