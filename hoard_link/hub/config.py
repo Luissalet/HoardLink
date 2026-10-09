@@ -66,8 +66,8 @@ class HubConfig:
     # The Ágora's passive observer of the coding agents' transcripts (agent_watch.py): {enabled, hours, max_files,
     # roots: {"codex": [...], "cursor": [...], "claude": [...]}}; every key optional (defaults: the user's home).
     agent_watch: dict[str, Any] = field(default_factory=dict)
-    # The Ágora: {"freshness": "warn" | "enforce" | "off"} — acting on a task without having read what others wrote
-    # there since (see docs/facets/agora.md). Default warn.
+    # The Ágora: {"freshness": "warn" | "off"} — whether an answer says that the agent acted on a task without
+    # having read what others wrote there since (never a block; docs/AGORA.md). Default warn.
     agora: dict[str, Any] = field(default_factory=dict)
 
     @property

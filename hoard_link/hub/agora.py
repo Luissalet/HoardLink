@@ -130,8 +130,9 @@ MIGRATIONS = [
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
 
 
-UNSEEN_OK_MIN = 8   # characters of reason needed to act on a task with unread messages (A1)
-FRESHNESS_MODES = ("off", "warn", "enforce")
+# A1 only informs: the Ágora never blocks an agent for not having read a thread (Luis, 09-10: no more
+# obstacles for the agents' autonomy). "warn" lists what was unread in the answer; "off" says nothing.
+FRESHNESS_MODES = ("off", "warn")
 
 
 class AgoraError(ValueError):
@@ -641,8 +642,8 @@ class Agora:
                  repo_roots: Optional[Callable[[str], list[Path]]] = None,
                  freshness: Optional[str] = None):
         self.clock = clock
-        # A1: what to do when an agent acts on a task without having read what others wrote there since.
-        # "warn" (default): act, and say so in the answer and an event; "enforce": refuse; "off": nothing.
+        # A1: when an agent acts on a task without having read what others wrote there since, "warn" (default)
+        # says so in the answer and an event; "off" says nothing. Nothing is ever refused for it.
         mode = str(freshness or os.environ.get("HOARD_AGORA_FRESHNESS") or "warn").strip().lower()
         self.freshness = mode if mode in FRESHNESS_MODES else "warn"
         self.task_idle_s = _checkpoint_int(task_idle_s, "task_idle_s", 60, 7 * 86400)
@@ -939,31 +940,17 @@ class Agora:
             "ORDER BY m.id", (agent, task_id, agent, read_upto))]
 
     def _require_fresh(self, agent: str, task: dict[str, Any], a: dict[str, Any], action: str) -> Optional[str]:
-        """A1, before claim/submit/review/done/post on a task: has the agent seen what others wrote there since?
-
-        Nothing unseen, mode ``off`` or the person acting from the hub page: None. ``unseen_ok`` with a reason: act,
-        and return the line to record in the thread. Otherwise ``enforce`` refuses with the list (409,
-        ``unseen_messages``) and ``warn`` lets it through: the unseen list goes in the answer (``unseen``) and in an
-        ``agora.task.unseen`` event, without writing in the thread."""
+        """A1, before claim/submit/review/done/post on a task: did others write there something the agent has not
+        read? It never refuses: the unseen list goes in the answer (``unseen``) and in an ``agora.task.unseen``
+        event, and nothing is written in the thread. Mode ``off`` and the person acting from the hub page skip it.
+        Returns None (kept as a hook for the callers)."""
         if self.freshness == "off" or agent == PERSON or a.get("_person"):
             return None
         unseen = self._unseen(agent, int(task["id"]))
         if not unseen:
             return None
-        ids = ", ".join("#%s" % m["id"] for m in unseen[:8]) + (" ..." if len(unseen) > 8 else "")
-        reason = str(a.get("unseen_ok") or "").strip()
-        if len(reason) >= UNSEEN_OK_MIN:
-            return f"{agent} hace «{action}» sin haber leído {len(unseen)} mensaje(s) ({ids}): {reason[:300]}"
-        if self.freshness == "enforce":
-            listed = ", ".join("#%s %s %s" % (m["id"], m["author"], m["kind"]) for m in unseen[:5])
-            more = " ..." if len(unseen) > 5 else ""
-            raise AgoraError(
-                f"task {task['id']}: {len(unseen)} message(s) from others you have not read yet ({listed}{more}). "
-                f"Read the thread first (thread <id> or task <id> with your agent), or pass unseen_ok with the "
-                f"reason ({UNSEEN_OK_MIN}+ characters)", 409,
-                error_code="unseen_messages", unseen=unseen[:20], unseen_count=len(unseen))
         a["_unseen_warning"] = {"count": len(unseen), "messages": unseen[:20], "action": action,
-                                "hint": "read the task thread (thread/task with your agent) before acting on it"}
+                                "hint": "others wrote in this task's thread since you last read it: task/thread <id>"}
         self._bump("agora.task.unseen", {"task_id": task["id"], "agent": agent, "action": action, "count": len(unseen),
                                          "message_ids": [m["id"] for m in unseen[:20]]})
         return None
@@ -1302,8 +1289,6 @@ class Agora:
             self._touch(agent)
             if task["status"] not in ACTIVE:
                 raise AgoraError(f"task {task['id']} is {task['status']}", 409)
-            if self.freshness == "enforce":
-                self._require_fresh(agent, task, a, "submit")   # fail before the code_peek verification
             reviewer = str(a.get("reviewer") or "").strip().lower() or None
             if reviewer == agent:
                 raise AgoraError("the reviewer must be someone else")
@@ -2129,7 +2114,7 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Claim a task and take its locks all-or-nothing (path:Repo/file-or-dir, repo:Repo, merge:Repo, "
                     "model:principal, gpu:N, port:N, app:id). Default locks: path:<repo>/<each path>. On conflict "
                     "you get who holds what. force takes a task whose owner has been silent for 6 h.",
-     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "task_id": _TASK, "locks": _STRS, "ttl_s": {"type": "integer"},
+     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "locks": _STRS, "ttl_s": {"type": "integer"},
                              "force": {"type": "boolean"}}, ["agent", "task_id"])},
     {"name": "hub_agora_task_update",
      "description": "Progress on your task: note, status in_progress|blocked, branch, more paths and locks.",
@@ -2141,7 +2126,7 @@ TOOLS: list[dict[str, Any]] = [
                     "verified, branch/commits; optionally name the reviewer. Optional blocks: structured review "
                     "(what_why, paths, code_peek with path#Lx-Ly@commit verified against the task repo or an "
                     "identity-checked absolute checkout for isolated clones, flow, sequence). Block ids must be unique.",
-     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "task_id": _TASK, "summary": {"type": "string"}, "branch": {"type": "string"},
+     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "summary": {"type": "string"}, "branch": {"type": "string"},
                              "commits": _STRS, "reviewer": {"type": "string"},
                              "blocks": {"type": "array", "items": {"type": "object"}, "maxItems": 40}},
                             ["agent", "task_id", "summary"])},
@@ -2149,7 +2134,7 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Review someone else's observed submission: read its submission_revision, inspect and test that "
                     "revision, then send expected_submission_revision with verdict approve|changes and the reasons. "
                     "Optional block_comments: [{block_id, body}] for per-block notes on structured submissions.",
-     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "task_id": _TASK, "expected_submission_revision": {"type": "integer", "minimum": 1},
+     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "expected_submission_revision": {"type": "integer", "minimum": 1},
                              "verdict": {"type": "string"}, "body": {"type": "string"},
                              "block_comments": {"type": "array", "items": {"type": "object"}, "maxItems": 40}},
                             ["agent", "task_id", "expected_submission_revision", "verdict", "body"])},
@@ -2157,7 +2142,7 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Your task is integrated: commits and result. Releases its locks. Refused while a review is "
                     "younger than 2 h or changes were requested, unless force with a reason. docs, eval, research and "
                     "chore tasks may close without review (exempt, with the reason); code may not.",
-     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "task_id": _TASK, "result": {"type": "string"}, "commits": _STRS,
+     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "result": {"type": "string"}, "commits": _STRS,
                              "force": {"type": "boolean"}, "reason": {"type": "string"}, "exempt": {"type": "string"}},
                             ["agent", "task_id"])},
     {"name": "hub_agora_task_release",
@@ -2202,7 +2187,7 @@ TOOLS: list[dict[str, Any]] = [
                              "escalate": {"type": "boolean"}}, ["agent", "title", "body"])},
     {"name": "hub_agora_post",
      "description": "Reply in a thread: kind comment|proposal|agree|disagree (state your position with arguments).",
-     "inputSchema": _schema({"agent": _A, "unseen_ok": {"type": "string", "description": "reason to act although others wrote in this task's thread after you last read it"}, "thread_id": _THREAD, "body": {"type": "string"}, "kind": {"type": "string"},
+     "inputSchema": _schema({"agent": _A, "thread_id": _THREAD, "body": {"type": "string"}, "kind": {"type": "string"},
                              "mentions": _STRS}, ["agent", "thread_id", "body"])},
     {"name": "hub_agora_resolve",
      "description": "Close a thread with the agreed resolution in writing (it enters the decision log).",

@@ -392,21 +392,21 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--repo"); s.add_argument("--paths", action="append")
     s.add_argument("--kind", default="feature"); s.add_argument("--prio", type=int, default=2); s.add_argument("--claim", action="store_true")
     s.add_argument("--lock", action="append"); s.add_argument("--mention", action="append")
-    s = sub.add_parser("claim"); s.add_argument("task", type=int); s.add_argument("--lock", action="append"); s.add_argument("--ttl", type=int); s.add_argument("--force", action="store_true"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
+    s = sub.add_parser("claim"); s.add_argument("task", type=int); s.add_argument("--lock", action="append"); s.add_argument("--ttl", type=int); s.add_argument("--force", action="store_true")
     s = sub.add_parser("update"); s.add_argument("task", type=int); texts(s, "note"); s.add_argument("--status"); s.add_argument("--branch")
     s.add_argument("--paths", action="append"); s.add_argument("--lock", action="append")
-    s = sub.add_parser("submit"); s.add_argument("task", type=int); texts(s, "summary"); s.add_argument("--commits", action="append"); s.add_argument("--branch"); s.add_argument("--reviewer"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
+    s = sub.add_parser("submit"); s.add_argument("task", type=int); texts(s, "summary"); s.add_argument("--commits", action="append"); s.add_argument("--branch"); s.add_argument("--reviewer")
     s.add_argument("--blocks-file", help="JSON UTF-8 list of structured review blocks (what_why, paths, code_peek, flow, sequence)")
-    s = sub.add_parser("review"); s.add_argument("task", type=int); s.add_argument("verdict", choices=["approve", "changes"]); s.add_argument("--revision", type=int, required=True, help="submission_revision you inspected before reviewing; not the latest revision fetched automatically"); texts(s, "body"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
+    s = sub.add_parser("review"); s.add_argument("task", type=int); s.add_argument("verdict", choices=["approve", "changes"]); s.add_argument("--revision", type=int, required=True, help="submission_revision you inspected before reviewing; not the latest revision fetched automatically"); texts(s, "body")
     s.add_argument("--block-comments-file", help="JSON UTF-8 list of {block_id, body} notes on structured blocks")
-    s = sub.add_parser("done"); s.add_argument("task", type=int); texts(s, "result"); s.add_argument("--commits", action="append"); s.add_argument("--force", action="store_true"); s.add_argument("--reason"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
+    s = sub.add_parser("done"); s.add_argument("task", type=int); texts(s, "result"); s.add_argument("--commits", action="append"); s.add_argument("--force", action="store_true"); s.add_argument("--reason")
     s = sub.add_parser("release"); s.add_argument("task", type=int); s.add_argument("--reason"); s.add_argument("--drop", action="store_true")
     s = sub.add_parser("lock"); s.add_argument("resources", nargs="+"); s.add_argument("--ttl", type=int); s.add_argument("--note"); s.add_argument("--task", type=int)
     s = sub.add_parser("unlock"); s.add_argument("resources", nargs="+")
     s = sub.add_parser("locks"); s.add_argument("--check")
     s = sub.add_parser("open"); s.add_argument("title"); texts(s, "body"); s.add_argument("--kind", default="debate"); s.add_argument("--task", type=int)
     s.add_argument("--mention", action="append"); s.add_argument("--escalate", action="store_true")
-    s = sub.add_parser("post"); s.add_argument("thread", type=int); texts(s, "body"); s.add_argument("--kind", default="comment"); s.add_argument("--mention", action="append"); s.add_argument("--unseen-ok", dest="unseen_ok", help="motivo para actuar aunque haya mensajes sin leer en el hilo de la tarea")
+    s = sub.add_parser("post"); s.add_argument("thread", type=int); texts(s, "body"); s.add_argument("--kind", default="comment"); s.add_argument("--mention", action="append")
     s = sub.add_parser("resolve"); s.add_argument("thread", type=int); texts(s, "text")
     s = sub.add_parser("escalate"); s.add_argument("thread", type=int); texts(s, "question")
     s = sub.add_parser("reopen"); s.add_argument("thread", type=int); s.add_argument("--reason", required=True)
@@ -483,8 +483,7 @@ def main(argv: list[str] | None = None) -> int:
                                                  "paths": csv(a.paths), "kind": a.kind, "priority": a.prio, "claim": a.claim,
                                                  "locks": csv(a.lock), "mentions": csv(a.mention)})
     elif c == "claim":
-        r = call("POST", "/api/agora/task_claim", {"agent": ag, "task_id": a.task, "locks": csv(a.lock), "ttl_s": a.ttl, "force": a.force,
-                                                   "unseen_ok": a.unseen_ok})
+        r = call("POST", "/api/agora/task_claim", {"agent": ag, "task_id": a.task, "locks": csv(a.lock), "ttl_s": a.ttl, "force": a.force})
     elif c == "update":
         body = {"agent": ag, "task_id": a.task, "note": text_arg(a, "note") or "", "locks": csv(a.lock)}
         if a.status:
@@ -496,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/task_update", body)
     elif c == "submit":
         body = {"agent": ag, "task_id": a.task, "summary": text_arg(a, "summary") or "",
-                "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer, "unseen_ok": a.unseen_ok}
+                "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer}
         if getattr(a, "blocks_file", None):
             try:
                 raw = sys.stdin.read() if a.blocks_file == "-" else Path(a.blocks_file).read_text(encoding="utf-8-sig")
@@ -506,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/task_submit", body)
     elif c == "review":
         body = {"agent": ag, "task_id": a.task, "verdict": a.verdict, "body": text_arg(a, "body") or "",
-                "expected_submission_revision": a.revision, "unseen_ok": a.unseen_ok}
+                "expected_submission_revision": a.revision}
         if getattr(a, "block_comments_file", None):
             try:
                 raw = (sys.stdin.read() if a.block_comments_file == "-"
@@ -517,8 +516,7 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/task_review", body)
     elif c == "done":
         r = call("POST", "/api/agora/task_done", {"agent": ag, "task_id": a.task, "result": text_arg(a, "result") or "",
-                                                  "commits": csv(a.commits), "force": a.force, "reason": a.reason or "",
-                                                  "unseen_ok": a.unseen_ok})
+                                                  "commits": csv(a.commits), "force": a.force, "reason": a.reason or ""})
     elif c == "release":
         r = call("POST", "/api/agora/task_release", {"agent": ag, "task_id": a.task, "reason": a.reason or "", "drop": a.drop})
     elif c == "handover":
@@ -542,7 +540,7 @@ def main(argv: list[str] | None = None) -> int:
                                                     "task_id": a.task, "mentions": csv(a.mention), "escalate": a.escalate})
     elif c == "post":
         r = call("POST", "/api/agora/post", {"agent": ag, "thread_id": a.thread, "body": text_arg(a, "body") or "", "kind": a.kind,
-                                             "mentions": csv(a.mention), "unseen_ok": a.unseen_ok})
+                                             "mentions": csv(a.mention)})
     elif c == "resolve":
         r = call("POST", "/api/agora/resolve", {"agent": ag, "thread_id": a.thread, "resolution": text_arg(a, "text") or ""})
     elif c == "escalate":

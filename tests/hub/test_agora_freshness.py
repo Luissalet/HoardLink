@@ -1,15 +1,15 @@
-"""A1/A2: acting on a task only after reading what others wrote there, and an inbox of metadata only.
+"""A1/A2: say when an agent acts on a task without having read its thread, and an inbox of metadata only.
 
-Idea from a multi-agent workspace study (#130): an agent that votes, submits or closes a task while the
-other agent's last message there is still unread works on a stale picture. The Ágora knows what each agent
-has seen (thread acks, the inbox read mark), so it can say so — and, in "enforce" mode, refuse.
+The Ágora knows what each agent has seen (thread acks, the inbox read mark), so an answer can say "others wrote
+here since you last read it". It only informs: nothing is ever refused for it (Luis, 09-10: no more obstacles for
+the agents' autonomy).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from hoard_link.hub.agora import Agora, AgoraError
+from hoard_link.hub.agora import Agora
 
 
 class Clock:
@@ -21,23 +21,11 @@ class Clock:
         return self.t
 
 
-def _agora(tmp_path, mode):
+@pytest.fixture
+def ag(tmp_path):
     events = []
-    a = Agora(tmp_path / f"agora-{mode}.db", clock=Clock(), emit=lambda t, d: events.append((t, d)), freshness=mode)
+    a = Agora(tmp_path / "agora.db", clock=Clock(), emit=lambda t, d: events.append((t, d)), freshness="warn")
     a.events = events
-    return a
-
-
-@pytest.fixture
-def enforce(tmp_path):
-    a = _agora(tmp_path, "enforce")
-    yield a
-    a.close()
-
-
-@pytest.fixture
-def warn(tmp_path):
-    a = _agora(tmp_path, "warn")
     yield a
     a.close()
 
@@ -50,128 +38,94 @@ def _submitted(a):
     return tid, a.task({"task_id": tid})["task"]["thread_id"]
 
 
-def test_the_task_description_alone_never_blocks_a_claim(enforce):
-    tid = enforce.task_add({"agent": "claude", "title": "Open work", "body": "details"})["task"]["id"]
-    assert enforce.task_claim({"agent": "codex", "task_id": tid})["ok"]
+def _review(a, tid, agent="codex", **extra):
+    return a.task_review({"agent": agent, "task_id": tid, "expected_submission_revision": 1,
+                          "verdict": "approve", "body": "checked", **extra})
 
 
-def test_enforce_refuses_a_review_of_an_unread_submission_and_lists_it(enforce):
-    tid, thread = _submitted(enforce)
-    with pytest.raises(AgoraError) as exc:
-        enforce.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                             "verdict": "approve", "body": "looks fine"})
-    err = exc.value
-    assert err.status == 409 and err.extra["error_code"] == "unseen_messages"
-    assert err.extra["unseen_count"] == 1 and err.extra["unseen"][0]["author"] == "claude"
-    assert err.extra["unseen"][0]["kind"] == "proposal"
-    assert "unseen_ok" in str(err)
-    # Reading the task with the agent counts as reading its thread.
-    enforce.task({"task_id": tid, "agent": "codex"})
-    assert enforce.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                                "verdict": "approve", "body": "read and checked"})["ok"]
-
-
-def test_reading_the_thread_or_the_inbox_counts_as_seen(enforce):
-    tid, thread = _submitted(enforce)
-    enforce.thread({"thread_id": thread, "agent": "codex"})
-    assert enforce.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                                "verdict": "changes", "body": "one thing"})["ok"]
-    # claude has not seen the verdict; a (non-peek) inbox delivers it with its body.
-    with pytest.raises(AgoraError):
-        enforce.task_submit({"agent": "claude", "task_id": tid, "summary": "fixed"})
-    assert enforce.inbox({"agent": "claude", "peek": True})["counts"]["messages"] == 1
-    with pytest.raises(AgoraError):                      # a peek delivers nothing: still unseen
-        enforce.task_submit({"agent": "claude", "task_id": tid, "summary": "fixed"})
-    enforce.inbox({"agent": "claude"})
-    assert enforce.task_submit({"agent": "claude", "task_id": tid, "summary": "fixed"})["ok"]
-
-
-def test_unseen_ok_overrides_and_is_recorded_in_the_thread(enforce):
-    tid, thread = _submitted(enforce)
-    with pytest.raises(AgoraError):                      # a reason that says nothing is not a reason
-        enforce.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                             "verdict": "approve", "body": "ok", "unseen_ok": "x"})
-    r = enforce.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                             "verdict": "approve", "body": "ok",
-                             "unseen_ok": "the diff was read in the worktree, not here"})
-    assert r["ok"]
-    lines = [m for m in enforce.task({"task_id": tid})["messages"] if m["kind"] == "system"]
-    assert any("codex hace «review» sin haber leído 1 mensaje(s)" in m["body"]
-               and "the diff was read in the worktree" in m["body"] for m in lines)
-
-
-def test_posting_in_a_task_thread_is_guarded_but_other_threads_are_not(enforce):
-    tid, thread = _submitted(enforce)
-    with pytest.raises(AgoraError):
-        enforce.post({"agent": "codex", "thread_id": thread, "body": "quick question"})
-    other = enforce.thread_open({"agent": "claude", "title": "Free debate", "body": "what do you think?"})["thread"]["id"]
-    assert enforce.post({"agent": "codex", "thread_id": other, "body": "a thought"})["ok"]
-
-
-def test_own_messages_and_bookkeeping_lines_never_count(enforce):
-    tid = enforce.task_add({"agent": "claude", "title": "Mine", "claim": True})["task"]["id"]
-    # claude's own submission and the system lines of its own claim are not "unread" for claude
-    enforce.task_submit({"agent": "claude", "task_id": tid, "summary": "first"})
-    assert enforce.task_submit({"agent": "claude", "task_id": tid, "summary": "second"})["ok"]
-
-
-def test_done_after_an_unread_review_is_refused(enforce):
-    tid, thread = _submitted(enforce)
-    enforce.task({"task_id": tid, "agent": "codex"})
-    enforce.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                         "verdict": "approve", "body": "approved, but see the note about the cache"})
-    with pytest.raises(AgoraError) as exc:
-        enforce.task_done({"agent": "claude", "task_id": tid, "result": "merged"})
-    assert exc.value.extra["unseen"][0]["kind"] == "approve"
-    enforce.task({"task_id": tid, "agent": "claude"})
-    assert enforce.task_done({"agent": "claude", "task_id": tid, "result": "merged"})["ok"]
-
-
-def test_the_person_is_never_blocked(enforce):
-    tid, thread = _submitted(enforce)
-    assert enforce.task_review({"agent": "luis", "task_id": tid, "expected_submission_revision": 1,
-                                "verdict": "approve", "body": "fine", "_person": True})["ok"]
-
-
-def test_warn_mode_acts_and_says_so_without_writing_in_the_thread(warn):
-    tid, thread = _submitted(warn)
-    before = len(warn.task({"task_id": tid})["messages"])
-    r = warn.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                          "verdict": "approve", "body": "fine"})
-    assert r["ok"] and r["unseen"]["count"] == 1 and r["unseen"]["action"] == "review"
-    msgs = warn.task({"task_id": tid})["messages"]
-    assert len(msgs) == before + 1 and msgs[-1]["kind"] == "approve"     # only the vote, no extra line
-    ev = [d for t, d in warn.events if t == "agora.task.unseen"]
+def test_a_review_of_an_unread_submission_goes_through_and_says_so(ag):
+    tid, thread = _submitted(ag)
+    before = len(ag.task({"task_id": tid})["messages"])
+    r = _review(ag, tid)
+    assert r["ok"] and r["task"]["status"] == "approved"
+    u = r["unseen"]
+    assert u["count"] == 1 and u["action"] == "review"
+    assert u["messages"][0]["author"] == "claude" and u["messages"][0]["kind"] == "proposal"
+    msgs = ag.task({"task_id": tid})["messages"]
+    assert len(msgs) == before + 1 and msgs[-1]["kind"] == "approve"     # only the vote: nothing else written
+    ev = [d for t, d in ag.events if t == "agora.task.unseen"]
     assert ev and ev[-1]["agent"] == "codex" and ev[-1]["count"] == 1
 
 
-def test_off_mode_and_default(tmp_path, monkeypatch):
-    off = _agora(tmp_path, "off")
-    tid, _ = _submitted(off)
-    r = off.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                         "verdict": "approve", "body": "fine"})
-    assert r["ok"] and "unseen" not in r
+def test_no_notice_once_the_task_or_thread_was_read(ag):
+    tid, thread = _submitted(ag)
+    ag.task({"task_id": tid, "agent": "codex"})              # reading the task as codex marks its thread read
+    assert "unseen" not in _review(ag, tid)
+    tid2, thread2 = _submitted(ag)
+    ag.thread({"thread_id": thread2, "agent": "codex"})
+    assert "unseen" not in _review(ag, tid2)
+
+
+def test_a_non_peek_inbox_counts_as_read_and_a_peek_does_not(ag):
+    tid, thread = _submitted(ag)
+    ag.task({"task_id": tid, "agent": "codex"})
+    ag.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
+                    "verdict": "changes", "body": "one thing"})
+    ag.inbox({"agent": "claude", "peek": True})
+    assert ag.task_submit({"agent": "claude", "task_id": tid, "summary": "fixed"})["unseen"]["count"] == 1
+    ag.task({"task_id": tid, "agent": "codex"})
+    ag.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 2,
+                    "verdict": "changes", "body": "and another"})
+    ag.inbox({"agent": "claude"})                            # delivers the bodies: read
+    assert "unseen" not in ag.task_submit({"agent": "claude", "task_id": tid, "summary": "fixed again"})
+
+
+def test_the_task_description_own_messages_and_bookkeeping_never_count(ag):
+    tid = ag.task_add({"agent": "claude", "title": "Open work", "body": "details"})["task"]["id"]
+    assert "unseen" not in ag.task_claim({"agent": "codex", "task_id": tid})
+    mine = ag.task_add({"agent": "claude", "title": "Mine", "claim": True})["task"]["id"]
+    ag.task_submit({"agent": "claude", "task_id": mine, "summary": "first"})
+    assert "unseen" not in ag.task_submit({"agent": "claude", "task_id": mine, "summary": "second"})
+
+
+def test_done_and_post_say_so_too_but_other_threads_do_not(ag):
+    tid, thread = _submitted(ag)
+    ag.task({"task_id": tid, "agent": "codex"})
+    _review(ag, tid)
+    assert ag.post({"agent": "codex", "thread_id": thread, "body": "note"}).get("unseen") is None
+    done = ag.task_done({"agent": "claude", "task_id": tid, "result": "merged"})
+    assert done["ok"] and done["unseen"]["count"] == 2 and done["unseen"]["action"] == "done"
+    other = ag.thread_open({"agent": "claude", "title": "Free debate", "body": "what do you think?"})["thread"]["id"]
+    assert "unseen" not in ag.post({"agent": "codex", "thread_id": other, "body": "a thought"})
+
+
+def test_the_person_and_off_mode_get_no_notice(ag, tmp_path):
+    tid, thread = _submitted(ag)
+    assert "unseen" not in _review(ag, tid, agent="luis", _person=True)
+    off = Agora(tmp_path / "off.db", freshness="off")
+    tid2, _ = _submitted(off)
+    assert "unseen" not in _review(off, tid2)
     off.close()
+
+
+def test_modes_and_default(tmp_path, monkeypatch):
     monkeypatch.delenv("HOARD_AGORA_FRESHNESS", raising=False)
     d = Agora(tmp_path / "default.db")
     assert d.freshness == "warn"
     d.close()
-    monkeypatch.setenv("HOARD_AGORA_FRESHNESS", "enforce")
+    monkeypatch.setenv("HOARD_AGORA_FRESHNESS", "enforce")          # no blocking mode exists: falls back to warn
     e = Agora(tmp_path / "env.db")
-    assert e.freshness == "enforce"
+    assert e.freshness == "warn"
     e.close()
 
 
-def test_metadata_only_inbox_has_no_bodies_and_keeps_the_read_mark(enforce):
-    tid, thread = _submitted(enforce)
-    meta = enforce.inbox({"agent": "codex", "metadata_only": True})
+def test_metadata_only_inbox_has_no_bodies_and_keeps_the_read_mark(ag):
+    tid, thread = _submitted(ag)
+    meta = ag.inbox({"agent": "codex", "metadata_only": True})
     n = meta["counts"]["messages"]
     assert meta["metadata_only"] and n >= 1
     assert all("body" not in m and "body_chars" in m for m in meta["messages"])
     m = meta["messages"][-1]                              # the submission
     assert m["author"] == "claude" and m["thread_id"] == thread and m["kind"] == "proposal" and m["body_chars"] > 0
-    # nothing was delivered: the same messages are still new, and still unseen for the guard
-    assert enforce.inbox({"agent": "codex", "metadata_only": True})["counts"]["messages"] == n
-    with pytest.raises(AgoraError):
-        enforce.task_review({"agent": "codex", "task_id": tid, "expected_submission_revision": 1,
-                             "verdict": "approve", "body": "fine"})
+    assert ag.inbox({"agent": "codex", "metadata_only": True})["counts"]["messages"] == n
+    assert _review(ag, tid)["unseen"]["count"] == 1      # nothing was delivered: still unread
