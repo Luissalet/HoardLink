@@ -77,20 +77,29 @@ class AgoraConsoleFacet(Facet):
         try:
             from .agora_capacity import start_codex_capacity_reporter
 
-            start_codex_capacity_reporter(
-                interval_seconds=90,
-                reporter_kwargs={
-                    "repo_root": Path(__file__).resolve().parents[2],
-                    "env": {
-                        "HOARD_HUB_URL": hub_url,
-                        "HOARD_HUB_DATA_DIR": data_dir,
-                        "HOARD_HUB_TOKEN_FILE": token_file,
-                    },
+            publication = {
+                "repo_root": Path(__file__).resolve().parents[2],
+                "env": {
+                    "HOARD_HUB_URL": hub_url,
+                    "HOARD_HUB_DATA_DIR": data_dir,
+                    "HOARD_HUB_TOKEN_FILE": token_file,
                 },
-            )
+            }
+            start_codex_capacity_reporter(interval_seconds=90, reporter_kwargs=publication)
             self._capacity_reporter_started = True
         except Exception:
             logger.info("Codex quota reporter could not start", exc_info=False)
+        if (os.environ.get("HOARD_AGORA_ACCOUNT_USAGE", "1").strip().lower() in ("0", "false", "off", "no")
+                or "PYTEST_CURRENT_TEST" in os.environ):  # tests never read real accounts
+            return
+        try:
+            # Claude and Cursor quotas, read like unified usage trackers do (agora_capacity_accounts).
+            from .agora_capacity_accounts import start_account_capacity_reporter
+
+            start_account_capacity_reporter(interval_seconds=120, reporter_kwargs=publication)
+            self._capacity_reporter_started = True
+        except Exception:
+            logger.info("Claude/Cursor quota reporter could not start", exc_info=False)
 
     def close(self) -> None:
         if not self._capacity_reporter_started:
@@ -101,6 +110,12 @@ class AgoraConsoleFacet(Facet):
             stop_codex_capacity_reporter()
         except Exception:
             logger.info("Codex quota reporter could not stop", exc_info=False)
+        try:
+            from .agora_capacity_accounts import stop_account_capacity_reporter
+
+            stop_account_capacity_reporter()
+        except Exception:
+            logger.info("Claude/Cursor quota reporter could not stop", exc_info=False)
         self._capacity_reporter_started = False
 
     def _connect(self) -> sqlite3.Connection:
