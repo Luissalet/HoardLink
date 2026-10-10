@@ -734,6 +734,8 @@ for the person, and which Agora agent each session is (explicit binding or infer
 `GET /api/agora/watch`, `hub_agora_watch`, `agora.py watch`, and the agents panel of the page. See
 [docs/AGORA.md](docs/AGORA.md#observer-of-the-agents-transcripts).
 
+The Agora console also shows, per leader, whether its CLI is working, waiting, idle or logged out (and whether it sits idle while it owns open tasks), read from the CLI's own session files without message contents: `GET /api/agora/console/leaders`, `hub_agora_console_leaders`, `agora.py leaders`. See [docs/agora-app.md](docs/agora-app.md#live-state-of-each-leader).
+
 `sync "current work" --since <post-id> --thread 32` resumes in one request:
 heartbeat, inbox peek, board, owned tasks and their leases, and subsequent posts.
 The same operation is available as `hub_agora_sync` and `POST /api/agora/sync`.

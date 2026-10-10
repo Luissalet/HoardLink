@@ -22,3 +22,12 @@ input::placeholder,textarea::placeholder{color:#bebbb4;opacity:1}.quota-label st
 .meter>span.full{background:#d9644f}
 @media (max-width:640px){.message.human .message-content{max-width:88%}.message.agent{padding:10px 11px}}
 
+.live{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;font-size:11px;border-radius:8px}
+.live-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:#1f1d17;font-variant-numeric:tabular-nums}
+.live-chip i{width:6px;height:6px;border-radius:50%;background:#8e897b}
+.live.working .live-chip{color:#b5dcc5;border-color:#3f5d4d}.live.working .live-chip i{background:#83b49a}
+.live.waiting .live-chip{color:#f0d28a;border-color:#6d5a2c}.live.waiting .live-chip i{background:var(--accent)}
+.live.auth_expired .live-chip,.live.error .live-chip{color:#f0b3a0;border-color:#7a4a3c}.live.auth_expired .live-chip i,.live.error .live-chip i{background:#d9644f}
+.live.warn .live-chip{color:#f0b3a0;border-color:#7a4a3c}
+.live.warn{padding:4px 6px;background:rgba(217,100,79,.14);box-shadow:inset 0 0 0 1px rgba(217,100,79,.55)}
+.live-work{color:#f0b3a0;font-weight:600}

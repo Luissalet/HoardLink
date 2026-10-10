@@ -16,6 +16,7 @@ Standard library only, so any agent with a terminal can use it (no MCP needed)::
     python scripts/agora.py --as builder post 7 --kind disagree --body-file answer.md
     python scripts/agora.py --as reviewer escalate 7 --question "q8 at 500k (slow, faithful) or q4 (fast)?"
     python scripts/agora.py watch                         # what each agent is really doing, from its own transcripts
+    python scripts/agora.py leaders                       # state of each leader's CLI (working / waiting / idle / login expired / error)
     python scripts/agora.py watch-bind codex:<session id> codex-sparks   # assign a transcript session to an agent ("-" unbinds)
     python scripts/agora.py --as successor handover --from dead-agent --to successor --reason "context exhausted" [--tasks 1,2] [--no-reviews]
 
@@ -201,6 +202,16 @@ def observed_text(o: dict | None, now: float | None = None) -> str:
     return f"{what} {ago(o.get('since'), now)}".strip()
 
 
+def print_leaders(r: dict) -> None:
+    """One line per leader: its CLI's live state, since when, where it was read and its open tasks."""
+    for lead in r.get("leaders", []):
+        flag = "  <-- INACTIVO CON TRABAJO" if lead.get("idle_with_work") else ""
+        tasks = lead.get("open_tasks") or []
+        print(f"{lead.get('name', lead.get('id')):<8} {lead.get('label', lead.get('state')):<24} "
+              f"tareas abiertas: {', '.join('#' + str(t) for t in tasks) if tasks else '-'}{flag}")
+        print(f"         {lead.get('detail', '')} [{lead.get('source', '-')}]")
+
+
 def print_watch(board: dict, w: dict) -> None:
     now = time.time()
     seen = set()
@@ -375,6 +386,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("board"); s.add_argument("--full", action="store_true", help="todos los bloqueos, uno a uno")
     sub.add_parser("usage", help="cuotas recientes de los pools de cuenta compartidos")
+    sub.add_parser("leaders", help="estado en vivo de cada líder (trabajando, esperando, inactivo, sesión caducada, error) "
+                                    "leído de sus ficheros de sesión")
     s = sub.add_parser("usage-report", help="publica un snapshot de cuota sanitizado desde JSON UTF-8")
     s.add_argument("--data-file", required=True, help="JSON UTF-8 con provider_id, pool_id, pool_label, source y windows")
     s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true"); s.add_argument("--meta", action="store_true", help="solo metadatos (quién, dónde, tipo), sin cuerpos ni mover la marca")
@@ -445,7 +458,7 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(value, list):
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
-    reads = {"board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind"}
+    reads = {"board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders"}
     if a.cmd not in reads and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
@@ -454,6 +467,8 @@ def main(argv: list[str] | None = None) -> int:
         r = call("GET", "/api/agora/board")
     elif c == "usage":
         r = call("GET", "/api/agora/console/usage")
+    elif c == "leaders":
+        r = call("GET", "/api/agora/console/leaders")
     elif c == "usage-report":
         try:
             raw = sys.stdin.read() if a.data_file == "-" else Path(a.data_file).read_text(encoding="utf-8-sig")
@@ -601,6 +616,8 @@ def main(argv: list[str] | None = None) -> int:
         print_board(r, full=a.full)
     elif c == "usage":
         print(json.dumps(r.get("providers", []), ensure_ascii=False, indent=2))
+    elif c == "leaders":
+        print_leaders(r)
     elif c == "activity":
         print(json.dumps(r["activity"], ensure_ascii=False, indent=2))
     elif c == "timeline":

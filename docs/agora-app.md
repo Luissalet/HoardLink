@@ -15,6 +15,23 @@ The console reads every provider's quota where its own client does, the way unif
 
 `HOARD_AGORA_ACCOUNT_USAGE=0` turns the Claude/Cursor readers off. A network failure publishes nothing, so the last real reading stays until it goes stale; bars show the percentage used, with what is left and the reset underneath.
 
+## Live state of each leader
+
+Next to each leader's name the rail shows what that leader's CLI is doing right now, so an idle agent or an expired login is not mistaken for a healthy one. The Hub (`agora_leader_state.py`) reads, read-only, the session files each CLI already writes and keeps only event kinds and timestamps; message bodies, tool inputs and outputs, reasoning and file paths are never copied, and from `~/.claude/.credentials.json` only `claudeAiOauth.expiresAt` is read (never a token).
+
+| State | Chip | How it is derived |
+| --- | --- | --- |
+| `working` | Trabajando | **Claude Code** (newest `~/.claude/projects/<slug>/*.jsonl`) and **Codex** (newest `~/.codex/sessions/**/rollout-*.jsonl`): a turn is open (prompt, tool call or `task_started` without its end) and the file was written in the last 30 min; with no turn markers, a write in the last 2 min. **Cursor** (`launch-state.json` + `logs/*.jsonl` of the managed runner): `status` is running with a live `cli_pid`, or the log moved in the last 2 min without a final `result`. **Faustus**: its verified native session is working. |
+| `waiting` | Esperando | Claude: an `AskUserQuestion`/`ExitPlanMode` call with no result, or any tool call unanswered for 60 s (a permission prompt, best effort). Codex: an approval / `request_user_input` event not followed by the agent going on. Cursor: a run status that says it waits for input. |
+| `idle` | Inactivo desde HH:MM | The last turn or run ended (or a turn stayed open for 30 min with nothing written); the time is the end of that turn, shown in the viewer's local time. |
+| `auth_expired` | Sesión caducada | Claude: the last turn ended in an authentication error (401) and the credentials were not rewritten since, or `expiresAt` is in the past although the CLI ran after it (the refresh failed). An access token that expired while the CLI was merely idle is not an error: it renews on use. |
+| `error` | Error | Claude: the last turn ended in another API error. Codex: the last turn ended with an `error` event. Cursor: `status` failed, a non-zero `exit_code`, an `error`, or a run still marked running whose process is gone. |
+| `unknown` | Sin datos | No session files were found, or they could not be read. |
+
+Each state carries `last_activity_at`, `source` (`claude_session`, `claude_credentials`, `codex_session`, `cursor_launch_state`, `cursor_log`, `faustus_native_session`) and a fixed-sentence `detail`. A leader that is `idle`, `auth_expired` or `error` while it owns open Agora tasks (`claimed`, `in_progress` or `changes`, owner equal to its agent id or starting with `<leader>-`) gets `idle_with_work: true`; the rail then outlines it in red and writes how many tasks wait ("2 tareas abiertas sin atender").
+
+It is returned as `live_state` and `idle_with_work` on every leader of `GET /api/agora/console/overview`, alone by `GET /api/agora/console/leaders`, by the MCP tool `hub_agora_console_leaders` and by `python scripts/agora.py leaders`. Paths can be overridden with `HOARD_LEADER_CLAUDE_PROJECTS`, `HOARD_LEADER_CLAUDE_CREDENTIALS`, `HOARD_LEADER_CODEX_SESSIONS` and `HOARD_LEADER_CURSOR_DIR` (default `D:\LocalAI\cursor`).
+
 ## Conversation and colours
 
 Luis's messages are bubbles on the right. Each leader's messages are cards outlined in that provider's colour, with the avatar and name tinted to match; the name is always written, so colour is never the only cue. The swatch next to each leader opens a colour picker. The choice is stored in the Hub (`POST /api/agora/console/color` `{leader_id, color}`, MCP `hub_agora_console_color`, returned as `color` in the overview), so the browser view and the desktop app show the same colours; an empty colour restores the default (Claude terracotta, Codex green, Cursor blue, Faustus red).

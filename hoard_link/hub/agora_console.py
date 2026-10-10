@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
+from .agora_leader_state import build_leader_states
 from .facets import Facet, Reply, Request
 
 logger = logging.getLogger("hoard_hub.agora_console")
@@ -790,6 +791,7 @@ class AgoraConsoleFacet(Facet):
             except Exception:  # noqa: BLE001
                 agents = {}
         faustus_current = self._faustus_current_settings()
+        live_states = self.leader_states(provider_data=provider_data, faustus_current=faustus_current)["states"]
         console_sessions = {row["leader_id"]: row for row in self._console_sessions()}
         active_console_turns = self._active_console_turns()
         now = time.time()
@@ -837,7 +839,9 @@ class AgoraConsoleFacet(Facet):
                             "agent_state": observed.get("state", "unknown"),
                             "agent_detail": observed.get("doing") or observed.get("note") or "",
                             "console_session": console_session,
-                            "color": colors.get(leader_id)}
+                            "color": colors.get(leader_id),
+                            "live_state": live_states.get(leader_id),
+                            "idle_with_work": bool((live_states.get(leader_id) or {}).get("idle_with_work"))}
             if leader_id == "faustus":
                 leader.update(faustus_current)
             leaders.append(leader)
@@ -857,6 +861,33 @@ class AgoraConsoleFacet(Facet):
                 "activity": activity, "messages": messages, "console_turns": console_turns,
                 "console_sessions": console_sessions, "native_preferences": native_preferences,
                 "checked_at": time.time()}
+
+    def _open_agora_tasks(self) -> list[dict[str, Any]]:
+        """The Agora's live tasks (the open ones are the leaders' pending work); empty when the Agora is unreachable."""
+        agora = self._agora()
+        if agora is None or not hasattr(agora, "tasks"):
+            return []
+        try:
+            rows = agora.tasks({"limit": 500}).get("tasks", [])
+        except Exception:  # noqa: BLE001
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+    def leader_states(self, refresh: bool = False, provider_data: Optional[dict[str, dict[str, Any]]] = None,
+                      faustus_current: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """What each leader's CLI is doing now (working / waiting / idle / login expired / failed), read from its
+        own session files without message contents, and whether it is idle while it owns open tasks."""
+        providers = provider_data if provider_data is not None else self._provider_data(force=refresh)
+        if faustus_current is None:
+            faustus_current = self._faustus_current_settings()
+        now = time.time()
+        states = build_leader_states(
+            LEADERS, tasks=self._open_agora_tasks(), now=now,
+            faustus_native_session=faustus_current.get("native_session"),
+            faustus_provider_state=str((providers.get("faustus") or {}).get("state") or ""))
+        return {"ok": True, "checked_at": now, "states": states,
+                "leaders": [{"id": leader_id, "name": name, "agent_id": agent_id, **states[leader_id]}
+                            for leader_id, name, agent_id in LEADERS]}
 
     def _faustus_current_settings(self) -> dict[str, Any]:
         """Read only the verified controller session's current model and effort."""
@@ -1669,6 +1700,8 @@ class AgoraConsoleFacet(Facet):
             return {"ok": False, "status": 401, "error": "use the Hub page or its bearer token"}
         if req.path == "/api/agora/console/overview":
             return self.overview(req.q_bool("refresh"))
+        if req.path == "/api/agora/console/leaders":
+            return self.leader_states(req.q_bool("refresh"))
         # Let AgoraFacet serve its existing /api/agora/console/usage endpoint.
         return None
 
@@ -1745,6 +1778,9 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_overview", "description": "Read the Agora team console: live provider catalogs where the official local interface exposes them, shared quota pools, child workers and canonical group messages. Catalogs may be unavailable; no model call is made.",
              "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
+            {"name": "hub_agora_console_leaders", "description": "Live state of each leader's CLI (Claude, Codex, Cursor, Faustus): working, waiting, idle since <time>, auth_expired, error or unknown, read from its local session files (event kinds and timestamps only, never message contents), with last_activity_at, source, detail, the open Agora task ids it owns and idle_with_work when it is idle, logged out or failed while owning open tasks. No model call is made.",
+             "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},
+             "annotations": {"readOnlyHint": True}},
             {"name": "hub_agora_console_message", "description": "Post one attributed message to canonical Agora work thread 32 and mention the selected existing leaders. Mentions queue attention; they do not imply that an idle agent woke or replied. MCP agents may supply their own valid actor id; only the Hub page may post as luis.",
              "inputSchema": {"type": "object", "properties": {"body": {"type": "string", "minLength": 1, "maxLength": 20000}, "recipients": {"type": "array", "items": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}}, "actor": {"type": "string", "maxLength": 64}}, "required": ["body"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
@@ -1789,6 +1825,7 @@ class AgoraConsoleFacet(Facet):
 
         return {
             "hub_agora_console_overview": lambda a: self.overview(bool(a.get("refresh"))),
+            "hub_agora_console_leaders": lambda a: self.leader_states(bool(a.get("refresh"))),
             "hub_agora_console_message": post_message,
             "hub_agora_console_preferences": post_preferences,
             "hub_agora_console_color": post_color,
