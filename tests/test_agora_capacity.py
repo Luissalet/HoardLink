@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -128,14 +129,43 @@ def test_report_uses_existing_cli_identity_and_never_passes_raw_identity(tmp_pat
     def runner(command, **kwargs):
         captured["command"] = command
         captured["body"] = kwargs["input"]
+        captured["env"] = kwargs["env"]
         return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": True, "reported_at": "2026-10-10T00:00:00+00:00"}))
 
     result = agora_capacity._report_via_agora_cli(
-        report, repo_root=Path(__file__).resolve().parents[1], runner=runner)
+        report, repo_root=Path(__file__).resolve().parents[1],
+        env={"HOARD_HUB_URL": "http://127.0.0.1:62841",
+             "HOARD_HUB_DATA_DIR": str(tmp_path / "hub-data"),
+             "HOARD_HUB_TOKEN_FILE": str(tmp_path / "hub-data" / "token")}, runner=runner)
     assert captured["command"][captured["command"].index("--as") + 1] == "codex-capacity"
     assert "private@example.invalid" not in captured["body"]
+    assert captured["env"]["HOARD_HUB_URL"] == "http://127.0.0.1:62841"
+    assert captured["env"]["HOARD_HUB_DATA_DIR"] == str(tmp_path / "hub-data")
+    assert captured["env"]["HOARD_HUB_TOKEN_FILE"] == str(tmp_path / "hub-data" / "token")
+    assert "PATH" in captured["env"]
     assert result == {"ok": True, "provider_id": "codex", "window_count": 2,
                       "reported_at": "2026-10-10T00:00:00+00:00"}
+
+
+def test_startup_reporter_keeps_bound_hub_cli_configuration(monkeypatch):
+    completed = threading.Event()
+    seen = []
+
+    def fake_collect(*, reporter_kwargs):
+        seen.append(dict(reporter_kwargs))
+        completed.set()
+        return {"ok": True}
+
+    monkeypatch.setattr(agora_capacity, "collect_and_report_codex_usage", fake_collect)
+    binding = {"repo_root": Path("C:/isolated/hoardlink"), "env": {
+        "HOARD_HUB_URL": "http://127.0.0.1:62841",
+        "HOARD_HUB_DATA_DIR": "C:/isolated/hub-data",
+        "HOARD_HUB_TOKEN_FILE": "C:/isolated/hub-data/token",
+    }}
+    agora_capacity.start_codex_capacity_reporter(interval_seconds=60, reporter_kwargs=binding)
+    assert completed.wait(2)
+    agora_capacity.stop_codex_capacity_reporter()
+    assert seen and seen[0] == binding
 
 
 def test_usage_store_expires_only_the_reset_window(tmp_path):

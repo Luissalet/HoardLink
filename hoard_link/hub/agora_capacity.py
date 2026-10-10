@@ -241,7 +241,11 @@ def _report_via_agora_cli(report: Mapping[str, Any], *, repo_root: Optional[Path
         return {"ok": False, "reason": "agora_cli_unavailable"}
     command = [sys.executable, str(cli), "--json", "--as", "codex-capacity",
                "usage-report", "--data-file", "-"]
-    child_env = dict(os.environ if env is None else env)
+    # Preserve the installed CLI/Python environment while allowing a Hub
+    # instance to bind its own URL and data directory for isolated QA.
+    child_env = dict(os.environ)
+    if env is not None:
+        child_env.update(env)
     try:
         completed = runner(command, input=json.dumps(report, separators=(",", ":")),
                            text=True, encoding="utf-8", errors="replace", capture_output=True,
@@ -280,11 +284,13 @@ def collect_and_report_codex_usage(*, executable: Optional[str] = None,
         return {"ok": False, "provider_id": "codex", "reason": "report_failed"}
 
 
-def start_codex_capacity_reporter(*, interval_seconds: int = 90) -> threading.Thread:
-    """Start one daemon poller; the default cadence is 90 seconds."""
+def start_codex_capacity_reporter(*, interval_seconds: int = 90,
+                                  reporter_kwargs: Optional[Mapping[str, Any]] = None) -> threading.Thread:
+    """Start one daemon poller bound to the caller's Agora CLI configuration."""
     global _REPORTER_THREAD, _REPORTER_STOP
     if isinstance(interval_seconds, bool) or not 60 <= int(interval_seconds) <= 120:
         raise ValueError("interval_seconds must be between 60 and 120")
+    publication = dict(reporter_kwargs or {})
     with _REPORTER_LOCK:
         if _REPORTER_THREAD is not None and _REPORTER_THREAD.is_alive():
             return _REPORTER_THREAD
@@ -292,7 +298,7 @@ def start_codex_capacity_reporter(*, interval_seconds: int = 90) -> threading.Th
 
         def run() -> None:
             while not stop.is_set():
-                result = collect_and_report_codex_usage()
+                result = collect_and_report_codex_usage(reporter_kwargs=publication)
                 if not result.get("ok"):
                     LOGGER.info("Codex quota observation unavailable (%s)", result.get("reason", "unknown"))
                 stop.wait(interval_seconds)
