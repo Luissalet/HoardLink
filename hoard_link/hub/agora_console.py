@@ -40,6 +40,8 @@ LEADERS = (
     ("faustus", "Faustus", "faustus"),
 )
 PROBE_TTL_S = 60.0
+AGORA_ACTIVE_HEARTBEAT_S = 3 * 60 * 60
+CONSOLE_TURN_ACTIVE_S = 45 * 60
 MAX_TASK_CHARS = 12000
 
 
@@ -430,6 +432,14 @@ class AgoraConsoleFacet(Facet):
         with self._db_lock, self._db() as db:
             return [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM leader_sessions")]
 
+    def _active_console_turns(self, now: Optional[float] = None) -> set[str]:
+        """Return leaders with a recent provider turn still recorded as executing."""
+        cutoff = (time.time() if now is None else now) - CONSOLE_TURN_ACTIVE_S
+        with self._db_lock, self._db() as db:
+            rows = db.execute("SELECT DISTINCT leader_id FROM leader_turns WHERE state='working' AND updated_at>=?",
+                              (cutoff,)).fetchall()
+        return {str(row["leader_id"]) for row in rows}
+
     def _reconcile_workers(self) -> None:
         with self._db_lock, self._db() as db:
             db.execute("UPDATE workers SET state='unknown', detail='Hub restarted; the child may still be running, but its completion cannot be observed here.', updated_at=? WHERE state IN ('starting','running','paused')",
@@ -738,6 +748,9 @@ class AgoraConsoleFacet(Facet):
             except Exception:  # noqa: BLE001
                 agents = {}
         faustus_current = self._faustus_current_settings()
+        console_sessions = {row["leader_id"]: row for row in self._console_sessions()}
+        active_console_turns = self._active_console_turns()
+        now = time.time()
         leaders = []
         for leader_id, name, agent_id in LEADERS:
             provider = provider_data[leader_id]
@@ -754,18 +767,34 @@ class AgoraConsoleFacet(Facet):
             else:
                 effort = selected_effort or provider.get("current_effort") or (selected or {}).get("default_effort")
             state = provider.get("state", "unavailable")
-            if leader_id != "faustus" and observed.get("state") == "working" and state in ("available", "unverified"):
+            state_source = "provider"
+            agent_last_seen = observed.get("last_seen")
+            try:
+                heartbeat_fresh = (float(agent_last_seen) > 0 and
+                                   0 <= now - float(agent_last_seen) <= AGORA_ACTIVE_HEARTBEAT_S)
+            except (TypeError, ValueError):
+                heartbeat_fresh = False
+            console_session = console_sessions.get(leader_id)
+            if leader_id in ("codex", "cursor") and leader_id in active_console_turns:
                 state = "working"
+                state_source = "console_turn"
+            elif (leader_id != "faustus" and observed.get("state") == "working" and heartbeat_fresh):
+                state = "working"
+                state_source = "agora_heartbeat"
             if leader_id == "faustus" and (faustus_current.get("native_session") or {}).get("state") == "working":
                 state = "working"
+                state_source = "faustus_native_session"
             leader = {"id": leader_id, "name": name, "state": state,
                             "detail": provider.get("detail", ""), "model": model, "effort": effort,
+                            "state_source": state_source,
+                            "agent_last_seen": agent_last_seen,
+                            "agent_heartbeat_fresh": heartbeat_fresh,
                             "provider_checked_at": provider.get("checked_at"),
                             "auth_state": provider.get("auth_state", "unknown"),
                             "catalog": catalog, "agent_id": agent_id,
                             "agent_state": observed.get("state", "unknown"),
                             "agent_detail": observed.get("doing") or observed.get("note") or "",
-                            "console_session": next((row for row in self._console_sessions() if row["leader_id"] == leader_id), None)}
+                            "console_session": console_session}
             if leader_id == "faustus":
                 leader.update(faustus_current)
             leaders.append(leader)

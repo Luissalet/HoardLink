@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
@@ -166,6 +167,9 @@ def test_http_and_mcp_share_write_handlers_and_auth_boundary(tmp_path):
             "hub_agora_console_worker"} <= set(tools)
     assert tools["hub_agora_console_overview"]["annotations"]["readOnlyHint"] is True
     assert tools["hub_agora_console_message"]["annotations"]["readOnlyHint"] is False
+    overview = facet.handlers()["hub_agora_console_overview"]({})
+    codex = next(row for row in overview["leaders"] if row["id"] == "codex")
+    assert {"state_source", "agent_last_seen", "agent_heartbeat_fresh"} <= codex.keys()
     result = facet.handlers()["hub_agora_console_preferences"]({
         "leader_id": "codex", "model": "codex-model-from-cli", "effort": "low", "actor": "cursor-agora"})
     assert result["ok"] and result["verified"]
@@ -563,6 +567,57 @@ def test_unverified_native_activity_does_not_claim_faustus_is_working(tmp_path, 
 
     assert error == "" and bound["binding"] == "native"
     assert bound["state"] == "unknown"
+
+
+def test_roster_uses_active_console_turn_as_current_leader_activity(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    now = time.time()
+    with facet._db() as db:
+        db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) "
+                   "VALUES('active-cursor-turn','cursor','901','Review task','cursor-model','low','working',?,?)",
+                   (now, now))
+        db.execute("INSERT INTO leader_sessions(leader_id,session_id,state,detail,updated_at) "
+                   "VALUES('cursor','cursor-session','working','Provider turn started',?)", (now,))
+    providers = {leader_id: {"state": "available", "detail": "provider reachable", "catalog": []}
+                 for leader_id in ("codex", "claude", "cursor", "faustus")}
+    providers["cursor"] = {"state": "unavailable", "detail": "catalog probe failed", "catalog": []}
+    monkeypatch.setattr(facet, "_provider_data", lambda force=False: providers)
+    monkeypatch.setattr(facet, "_faustus_current_settings", lambda: {"current_model": None, "current_effort": None,
+                                                                         "native_session": None})
+    facet._agora().agents = lambda: {"agents": [{"id": "cursor", "state": "idle", "last_seen": now}]}
+
+    cursor = next(row for row in facet.overview()["leaders"] if row["id"] == "cursor")
+
+    assert cursor["state"] == "working" and cursor["state_source"] == "console_turn"
+    assert cursor["console_session"]["session_id"] == "cursor-session"
+    assert cursor["agent_id"] == "cursor"
+
+
+def test_roster_uses_only_fresh_agora_working_heartbeats(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    now = time.time()
+    providers = {leader_id: {"state": "available", "detail": "provider status", "catalog": []}
+                 for leader_id in ("codex", "claude", "cursor", "faustus")}
+    providers["claude"] = {"state": "unverified", "detail": "CLI authentication is unverified", "catalog": []}
+    monkeypatch.setattr(facet, "_provider_data", lambda force=False: providers)
+    monkeypatch.setattr(facet, "_faustus_current_settings", lambda: {"current_model": None, "current_effort": None,
+                                                                         "native_session": None})
+    facet._agora().agents = lambda: {"agents": [
+        {"id": "claude", "state": "working", "doing": "current review", "last_seen": now - 2 * 60 * 60},
+        {"id": "cursor", "state": "working", "doing": "old session", "last_seen": now - 3 * 60 * 60 - 1},
+        {"id": "codex-investiga", "state": "working", "doing": "unknown timestamp"},
+    ]}
+
+    leaders = {row["id"]: row for row in facet.overview()["leaders"]}
+
+    assert leaders["claude"]["state"] == "working"
+    assert leaders["claude"]["state_source"] == "agora_heartbeat"
+    assert leaders["claude"]["agent_heartbeat_fresh"] is True
+    assert leaders["cursor"]["state"] == "available"
+    assert leaders["cursor"]["state_source"] == "provider"
+    assert leaders["cursor"]["agent_heartbeat_fresh"] is False
+    assert leaders["codex"]["state"] == "available"
+    assert leaders["codex"]["state_source"] == "provider"
 
 
 def test_faustus_session_patch_uses_configured_owner_token_and_form_contract(tmp_path, monkeypatch):
