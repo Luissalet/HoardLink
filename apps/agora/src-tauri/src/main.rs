@@ -28,7 +28,17 @@ async fn hub_request(path: String, body: Option<Value>) -> Result<Value, String>
     if !status.is_success() { return Err(value.get("error").and_then(Value::as_str).unwrap_or("La operación falló").into()); }
     Ok(value)
 }
-fn main() { tauri::Builder::default().invoke_handler(tauri::generate_handler![hub_request]).run(tauri::generate_context!()).expect("Could not start the coordination window"); }
+#[tauri::command]
+fn open_hub() -> Result<(), String> {
+    let base = std::env::var("AGORA_HUB_URL").unwrap_or_else(|_| "http://127.0.0.1:8810".into());
+    let parsed = reqwest::Url::parse(&base).map_err(|_| "Dirección del Hub no válida")?;
+    if parsed.scheme() != "http" || !matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]")) || parsed.username() != "" || parsed.password().is_some() || parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("El Hub debe estar en una dirección local".into());
+    }
+    std::process::Command::new("explorer.exe").arg(format!("{}/#agora",base.trim_end_matches('/'))).spawn().map_err(|_| "No se puede abrir Hoard Hub".to_string())?;
+    Ok(())
+}
+fn main() { tauri::Builder::default().invoke_handler(tauri::generate_handler![hub_request,open_hub]).run(tauri::generate_context!()).expect("Could not start the coordination window"); }
 
 #[cfg(test)]
 mod tests {

@@ -1,4 +1,7 @@
 import {invoke, isTauri} from '@tauri-apps/api/core';
+export async function openHub(event:{preventDefault:()=>void}){
+  if(isTauri()){event.preventDefault();await invoke('open_hub');}
+}
 export async function api<T=any>(path:string,body?:unknown):Promise<T>{
   let data:any;
   if(isTauri()) data=await invoke('hub_request',{path,body:body===undefined?null:body});
