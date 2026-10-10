@@ -7,7 +7,7 @@ export async function api<T=any>(path:string,body?:unknown):Promise<T>{
   return data as T;
 }
 export type Model={id:string;name?:string;efforts?:string[]};
-export type Worker={id:string;parent_id:string;model?:string;state:string;task?:string;result?:string};
+export type Worker={id:string;parent_id:string;model?:string;state:string;task?:string;result?:string;effort?:string;outcome?:string};
 export type Leader={id:string;name:string;state:string;detail?:string;model?:string;effort?:string;catalog?:Model[];workers?:Worker[]};
 export type Message={id:number;agent?:string;author?:string;body:string;kind?:string;created?:number;ts?:number};
 export type Task={id:number;title:string;state:string;status?:string;owner?:string;repo?:string;thread_id?:number};
