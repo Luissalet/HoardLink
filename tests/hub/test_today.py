@@ -586,6 +586,21 @@ def test_compose_digest_english_and_empty_sections(env):
     assert "- Wed 7 · Work review · Kafka's Hoard" in md
 
 
+def test_digest_counts_and_separates_fleet_when_it_is_the_only_activity(env):
+    payload = env.facet.today('all')
+    payload['agenda'] = {key: [] for key in payload['agenda']}
+    payload['attention'] = {'mail': [], 'chats': []}
+    payload['news'] = []
+    waiting = {'id':'qa-login','label':'QA login','state':'unknown','needs_user':True}
+    blocked = {'id':'qa-stopped','label':'QA stopped','state':'silent'}
+    payload['system'] = {'incidents': [], 'jobs': [], 'fleet': {'ok':True,'items':[waiting,blocked],
+        'brief': {'waiting_for_you':[waiting],'blocked':[blocked]}, 'coverage':{}}}
+    digest = env.facet.compose_digest('all', summarize=False, payload=payload)
+    assert digest['items'] == 2
+    assert '### Esperando por ti' in digest['markdown'] and 'QA login' in digest['markdown']
+    assert '### Bloqueado' in digest['markdown'] and 'QA stopped' in digest['markdown']
+
+
 def test_digest_summary_written_by_the_model_only_from_the_items(env):
     prompts = []
 

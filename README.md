@@ -994,3 +994,7 @@ MIT — see [LICENSE](LICENSE).
 ## Agora desktop console
 
 The team console has its own Rust/Tauri Windows window and a full browser view at `/agora/`. It preserves the existing Hub coordination store and operations. See [run, model catalogs, quota pools and worker validation](docs/agora-app.md). Source checkouts require a frontend build; unavailable providers and quotas remain explicit. Quota bars read Codex, Claude and Cursor where their own clients do (app-server, Claude Code's OAuth usage endpoint, the Cursor app's usage summary); messages from Luis are right-hand bubbles and each provider's messages are outlined in a colour he picks.
+
+## Fleet monitoring
+
+`GET /api/fleet` and MCP `hub_fleet_status` reconcile declared apps, Hub jobs/rules and authenticated family watcher/task metadata. Faustus Home and the morning digest separate Today, Waiting for you, Blocked, Unverified and Paused. `hub_fleet_register` declares a cadence and `hub_fleet_report` records bounded outcomes. Two missed schedule opportunities and user-waiting transitions produce one notification through existing routing; monitoring never starts, restarts or approves work. Windows tasks are explicitly named and read as metadata only; unsupported schedules remain unverified. See [configuration, timing and coverage](docs/FLEET.md).

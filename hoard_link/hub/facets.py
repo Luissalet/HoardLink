@@ -39,6 +39,7 @@ FACET_MODULES = (
     "refs",
     "mailgate",
     "chats",
+    "fleet",
     "today",
     "search",
     "worktrack",
