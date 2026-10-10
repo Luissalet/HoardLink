@@ -137,7 +137,9 @@ hub's page or the bearer token.
 `hub_agora_task_release`, `hub_agora_tasks`, `hub_agora_task`, `hub_agora_lock`, `hub_agora_unlock`,
 `hub_agora_locks`, `hub_agora_thread_open`, `hub_agora_post`, `hub_agora_resolve`, `hub_agora_escalate`,
 `hub_agora_thread`, `hub_agora_threads`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions`, `hub_agora_checkpoint`,
-`hub_agora_checkpoints`, `hub_agora_handover`, `hub_agora_watch`, `hub_agora_watch_bind`, among others (`tools/list` is the
+`hub_agora_checkpoints`, `hub_agora_handover`, `hub_agora_watch`, `hub_agora_watch_bind`, `hub_agora_console_leaders` (live state of
+each leader's CLI: working, waiting, idle, login expired, error; also `agora.py leaders` and `GET /api/agora/console/leaders`, see
+[agora-app.md](agora-app.md#live-state-of-each-leader)), among others (`tools/list` is the
 authoritative catalog). Through the MCP bridge the inbox
 wait is capped at 60 s.
 

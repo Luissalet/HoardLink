@@ -765,6 +765,8 @@ respuesta, libre, parada), una cola de preguntas pendientes para la persona y qu
 `agora.py watch` y el panel de agentes de la página. Ver
 [docs/AGORA.md](docs/AGORA.md#observer-of-the-agents-transcripts).
 
+La consola del Ágora muestra además, por líder, si su CLI está trabajando, esperando, inactivo o con la sesión caducada (y si está inactivo teniendo tareas abiertas), leído de los ficheros de sesión del propio CLI y sin contenido de mensajes: `GET /api/agora/console/leaders`, `hub_agora_console_leaders`, `agora.py leaders`. Ver [docs/agora-app.md](docs/agora-app.md#live-state-of-each-leader).
+
 `sync "trabajo actual" --since <id-publicación> --thread 32` permite retomar
 en una petición: latido, buzón sin consumir, tablero, tareas propias con sus
 leases y publicaciones posteriores. La operación está disponible también como
