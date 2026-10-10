@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs
 
 from hoard_link.hub.agora_console import AgoraConsoleFacet, THREAD_ID
 from hoard_link.hub.facets import FACET_MODULES, Request
@@ -135,7 +136,37 @@ def test_worker_unavailable_is_recorded_without_fabricating_a_reply(tmp_path):
     assert response["worker"]["state"] == "unavailable"
     assert response["worker"]["result"] == ""
     assert "no catalog" in response["worker"]["detail"]
+    assert response["worker"]["agent_id"].startswith("claude-worker-")
     assert facet.overview()["workers"][0]["id"] == response["worker"]["id"]
+
+
+def test_worker_prompt_and_receipt_use_a_distinct_child_identity(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    facet.set_preferences({"leader_id": "codex", "model": "codex-model-from-cli", "effort": "low"})
+    monkeypatch.setattr(facet, "_codex_executable", lambda: "codex-test.exe")
+    commands = []
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.Popen", lambda command, **kwargs: (
+        commands.append((command, kwargs)) or SimpleNamespace(pid=1234)))
+
+    class DeferredThread:
+        def __init__(self, *args, **kwargs):
+            self.args, self.kwargs = args, kwargs
+        def start(self):
+            pass
+    monkeypatch.setattr("hoard_link.hub.agora_console.threading.Thread", DeferredThread)
+
+    response = facet.worker({"leader_id": "codex", "model": "codex-model-from-cli", "effort": "low",
+                             "task": "Inspect one isolated candidate."})
+
+    worker = response["worker"]
+    command = commands[0][0]
+    prompt = command[-1]
+    assert worker["agent_id"] == f"codex-worker-{worker['id'][:8]}"
+    assert worker["parent_id"] == "codex"
+    assert f"--as {worker['agent_id']} hb" in prompt
+    assert "create or claim an Agora task" in prompt
+    assert "CRITERIOS.md" in prompt and "MEMORY.md" in prompt
+    assert commands[0][1]["cwd"] == str(Path(__file__).resolve().parents[1])
 
 
 def test_external_worker_registration_requires_real_receipt_and_tracks_lifecycle(tmp_path):
@@ -216,13 +247,144 @@ def test_faustus_catalog_only_exposes_the_active_sparks_provider(tmp_path, monke
 
     facet._provider_cache["faustus"] = provider
     saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
-    assert saved["verified"] and saved["applies_to"] == "pending_native_per_session_control"
-    assert "no Faustus session or Primary endpoint was changed" in saved["warning"]
+    assert saved["verified"] and saved["applies_to"] == "queued_until_native_session_idle"
+    assert "watcher is disabled" in saved["warning"]
     with facet._db() as db:
         pending = db.execute("SELECT session_id,model,effort,state FROM native_preferences").fetchone()
-    assert pending["session_id"] == "cc16a8f3-7eaa-44b1-a427-21f2bfb1ae95"
+    assert pending["session_id"] == ""
     assert pending["model"] == "spark-main::glm-flash" and pending["effort"] == "low"
     assert pending["state"] == "pending"
+
+
+def test_faustus_native_preference_uses_only_explicit_idle_watch_binding(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    sid = "observed-faustus-session"
+    session = {"agent": "faustus", "binding": "explicit", "session_id": sid, "state": "idle"}
+    class Watch:
+        def view(self, **kwargs):
+            assert kwargs == {"force": True, "agent": "faustus", "limit": 1000}
+            return {"sessions": [session]}
+    facet.hub.facet = lambda _: SimpleNamespace(agora=facet.hub.agora, watch=Watch(), _watch_enabled=lambda: True)
+    facet._provider_cache["faustus"] = {"state": "available", "detail": "verified catalog", "catalog": [
+        {"id": "spark-main::glm-flash", "endpoint_id": "spark-main", "model_id": "glm-flash",
+         "efforts": ["low", "high"], "default_effort": "high"}]}
+    facet._provider_at = 10**9
+    calls = []
+    def request(method, path, fields=None):
+        calls.append((method, path, fields))
+        if method == "PATCH":
+            return 200, {"id": sid, "model": "glm-flash", "reasoning_effort": "low"}
+        if sum(call[0] == "GET" for call in calls) == 1:
+            return 200, {"session_id": sid, "reasoning_effort": "high", "available_levels": ["low", "high"]}
+        return 200, {"session_id": sid, "reasoning_effort": "low", "available_levels": ["low", "high"]}
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+
+    saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
+
+    assert saved["verified"] and saved["applies_to"] == "next_native_session_turn" and saved["warning"] is None
+    patch = next(call for call in calls if call[0] == "PATCH")
+    assert patch[1] == f"/api/session/{sid}"
+    assert patch[2] == {"model": "glm-flash", "endpoint_id": "spark-main", "endpoint_url": "",
+                        "reasoning_effort": "low"}
+    with facet._db() as db:
+        native = db.execute("SELECT session_id,model,effort,state FROM native_preferences").fetchone()
+    assert tuple(native) == (sid, "spark-main::glm-flash", "low", "applied")
+
+
+def test_faustus_native_preference_waits_when_bound_session_is_busy(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    session = {"agent": "faustus", "binding": "explicit", "session_id": "busy-faustus-session", "state": "working"}
+    class Watch:
+        def view(self, **kwargs):
+            return {"sessions": [session]}
+    facet.hub.facet = lambda _: SimpleNamespace(agora=facet.hub.agora, watch=Watch(), _watch_enabled=lambda: True)
+    facet._provider_cache["faustus"] = {"state": "available", "detail": "verified catalog", "catalog": [
+        {"id": "spark-main::glm-flash", "endpoint_id": "spark-main", "model_id": "glm-flash",
+         "efforts": ["low", "high"], "default_effort": "high"}]}
+    facet._provider_at = 10**9
+    calls = []
+    def request(method, path, fields=None):
+        calls.append((method, path, fields))
+        if method == "PATCH":
+            return 200, {"id": "busy-faustus-session", "model": "glm-flash", "reasoning_effort": "low"}
+        level = "high" if sum(call[0] == "GET" for call in calls) == 1 else "low"
+        return 200, {"session_id": "busy-faustus-session", "reasoning_effort": level,
+                     "available_levels": ["low", "high"]}
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+
+    saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
+
+    assert saved["applies_to"] == "queued_until_native_session_idle"
+    assert "observed working" in saved["warning"]
+    assert not calls
+    with facet._db() as db:
+        native = db.execute("SELECT session_id,state FROM native_preferences").fetchone()
+    assert tuple(native) == ("busy-faustus-session", "pending")
+
+    session["state"] = "idle"
+    overview = facet.overview()
+    assert overview["ok"]
+    assert any(call[0] == "PATCH" for call in calls)
+    with facet._db() as db:
+        native = db.execute("SELECT state FROM native_preferences").fetchone()
+    assert native["state"] == "applied"
+
+
+def test_faustus_session_patch_uses_configured_owner_token_and_form_contract(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    monkeypatch.setenv("FAUSTUS_OWNER_API_TOKEN", "configured-owner-token")
+    requests = []
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self, limit):
+            return b'{"id":"session-1"}'
+    class Opener:
+        def open(self, request, timeout):
+            requests.append((request, timeout))
+            return Response()
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: Opener())
+
+    result = facet._faustus_session_request("PATCH", "/api/session/session-1", {
+        "model": "glm-flash", "endpoint_id": "spark-main", "endpoint_url": "", "reasoning_effort": "low"})
+
+    assert result == (200, {"id": "session-1"})
+    request, timeout = requests[0]
+    assert request.full_url == "http://127.0.0.1:7000/api/session/session-1"
+    assert request.get_method() == "PATCH" and timeout == 8.0
+    assert request.headers["Authorization"] == "Bearer configured-owner-token"
+    assert parse_qs(request.data.decode("utf-8"), keep_blank_values=True) == {
+        "model": ["glm-flash"], "endpoint_id": ["spark-main"], "endpoint_url": [""],
+        "reasoning_effort": ["low"]}
+
+
+def test_faustus_session_patch_does_not_forward_family_token(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    monkeypatch.delenv("FAUSTUS_OWNER_API_TOKEN", raising=False)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "mcp-token").write_text("family-agent-token", encoding="utf-8")
+    requests = []
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self, *args):
+            return b'{"session_id":"session-1"}'
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request)
+            return Response()
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: Opener())
+
+    result = facet._faustus_session_request("GET", "/api/session/session-1/reasoning-effort")
+
+    assert result == (200, {"session_id": "session-1"})
+    assert "Authorization" not in requests[0].headers
 
 
 def test_claude_auth_status_is_live_sanitized_and_does_not_invent_catalog(tmp_path, monkeypatch):
@@ -340,6 +502,39 @@ def test_console_leader_posts_only_a_real_runner_result_with_its_own_identity(tm
     assert tuple(metrics) == (0, "unverified", 0, 0)
     assert facet.hub.agora.posts[-1] == {"agent": "codex-agora", "thread_id": THREAD_ID,
                                          "body": "A real answer from the Codex CLI.", "kind": "comment", "mentions": []}
+
+
+def test_console_leader_resume_places_exec_options_before_subcommand_and_keeps_session_cwd(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    with facet._db() as db:
+        db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) VALUES('turn-2','codex','903','new explicit prompt','codex-model-from-cli','low','working',2,2)")
+        db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,updated_at) VALUES('codex','provider-session-9','codex-model-from-cli','high','working',1)")
+
+    commands, run_kwargs = [], []
+    def runner(command, **kwargs):
+        commands.append(command)
+        run_kwargs.append(kwargs)
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text("Reply from the resumed provider session.", encoding="utf-8")
+        log_path = tmp_path / "agora-console" / "leaders" / "codex" / "turn-2.jsonl"
+        log_path.write_text('{"type":"thread.started","payload":{"thread_id":"provider-session-9"}}\n', encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda _: "codex-test.exe")
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", runner)
+    facet._run_leader_turn({"id": "turn-2", "leader_id": "codex", "model": "codex-model-from-cli",
+                            "effort": "low", "prompt": "new explicit prompt"})
+
+    command = commands[0]
+    resume = command.index("resume")
+    assert command[:resume][1:3] == ["exec", "--json"]
+    assert command.index("--sandbox") < resume
+    assert command[resume + 1:resume + 3] == ["--json", "provider-session-9"]
+    assert "--sandbox" not in command[resume:] and "--cd" not in command[resume:]
+    assert run_kwargs[0]["cwd"] is None
+    with facet._db() as db:
+        turn = db.execute("SELECT state,result,session_id FROM leader_turns WHERE id='turn-2'").fetchone()
+    assert tuple(turn) == ("completed", "Reply from the resumed provider session.", "provider-session-9")
 
 
 def test_console_preserves_provider_text_and_reports_task_outcome_as_unverified(tmp_path, monkeypatch):

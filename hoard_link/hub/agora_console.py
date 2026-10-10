@@ -19,17 +19,18 @@ import threading
 import time
 import uuid
 import tomllib
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from .facets import Facet, Reply, Request
 
 logger = logging.getLogger("hoard_hub.agora_console")
 THREAD_ID = 32
-FAUSTUS_AGORA_SESSION = "cc16a8f3-7eaa-44b1-a427-21f2bfb1ae95"
 LEADERS = (
     ("codex", "Codex", "codex-investiga"),
     ("claude", "Claude", "claude"),
@@ -50,6 +51,7 @@ class AgoraConsoleFacet(Facet):
         self._db_path = data_dir / "agora-console.db"
         self._db_lock = threading.RLock()
         self._provider_lock = threading.Lock()
+        self._native_preference_lock = threading.Lock()
         self._provider_at = 0.0
         self._provider_cache: dict[str, dict[str, Any]] = {}
         self._processes: dict[str, subprocess.Popen[str]] = {}
@@ -98,7 +100,7 @@ class AgoraConsoleFacet(Facet):
                     leader_id TEXT PRIMARY KEY, model TEXT NOT NULL, effort TEXT NOT NULL,
                     updated_by TEXT NOT NULL, updated_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS workers (
-                    id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL,
+                    id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, agent_id TEXT NOT NULL DEFAULT '', model TEXT NOT NULL, effort TEXT NOT NULL,
                     task TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '',
                     detail TEXT NOT NULL DEFAULT '', pid INTEGER, log_path TEXT NOT NULL DEFAULT '',
                     session_id TEXT NOT NULL DEFAULT '', model_source TEXT NOT NULL DEFAULT '',
@@ -131,6 +133,8 @@ class AgoraConsoleFacet(Facet):
                     auth_state TEXT NOT NULL DEFAULT 'unknown', checked_at TEXT NOT NULL);
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(workers)")}
+            if "agent_id" not in columns:
+                db.execute("ALTER TABLE workers ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''")
             if "session_id" not in columns:
                 db.execute("ALTER TABLE workers ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
             if "model_source" not in columns:
@@ -375,7 +379,7 @@ class AgoraConsoleFacet(Facet):
     def _worker_rows(self) -> list[dict[str, Any]]:
         with self._db_lock, self._db() as db:
             rows = db.execute("SELECT * FROM workers ORDER BY created_at DESC LIMIT 100").fetchall()
-        return [{k: row[k] for k in ("id", "parent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
+        return [{k: row[k] for k in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
                 for row in rows]
 
     def _console_sessions(self) -> list[dict[str, Any]]:
@@ -411,8 +415,9 @@ class AgoraConsoleFacet(Facet):
 
     def _enqueue_leader_turn(self, leader_id: str, message_id: Any, body: str) -> dict[str, Any]:
         if leader_id not in ("codex", "cursor"):
+            provider = self._provider_data().get(leader_id) or {}
             return {"leader_id": leader_id, "status": "queued" if leader_id == "faustus" else "unavailable",
-                    "receipt_id": message_id, "detail": "Faustus is addressed through its native watcher; its current turn is left undisturbed." if leader_id == "faustus" else "Claude authentication is expired (HTTP 401); no provider turn was started."}
+                    "receipt_id": message_id, "detail": "Faustus is addressed through its native watcher; its current turn is left undisturbed." if leader_id == "faustus" else (provider.get("detail") or "Claude has no verified local model catalog or runner; no provider turn was started.")}
         provider = self._provider_data().get(leader_id) or {}
         saved = self._preferences().get(leader_id, {})
         model = str(saved.get("model") or provider.get("current_model") or "").strip()
@@ -478,21 +483,26 @@ class AgoraConsoleFacet(Facet):
         with self._db_lock, self._db() as db:
             prior = db.execute("SELECT session_id FROM leader_sessions WHERE leader_id=?", (leader_id,)).fetchone()
         session_id = str(prior["session_id"] or "") if prior else ""
+        use_saved_cwd = False
         if leader_id == "codex":
             executable = self._codex_executable()
             if not executable:
                 self._finish_leader_turn(turn_id, leader_id, "failed", "Codex CLI is unavailable to the Hub process.", "", "")
                 return
             if session_id:
-                command = [executable, "exec", "resume", "--json", session_id, "--model", turn["model"],
+                # `resume` is a subcommand. Its parser does not accept the
+                # exec-level --sandbox/--cd flags after the subcommand, and it
+                # must restore the worktree recorded by this session itself.
+                command = [executable, "exec", "--json", "--model", turn["model"],
                            "--config", f'model_reasoning_effort="{turn["effort"]}"',
                            "--config", 'approval_policy="never"', "--sandbox", "danger-full-access",
-                           "--cd", str(work_dir), "--output-last-message", str(result_path), turn["prompt"]]
+                           "resume", "--json", session_id, "--output-last-message", str(result_path), turn["prompt"]]
             else:
                 command = [executable, "exec", "--json", "--model", turn["model"], "--config",
                            f'model_reasoning_effort="{turn["effort"]}"', "--config", 'approval_policy="never"',
                            "--sandbox", "danger-full-access", "--worktree",
                            "--cd", str(work_dir), "--output-last-message", str(result_path), turn["prompt"]]
+                use_saved_cwd = True
         else:
             runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
             node, entry = runtime / "node.exe", runtime / "index.js"
@@ -513,7 +523,8 @@ class AgoraConsoleFacet(Facet):
         try:
             with log_path.open("w", encoding="utf-8") as log:
                 result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                        text=True, cwd=str(work_dir), timeout=1800, check=False,
+                                        text=True, cwd=str(work_dir) if use_saved_cwd or leader_id != "codex" else None,
+                                        timeout=1800, check=False,
                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             observer_done.set()
             observer.join(timeout=1)
@@ -606,6 +617,10 @@ class AgoraConsoleFacet(Facet):
         return {"tool_success_count": successes, "tool_failure_count": failures, "provider_error": provider_error}
 
     def overview(self, refresh: bool = False) -> dict[str, Any]:
+        # A previously selected Faustus preference may have been queued while
+        # the watched session was busy. Retry only that explicit pending choice
+        # after checking the trusted session binding and live idle state.
+        self._apply_pending_faustus_preference()
         provider_data = self._provider_data(force=refresh)
         preferences = self._preferences()
         agents = {}
@@ -657,6 +672,154 @@ class AgoraConsoleFacet(Facet):
         facet = self.hub.facet("agora") if hasattr(self.hub, "facet") else None
         return getattr(facet, "agora", None)
 
+    def _faustus_bound_session(self) -> tuple[Optional[dict[str, Any]], str]:
+        agora_facet = self.hub.facet("agora") if hasattr(self.hub, "facet") else None
+        enabled = getattr(agora_facet, "_watch_enabled", None)
+        watch = getattr(agora_facet, "watch", None)
+        if not callable(enabled) or not enabled() or watch is None:
+            return None, "The Hub agent watcher is disabled; no Faustus session binding can be verified."
+        try:
+            view = watch.view(force=True, agent="faustus", limit=1000)
+        except Exception as exc:  # noqa: BLE001
+            return None, f"The Hub agent watcher could not inspect Faustus sessions: {type(exc).__name__}."
+        rows = view.get("sessions", []) if isinstance(view, dict) else []
+        bound = [row for row in rows if isinstance(row, dict) and row.get("agent") == "faustus"
+                 and row.get("binding") == "explicit" and str(row.get("session_id") or "").strip()]
+        if len(bound) != 1:
+            return None, "A single explicitly bound Faustus session is required; the current binding is missing or ambiguous."
+        return bound[0], ""
+
+    def _faustus_session_request(self, method: str, path: str,
+                                 fields: Optional[dict[str, str]] = None) -> tuple[Optional[int], Any]:
+        try:
+            service = self.hub.faustus_status() if hasattr(self.hub, "faustus_status") else {}
+        except Exception as exc:  # noqa: BLE001
+            return None, {"error": f"Hub Faustus health lookup failed: {type(exc).__name__}"}
+        configured = list(getattr(getattr(self.hub, "config", None), "faustus_urls", ()) or ())
+        base_url = str(service.get("url") or "").rstrip("/") if isinstance(service, dict) else ""
+        health = service.get("body") if isinstance(service, dict) else None
+        if (not service.get("reachable") or not isinstance(health, dict) or health.get("service") != "faustus"
+                or base_url not in {str(url).rstrip("/") for url in configured}):
+            return None, {"error": "Hub has not confirmed a reachable Faustus service URL"}
+        runtime = getattr(self.hub, "faustus_runtime", None)
+        try:
+            installation = runtime.installation() if runtime is not None else (None, None)
+        except Exception as exc:  # noqa: BLE001
+            return None, {"error": f"Faustus installation lookup failed: {type(exc).__name__}"}
+        root = installation[0] if isinstance(installation, tuple) and installation else None
+        if root is None:
+            return None, {"error": "Faustus installation is unavailable for local authenticated requests"}
+        from .contract import _get
+        # The family mcp-token authenticates agent calls, not owner-scoped
+        # session management. Do not forward it to Faustus's owner API. An
+        # installation that enables auth can opt in with its existing
+        # owner-scoped API token; in local single-user mode the API accepts
+        # the loopback request without a bearer token.
+        token = os.environ.get("FAUSTUS_OWNER_API_TOKEN", "").strip()
+        method = method.upper()
+        url = base_url + path
+        if method == "GET":
+            return _get(url, token, 6.0)
+        if method != "PATCH" or not isinstance(fields, dict):
+            return None, {"error": "unsupported Faustus session request"}
+        headers = {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded",
+                   "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})}
+        request = urllib.request.Request(url, data=urlencode(fields).encode("utf-8"), method="PATCH", headers=headers)
+        from .._hubclient import NoRedirect
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        try:
+            with opener.open(request, timeout=8.0) as response:
+                status, raw = response.status, response.read(256 * 1024)
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            try:
+                raw = exc.read(256 * 1024)
+            except Exception:  # noqa: BLE001
+                raw = b""
+        except Exception as exc:  # noqa: BLE001
+            return None, {"error": type(exc).__name__}
+        try:
+            return status, json.loads(raw.decode("utf-8", "replace")) if raw else None
+        except ValueError:
+            return status, None
+
+    def _apply_pending_faustus_preference(self) -> dict[str, Any]:
+        if not self._native_preference_lock.acquire(blocking=False):
+            return {"state": "pending", "detail": "A Faustus preference update is already being checked."}
+        try:
+            return self._apply_pending_faustus_preference_locked()
+        finally:
+            self._native_preference_lock.release()
+
+    def _apply_pending_faustus_preference_locked(self) -> dict[str, Any]:
+        with self._db_lock, self._db() as db:
+            pending = db.execute("SELECT * FROM native_preferences WHERE leader_id='faustus' AND state='pending'").fetchone()
+        if pending is None:
+            return {"state": "idle", "detail": "No Faustus preference is pending."}
+        session, bind_error = self._faustus_bound_session()
+        if session is None:
+            detail = bind_error
+            session_id = ""
+        else:
+            session_id = str(session.get("session_id") or "").strip()
+            observed_state = str(session.get("state") or "unknown").lower()
+            detail = ""
+            if observed_state != "idle":
+                detail = f"Waiting for the explicitly bound Faustus session to become idle (observed {observed_state})."
+        if detail:
+            with self._db_lock, self._db() as db:
+                db.execute("UPDATE native_preferences SET session_id=?,detail=?,updated_at=? WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
+                           (session_id, detail, time.time(), pending["model"], pending["effort"]))
+            return {"state": "pending", "detail": detail, "session_id": session_id}
+
+        providers = self._provider_data()
+        catalog = providers.get("faustus", {}).get("catalog") or []
+        selected = next((row for row in catalog if row.get("id") == pending["model"]), None)
+        if not selected or not selected.get("endpoint_id") or not selected.get("model_id"):
+            detail = "The selected Faustus model is no longer present in the verified Sparks catalog."
+        else:
+            encoded_sid = quote(session_id, safe="")
+            status, current = self._faustus_session_request("GET", f"/api/session/{encoded_sid}/reasoning-effort")
+            if status != 200 or not isinstance(current, dict) or current.get("session_id") != session_id:
+                detail = f"Could not verify the bound Faustus session preference (HTTP {status})."
+            elif not isinstance(current.get("available_levels"), list):
+                detail = "The bound Faustus session did not return a verified reasoning-level catalog."
+            else:
+                # Check the watcher again immediately before mutation. The
+                # owner-checked API persists session-only model/effort values;
+                # no global default or Primary process is steered.
+                latest, latest_error = self._faustus_bound_session()
+                if latest is None or latest.get("session_id") != session_id or str(latest.get("state") or "").lower() != "idle":
+                    detail = latest_error or "The bound Faustus session is no longer idle; preference remains queued."
+                else:
+                    with self._db_lock, self._db() as db:
+                        still_current = db.execute("SELECT 1 FROM native_preferences WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
+                                                   (pending["model"], pending["effort"])).fetchone()
+                    if not still_current:
+                        detail = "A newer Faustus preference replaced this pending choice before it could be applied."
+                        return {"state": "pending", "detail": detail, "session_id": session_id}
+                    else:
+                        fields = {"model": str(selected["model_id"]), "endpoint_id": str(selected["endpoint_id"]),
+                                  "endpoint_url": "", "reasoning_effort": str(pending["effort"])}
+                        patch_status, patched = self._faustus_session_request("PATCH", f"/api/session/{encoded_sid}", fields)
+                        verify_status, verified = self._faustus_session_request("GET", f"/api/session/{encoded_sid}/reasoning-effort")
+                        if (patch_status == 200 and isinstance(patched, dict) and patched.get("model") == selected["model_id"]
+                                and patched.get("reasoning_effort") == pending["effort"] and verify_status == 200
+                                and isinstance(verified, dict) and verified.get("session_id") == session_id
+                                and verified.get("reasoning_effort") == pending["effort"]
+                                and pending["effort"] in (verified.get("available_levels") or [])):
+                            detail = "Applied and read back the selected model and reasoning effort for the explicitly bound idle Faustus session."
+                            with self._db_lock, self._db() as db:
+                                db.execute("UPDATE native_preferences SET session_id=?,state='applied',detail=?,updated_at=? WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
+                                           (session_id, detail, time.time(), pending["model"], pending["effort"]))
+                            self._record("native_preference", session_id, "applied", detail)
+                            return {"state": "applied", "detail": detail, "session_id": session_id}
+                        detail = f"Faustus session preference did not verify after the owner-checked request (PATCH HTTP {patch_status}, readback HTTP {verify_status})."
+        with self._db_lock, self._db() as db:
+            db.execute("UPDATE native_preferences SET session_id=?,detail=?,updated_at=? WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
+                       (session_id, detail, time.time(), pending["model"], pending["effort"]))
+        return {"state": "pending", "detail": detail, "session_id": session_id}
+
     def set_preferences(self, args: dict[str, Any], actor: str = "codex-console") -> dict[str, Any]:
         leader_id = str(args.get("leader_id") or "").strip().lower()
         if leader_id not in {row[0] for row in LEADERS}:
@@ -674,20 +837,22 @@ class AgoraConsoleFacet(Facet):
         warning = None if verified else "Provider has not verified this model and effort; preference is recorded for the next compatible turn."
         applies_to = "next_console_leader_turn_and_child_worker_default" if leader_id in ("codex", "cursor") else "pending_native_session_control"
         if leader_id == "faustus":
-            warning = (warning + " " if warning else "") + "Saved for a native per-session control API; no Faustus session or Primary endpoint was changed."
+            warning = (warning + " " if warning else "") + "Saved for the trusted Faustus session; it will apply only when that exact session is idle."
         elif leader_id == "claude":
-            warning = (warning + " " if warning else "") + "Claude is currently unavailable because its OAuth token expired."
+            warning = (warning + " " if warning else "") + "Claude authentication and model availability are not verified."
         now = time.time()
         with self._db_lock, self._db() as db:
             db.execute("INSERT INTO preferences(leader_id,model,effort,updated_by,updated_at) VALUES(?,?,?,?,?) "
                        "ON CONFLICT(leader_id) DO UPDATE SET model=excluded.model,effort=excluded.effort,updated_by=excluded.updated_by,updated_at=excluded.updated_at",
                        (leader_id, model, effort, actor[:80], now))
             if leader_id == "faustus":
-                db.execute("INSERT INTO native_preferences(leader_id,session_id,model,effort,state,detail,updated_at) VALUES(?,?,?,?, 'pending','',?) ON CONFLICT(leader_id) DO UPDATE SET session_id=excluded.session_id,model=excluded.model,effort=excluded.effort,state='pending',detail='',updated_at=excluded.updated_at",
-                           (leader_id, FAUSTUS_AGORA_SESSION, model, effort, now))
+                db.execute("INSERT INTO native_preferences(leader_id,session_id,model,effort,state,detail,updated_at) VALUES(?,'',?,?,'pending','',?) ON CONFLICT(leader_id) DO UPDATE SET session_id='',model=excluded.model,effort=excluded.effort,state='pending',detail='',updated_at=excluded.updated_at",
+                           (leader_id, model, effort, now))
         self._record("preference", leader_id, "saved", f"{model} · {effort}" + (f" · {warning}" if warning else ""))
         if leader_id == "faustus":
-            applies_to = "pending_native_per_session_control"
+            result = self._apply_pending_faustus_preference()
+            applies_to = "next_native_session_turn" if result.get("state") == "applied" else "queued_until_native_session_idle"
+            warning = None if result.get("state") == "applied" else result.get("detail") or warning
         return {"ok": True, "leader_id": leader_id, "model": model, "effort": effort,
                 "verified": verified, "applies_to": applies_to, "warning": warning, "updated_at": now}
 
@@ -701,6 +866,8 @@ class AgoraConsoleFacet(Facet):
         leader_map = {row[0]: row[2] for row in LEADERS}
         if not recipients or any(x not in leader_map for x in recipients):
             return {"ok": False, "status": 400, "error": "recipients must be a non-empty list of codex, claude, cursor or faustus"}
+        if "faustus" in recipients:
+            self._apply_pending_faustus_preference()
         agora = self._agora()
         if agora is None:
             return {"ok": False, "status": 503, "error": "Agora is not available in this Hub instance"}
@@ -742,6 +909,7 @@ class AgoraConsoleFacet(Facet):
         if leader_id not in {row[0] for row in LEADERS} or not task or len(task) > MAX_TASK_CHARS:
             return {"ok": False, "status": 400, "error": f"leader_id and task (1-{MAX_TASK_CHARS} characters) are required"}
         worker_id = str(uuid.uuid4())
+        agent_id = f"{leader_id}-worker-{worker_id[:8]}"
         now = time.time()
         provider = self._provider_data().get(leader_id) or {}
         saved = self._preferences().get(leader_id, {})
@@ -761,8 +929,8 @@ class AgoraConsoleFacet(Facet):
             if leader_id in ("codex", "cursor") and not runner_available:
                 detail = f"{leader_id.title()} child runner is unavailable to the Hub process."
             with self._db_lock, self._db() as db:
-                db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,'unavailable',?,?,?)",
-                           (worker_id, leader_id, model, effort, task, detail, now, now))
+                db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,?,'unavailable',?,?,?)",
+                           (worker_id, leader_id, agent_id, model, effort, task, detail, now, now))
             self._record("worker", worker_id, "unavailable", detail)
             return {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id),
                     "warning": detail}
@@ -771,9 +939,14 @@ class AgoraConsoleFacet(Facet):
         worker_dir.mkdir(parents=True, exist_ok=True)
         log_path = worker_dir / f"{worker_id}.jsonl"
         result_path = worker_dir / f"{worker_id}.result.txt"
-        prompt = ("You are an independent child worker for the Agora team. Complete the requested task in the "
-                  "isolated worktree. Follow the repository's AGENTS.md and Agora task/lock protocol. Do not claim "
-                  "results that are not supported by your work. Return a concise result and concrete evidence.\n\n"
+        prompt = (f"You are independent Agora child worker {agent_id}, assigned by leader {leader_id} for task {worker_id}. "
+                  f"Use `{agent_id}` as your own Agora identity and parent the work to `{leader_id}`; never speak or act "
+                  "as the console operator, the leader, or another agent. At the start, use `D:\\LocalAI\\agora.cmd "
+                  f"--as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Read `D:\\LocalAI\\CRITERIOS.md` "
+                  "before `D:\\LocalAI\\MEMORY.md`, then read the repository's AGENTS.md. Before changing a repository, "
+                  "create or claim an Agora task under your identity and take the required path locks. Work only in an "
+                  "isolated worktree and follow repository skills. Do not claim results that are not supported by your work; "
+                  "return a concise result and concrete evidence.\n\n"
                   f"Task: {task}")
         if leader_id == "codex":
             command = [executable, "exec", "--json", "--model", model, "--config", f'model_reasoning_effort="{effort}"',
@@ -792,13 +965,13 @@ class AgoraConsoleFacet(Facet):
             log.close()
         except OSError as exc:
             with self._db_lock, self._db() as db:
-                db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,'failed',?,?,?)",
-                           (worker_id, leader_id, model, effort, task, f"Could not start Codex worker: {type(exc).__name__}.", now, time.time()))
+                db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,?,'failed',?,?,?)",
+                           (worker_id, leader_id, agent_id, model, effort, task, f"Could not start Codex worker: {type(exc).__name__}.", now, time.time()))
             return {"ok": False, "status": 503, "error": f"Could not start Codex worker: {type(exc).__name__}"}
         self._processes[worker_id] = process
         with self._db_lock, self._db() as db:
-            db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,pid,log_path,model_source,created_at,updated_at) VALUES(?,?,?,?,?,'running',?,?,?,?,?)",
-                       (worker_id, leader_id, model, effort, task, process.pid, str(log_path), model_source, now, now))
+            db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?)",
+                       (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), model_source, now, now))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
                          name=f"agora-worker-{worker_id[:8]}").start()
@@ -915,11 +1088,11 @@ class AgoraConsoleFacet(Facet):
             with self._db_lock, self._db() as db:
                 existing = db.execute("SELECT id FROM workers WHERE id=?", (worker_id,)).fetchone()
                 if existing:
-                    db.execute("UPDATE workers SET parent_id=?,model=?,effort=?,task=?,state='running',detail='',session_id=?,model_source=?,updated_at=? WHERE id=?",
-                               (parent_id, model, effort, task, session_id, model_source, now, worker_id))
+                    db.execute("UPDATE workers SET parent_id=?,agent_id=?,model=?,effort=?,task=?,state='running',detail='',session_id=?,model_source=?,updated_at=? WHERE id=?",
+                               (parent_id, actor[:80], model, effort, task, session_id, model_source, now, worker_id))
                 else:
-                    db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,'running',?,?,?,?)",
-                               (worker_id, parent_id, model, effort, task, session_id, model_source, now, now))
+                    db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?)",
+                               (worker_id, parent_id, actor[:80], model, effort, task, session_id, model_source, now, now))
             self._record("worker", worker_id, "running", f"Registered by {actor}; parent={parent_id}; source={model_source}")
         else:
             if not worker_id:
