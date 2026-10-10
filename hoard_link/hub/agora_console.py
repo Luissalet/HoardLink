@@ -639,6 +639,8 @@ class AgoraConsoleFacet(Facet):
                     continue
                 payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
                 kind = str(event.get("type") or event.get("event") or "").lower()
+                if kind == "run_summary" and payload.get("error"):
+                    provider_error = str(payload.get("error"))[:1000]
                 item = payload.get("item") if isinstance(payload.get("item"), dict) else payload
                 item_kind = str(item.get("type") or item.get("kind") or "").lower()
                 if "error" in kind or kind.endswith(".failed") or payload.get("is_error") is True:
@@ -646,7 +648,7 @@ class AgoraConsoleFacet(Facet):
                 code = item.get("exit_code")
                 state = str(item.get("status") or payload.get("status") or "").lower()
                 is_tool = any(token in item_kind or token in kind for token in
-                              ("tool_call", "tool_result", "command_execution", "tool_use"))
+                              ("tool_call", "tool_result", "tool_output", "command_execution", "tool_use"))
                 if is_tool:
                     if code == 0 or state in ("success", "succeeded", "completed"):
                         successes += 1
@@ -809,7 +811,8 @@ class AgoraConsoleFacet(Facet):
         if snapshot.get("local_turn_active") is not False:
             return None, "The Faustus controller did not explicitly confirm whether its current turn is idle."
         return {"agent": "faustus", "binding": "native", "session_id": session_id,
-                "project_id": project["id"], "workspace": str(project.get("workspace") or ""), "state": "idle"}, ""
+                "project_id": project["id"], "workspace": str(project.get("workspace") or ""),
+                "coordination": binding, "state": "idle"}, ""
 
     @contextmanager
     def _faustus_controller_lock(self, session_id: str):
@@ -925,11 +928,42 @@ class AgoraConsoleFacet(Facet):
                                                  f"readback_effort_verified={bool(isinstance(levels, dict) and levels.get('reasoning_effort') == effort)}, "
                                                  f"effort_supported={bool(isinstance(levels, dict) and effort in (levels.get('available_levels') or []))}, "
                                                  f"PATCH HTTP {patch_status}, levels HTTP {levels_status}); no runner was started.")
+        parent_binding = parent.get("coordination")
+        if not isinstance(parent_binding, dict):
+            return {"session_id": session_id}, "Faustus child setup failed at stage=parent_coordination_template: the verified controller binding is missing."
+        # Faustus's runner refuses to assign an explicit identity to a resumed
+        # session unless that session already owns the same native binding.
+        # Copy only the parent's approved project scope to this newly-created
+        # child, replacing its actor with the child's own identity.
+        binding_fields = {key: parent_binding.get(key) for key in
+                          ("connector_id", "operations", "resources", "repos", "thread_ids", "active")}
+        if (not binding_fields["connector_id"] or binding_fields["active"] is not True
+                or any(not isinstance(binding_fields[key], list) for key in
+                       ("operations", "resources", "repos", "thread_ids"))):
+            return {"session_id": session_id}, "Faustus child setup failed at stage=child_coordination_scope: the parent binding has no complete active scope."
+        binding_fields["actor"] = agent_id
+        bind_status, saved_binding = self._faustus_session_request(
+            "PUT", f"/api/coordination/{quote(session_id, safe='')}", binding_fields)
+        verified_status, verified_binding_data = self._faustus_session_request(
+            "GET", f"/api/coordination/{quote(session_id, safe='')}")
+        verified_binding = (verified_binding_data.get("binding")
+                            if isinstance(verified_binding_data, dict) else None)
+        if (bind_status != 200 or not isinstance(saved_binding, dict)
+                or verified_status != 200 or not isinstance(verified_binding, dict)
+                or verified_binding.get("session_id") != session_id
+                or verified_binding.get("project_id") != parent["project_id"]
+                or verified_binding.get("actor") != agent_id
+                or verified_binding.get("active") is not True):
+            return {"session_id": session_id}, (f"Faustus child setup failed at stage=child_identity_verify "
+                                                 f"(PUT HTTP {bind_status}, GET HTTP {verified_status}, "
+                                                 f"actor_verified={bool(isinstance(verified_binding, dict) and verified_binding.get('actor') == agent_id)}, "
+                                                 f"project_verified={bool(isinstance(verified_binding, dict) and verified_binding.get('project_id') == parent['project_id'])}); "
+                                                 "no runner was started.")
         return {"session_id": session_id, "project_id": parent["project_id"],
                 "workspace": str(child_project.get("workspace") or parent.get("workspace") or "")}, ""
 
     def _faustus_session_request(self, method: str, path: str,
-                                 fields: Optional[dict[str, str]] = None) -> tuple[Optional[int], Any]:
+                                 fields: Optional[dict[str, Any]] = None) -> tuple[Optional[int], Any]:
         try:
             service = self.hub.faustus_status() if hasattr(self.hub, "faustus_status") else {}
         except Exception as exc:  # noqa: BLE001
@@ -959,11 +993,17 @@ class AgoraConsoleFacet(Facet):
         url = base_url + path
         if method == "GET":
             return _get(url, token, 6.0)
-        if method not in ("PATCH", "POST") or not isinstance(fields, dict):
+        if method == "PUT" and path.startswith("/api/coordination/") and isinstance(fields, dict):
+            headers = {"Accept": "application/json", "Content-Type": "application/json",
+                       "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})}
+            request = urllib.request.Request(url, data=json.dumps(fields).encode("utf-8"),
+                                             method=method, headers=headers)
+        elif method in ("PATCH", "POST") and isinstance(fields, dict):
+            headers = {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded",
+                       "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})}
+            request = urllib.request.Request(url, data=urlencode(fields).encode("utf-8"), method=method, headers=headers)
+        else:
             return None, {"error": "unsupported Faustus session request"}
-        headers = {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded",
-                   "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})}
-        request = urllib.request.Request(url, data=urlencode(fields).encode("utf-8"), method=method, headers=headers)
         from .._hubclient import NoRedirect
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         try:
@@ -1330,17 +1370,23 @@ class AgoraConsoleFacet(Facet):
         try:
             code = process.wait()
             session_id = ""
+            leader_id = "unknown"
             try:
                 log_path = self._worker_log_path(worker_id)
                 session_id, stream_result = self._read_runner_receipt(log_path)
                 result = result_path.read_text(encoding="utf-8")[:20000] if result_path.is_file() else stream_result[:20000]
             except OSError:
                 result = ""
+            with self._db_lock, self._db() as db:
+                worker_row = db.execute("SELECT parent_id FROM workers WHERE id=?", (worker_id,)).fetchone()
+                if worker_row:
+                    leader_id = str(worker_row["parent_id"] or "unknown")
             metrics = self._runner_metrics(log_path)
             state = "completed" if code == 0 else "failed"
             outcome = "provider_error" if metrics["provider_error"] else ("missing_final_response" if not result.strip() else "unverified")
-            detail = (f"Codex provider turn ended with exit code {code}; task outcome is {outcome}." if state == "completed"
-                      else f"Codex worker exited with status {code}.")
+            provider_name = {"codex": "Codex", "cursor": "Cursor", "faustus": "Faustus"}.get(leader_id, leader_id)
+            detail = (f"{provider_name} provider turn ended with exit code {code}; task outcome is {outcome}." if state == "completed"
+                      else f"{provider_name} worker exited with status {code}; task outcome is {outcome}.")
             with self._db_lock, self._db() as db:
                 db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=CASE WHEN ?='' THEN session_id ELSE ? END,process_exit_code=?,outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,updated_at=? WHERE id=?",
                            (state, result, detail, session_id, session_id, code, outcome, metrics["tool_success_count"],
@@ -1370,7 +1416,7 @@ class AgoraConsoleFacet(Facet):
                 if not isinstance(event, dict):
                     continue
                 payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
-                for key in ("thread_id", "session_id", "chat_id"):
+                for key in ("thread_id", "session_id", "chat_id", "session"):
                     value = payload.get(key)
                     if isinstance(value, str) and value:
                         session_id = value
