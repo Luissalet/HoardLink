@@ -138,7 +138,7 @@ def test_checkpoint_message_binding_upgrade_and_reopen(tmp_path):
     for turn in range(2):
         store = Agora(path)
         try:
-            assert store.db.schema_version == 7
+            assert store.db.schema_version == len(MIGRATIONS)
             event = store.timeline({"task_id": 1})["events"][0]
             assert event["checkpoint_link"] == "legacy_inferred"
             assert event["checkpoint"]["payload"]["summary"] == "Legacy evidence"
