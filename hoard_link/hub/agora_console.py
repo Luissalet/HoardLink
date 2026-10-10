@@ -555,7 +555,7 @@ class AgoraConsoleFacet(Facet):
             if session_id:
                 command.extend(["--resume", session_id])
             else:
-                command.extend([f"--worktree={self._cursor_worktree_name(turn_id)}", "--"])
+                command.extend([f"--worktree={self._cursor_worktree_name(turn_id)}", "--trust", "--"])
             command.append(turn["prompt"])
         observer_done = threading.Event()
         observer = threading.Thread(target=self._observe_leader_session, args=(turn_id, leader_id, log_path, observer_done),
@@ -1293,7 +1293,7 @@ class AgoraConsoleFacet(Facet):
         elif leader_id == "cursor":
             command = [str(cursor_runner), str(cursor_entry), "--print", "--output-format", "stream-json",
                        "--model", model, "--workspace", str(work_dir),
-                       f"--worktree={self._cursor_worktree_name(worker_id)}", "--", prompt]
+                       f"--worktree={self._cursor_worktree_name(worker_id)}", "--trust", "--", prompt]
             model_source = "installed managed Cursor Agent `models` catalog + independent `--worktree` session"
             worker_cwd = work_dir
             session_id = ""

@@ -986,7 +986,8 @@ def test_cursor_group_leader_passes_explicit_worktree_name_before_prompt(tmp_pat
     worktree = next(arg for arg in command if arg.startswith("--worktree="))
     assert re.fullmatch(r"--worktree=agora-cursor-[A-Za-z0-9._-]+", worktree)
     worktree_index = command.index(worktree)
-    assert command[worktree_index + 1:] == ["--", prompt]
+    assert command[worktree_index + 1:] == ["--trust", "--", prompt]
+    assert "--force" not in command and "--yolo" not in command and "-f" not in command
 
 
 def test_cursor_child_worker_passes_explicit_worktree_name_before_prompt(tmp_path, monkeypatch):
@@ -1020,7 +1021,8 @@ def test_cursor_child_worker_passes_explicit_worktree_name_before_prompt(tmp_pat
     worktree = next(arg for arg in command if arg.startswith("--worktree="))
     assert re.fullmatch(r"--worktree=agora-cursor-[A-Za-z0-9._-]+", worktree)
     worktree_index = command.index(worktree)
-    assert command[worktree_index + 1] == "--"
+    assert command[worktree_index + 1:worktree_index + 3] == ["--trust", "--"]
+    assert "--force" not in command and "--yolo" not in command and "-f" not in command
     assert command[-1].endswith(f"Task: {prompt_task}")
     assert response["worker"]["state"] == "running"
 
