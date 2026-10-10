@@ -272,3 +272,15 @@ def test_a_newer_template_upgrades_an_installed_recommended_rule(tmp_path):
     assert cur["when"].get("unless_recent") and cur["rev"] == 2 and cur["enabled"] is False     # the person's switch stays
     assert eng.install_recommended_on_start()["upgraded"] == []
     eng.close()
+
+
+def test_a_flapping_app_is_one_notification_per_burst():
+    """Cassandra's incidents of one app less than 30 min apart share burst_id: the dedupe key is per burst, not per incident."""
+    step = {r["id"]: r for r in example_rules()}["rule-cassandra-app-incident"]["then"][0]
+    keys = [actions.render(step["args"], actions.base_context(event={"type": "cassandra.incident.opened", "data": {
+        "app": "prospero", "incident_id": iid, "burst_id": 969, "burst_count": n, "service_kind": "app"}}))["dedupe_key"]
+        for n, iid in enumerate((969, 970, 971), start=1)]
+    assert keys == ["cassandra:burst:prospero:969"] * 3
+    other = actions.render(step["args"], actions.base_context(event={"type": "cassandra.incident.opened", "data": {
+        "app": "ledger", "incident_id": 972, "burst_id": 972}}))["dedupe_key"]
+    assert other == "cassandra:burst:ledger:972"
