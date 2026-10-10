@@ -20,6 +20,7 @@ import time
 import uuid
 import tomllib
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlencode
@@ -125,6 +126,9 @@ class AgoraConsoleFacet(Facet):
                     leader_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
                     effort TEXT NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
                     updated_at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS provider_diagnostics (
+                    provider_id TEXT PRIMARY KEY, state TEXT NOT NULL, detail TEXT NOT NULL,
+                    auth_state TEXT NOT NULL DEFAULT 'unknown', checked_at TEXT NOT NULL);
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(workers)")}
             if "session_id" not in columns:
@@ -203,11 +207,43 @@ class AgoraConsoleFacet(Facet):
     def _claude_status(self) -> dict[str, Any]:
         executable = shutil.which("claude")
         if not executable:
-            return {"state": "unavailable", "detail": "Claude Code CLI is not on the Hub process PATH.", "catalog": []}
-        # `auth status` is useful diagnostic data, but an OAuth cache may be
-        # expired while still being reported as logged in. Without a safe,
-        # non-inference provider catalog/health endpoint, do not claim ready.
-        return {"state": "unavailable", "detail": "Claude Code is installed, but its latest authenticated model probe returned HTTP 401 (OAuth access token expired). Refresh Claude authentication before using this provider.", "catalog": []}
+            return {"state": "unavailable", "auth_state": "unknown", "checked_at": self._utc_now(),
+                    "detail": "Claude Code CLI is not on the Hub process PATH.", "catalog": []}
+        checked_at = self._utc_now()
+        try:
+            # This is a non-inference diagnostic. Keep only the boolean reported
+            # by the CLI; never retain its raw output, which may contain account data.
+            result = subprocess.run([executable, "auth", "status"], capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=8, check=False,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            payload = json.loads(result.stdout) if result.stdout.strip() else None
+            logged_in = payload.get("loggedIn") if isinstance(payload, dict) else None
+            if result.returncode != 0:
+                auth_state = "unknown"
+                detail = f"Claude auth diagnostic exited with {result.returncode}; provider access is unverified."
+                state = "unverified"
+            elif logged_in is False:
+                auth_state = "logged_out"
+                detail = "Claude CLI reports that no account is logged in; no model catalog was discovered."
+                state = "unavailable"
+            elif logged_in is True:
+                auth_state = "reported_logged_in"
+                detail = "Claude CLI reports a logged-in account, but no authenticated model catalog was discovered; provider access is unverified."
+                state = "unverified"
+            else:
+                auth_state = "unknown"
+                detail = "Claude auth status was returned in an unrecognized format; provider access is unverified."
+                state = "unverified"
+        except subprocess.TimeoutExpired:
+            auth_state = "unknown"
+            detail = "Claude auth diagnostic timed out; provider access is unverified."
+            state = "unverified"
+        except (OSError, ValueError):
+            auth_state = "unknown"
+            detail = "Claude auth diagnostic could not be read; provider access is unverified."
+            state = "unverified"
+        return {"state": state, "auth_state": auth_state, "checked_at": checked_at,
+                "detail": detail, "catalog": []}
 
     def _cursor_status(self) -> dict[str, Any]:
         runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
@@ -243,17 +279,34 @@ class AgoraConsoleFacet(Facet):
             return {"state": "unavailable", "detail": f"Could not read Cursor Agent model catalog: {type(exc).__name__}.", "catalog": []}
 
     def _faustus_status(self) -> dict[str, Any]:
-        app = self.hub.get("faustus") if hasattr(self.hub, "get") else None
-        if app is None:
-            return {"state": "unavailable", "detail": "Faustus is not registered in this Hub instance.", "catalog": []}
+        # Faustus is Hub-managed and intentionally is not a registry App. Use
+        # its cached special-service health record and configured loopback URL.
         try:
-            from .contract import app_request
-            status, health = app_request(app, "GET", "/api/health", timeout=1.5)
+            service = self.hub.faustus_status() if hasattr(self.hub, "faustus_status") else {}
         except Exception as exc:  # noqa: BLE001
-            return {"state": "unavailable", "detail": f"Faustus health probe failed: {type(exc).__name__}.", "catalog": []}
-        if status != 200 or not isinstance(health, dict) or health.get("service") != "faustus":
-            return {"state": "unavailable", "detail": "Faustus health endpoint did not confirm the expected service.", "catalog": []}
-        status, models = app_request(app, "GET", "/api/models?background=false", timeout=35.0)
+            return {"state": "unverified", "detail": f"Hub Faustus health lookup failed: {type(exc).__name__}.", "catalog": []}
+        configured_urls = list(getattr(getattr(self.hub, "config", None), "faustus_urls", ()) or ())
+        base_url = str(service.get("url") or "").rstrip("/") if isinstance(service, dict) else ""
+        if not base_url or base_url.rstrip("/") not in {str(url).rstrip("/") for url in configured_urls}:
+            return {"state": "unavailable", "detail": "Faustus has no reachable URL in the Hub's configured service list.", "catalog": []}
+        health = service.get("body") if isinstance(service, dict) else None
+        if not service.get("reachable") or not isinstance(health, dict) or health.get("service") != "faustus":
+            return {"state": "unavailable", "detail": "Hub's Faustus service health has not confirmed a reachable Faustus instance.", "catalog": []}
+        runtime = getattr(self.hub, "faustus_runtime", None)
+        try:
+            installation = runtime.installation() if runtime is not None else (None, None)
+        except Exception as exc:  # noqa: BLE001
+            return {"state": "unverified", "detail": f"Faustus installation lookup failed: {type(exc).__name__}.", "catalog": []}
+        root = installation[0] if isinstance(installation, tuple) and installation else None
+        if root is None:
+            return {"state": "unverified", "detail": "Faustus is healthy, but its configured installation is unavailable for authenticated catalog access.", "catalog": []}
+        from .contract import _get, read_token
+        token_file = str(Path(root) / "data" / "mcp-token")
+        token = read_token(token_file)
+        try:
+            status, models = _get(base_url + "/api/models?background=false", token, 35.0)
+        except Exception as exc:  # noqa: BLE001
+            return {"state": "unverified", "detail": f"Faustus model catalog request failed: {type(exc).__name__}.", "catalog": []}
         if status != 200 or not isinstance(models, dict) or not isinstance(models.get("items"), list):
             return {"state": "unverified", "detail": f"Faustus is healthy, but its model catalog returned HTTP {status}.", "catalog": []}
         catalog: list[dict[str, Any]] = []
@@ -274,7 +327,7 @@ class AgoraConsoleFacet(Facet):
                     continue
                 query = urlencode({"endpoint_id": endpoint_id, "model": model_name})
                 try:
-                    effort_status, levels = app_request(app, "GET", f"/api/models/reasoning-levels?{query}", timeout=4.0)
+                    effort_status, levels = _get(base_url + f"/api/models/reasoning-levels?{query}", token, 4.0)
                 except Exception:  # noqa: BLE001
                     effort_status, levels = None, None
                 efforts = levels.get("levels", []) if effort_status == 200 and isinstance(levels, dict) else []
@@ -298,8 +351,20 @@ class AgoraConsoleFacet(Facet):
                 "cursor": self._cursor_status(),
                 "faustus": self._faustus_status(),
             }
+            checked_at = self._utc_now()
+            with self._db_lock, self._db() as db:
+                for provider_id, provider in providers.items():
+                    provider.setdefault("checked_at", checked_at)
+                    db.execute("INSERT INTO provider_diagnostics(provider_id,state,detail,auth_state,checked_at) VALUES(?,?,?,?,?) "
+                               "ON CONFLICT(provider_id) DO UPDATE SET state=excluded.state,detail=excluded.detail,auth_state=excluded.auth_state,checked_at=excluded.checked_at",
+                               (provider_id, str(provider.get("state") or "unknown"), str(provider.get("detail") or "")[:1000],
+                                str(provider.get("auth_state") or "unknown"), str(provider.get("checked_at") or checked_at)))
             self._provider_cache, self._provider_at = providers, time.monotonic()
             return providers
+
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     def _preferences(self) -> dict[str, dict[str, Any]]:
         with self._db_lock, self._db() as db:
@@ -565,6 +630,8 @@ class AgoraConsoleFacet(Facet):
                 state = "working"
             leaders.append({"id": leader_id, "name": name, "state": state,
                             "detail": provider.get("detail", ""), "model": model, "effort": effort,
+                            "provider_checked_at": provider.get("checked_at"),
+                            "auth_state": provider.get("auth_state", "unknown"),
                             "catalog": catalog, "agent_id": agent_id,
                             "agent_state": observed.get("state", "unknown"),
                             "agent_detail": observed.get("doing") or observed.get("note") or "",
