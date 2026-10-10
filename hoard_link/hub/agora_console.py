@@ -862,6 +862,17 @@ class AgoraConsoleFacet(Facet):
                 "console_sessions": console_sessions, "native_preferences": native_preferences,
                 "checked_at": time.time()}
 
+    def _agora_agents(self) -> list[dict[str, Any]]:
+        """The Agora's agents with their last heartbeat or action; empty when the Agora is unreachable."""
+        agora = self._agora()
+        if agora is None or not hasattr(agora, "agents"):
+            return []
+        try:
+            rows = agora.agents({}).get("agents", [])
+        except Exception:  # noqa: BLE001
+            return []
+        return [{"id": row.get("id"), "last_seen": row.get("last_seen")} for row in rows if isinstance(row, dict)]
+
     def _open_agora_tasks(self) -> list[dict[str, Any]]:
         """The Agora's live tasks (the open ones are the leaders' pending work); empty when the Agora is unreachable."""
         agora = self._agora()
@@ -882,7 +893,7 @@ class AgoraConsoleFacet(Facet):
             faustus_current = self._faustus_current_settings()
         now = time.time()
         states = build_leader_states(
-            LEADERS, tasks=self._open_agora_tasks(), now=now,
+            LEADERS, tasks=self._open_agora_tasks(), now=now, agents=self._agora_agents(),
             faustus_native_session=faustus_current.get("native_session"),
             faustus_provider_state=str((providers.get("faustus") or {}).get("state") or ""))
         return {"ok": True, "checked_at": now, "states": states,

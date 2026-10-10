@@ -30,6 +30,8 @@ Next to each leader's name the rail shows what that leader's CLI is doing right 
 
 Each state carries `last_activity_at`, `source` (`claude_session`, `claude_credentials`, `codex_session`, `cursor_launch_state`, `cursor_log`, `faustus_native_session`) and a fixed-sentence `detail`. A leader that is `idle`, `auth_expired` or `error` while it owns open Agora tasks (`claimed`, `in_progress` or `changes`, owner equal to its agent id or starting with `<leader>-`) gets `idle_with_work: true`; the rail then outlines it in red and writes how many tasks wait ("2 tareas abiertas sin atender").
 
+The Agora itself is the second witness: a leader whose agents (its id or `<leader>-*`) heartbeat or act in the Agora within 15 minutes is `working` with `source: agora` when its local files say `idle` or `unknown` (a session on another machine or in the cloud writes nothing on this PC), and is never flagged `idle_with_work`. Each state also carries `agora_last_seen_at`.
+
 It is returned as `live_state` and `idle_with_work` on every leader of `GET /api/agora/console/overview`, alone by `GET /api/agora/console/leaders`, by the MCP tool `hub_agora_console_leaders` and by `python scripts/agora.py leaders`. Paths can be overridden with `HOARD_LEADER_CLAUDE_PROJECTS`, `HOARD_LEADER_CLAUDE_CREDENTIALS`, `HOARD_LEADER_CODEX_SESSIONS` and `HOARD_LEADER_CURSOR_DIR` (default `D:\LocalAI\cursor`).
 
 ## Conversation and colours

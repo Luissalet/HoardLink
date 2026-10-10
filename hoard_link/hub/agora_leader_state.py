@@ -512,21 +512,61 @@ def open_task_ids(tasks: Iterable[dict[str, Any]], leader_id: str, agent_ids: It
     return sorted(ids)
 
 
+#: An Ágora heartbeat or post this recent means the leader is working, even
+#: when its local session files say otherwise (a session that runs on another
+#: machine or in the cloud writes nothing here).
+AGORA_ACTIVE_S = 15 * 60
+
+
+def agora_last_seen(agents: Iterable[dict[str, Any]], leader_id: str, agent_ids: Iterable[str]) -> Optional[float]:
+    """The newest Ágora ``last_seen`` among the leader's agents (its id, or ``<leader>-*``)."""
+    own = {str(a).lower() for a in agent_ids}
+    prefix = leader_id.lower() + "-"
+    best: Optional[float] = None
+    for a in agents or []:
+        if not isinstance(a, dict):
+            continue
+        aid = str(a.get("id") or "").lower()
+        if not aid or not (aid in own or aid.startswith(prefix)):
+            continue
+        try:
+            seen = float(a.get("last_seen") or 0)
+        except (TypeError, ValueError):
+            continue
+        if seen and (best is None or seen > best):
+            best = seen
+    return best
+
+
 def build_leader_states(leaders: Iterable[tuple[str, str, str]], *, tasks: Iterable[dict[str, Any]] = (),
                         faustus_native_session: Optional[dict[str, Any]] = None, faustus_provider_state: str = "",
                         now: Optional[float] = None, paths: Optional[dict[str, Any]] = None,
-                        pid_alive: Callable[[Any], bool] = default_pid_alive) -> dict[str, dict[str, Any]]:
+                        pid_alive: Callable[[Any], bool] = default_pid_alive,
+                        agents: Iterable[dict[str, Any]] = ()) -> dict[str, dict[str, Any]]:
     """Live state of every ``(leader_id, name, agent_id)`` plus its open tasks and the ``idle_with_work`` flag."""
     now = time.time() if now is None else float(now)
     states = read_leader_states(now, paths=paths, pid_alive=pid_alive)
     states["faustus"] = faustus_state(faustus_native_session, faustus_provider_state)
     task_list = list(tasks or [])
+    agent_list = list(agents or [])
     out: dict[str, dict[str, Any]] = {}
     for leader_id, name, agent_id in leaders:
         state = dict(states.get(leader_id) or _result("unknown", "none", "Sin lector para este líder.", None))
         open_ids = open_task_ids(task_list, leader_id, (agent_id,))
         state["open_tasks"] = open_ids
-        state["idle_with_work"] = bool(open_ids) and state["state"] in NEEDS_ATTENTION
+        seen = agora_last_seen(agent_list, leader_id, (agent_id,))
+        state["agora_last_seen_at"] = _iso(seen)
+        if seen is not None and now - seen <= AGORA_ACTIVE_S and state["state"] in ("idle", "unknown"):
+            last_ts = state.get("last_activity_ts")
+            if last_ts is None or seen > float(last_ts):
+                state = dict(state, **_result(
+                    "working", "agora",
+                    "Activo en el Ágora (latido o mensaje reciente); su sesión no deja ficheros en este PC.", seen),
+                    open_tasks=open_ids, agora_last_seen_at=_iso(seen))
+        # Recently active in the Ágora means somebody IS on it, whatever the
+        # local files say (a logged-out local CLI next to a working cloud one).
+        agora_active = seen is not None and now - seen <= AGORA_ACTIVE_S
+        state["idle_with_work"] = bool(open_ids) and state["state"] in NEEDS_ATTENTION and not agora_active
         if state["idle_with_work"]:
             state["detail"] += f" Tiene {len(open_ids)} tarea(s) abierta(s) sin que nadie trabaje en ellas."
         out[leader_id] = state
