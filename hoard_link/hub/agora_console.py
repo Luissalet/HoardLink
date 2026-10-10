@@ -1394,8 +1394,18 @@ class AgoraConsoleFacet(Facet):
         caller_text = str(caller or "")
         valid_caller = bool(caller_text) and len(caller_text) <= 64 and caller_text.isascii() and all(
             ch.isalnum() or ch in "_-" for ch in caller_text)
-        actor = "luis" if caller == "ui" else (caller_to_agent.get(caller_text, caller_text) if req.agent() and valid_caller
-                                                   else caller_to_agent.get(caller_text, caller_text if caller_text in known_agent_ids else "codex-console"))
+        if caller == "ui":
+            actor = "luis"
+        elif req.agent() and caller_text == "hub":
+            # The shared Hub bearer authenticates the request but is not a
+            # person or Agora agent identity. Attribute its API writes to the
+            # console service identity; the Hub page remains the only caller
+            # that writes as Luis.
+            actor = "codex-console"
+        elif req.agent() and valid_caller:
+            actor = caller_to_agent.get(caller_text, caller_text)
+        else:
+            actor = caller_to_agent.get(caller_text, caller_text if caller_text in known_agent_ids else "codex-console")
         if req.path == "/api/agora/console/message":
             return self.send_message(args, actor)
         if req.path == "/api/agora/console/preferences":
