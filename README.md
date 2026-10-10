@@ -988,3 +988,7 @@ MIT — see [LICENSE](LICENSE).
 ## Family expansion · 2026-10-04
 
 `hub_capability_find` searches all installed sibling manifests, including stdio-only MCP plugins such as GamerHoard. With `check=true` it checks at most eight HTTP catalogues, returns real schemas/annotations and distinguishes declarations from connectivity. It never starts apps or infers model readiness from a catalogue. `hub_recipe_plan` maps 15 cross-family workflows to actual declared capabilities and lists uncovered stages, including measured CAD, personal continuity and the games library. The Capabilities tab exposes both. These plans use existing family execution and resource services; stdio-only tools are called through Faustus MCP, not through a fabricated HTTP endpoint. Discovery does not change the Hub's web-app launcher inventory.
+
+## Agora desktop console
+
+The team console has its own Rust/Tauri Windows window and a full browser view at `/agora/`. It preserves the existing Hub coordination store and operations. See [run, model catalogs, quota pools and worker validation](docs/agora-app.md). Source checkouts require a frontend build; unavailable providers and quotas remain explicit.

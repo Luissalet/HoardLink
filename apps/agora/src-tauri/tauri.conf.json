@@ -1,0 +1,6 @@
+{
+ "$schema":"https://schema.tauri.app/config/2", "productName":"Ágora", "version":"0.1.0", "identifier":"com.hoard.agora",
+ "build":{"beforeDevCommand":"npm run dev","devUrl":"http://127.0.0.1:62840","beforeBuildCommand":"npm run build","frontendDist":"../dist"},
+ "app":{"windows":[{"title":"Ágora — Faustus & Hoards","width":1360,"height":900,"minWidth":920,"minHeight":640}],"security":{"csp":"default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"}},
+ "bundle":{"active":false}
+}
