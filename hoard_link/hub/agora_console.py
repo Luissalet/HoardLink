@@ -60,6 +60,44 @@ class AgoraConsoleFacet(Facet):
         self._init_db()
         self._reconcile_workers()
         self._start_queued_leaders()
+        self._capacity_reporter_started = False
+
+    def start(self) -> None:
+        """Start the read-only Codex quota reporter bound to this Hub instance."""
+        config = getattr(self.hub, "config", None)
+        hub_url = str(getattr(config, "url", "") or "").rstrip("/")
+        data_dir = str(getattr(config, "data_dir", "") or "")
+        token_file = str(getattr(config, "token_file", "") or "")
+        if not (hub_url and data_dir and token_file):
+            return
+        try:
+            from .agora_capacity import start_codex_capacity_reporter
+
+            start_codex_capacity_reporter(
+                interval_seconds=90,
+                reporter_kwargs={
+                    "repo_root": Path(__file__).resolve().parents[2],
+                    "env": {
+                        "HOARD_HUB_URL": hub_url,
+                        "HOARD_HUB_DATA_DIR": data_dir,
+                        "HOARD_HUB_TOKEN_FILE": token_file,
+                    },
+                },
+            )
+            self._capacity_reporter_started = True
+        except Exception:
+            logger.info("Codex quota reporter could not start", exc_info=False)
+
+    def close(self) -> None:
+        if not self._capacity_reporter_started:
+            return
+        try:
+            from .agora_capacity import stop_codex_capacity_reporter
+
+            stop_codex_capacity_reporter()
+        except Exception:
+            logger.info("Codex quota reporter could not stop", exc_info=False)
+        self._capacity_reporter_started = False
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self._db_path, timeout=10)
