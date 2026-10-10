@@ -28,6 +28,7 @@ from .facets import Facet, Reply, Request
 
 logger = logging.getLogger("hoard_hub.agora_console")
 THREAD_ID = 32
+FAUSTUS_AGORA_SESSION = "cc16a8f3-7eaa-44b1-a427-21f2bfb1ae95"
 LEADERS = (
     ("codex", "Codex", "codex-investiga"),
     ("claude", "Claude", "claude"),
@@ -51,13 +52,31 @@ class AgoraConsoleFacet(Facet):
         self._provider_at = 0.0
         self._provider_cache: dict[str, dict[str, Any]] = {}
         self._processes: dict[str, subprocess.Popen[str]] = {}
+        self._leader_locks = {"codex": threading.Lock(), "cursor": threading.Lock()}
+        self._leader_threads: dict[str, threading.Thread] = {}
         self._init_db()
         self._reconcile_workers()
+        self._start_queued_leaders()
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self._db_path, timeout=10)
         db.row_factory = sqlite3.Row
         return db
+
+    @staticmethod
+    def _codex_executable() -> Optional[str]:
+        found = shutil.which("codex")
+        if found:
+            return found
+        local_app_data = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        install_root = local_app_data / "OpenAI" / "Codex" / "bin"
+        try:
+            installed = list(install_root.glob("*/codex.exe"))
+        except OSError:
+            installed = []
+        if not installed:
+            return None
+        return str(max(installed, key=lambda path: path.stat().st_mtime))
 
     @contextmanager
     def _db(self):
@@ -82,17 +101,47 @@ class AgoraConsoleFacet(Facet):
                     task TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '',
                     detail TEXT NOT NULL DEFAULT '', pid INTEGER, log_path TEXT NOT NULL DEFAULT '',
                     session_id TEXT NOT NULL DEFAULT '', model_source TEXT NOT NULL DEFAULT '',
-                    created_at REAL NOT NULL, updated_at REAL NOT NULL);
+                    process_exit_code INTEGER, outcome TEXT NOT NULL DEFAULT 'unverified',
+                    tool_success_count INTEGER NOT NULL DEFAULT 0, tool_failure_count INTEGER NOT NULL DEFAULT 0,
+                    provider_error TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, updated_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS activity (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, subject TEXT NOT NULL,
                     state TEXT NOT NULL, detail TEXT NOT NULL, created_at REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS console_activity_created ON activity(created_at DESC);
+                CREATE TABLE IF NOT EXISTS leader_sessions (
+                    leader_id TEXT PRIMARY KEY, session_id TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '',
+                    state TEXT NOT NULL DEFAULT 'idle', detail TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS leader_turns (
+                    id TEXT PRIMARY KEY, leader_id TEXT NOT NULL, message_id TEXT NOT NULL,
+                    prompt TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL,
+                    state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '',
+                    session_id TEXT NOT NULL DEFAULT '', process_exit_code INTEGER,
+                    outcome TEXT NOT NULL DEFAULT 'unverified', tool_success_count INTEGER NOT NULL DEFAULT 0,
+                    tool_failure_count INTEGER NOT NULL DEFAULT 0, provider_error TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL, updated_at REAL NOT NULL);
+                CREATE INDEX IF NOT EXISTS console_leader_turns_queue ON leader_turns(leader_id,state,created_at);
+                CREATE TABLE IF NOT EXISTS native_preferences (
+                    leader_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
+                    effort TEXT NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+                    updated_at REAL NOT NULL);
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(workers)")}
             if "session_id" not in columns:
                 db.execute("ALTER TABLE workers ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
             if "model_source" not in columns:
                 db.execute("ALTER TABLE workers ADD COLUMN model_source TEXT NOT NULL DEFAULT ''")
+            for name, declaration in (("process_exit_code", "INTEGER"), ("outcome", "TEXT NOT NULL DEFAULT 'unverified'"),
+                                      ("tool_success_count", "INTEGER NOT NULL DEFAULT 0"), ("tool_failure_count", "INTEGER NOT NULL DEFAULT 0"),
+                                      ("provider_error", "TEXT NOT NULL DEFAULT ''")):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE workers ADD COLUMN {name} {declaration}")
+            turn_columns = {row[1] for row in db.execute("PRAGMA table_info(leader_turns)")}
+            for name, declaration in (("process_exit_code", "INTEGER"), ("outcome", "TEXT NOT NULL DEFAULT 'unverified'"),
+                                      ("tool_success_count", "INTEGER NOT NULL DEFAULT 0"), ("tool_failure_count", "INTEGER NOT NULL DEFAULT 0"),
+                                      ("provider_error", "TEXT NOT NULL DEFAULT ''")):
+                if name not in turn_columns:
+                    db.execute(f"ALTER TABLE leader_turns ADD COLUMN {name} {declaration}")
 
     def _record(self, kind: str, subject: str, state: str, detail: str = "") -> None:
         with self._db_lock, self._db() as db:
@@ -111,7 +160,7 @@ class AgoraConsoleFacet(Facet):
         return values
 
     def _codex_catalog(self) -> dict[str, Any]:
-        executable = shutil.which("codex")
+        executable = self._codex_executable()
         if not executable:
             return {"state": "unavailable", "detail": "Codex CLI is not on the Hub process PATH.", "catalog": []}
         try:
@@ -177,7 +226,7 @@ class AgoraConsoleFacet(Facet):
                     continue
                 model_id, name = line.split(" - ", 1)
                 model_id, name = model_id.strip(), name.strip()
-                if model_id and model_id != "auto":
+                if model_id:
                     # Cursor publishes reasoning levels as model variants, e.g.
                     # gpt-5.6-luna-low. Keep the provider's exact selectable ID.
                     variant_id = model_id[:-5] if model_id.endswith("-fast") else model_id
@@ -185,9 +234,11 @@ class AgoraConsoleFacet(Facet):
                                   if variant_id.endswith("-" + x)), None)
                     catalog.append({"id": model_id, "name": name, "efforts": [level or "default"],
                                     "default_effort": level or "default", "effort_in_model_id": bool(level)})
+            default = next((item for item in catalog if item["id"] == "auto"), None)
             return {"state": "available" if catalog else "unavailable",
                     "detail": "Discovered from the installed managed Cursor Agent `models` command; variants encode reasoning effort in the model ID.",
-                    "catalog": catalog}
+                    "catalog": catalog, "current_model": default.get("id") if default else None,
+                    "current_effort": default.get("default_effort") if default else None}
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {"state": "unavailable", "detail": f"Could not read Cursor Agent model catalog: {type(exc).__name__}.", "catalog": []}
 
@@ -259,13 +310,235 @@ class AgoraConsoleFacet(Facet):
     def _worker_rows(self) -> list[dict[str, Any]]:
         with self._db_lock, self._db() as db:
             rows = db.execute("SELECT * FROM workers ORDER BY created_at DESC LIMIT 100").fetchall()
-        return [{k: row[k] for k in ("id", "parent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "created_at", "updated_at")}
+        return [{k: row[k] for k in ("id", "parent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
                 for row in rows]
+
+    def _console_sessions(self) -> list[dict[str, Any]]:
+        with self._db_lock, self._db() as db:
+            return [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM leader_sessions")]
 
     def _reconcile_workers(self) -> None:
         with self._db_lock, self._db() as db:
             db.execute("UPDATE workers SET state='unknown', detail='Hub restarted; the child may still be running, but its completion cannot be observed here.', updated_at=? WHERE state IN ('starting','running','paused')",
                        (time.time(),))
+            # A CLI request may have reached the provider before the Hub died.
+            # Never replay it automatically: that could create duplicate paid work.
+            db.execute("UPDATE leader_turns SET state='unknown', detail='Hub restarted during this provider turn; completion is ambiguous and it will not be retried automatically.', updated_at=? WHERE state='working'",
+                       (time.time(),))
+            db.execute("UPDATE leader_sessions SET state='unknown', detail='Hub restarted; session state needs reconciliation before another turn.', updated_at=? WHERE state='working'",
+                       (time.time(),))
+
+    def _start_queued_leaders(self) -> None:
+        for leader_id in ("codex", "cursor"):
+            with self._db_lock, self._db() as db:
+                pending = db.execute("SELECT 1 FROM leader_turns WHERE leader_id=? AND state='queued' LIMIT 1", (leader_id,)).fetchone()
+            if pending:
+                self._ensure_leader_drain(leader_id)
+
+    def _ensure_leader_drain(self, leader_id: str) -> None:
+        current = self._leader_threads.get(leader_id)
+        if current and current.is_alive():
+            return
+        thread = threading.Thread(target=self._drain_leader, args=(leader_id,), daemon=True,
+                                  name=f"agora-leader-{leader_id}")
+        self._leader_threads[leader_id] = thread
+        thread.start()
+
+    def _enqueue_leader_turn(self, leader_id: str, message_id: Any, body: str) -> dict[str, Any]:
+        if leader_id not in ("codex", "cursor"):
+            return {"leader_id": leader_id, "status": "queued" if leader_id == "faustus" else "unavailable",
+                    "receipt_id": message_id, "detail": "Faustus is addressed through its native watcher; its current turn is left undisturbed." if leader_id == "faustus" else "Claude authentication is expired (HTTP 401); no provider turn was started."}
+        provider = self._provider_data().get(leader_id) or {}
+        saved = self._preferences().get(leader_id, {})
+        model = str(saved.get("model") or provider.get("current_model") or "").strip()
+        effort = str(saved.get("effort") or provider.get("current_effort") or "").strip().lower()
+        selected = next((row for row in provider.get("catalog", []) if row.get("id") == model), None)
+        effort = effort or str((selected or {}).get("default_effort") or "").strip().lower()
+        executable = self._codex_executable() if leader_id == "codex" else None
+        cursor_runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
+        available = bool(executable) if leader_id == "codex" else (cursor_runtime / "node.exe").is_file() and (cursor_runtime / "index.js").is_file()
+        if not available or not selected or effort not in (selected.get("efforts") or []):
+            return {"leader_id": leader_id, "status": "unavailable", "receipt_id": None,
+                    "detail": provider.get("detail") or "No verified model and effort are configured for this independent leader session."}
+        agora = self._agora()
+        recent = agora.thread_recent({"thread_id": THREAD_ID, "limit": 40}) if agora is not None else {}
+        messages = recent.get("messages", []) if isinstance(recent, dict) else []
+        context = []
+        for row in messages[-20:]:
+            if isinstance(row, dict):
+                author = str(row.get("author") or row.get("agent") or "unknown")[:80]
+                text = str(row.get("body") or row.get("text") or "")[:4000]
+                if text:
+                    context.append(f"{author}: {text}")
+        identity = "codex-agora" if leader_id == "codex" else "cursor-agora"
+        prompt = ("You are the independent Agora console leader " + identity + ". Continue the shared work chat. "
+                  "At the start of each turn, use `D:\\LocalAI\\agora.cmd --as " + identity + " hb \"...\"`, then read inbox and board. "
+                  "Before editing, read `D:\\LocalAI\\CRITERIOS.md` first and `D:\\LocalAI\\MEMORY.md` second; also read the repo AGENTS.md. "
+                  "Use this exact identity for all Agora operations; never impersonate Luis or another agent. "
+                  "Do not claim that queued messages woke another agent. Answer the latest message with useful work or a concise status. "
+                  "If you change files, follow the repo's skills and Agora protocol, work in an isolated worktree, create/claim the Agora task, "
+                  "and take path locks first. Do not fake reviews or claim a task complete without evidence.\n\nRecent canonical thread 32:\n" + "\n".join(context))[-30000:]
+        turn_id, now = str(uuid.uuid4()), time.time()
+        with self._db_lock, self._db() as db:
+            db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'queued',?,?)",
+                       (turn_id, leader_id, str(message_id or ""), prompt, model, effort, now, now))
+        self._record("leader_turn", turn_id, "queued", f"{leader_id}; {model}/{effort}; canonical message {message_id}")
+        self._ensure_leader_drain(leader_id)
+        return {"leader_id": leader_id, "status": "queued", "receipt_id": turn_id,
+                "detail": f"Queued for the independent {leader_id.title()} console session ({model}/{effort}); reply will be posted only after a real CLI turn completes."}
+
+    def _drain_leader(self, leader_id: str) -> None:
+        with self._leader_locks[leader_id]:
+            while True:
+                with self._db_lock, self._db() as db:
+                    session = db.execute("SELECT state,session_id FROM leader_sessions WHERE leader_id=?", (leader_id,)).fetchone()
+                    if session and session["state"] == "unknown":
+                        db.execute("UPDATE leader_turns SET detail='Blocked: the prior provider turn is ambiguous after Hub restart. Confirm that session is idle before continuing.',updated_at=? WHERE leader_id=? AND state='queued'",
+                                   (time.time(), leader_id))
+                        return
+                    row = db.execute("SELECT * FROM leader_turns WHERE leader_id=? AND state='queued' ORDER BY created_at,id LIMIT 1", (leader_id,)).fetchone()
+                    if row is None:
+                        return
+                    db.execute("UPDATE leader_turns SET state='working',updated_at=? WHERE id=? AND state='queued'", (time.time(), row["id"]))
+                    db.execute("INSERT INTO leader_sessions(leader_id,state,detail,updated_at) VALUES(?,'working','Provider turn started',?) ON CONFLICT(leader_id) DO UPDATE SET state='working',detail='Provider turn started',updated_at=excluded.updated_at",
+                               (leader_id, time.time()))
+                self._run_leader_turn(dict(row))
+
+    def _run_leader_turn(self, turn: dict[str, Any]) -> None:
+        leader_id, turn_id = turn["leader_id"], turn["id"]
+        work_dir = Path(__file__).resolve().parents[2]
+        base = Path(self.hub.config.data_dir).resolve() / "agora-console" / "leaders" / leader_id
+        base.mkdir(parents=True, exist_ok=True)
+        log_path, result_path = base / f"{turn_id}.jsonl", base / f"{turn_id}.result.txt"
+        with self._db_lock, self._db() as db:
+            prior = db.execute("SELECT session_id FROM leader_sessions WHERE leader_id=?", (leader_id,)).fetchone()
+        session_id = str(prior["session_id"] or "") if prior else ""
+        if leader_id == "codex":
+            executable = self._codex_executable()
+            if not executable:
+                self._finish_leader_turn(turn_id, leader_id, "failed", "Codex CLI is unavailable to the Hub process.", "", "")
+                return
+            if session_id:
+                command = [executable, "exec", "resume", "--json", session_id, "--model", turn["model"],
+                           "--config", f'model_reasoning_effort="{turn["effort"]}"',
+                           "--config", 'approval_policy="never"', "--sandbox", "danger-full-access",
+                           "--cd", str(work_dir), "--output-last-message", str(result_path), turn["prompt"]]
+            else:
+                command = [executable, "exec", "--json", "--model", turn["model"], "--config",
+                           f'model_reasoning_effort="{turn["effort"]}"', "--config", 'approval_policy="never"',
+                           "--sandbox", "danger-full-access", "--worktree",
+                           "--cd", str(work_dir), "--output-last-message", str(result_path), turn["prompt"]]
+        else:
+            runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
+            node, entry = runtime / "node.exe", runtime / "index.js"
+            if not node.is_file() or not entry.is_file():
+                self._finish_leader_turn(turn_id, leader_id, "failed", "Managed Cursor CLI is unavailable.", "", "")
+                return
+            command = [str(node), str(entry), "--print", "--output-format", "stream-json", "--model", turn["model"],
+                       "--workspace", str(work_dir)]
+            if session_id:
+                command.extend(["--resume", session_id])
+            else:
+                command.append("--worktree")
+            command.append(turn["prompt"])
+        observer_done = threading.Event()
+        observer = threading.Thread(target=self._observe_leader_session, args=(turn_id, leader_id, log_path, observer_done),
+                                    daemon=True, name=f"agora-session-observer-{leader_id}")
+        observer.start()
+        try:
+            with log_path.open("w", encoding="utf-8") as log:
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                        text=True, cwd=str(work_dir), timeout=1800, check=False,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            observer_done.set()
+            observer.join(timeout=1)
+            self._record_leader_session(turn_id, leader_id, log_path)
+            found_session, stream_text = self._read_runner_receipt(log_path)
+            answer = result_path.read_text(encoding="utf-8")[:20000] if result_path.is_file() else stream_text[:20000]
+            metrics = self._runner_metrics(log_path)
+            state = "completed" if result.returncode == 0 else "failed"
+            outcome = "provider_error" if metrics["provider_error"] else ("missing_final_response" if not answer.strip() else "unverified")
+            detail = (f"{leader_id.title()} provider turn ended with exit code {result.returncode}; task outcome is {outcome}." if state == "completed"
+                      else f"{leader_id.title()} CLI exited with status {result.returncode}.")
+            self._finish_leader_turn(turn_id, leader_id, state, detail, answer, found_session or session_id,
+                                     process_exit_code=result.returncode, outcome=outcome, metrics=metrics)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            observer_done.set()
+            self._finish_leader_turn(turn_id, leader_id, "failed", f"{leader_id.title()} turn failed: {type(exc).__name__}.", "", session_id)
+
+    def _observe_leader_session(self, turn_id: str, leader_id: str, log_path: Path, done: threading.Event) -> None:
+        while not done.wait(0.5):
+            self._record_leader_session(turn_id, leader_id, log_path)
+
+    def _record_leader_session(self, turn_id: str, leader_id: str, log_path: Path) -> None:
+        session_id, _ = self._read_runner_receipt(log_path)
+        if not session_id:
+            return
+        now = time.time()
+        with self._db_lock, self._db() as db:
+            turn = db.execute("SELECT model,effort FROM leader_turns WHERE id=?", (turn_id,)).fetchone()
+            if not turn:
+                return
+            db.execute("UPDATE leader_turns SET session_id=?,updated_at=? WHERE id=? AND session_id=''",
+                       (session_id, now, turn_id))
+            db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,detail,updated_at) VALUES(?,?,?,?, 'working','Provider session observed from its runner receipt',?) ON CONFLICT(leader_id) DO UPDATE SET session_id=excluded.session_id,model=excluded.model,effort=excluded.effort,state='working',detail=excluded.detail,updated_at=excluded.updated_at",
+                       (leader_id, session_id, turn["model"], turn["effort"], now))
+
+    def _finish_leader_turn(self, turn_id: str, leader_id: str, state: str, detail: str, answer: str, session_id: str,
+                            *, process_exit_code: Optional[int] = None, outcome: str = "unverified",
+                            metrics: Optional[dict[str, Any]] = None) -> None:
+        now = time.time()
+        metrics = metrics or {"tool_success_count": 0, "tool_failure_count": 0, "provider_error": ""}
+        with self._db_lock, self._db() as db:
+            turn = db.execute("SELECT model,effort FROM leader_turns WHERE id=?", (turn_id,)).fetchone()
+            model, effort = (turn["model"], turn["effort"]) if turn else ("", "")
+            db.execute("UPDATE leader_turns SET state=?,result=?,detail=?,session_id=?,process_exit_code=?,outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,updated_at=? WHERE id=?",
+                       (state, answer[:20000], detail[:1000], session_id, process_exit_code, outcome,
+                        metrics["tool_success_count"], metrics["tool_failure_count"], str(metrics["provider_error"] or "")[:1000], now, turn_id))
+            db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,detail,updated_at) SELECT leader_id,?,?,?,?,?,? FROM leader_turns WHERE id=? ON CONFLICT(leader_id) DO UPDATE SET session_id=excluded.session_id,model=excluded.model,effort=excluded.effort,state=excluded.state,detail=excluded.detail,updated_at=excluded.updated_at",
+                       (session_id, model, effort, "idle" if state == "completed" else state, detail[:1000], now, turn_id))
+        if state == "completed" and answer.strip():
+            agora = self._agora()
+            if agora is not None:
+                actor = "codex-agora" if leader_id == "codex" else "cursor-agora"
+                try:
+                    agora.post({"agent": actor, "thread_id": THREAD_ID, "body": answer[:20000], "kind": "comment", "mentions": []})
+                except Exception:  # noqa: BLE001
+                    logger.exception("could not post real %s console response", leader_id)
+        self._record("leader_turn", turn_id, state, detail or f"{leader_id} real provider response recorded.")
+
+    @staticmethod
+    def _runner_metrics(path: Path) -> dict[str, Any]:
+        successes = failures = 0
+        provider_error = ""
+        if not path.is_file():
+            return {"tool_success_count": 0, "tool_failure_count": 0, "provider_error": ""}
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
+                kind = str(event.get("type") or event.get("event") or "").lower()
+                item = payload.get("item") if isinstance(payload.get("item"), dict) else payload
+                item_kind = str(item.get("type") or item.get("kind") or "").lower()
+                if "error" in kind or kind.endswith(".failed") or payload.get("is_error") is True:
+                    provider_error = str(payload.get("message") or payload.get("error") or payload.get("text") or kind)[:1000]
+                code = item.get("exit_code")
+                state = str(item.get("status") or payload.get("status") or "").lower()
+                is_tool = any(token in item_kind or token in kind for token in
+                              ("tool_call", "tool_result", "command_execution", "tool_use"))
+                if is_tool:
+                    if code == 0 or state in ("success", "succeeded", "completed"):
+                        successes += 1
+                    elif code is not None or state in ("error", "failed", "failure") or payload.get("is_error") is True:
+                        failures += 1
+        except OSError:
+            pass
+        return {"tool_success_count": successes, "tool_failure_count": failures, "provider_error": provider_error}
 
     def overview(self, refresh: bool = False) -> dict[str, Any]:
         provider_data = self._provider_data(force=refresh)
@@ -294,10 +567,14 @@ class AgoraConsoleFacet(Facet):
                             "detail": provider.get("detail", ""), "model": model, "effort": effort,
                             "catalog": catalog, "agent_id": agent_id,
                             "agent_state": observed.get("state", "unknown"),
-                            "agent_detail": observed.get("doing") or observed.get("note") or ""})
+                            "agent_detail": observed.get("doing") or observed.get("note") or "",
+                            "console_session": next((row for row in self._console_sessions() if row["leader_id"] == leader_id), None)})
         usage = agora.usage() if agora is not None else {"ok": False, "providers": []}
         with self._db_lock, self._db() as db:
             activity = [dict(row) for row in db.execute("SELECT id,kind,subject,state,detail,created_at FROM activity ORDER BY id DESC LIMIT 40")]
+            console_turns = [dict(row) for row in db.execute("SELECT id,leader_id,message_id,model,effort,state,result,detail,session_id,process_exit_code,outcome,tool_success_count,tool_failure_count,provider_error,created_at,updated_at FROM leader_turns ORDER BY created_at DESC LIMIT 40")]
+            console_sessions = [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM leader_sessions")]
+            native_preferences = [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM native_preferences")]
         messages = None
         if agora is not None:
             recent = agora.thread_recent({"thread_id": THREAD_ID, "limit": 40})
@@ -305,7 +582,9 @@ class AgoraConsoleFacet(Facet):
                 messages = recent
         return {"ok": True, "thread_id": THREAD_ID, "leaders": leaders,
                 "workers": self._worker_rows(), "quota_pools": usage.get("providers", []),
-                "activity": activity, "messages": messages, "checked_at": time.time()}
+                "activity": activity, "messages": messages, "console_turns": console_turns,
+                "console_sessions": console_sessions, "native_preferences": native_preferences,
+                "checked_at": time.time()}
 
     def _agora(self) -> Any:
         facet = self.hub.facet("agora") if hasattr(self.hub, "facet") else None
@@ -326,9 +605,9 @@ class AgoraConsoleFacet(Facet):
             effort = str(selected.get("default_effort") or "").strip().lower()
         verified = bool(selected and effort in selected.get("efforts", []))
         warning = None if verified else "Provider has not verified this model and effort; preference is recorded for the next compatible turn."
-        applies_to = "next_child_worker_default" if leader_id in ("codex", "cursor") else "pending_native_session_control"
+        applies_to = "next_console_leader_turn_and_child_worker_default" if leader_id in ("codex", "cursor") else "pending_native_session_control"
         if leader_id == "faustus":
-            warning = (warning + " " if warning else "") + "Saved only: the active Faustus watcher/session was not changed; native idle-turn preference control is pending."
+            warning = (warning + " " if warning else "") + "Saved for a native per-session control API; no Faustus session or Primary endpoint was changed."
         elif leader_id == "claude":
             warning = (warning + " " if warning else "") + "Claude is currently unavailable because its OAuth token expired."
         now = time.time()
@@ -336,9 +615,15 @@ class AgoraConsoleFacet(Facet):
             db.execute("INSERT INTO preferences(leader_id,model,effort,updated_by,updated_at) VALUES(?,?,?,?,?) "
                        "ON CONFLICT(leader_id) DO UPDATE SET model=excluded.model,effort=excluded.effort,updated_by=excluded.updated_by,updated_at=excluded.updated_at",
                        (leader_id, model, effort, actor[:80], now))
+            if leader_id == "faustus":
+                db.execute("INSERT INTO native_preferences(leader_id,session_id,model,effort,state,detail,updated_at) VALUES(?,?,?,?, 'pending','',?) ON CONFLICT(leader_id) DO UPDATE SET session_id=excluded.session_id,model=excluded.model,effort=excluded.effort,state='pending',detail='',updated_at=excluded.updated_at",
+                           (leader_id, FAUSTUS_AGORA_SESSION, model, effort, now))
         self._record("preference", leader_id, "saved", f"{model} · {effort}" + (f" · {warning}" if warning else ""))
+        if leader_id == "faustus":
+            applies_to = "pending_native_per_session_control"
         return {"ok": True, "leader_id": leader_id, "model": model, "effort": effort,
                 "verified": verified, "applies_to": applies_to, "warning": warning, "updated_at": now}
+
 
     def send_message(self, args: dict[str, Any], actor: str = "codex-console") -> dict[str, Any]:
         body = str(args.get("body") or "").strip()
@@ -363,10 +648,21 @@ class AgoraConsoleFacet(Facet):
         for leader_id in recipients:
             target = leader_map[leader_id]
             present = target in known
-            dispatch.append({"leader_id": leader_id, "agent_id": target,
-                             "status": "queued" if present else "unavailable",
-                             "receipt_id": message_id if present else None,
-                             "detail": "Stored as a canonical Agora mention; the recipient wakes on its next turn." if present else "No matching Agora agent identity is registered."})
+            console = self._enqueue_leader_turn(leader_id, message_id, body)
+            if leader_id in ("codex", "cursor"):
+                dispatch.append({**console, "agent_id": target,
+                                 "legacy_mention": {"status": "queued" if present else "unavailable",
+                                                    "receipt_id": message_id if present else None,
+                                                    "detail": "Canonical mention waits for the existing agent's next turn." if present else "No matching existing agent identity is registered."}})
+            elif leader_id == "faustus":
+                dispatch.append({**console, "agent_id": target, "legacy_mention": {"status": "queued" if present else "unavailable",
+                                                                                     "receipt_id": message_id if present else None,
+                                                                                     "detail": "Native watcher handles this mention on its next turn." if present else "No matching existing agent identity is registered."}})
+            else:
+                dispatch.append({**console, "agent_id": target,
+                                 "legacy_mention": {"status": "queued" if present else "unavailable",
+                                                    "receipt_id": message_id if present else None,
+                                                    "detail": "Canonical mention waits for Claude's next turn." if present else "No matching existing agent identity is registered."}})
         self._record("message", str(message_id or THREAD_ID), "queued", f"thread={THREAD_ID}; recipients={','.join(recipients)}")
         return {"ok": True, "thread_id": THREAD_ID, "message_id": message_id, "author": actor,
                 "dispatch": dispatch, "delivery_semantics": "queued; a mention does not wake an idle agent immediately"}
@@ -385,7 +681,7 @@ class AgoraConsoleFacet(Facet):
         model = model or str(saved.get("model") or provider.get("current_model") or "").strip()
         effort = effort or str(saved.get("effort") or provider.get("current_effort") or "").strip().lower()
         row = next((m for m in provider.get("catalog", []) if m.get("id") == model), None)
-        executable = shutil.which("codex") if leader_id == "codex" else None
+        executable = self._codex_executable() if leader_id == "codex" else None
         cursor_runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
         cursor_runner = cursor_runtime / "node.exe"
         cursor_entry = cursor_runtime / "index.js"
@@ -414,12 +710,13 @@ class AgoraConsoleFacet(Facet):
                   f"Task: {task}")
         if leader_id == "codex":
             command = [executable, "exec", "--json", "--model", model, "--config", f'model_reasoning_effort="{effort}"',
-                       "--sandbox", "workspace-write", "--worktree", "--cd", str(work_dir),
+                       "--config", 'approval_policy="never"', "--sandbox", "danger-full-access",
+                       "--worktree", "--cd", str(work_dir),
                        "--output-last-message", str(result_path), prompt]
             model_source = "installed Codex CLI catalog + independent `codex exec --worktree` session"
         else:
             command = [str(cursor_runner), str(cursor_entry), "--print", "--output-format", "stream-json",
-                       "--model", model, "--workspace", str(work_dir), "--trust", "--worktree", prompt]
+                       "--model", model, "--workspace", str(work_dir), "--worktree", prompt]
             model_source = "installed managed Cursor Agent `models` catalog + independent `--worktree` session"
         try:
             log = open(log_path, "a", encoding="utf-8")
@@ -450,11 +747,15 @@ class AgoraConsoleFacet(Facet):
                 result = result_path.read_text(encoding="utf-8")[:20000] if result_path.is_file() else stream_result[:20000]
             except OSError:
                 result = ""
+            metrics = self._runner_metrics(log_path)
             state = "completed" if code == 0 else "failed"
-            detail = "" if code == 0 else f"Codex worker exited with status {code}."
+            outcome = "provider_error" if metrics["provider_error"] else ("missing_final_response" if not result.strip() else "unverified")
+            detail = (f"Codex provider turn ended with exit code {code}; task outcome is {outcome}." if state == "completed"
+                      else f"Codex worker exited with status {code}.")
             with self._db_lock, self._db() as db:
-                db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=CASE WHEN ?='' THEN session_id ELSE ? END,updated_at=? WHERE id=?",
-                           (state, result, detail, session_id, session_id, time.time(), worker_id))
+                db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=CASE WHEN ?='' THEN session_id ELSE ? END,process_exit_code=?,outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,updated_at=? WHERE id=?",
+                           (state, result, detail, session_id, session_id, code, outcome, metrics["tool_success_count"],
+                            metrics["tool_failure_count"], metrics["provider_error"], time.time(), worker_id))
             self._record("worker", worker_id, state, detail or "Child worker finished.")
         except Exception:  # noqa: BLE001
             logger.exception("worker monitor failed for %s", worker_id)
@@ -510,9 +811,24 @@ class AgoraConsoleFacet(Facet):
             return self._create_worker(args, actor)
         if action in ("register", "heartbeat", "finish"):
             return self._external_worker(args, action, actor)
+        if action == "reconcile":
+            leader_id = str(args.get("leader_id") or "").strip().lower()
+            session_id = str(args.get("session_id") or "").strip()
+            if leader_id not in ("codex", "cursor") or not session_id or args.get("confirm_idle") is not True:
+                return {"ok": False, "status": 400, "error": "reconcile requires a Codex/Cursor leader, its exact session_id and confirm_idle=true"}
+            with self._db_lock, self._db() as db:
+                row = db.execute("SELECT session_id,state FROM leader_sessions WHERE leader_id=?", (leader_id,)).fetchone()
+                if not row or row["session_id"] != session_id or row["state"] != "unknown":
+                    return {"ok": False, "status": 409, "error": "leader session is not the matching ambiguous session"}
+                db.execute("UPDATE leader_sessions SET state='idle',detail='Operator confirmed the exact provider session is idle; ambiguous turn remains unknown and will not be retried.',updated_at=? WHERE leader_id=?",
+                           (time.time(), leader_id))
+            self._record("leader_session", leader_id, "idle", "Operator confirmed the exact provider session is idle; previous ambiguous turn was not retried.")
+            self._ensure_leader_drain(leader_id)
+            return {"ok": True, "leader_id": leader_id, "session_id": session_id, "state": "idle",
+                    "detail": "The ambiguous turn remains unknown; queued later turns may now continue."}
         if action in ("stop", "cancel"):
             return self._stop_worker(str(args.get("worker_id") or ""))
-        return {"ok": False, "status": 400, "error": "action must be create, register, heartbeat, finish or stop"}
+        return {"ok": False, "status": 400, "error": "action must be create, stop, register, heartbeat, finish or reconcile"}
 
     def _external_worker(self, args: dict[str, Any], action: str, actor: str) -> dict[str, Any]:
         worker_id = str(args.get("worker_id") or "").strip()
@@ -591,7 +907,11 @@ class AgoraConsoleFacet(Facet):
         caller = req.caller()
         known_agent_ids = {row[2] for row in LEADERS}
         caller_to_agent = {row[0]: row[2] for row in LEADERS}
-        actor = "luis" if caller == "ui" else caller_to_agent.get(str(caller), str(caller) if caller in known_agent_ids else "codex-console")
+        caller_text = str(caller or "")
+        valid_caller = bool(caller_text) and len(caller_text) <= 64 and caller_text.isascii() and all(
+            ch.isalnum() or ch in "_-" for ch in caller_text)
+        actor = "luis" if caller == "ui" else (caller_to_agent.get(caller_text, caller_text) if req.agent() and valid_caller
+                                                   else caller_to_agent.get(caller_text, caller_text if caller_text in known_agent_ids else "codex-console"))
         if req.path == "/api/agora/console/message":
             return self.send_message(args, actor)
         if req.path == "/api/agora/console/preferences":
@@ -639,18 +959,18 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_message", "description": "Post one attributed message to canonical Agora work thread 32 and mention the selected existing leaders. Mentions queue attention; they do not imply that an idle agent woke or replied. MCP agents may supply their own valid actor id; only the Hub page may post as luis.",
              "inputSchema": {"type": "object", "properties": {"body": {"type": "string", "minLength": 1, "maxLength": 20000}, "recipients": {"type": "array", "items": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}}, "actor": {"type": "string", "maxLength": 64}}, "required": ["body"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
-            {"name": "hub_agora_console_preferences", "description": "Save a verified provider model and reasoning effort; Codex/Cursor child-worker defaults use it. Faustus and Claude limitations are reported explicitly.",
-             "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "model": {"type": "string"}, "effort": {"type": "string"}}, "required": ["leader_id", "model"], "additionalProperties": False},
+            {"name": "hub_agora_console_preferences", "description": "Save a verified provider model and reasoning effort; Codex/Cursor independent console leaders and child workers consume the saved preferences. Faustus and Claude limitations are reported explicitly.",
+             "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "model": {"type": "string"}, "effort": {"type": "string"}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id", "model"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
-            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex or managed Cursor child in an isolated worktree; register and update the lifecycle of external workers using their declared real session/model source metadata.",
+            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex or managed Cursor child in an isolated worktree; register external workers from real metadata, or reconcile an ambiguous console session after its operator confirms it is idle.",
              "inputSchema": {"type": "object", "properties": {
-                 "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish"]},
+                 "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},
-                 "task": {"type": "string", "maxLength": MAX_TASK_CHARS},
+                 "task": {"type": "string", "maxLength": MAX_TASK_CHARS}, "confirm_idle": {"type": "boolean"},
                  "session_id": {"type": "string"}, "model_source": {"type": "string"},
-                 "result": {"type": "string", "maxLength": 20000}}, "additionalProperties": False},
+                 "result": {"type": "string", "maxLength": 20000}, "actor": {"type": "string", "maxLength": 64}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
         ]
 
@@ -660,9 +980,19 @@ class AgoraConsoleFacet(Facet):
             actor, error = self._mcp_actor(values)
             return error or self.send_message(values, actor)
 
+        def post_preferences(args: dict[str, Any]) -> dict[str, Any]:
+            values = dict(args)
+            actor, error = self._mcp_actor(values)
+            return error or self.set_preferences(values, actor)
+
+        def post_worker(args: dict[str, Any]) -> dict[str, Any]:
+            values = dict(args)
+            actor, error = self._mcp_actor(values)
+            return error or self.worker(values, actor)
+
         return {
             "hub_agora_console_overview": lambda a: self.overview(bool(a.get("refresh"))),
             "hub_agora_console_message": post_message,
-            "hub_agora_console_preferences": lambda a: self.set_preferences(dict(a)),
-            "hub_agora_console_worker": lambda a: self.worker(dict(a)),
+            "hub_agora_console_preferences": post_preferences,
+            "hub_agora_console_worker": post_worker,
         }
