@@ -415,6 +415,24 @@ def test_idle_expired_or_failed_leaders_with_open_tasks_are_flagged(tmp_path):
     assert again["cursor"]["idle_with_work"] is True                       # failed counts as needing attention
 
 
+def test_a_leader_active_in_the_agora_is_working_even_with_idle_local_files(tmp_path):
+    """A session running elsewhere (another PC, the cloud) writes no local
+    files; its Ágora heartbeat or posts are what show it is on the job."""
+    claude_session(tmp_path, [c_user(NOW - 9000), c_assistant(NOW - 8900, stop="end_turn")])
+    agents = [{"id": "claude", "last_seen": NOW - 120}, {"id": "cursor-agora", "last_seen": NOW - 60},
+              {"id": "codex", "last_seen": NOW - 7200}]
+    states = ls.build_leader_states(LEADERS, tasks=tasks_for_flags(), now=NOW, paths=paths_for(tmp_path),
+                                    agents=agents, pid_alive=lambda pid: False)
+    assert states["claude"]["state"] == "working" and states["claude"]["source"] == "agora"
+    assert states["claude"]["idle_with_work"] is False and states["claude"]["open_tasks"] == [1, 5]
+    assert states["cursor"]["state"] == "working"            # cursor-agora counts for Cursor
+    assert states["codex"]["source"] != "agora"              # two hours ago is not "now"
+    # without the heartbeat, the same files say idle with work
+    quiet = ls.build_leader_states(LEADERS, tasks=tasks_for_flags(), now=NOW, paths=paths_for(tmp_path),
+                                   pid_alive=lambda pid: False)
+    assert quiet["claude"]["state"] == "idle" and quiet["claude"]["idle_with_work"] is True
+
+
 def test_unknown_or_working_leaders_are_never_flagged(tmp_path):
     states = ls.build_leader_states(LEADERS, tasks=tasks_for_flags(), now=NOW, paths=paths_for(tmp_path))
     assert states["claude"]["state"] == "unknown" and states["claude"]["idle_with_work"] is False
