@@ -986,8 +986,43 @@ def test_cursor_group_leader_passes_explicit_worktree_name_before_prompt(tmp_pat
     worktree = next(arg for arg in command if arg.startswith("--worktree="))
     assert re.fullmatch(r"--worktree=agora-cursor-[A-Za-z0-9._-]+", worktree)
     worktree_index = command.index(worktree)
-    assert command[worktree_index + 1:] == ["--trust", "--", prompt]
-    assert "--force" not in command and "--yolo" not in command and "-f" not in command
+    assert command[worktree_index + 1:] == ["--trust", "--force", "--", prompt]
+    assert "--yolo" not in command and "-f" not in command
+
+
+def test_cursor_group_leader_resumes_with_autonomous_cli_mode(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    turn_id = "group-resume-234"
+    prompt = "Continue the current group task."
+    with facet._db() as db:
+        db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) "
+                   "VALUES(?,?,?,?,?,?,'working',1,1)",
+                   (turn_id, "cursor", "903", prompt, "cursor-model", "low"))
+        db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,updated_at) "
+                   "VALUES('cursor','cursor-console-session','cursor-model','low','idle',1)")
+    original_is_file = Path.is_file
+    def is_file(path):
+        if str(path).lower().endswith((r"cursor\runtime\dist-package\node.exe",
+                                       r"cursor\runtime\dist-package\index.js")):
+            return True
+        return original_is_file(path)
+    monkeypatch.setattr(Path, "is_file", is_file)
+    commands = []
+    def runner(command, **kwargs):
+        commands.append(command)
+        kwargs["stdout"].write(json.dumps({"type": "result", "session_id": "cursor-console-session",
+                                            "text": "Continued."}) + "\n")
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", runner)
+
+    facet._run_leader_turn({"id": turn_id, "leader_id": "cursor", "model": "cursor-model",
+                            "effort": "low", "prompt": prompt})
+
+    command = commands[0]
+    resume_index = command.index("--resume")
+    assert command[resume_index:resume_index + 2] == ["--resume", "cursor-console-session"]
+    assert command[resume_index + 2:] == ["--trust", "--force", "--", prompt]
+    assert "--worktree" not in command and "--yolo" not in command and "-f" not in command
 
 
 def test_cursor_child_worker_passes_explicit_worktree_name_before_prompt(tmp_path, monkeypatch):
@@ -1021,8 +1056,8 @@ def test_cursor_child_worker_passes_explicit_worktree_name_before_prompt(tmp_pat
     worktree = next(arg for arg in command if arg.startswith("--worktree="))
     assert re.fullmatch(r"--worktree=agora-cursor-[A-Za-z0-9._-]+", worktree)
     worktree_index = command.index(worktree)
-    assert command[worktree_index + 1:worktree_index + 3] == ["--trust", "--"]
-    assert "--force" not in command and "--yolo" not in command and "-f" not in command
+    assert command[worktree_index + 1:worktree_index + 4] == ["--trust", "--force", "--"]
+    assert "--yolo" not in command and "-f" not in command
     assert command[-1].endswith(f"Task: {prompt_task}")
     assert response["worker"]["state"] == "running"
 
