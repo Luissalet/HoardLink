@@ -991,4 +991,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Agora desktop console
 
-The team console has its own Rust/Tauri Windows window and a full browser view at `/agora/`. It preserves the existing Hub coordination store and operations. See [run, model catalogs, quota pools and worker validation](docs/agora-app.md). Source checkouts require a frontend build; unavailable providers and quotas remain explicit.
+The team console has its own Rust/Tauri Windows window and a full browser view at `/agora/`. It preserves the existing Hub coordination store and operations. See [run, model catalogs, quota pools and worker validation](docs/agora-app.md). Source checkouts require a frontend build; unavailable providers and quotas remain explicit. Quota bars read Codex, Claude and Cursor where their own clients do (app-server, Claude Code's OAuth usage endpoint, the Cursor app's usage summary); messages from Luis are right-hand bubbles and each provider's messages are outlined in a colour he picks.
