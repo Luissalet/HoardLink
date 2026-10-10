@@ -760,11 +760,18 @@ class TodayFacet(Facet):
         if ag["errors"]:
             errors["agenda"] = ag["errors"]
         last = self._last_digest(sph)
+        fleet = None
+        try:
+            provider = self.hub.facet("fleet")
+            if provider: fleet = provider.status()
+        except Exception:
+            errors["fleet"] = "source_unavailable"
         return {"ok": True, "date": today.isoformat(), "sphere": sph or "all", "generated_ts": self.clock(),
                 "agenda": self._buckets([i for i in ag["items"] if i.get("kind") != "incident"]),   # incidents: System column
                 "attention": self._attention(sph, errors),
                 "news": self._news(sph),
-                "system": {"incidents": self._incidents(sph), "jobs": self._jobs_running(sph, errors)},
+                "system": {"incidents": self._incidents(sph), "jobs": self._jobs_running(sph, errors),
+                           **({"fleet": fleet} if fleet is not None else {})},
                 "notifications": self._notifications(sph),
                 "last_digest": ({k: last.get(k) for k in ("ts", "date", "title", "sent", "summary", "file")}
                                 if last else None),
@@ -827,13 +834,29 @@ class TodayFacet(Facet):
         if held:
             sysl.append(f"- {held} {t['held']}")
         sec.append(f"## {t['system']}\n" + ("\n".join(self._cap(sysl, lang, 8)) if sysl else t["nothing"]))
+        fleet = payload["system"].get("fleet")
+        if isinstance(fleet, dict) and fleet.get("ok"):
+            headings = {"es": {"today": "Hoy", "waiting_for_you": "Esperando por ti", "blocked": "Bloqueado", "unknown": "Sin verificar", "paused": "En pausa"},
+                        "en": {"today": "Today", "waiting_for_you": "Waiting for you", "blocked": "Blocked", "unknown": "Unverified", "paused": "Paused"}}
+            state_labels = {"es": {"healthy": "Funciona", "silent": "Parado en silencio", "error": "Parado con error", "unknown": "Sin verificar", "paused": "En pausa"},
+                            "en": {"healthy": "Working", "silent": "Stopped silently", "error": "Stopped with error", "unknown": "Unverified", "paused": "Paused"}}
+            lines = []
+            for key in ("today", "waiting_for_you", "blocked", "unknown", "paused"):
+                group = (fleet.get("brief") or {}).get(key) or []
+                lines.append("### " + headings[lang][key])
+                lines.extend(self._cap([f"- {state_labels[lang].get(row.get('state'), row.get('state'))}: {row.get('label') or row.get('id')}" for row in group], lang, 5) or [t["nothing"]])
+            coverage = fleet.get("coverage") or {}
+            if coverage.get("errors") or coverage.get("truncated"):
+                lines.append("Cobertura incompleta." if lang == "es" else "Coverage incomplete.")
+            sec.append(("## Flota\n" if lang == "es" else "## Fleet\n") + "\n".join(lines))
         return "\n\n".join(sec)
 
     @staticmethod
     def _count(payload: dict[str, Any]) -> int:
         ag = payload["agenda"]
         return (sum(len(v) for v in ag.values()) + len(payload["attention"]["mail"]) + len(payload["attention"]["chats"])
-                + len(payload["news"]) + len(payload["system"]["incidents"]) + len(payload["system"]["jobs"]))
+                + len(payload["news"]) + len(payload["system"]["incidents"]) + len(payload["system"]["jobs"])
+                + len((payload["system"].get("fleet") or {}).get("items") or []))
 
     def _default_llm(self, system: str, user: str) -> Optional[str]:
         """One chat call to the language model that is *already loaded* (never loads one); None when there is none."""
