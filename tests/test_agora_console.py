@@ -651,6 +651,36 @@ def test_faustus_child_session_creation_uses_native_form_api(tmp_path, monkeypat
         "endpoint_id": ["spark-main"], "project_id": ["faustus-project"], "skip_validation": ["true"]}
 
 
+def test_faustus_coordination_put_uses_owner_scoped_json_api(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    monkeypatch.setenv("FAUSTUS_OWNER_API_TOKEN", "configured-owner-token")
+    requests = []
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self, *args):
+            return b'{"binding":{"actor":"faustus-worker-a1b2c3d4"}}'
+    class Opener:
+        def open(self, request, timeout):
+            requests.append((request, timeout))
+            return Response()
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: Opener())
+    body = {"connector_id": "agora", "actor": "faustus-worker-a1b2c3d4", "active": True,
+            "operations": ["poll"], "resources": [], "repos": [], "thread_ids": []}
+
+    status, data = facet._faustus_session_request("PUT", "/api/coordination/child-session", body)
+
+    request, timeout = requests[0]
+    assert status == 200 and data["binding"]["actor"] == body["actor"]
+    assert request.get_method() == "PUT" and timeout == 8.0
+    assert request.headers["Content-type"] == "application/json"
+    assert request.headers["Authorization"] == "Bearer configured-owner-token"
+    assert json.loads(request.data.decode("utf-8")) == body
+
+
 def test_faustus_worker_starts_independent_native_project_session(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     monkeypatch.delenv("FAUSTUS_OWNER_API_TOKEN", raising=False)
@@ -668,7 +698,15 @@ def test_faustus_worker_starts_independent_native_project_session(tmp_path, monk
             return 200, {"project": {"id": "faustus-project", "workspace": str(tmp_path / "workspace")}}
         if path == "/api/coordination/controller-owned-session":
             return 200, {"binding": {"session_id": "controller-owned-session", "project_id": "faustus-project",
-                                     "actor": "faustus", "active": True}}
+                                     "actor": "faustus", "active": True, "connector_id": "agora",
+                                     "operations": ["poll", "post"], "resources": [], "repos": [],
+                                     "thread_ids": [32]}}
+        if path == "/api/coordination/new-child-session":
+            if method == "PUT":
+                assert fields["actor"].startswith("faustus-worker-")
+                return 200, {"binding": {"actor": fields["actor"]}}
+            return 200, {"binding": {"session_id": "new-child-session", "project_id": "faustus-project",
+                                     "actor": calls[-2][2]["actor"], "active": True}}
         if path == "/api/chat/activity":
             return 200, {"running": [], "unverified": 0}
         if method == "POST" and path == "/api/session":
@@ -713,6 +751,10 @@ def test_faustus_worker_starts_independent_native_project_session(tmp_path, monk
     assert patched_paths == ["/api/session/new-child-session"]
     patch = next(call for call in calls if call[0] == "PATCH")
     assert patch[2] == {"reasoning_effort": "low"}
+    put = next(call for call in calls if call[0] == "PUT")
+    assert put[1] == "/api/coordination/new-child-session"
+    assert put[2]["actor"] == worker["agent_id"] and put[2]["actor"] != "faustus"
+    assert put[2]["connector_id"] == "agora" and put[2]["thread_ids"] == [32]
 
 
 def test_faustus_worker_setup_exception_becomes_failed_receipt(tmp_path, monkeypatch):
@@ -950,6 +992,42 @@ def test_runner_metrics_keep_tool_success_and_failure_counts_separate(tmp_path):
 
     assert metrics["tool_success_count"] == 1 and metrics["tool_failure_count"] == 1
     assert metrics["provider_error"] == "provider returned an explicit error"
+
+
+def test_faustus_run_summary_error_is_provider_error_with_native_tool_counts(tmp_path):
+    facet = _facet(tmp_path)
+    worker_id = "faustus-summary-error"
+    log = tmp_path / "faustus-run.jsonl"
+    log.write_text("\n".join([
+        '{"type":"tool_output","tool":"read_file","exit_code":0}',
+        '{"type":"tool_output","tool":"run_command","exit_code":2}',
+        '{"type":"run_summary","session":"child-session","stop":"error","text":"",'
+        '"tools":["read_file","run_command"],"error":"The resumed chat keeps its automatic identity."}',
+    ]), encoding="utf-8")
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,log_path,created_at,updated_at) "
+                   "VALUES(?,?,?,?,?,?,'running',?,?,?)",
+                   (worker_id, "faustus", "faustus-worker-12345678", "glm", "low", "task", str(log), 1, 1))
+
+    metrics = facet._runner_metrics(log)
+    session_id, text = facet._read_runner_receipt(log)
+
+    assert metrics["provider_error"] == "The resumed chat keeps its automatic identity."
+    assert metrics["tool_success_count"] == 1 and metrics["tool_failure_count"] == 1
+    assert session_id == "child-session" and text == ""
+
+    class Process:
+        def wait(self):
+            return 1
+    facet._monitor_worker(worker_id, Process(), tmp_path / "missing-result.txt")
+
+    with facet._db() as db:
+        row = db.execute("SELECT state,detail,outcome,process_exit_code,tool_success_count,tool_failure_count,provider_error "
+                         "FROM workers WHERE id=?", (worker_id,)).fetchone()
+    assert row["state"] == "failed" and row["outcome"] == "provider_error"
+    assert row["process_exit_code"] == 1 and row["tool_success_count"] == 1 and row["tool_failure_count"] == 1
+    assert row["provider_error"] == "The resumed chat keeps its automatic identity."
+    assert "Faustus worker exited" in row["detail"] and "missing_final_response" not in row["detail"]
 
 
 def test_hub_restart_marks_ambiguous_leader_turn_unknown_without_replay(tmp_path):
