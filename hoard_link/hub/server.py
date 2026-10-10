@@ -28,6 +28,10 @@ GET  /api/lease/<id>           one lease (also keeps a queued one in the queue)
 POST /api/lease/request        {owner, purpose, vram_mb, gpu (index | [indices] | "2,3" | "any"), priority, ttl_s, wait, pid[, lease_id]}
 POST /api/lease/renew          {lease_id, ttl_s}
 POST /api/lease/release        {lease_id}
+GET  /api/lane                 active browser lanes (per site / profile), who waits
+POST /api/lane/acquire         {domain|url, holder, purpose, ttl_s, wait_s, profile, pid[, queue_seq]} -> granted | busy (held_by, since)
+POST /api/lane/renew           {lease_id, holder, ttl_s}
+POST /api/lane/release         {lease_id, holder[, force]}
 GET  /api/profiles             every profile with the state of its apps and commands
 GET  /api/profiles/<name>      one profile
 POST /api/profiles/<name>/start|stop
@@ -77,6 +81,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools, autostart, profile_editor, portable_profiles
+from .browser_lanes import LaneError
 from .lease import LeaseError
 from .rules import example_rules
 from .jobs import example_jobs
@@ -270,6 +275,30 @@ class _HubHandler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": str(exc)}, 400)
         return self._lease_reply(res)
 
+    # -- browser lanes ---------------------------------------------------------
+    def _lane_post(self, action: str, body: dict[str, Any]) -> None:
+        arb = self.hub.lanes
+        granted: Optional[str] = None
+        try:
+            if action == "acquire":
+                res = arb.acquire(domain=str(body.get("domain") or body.get("url") or ""), holder=str(body.get("holder") or ""),
+                                  purpose=str(body.get("purpose") or ""), ttl_s=body.get("ttl_s"), wait_s=body.get("wait_s", 0),
+                                  profile=str(body.get("profile") or ""), pid=body.get("pid"), queue_seq=body.get("queue_seq"))
+                if res.get("granted"):
+                    granted = res.get("lease_id")
+            elif action == "renew":
+                res = arb.renew(str(body.get("lease_id") or ""), body.get("holder"), body.get("ttl_s"))
+            else:
+                res = arb.release(str(body.get("lease_id") or ""), body.get("holder"), force=bool(body.get("force", False)))
+        except LaneError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
+        try:
+            return self._lease_reply(res)
+        except Exception:  # noqa: BLE001  (the caller went away after the lane was granted: do not keep it for its ttl)
+            if granted:
+                arb.release(granted, force=True)
+            raise
+
     # -- facets (0.7) ----------------------------------------------------------
     def _facet(self, method: str, path: str, query: dict[str, list[str]], body: dict[str, Any]) -> bool:
         """Let the facets answer; True when one did."""
@@ -339,6 +368,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json(hub.services())
             if path == "/api/memory":
                 return self._json(hub.gpu_memory())
+            if path == "/api/lane":
+                return self._json(hub.lanes.status())
             if path == "/api/lease":
                 return self._json(hub.leases.status(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path.startswith("/api/lease/"):
@@ -475,6 +506,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": ok, "tool": name, "result": result}, 200 if ok else 400)
             if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release"):
                 return self._lease_post(path.rsplit("/", 1)[1], body)
+            if path in ("/api/lane/acquire", "/api/lane/renew", "/api/lane/release"):
+                return self._lane_post(path.rsplit("/", 1)[1], body)
             if path == "/api/events":
                 who = self._family_ok()
                 if who is None:

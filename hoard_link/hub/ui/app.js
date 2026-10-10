@@ -25,6 +25,9 @@
       used: "used", reserved: "reserved", available: "available", release: "Release", released: "lease released",
       queued: "queued", granted: "granted", no_leases: "No GPU leases.", expires: "expires in", owner: "owner",
       any_gpu: "any",
+      lanes_title: "Browser lanes", lane_summary: (n, w) => `${n} lane${n === 1 ? "" : "s"} in use${w ? ` · ${w} waiting` : ""}`,
+      no_lanes: "No browser lanes in use. An app takes one before it opens a browser on a site.", lane_since: "since",
+      lane_released: "lane released", lane_waiting: "waiting", lane_profile: "profile", lane_held_by: "held by",
       profiles: "Groups", profile_started: "group started", profile_stopped: "group stopped",
       new_group: "New group", edit_group: "Edit group", group_name: "Group name", save_group: "Save group",
       cancel_group: "Cancel", delete_group: "Delete group", group_hint: "Choose apps to start together. Windows are optional.",
@@ -61,6 +64,9 @@
       used: "usada", reserved: "reservada", available: "disponible", release: "Liberar", released: "reserva liberada",
       queued: "en cola", granted: "concedida", no_leases: "Sin reservas de GPU.", expires: "caduca en", owner: "dueño",
       any_gpu: "cualquiera",
+      lanes_title: "Carriles de navegador", lane_summary: (n, w) => `${n} carril${n === 1 ? "" : "es"} en uso${w ? ` · ${w} esperando` : ""}`,
+      no_lanes: "Ningún carril de navegador en uso. Una app toma uno antes de abrir un navegador sobre un sitio.", lane_since: "desde",
+      lane_released: "carril liberado", lane_waiting: "esperando", lane_profile: "perfil", lane_held_by: "ocupado por",
       profiles: "Grupos", profile_started: "grupo arrancado", profile_stopped: "grupo parado",
       new_group: "Crear grupo", edit_group: "Editar grupo", group_name: "Nombre del grupo", save_group: "Guardar grupo",
       cancel_group: "Cancelar", delete_group: "Eliminar grupo", group_hint: "Elige las apps que arrancarán juntas. Abrir sus ventanas es opcional.",
@@ -598,6 +604,60 @@
   };
   try { if (localStorage.getItem("hub.gpu.collapsed") === "1") { $("#gpu-body").hidden = true; $("#gpu-toggle").setAttribute("aria-expanded", "false"); } } catch (e) { /* ignore */ }
 
+  // ---- Browser lanes panel (one app at a time per site) --------------------------
+  let laneData = null;
+  const clockText = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString(lang === "es" ? "es-ES" : "en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+  function renderLanes() {
+    const d = laneData;
+    if (!d) return;
+    const lanes = d.lanes || [], waiting = d.waiting || [];
+    $("#lane-summary").textContent = t("lane_summary", lanes.length, waiting.length);
+    const box = $("#lane-rows");
+    box.innerHTML = "";
+    if (!lanes.length && !waiting.length) { const p = document.createElement("div"); p.className = "gpu-none"; p.textContent = t("no_lanes"); box.appendChild(p); return; }
+    for (const l of lanes) {
+      const row = document.createElement("div");
+      row.className = "lease-row granted lane-row";
+      row.innerHTML = `<span class="pill running"></span><b class="domain"></b><b class="who"></b><span class="what"></span><span class="mono since"></span><span class="mono ttl"></span><button class="ghost small danger"></button>`;
+      $(".pill", row).textContent = t("granted");
+      $(".domain", row).textContent = l.domain || `${t("lane_profile")}: ${l.profile}`;
+      $(".who", row).textContent = l.holder;
+      $(".what", row).textContent = [l.purpose, l.domain && l.profile ? `${t("lane_profile")}: ${l.profile}` : ""].filter(Boolean).join(" · ");
+      $(".since", row).textContent = `${t("lane_since")} ${clockText(l.since)}`;
+      $(".ttl", row).textContent = `${t("expires")} ${fmtUptime(l.expires_in_s)}`;
+      row.title = `${l.lease_id}${l.pid ? " · pid " + l.pid : ""}`;
+      const btn = $("button", row);
+      btn.textContent = t("release");
+      btn.onclick = async () => {
+        btn.disabled = true;
+        const r = await api("/api/lane/release", { lease_id: l.lease_id, holder: l.holder, force: true });
+        toast(`${l.holder}: ${r.ok ? t("lane_released") : (r.error || "error")}`, r.ok ? "ok" : "err");
+        await refreshLanes();
+      };
+      box.appendChild(row);
+    }
+    for (const w of waiting) {
+      const row = document.createElement("div");
+      row.className = "lease-row queued lane-row";
+      row.innerHTML = `<span class="pill starting"></span><b class="domain"></b><b class="who"></b><span class="what"></span><span class="mono since"></span>`;
+      $(".pill", row).textContent = t("lane_waiting");
+      $(".domain", row).textContent = w.domain || `${t("lane_profile")}: ${w.profile}`;
+      $(".who", row).textContent = w.holder;
+      $(".what", row).textContent = w.purpose || "";
+      $(".since", row).textContent = `${t("lane_since")} ${clockText(w.since)}`;
+      box.appendChild(row);
+    }
+  }
+  async function refreshLanes() {
+    try { laneData = await api("/api/lane"); renderLanes(); } catch (e) { /* panel is best-effort */ }
+  }
+  $("#lane-toggle").onclick = () => {
+    const body = $("#lane-body"); body.hidden = !body.hidden;
+    $("#lane-toggle").setAttribute("aria-expanded", String(!body.hidden));
+    try { localStorage.setItem("hub.lane.collapsed", body.hidden ? "1" : "0"); } catch (e) { /* ignore */ }
+  };
+  try { if (localStorage.getItem("hub.lane.collapsed") === "1") { $("#lane-body").hidden = true; $("#lane-toggle").setAttribute("aria-expanded", "false"); } } catch (e) { /* ignore */ }
+
   // ---- refresh loop -------------------------------------------------------------
   let refreshing = null;
   function refresh() {
@@ -608,6 +668,7 @@
         loginState = await api("/api/autostart");
         render();
         refreshLeases();
+        refreshLanes();
       } catch (e) { counts.textContent = String(e); }
       refreshing = null;
     })();
@@ -644,7 +705,7 @@
   }
   $("#btn-start-all").onclick = () => runBatch("start");
   $("#btn-stop-all").onclick = () => runBatch("stop");
-  $("#btn-lang").onclick = () => { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("hub.lang", lang); } catch (e) { /* ignore */ } applyI18n(); render(); renderLeases(); refreshBackends(); renderServices(); };
+  $("#btn-lang").onclick = () => { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("hub.lang", lang); } catch (e) { /* ignore */ } applyI18n(); render(); renderLeases(); renderLanes(); refreshBackends(); renderServices(); };
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 
   applyI18n();
