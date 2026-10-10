@@ -356,7 +356,8 @@ def test_http_cli_and_real_stdio_mcp(tmp_path):
             encoding="utf-8")
         assert len(TOOLS) == len({t["name"] for t in TOOLS})
         # Two hub_agora_* tools are registered outside agora.TOOLS.
-        assert len([t for t in tools.all_tools() if t["name"].startswith("hub_agora_")]) == len(TOOLS) + 2
+        from hoard_link.hub.agora_console import AgoraConsoleFacet
+        assert len([t for t in tools.all_tools() if t["name"].startswith("hub_agora_")]) == len(TOOLS) + 2 + len(AgoraConsoleFacet.tools())
     finally:
         server.shutdown()
         server.server_close()

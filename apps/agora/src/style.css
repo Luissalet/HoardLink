@@ -5,3 +5,20 @@
 input::placeholder,textarea::placeholder{color:#bebbb4;opacity:1}.quota-label strong,.quota small{font-variant-numeric:tabular-nums}.quota small{display:block;line-height:1.35}.roster-mobile-hint{display:none}.worker-summary-control{display:none;background:transparent;color:#e2b24c;border:0;border-bottom:1px solid #625a48;text-align:left;padding:5px 0;font-size:12px;width:100%;margin-top:5px}.worker-detail{border-top:1px solid #433e35;padding:17px 0}.worker-detail h3{font-size:15px}.worker-detail p{font-size:13px;line-height:1.5;margin:6px 0;color:#bebbb4}.worker-result{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;font-size:13px;margin-top:12px}.worker-detail:last-child{padding-bottom:0}@media(max-width:640px){.roster>.section-heading{display:flex;padding:7px 12px}.roster>.section-heading h2{font-size:12px}.roster-mobile-hint{display:block;font-size:10px!important}.roster{max-height:235px}.leader-list{min-height:185px}.leader .quota small{display:block;font-size:10px}.worker-summary-control{display:block}.leader .worker{display:none}.leader{overflow-y:auto}}
 
 .quota small{font-size:10px;white-space:normal;overflow-wrap:normal}.quota-label strong{white-space:nowrap}
+/* Agora #239: Luis's messages as right-hand bubbles; each provider outlined in its own colour. */
+.messages{display:flex;flex-direction:column;gap:12px}
+.message{border-bottom:0;padding:0}
+.message.human{justify-content:flex-end}
+.message.human .message-content{flex:0 1 auto;max-width:min(72%,78ch);display:flex;flex-direction:column;align-items:flex-end}
+.message.human .bubble{background:#2f2c26;border:1px solid #3d392f;border-radius:18px;padding:10px 16px;color:#ece9e1;max-width:100%}
+.message.human .message-meta{margin:4px 6px 0;justify-content:flex-end}
+.message.agent{--c:#6b6456;border:1px solid color-mix(in srgb,var(--c) 70%,transparent);border-left:3px solid var(--c);border-radius:12px;padding:12px 14px;background:color-mix(in srgb,var(--c) 6%,#1c1a14);max-width:min(100%,92ch)}
+.message.agent .message-meta strong{color:color-mix(in srgb,var(--c) 55%,#ffffff)}
+.message.agent .message-avatar{background:color-mix(in srgb,var(--c) 22%,#24221b);color:color-mix(in srgb,var(--c) 45%,#ffffff);border:1px solid color-mix(in srgb,var(--c) 60%,transparent)}
+.leader .avatar{border-color:var(--c,#68604f);background:color-mix(in srgb,var(--c,#353128) 22%,#24221b);color:color-mix(in srgb,var(--c,#ece9e1) 45%,#ffffff)}
+.swatch{--c:#888;width:18px;height:18px;border-radius:50%;background:var(--c);border:2px solid #24221b;box-shadow:0 0 0 1px #68604f;cursor:pointer;flex-shrink:0;position:relative;margin-left:auto}
+.swatch:focus-within{box-shadow:0 0 0 2px var(--accent)}
+.swatch input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;border:0;padding:0}
+.meter>span.full{background:#d9644f}
+@media (max-width:640px){.message.human .message-content{max-width:88%}.message.agent{padding:10px 11px}}
+

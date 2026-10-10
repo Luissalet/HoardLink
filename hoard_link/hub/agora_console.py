@@ -186,6 +186,9 @@ class AgoraConsoleFacet(Facet):
                     leader_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, model TEXT NOT NULL,
                     effort TEXT NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
                     updated_at REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS leader_colors (
+                    leader_id TEXT PRIMARY KEY, color TEXT NOT NULL,
+                    updated_by TEXT NOT NULL, updated_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS provider_diagnostics (
                     provider_id TEXT PRIMARY KEY, state TEXT NOT NULL, detail TEXT NOT NULL,
                     auth_state TEXT NOT NULL DEFAULT 'unknown', checked_at TEXT NOT NULL);
@@ -436,6 +439,29 @@ class AgoraConsoleFacet(Facet):
             return {row["leader_id"]: {"model": row["model"], "effort": row["effort"],
                                         "updated_by": row["updated_by"], "updated_at": row["updated_at"]}
                     for row in db.execute("SELECT * FROM preferences")}
+
+    def _colors(self) -> dict[str, str]:
+        with self._db_lock, self._db() as db:
+            return {row["leader_id"]: row["color"] for row in db.execute("SELECT leader_id,color FROM leader_colors")}
+
+    def set_color(self, args: dict[str, Any], actor: str = "codex-console") -> dict[str, Any]:
+        """The colour that marks one leader's messages and avatar in the console, shared by every
+        client (browser and desktop app). An empty colour goes back to the default."""
+        leader_id = str(args.get("leader_id") or "").strip().lower()
+        if leader_id not in {row[0] for row in LEADERS}:
+            return {"ok": False, "status": 400, "error": "leader_id must be codex, claude, cursor or faustus"}
+        color = str(args.get("color") or "").strip().lower()
+        if color and not re.fullmatch(r"#[0-9a-f]{6}", color):
+            return {"ok": False, "status": 400, "error": "color must be #rrggbb or empty"}
+        with self._db_lock, self._db() as db:
+            if color:
+                db.execute("INSERT INTO leader_colors(leader_id,color,updated_by,updated_at) VALUES(?,?,?,?) "
+                           "ON CONFLICT(leader_id) DO UPDATE SET color=excluded.color,"
+                           "updated_by=excluded.updated_by,updated_at=excluded.updated_at",
+                           (leader_id, color, actor, time.time()))
+            else:
+                db.execute("DELETE FROM leader_colors WHERE leader_id=?", (leader_id,))
+        return {"ok": True, "leader_id": leader_id, "color": color or None}
 
     def _worker_rows(self) -> list[dict[str, Any]]:
         with self._db_lock, self._db() as db:
@@ -755,6 +781,7 @@ class AgoraConsoleFacet(Facet):
         self._apply_pending_faustus_preference()
         provider_data = self._provider_data(force=refresh)
         preferences = self._preferences()
+        colors = self._colors()
         agents = {}
         agora = self._agora()
         if agora is not None:
@@ -809,7 +836,8 @@ class AgoraConsoleFacet(Facet):
                             "catalog": catalog, "agent_id": agent_id,
                             "agent_state": observed.get("state", "unknown"),
                             "agent_detail": observed.get("doing") or observed.get("note") or "",
-                            "console_session": console_session}
+                            "console_session": console_session,
+                            "color": colors.get(leader_id)}
             if leader_id == "faustus":
                 leader.update(faustus_current)
             leaders.append(leader)
@@ -1675,6 +1703,8 @@ class AgoraConsoleFacet(Facet):
             return self.send_message(args, actor)
         if req.path == "/api/agora/console/preferences":
             return self.set_preferences(args, actor)
+        if req.path == "/api/agora/console/color":
+            return self.set_color(args, actor)
         if req.path == "/api/agora/console/worker":
             return self.worker(args, actor)
         return {"ok": False, "status": 404, "error": f"unknown Agora console route {req.path}"}
@@ -1721,6 +1751,9 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_preferences", "description": "Save a verified provider model and reasoning effort; Codex/Cursor independent console leaders and child workers consume the saved preferences. Faustus and Claude limitations are reported explicitly.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "model": {"type": "string"}, "effort": {"type": "string"}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id", "model"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
+            {"name": "hub_agora_console_color", "description": "Set the colour that outlines one leader's messages and avatar in the Agora console (#rrggbb; empty restores the default). Shared by the browser and the desktop app.",
+             "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "color": {"type": "string", "maxLength": 7}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id"], "additionalProperties": False},
+             "annotations": {"readOnlyHint": False}},
             {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex or managed Cursor child in an isolated worktree; register external workers from real metadata, or reconcile an ambiguous console session after its operator confirms it is idle.",
              "inputSchema": {"type": "object", "properties": {
                  "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile"]},
@@ -1744,6 +1777,11 @@ class AgoraConsoleFacet(Facet):
             actor, error = self._mcp_actor(values)
             return error or self.set_preferences(values, actor)
 
+        def post_color(args: dict[str, Any]) -> dict[str, Any]:
+            values = dict(args)
+            actor, error = self._mcp_actor(values)
+            return error or self.set_color(values, actor)
+
         def post_worker(args: dict[str, Any]) -> dict[str, Any]:
             values = dict(args)
             actor, error = self._mcp_actor(values)
@@ -1753,5 +1791,6 @@ class AgoraConsoleFacet(Facet):
             "hub_agora_console_overview": lambda a: self.overview(bool(a.get("refresh"))),
             "hub_agora_console_message": post_message,
             "hub_agora_console_preferences": post_preferences,
+            "hub_agora_console_color": post_color,
             "hub_agora_console_worker": post_worker,
         }

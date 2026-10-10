@@ -1271,3 +1271,21 @@ def test_hub_restart_marks_ambiguous_leader_turn_unknown_without_replay(tmp_path
     # it never changes the ambiguous turn's terminal record.
     with facet._db() as db:
         assert db.execute("SELECT state FROM leader_turns WHERE id='ambiguous'").fetchone()["state"] == "unknown"
+
+
+def test_leader_colours_are_shared_validated_and_resettable(tmp_path):
+    """Luis picks a colour per provider; every client reads it from the overview (Agora #239)."""
+    facet = _facet(tmp_path)
+    saved = facet.post(_request("POST", "/api/agora/console/color", {"leader_id": "cursor", "color": "#7AA2F7"}))
+    assert saved == {"ok": True, "leader_id": "cursor", "color": "#7aa2f7"}
+    leaders = {row["id"]: row for row in facet.get(_request("GET", "/api/agora/console/overview"))["leaders"]}
+    assert leaders["cursor"]["color"] == "#7aa2f7"
+    assert leaders["claude"]["color"] is None, "no saved colour means the client default"
+    assert facet.post(_request("POST", "/api/agora/console/color", {"leader_id": "cursor", "color": "red"}))["status"] == 400
+    assert facet.post(_request("POST", "/api/agora/console/color", {"leader_id": "nobody", "color": "#000000"}))["status"] == 400
+    assert facet.post(_request("POST", "/api/agora/console/color", {"leader_id": "cursor", "color": ""}))["color"] is None
+    leaders = {row["id"]: row for row in facet.get(_request("GET", "/api/agora/console/overview"))["leaders"]}
+    assert leaders["cursor"]["color"] is None
+    tool = facet.handlers()["hub_agora_console_color"]
+    assert tool({"leader_id": "claude", "color": "#d97757", "actor": "claude"})["color"] == "#d97757"
+    assert "hub_agora_console_color" in {t["name"] for t in facet.tools()}
