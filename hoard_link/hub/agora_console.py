@@ -17,6 +17,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import traceback
 import uuid
 import tomllib
 import urllib.error
@@ -677,11 +678,18 @@ class AgoraConsoleFacet(Facet):
             observed = agents.get(agent_id) or {}
             catalog = provider.get("catalog") or []
             model = pref.get("model") or provider.get("current_model")
+            if leader_id == "faustus" and not pref.get("model"):
+                model = faustus_current.get("catalog_model_id") or model
             selected_effort = pref.get("effort")
             selected = next((row for row in catalog if row.get("id") == model), None)
-            effort = selected_effort or provider.get("current_effort") or (selected or {}).get("default_effort")
+            if leader_id == "faustus" and not selected_effort:
+                effort = faustus_current.get("current_effort")
+            else:
+                effort = selected_effort or provider.get("current_effort") or (selected or {}).get("default_effort")
             state = provider.get("state", "unavailable")
-            if observed.get("state") == "working" and state in ("available", "unverified"):
+            if leader_id != "faustus" and observed.get("state") == "working" and state in ("available", "unverified"):
+                state = "working"
+            if leader_id == "faustus" and (faustus_current.get("native_session") or {}).get("state") == "working":
                 state = "working"
             leader = {"id": leader_id, "name": name, "state": state,
                             "detail": provider.get("detail", ""), "model": model, "effort": effort,
@@ -731,7 +739,11 @@ class AgoraConsoleFacet(Facet):
         if current is None or effort_status != 200 or not isinstance(effort_data, dict) or effort_data.get("session_id") != session_id:
             return {"current_model": None, "current_effort": None, "native_session": session,
                     "current_settings_detail": f"Could not verify current model and effort for the bound session (HTTP {effort_status})."}
-        return {"current_model": current.get("model") if isinstance(current.get("model"), str) else None,
+        current_model = current.get("model") if isinstance(current.get("model"), str) else None
+        catalog = self._provider_data().get("faustus", {}).get("catalog") or []
+        matching_models = [row for row in catalog if isinstance(row, dict) and row.get("model_id") == current_model]
+        catalog_model_id = matching_models[0].get("id") if len(matching_models) == 1 else None
+        return {"current_model": current_model, "catalog_model_id": catalog_model_id,
                 "current_effort": effort_data.get("reasoning_effort") if isinstance(effort_data.get("reasoning_effort"), str) else None,
                 "native_session": session, "current_settings_detail": "Read from the owner-checked native Faustus session."}
 
@@ -754,10 +766,16 @@ class AgoraConsoleFacet(Facet):
             return None, "The Faustus Agora controller is not present beside the configured installation."
         try:
             status = subprocess.run([str(python), "-X", "utf8", str(controller), "status"], stdin=subprocess.DEVNULL,
-                                    capture_output=True, text=True, timeout=5, check=False,
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                    timeout=5, check=False,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            snapshot = json.loads(status.stdout) if status.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            if status.returncode != 0:
+                return None, f"Faustus controller status failed (stage=controller_status, exit={status.returncode})."
+            if not isinstance(status.stdout, str) or not status.stdout.strip():
+                return None, "Faustus controller status returned no text (stage=controller_status)."
+            snapshot = json.loads(status.stdout)
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError) as exc:
+            logger.warning("Faustus controller status failed (stage=controller_status; type=%s)", type(exc).__name__)
             return None, f"The Faustus Agora controller status is unavailable: {type(exc).__name__}."
         if not isinstance(snapshot, dict):
             return None, "The Faustus Agora controller returned no trusted status snapshot."
@@ -864,36 +882,46 @@ class AgoraConsoleFacet(Facet):
                                        ) -> tuple[Optional[dict[str, Any]], str]:
         parent, detail = self._faustus_bound_session()
         if parent is None:
-            return None, detail
+            return None, f"Faustus child setup failed at stage=parent_binding: {detail}"
         if parent.get("state") != "idle" or not parent.get("project_id"):
-            return None, "The Faustus controller session is busy or its native project is not verified."
+            return None, "Faustus child setup failed at stage=parent_idle_check: the controller is busy or its native project is not verified."
         model_id = str(model.get("model_id") or "").strip()
         endpoint_id = str(model.get("endpoint_id") or "").strip()
         if not model_id or not endpoint_id:
-            return None, "The verified Faustus catalog row has no native model and endpoint identifiers."
+            return None, "Faustus child setup failed at stage=model_catalog: the verified row has no native model and endpoint identifiers."
         created_status, created = self._faustus_session_request("POST", "/api/session", {
             "name": f"Agora worker {agent_id}", "model": model_id, "endpoint_id": endpoint_id,
             "project_id": str(parent["project_id"]), "skip_validation": "true"})
         if created_status != 200 or not isinstance(created, dict):
-            return None, f"Faustus child session creation failed (HTTP {created_status}); no runner was started."
+            return None, f"Faustus child setup failed at stage=session_create (HTTP {created_status}); no runner was started."
         session_id = str(created.get("id") or created.get("session_id") or "").strip()
         if not session_id:
-            return None, "Faustus did not return a child session id; no runner was started."
+            return None, "Faustus child setup failed at stage=session_create_response: no child session id was returned; no runner was started."
+        if created.get("model") != model_id:
+            return {"session_id": session_id}, "Faustus child setup failed at stage=child_model_verify: Owner API did not confirm the requested model; no runner was started."
         child_project_status, child_project_data = self._faustus_session_request(
             "GET", f"/api/projects/resolve/session/{quote(session_id, safe='')}")
         child_project = child_project_data.get("project") if isinstance(child_project_data, dict) else None
         if child_project_status != 200 or not isinstance(child_project, dict) or child_project.get("id") != parent["project_id"]:
-            return {"session_id": session_id}, "The new Faustus chat did not verify in the parent's native project; no runner was started."
-        patch_status, patched = self._faustus_session_request("PATCH", f"/api/session/{quote(session_id, safe='')}", {
-            "model": model_id, "endpoint_id": endpoint_id, "endpoint_url": "", "reasoning_effort": effort})
+            return {"session_id": session_id}, "Faustus child setup failed at stage=child_project_verify: the new chat is not in the parent's native project; no runner was started."
+        # Creation already selected and returned the native model. The session
+        # PATCH endpoint treats an empty endpoint_url as absent on Windows form
+        # parsing, which skips its model-switch branch; send only the per-session
+        # effort here so we never need to repeat or mutate endpoint settings.
+        patch_status, patched = self._faustus_session_request(
+            "PATCH", f"/api/session/{quote(session_id, safe='')}", {"reasoning_effort": effort})
         levels_status, levels = self._faustus_session_request(
             "GET", f"/api/session/{quote(session_id, safe='')}/reasoning-effort")
-        if (patch_status != 200 or not isinstance(patched, dict) or patched.get("model") != model_id
-                or patched.get("reasoning_effort") != effort or levels_status != 200 or not isinstance(levels, dict)
+        if (patch_status != 200 or not isinstance(patched, dict) or patched.get("reasoning_effort") != effort
+                or levels_status != 200 or not isinstance(levels, dict)
                 or levels.get("session_id") != session_id or levels.get("reasoning_effort") != effort
                 or effort not in (levels.get("available_levels") or [])):
-            return {"session_id": session_id}, (f"Faustus child session preference did not verify "
-                                                 f"(PATCH HTTP {patch_status}, levels HTTP {levels_status}); no runner was started.")
+            return {"session_id": session_id}, (f"Faustus child setup failed at stage=child_preferences_verify "
+                                                 f"(model_verified=true, patch_effort_verified={bool(isinstance(patched, dict) and patched.get('reasoning_effort') == effort)}, "
+                                                 f"readback_session_verified={bool(isinstance(levels, dict) and levels.get('session_id') == session_id)}, "
+                                                 f"readback_effort_verified={bool(isinstance(levels, dict) and levels.get('reasoning_effort') == effort)}, "
+                                                 f"effort_supported={bool(isinstance(levels, dict) and effort in (levels.get('available_levels') or []))}, "
+                                                 f"PATCH HTTP {patch_status}, levels HTTP {levels_status}); no runner was started.")
         return {"session_id": session_id, "project_id": parent["project_id"],
                 "workspace": str(child_project.get("workspace") or parent.get("workspace") or "")}, ""
 
@@ -1027,11 +1055,27 @@ class AgoraConsoleFacet(Facet):
                             if not still_current:
                                 detail = "A newer Faustus preference replaced this pending choice before it could be applied."
                                 return {"state": "pending", "detail": detail, "session_id": session_id}
-                            fields = {"model": str(selected["model_id"]), "endpoint_id": str(selected["endpoint_id"]),
-                                      "endpoint_url": "", "reasoning_effort": str(pending["effort"])}
-                            patch_status, patched = self._faustus_session_request("PATCH", f"/api/session/{encoded_sid}", fields)
-                            verify_status, verified = self._faustus_session_request("GET", f"/api/session/{encoded_sid}/reasoning-effort")
-                            if (patch_status == 200 and isinstance(patched, dict) and patched.get("model") == selected["model_id"]
+                            metadata_status, session_rows = self._faustus_session_request("GET", "/api/sessions")
+                            bound_metadata = next((row for row in session_rows if isinstance(row, dict)
+                                                   and row.get("id") == session_id), None) if isinstance(session_rows, list) else None
+                            endpoint_url = bound_metadata.get("endpoint_url") if isinstance(bound_metadata, dict) else None
+                            if metadata_status != 200 or not isinstance(endpoint_url, str) or not endpoint_url.strip():
+                                detail = f"Faustus preference remains pending: owner metadata has no endpoint URL for the bound session (HTTP {metadata_status})."
+                                continue_apply = False
+                            else:
+                                continue_apply = True
+                            if continue_apply:
+                                # Faustus interprets an empty endpoint_url as
+                                # absent form data. Reuse the verified session
+                                # route value; endpoint_id makes the target
+                                # route authoritative inside Faustus.
+                                fields = {"model": str(selected["model_id"]), "endpoint_id": str(selected["endpoint_id"]),
+                                          "endpoint_url": endpoint_url, "reasoning_effort": str(pending["effort"])}
+                                patch_status, patched = self._faustus_session_request("PATCH", f"/api/session/{encoded_sid}", fields)
+                                verify_status, verified = self._faustus_session_request("GET", f"/api/session/{encoded_sid}/reasoning-effort")
+                            else:
+                                patch_status, patched, verify_status, verified = None, None, None, None
+                            if (continue_apply and patch_status == 200 and isinstance(patched, dict) and patched.get("model") == selected["model_id"]
                                     and patched.get("reasoning_effort") == pending["effort"] and verify_status == 200
                                     and isinstance(verified, dict) and verified.get("session_id") == session_id
                                     and verified.get("reasoning_effort") == pending["effort"]
@@ -1042,7 +1086,8 @@ class AgoraConsoleFacet(Facet):
                                                (session_id, detail, time.time(), pending["model"], pending["effort"]))
                                 self._record("native_preference", session_id, "applied", detail)
                                 return {"state": "applied", "detail": detail, "session_id": session_id}
-                            detail = f"Faustus session preference did not verify after the owner-checked request (PATCH HTTP {patch_status}, readback HTTP {verify_status})."
+                            if continue_apply:
+                                detail = f"Faustus session preference did not verify after the owner-checked request (PATCH HTTP {patch_status}, readback HTTP {verify_status})."
         with self._db_lock, self._db() as db:
             db.execute("UPDATE native_preferences SET session_id=?,detail=?,updated_at=? WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
                        (session_id, detail, time.time(), pending["model"], pending["effort"]))
@@ -1213,7 +1258,12 @@ class AgoraConsoleFacet(Facet):
                 # through MCP as though no worker lifecycle had been recorded.
                 faustus_session = None
                 setup_failed = True
-                setup_error = (f"Faustus child session setup raised {type(exc).__name__} before the runner started; "
+                frames = traceback.extract_tb(exc.__traceback__)
+                locations = " > ".join(f"{Path(frame.filename).name}:{frame.name}:{frame.lineno}"
+                                        for frame in frames[-8:])
+                logger.error("Faustus child setup failed (stage=child_session_prepare; type=%s; frames=%s)",
+                             type(exc).__name__, locations or "unavailable")
+                setup_error = (f"Faustus child setup failed at stage=child_session_prepare ({type(exc).__name__}); "
                                "no child runner was launched.")
             if faustus_session is None or setup_error:
                 session_id = str((faustus_session or {}).get("session_id") or "")
