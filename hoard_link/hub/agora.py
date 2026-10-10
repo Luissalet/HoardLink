@@ -40,6 +40,7 @@ import shutil
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -124,6 +125,17 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE task_checkpoints ADD COLUMN message_id INTEGER;
+    """,
+    """
+    CREATE TABLE agora_usage_pools (
+        provider_id TEXT NOT NULL, pool_id TEXT NOT NULL, pool_label TEXT NOT NULL,
+        source TEXT NOT NULL, reported_at REAL NOT NULL, windows_json TEXT NOT NULL,
+        PRIMARY KEY(provider_id, pool_id));
+    CREATE TABLE agora_usage_reporters (
+        provider_id TEXT NOT NULL, pool_id TEXT NOT NULL, agent_id TEXT NOT NULL, last_reported_at REAL NOT NULL,
+        PRIMARY KEY(provider_id, pool_id, agent_id),
+        FOREIGN KEY(provider_id, pool_id) REFERENCES agora_usage_pools(provider_id, pool_id) ON DELETE CASCADE);
+    CREATE INDEX agora_usage_reporters_agent ON agora_usage_reporters(agent_id);
     """,
 ]
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -1076,6 +1088,122 @@ class Agora:
             clash = [lk for lk in live if conflicts(res, lk["resource"])]
             return {"ok": True, "resource": res, "free": not clash, "held_by": clash}
         return {"ok": True, "locks": live, "capabilities": {"heartbeat_selective_renewal": True}}
+
+    # -- provider quota observations ---------------------------------------------------------------------------
+
+    _USAGE_PROVIDERS = frozenset({"claude", "codex", "cursor", "faustus"})
+    _USAGE_STALE_S = 24 * 3600
+
+    def usage_report(self, a: dict[str, Any]) -> dict[str, Any]:
+        """Save a sanitized account-pool snapshot. The pool key is an opaque label, never an account identifier."""
+        agent = self._agent(a.get("agent"))
+        provider = str(a.get("provider_id") or "").strip().lower()
+        if provider not in self._USAGE_PROVIDERS:
+            raise AgoraError("provider_id must be one of claude, codex, cursor or faustus")
+        pool_id = str(a.get("pool_id") or "").strip()
+        pool_label = _txt(a.get("pool_label"), 80, "pool_label", required=True)
+        if not pool_id or len(pool_id) > 80 or "@" in pool_id or re.search(r"[\\/\s]", pool_id):
+            raise AgoraError("pool_id must be a short opaque label without email, path or whitespace")
+        source = _txt(a.get("source"), 120, "source", required=True)
+        raw_windows = a.get("windows")
+        if not isinstance(raw_windows, list) or not raw_windows or len(raw_windows) > 20:
+            raise AgoraError("windows must be a non-empty array of at most 20 quota windows")
+        windows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw in raw_windows:
+            if not isinstance(raw, dict):
+                raise AgoraError("each quota window must be an object")
+            window_id = str(raw.get("window_id") or "").strip()
+            if not re.fullmatch(r"[a-zA-Z0-9._-]{1,64}", window_id) or window_id in seen:
+                raise AgoraError("window_id must be unique and contain only letters, digits, dot, underscore or hyphen")
+            seen.add(window_id)
+            label = _txt(raw.get("label") or window_id, 100, "window label", required=True)
+            measurement = str(raw.get("measurement") or "unknown").strip().lower()
+            if measurement not in {"measured", "declared", "unknown"}:
+                raise AgoraError("measurement must be measured, declared or unknown")
+            used = raw.get("used_percent")
+            remaining = raw.get("remaining_percent")
+            if measurement == "unknown":
+                if used is not None or remaining is not None:
+                    raise AgoraError("unknown quota windows must not include percentages")
+                used = remaining = None
+            else:
+                if isinstance(used, bool) or isinstance(remaining, bool):
+                    raise AgoraError("quota percentages must be numbers from 0 to 100")
+                try:
+                    used, remaining = float(used), float(remaining)
+                except (TypeError, ValueError):
+                    raise AgoraError("measured and declared windows require used_percent and remaining_percent") from None
+                if not (math.isfinite(used) and math.isfinite(remaining) and 0 <= used <= 100 and 0 <= remaining <= 100):
+                    raise AgoraError("quota percentages must be finite numbers from 0 to 100")
+                if abs(used + remaining - 100) > 0.5:
+                    raise AgoraError("used_percent and remaining_percent must sum to 100 (within 0.5)")
+            reset_at = raw.get("reset_at")
+            if reset_at is not None:
+                reset_at = str(reset_at).strip()
+                try:
+                    datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                except ValueError:
+                    raise AgoraError("reset_at must be an ISO-8601 timestamp or null") from None
+            windows.append({"window_id": window_id, "label": label, "measurement": measurement,
+                            "used_percent": used, "remaining_percent": remaining, "reset_at": reset_at,
+                            "source": _txt(raw.get("source") or source, 120, "window source", required=True)})
+
+        now = self.clock()
+        with self.db.tx():
+            self._touch(agent)
+            self.db.execute(
+                "INSERT INTO agora_usage_pools(provider_id,pool_id,pool_label,source,reported_at,windows_json) "
+                "VALUES(?,?,?,?,?,?) ON CONFLICT(provider_id,pool_id) DO UPDATE SET "
+                "pool_label=excluded.pool_label,source=excluded.source,reported_at=excluded.reported_at,"
+                "windows_json=excluded.windows_json",
+                (provider, pool_id, pool_label, source, now, json.dumps(windows, separators=(",", ":"))))
+            self.db.execute(
+                "INSERT INTO agora_usage_reporters(provider_id,pool_id,agent_id,last_reported_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(provider_id,pool_id,agent_id) DO UPDATE SET last_reported_at=excluded.last_reported_at",
+                (provider, pool_id, agent, now))
+        self._bump("agora.usage.reported", {"provider_id": provider, "pool_id": pool_id, "agent_id": agent})
+        return {"ok": True, "provider_id": provider, "pool_id": pool_id, "agent_id": agent,
+                "reported_at": datetime.fromtimestamp(now, timezone.utc).isoformat()}
+
+    def usage(self, _a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Read shared quota pools; old records remain visible but explicitly stale/unknown, never zero."""
+        now = self.clock()
+        rows = self.db.query(
+            "SELECT p.*, GROUP_CONCAT(r.agent_id, ',') AS reporter_ids FROM agora_usage_pools p "
+            "LEFT JOIN agora_usage_reporters r ON r.provider_id=p.provider_id AND r.pool_id=p.pool_id "
+            "GROUP BY p.provider_id,p.pool_id ORDER BY p.provider_id,p.pool_label")
+        providers: dict[str, list[dict[str, Any]]] = {key: [] for key in sorted(self._USAGE_PROVIDERS)}
+        provider_agents: dict[str, list[dict[str, Any]]] = {key: [] for key in sorted(self._USAGE_PROVIDERS)}
+        for row in rows:
+            stale = now - float(row["reported_at"]) > self._USAGE_STALE_S
+            try:
+                windows = json.loads(row["windows_json"])
+            except (TypeError, ValueError):
+                windows = []
+            reported_at = datetime.fromtimestamp(float(row["reported_at"]), timezone.utc).isoformat()
+            for window in windows:
+                window["reported_at"] = reported_at
+                if stale:
+                    window["stale"] = True
+                    window["used_percent"] = None
+                    window["remaining_percent"] = None
+                    window["reset_at"] = None
+                    window["measurement"] = "unknown"
+                else:
+                    window["stale"] = False
+            providers[row["provider_id"]].append({
+                "pool_id": row["pool_id"], "pool_label": row["pool_label"], "source": row["source"],
+                "reported_at": reported_at, "stale": stale,
+                "agent_ids": sorted(filter(None, str(row["reporter_ids"] or "").split(","))), "windows": windows})
+            agents = sorted(filter(None, str(row["reporter_ids"] or "").split(",")))
+            for agent_id in agents:
+                provider_agents[row["provider_id"]].append({
+                    "agent_id": agent_id, "pool_id": row["pool_id"], "pool_label": row["pool_label"],
+                    "shared": len(agents) > 1, "shared_agent_count": len(agents), "source": row["source"],
+                    "reported_at": reported_at, "stale": stale, "windows": json.loads(json.dumps(windows))})
+        return {"ok": True, "providers": [{"provider_id": key, "pools": providers[key],
+                                             "agents": provider_agents[key]} for key in sorted(providers)]}
 
     # -- agents --------------------------------------------------------------------------------------------------
 
@@ -2142,6 +2270,24 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Ágora (shared workspace of the coding agents and the person): agents and what they do, tasks by status, "
                     "active locks, open/escalated threads and recent decisions. Read this when you start a session.",
      "inputSchema": _schema({}, [])},
+    {"name": "hub_agora_usage", "read": True,
+     "description": "Read the latest sanitized quota observations for the four provider leaders. Pools shared by multiple agents are returned once, with reporter identities; expired observations are marked stale and their percentages become unknown.",
+     "inputSchema": _schema({}, [])},
+    {"name": "hub_agora_usage_report",
+     "description": "Report a sanitized provider account-pool snapshot. pool_id must be an opaque local label, never an account id, email or credential. Unknown windows use null percentages; reported_at is assigned by the Hub.",
+     "inputSchema": _schema({"agent": _A, "provider_id": {"type": "string", "enum": ["claude", "codex", "cursor", "faustus"]},
+                             "pool_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                             "pool_label": {"type": "string", "minLength": 1, "maxLength": 80},
+                             "source": {"type": "string", "minLength": 1, "maxLength": 120},
+                             "windows": {"type": "array", "minItems": 1, "maxItems": 20, "items": _schema({
+                                 "window_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                                 "label": {"type": "string", "maxLength": 100},
+                                 "measurement": {"type": "string", "enum": ["measured", "declared", "unknown"]},
+                                 "used_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+                                 "remaining_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+                                 "reset_at": {"type": ["string", "null"]},
+                                 "source": {"type": "string", "maxLength": 120}}, ["window_id", "measurement"])}},
+                            ["agent", "provider_id", "pool_id", "pool_label", "source", "windows"])},
     {"name": "hub_agora_inbox", "read": True,
      "description": "Your Ágora inbox: messages from the others since your last read (for_you when it concerns you), "
                     "reviews waiting for you and changes asked of you. wait_s (<=60 here) waits for something new; "
@@ -2296,7 +2442,8 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 _WRITE_OPS = ("checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
-              "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack")
+              "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
+              "usage_report")
 
 
 def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -2567,6 +2714,8 @@ class AgoraFacet(Facet):
             return self._run(self._digest, q)
         if p == "/api/agora/agents":
             return self._run(ag.agents, q)
+        if p in ("/api/agora/usage", "/api/agora/console/usage"):
+            return self._run(ag.usage, q)
         return {"ok": False, "status": 404, "error": f"unknown Ágora route {p}"}
 
     def post(self, req: Request) -> Optional[Any]:
@@ -2574,6 +2723,8 @@ class AgoraFacet(Facet):
         if not p.startswith("/api/agora/"):
             return None
         op = p[len("/api/agora/"):].strip("/")
+        if op == "usage/report":
+            op = "usage_report"
         if op == "watch/bind":
             if not req.caller():
                 return {"ok": False, "status": 401, "error": "send the hub's bearer token (data/mcp-token) or use the hub's page"}
@@ -2623,6 +2774,7 @@ class AgoraFacet(Facet):
 
         return {
             "hub_agora_checkpoint": wrap(ag.checkpoint), "hub_agora_checkpoints": wrap(ag.checkpoints),
+            "hub_agora_usage": wrap(ag.usage), "hub_agora_usage_report": wrap(ag.usage_report),
             "hub_agora_activity": wrap(self._activity), "hub_agora_timeline": wrap(ag.timeline),
             "hub_agora_board": wrap(self._board), "hub_agora_inbox": wrap(self._inbox, cap_wait=True),
             "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(self._sync), "hub_agora_task_add": wrap(ag.task_add),

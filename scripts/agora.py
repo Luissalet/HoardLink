@@ -22,6 +22,10 @@ Standard library only, so any agent with a terminal can use it (no MCP needed)::
 Every long text accepts ``--<name>-file PATH`` (``-`` reads stdin): PowerShell eats ``$`` and nested quotes.
 Agent id: ``--as`` or ``AGORA_AGENT``. Hub: ``HOARD_HUB_URL`` or ``data/url``; token ``HOARD_HUB_TOKEN_FILE`` or
 ``data/mcp-token`` next to this repository. ``--json`` prints the raw answer.
+
+Quota snapshots are read with ``usage`` and reported with ``usage-report --data-file snapshot.json``. The JSON file
+contains ``provider_id``, opaque ``pool_id``/``pool_label``, ``source`` and a ``windows`` array; this command adds
+the current ``--as`` identity and the Hub assigns ``reported_at``.
 """
 
 from __future__ import annotations
@@ -370,6 +374,9 @@ def main(argv: list[str] | None = None) -> int:
             sp.add_argument(f"--{n}-file", dest=f"{n}_file")
 
     s = sub.add_parser("board"); s.add_argument("--full", action="store_true", help="todos los bloqueos, uno a uno")
+    sub.add_parser("usage", help="cuotas recientes de los pools de cuenta compartidos")
+    s = sub.add_parser("usage-report", help="publica un snapshot de cuota sanitizado desde JSON UTF-8")
+    s.add_argument("--data-file", required=True, help="JSON UTF-8 con provider_id, pool_id, pool_label, source y windows")
     s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true"); s.add_argument("--meta", action="store_true", help="solo metadatos (quién, dónde, tipo), sin cuerpos ni mover la marca")
     s = sub.add_parser("hb"); s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
     renewal = s.add_mutually_exclusive_group()
@@ -438,13 +445,27 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(value, list):
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
-    reads = {"board", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind"}
+    reads = {"board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind"}
     if a.cmd not in reads and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
     c = a.cmd
     if c == "board":
         r = call("GET", "/api/agora/board")
+    elif c == "usage":
+        r = call("GET", "/api/agora/console/usage")
+    elif c == "usage-report":
+        try:
+            raw = sys.stdin.read() if a.data_file == "-" else Path(a.data_file).read_text(encoding="utf-8-sig")
+            def reject_constant(value):
+                raise ValueError(f"invalid JSON constant: {value}")
+            payload = json.loads(raw, parse_constant=reject_constant)
+        except (OSError, ValueError) as exc:
+            p.error(f"--data-file necesita JSON UTF-8 válido: {exc}")
+        if not isinstance(payload, dict):
+            p.error("--data-file debe contener un objeto JSON")
+        payload["agent"] = ag
+        r = call("POST", "/api/agora/usage/report", payload)
     elif c == "watch":
         r = call("GET", "/api/agora/watch")
         if r.get("ok", True):
@@ -578,6 +599,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if r.get("ok", True) else 1
     if c == "board":
         print_board(r, full=a.full)
+    elif c == "usage":
+        print(json.dumps(r.get("providers", []), ensure_ascii=False, indent=2))
     elif c == "activity":
         print(json.dumps(r["activity"], ensure_ascii=False, indent=2))
     elif c == "timeline":
