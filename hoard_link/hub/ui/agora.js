@@ -879,7 +879,9 @@
       const forms = el("div");
       const nt = el("button", "small", "+ " + t("new_task")); nt.onclick = () => taskForm(forms);
       const nth = el("button", "small", "+ " + t("new_thread")); nth.onclick = () => threadForm(forms);
-      tools.appendChild(nt); tools.appendChild(nth); tools.appendChild(el("span", "hint", t("hint")));
+      const full = el("a", "small", L({ es: "Abrir Ágora completo", en: "Open full Agora" }));
+      full.href = "/agora/"; full.target = "_blank"; full.rel = "noopener";
+      tools.appendChild(full); tools.appendChild(nt); tools.appendChild(nth); tools.appendChild(el("span", "hint", t("hint")));
       box.appendChild(tools);
       box.appendChild(forms);
       const bar = el("div", "ag-filterbar");
