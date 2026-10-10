@@ -1,0 +1,352 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-10T07:47:48+02:00",
+  "title": "Design System: HoardLink Ágora",
+  "extensions": {
+    "colorMeta": {
+      "amber": {
+        "role": "primary",
+        "displayName": "Hub Amber",
+        "canonical": "#e2b24c",
+        "tonalRamp": [
+          "oklch(15% 0.14 81)",
+          "oklch(25% 0.14 81)",
+          "oklch(35% 0.14 81)",
+          "oklch(45% 0.14 81)",
+          "oklch(55% 0.14 81)",
+          "oklch(65% 0.14 81)",
+          "oklch(75% 0.14 81)",
+          "oklch(95% 0.14 81)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Warm Canvas",
+        "canonical": "#1c1a14",
+        "tonalRamp": [
+          "oklch(15% 0.018 82)",
+          "oklch(25% 0.018 82)",
+          "oklch(35% 0.018 82)",
+          "oklch(45% 0.018 82)",
+          "oklch(55% 0.018 82)",
+          "oklch(65% 0.018 82)",
+          "oklch(75% 0.018 82)",
+          "oklch(95% 0.018 82)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Roster Charcoal",
+        "canonical": "#201e17",
+        "tonalRamp": [
+          "oklch(15% 0.018 82)",
+          "oklch(25% 0.018 82)",
+          "oklch(35% 0.018 82)",
+          "oklch(45% 0.018 82)",
+          "oklch(55% 0.018 82)",
+          "oklch(65% 0.018 82)",
+          "oklch(75% 0.018 82)",
+          "oklch(95% 0.018 82)"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised Charcoal",
+        "canonical": "#24221b",
+        "tonalRamp": [
+          "oklch(15% 0.018 82)",
+          "oklch(25% 0.018 82)",
+          "oklch(35% 0.018 82)",
+          "oklch(45% 0.018 82)",
+          "oklch(55% 0.018 82)",
+          "oklch(65% 0.018 82)",
+          "oklch(75% 0.018 82)",
+          "oklch(95% 0.018 82)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Ivory Text",
+        "canonical": "#ece9e1",
+        "tonalRamp": [
+          "oklch(15% 0.018 82)",
+          "oklch(25% 0.018 82)",
+          "oklch(35% 0.018 82)",
+          "oklch(45% 0.018 82)",
+          "oklch(55% 0.018 82)",
+          "oklch(65% 0.018 82)",
+          "oklch(75% 0.018 82)",
+          "oklch(95% 0.018 82)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Soft Ash",
+        "canonical": "#bebbb4",
+        "tonalRamp": [
+          "oklch(15% 0.012 82)",
+          "oklch(25% 0.012 82)",
+          "oklch(35% 0.012 82)",
+          "oklch(45% 0.012 82)",
+          "oklch(55% 0.012 82)",
+          "oklch(65% 0.012 82)",
+          "oklch(75% 0.012 82)",
+          "oklch(95% 0.012 82)"
+        ]
+      },
+      "divider": {
+        "role": "neutral",
+        "displayName": "Divider Umber",
+        "canonical": "#433e35",
+        "tonalRamp": [
+          "oklch(15% 0.025 72)",
+          "oklch(25% 0.025 72)",
+          "oklch(35% 0.025 72)",
+          "oklch(45% 0.025 72)",
+          "oklch(55% 0.025 72)",
+          "oklch(65% 0.025 72)",
+          "oklch(75% 0.025 72)",
+          "oklch(95% 0.025 72)"
+        ]
+      },
+      "positive": {
+        "role": "status",
+        "displayName": "Quiet Green",
+        "canonical": "#83b49a",
+        "tonalRamp": [
+          "oklch(15% 0.08 157)",
+          "oklch(25% 0.08 157)",
+          "oklch(35% 0.08 157)",
+          "oklch(45% 0.08 157)",
+          "oklch(55% 0.08 157)",
+          "oklch(65% 0.08 157)",
+          "oklch(75% 0.08 157)",
+          "oklch(95% 0.08 157)"
+        ]
+      },
+      "warning": {
+        "role": "status",
+        "displayName": "Muted Clay",
+        "canonical": "#d3927b",
+        "tonalRamp": [
+          "oklch(15% 0.09 43)",
+          "oklch(25% 0.09 43)",
+          "oklch(35% 0.09 43)",
+          "oklch(45% 0.09 43)",
+          "oklch(55% 0.09 43)",
+          "oklch(65% 0.09 43)",
+          "oklch(75% 0.09 43)",
+          "oklch(95% 0.09 43)"
+        ]
+      },
+      "claude-mark": {
+        "role": "leader",
+        "displayName": "Claude Mark",
+        "canonical": "#dfa991",
+        "tonalRamp": [
+          "oklch(15% 0.1 43)",
+          "oklch(25% 0.1 43)",
+          "oklch(35% 0.1 43)",
+          "oklch(45% 0.1 43)",
+          "oklch(55% 0.1 43)",
+          "oklch(65% 0.1 43)",
+          "oklch(75% 0.1 43)",
+          "oklch(95% 0.1 43)"
+        ]
+      },
+      "codex-mark": {
+        "role": "leader",
+        "displayName": "Codex Mark",
+        "canonical": "#b5d9c3",
+        "tonalRamp": [
+          "oklch(15% 0.08 151)",
+          "oklch(25% 0.08 151)",
+          "oklch(35% 0.08 151)",
+          "oklch(45% 0.08 151)",
+          "oklch(55% 0.08 151)",
+          "oklch(65% 0.08 151)",
+          "oklch(75% 0.08 151)",
+          "oklch(95% 0.08 151)"
+        ]
+      },
+      "cursor-mark": {
+        "role": "leader",
+        "displayName": "Cursor Mark",
+        "canonical": "#c6ccd2",
+        "tonalRamp": [
+          "oklch(15% 0.025 245)",
+          "oklch(25% 0.025 245)",
+          "oklch(35% 0.025 245)",
+          "oklch(45% 0.025 245)",
+          "oklch(55% 0.025 245)",
+          "oklch(65% 0.025 245)",
+          "oklch(75% 0.025 245)",
+          "oklch(95% 0.025 245)"
+        ]
+      },
+      "faustus-mark": {
+        "role": "leader",
+        "displayName": "Faustus Mark",
+        "canonical": "#e4c889",
+        "tonalRamp": [
+          "oklch(15% 0.09 83)",
+          "oklch(25% 0.09 83)",
+          "oklch(35% 0.09 83)",
+          "oklch(45% 0.09 83)",
+          "oklch(55% 0.09 83)",
+          "oklch(65% 0.09 83)",
+          "oklch(75% 0.09 83)",
+          "oklch(95% 0.09 83)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "wordmark": {
+        "purpose": "The Ágora name in the top bar.",
+        "displayName": "Wordmark"
+      },
+      "heading": {
+        "purpose": "Conversation and primary pane headings.",
+        "displayName": "Section heading"
+      },
+      "title": {
+        "purpose": "Leader names, message author emphasis and task titles.",
+        "displayName": "Compact title"
+      },
+      "body": {
+        "purpose": "Default readable text across the interface.",
+        "displayName": "Body"
+      },
+      "label": {
+        "purpose": "Small status, quota, timestamp and control text.",
+        "displayName": "Operational label"
+      }
+    },
+    "shadows": [
+      {
+        "value": "-8px 0 25px #0005",
+        "name": "drawer-left",
+        "purpose": "Separates the operations drawer from the conversation on narrow screens."
+      },
+      {
+        "value": "background: #090804b3",
+        "name": "modal-backdrop",
+        "purpose": "Darkens the workspace behind a dialog."
+      }
+    ],
+    "motion": [
+      {
+        "value": "@media (prefers-reduced-motion: reduce)",
+        "name": "reduced-motion",
+        "purpose": "Disables smooth scrolling when reduced motion is requested."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "wide",
+        "value": "1500px"
+      },
+      {
+        "name": "compact-desktop",
+        "value": "1080px"
+      },
+      {
+        "name": "drawer",
+        "value": "900px"
+      },
+      {
+        "name": "mobile",
+        "value": "640px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "description": "Amber send or confirm action.",
+      "html": "<button class=\"ds-primary\">Enviar</button>",
+      "refersTo": "button-primary",
+      "css": ".ds-primary { background: #e2b24c; color: #241e12; border: 1px solid #d7ae55; border-radius: 6px; padding: 8px 13px; font: 600 13px/1.4 \"Source Sans 3\", sans-serif; } .ds-primary:hover { background: #f0c367; } .ds-primary:focus-visible { outline: 2px solid #e2b24c; outline-offset: 3px; } .ds-primary:active { background: #d7a63d; }",
+      "name": "Primary Action",
+      "kind": "button"
+    },
+    {
+      "html": "<button class=\"ds-icon\" aria-label=\"Actualizar\">↻</button>",
+      "description": "Quiet toolbar action with a restrained hover surface.",
+      "name": "Ghost Icon Button",
+      "css": ".ds-icon { color: #bebbb4; background: transparent; border: 0; border-radius: 6px; padding: 8px; font: 400 18px/1 \"Source Sans 3\", sans-serif; } .ds-icon:hover { background: #353128; color: #ece9e1; } .ds-icon:focus-visible { outline: 2px solid #e2b24c; outline-offset: 3px; } .ds-icon:active { background: #433e35; }",
+      "kind": "button"
+    },
+    {
+      "description": "Bordered message field with a recipient label and text area.",
+      "html": "<div class=\"ds-composer\"><label>Para <select aria-label=\"Destinatario\"><option>Todo el equipo</option></select></label><textarea placeholder=\"¿Qué vamos a hacer?\"></textarea></div>",
+      "refersTo": "composer",
+      "css": ".ds-composer { background: #24221b; color: #ece9e1; border: 1px solid #625a48; border-radius: 10px; padding: 12px 14px; } .ds-composer label { color: #bebbb4; font: 400 12px/1.4 \"Source Sans 3\", sans-serif; } .ds-composer select, .ds-composer textarea { width: 100%; color: inherit; background: transparent; border: 0; font: 400 15px/1.5 \"Source Sans 3\", sans-serif; } .ds-composer textarea { min-height: 82px; padding: 12px 0; } .ds-composer textarea::placeholder { color: #bebbb4; opacity: 1; } .ds-composer:focus-within { border-color: #e2b24c; } .ds-composer textarea:focus-visible { outline: 2px solid #e2b24c; outline-offset: -3px; }",
+      "name": "Message Composer",
+      "kind": "input"
+    },
+    {
+      "description": "Full-width model choice within a leader block.",
+      "html": "<button class=\"ds-model\" aria-haspopup=\"listbox\"><span>gpt-6-luna</span><span>⌄</span></button>",
+      "refersTo": "model-selector",
+      "css": ".ds-model { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 7px; color: #ece9e1; background: #24221b; border: 1px solid #433e35; border-radius: 6px; padding: 7px 9px; text-align: left; font: 400 12px/1.4 \"Source Sans 3\", sans-serif; } .ds-model:hover { border-color: #625a48; } .ds-model:focus-visible { outline: 2px solid #e2b24c; outline-offset: 3px; } .ds-model:active { background: #201e17; }",
+      "name": "Model Selector",
+      "kind": "input"
+    },
+    {
+      "html": "<button class=\"ds-task\"><small>#209 · Abierta</small><strong>Revisar la consola</strong><span>HoardLink · Sin asignar</span></button>",
+      "description": "Task summary in the operations list, divided from neighboring rows.",
+      "name": "Task Row",
+      "css": ".ds-task { display: block; width: 100%; text-align: left; color: #ece9e1; background: transparent; border: 0; border-bottom: 1px solid #37332b; padding: 17px 20px; font: 400 13px/1.4 \"Source Sans 3\", sans-serif; } .ds-task small, .ds-task span { display: block; color: #bebbb4; font-size: 10px; } .ds-task strong { display: block; margin: 6px 0; font-size: 13px; font-weight: 600; } .ds-task:hover { background: #2d2920; } .ds-task:focus-visible { outline: 2px solid #e2b24c; outline-offset: -2px; } .ds-task:active { background: #24221b; }",
+      "kind": "custom"
+    },
+    {
+      "html": "<nav class=\"ds-tabs\"><button class=\"ds-tab ds-tab-active\">Pendiente <span>1</span></button><button class=\"ds-tab\">Finalizado</button></nav>",
+      "description": "Text tab with an amber underline for the selected operations view.",
+      "name": "Selected Task Tab",
+      "css": ".ds-tabs { display: flex; gap: 16px; border-bottom: 1px solid #433e35; } .ds-tab { color: #bebbb4; background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 8px 0 10px; font: 400 13px/1.4 \"Source Sans 3\", sans-serif; } .ds-tab span { margin-left: 4px; font-size: 10px; } .ds-tab-active { color: #ece9e1; border-bottom-color: #e2b24c; } .ds-tab:hover { color: #ece9e1; } .ds-tab:focus-visible { outline: 2px solid #e2b24c; outline-offset: 3px; } .ds-tab:active { color: #e2b24c; }",
+      "kind": "nav"
+    },
+    {
+      "html": "<span class=\"ds-leader ds-codex\">C</span>",
+      "description": "Compact avatar tile with provider-specific tint.",
+      "name": "Leader Mark",
+      "css": ".ds-leader { width: 34px; height: 34px; display: inline-grid; place-items: center; border: 1px solid #4a6655; border-radius: 8px; color: #b5d9c3; background: #28352e; font: 600 17px/1 \"Source Sans 3\", sans-serif; } .ds-leader:hover { border-color: #83b49a; } .ds-leader:focus-visible { outline: 2px solid #e2b24c; outline-offset: 3px; } .ds-leader:active { background: #303f35; }",
+      "kind": "chip"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Team Room",
+    "overview": "Ágora extends the Hoard family's warm charcoal workspace into a full team console. A restrained amber wordmark anchors the frame, while quiet dividers make the three working areas legible: a permanent leader roster, a central group conversation and an operations pane. Source Sans 3 carries the information; Cinzel is reserved for the Ágora wordmark.\n\nThe surface favors named states, authorship and source details over decoration. The desktop keeps four leaders visible beside the conversation. At narrow widths, the leaders become a horizontal roster and operations open as a drawer; the conversation and composer remain the main work area. The visual system is a description of the shipped UI, not a claim that every provider workflow is complete.",
+    "keyCharacteristics": [
+      "Warm charcoal surfaces with a focused amber accent.",
+      "Compact, divided work areas with a readable conversation measure.",
+      "Status, authorship and quota provenance are written out alongside color.",
+      "Provider state uses distinct restrained avatar colors; the wordmark remains the only display face."
+    ],
+    "rules": [
+      {
+        "body": "Reserve amber for the brand mark, primary action, focus and selected navigation; do not turn every leader or status into an amber accent.",
+        "name": "The Amber Signal Rule",
+        "section": "colors"
+      },
+      {
+        "body": "Cinzel appears in the wordmark; use Source Sans 3 for headings, messages, labels and controls.",
+        "name": "The One Display Face Rule",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Do use the warm charcoal, ivory and amber palette for the app frame and primary actions.",
+      "Do keep names and status words visible next to state color; unknown quota remains explicitly unknown rather than becoming a numeric zero.",
+      "Do preserve author, leader/helper identity and quota freshness in dense or narrow layouts.",
+      "Do keep the composer visually distinct and reachable while reading the conversation.",
+      "Do use visible keyboard focus and honor reduced-motion preferences."
+    ],
+    "donts": [
+      "Don't add marketing slogans, hero metrics or decorative gradients to this operational surface.",
+      "Don't present mock activity or an unavailable provider as a live response.",
+      "Don't rely on color alone for connectivity, availability, quota or task state.",
+      "Don't spread the provider avatar tints across unrelated controls or panels."
+    ]
+  }
+}
