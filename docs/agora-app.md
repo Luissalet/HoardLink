@@ -4,6 +4,21 @@
 
 The left rail contains Claude, Codex, Cursor and Faustus. Each provider exposes a discovered model catalog and its supported reasoning settings, shared quota observations and child-worker states. Unavailable catalogs and quota readings remain unknown. Quotas belong to account pools, not individual chats; adding a helper does not add capacity. Expired readings retain their provenance and show unknown percentages.
 
+## Quotas: where each reading comes from
+
+The console reads every provider's quota where its own client does, the way unified usage trackers such as CodexBar do. The Hub starts the readers; each publishes through `usage-report` as `<provider>-capacity`, hashes the account identity into an opaque pool key and never stores or logs a token.
+
+- **Codex**: the official CLI's app-server (`account/rateLimits/read`), every 90 s (`agora_capacity.py`).
+- **Claude**: `GET https://api.anthropic.com/api/oauth/usage` with Claude Code's OAuth token from `~/.claude/.credentials.json` (`CLAUDE_CONFIG_DIR` when set), every 2 min: session (5 h), the week for all models and per-model weeks. The file is only read. An expired session is published as an unknown window that says how to renew it (`claude /login` on the PC); the reading comes back on the next poll.
+- **Cursor**: `GET https://cursor.com/api/usage-summary` with the Cursor app's session, read from its `state.vscdb` opened read-only, every 2 min: the two quotas included in the plan as the dashboard shows them, *Cursor models* (Auto, Composer, Grok) and *Other models*, plus on-demand spend when enabled; they reset at the end of the billing cycle.
+- **Faustus**: local models have no account quota; spend caps are reported by Faustus itself.
+
+`HOARD_AGORA_ACCOUNT_USAGE=0` turns the Claude/Cursor readers off. A network failure publishes nothing, so the last real reading stays until it goes stale; bars show the percentage used, with what is left and the reset underneath.
+
+## Conversation and colours
+
+Luis's messages are bubbles on the right. Each leader's messages are cards outlined in that provider's colour, with the avatar and name tinted to match; the name is always written, so colour is never the only cue. The swatch next to each leader opens a colour picker. The choice is stored in the Hub (`POST /api/agora/console/color` `{leader_id, color}`, MCP `hub_agora_console_color`, returned as `color` in the overview), so the browser view and the desktop app show the same colours; an empty colour restores the default (Claude terracotta, Codex green, Cursor blue, Faustus red).
+
 The central conversation uses the canonical team thread. Messages select all four leaders or one recipient. Delivery receipts distinguish queued attention from an actual running agent. A mention alone does not wake an idle desktop chat. Results retain their actual author and source. Model preferences apply to the selected console leader's next execution, without rewriting unrelated existing chats.
 
 The helper control creates a separate session with the selected model and reasoning. It preserves the principal's configuration, history and identity. External workers can register their actual lifecycle through the console API/MCP. A declared model observation is identified as declared; it is not promoted to a measured provider reading. Provider authentication failures are visible and are not represented as working sessions.
