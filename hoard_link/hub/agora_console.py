@@ -800,9 +800,12 @@ class AgoraConsoleFacet(Facet):
         activity_status, activity = self._faustus_session_request("GET", "/api/chat/activity")
         if activity_status != 200 or not isinstance(activity, dict) or not isinstance(activity.get("running"), list):
             return None, f"Faustus session activity could not be verified (HTTP {activity_status})."
-        if session_id in activity["running"] or activity.get("unverified") or snapshot.get("local_turn_active") is True:
+        if session_id in activity["running"] or snapshot.get("local_turn_active") is True:
             return {"agent": "faustus", "binding": "native", "session_id": session_id,
                     "project_id": project["id"], "state": "working"}, ""
+        if activity.get("unverified"):
+            return {"agent": "faustus", "binding": "native", "session_id": session_id,
+                    "project_id": project["id"], "state": "unknown"}, ""
         if snapshot.get("local_turn_active") is not False:
             return None, "The Faustus controller did not explicitly confirm whether its current turn is idle."
         return {"agent": "faustus", "binding": "native", "session_id": session_id,
