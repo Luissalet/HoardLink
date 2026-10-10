@@ -1,11 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use serde_json::Value;
 
+fn valid_agora_path(path: &str) -> bool {
+    let route = path.split('?').next().unwrap_or("");
+    route.starts_with("/api/agora/") && !path.contains('#') &&
+        route.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'/' | b'-' | b'_'))
+}
+
 // The shell only relays the local coordination API; it exposes no arbitrary URL,
 // shell command, credential file or filesystem operation to browser content.
 #[tauri::command]
 async fn hub_request(path: String, body: Option<Value>) -> Result<Value, String> {
-    if !path.starts_with("/api/agora/") || path.contains("..") || path.contains('\\') || path.contains('#') {
+    if !valid_agora_path(&path) {
         return Err("Ruta de coordinación no válida".into());
     }
     let base = std::env::var("AGORA_HUB_URL").unwrap_or_else(|_| "http://127.0.0.1:8810".into());
@@ -23,3 +29,15 @@ async fn hub_request(path: String, body: Option<Value>) -> Result<Value, String>
     Ok(value)
 }
 fn main() { tauri::Builder::default().invoke_handler(tauri::generate_handler![hub_request]).run(tauri::generate_context!()).expect("Could not start the coordination window"); }
+
+#[cfg(test)]
+mod tests {
+    use super::valid_agora_path;
+    #[test]
+    fn relay_stays_inside_coordination_routes() {
+        assert!(valid_agora_path("/api/agora/threads/32/recent?limit=60"));
+        for path in ["https://example.com/api/agora/", "/api/agora/../agent/call", "/api/agora/%2e%2e/agent/call", "/api/agora/%2f../tokens", "/api/agora/board#fragment", "/api/agora/..\\tokens"] {
+            assert!(!valid_agora_path(path), "unexpected route: {path}");
+        }
+    }
+}
