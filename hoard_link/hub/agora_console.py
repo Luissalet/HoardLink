@@ -669,6 +669,7 @@ class AgoraConsoleFacet(Facet):
                 agents = {str(row.get("id")): row for row in agora.agents().get("agents", []) if isinstance(row, dict)}
             except Exception:  # noqa: BLE001
                 agents = {}
+        faustus_current = self._faustus_current_settings()
         leaders = []
         for leader_id, name, agent_id in LEADERS:
             provider = provider_data[leader_id]
@@ -682,14 +683,17 @@ class AgoraConsoleFacet(Facet):
             state = provider.get("state", "unavailable")
             if observed.get("state") == "working" and state in ("available", "unverified"):
                 state = "working"
-            leaders.append({"id": leader_id, "name": name, "state": state,
+            leader = {"id": leader_id, "name": name, "state": state,
                             "detail": provider.get("detail", ""), "model": model, "effort": effort,
                             "provider_checked_at": provider.get("checked_at"),
                             "auth_state": provider.get("auth_state", "unknown"),
                             "catalog": catalog, "agent_id": agent_id,
                             "agent_state": observed.get("state", "unknown"),
                             "agent_detail": observed.get("doing") or observed.get("note") or "",
-                            "console_session": next((row for row in self._console_sessions() if row["leader_id"] == leader_id), None)})
+                            "console_session": next((row for row in self._console_sessions() if row["leader_id"] == leader_id), None)}
+            if leader_id == "faustus":
+                leader.update(faustus_current)
+            leaders.append(leader)
         usage = agora.usage() if agora is not None else {"ok": False, "providers": []}
         with self._db_lock, self._db() as db:
             activity = [dict(row) for row in db.execute("SELECT id,kind,subject,state,detail,created_at FROM activity ORDER BY id DESC LIMIT 40")]
@@ -706,6 +710,30 @@ class AgoraConsoleFacet(Facet):
                 "activity": activity, "messages": messages, "console_turns": console_turns,
                 "console_sessions": console_sessions, "native_preferences": native_preferences,
                 "checked_at": time.time()}
+
+    def _faustus_current_settings(self) -> dict[str, Any]:
+        """Read only the verified controller session's current model and effort."""
+        session, error = self._faustus_bound_session()
+        if session is None:
+            return {"current_model": None, "current_effort": None, "native_session": None,
+                    "current_settings_detail": error}
+        session_id = str(session.get("session_id") or "").strip()
+        if not session_id or session.get("binding") != "native":
+            return {"current_model": None, "current_effort": None, "native_session": session,
+                    "current_settings_detail": "The controller session is not bound to a verified native project and actor."}
+        status, rows = self._faustus_session_request("GET", "/api/sessions")
+        if status != 200 or not isinstance(rows, list):
+            return {"current_model": None, "current_effort": None, "native_session": session,
+                    "current_settings_detail": f"Could not read the verified session metadata (HTTP {status})."}
+        current = next((row for row in rows if isinstance(row, dict) and row.get("id") == session_id), None)
+        effort_status, effort_data = self._faustus_session_request(
+            "GET", f"/api/session/{quote(session_id, safe='')}/reasoning-effort")
+        if current is None or effort_status != 200 or not isinstance(effort_data, dict) or effort_data.get("session_id") != session_id:
+            return {"current_model": None, "current_effort": None, "native_session": session,
+                    "current_settings_detail": f"Could not verify current model and effort for the bound session (HTTP {effort_status})."}
+        return {"current_model": current.get("model") if isinstance(current.get("model"), str) else None,
+                "current_effort": effort_data.get("reasoning_effort") if isinstance(effort_data.get("reasoning_effort"), str) else None,
+                "native_session": session, "current_settings_detail": "Read from the owner-checked native Faustus session."}
 
     def _agora(self) -> Any:
         facet = self.hub.facet("agora") if hasattr(self.hub, "facet") else None
@@ -736,9 +764,6 @@ class AgoraConsoleFacet(Facet):
         session_id = str(snapshot.get("session") or "").strip()
         if not session_id:
             return None, "The Faustus Agora controller has not confirmed its current native session."
-        if snapshot.get("local_turn_active") is not False:
-            return {"agent": "faustus", "session_id": session_id, "state": "working"}, ""
-
         encoded_sid = quote(session_id, safe="")
         project_status, project_data = self._faustus_session_request(
             "GET", f"/api/projects/resolve/session/{encoded_sid}")
@@ -757,9 +782,11 @@ class AgoraConsoleFacet(Facet):
         activity_status, activity = self._faustus_session_request("GET", "/api/chat/activity")
         if activity_status != 200 or not isinstance(activity, dict) or not isinstance(activity.get("running"), list):
             return None, f"Faustus session activity could not be verified (HTTP {activity_status})."
-        if session_id in activity["running"] or activity.get("unverified"):
+        if session_id in activity["running"] or activity.get("unverified") or snapshot.get("local_turn_active") is True:
             return {"agent": "faustus", "binding": "native", "session_id": session_id,
                     "project_id": project["id"], "state": "working"}, ""
+        if snapshot.get("local_turn_active") is not False:
+            return None, "The Faustus controller did not explicitly confirm whether its current turn is idle."
         return {"agent": "faustus", "binding": "native", "session_id": session_id,
                 "project_id": project["id"], "workspace": str(project.get("workspace") or ""), "state": "idle"}, ""
 
@@ -934,10 +961,25 @@ class AgoraConsoleFacet(Facet):
 
     def _apply_pending_faustus_preference_locked(self) -> dict[str, Any]:
         with self._db_lock, self._db() as db:
-            pending = db.execute("SELECT * FROM native_preferences WHERE leader_id='faustus' AND state='pending'").fetchone()
-        if pending is None:
+            saved = db.execute("SELECT * FROM native_preferences WHERE leader_id='faustus'").fetchone()
+        if saved is None:
             return {"state": "idle", "detail": "No Faustus preference is pending."}
         session, bind_error = self._faustus_bound_session()
+        if saved["state"] == "applied":
+            if session is None or session.get("binding") != "native":
+                return {"state": "applied", "detail": bind_error or "The current native session binding is unverified.",
+                        "session_id": str(saved["session_id"] or "")}
+            observed_sid = str(session.get("session_id") or "").strip()
+            if observed_sid == str(saved["session_id"] or ""):
+                return {"state": "applied", "detail": "The saved preference is already applied to the current native session.",
+                        "session_id": observed_sid}
+            with self._db_lock, self._db() as db:
+                db.execute("UPDATE native_preferences SET session_id=?,state='pending',detail=?,updated_at=? WHERE leader_id='faustus' AND state='applied' AND session_id=? AND model=? AND effort=?",
+                           (observed_sid, "Controller rotated to a newly verified native session; saved preference is queued for its next idle turn.",
+                            time.time(), saved["session_id"], saved["model"], saved["effort"]))
+                pending = db.execute("SELECT * FROM native_preferences WHERE leader_id='faustus' AND state='pending'").fetchone()
+        else:
+            pending = saved
         if session is None:
             detail = bind_error
             session_id = ""
@@ -1162,10 +1204,20 @@ class AgoraConsoleFacet(Facet):
             session_id = ""
             process_env = None
         else:
-            faustus_session, setup_error = self._prepare_faustus_worker_session(agent_id, row, effort)
+            setup_failed = False
+            try:
+                faustus_session, setup_error = self._prepare_faustus_worker_session(agent_id, row, effort)
+            except Exception as exc:  # noqa: BLE001
+                # Native session setup is an external API boundary. Preserve a
+                # durable failed receipt instead of letting an exception escape
+                # through MCP as though no worker lifecycle had been recorded.
+                faustus_session = None
+                setup_failed = True
+                setup_error = (f"Faustus child session setup raised {type(exc).__name__} before the runner started; "
+                               "no child runner was launched.")
             if faustus_session is None or setup_error:
                 session_id = str((faustus_session or {}).get("session_id") or "")
-                state = "failed" if session_id else "unavailable"
+                state = "failed" if session_id or setup_failed else "unavailable"
                 with self._db_lock, self._db() as db:
                     db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,session_id,outcome,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'unverified',?,?)",
                                (worker_id, leader_id, agent_id, model, effort, task, state, setup_error, session_id, now, time.time()))

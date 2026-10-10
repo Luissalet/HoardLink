@@ -97,13 +97,13 @@ def test_capacity_reporter_starts_with_this_hub_configuration(tmp_path, monkeypa
     assert stopped == [True]
 
 
-def _mock_faustus_controller(tmp_path, monkeypatch, *, active=False):
+def _mock_faustus_controller(tmp_path, monkeypatch, *, active=False, session_id="controller-owned-session"):
     controller_dir = tmp_path / "faustus-agora"
     controller_dir.mkdir(exist_ok=True)
     (controller_dir / "faustus_agora.py").write_text("# controller stub", encoding="utf-8")
     (controller_dir / "run.lock").touch(exist_ok=True)
     monkeypatch.setenv("FAUSTUS_AGORA_DIR", str(controller_dir))
-    snapshot = {"session": "controller-owned-session", "local_turn_active": active}
+    snapshot = {"session": session_id, "local_turn_active": active}
     (controller_dir / "state.json").write_text(json.dumps(snapshot), encoding="utf-8")
     monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", lambda *args, **kwargs:
                         SimpleNamespace(returncode=0, stdout=json.dumps(snapshot)))
@@ -349,14 +349,22 @@ def test_faustus_native_preference_waits_when_controller_reports_active_turn(tmp
     calls = []
     def request(method, path, fields=None):
         calls.append((method, path, fields))
-        return 503, {"error": "not expected while controller is active"}
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project"}}
+        if path == f"/api/coordination/{session_id}":
+            return 200, {"binding": {"session_id": session_id, "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [session_id], "unverified": 0}
+        raise AssertionError((method, path))
     monkeypatch.setattr(facet, "_faustus_session_request", request)
 
     saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
 
     assert saved["applies_to"] == "queued_until_native_session_idle"
     assert "observed working" in saved["warning"]
-    assert not calls
+    assert [call[1] for call in calls] == [f"/api/projects/resolve/session/{session_id}",
+                                               f"/api/coordination/{session_id}", "/api/chat/activity"]
     with facet._db() as db:
         native = db.execute("SELECT session_id,state FROM native_preferences").fetchone()
     assert tuple(native) == (session_id, "pending")
@@ -383,6 +391,64 @@ def test_faustus_native_preference_waits_when_controller_reports_active_turn(tmp
     with facet._db() as db:
         native = db.execute("SELECT state FROM native_preferences").fetchone()
     assert native["state"] == "applied"
+
+
+def test_faustus_preference_rotates_only_to_verified_native_controller_session(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    old_sid, new_sid = "old-native-session", "rotated-native-session"
+    _mock_faustus_controller(tmp_path, monkeypatch, session_id=old_sid)
+    facet._provider_cache["faustus"] = {"state": "available", "detail": "verified catalog", "catalog": [
+        {"id": "spark-main::glm-flash", "endpoint_id": "spark-main", "model_id": "glm-flash",
+         "efforts": ["low", "high"], "default_effort": "high"}]}
+    facet._provider_at = 10**9
+    current = {"sid": old_sid, "model": "glm-flash", "effort": "low"}
+    patches = []
+
+    def request(method, path, fields=None):
+        sid = current["sid"]
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project", "workspace": str(tmp_path / "workspace")}}
+        if path == f"/api/coordination/{sid}":
+            return 200, {"binding": {"session_id": sid, "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "unverified": 0}
+        if path == "/api/sessions":
+            return 200, [{"id": sid, "model": current["model"]}]
+        if path == f"/api/session/{sid}/reasoning-effort":
+            return 200, {"session_id": sid, "reasoning_effort": current["effort"],
+                         "available_levels": ["low", "high"]}
+        if method == "PATCH" and path == f"/api/session/{sid}":
+            patches.append((sid, fields))
+            current["model"] = fields["model"]
+            current["effort"] = fields["reasoning_effort"]
+            return 200, {"id": sid, **fields}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+    saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
+    assert saved["applies_to"] == "next_native_session_turn"
+    assert patches == [(old_sid, {"model": "glm-flash", "endpoint_id": "spark-main", "endpoint_url": "",
+                                  "reasoning_effort": "low"})]
+
+    current.update(sid=new_sid, model="old-model", effort="high")
+    _mock_faustus_controller(tmp_path, monkeypatch, active=True, session_id=new_sid)
+    result = facet._apply_pending_faustus_preference()
+
+    assert result["state"] == "pending" and result["session_id"] == new_sid
+    assert len(patches) == 1
+    with facet._db() as db:
+        pending = db.execute("SELECT session_id,state FROM native_preferences WHERE leader_id='faustus'").fetchone()
+    assert tuple(pending) == (new_sid, "pending")
+
+    _mock_faustus_controller(tmp_path, monkeypatch, session_id=new_sid)
+    result = facet._apply_pending_faustus_preference()
+    assert result["state"] == "applied" and result["session_id"] == new_sid
+    assert [sid for sid, _ in patches] == [old_sid, new_sid]
+    overview = facet.overview()
+    faustus = next(row for row in overview["leaders"] if row["id"] == "faustus")
+    assert faustus["current_model"] == "glm-flash" and faustus["current_effort"] == "low"
+    assert faustus["native_session"]["session_id"] == new_sid
 
 
 def test_faustus_native_preference_rejects_foreign_coordination_binding(tmp_path, monkeypatch):
@@ -557,6 +623,40 @@ def test_faustus_worker_starts_independent_native_project_session(tmp_path, monk
     assert created[2]["project_id"] == "faustus-project" and created[2]["endpoint_id"] == "spark-main"
     patched_paths = [call[1] for call in calls if call[0] == "PATCH"]
     assert patched_paths == ["/api/session/new-child-session"]
+
+
+def test_faustus_worker_setup_exception_becomes_failed_receipt(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    _mock_faustus_controller(tmp_path, monkeypatch)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "faustus_run.py").write_text("# installed runner", encoding="utf-8")
+    facet._provider_cache["faustus"] = {"state": "available", "catalog": [
+        {"id": "spark-main::glm-flash", "model_id": "glm-flash", "endpoint_id": "spark-main",
+         "efforts": ["low", "high"], "default_effort": "high"}]}
+    facet._provider_at = 10**9
+    def request(method, path, fields=None):
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project"}}
+        if path == "/api/coordination/controller-owned-session":
+            return 200, {"binding": {"session_id": "controller-owned-session", "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "unverified": 0}
+        if method == "POST" and path == "/api/session":
+            raise TypeError("JSON object is None")
+        raise AssertionError((method, path))
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.Popen",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("runner must not start")))
+
+    response = facet.worker({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low",
+                             "task": "Create an isolated helper session."}, actor="codex-investiga")
+
+    worker = response["worker"]
+    assert response["ok"] and worker["state"] == "failed"
+    assert worker["process_exit_code"] is None and worker["outcome"] == "unverified"
+    assert "TypeError" in worker["detail"] and "no child runner was launched" in worker["detail"]
+    assert worker["session_id"] == ""
 
 
 def test_claude_auth_status_is_live_sanitized_and_does_not_invent_catalog(tmp_path, monkeypatch):
