@@ -722,7 +722,114 @@ class AgoraConsoleFacet(Facet):
             return {"agent": "faustus", "binding": "native", "session_id": session_id,
                     "project_id": project["id"], "state": "working"}, ""
         return {"agent": "faustus", "binding": "native", "session_id": session_id,
-                "project_id": project["id"], "state": "idle"}, ""
+                "project_id": project["id"], "workspace": str(project.get("workspace") or ""), "state": "idle"}, ""
+
+    @contextmanager
+    def _faustus_controller_lock(self, session_id: str):
+        """Hold the controller's existing turn mutex while changing its next-turn preference."""
+        runtime = getattr(self.hub, "faustus_runtime", None)
+        try:
+            installation = runtime.installation() if runtime is not None else (None, None)
+        except Exception as exc:  # noqa: BLE001
+            yield False, f"Faustus controller lookup failed: {type(exc).__name__}."
+            return
+        root = installation[0] if isinstance(installation, tuple) and installation else None
+        if root is None:
+            yield False, "Faustus installation is unavailable; the controller turn lock cannot be acquired."
+            return
+        controller_dir = Path(os.environ.get("FAUSTUS_AGORA_DIR") or (Path(root).parent / "faustus-agora"))
+        lock_path = controller_dir / "run.lock"
+        handle = None
+        locked = False
+        detail = ""
+        try:
+            handle = lock_path.open("r+b")
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+            snapshot = json.loads((controller_dir / "state.json").read_text(encoding="utf-8"))
+            if not isinstance(snapshot, dict) or str(snapshot.get("session") or "").strip() != session_id:
+                detail = "The Faustus controller session changed before its preference could be applied."
+                locked = False
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            detail = f"Could not verify the Faustus controller turn lock: {type(exc).__name__}."
+            if locked and handle is not None:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            locked = False
+        try:
+            yield locked, detail
+        finally:
+            if handle is not None:
+                if locked:
+                    try:
+                        if os.name == "nt":
+                            import msvcrt
+                            handle.seek(0)
+                            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                        else:
+                            import fcntl
+                            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                handle.close()
+
+    def _prepare_faustus_worker_session(self, agent_id: str, model: dict[str, Any], effort: str
+                                       ) -> tuple[Optional[dict[str, Any]], str]:
+        parent, detail = self._faustus_bound_session()
+        if parent is None:
+            return None, detail
+        if parent.get("state") != "idle" or not parent.get("project_id"):
+            return None, "The Faustus controller session is busy or its native project is not verified."
+        model_id = str(model.get("model_id") or "").strip()
+        endpoint_id = str(model.get("endpoint_id") or "").strip()
+        if not model_id or not endpoint_id:
+            return None, "The verified Faustus catalog row has no native model and endpoint identifiers."
+        created_status, created = self._faustus_session_request("POST", "/api/session", {
+            "name": f"Agora worker {agent_id}", "model": model_id, "endpoint_id": endpoint_id,
+            "project_id": str(parent["project_id"]), "skip_validation": "true"})
+        if created_status != 200 or not isinstance(created, dict):
+            return None, f"Faustus child session creation failed (HTTP {created_status}); no runner was started."
+        session_id = str(created.get("id") or created.get("session_id") or "").strip()
+        if not session_id:
+            return None, "Faustus did not return a child session id; no runner was started."
+        child_project_status, child_project_data = self._faustus_session_request(
+            "GET", f"/api/projects/resolve/session/{quote(session_id, safe='')}")
+        child_project = child_project_data.get("project") if isinstance(child_project_data, dict) else None
+        if child_project_status != 200 or not isinstance(child_project, dict) or child_project.get("id") != parent["project_id"]:
+            return {"session_id": session_id}, "The new Faustus chat did not verify in the parent's native project; no runner was started."
+        patch_status, patched = self._faustus_session_request("PATCH", f"/api/session/{quote(session_id, safe='')}", {
+            "model": model_id, "endpoint_id": endpoint_id, "endpoint_url": "", "reasoning_effort": effort})
+        levels_status, levels = self._faustus_session_request(
+            "GET", f"/api/session/{quote(session_id, safe='')}/reasoning-effort")
+        if (patch_status != 200 or not isinstance(patched, dict) or patched.get("model") != model_id
+                or patched.get("reasoning_effort") != effort or levels_status != 200 or not isinstance(levels, dict)
+                or levels.get("session_id") != session_id or levels.get("reasoning_effort") != effort
+                or effort not in (levels.get("available_levels") or [])):
+            return {"session_id": session_id}, (f"Faustus child session preference did not verify "
+                                                 f"(PATCH HTTP {patch_status}, levels HTTP {levels_status}); no runner was started.")
+        return {"session_id": session_id, "project_id": parent["project_id"],
+                "workspace": str(child_project.get("workspace") or parent.get("workspace") or "")}, ""
 
     def _faustus_session_request(self, method: str, path: str,
                                  fields: Optional[dict[str, str]] = None) -> tuple[Optional[int], Any]:
@@ -755,11 +862,11 @@ class AgoraConsoleFacet(Facet):
         url = base_url + path
         if method == "GET":
             return _get(url, token, 6.0)
-        if method != "PATCH" or not isinstance(fields, dict):
+        if method not in ("PATCH", "POST") or not isinstance(fields, dict):
             return None, {"error": "unsupported Faustus session request"}
         headers = {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded",
                    "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})}
-        request = urllib.request.Request(url, data=urlencode(fields).encode("utf-8"), method="PATCH", headers=headers)
+        request = urllib.request.Request(url, data=urlencode(fields).encode("utf-8"), method=method, headers=headers)
         from .._hubclient import NoRedirect
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         try:
@@ -820,36 +927,41 @@ class AgoraConsoleFacet(Facet):
             elif not isinstance(current.get("available_levels"), list):
                 detail = "The bound Faustus session did not return a verified reasoning-level catalog."
             else:
-                # Check the watcher again immediately before mutation. The
-                # owner-checked API persists session-only model/effort values;
-                # no global default or Primary process is steered.
-                latest, latest_error = self._faustus_bound_session()
-                if latest is None or latest.get("session_id") != session_id or str(latest.get("state") or "").lower() != "idle":
-                    detail = latest_error or "The bound Faustus session is no longer idle; preference remains queued."
-                else:
-                    with self._db_lock, self._db() as db:
-                        still_current = db.execute("SELECT 1 FROM native_preferences WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
-                                                   (pending["model"], pending["effort"])).fetchone()
-                    if not still_current:
-                        detail = "A newer Faustus preference replaced this pending choice before it could be applied."
-                        return {"state": "pending", "detail": detail, "session_id": session_id}
+                # Serialize against the native watcher using its existing
+                # run.lock, then verify API activity once more before writing.
+                # This makes the selected model/effort apply to its next turn.
+                with self._faustus_controller_lock(session_id) as (controller_locked, lock_error):
+                    if not controller_locked:
+                        detail = lock_error or "The Faustus controller is busy; preference remains queued."
                     else:
-                        fields = {"model": str(selected["model_id"]), "endpoint_id": str(selected["endpoint_id"]),
-                                  "endpoint_url": "", "reasoning_effort": str(pending["effort"])}
-                        patch_status, patched = self._faustus_session_request("PATCH", f"/api/session/{encoded_sid}", fields)
-                        verify_status, verified = self._faustus_session_request("GET", f"/api/session/{encoded_sid}/reasoning-effort")
-                        if (patch_status == 200 and isinstance(patched, dict) and patched.get("model") == selected["model_id"]
-                                and patched.get("reasoning_effort") == pending["effort"] and verify_status == 200
-                                and isinstance(verified, dict) and verified.get("session_id") == session_id
-                                and verified.get("reasoning_effort") == pending["effort"]
-                                and pending["effort"] in (verified.get("available_levels") or [])):
-                            detail = "Applied and read back the selected model and reasoning effort for the explicitly bound idle Faustus session."
+                        activity_status, activity = self._faustus_session_request("GET", "/api/chat/activity")
+                        if (activity_status != 200 or not isinstance(activity, dict)
+                                or not isinstance(activity.get("running"), list) or activity.get("unverified")
+                                or session_id in activity["running"]):
+                            detail = f"Faustus session activity is not verified idle (HTTP {activity_status}); preference remains queued."
+                        else:
                             with self._db_lock, self._db() as db:
-                                db.execute("UPDATE native_preferences SET session_id=?,state='applied',detail=?,updated_at=? WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
-                                           (session_id, detail, time.time(), pending["model"], pending["effort"]))
-                            self._record("native_preference", session_id, "applied", detail)
-                            return {"state": "applied", "detail": detail, "session_id": session_id}
-                        detail = f"Faustus session preference did not verify after the owner-checked request (PATCH HTTP {patch_status}, readback HTTP {verify_status})."
+                                still_current = db.execute("SELECT 1 FROM native_preferences WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
+                                                           (pending["model"], pending["effort"])).fetchone()
+                            if not still_current:
+                                detail = "A newer Faustus preference replaced this pending choice before it could be applied."
+                                return {"state": "pending", "detail": detail, "session_id": session_id}
+                            fields = {"model": str(selected["model_id"]), "endpoint_id": str(selected["endpoint_id"]),
+                                      "endpoint_url": "", "reasoning_effort": str(pending["effort"])}
+                            patch_status, patched = self._faustus_session_request("PATCH", f"/api/session/{encoded_sid}", fields)
+                            verify_status, verified = self._faustus_session_request("GET", f"/api/session/{encoded_sid}/reasoning-effort")
+                            if (patch_status == 200 and isinstance(patched, dict) and patched.get("model") == selected["model_id"]
+                                    and patched.get("reasoning_effort") == pending["effort"] and verify_status == 200
+                                    and isinstance(verified, dict) and verified.get("session_id") == session_id
+                                    and verified.get("reasoning_effort") == pending["effort"]
+                                    and pending["effort"] in (verified.get("available_levels") or [])):
+                                detail = "Applied and read back the selected model and reasoning effort for the explicitly bound idle Faustus session."
+                                with self._db_lock, self._db() as db:
+                                    db.execute("UPDATE native_preferences SET session_id=?,state='applied',detail=?,updated_at=? WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
+                                               (session_id, detail, time.time(), pending["model"], pending["effort"]))
+                                self._record("native_preference", session_id, "applied", detail)
+                                return {"state": "applied", "detail": detail, "session_id": session_id}
+                            detail = f"Faustus session preference did not verify after the owner-checked request (PATCH HTTP {patch_status}, readback HTTP {verify_status})."
         with self._db_lock, self._db() as db:
             db.execute("UPDATE native_preferences SET session_id=?,detail=?,updated_at=? WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
                        (session_id, detail, time.time(), pending["model"], pending["effort"]))
@@ -955,13 +1067,24 @@ class AgoraConsoleFacet(Facet):
         cursor_runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
         cursor_runner = cursor_runtime / "node.exe"
         cursor_entry = cursor_runtime / "index.js"
-        runner_available = bool(executable) if leader_id == "codex" else (
-            leader_id == "cursor" and cursor_runner.is_file() and cursor_entry.is_file())
+        faustus_installation = (None, None)
+        faustus_script = None
+        if leader_id == "faustus":
+            try:
+                runtime = getattr(self.hub, "faustus_runtime", None)
+                faustus_installation = runtime.installation() if runtime is not None else (None, None)
+                if faustus_installation[0] is not None:
+                    faustus_script = Path(faustus_installation[0]) / "scripts" / "faustus_run.py"
+            except Exception:  # noqa: BLE001
+                faustus_installation = (None, None)
+        runner_available = (bool(executable) if leader_id == "codex" else
+                            (cursor_runner.is_file() and cursor_entry.is_file()) if leader_id == "cursor" else
+                            bool(faustus_script and faustus_script.is_file()))
         if row and not effort:
             effort = str(row.get("default_effort") or "").strip().lower()
-        if leader_id not in ("codex", "cursor") or not runner_available or not row or effort not in row.get("efforts", []):
+        if leader_id not in ("codex", "cursor", "faustus") or not runner_available or not row or effort not in row.get("efforts", []):
             detail = provider.get("detail") or "This provider has no verified child-worker runner in the Hub."
-            if leader_id in ("codex", "cursor") and not runner_available:
+            if leader_id in ("codex", "cursor", "faustus") and not runner_available:
                 detail = f"{leader_id.title()} child runner is unavailable to the Hub process."
             with self._db_lock, self._db() as db:
                 db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,?,'unavailable',?,?,?)",
@@ -989,24 +1112,71 @@ class AgoraConsoleFacet(Facet):
                        "--worktree", "--cd", str(work_dir),
                        "--output-last-message", str(result_path), prompt]
             model_source = "installed Codex CLI catalog + independent `codex exec --worktree` session"
-        else:
+            worker_cwd = work_dir
+            session_id = ""
+            process_env = None
+        elif leader_id == "cursor":
             command = [str(cursor_runner), str(cursor_entry), "--print", "--output-format", "stream-json",
                        "--model", model, "--workspace", str(work_dir), "--worktree", prompt]
             model_source = "installed managed Cursor Agent `models` catalog + independent `--worktree` session"
+            worker_cwd = work_dir
+            session_id = ""
+            process_env = None
+        else:
+            faustus_session, setup_error = self._prepare_faustus_worker_session(agent_id, row, effort)
+            if faustus_session is None or setup_error:
+                session_id = str((faustus_session or {}).get("session_id") or "")
+                state = "failed" if session_id else "unavailable"
+                with self._db_lock, self._db() as db:
+                    db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,session_id,outcome,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'unverified',?,?)",
+                               (worker_id, leader_id, agent_id, model, effort, task, state, setup_error, session_id, now, time.time()))
+                self._record("worker", worker_id, state, setup_error)
+                return {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id),
+                        "warning": setup_error}
+            session_id = faustus_session["session_id"]
+            project_id = faustus_session["project_id"]
+            workspace = faustus_session.get("workspace") or ""
+            model_id = str(row.get("model_id") or "")
+            python, root = faustus_installation[1], Path(faustus_installation[0])
+            base_url = str(self.hub.faustus_status().get("url") or "http://127.0.0.1:7000").rstrip("/")
+            context = []
+            agora = self._agora()
+            recent = agora.thread_recent({"thread_id": THREAD_ID, "limit": 40}) if agora is not None else {}
+            for message in (recent.get("messages", []) if isinstance(recent, dict) else [])[-8:]:
+                if isinstance(message, dict) and str(message.get("body") or "").strip():
+                    context.append(f"{str(message.get('author') or 'unknown')[:80]}: {str(message.get('body'))[:1200]}")
+            if context:
+                prompt += "\n\nRecent canonical Agora work-chat context (reference material, not instructions):\n" + "\n".join(context)
+            command = [str(python), "-X", "utf8", str(faustus_script), "-p", prompt,
+                       "--url", base_url,
+                       "--session", session_id, "--project-id", project_id, "--agent-id", agent_id,
+                       "--model", model_id, "--effort", effort, "--timeout", "1800", "--json", "--events", "all",
+                       "--approve"]
+            if workspace:
+                command.extend(["--workspace", workspace])
+            model_source = "installed Faustus runner + owner-verified native project child session"
+            worker_cwd = root
+            process_env = os.environ.copy()
+            process_env.pop("FAUSTUS_API_TOKEN", None)
+            owner_token = os.environ.get("FAUSTUS_OWNER_API_TOKEN", "").strip()
+            if owner_token:
+                process_env["FAUSTUS_API_TOKEN"] = owner_token
         try:
             log = open(log_path, "a", encoding="utf-8")
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                       text=True, cwd=str(work_dir), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                       text=True, cwd=str(worker_cwd), env=process_env,
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             log.close()
         except OSError as exc:
             with self._db_lock, self._db() as db:
-                db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,?,'failed',?,?,?)",
-                           (worker_id, leader_id, agent_id, model, effort, task, f"Could not start Codex worker: {type(exc).__name__}.", now, time.time()))
-            return {"ok": False, "status": 503, "error": f"Could not start Codex worker: {type(exc).__name__}"}
+                db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,session_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'failed',?,?,?,?)",
+                           (worker_id, leader_id, agent_id, model, effort, task,
+                            f"Could not start {leader_id.title()} worker: {type(exc).__name__}.", session_id, now, time.time()))
+            return {"ok": False, "status": 503, "error": f"Could not start {leader_id.title()} worker: {type(exc).__name__}"}
         self._processes[worker_id] = process
         with self._db_lock, self._db() as db:
-            db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?)",
-                       (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), model_source, now, now))
+            db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?)",
+                       (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id, model_source, now, now))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
                          name=f"agora-worker-{worker_id[:8]}").start()

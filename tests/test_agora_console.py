@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
@@ -69,8 +70,10 @@ def _mock_faustus_controller(tmp_path, monkeypatch, *, active=False):
     controller_dir = tmp_path / "faustus-agora"
     controller_dir.mkdir(exist_ok=True)
     (controller_dir / "faustus_agora.py").write_text("# controller stub", encoding="utf-8")
+    (controller_dir / "run.lock").touch(exist_ok=True)
     monkeypatch.setenv("FAUSTUS_AGORA_DIR", str(controller_dir))
     snapshot = {"session": "controller-owned-session", "local_turn_active": active}
+    (controller_dir / "state.json").write_text(json.dumps(snapshot), encoding="utf-8")
     monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", lambda *args, **kwargs:
                         SimpleNamespace(returncode=0, stdout=json.dumps(snapshot)))
 
@@ -431,6 +434,98 @@ def test_faustus_session_patch_does_not_forward_family_token(tmp_path, monkeypat
 
     assert result == (200, {"session_id": "session-1"})
     assert "Authorization" not in requests[0].headers
+
+
+def test_faustus_child_session_creation_uses_native_form_api(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    requests = []
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self, *args):
+            return b'{"id":"child-session"}'
+    class Opener:
+        def open(self, request, timeout):
+            requests.append((request, timeout))
+            return Response()
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: Opener())
+
+    status, data = facet._faustus_session_request("POST", "/api/session", {
+        "name": "Agora worker faustus-worker-a1b2c3d4", "model": "glm-flash",
+        "endpoint_id": "spark-main", "project_id": "faustus-project", "skip_validation": "true"})
+
+    request, timeout = requests[0]
+    assert (status, data) == (200, {"id": "child-session"})
+    assert request.get_method() == "POST" and timeout == 8.0
+    assert request.full_url.endswith("/api/session")
+    assert parse_qs(request.data.decode("utf-8")) == {
+        "name": ["Agora worker faustus-worker-a1b2c3d4"], "model": ["glm-flash"],
+        "endpoint_id": ["spark-main"], "project_id": ["faustus-project"], "skip_validation": ["true"]}
+
+
+def test_faustus_worker_starts_independent_native_project_session(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    monkeypatch.delenv("FAUSTUS_OWNER_API_TOKEN", raising=False)
+    monkeypatch.setenv("FAUSTUS_API_TOKEN", "family-token-must-not-be-forwarded")
+    _mock_faustus_controller(tmp_path, monkeypatch)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "faustus_run.py").write_text("# installed runner", encoding="utf-8")
+    facet._provider_cache["faustus"] = {"state": "available", "detail": "real Sparks catalog", "catalog": [
+        {"id": "spark-main::glm-flash", "model_id": "glm-flash", "endpoint_id": "spark-main",
+         "efforts": ["low", "high"], "default_effort": "high"}]}
+    calls = []
+    def request(method, path, fields=None):
+        calls.append((method, path, fields))
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project", "workspace": str(tmp_path / "workspace")}}
+        if path == "/api/coordination/controller-owned-session":
+            return 200, {"binding": {"session_id": "controller-owned-session", "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "unverified": 0}
+        if method == "POST" and path == "/api/session":
+            return 200, {"id": "new-child-session", "model": "glm-flash"}
+        if path == "/api/projects/resolve/session/new-child-session":
+            return 200, {"project": {"id": "faustus-project", "workspace": str(tmp_path / "workspace")}}
+        if method == "PATCH" and path == "/api/session/new-child-session":
+            return 200, {"id": "new-child-session", "model": "glm-flash", "reasoning_effort": "low"}
+        if path == "/api/session/new-child-session/reasoning-effort":
+            return 200, {"session_id": "new-child-session", "reasoning_effort": "low",
+                         "available_levels": ["low", "high"]}
+        raise AssertionError((method, path))
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+    commands = []
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.Popen", lambda command, **kwargs: (
+        commands.append((command, kwargs)) or SimpleNamespace(pid=4321)))
+
+    class DeferredThread:
+        def __init__(self, *args, **kwargs):
+            self.args, self.kwargs = args, kwargs
+        def start(self):
+            pass
+    monkeypatch.setattr("hoard_link.hub.agora_console.threading.Thread", DeferredThread)
+
+    response = facet.worker({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low",
+                             "task": "Inspect this isolated project."})
+
+    worker = response["worker"]
+    command, options = commands[0]
+    assert worker["state"] == "running" and worker["agent_id"].startswith("faustus-worker-")
+    assert worker["session_id"] == "new-child-session" and worker["parent_id"] == "faustus"
+    assert command[command.index("--session") + 1] == "new-child-session"
+    assert command[command.index("--project-id") + 1] == "faustus-project"
+    assert command[command.index("--agent-id") + 1] == worker["agent_id"]
+    assert command[command.index("--model") + 1] == "glm-flash"
+    assert command[command.index("--effort") + 1] == "low" and "--approve" in command
+    assert options["cwd"] == str(tmp_path)
+    assert options["env"].get("FAUSTUS_API_TOKEN") is None
+    created = next(call for call in calls if call[0] == "POST")
+    assert created[2]["project_id"] == "faustus-project" and created[2]["endpoint_id"] == "spark-main"
+    patched_paths = [call[1] for call in calls if call[0] == "PATCH"]
+    assert patched_paths == ["/api/session/new-child-session"]
 
 
 def test_claude_auth_status_is_live_sanitized_and_does_not_invent_catalog(tmp_path, monkeypatch):
