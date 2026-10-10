@@ -544,6 +544,26 @@ def test_overview_uses_unique_native_model_mapping_and_keeps_null_effort_unknown
     assert faustus["state"] == "available"  # stale Agora working state is not a live native activity check
 
 
+def test_unverified_native_activity_does_not_claim_faustus_is_working(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    _mock_faustus_controller(tmp_path, monkeypatch)
+    def request(method, path, fields=None):
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project"}}
+        if path == "/api/coordination/controller-owned-session":
+            return 200, {"binding": {"session_id": "controller-owned-session", "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "unverified": 1}
+        raise AssertionError((method, path))
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+
+    bound, error = facet._faustus_bound_session()
+
+    assert error == "" and bound["binding"] == "native"
+    assert bound["state"] == "unknown"
+
+
 def test_faustus_session_patch_uses_configured_owner_token_and_form_contract(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     monkeypatch.setenv("FAUSTUS_OWNER_API_TOKEN", "configured-owner-token")
