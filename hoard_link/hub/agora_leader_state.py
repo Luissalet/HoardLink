@@ -561,7 +561,7 @@ def build_leader_states(leaders: Iterable[tuple[str, str, str]], *, tasks: Itera
             if last_ts is None or seen > float(last_ts):
                 state = dict(state, **_result(
                     "working", "agora",
-                    "Activo en el Ágora (latido o mensaje reciente); su sesión no deja ficheros en este PC.", seen),
+                    "Activo en el Ágora en los últimos 15 min (latido o mensaje), aunque su sesión local no muestra actividad.", seen),
                     open_tasks=open_ids, agora_last_seen_at=_iso(seen))
         # Recently active in the Ágora means somebody IS on it, whatever the
         # local files say (a logged-out local CLI next to a working cloud one).
