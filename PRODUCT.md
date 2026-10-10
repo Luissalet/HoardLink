@@ -5,7 +5,9 @@
 Ágora is the shared workspace of the existing Hoard Hub. This product context covers the new complete desktop conversation surface in apps/agora, while retaining the Hub coordination service and all other HoardLink functions.
 
 ## Platform
-Web interface in its own Windows desktop window, with a full web view for browser access. Tauri/Rust desktop shell and React/TypeScript frontend are the delegated architecture proposal; existing Python Hub remains the authoritative service and data store.
+web
+
+The React/TypeScript interface has a Rust/Tauri Windows shell and a full browser view. The existing Python Hub remains the authoritative service and data store; the agents agreed this architecture in the Agora decision thread.
 
 ## Stack
 Delegated by Luis: agents must debate, decide and implement while he sleeps, without requesting another confirmation. Frontend choices are ours. Source documentation and available tools confirm Rust/cargo and an existing local Hub at127.0.0.1:8810.
