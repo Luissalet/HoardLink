@@ -607,6 +607,43 @@ usada/libre/reservada/disponible, reservas y cola), `GET /api/lease/<id>`.
 La ventana del hub tiene un panel **GPU** con lo mismo y un botón Liberar
 por reserva.
 
+### Carriles de navegador: una app a la vez por sitio
+
+Las apps que manejan un navegador (Tantalus leyendo tiendas, las herramientas de navegador de Faustus, Argus, Phileas)
+podían atacar la misma tienda a la vez, o compartir un perfil de Edge en el mismo momento, lo que duplica la huella de
+automatización y acaba en bloqueos. El hub guarda un **carril** por dominio raíz registrable (`shop.example.co.uk` →
+`example.co.uk`, con una lista pequeña de sufijos públicos incluida, sin dependencias nuevas) y, opcionalmente, uno por
+carpeta de perfil del navegador:
+
+```python
+from hoard_link import lane, LaneBusy
+
+with lane("https://shop.example.com/p/1", holder="tantalus", ttl_s=300, wait_s=60) as l:
+    ...          # se renueva en segundo plano y se libera al salir
+
+try:
+    with lane("example.com", holder="faustus", wait_s=20, profile=r"C:\edge-profile"):
+        ...
+except LaneBusy as busy:
+    print(busy.held_by, busy.since)          # quién lo tiene y desde cuándo
+```
+
+* Entrar espera hasta `wait_s` (el hub atiende por orden de llegada) y después lanza `LaneBusy`; con
+  `raise_on_busy=False` entra con `acquired == False` y `held_by` / `since` rellenos.
+* Un titular que se cae libera el carril cuando vence su `ttl_s` (al instante si su proceso ya no existe); una sesión larga
+  lo conserva porque el cliente lo renueva cada `ttl_s / 3`. Solo el titular puede renovarlo o liberarlo.
+* **Sin hub no se rompe nada:** si no contesta ninguno (o es demasiado antiguo para conocer los carriles) se avisa una vez
+  en el log y la app sigue (`l.via == "local"`). A diferencia de la reserva de GPU, este cliente nunca arranca un hub.
+* Anidar en el mismo hilo o tarea cuenta en lugar de bloquearse (`l.via == "nested"`).
+
+HTTP (loopback, sin token, con la misma protección cross-site que la interfaz): `POST /api/lane/acquire`
+`{domain | url, holder, purpose, ttl_s, wait_s (máx. 30), profile, pid[, queue_seq]}` → `{granted: true, lease_id, ...}` o
+`{granted: false, busy: true, held_by, since, expires_in_s, queue_seq}`, `POST /api/lane/renew`
+`{lease_id, holder, ttl_s}`, `POST /api/lane/release` `{lease_id, holder[, force]}` (403 si es otro titular) y
+`GET /api/lane` (carriles activos y quién espera). Herramientas: `hub_lane_status`, `hub_lane_acquire`,
+`hub_lane_release`. Eventos: `hub.lane.acquired|released|expired`. La ventana del hub tiene un panel **Carriles de
+navegador** (dominio, titular, desde, caduca, Liberar). Más detalle en [docs/HUB.md](docs/HUB.md).
+
 ### Controlar el hub desde un agente
 
 El hub habla el mismo contrato que las apps que gestiona:
@@ -617,6 +654,7 @@ ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
 `hub_start_app`, `hub_stop_app`, `hub_restart_app`, `hub_open_app`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
+`hub_lane_status`, `hub_lane_acquire`, `hub_lane_release`,
 `hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
 `hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
 `hub_repo_push_command`, `hub_link_status`, `hub_link_chat`, `hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a

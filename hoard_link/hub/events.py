@@ -275,6 +275,8 @@ def event_types_help() -> list[dict[str, str]]:
         {"type": "hub.rule.ran", "who": "hub", "data": "rule, event_id, results"},
         {"type": "hub.job.ran", "who": "hub", "data": "job, results"},
         {"type": "hub.lease.granted|released", "who": "hub", "data": "lease_id, owner, gpu, vram_mb"},
+        {"type": "hub.lane.acquired|released|expired", "who": "hub",
+         "data": "lease_id, holder, purpose, domain, profile, reason (expired: ttl | owner process gone), waited_s, held_s — a browser lane per site"},
         {"type": "hub.repos.scan", "who": "hub", "data": "repos, with_issues, unpushed_total, errors — after each full repo scan"},
         {"type": "hub.repos.issue", "who": "hub", "data": "repo, kind, text — a repository gained an error-level issue"},
         {"type": "hub.repos.fetch", "who": "hub", "data": "repo, ok, error — a git fetch the user asked for"},

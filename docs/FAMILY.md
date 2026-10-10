@@ -66,6 +66,7 @@ contents (16 KB cap). Conventions:
 | `hub.backup.done` / `failed` / `restored` | hub | `snapshot, apps, files, new_bytes` |
 | `hub.rule.ran` / `hub.job.ran` | hub | `rule|job, ok, ms, results` |
 | `hub.lease.granted` / `released` | hub | `lease_id, owner, gpu, vram_mb` |
+| `hub.lane.acquired` / `released` / `expired` | hub | `lease_id, holder, purpose, domain, profile, reason (expired: ttl / owner process gone), waited_s, held_s` |
 | `hub.repos.scan` | hub, after each repository scan | `repos, with_issues, unpushed_total, errors, scan_errors` |
 | `hub.repos.issue` | hub, a repository gained an error-level issue | `repo, kind, severity, text, url` |
 | `hub.repos.fetch` / `push_command` | hub | `repo, ok, error, ms` / `repo, command` |

@@ -230,6 +230,37 @@ MCP bridge).
 `lease_headroom_mb` in `data/hub.json` (default 256): memory kept free on
 every GPU when granting.
 
+## Browser lanes
+
+The lease arbiter keeps two apps from loading into the same VRAM; the **lane arbiter** (`hoard_link/hub/browser_lanes.py`)
+keeps two apps from driving a browser against the same site, or from sharing one browser profile, at the same moment.
+Tantalus' headless and visible reads, Faustus' browser tools and any other app that opens a browser take a lane first
+(`from hoard_link import lane`, see the README).
+
+* **Key.** The registrable root domain of the URL or host (`shop.example.co.uk` → `example.co.uk`; IPs, `localhost` and
+  single labels are used as they are; hosting suffixes such as `myshopify.com` keep the customer label). The suffix
+  list is a small built-in table in `hoard_link/browser_lane.py`: no new dependency. An optional `profile` (a browser
+  profile folder, compared case-folded and without a trailing separator) is a second key; a request for both takes both
+  keys or neither.
+* **Wait.** `acquire` waits up to `wait_s` (capped at 30 s per call; the client asks again for longer waits and keeps
+  its place with `queue_seq`) and then answers `busy` with `held_by`, `since`, `purpose` and `expires_in_s`. Waiters are
+  served in arrival order and never overtake an earlier waiter for the same key.
+* **Lifetime.** A lane lasts `ttl_s` (default 300 s, 1 s to 6 h) and is kept by `renew`. A holder whose `pid` is gone loses
+  it at once (psutil); otherwise it ends at the ttl. Only the holder (`holder` must match) can renew or release a lane;
+  `force` is the hub window's override. Granted lanes are written to `data/browser-lanes.json`, so a restarted hub still
+  knows who holds what.
+
+| Route | Body | Answer |
+|---|---|---|
+| `POST /api/lane/acquire` | `domain` (or `url`), `holder`, `purpose`, `ttl_s`, `wait_s`, `profile`, `pid`, `queue_seq` | `granted: true, lease_id, expires_at, lane` or `granted: false, busy: true, held_by, since, purpose, expires_in_s, waiting, queue_seq`; 400 without a domain or profile |
+| `POST /api/lane/renew` | `lease_id`, `holder`, `ttl_s` | the lane; 404 when unknown or expired, 403 for another holder |
+| `POST /api/lane/release` | `lease_id`, `holder`, `force` | `released: true\|false` (idempotent); 403 for another holder |
+| `GET /api/lane` | — | `lanes[] (domain, profile, holder, purpose, since, expires_in_s, held_for_s, lease_id)`, `waiting[]`, `reaped[]` |
+
+Tools: `hub_lane_status` (read-only), `hub_lane_acquire`, `hub_lane_release`. Events: `hub.lane.acquired`,
+`hub.lane.released`, `hub.lane.expired`. The hub window lists the active lanes (and who waits) in its **Browser lanes**
+panel, with a Release button per lane.
+
 ## Models for every app
 
 `POST /api/link/chat` and `GET /api/link/status` serve the hub's own Hoard

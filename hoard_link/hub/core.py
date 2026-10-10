@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional
 
 from . import HUB_VERSION, SERVICE
 from .config import HubConfig
+from .browser_lanes import LaneArbiter
 from .lease import LeaseArbiter
 from .profiles import CommandRunner, Profile, parse as parse_profiles
 from .registry import App, scan
@@ -79,6 +80,8 @@ class Hub:
         self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=gpu_fn,
                                    headroom_mb=int(self.config.lease_headroom_mb or 0),
                                    protected_gpus=self.config.protected_gpus)
+        # Browser lanes: one holder at a time per site / browser profile (Agora #265).
+        self.lanes = LaneArbiter(self.config.lanes_file)
         # External commands of the profiles (ComfyUI instances, scripts...).
         # the shared backends (ComfyUI, Ollama, configured servers) any app of
         # the family can start without Faustus: same files as the apps use
@@ -90,6 +93,7 @@ class Hub:
         # rules that react to it, jobs on a clock, and the backup store.
         self.events = EventLog(self.config.events_file, keep=int(self.config.events_keep or 20000))
         self.leases.on_event = self._lease_event
+        self.lanes.on_event = self._lane_event
         runner = lambda acts, ctx, caller: _actions.run_all(self, acts, ctx, caller=caller)  # noqa: E731
         self.rules = RuleEngine(self.config.rules_file, self.events, runner)
         self.jobs = Scheduler(self.config.jobs_file, runner, events=self.events)
@@ -125,6 +129,12 @@ class Hub:
     def _lease_event(self, kind: str, lease: dict[str, Any]) -> None:
         try:
             self.events.emit("hub.lease." + kind, {k: lease.get(k) for k in ("lease_id", "owner", "purpose", "gpu", "vram_mb")})
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _lane_event(self, kind: str, lane: dict[str, Any]) -> None:
+        try:
+            self.events.emit("hub.lane." + kind, {k: lane.get(k) for k in ("lease_id", "holder", "purpose", "domain", "profile", "reason", "forced", "waited_s", "held_s") if lane.get(k) not in (None, "")})
         except Exception:  # noqa: BLE001
             pass
 

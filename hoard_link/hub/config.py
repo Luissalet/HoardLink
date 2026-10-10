@@ -94,6 +94,10 @@ class HubConfig:
         return os.path.join(self.data_dir, "leases.json")
 
     @property
+    def lanes_file(self) -> str:
+        return os.path.join(self.data_dir, "browser-lanes.json")
+
+    @property
     def events_file(self) -> str:
         return os.path.join(self.data_dir, "events.db")
 

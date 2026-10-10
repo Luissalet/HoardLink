@@ -582,6 +582,45 @@ used/free/reserved/available, the leases and the queue),
 `GET /api/lease/<id>`. The hub window has a **GPU** panel with the same
 picture and a Release button per lease.
 
+### Browser lanes: one app at a time per site
+
+Apps that drive a web browser (Tantalus reading shops, Faustus' browser tools, Argus, Phileas) used to be able to hit
+the same shop together, or share one Edge profile at the same moment, which doubles the automation footprint and gets the
+machine blocked. The hub keeps one **lane** per registrable root domain (`shop.example.co.uk` → `example.co.uk`, with a
+small built-in public-suffix list, no extra dependency) and, optionally, one per browser profile folder:
+
+```python
+from hoard_link import lane, LaneBusy
+
+with lane("https://shop.example.com/p/1", holder="tantalus", ttl_s=300, wait_s=60) as l:
+    ...          # renewed in the background, released on exit
+
+try:
+    with lane("example.com", holder="faustus", wait_s=20, profile=r"C:\edge-profile"):
+        ...
+except LaneBusy as busy:
+    print(busy.held_by, busy.since)          # who has it, since when
+
+with lane("example.com", holder="argus", wait_s=0, raise_on_busy=False) as l:
+    if not l.acquired:
+        return f"busy: {l.held_by}"
+```
+
+* Entering waits up to `wait_s` (the hub serves waiters in arrival order) and then raises `LaneBusy` — or, with
+  `raise_on_busy=False`, enters with `acquired == False` and `held_by` / `since` filled in.
+* A holder that crashes frees the lane when its `ttl_s` runs out (at once when its process is gone); a long session keeps
+  it: the client renews it every `ttl_s / 3`. Only the holder can renew or release a lane.
+* **Without a hub nothing breaks:** if none answers (or it is too old to know lanes) the context manager logs once and
+  the caller proceeds (`l.via == "local"`). Unlike the GPU lease, this client never starts a hub.
+* Nesting in the same thread or task counts instead of deadlocking (`l.via == "nested"`).
+
+HTTP (loopback, no token, same cross-site guard as the UI): `POST /api/lane/acquire`
+`{domain | url, holder, purpose, ttl_s, wait_s (max 30), profile, pid[, queue_seq]}` → `{granted: true, lease_id, ...}` or
+`{granted: false, busy: true, held_by, since, expires_in_s, queue_seq}`, `POST /api/lane/renew` `{lease_id, holder, ttl_s}`,
+`POST /api/lane/release` `{lease_id, holder[, force]}` (403 for another holder), `GET /api/lane` (active lanes and who waits).
+Tools: `hub_lane_status`, `hub_lane_acquire`, `hub_lane_release`. Events: `hub.lane.acquired|released|expired`. The hub
+window has a **Browser lanes** panel (domain, holder, since, expires, Release). Details in [docs/HUB.md](docs/HUB.md).
+
 ### Driving the hub from an agent
 
 The hub speaks the same contract as the apps it manages:
@@ -592,6 +631,7 @@ hub when none is listening. Tools: `hub_list_apps`, `hub_app_status`,
 `hub_start_app`, `hub_stop_app`, `hub_restart_app`, `hub_open_app`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
+`hub_lane_status`, `hub_lane_acquire`, `hub_lane_release`,
 `hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
 `hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
 `hub_repo_push_command`, `hub_link_status`, `hub_link_chat`, `hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus

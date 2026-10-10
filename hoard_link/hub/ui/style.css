@@ -88,6 +88,8 @@ input[type=search]:focus { border-color: var(--accent); }
 .lease-row .what { color: var(--muted); flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lease-row .mono { font-family: var(--mono); color: var(--muted); font-size: 12px; }
 .lease-row button { margin-left: auto; }
+.lane-row .domain { min-width: 150px; }
+.lane-row .who { color: var(--muted); font-weight: 500; }
 
 .profiles { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
 .profiles-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; margin-right: 2px; }
