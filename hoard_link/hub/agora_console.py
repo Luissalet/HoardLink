@@ -528,13 +528,14 @@ class AgoraConsoleFacet(Facet):
                 self._finish_leader_turn(turn_id, leader_id, "failed", "Codex CLI is unavailable to the Hub process.", "", "")
                 return
             if session_id:
-                # `resume` is a subcommand. Its parser does not accept the
-                # exec-level --sandbox/--cd flags after the subcommand, and it
-                # must restore the worktree recorded by this session itself.
-                command = [executable, "exec", "--json", "--model", turn["model"],
+                # The installed CLI parses resume as `exec resume [options]`;
+                # resume has no --sandbox flag, so use the equivalent explicit
+                # sandbox_mode config and preserve the session's own worktree.
+                command = [executable, "exec", "resume", "--json", "--model", turn["model"],
                            "--config", f'model_reasoning_effort="{turn["effort"]}"',
-                           "--config", 'approval_policy="never"', "--sandbox", "danger-full-access",
-                           "resume", "--json", session_id, "--output-last-message", str(result_path), turn["prompt"]]
+                           "--config", 'approval_policy="never"',
+                           "--config", 'sandbox_mode="danger-full-access"',
+                           session_id, "--output-last-message", str(result_path), turn["prompt"]]
             else:
                 command = [executable, "exec", "--json", "--model", turn["model"], "--config",
                            f'model_reasoning_effort="{turn["effort"]}"', "--config", 'approval_policy="never"',

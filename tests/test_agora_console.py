@@ -676,7 +676,7 @@ def test_console_leader_posts_only_a_real_runner_result_with_its_own_identity(tm
                                          "body": "A real answer from the Codex CLI.", "kind": "comment", "mentions": []}
 
 
-def test_console_leader_resume_places_exec_options_before_subcommand_and_keeps_session_cwd(tmp_path, monkeypatch):
+def test_console_leader_resume_uses_supported_resume_options_and_keeps_session_cwd(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     with facet._db() as db:
         db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) VALUES('turn-2','codex','903','new explicit prompt','codex-model-from-cli','low','working',2,2)")
@@ -699,10 +699,13 @@ def test_console_leader_resume_places_exec_options_before_subcommand_and_keeps_s
 
     command = commands[0]
     resume = command.index("resume")
-    assert command[:resume][1:3] == ["exec", "--json"]
-    assert command.index("--sandbox") < resume
-    assert command[resume + 1:resume + 3] == ["--json", "provider-session-9"]
-    assert "--sandbox" not in command[resume:] and "--cd" not in command[resume:]
+    assert command[resume:resume + 3] == ["resume", "--json", "--model"]
+    assert command[resume + 3] == "codex-model-from-cli"
+    assert command[resume + 4:resume + 6] == ["--config", 'model_reasoning_effort="low"']
+    assert command[resume + 6:resume + 8] == ["--config", 'approval_policy="never"']
+    assert command[resume + 8:resume + 10] == ["--config", 'sandbox_mode="danger-full-access"']
+    assert command[resume + 10] == "provider-session-9"
+    assert "--sandbox" not in command and "--cd" not in command
     assert run_kwargs[0]["cwd"] is None
     with facet._db() as db:
         turn = db.execute("SELECT state,result,session_id FROM leader_turns WHERE id='turn-2'").fetchone()
