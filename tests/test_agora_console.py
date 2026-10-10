@@ -960,6 +960,9 @@ def test_cursor_group_leader_passes_explicit_worktree_name_before_prompt(tmp_pat
     facet = _facet(tmp_path)
     turn_id = "group-turn-123"
     prompt = "Review the current task and report findings."
+    managed_worktree = tmp_path / "home" / ".cursor" / "worktrees" / "hoardlink" / "agora-cursor-group-turn-123"
+    managed_worktree.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     with facet._db() as db:
         db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) "
                    "VALUES(?,?,?,?,?,?,'working',1,1)",
@@ -974,6 +977,8 @@ def test_cursor_group_leader_passes_explicit_worktree_name_before_prompt(tmp_pat
     commands = []
     def runner(command, **kwargs):
         commands.append(command)
+        kwargs["stdout"].write(json.dumps({"type": "system", "subtype": "init",
+                                            "session_id": "cursor-session", "cwd": str(managed_worktree)}) + "\n")
         kwargs["stdout"].write(json.dumps({"type": "result", "session_id": "cursor-session",
                                             "text": "Review complete."}) + "\n")
         return SimpleNamespace(returncode=0)
@@ -988,18 +993,36 @@ def test_cursor_group_leader_passes_explicit_worktree_name_before_prompt(tmp_pat
     worktree_index = command.index(worktree)
     assert command[worktree_index + 1:] == ["--trust", "--force", "--", prompt]
     assert "--yolo" not in command and "-f" not in command
+    with facet._db() as db:
+        saved = db.execute("SELECT session_id,workspace FROM leader_sessions WHERE leader_id='cursor'").fetchone()
+    assert saved["session_id"] == "cursor-session" and Path(saved["workspace"]) == managed_worktree.resolve()
 
 
 def test_cursor_group_leader_resumes_with_autonomous_cli_mode(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     turn_id = "group-resume-234"
     prompt = "Continue the current group task."
+    saved_worktree = tmp_path / "home" / ".cursor" / "worktrees" / "hoardlink" / "agora-cursor-group-resume-234"
+    saved_worktree.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     with facet._db() as db:
         db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) "
                    "VALUES(?,?,?,?,?,?,'working',1,1)",
                    (turn_id, "cursor", "903", prompt, "cursor-model", "low"))
-        db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,updated_at) "
-                   "VALUES('cursor','cursor-console-session','cursor-model','low','idle',1)")
+        db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,workspace,updated_at) "
+                   "VALUES('cursor','cursor-console-session','cursor-model','low','idle','',1)")
+    receipt_dir = tmp_path / "agora-console" / "leaders" / "cursor"
+    receipt_dir.mkdir(parents=True)
+    (receipt_dir / "original-turn.jsonl").write_text(json.dumps({
+        "type": "system", "subtype": "init", "session_id": "cursor-console-session",
+        "cwd": str(saved_worktree),
+    }) + "\n", encoding="utf-8")
+    # A later turn from R3 reported the source checkout. It must not replace
+    # the session's original managed worktree.
+    (receipt_dir / "bad-resume.jsonl").write_text(json.dumps({
+        "type": "system", "subtype": "init", "session_id": "cursor-console-session",
+        "cwd": str(tmp_path),
+    }) + "\n", encoding="utf-8")
     original_is_file = Path.is_file
     def is_file(path):
         if str(path).lower().endswith((r"cursor\runtime\dist-package\node.exe",
@@ -1008,8 +1031,10 @@ def test_cursor_group_leader_resumes_with_autonomous_cli_mode(tmp_path, monkeypa
         return original_is_file(path)
     monkeypatch.setattr(Path, "is_file", is_file)
     commands = []
+    run_options = []
     def runner(command, **kwargs):
         commands.append(command)
+        run_options.append(kwargs)
         kwargs["stdout"].write(json.dumps({"type": "result", "session_id": "cursor-console-session",
                                             "text": "Continued."}) + "\n")
         return SimpleNamespace(returncode=0)
@@ -1023,6 +1048,36 @@ def test_cursor_group_leader_resumes_with_autonomous_cli_mode(tmp_path, monkeypa
     assert command[resume_index:resume_index + 2] == ["--resume", "cursor-console-session"]
     assert command[resume_index + 2:] == ["--trust", "--force", "--", prompt]
     assert "--worktree" not in command and "--yolo" not in command and "-f" not in command
+    assert command[command.index("--workspace") + 1] == str(saved_worktree.resolve())
+    assert run_options[0]["cwd"] == str(saved_worktree.resolve())
+    with facet._db() as db:
+        saved = db.execute("SELECT workspace FROM leader_sessions WHERE leader_id='cursor'").fetchone()
+    assert Path(saved["workspace"]) == saved_worktree.resolve()
+
+
+def test_cursor_resume_refuses_workspace_outside_its_managed_worktrees(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    with facet._db() as db:
+        db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) "
+                   "VALUES('unsafe-resume','cursor','904','Do not use the shared checkout.','cursor-model','low','working',1,1)")
+        db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,workspace,updated_at) "
+                   "VALUES('cursor','cursor-session','cursor-model','low','idle',?,1)", (str(tmp_path),))
+    original_is_file = Path.is_file
+    def is_file(path):
+        if str(path).lower().endswith((r"cursor\runtime\dist-package\node.exe",
+                                       r"cursor\runtime\dist-package\index.js")):
+            return True
+        return original_is_file(path)
+    monkeypatch.setattr(Path, "is_file", is_file)
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unsafe resume must not launch")))
+
+    facet._run_leader_turn({"id": "unsafe-resume", "leader_id": "cursor", "model": "cursor-model",
+                            "effort": "low", "prompt": "Do not use the shared checkout."})
+
+    with facet._db() as db:
+        turn = db.execute("SELECT state,detail FROM leader_turns WHERE id='unsafe-resume'").fetchone()
+    assert turn["state"] == "failed" and "no resumed turn was launched" in turn["detail"]
 
 
 def test_cursor_child_worker_passes_explicit_worktree_name_before_prompt(tmp_path, monkeypatch):
@@ -1117,11 +1172,11 @@ def test_faustus_run_summary_error_is_provider_error_with_native_tool_counts(tmp
                    (worker_id, "faustus", "faustus-worker-12345678", "glm", "low", "task", str(log), 1, 1))
 
     metrics = facet._runner_metrics(log)
-    session_id, text = facet._read_runner_receipt(log)
+    session_id, text, workspace = facet._read_runner_receipt(log)
 
     assert metrics["provider_error"] == "The resumed chat keeps its automatic identity."
     assert metrics["tool_success_count"] == 1 and metrics["tool_failure_count"] == 1
-    assert session_id == "child-session" and text == ""
+    assert session_id == "child-session" and text == "" and workspace == ""
 
     class Process:
         def wait(self):

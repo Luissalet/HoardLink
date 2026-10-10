@@ -154,7 +154,8 @@ class AgoraConsoleFacet(Facet):
                 CREATE TABLE IF NOT EXISTS leader_sessions (
                     leader_id TEXT PRIMARY KEY, session_id TEXT NOT NULL DEFAULT '',
                     model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '',
-                    state TEXT NOT NULL DEFAULT 'idle', detail TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL);
+                    state TEXT NOT NULL DEFAULT 'idle', detail TEXT NOT NULL DEFAULT '',
+                    workspace TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS leader_turns (
                     id TEXT PRIMARY KEY, leader_id TEXT NOT NULL, message_id TEXT NOT NULL,
                     prompt TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL,
@@ -190,6 +191,9 @@ class AgoraConsoleFacet(Facet):
                                       ("provider_error", "TEXT NOT NULL DEFAULT ''")):
                 if name not in turn_columns:
                     db.execute(f"ALTER TABLE leader_turns ADD COLUMN {name} {declaration}")
+            session_columns = {row[1] for row in db.execute("PRAGMA table_info(leader_sessions)")}
+            if "workspace" not in session_columns:
+                db.execute("ALTER TABLE leader_sessions ADD COLUMN workspace TEXT NOT NULL DEFAULT ''")
 
     def _record(self, kind: str, subject: str, state: str, detail: str = "") -> None:
         with self._db_lock, self._db() as db:
@@ -521,9 +525,10 @@ class AgoraConsoleFacet(Facet):
         base.mkdir(parents=True, exist_ok=True)
         log_path, result_path = base / f"{turn_id}.jsonl", base / f"{turn_id}.result.txt"
         with self._db_lock, self._db() as db:
-            prior = db.execute("SELECT session_id FROM leader_sessions WHERE leader_id=?", (leader_id,)).fetchone()
+            prior = db.execute("SELECT session_id,workspace FROM leader_sessions WHERE leader_id=?", (leader_id,)).fetchone()
         session_id = str(prior["session_id"] or "") if prior else ""
         use_saved_cwd = False
+        cursor_workspace = work_dir
         if leader_id == "codex":
             executable = self._codex_executable()
             if not executable:
@@ -550,8 +555,22 @@ class AgoraConsoleFacet(Facet):
             if not node.is_file() or not entry.is_file():
                 self._finish_leader_turn(turn_id, leader_id, "failed", "Managed Cursor CLI is unavailable.", "", "")
                 return
+            if session_id:
+                stored_workspace = str(prior["workspace"] or "") if prior else ""
+                cursor_workspace = self._verified_cursor_worktree(stored_workspace)
+                if not stored_workspace:
+                    cursor_workspace = self._cursor_workspace_from_receipts(session_id)
+                    if cursor_workspace is not None:
+                        with self._db_lock, self._db() as db:
+                            db.execute("UPDATE leader_sessions SET workspace=?,updated_at=? WHERE leader_id='cursor' AND session_id=? AND workspace=''",
+                                       (str(cursor_workspace), time.time(), session_id))
+                if cursor_workspace is None:
+                    self._finish_leader_turn(turn_id, leader_id, "failed",
+                                             "Cursor session has no existing verified managed worktree; no resumed turn was launched.",
+                                             "", session_id)
+                    return
             command = [str(node), str(entry), "--print", "--output-format", "stream-json", "--model", turn["model"],
-                       "--workspace", str(work_dir)]
+                       "--workspace", str(cursor_workspace)]
             if session_id:
                 command.extend(["--resume", session_id, "--trust", "--force", "--"])
             else:
@@ -564,13 +583,14 @@ class AgoraConsoleFacet(Facet):
         try:
             with log_path.open("w", encoding="utf-8") as log:
                 result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                        text=True, cwd=str(work_dir) if use_saved_cwd or leader_id != "codex" else None,
+                                        text=True, cwd=(str(cursor_workspace) if leader_id == "cursor" else
+                                                       str(work_dir) if use_saved_cwd else None),
                                         timeout=1800, check=False,
                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             observer_done.set()
             observer.join(timeout=1)
             self._record_leader_session(turn_id, leader_id, log_path)
-            found_session, stream_text = self._read_runner_receipt(log_path)
+            found_session, stream_text, _ = self._read_runner_receipt(log_path)
             answer = result_path.read_text(encoding="utf-8")[:20000] if result_path.is_file() else stream_text[:20000]
             metrics = self._runner_metrics(log_path)
             state = "completed" if result.returncode == 0 else "failed"
@@ -592,10 +612,49 @@ class AgoraConsoleFacet(Facet):
         suffix = re.sub(r"[^A-Za-z0-9._-]", "-", str(identifier)).strip(".-")[:32]
         return f"agora-cursor-{suffix or uuid.uuid4().hex[:8]}"
 
+    @staticmethod
+    def _verified_cursor_worktree(raw_path: Any) -> Optional[Path]:
+        """Accept only an existing Cursor-managed worktree, never the shared source checkout."""
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return None
+        try:
+            managed_root = (Path.home() / ".cursor" / "worktrees").resolve(strict=True)
+            workspace = Path(raw_path).resolve(strict=True)
+            relative = workspace.relative_to(managed_root)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if (not workspace.is_dir() or len(relative.parts) != 2
+                or not relative.parts[1].startswith("agora-cursor-")
+                or any(part in ("", ".", "..") for part in relative.parts)):
+            return None
+        return workspace
+
+    def _cursor_workspace_from_receipts(self, session_id: str) -> Optional[Path]:
+        """Recover a legacy session workspace only from its own matching init receipts."""
+        if not session_id:
+            return None
+        log_dir = Path(self.hub.config.data_dir).resolve() / "agora-console" / "leaders" / "cursor"
+        candidates: set[Path] = set()
+        try:
+            for receipt in log_dir.glob("*.jsonl"):
+                found_session, _, reported_workspace = self._read_runner_receipt(receipt)
+                if found_session != session_id:
+                    continue
+                workspace = self._verified_cursor_worktree(reported_workspace)
+                if workspace is not None:
+                    candidates.add(workspace)
+        except OSError:
+            return None
+        return next(iter(candidates)) if len(candidates) == 1 else None
+
     def _record_leader_session(self, turn_id: str, leader_id: str, log_path: Path) -> None:
-        session_id, _ = self._read_runner_receipt(log_path)
+        session_id, _, reported_workspace = self._read_runner_receipt(log_path)
         if not session_id:
             return
+        workspace = ""
+        if leader_id == "cursor":
+            verified_workspace = self._verified_cursor_worktree(reported_workspace)
+            workspace = str(verified_workspace) if verified_workspace else ""
         now = time.time()
         with self._db_lock, self._db() as db:
             turn = db.execute("SELECT model,effort FROM leader_turns WHERE id=?", (turn_id,)).fetchone()
@@ -603,8 +662,8 @@ class AgoraConsoleFacet(Facet):
                 return
             db.execute("UPDATE leader_turns SET session_id=?,updated_at=? WHERE id=? AND session_id=''",
                        (session_id, now, turn_id))
-            db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,detail,updated_at) VALUES(?,?,?,?, 'working','Provider session observed from its runner receipt',?) ON CONFLICT(leader_id) DO UPDATE SET session_id=excluded.session_id,model=excluded.model,effort=excluded.effort,state='working',detail=excluded.detail,updated_at=excluded.updated_at",
-                       (leader_id, session_id, turn["model"], turn["effort"], now))
+            db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,detail,workspace,updated_at) VALUES(?,?,?,?, 'working','Provider session observed from its runner receipt',?,?) ON CONFLICT(leader_id) DO UPDATE SET session_id=excluded.session_id,model=excluded.model,effort=excluded.effort,state='working',detail=excluded.detail,workspace=CASE WHEN excluded.session_id<>leader_sessions.session_id THEN excluded.workspace WHEN leader_sessions.workspace='' THEN excluded.workspace ELSE leader_sessions.workspace END,updated_at=excluded.updated_at",
+                       (leader_id, session_id, turn["model"], turn["effort"], workspace, now))
 
     def _finish_leader_turn(self, turn_id: str, leader_id: str, state: str, detail: str, answer: str, session_id: str,
                             *, process_exit_code: Optional[int] = None, outcome: str = "unverified",
@@ -1380,7 +1439,7 @@ class AgoraConsoleFacet(Facet):
             leader_id = "unknown"
             try:
                 log_path = self._worker_log_path(worker_id)
-                session_id, stream_result = self._read_runner_receipt(log_path)
+                session_id, stream_result, _ = self._read_runner_receipt(log_path)
                 result = result_path.read_text(encoding="utf-8")[:20000] if result_path.is_file() else stream_result[:20000]
             except OSError:
                 result = ""
@@ -1410,10 +1469,10 @@ class AgoraConsoleFacet(Facet):
         return Path(row["log_path"]) if row and row["log_path"] else Path()
 
     @staticmethod
-    def _read_runner_receipt(path: Path) -> tuple[str, str]:
-        session_id, final_text = "", ""
+    def _read_runner_receipt(path: Path) -> tuple[str, str, str]:
+        session_id, final_text, workspace = "", "", ""
         if not path.is_file():
-            return session_id, final_text
+            return session_id, final_text, workspace
         try:
             for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
                 try:
@@ -1423,6 +1482,10 @@ class AgoraConsoleFacet(Facet):
                 if not isinstance(event, dict):
                     continue
                 payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
+                if event.get("type") == "system" and event.get("subtype") == "init":
+                    current_workspace = payload.get("cwd")
+                    if isinstance(current_workspace, str) and current_workspace:
+                        workspace = current_workspace
                 for key in ("thread_id", "session_id", "chat_id", "session"):
                     value = payload.get(key)
                     if isinstance(value, str) and value:
@@ -1433,7 +1496,7 @@ class AgoraConsoleFacet(Facet):
                     final_text = text
         except OSError:
             pass
-        return session_id, final_text
+        return session_id, final_text, workspace
 
     def _stop_worker(self, worker_id: str) -> dict[str, Any]:
         process = self._processes.get(worker_id)
