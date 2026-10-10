@@ -1192,6 +1192,24 @@ class Agora:
                     window["measurement"] = "unknown"
                 else:
                     window["stale"] = False
+                    # A fresh report can still contain a window whose reset has
+                    # already passed. Expire that window alone; other windows
+                    # in the same pool remain usable until their own reset.
+                    reset_at = window.get("reset_at")
+                    if reset_at:
+                        try:
+                            reset = datetime.fromisoformat(str(reset_at).replace("Z", "+00:00"))
+                            if reset.tzinfo is None:
+                                reset = reset.replace(tzinfo=timezone.utc)
+                            expired = reset.timestamp() <= now
+                        except (OverflowError, OSError, TypeError, ValueError):
+                            expired = False
+                        if expired:
+                            window["stale"] = True
+                            window["used_percent"] = None
+                            window["remaining_percent"] = None
+                            window["reset_at"] = None
+                            window["measurement"] = "unknown"
             providers[row["provider_id"]].append({
                 "pool_id": row["pool_id"], "pool_label": row["pool_label"], "source": row["source"],
                 "reported_at": reported_at, "stale": stale,
