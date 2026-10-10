@@ -12,6 +12,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -554,7 +555,7 @@ class AgoraConsoleFacet(Facet):
             if session_id:
                 command.extend(["--resume", session_id])
             else:
-                command.append("--worktree")
+                command.extend([f"--worktree={self._cursor_worktree_name(turn_id)}", "--"])
             command.append(turn["prompt"])
         observer_done = threading.Event()
         observer = threading.Thread(target=self._observe_leader_session, args=(turn_id, leader_id, log_path, observer_done),
@@ -585,6 +586,11 @@ class AgoraConsoleFacet(Facet):
     def _observe_leader_session(self, turn_id: str, leader_id: str, log_path: Path, done: threading.Event) -> None:
         while not done.wait(0.5):
             self._record_leader_session(turn_id, leader_id, log_path)
+
+    @staticmethod
+    def _cursor_worktree_name(identifier: str) -> str:
+        suffix = re.sub(r"[^A-Za-z0-9._-]", "-", str(identifier)).strip(".-")[:32]
+        return f"agora-cursor-{suffix or uuid.uuid4().hex[:8]}"
 
     def _record_leader_session(self, turn_id: str, leader_id: str, log_path: Path) -> None:
         session_id, _ = self._read_runner_receipt(log_path)
@@ -1286,7 +1292,8 @@ class AgoraConsoleFacet(Facet):
             process_env = None
         elif leader_id == "cursor":
             command = [str(cursor_runner), str(cursor_entry), "--print", "--output-format", "stream-json",
-                       "--model", model, "--workspace", str(work_dir), "--worktree", prompt]
+                       "--model", model, "--workspace", str(work_dir),
+                       f"--worktree={self._cursor_worktree_name(worker_id)}", "--", prompt]
             model_source = "installed managed Cursor Agent `models` catalog + independent `--worktree` session"
             worker_cwd = work_dir
             session_id = ""

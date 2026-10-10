@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
@@ -953,6 +954,75 @@ def test_console_leader_resume_uses_supported_resume_options_and_keeps_session_c
     with facet._db() as db:
         turn = db.execute("SELECT state,result,session_id FROM leader_turns WHERE id='turn-2'").fetchone()
     assert tuple(turn) == ("completed", "Reply from the resumed provider session.", "provider-session-9")
+
+
+def test_cursor_group_leader_passes_explicit_worktree_name_before_prompt(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    turn_id = "group-turn-123"
+    prompt = "Review the current task and report findings."
+    with facet._db() as db:
+        db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) "
+                   "VALUES(?,?,?,?,?,?,'working',1,1)",
+                   (turn_id, "cursor", "902", prompt, "cursor-model", "low"))
+    original_is_file = Path.is_file
+    def is_file(path):
+        if str(path).lower().endswith((r"cursor\runtime\dist-package\node.exe",
+                                       r"cursor\runtime\dist-package\index.js")):
+            return True
+        return original_is_file(path)
+    monkeypatch.setattr(Path, "is_file", is_file)
+    commands = []
+    def runner(command, **kwargs):
+        commands.append(command)
+        kwargs["stdout"].write(json.dumps({"type": "result", "session_id": "cursor-session",
+                                            "text": "Review complete."}) + "\n")
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", runner)
+
+    facet._run_leader_turn({"id": turn_id, "leader_id": "cursor", "model": "cursor-model",
+                            "effort": "low", "prompt": prompt})
+
+    command = commands[0]
+    worktree = next(arg for arg in command if arg.startswith("--worktree="))
+    assert re.fullmatch(r"--worktree=agora-cursor-[A-Za-z0-9._-]+", worktree)
+    worktree_index = command.index(worktree)
+    assert command[worktree_index + 1:] == ["--", prompt]
+
+
+def test_cursor_child_worker_passes_explicit_worktree_name_before_prompt(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    original_is_file = Path.is_file
+    def is_file(path):
+        if str(path).lower().endswith((r"cursor\runtime\dist-package\node.exe",
+                                       r"cursor\runtime\dist-package\index.js")):
+            return True
+        return original_is_file(path)
+    monkeypatch.setattr(Path, "is_file", is_file)
+    facet._provider_cache["cursor"] = {"state": "available", "detail": "installed catalog",
+                                        "current_model": "cursor-model", "current_effort": "low",
+                                        "catalog": [{"id": "cursor-model", "model_id": "cursor-model",
+                                                     "efforts": ["low"], "default_effort": "low"}]}
+    commands = []
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.Popen", lambda command, **kwargs: (
+        commands.append(command) or SimpleNamespace(pid=4321)))
+    class DeferredThread:
+        def __init__(self, *args, **kwargs):
+            pass
+        def start(self):
+            pass
+    monkeypatch.setattr("hoard_link.hub.agora_console.threading.Thread", DeferredThread)
+    prompt_task = "Inspect the isolated fixture."
+
+    response = facet.worker({"leader_id": "cursor", "model": "cursor-model", "effort": "low",
+                             "task": prompt_task})
+
+    command = commands[0]
+    worktree = next(arg for arg in command if arg.startswith("--worktree="))
+    assert re.fullmatch(r"--worktree=agora-cursor-[A-Za-z0-9._-]+", worktree)
+    worktree_index = command.index(worktree)
+    assert command[worktree_index + 1] == "--"
+    assert command[-1].endswith(f"Task: {prompt_task}")
+    assert response["worker"]["state"] == "running"
 
 
 def test_console_preserves_provider_text_and_reports_task_outcome_as_unverified(tmp_path, monkeypatch):
