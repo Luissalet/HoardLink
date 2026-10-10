@@ -33,7 +33,9 @@ class FakeAgora:
 
 class FakeHub:
     def __init__(self, tmp_path: Path):
-        self.config = SimpleNamespace(data_dir=str(tmp_path), faustus_urls=["http://127.0.0.1:7000"])
+        self.config = SimpleNamespace(data_dir=str(tmp_path), token_file=str(tmp_path / "mcp-token"),
+                                      url="http://127.0.0.1:62841",
+                                      faustus_urls=["http://127.0.0.1:7000"])
         self.agora = FakeAgora()
         self.faustus_runtime = SimpleNamespace(installation=lambda: (tmp_path, "python-test"))
 
@@ -64,6 +66,35 @@ def _facet(tmp_path):
     }
     facet._provider_at = 10**9
     return facet
+
+
+def test_capacity_reporter_starts_with_this_hub_configuration(tmp_path, monkeypatch):
+    calls = []
+    stopped = []
+    monkeypatch.setattr("hoard_link.hub.agora_capacity.start_codex_capacity_reporter",
+                        lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr("hoard_link.hub.agora_capacity.stop_codex_capacity_reporter",
+                        lambda: stopped.append(True))
+    monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:8810")
+
+    facet = _facet(tmp_path)
+    facet.start()
+
+    assert calls == [{
+        "interval_seconds": 90,
+        "reporter_kwargs": {
+            "repo_root": Path(__file__).resolve().parents[1],
+            "env": {
+                "HOARD_HUB_URL": "http://127.0.0.1:62841",
+                "HOARD_HUB_DATA_DIR": str(tmp_path),
+                "HOARD_HUB_TOKEN_FILE": str(tmp_path / "mcp-token"),
+            },
+        },
+    }]
+    assert os.environ["HOARD_HUB_URL"] == "http://127.0.0.1:8810"
+
+    facet.close()
+    assert stopped == [True]
 
 
 def _mock_faustus_controller(tmp_path, monkeypatch, *, active=False):
