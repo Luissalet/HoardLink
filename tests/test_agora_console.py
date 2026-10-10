@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
@@ -33,7 +34,7 @@ class FakeHub:
     def __init__(self, tmp_path: Path):
         self.config = SimpleNamespace(data_dir=str(tmp_path), faustus_urls=["http://127.0.0.1:7000"])
         self.agora = FakeAgora()
-        self.faustus_runtime = SimpleNamespace(installation=lambda: (tmp_path, None))
+        self.faustus_runtime = SimpleNamespace(installation=lambda: (tmp_path, "python-test"))
 
     def facet(self, facet_id):
         return SimpleNamespace(agora=self.agora) if facet_id == "agora" else None
@@ -62,6 +63,16 @@ def _facet(tmp_path):
     }
     facet._provider_at = 10**9
     return facet
+
+
+def _mock_faustus_controller(tmp_path, monkeypatch, *, active=False):
+    controller_dir = tmp_path / "faustus-agora"
+    controller_dir.mkdir(exist_ok=True)
+    (controller_dir / "faustus_agora.py").write_text("# controller stub", encoding="utf-8")
+    monkeypatch.setenv("FAUSTUS_AGORA_DIR", str(controller_dir))
+    snapshot = {"session": "controller-owned-session", "local_turn_active": active}
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", lambda *args, **kwargs:
+                        SimpleNamespace(returncode=0, stdout=json.dumps(snapshot)))
 
 
 def test_facet_order_routes_console_before_legacy_agora():
@@ -248,7 +259,7 @@ def test_faustus_catalog_only_exposes_the_active_sparks_provider(tmp_path, monke
     facet._provider_cache["faustus"] = provider
     saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
     assert saved["verified"] and saved["applies_to"] == "queued_until_native_session_idle"
-    assert "watcher is disabled" in saved["warning"]
+    assert "controller is not present" in saved["warning"]
     with facet._db() as db:
         pending = db.execute("SELECT session_id,model,effort,state FROM native_preferences").fetchone()
     assert pending["session_id"] == ""
@@ -256,15 +267,10 @@ def test_faustus_catalog_only_exposes_the_active_sparks_provider(tmp_path, monke
     assert pending["state"] == "pending"
 
 
-def test_faustus_native_preference_uses_only_explicit_idle_watch_binding(tmp_path, monkeypatch):
+def test_faustus_native_preference_uses_controller_and_api_confirmed_idle_binding(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
-    sid = "observed-faustus-session"
-    session = {"agent": "faustus", "binding": "explicit", "session_id": sid, "state": "idle"}
-    class Watch:
-        def view(self, **kwargs):
-            assert kwargs == {"force": True, "agent": "faustus", "limit": 1000}
-            return {"sessions": [session]}
-    facet.hub.facet = lambda _: SimpleNamespace(agora=facet.hub.agora, watch=Watch(), _watch_enabled=lambda: True)
+    sid = "controller-owned-session"
+    _mock_faustus_controller(tmp_path, monkeypatch)
     facet._provider_cache["faustus"] = {"state": "available", "detail": "verified catalog", "catalog": [
         {"id": "spark-main::glm-flash", "endpoint_id": "spark-main", "model_id": "glm-flash",
          "efforts": ["low", "high"], "default_effort": "high"}]}
@@ -272,6 +278,13 @@ def test_faustus_native_preference_uses_only_explicit_idle_watch_binding(tmp_pat
     calls = []
     def request(method, path, fields=None):
         calls.append((method, path, fields))
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project"}}
+        if path == f"/api/coordination/{sid}":
+            return 200, {"binding": {"session_id": sid, "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "unverified": 0}
         if method == "PATCH":
             return 200, {"id": sid, "model": "glm-flash", "reasoning_effort": "low"}
         if sum(call[0] == "GET" for call in calls) == 1:
@@ -291,13 +304,10 @@ def test_faustus_native_preference_uses_only_explicit_idle_watch_binding(tmp_pat
     assert tuple(native) == (sid, "spark-main::glm-flash", "low", "applied")
 
 
-def test_faustus_native_preference_waits_when_bound_session_is_busy(tmp_path, monkeypatch):
+def test_faustus_native_preference_waits_when_controller_reports_active_turn(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
-    session = {"agent": "faustus", "binding": "explicit", "session_id": "busy-faustus-session", "state": "working"}
-    class Watch:
-        def view(self, **kwargs):
-            return {"sessions": [session]}
-    facet.hub.facet = lambda _: SimpleNamespace(agora=facet.hub.agora, watch=Watch(), _watch_enabled=lambda: True)
+    session_id = "controller-owned-session"
+    _mock_faustus_controller(tmp_path, monkeypatch, active=True)
     facet._provider_cache["faustus"] = {"state": "available", "detail": "verified catalog", "catalog": [
         {"id": "spark-main::glm-flash", "endpoint_id": "spark-main", "model_id": "glm-flash",
          "efforts": ["low", "high"], "default_effort": "high"}]}
@@ -305,11 +315,7 @@ def test_faustus_native_preference_waits_when_bound_session_is_busy(tmp_path, mo
     calls = []
     def request(method, path, fields=None):
         calls.append((method, path, fields))
-        if method == "PATCH":
-            return 200, {"id": "busy-faustus-session", "model": "glm-flash", "reasoning_effort": "low"}
-        level = "high" if sum(call[0] == "GET" for call in calls) == 1 else "low"
-        return 200, {"session_id": "busy-faustus-session", "reasoning_effort": level,
-                     "available_levels": ["low", "high"]}
+        return 503, {"error": "not expected while controller is active"}
     monkeypatch.setattr(facet, "_faustus_session_request", request)
 
     saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
@@ -319,15 +325,55 @@ def test_faustus_native_preference_waits_when_bound_session_is_busy(tmp_path, mo
     assert not calls
     with facet._db() as db:
         native = db.execute("SELECT session_id,state FROM native_preferences").fetchone()
-    assert tuple(native) == ("busy-faustus-session", "pending")
+    assert tuple(native) == (session_id, "pending")
 
-    session["state"] = "idle"
+    _mock_faustus_controller(tmp_path, monkeypatch, active=False)
+    def idle_request(method, path, fields=None):
+        calls.append((method, path, fields))
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project"}}
+        if path == f"/api/coordination/{session_id}":
+            return 200, {"binding": {"session_id": session_id, "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "unverified": 0}
+        if method == "PATCH":
+            return 200, {"id": session_id, "model": "glm-flash", "reasoning_effort": "low"}
+        level = "high" if sum(call[0] == "GET" and "/reasoning-effort" in call[1] for call in calls) == 1 else "low"
+        return 200, {"session_id": session_id, "reasoning_effort": level,
+                     "available_levels": ["low", "high"]}
+    monkeypatch.setattr(facet, "_faustus_session_request", idle_request)
     overview = facet.overview()
     assert overview["ok"]
     assert any(call[0] == "PATCH" for call in calls)
     with facet._db() as db:
         native = db.execute("SELECT state FROM native_preferences").fetchone()
     assert native["state"] == "applied"
+
+
+def test_faustus_native_preference_rejects_foreign_coordination_binding(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    _mock_faustus_controller(tmp_path, monkeypatch)
+    facet._provider_cache["faustus"] = {"state": "available", "catalog": [
+        {"id": "spark-main::glm-flash", "endpoint_id": "spark-main", "model_id": "glm-flash",
+         "efforts": ["low", "high"]}]}
+    facet._provider_at = 10**9
+    def request(method, path, fields=None):
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project"}}
+        if path == "/api/coordination/controller-owned-session":
+            return 200, {"binding": {"session_id": "controller-owned-session", "project_id": "faustus-project",
+                                     "actor": "codex-investiga", "active": True}}
+        raise AssertionError("an unverified binding must prevent any further session API request")
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+
+    saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
+
+    assert saved["applies_to"] == "queued_until_native_session_idle"
+    assert "actor/project binding" in saved["warning"]
+    with facet._db() as db:
+        native = db.execute("SELECT state FROM native_preferences").fetchone()
+    assert native["state"] == "pending"
 
 
 def test_faustus_session_patch_uses_configured_owner_token_and_form_contract(tmp_path, monkeypatch):

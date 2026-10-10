@@ -673,21 +673,56 @@ class AgoraConsoleFacet(Facet):
         return getattr(facet, "agora", None)
 
     def _faustus_bound_session(self) -> tuple[Optional[dict[str, Any]], str]:
-        agora_facet = self.hub.facet("agora") if hasattr(self.hub, "facet") else None
-        enabled = getattr(agora_facet, "_watch_enabled", None)
-        watch = getattr(agora_facet, "watch", None)
-        if not callable(enabled) or not enabled() or watch is None:
-            return None, "The Hub agent watcher is disabled; no Faustus session binding can be verified."
+        runtime = getattr(self.hub, "faustus_runtime", None)
         try:
-            view = watch.view(force=True, agent="faustus", limit=1000)
+            installation = runtime.installation() if runtime is not None else (None, None)
         except Exception as exc:  # noqa: BLE001
-            return None, f"The Hub agent watcher could not inspect Faustus sessions: {type(exc).__name__}."
-        rows = view.get("sessions", []) if isinstance(view, dict) else []
-        bound = [row for row in rows if isinstance(row, dict) and row.get("agent") == "faustus"
-                 and row.get("binding") == "explicit" and str(row.get("session_id") or "").strip()]
-        if len(bound) != 1:
-            return None, "A single explicitly bound Faustus session is required; the current binding is missing or ambiguous."
-        return bound[0], ""
+            return None, f"Faustus controller lookup failed: {type(exc).__name__}."
+        root, python = installation if isinstance(installation, tuple) and len(installation) == 2 else (None, None)
+        if root is None or python is None:
+            return None, "The Faustus installation is unavailable; its controller binding cannot be checked."
+        controller_dir = Path(os.environ.get("FAUSTUS_AGORA_DIR") or (Path(root).parent / "faustus-agora"))
+        controller = controller_dir / "faustus_agora.py"
+        if not controller.is_file():
+            return None, "The Faustus Agora controller is not present beside the configured installation."
+        try:
+            status = subprocess.run([str(python), "-X", "utf8", str(controller), "status"], stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, timeout=5, check=False,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            snapshot = json.loads(status.stdout) if status.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            return None, f"The Faustus Agora controller status is unavailable: {type(exc).__name__}."
+        if not isinstance(snapshot, dict):
+            return None, "The Faustus Agora controller returned no trusted status snapshot."
+        session_id = str(snapshot.get("session") or "").strip()
+        if not session_id:
+            return None, "The Faustus Agora controller has not confirmed its current native session."
+        if snapshot.get("local_turn_active") is not False:
+            return {"agent": "faustus", "session_id": session_id, "state": "working"}, ""
+
+        encoded_sid = quote(session_id, safe="")
+        project_status, project_data = self._faustus_session_request(
+            "GET", f"/api/projects/resolve/session/{encoded_sid}")
+        binding_status, binding_data = self._faustus_session_request("GET", f"/api/coordination/{encoded_sid}")
+        if project_status != 200 or binding_status != 200:
+            return None, (f"Faustus controller session ownership could not be verified "
+                          f"(project HTTP {project_status}, coordination HTTP {binding_status}).")
+        project = project_data.get("project") if isinstance(project_data, dict) else None
+        binding = binding_data.get("binding") if isinstance(binding_data, dict) else None
+        if not isinstance(project, dict) or not project.get("id") or not isinstance(binding, dict):
+            return None, "The controller session has no confirmed native project and coordination binding."
+        if (binding.get("session_id") != session_id or binding.get("project_id") != project.get("id")
+                or binding.get("actor") != "faustus" or binding.get("active") is not True):
+            return None, "The controller session's native actor/project binding is absent, inactive, or mismatched."
+
+        activity_status, activity = self._faustus_session_request("GET", "/api/chat/activity")
+        if activity_status != 200 or not isinstance(activity, dict) or not isinstance(activity.get("running"), list):
+            return None, f"Faustus session activity could not be verified (HTTP {activity_status})."
+        if session_id in activity["running"] or activity.get("unverified"):
+            return {"agent": "faustus", "binding": "native", "session_id": session_id,
+                    "project_id": project["id"], "state": "working"}, ""
+        return {"agent": "faustus", "binding": "native", "session_id": session_id,
+                "project_id": project["id"], "state": "idle"}, ""
 
     def _faustus_session_request(self, method: str, path: str,
                                  fields: Optional[dict[str, str]] = None) -> tuple[Optional[int], Any]:
