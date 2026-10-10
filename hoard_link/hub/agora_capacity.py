@@ -234,12 +234,12 @@ def collect_codex_usage_report(*, executable: Optional[str] = None,
 def _report_via_agora_cli(report: Mapping[str, Any], *, repo_root: Optional[Path] = None,
                           env: Optional[Mapping[str, str]] = None,
                           runner: Callable[..., Any] = subprocess.run,
-                          timeout: float = 15.0) -> dict[str, Any]:
+                          timeout: float = 15.0, agent_id: str = "codex-capacity") -> dict[str, Any]:
     root = repo_root or Path(__file__).resolve().parents[2]
     cli = root / "scripts" / "agora.py"
     if not cli.is_file():
         return {"ok": False, "reason": "agora_cli_unavailable"}
-    command = [sys.executable, str(cli), "--json", "--as", "codex-capacity",
+    command = [sys.executable, str(cli), "--json", "--as", agent_id,
                "usage-report", "--data-file", "-"]
     # Preserve the installed CLI/Python environment while allowing a Hub
     # instance to bind its own URL and data directory for isolated QA.
@@ -261,7 +261,7 @@ def _report_via_agora_cli(report: Mapping[str, Any], *, repo_root: Optional[Path
     if not isinstance(result, dict) or not result.get("ok") or completed.returncode:
         return {"ok": False, "reason": "agora_report_rejected"}
     # Never return the opaque pool key or any CLI response payload to logs/callers.
-    return {"ok": True, "provider_id": "codex", "window_count": len(report["windows"]),
+    return {"ok": True, "provider_id": report.get("provider_id", "codex"), "window_count": len(report["windows"]),
             "reported_at": result.get("reported_at")}
 
 
