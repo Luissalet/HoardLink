@@ -643,6 +643,17 @@ def test_authenticated_agent_identity_is_preserved_by_http_dispatch(tmp_path):
     assert facet.hub.agora.posts[-1]["agent"] == "codex-agora"
 
 
+def test_hub_bearer_http_writes_as_console_identity_not_reserved_hub_or_luis(tmp_path):
+    facet = _facet(tmp_path)
+
+    response = facet.post(_request("POST", "/api/agora/console/message", {
+        "body": "QA message from the authenticated Hub API.", "recipients": ["faustus"], "actor": "luis"},
+        caller="hub", agent=True))
+
+    assert response["ok"] and response["author"] == "codex-console"
+    assert facet.hub.agora.posts[-1]["agent"] == "codex-console"
+
+
 def test_console_leader_posts_only_a_real_runner_result_with_its_own_identity(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     with facet._db() as db:
