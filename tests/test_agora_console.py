@@ -30,14 +30,19 @@ class FakeAgora:
 
 class FakeHub:
     def __init__(self, tmp_path: Path):
-        self.config = SimpleNamespace(data_dir=str(tmp_path))
+        self.config = SimpleNamespace(data_dir=str(tmp_path), faustus_urls=["http://127.0.0.1:7000"])
         self.agora = FakeAgora()
+        self.faustus_runtime = SimpleNamespace(installation=lambda: (tmp_path, None))
 
     def facet(self, facet_id):
         return SimpleNamespace(agora=self.agora) if facet_id == "agora" else None
 
     def get(self, app_id):
         return None
+
+    def faustus_status(self):
+        return {"reachable": True, "url": "http://127.0.0.1:7000",
+                "body": {"service": "faustus"}}
 
 
 def _request(method, path, body=None, query=None, caller="ui", agent=False):
@@ -186,22 +191,28 @@ def test_codex_runner_falls_back_to_the_installed_app_binary(tmp_path, monkeypat
 
 def test_faustus_catalog_only_exposes_the_active_sparks_provider(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
-    facet.hub.get = lambda app_id: object()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "mcp-token").write_text("local-test-token", encoding="utf-8")
     replies = iter([
-        (200, {"service": "faustus"}),
         (200, {"items": [
             {"endpoint_id": "pc-local", "endpoint_name": "127.0.0.1:11434", "models": ["qwen-local"]},
             {"endpoint_id": "spark-main", "endpoint_name": "Sparks · glm53", "models": ["glm-flash"]},
         ]}),
         (200, {"levels": ["low", "high"], "default": "high", "source": "verified template"}),
     ])
-    monkeypatch.setattr("hoard_link.hub.contract.app_request", lambda *a, **kw: next(replies))
+    seen = []
+    def get(url, token, timeout):
+        seen.append((url, token, timeout))
+        return next(replies)
+    monkeypatch.setattr("hoard_link.hub.contract._get", get)
 
     provider = facet._faustus_status()
 
     assert provider["state"] == "available"
     assert [row["id"] for row in provider["catalog"]] == ["spark-main::glm-flash"]
     assert provider["catalog"][0]["efforts"] == ["low", "high"]
+    assert seen[0][0] == "http://127.0.0.1:7000/api/models?background=false"
+    assert seen[0][1] == "local-test-token"
 
     facet._provider_cache["faustus"] = provider
     saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::glm-flash", "effort": "low"})
@@ -212,6 +223,38 @@ def test_faustus_catalog_only_exposes_the_active_sparks_provider(tmp_path, monke
     assert pending["session_id"] == "cc16a8f3-7eaa-44b1-a427-21f2bfb1ae95"
     assert pending["model"] == "spark-main::glm-flash" and pending["effort"] == "low"
     assert pending["state"] == "pending"
+
+
+def test_claude_auth_status_is_live_sanitized_and_does_not_invent_catalog(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda _: "claude-test.exe")
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", lambda *a, **k: SimpleNamespace(
+        returncode=0, stdout='{"loggedIn":true,"email":"private@example.test"}'))
+
+    provider = facet._claude_status()
+
+    assert provider["state"] == "unverified"
+    assert provider["auth_state"] == "reported_logged_in"
+    assert provider["checked_at"].endswith("Z")
+    assert provider["catalog"] == []
+    assert "private@example.test" not in provider["detail"]
+
+
+def test_provider_diagnostics_are_persisted_with_probe_timestamp(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    monkeypatch.setattr(facet, "_codex_catalog", lambda: {"state": "available", "detail": "catalog", "catalog": []})
+    monkeypatch.setattr(facet, "_claude_status", lambda: {"state": "unverified", "auth_state": "unknown", "detail": "no safe catalog", "catalog": []})
+    monkeypatch.setattr(facet, "_cursor_status", lambda: {"state": "unavailable", "detail": "not installed", "catalog": []})
+    monkeypatch.setattr(facet, "_faustus_status", lambda: {"state": "unavailable", "detail": "not reachable", "catalog": []})
+
+    providers = facet._provider_data(force=True)
+
+    with facet._db() as db:
+        rows = {row["provider_id"]: dict(row) for row in db.execute("SELECT * FROM provider_diagnostics")}
+    assert set(rows) == {"codex", "claude", "cursor", "faustus"}
+    assert rows["claude"]["auth_state"] == "unknown"
+    assert rows["claude"]["checked_at"] == providers["claude"]["checked_at"]
+    assert rows["faustus"]["checked_at"].endswith("Z")
 
 
 def test_console_static_routes_index_and_rejects_escape(tmp_path, monkeypatch):
