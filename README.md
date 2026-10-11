@@ -626,6 +626,16 @@ Tools: `hub_lane_status`, `hub_lane_acquire` (lease capped at 10 minutes: call `
 `hub_lane_renew`, `hub_lane_release`. Forcing a lane free is a button of the hub window, never a tool. Events: `hub.lane.acquired|released|expired`. The hub
 window has a **Browser lanes** panel (domain, holder, since, expires, Release). Details in [docs/HUB.md](docs/HUB.md).
 
+### Instances: a second copy of an app speaks as the app
+
+A copy of an app started on another data folder (a QA instance, a demo, a branch) writes its own `mcp-token`
+there, and the hub only knew the token of the app's registered folder: every family call of the copy came back
+`the hub refused this app's token`. List the copy and its token counts as that app: `POST /api/instances/add`
+`{app, data_dir | token_file, label?}`, `POST /api/instances/remove` `{app?, data_dir? | token_file?}` (hub page or
+hub token), `GET /api/instances` (any family caller; each row says whether its token file has a token and whether
+the app is registered). Tools: `hub_instance_list`, `hub_instance_add`, `hub_instance_remove`. The list is kept in
+`data/instance-tokens.json`; a rotated token is read again like the app's own.
+
 ### Driving the hub from an agent
 
 The hub speaks the same contract as the apps it manages:
@@ -637,6 +647,7 @@ hub when none is listening. Tools: `hub_list_apps`, `hub_app_status`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
 `hub_lane_status`, `hub_lane_acquire`, `hub_lane_release`,
+`hub_instance_list`, `hub_instance_add`, `hub_instance_remove`,
 `hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
 `hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
 `hub_repo_push_command`, `hub_link_status`, `hub_link_chat`, `hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus
