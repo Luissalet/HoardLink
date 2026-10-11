@@ -13,6 +13,9 @@ import time
 from typing import Any, Callable
 
 from .browser_lanes import LaneError
+
+LANE_TOOL_OWNER = "mcp"            # lanes taken through the tools belong to this owner
+LANE_TOOL_MAX_TTL_S = 600.0        # ...and are short: an agent renews them (hub_lane_renew) or they expire
 from .core import Hub
 from .repos import filter_rows
 
@@ -182,7 +185,7 @@ def catalogue() -> list[dict[str, Any]]:
                            "Two apps never drive the same shop at once."
                            " "
                            "Returns granted with lease_id, or busy with held_by and since after waiting up to wait_s. "
-                           "Release it with hub_lane_release when done; it expires after ttl_s otherwise.",
+                           "Release it with hub_lane_release when done; it lasts at most 10 minutes, so renew it with hub_lane_renew.",
             "inputSchema": {"type": "object", "properties": {
                 "domain": {"type": "string", "description": "A URL or host name; the lane is its registrable root domain."},
                 "holder": {"type": "string", "description": "Who takes it (app id or agent name). Default 'agent'."},
@@ -195,11 +198,21 @@ def catalogue() -> list[dict[str, Any]]:
         {
             "name": "hub_lane_release",
             "description": "Release a browser lane so the next app can use the site / liberar un carril de navegador.\n"
-                           "Only its holder can; force overrides (use it for a lane whose app is gone).",
+                           "Only the holder that took it through these tools can; a lane whose app is gone frees itself "
+                           "when its ttl runs out (or from the Hub page).",
             "inputSchema": {"type": "object", "properties": {
                 "lease_id": {"type": "string"},
                 "holder": {"type": "string", "description": "Must match the holder that took it. Default 'agent'."},
-                "force": {"type": "boolean", "default": False},
+            }, "required": ["lease_id"], "additionalProperties": False},
+        },
+        {
+            "name": "hub_lane_renew",
+            "description": "Keep a browser lane you hold for longer / renovar un carril de navegador.\n"
+                           "Call it before ttl_s runs out while the page is still in use (max 10 minutes each time).",
+            "inputSchema": {"type": "object", "properties": {
+                "lease_id": {"type": "string"},
+                "holder": {"type": "string", "description": "Must match the holder that took it. Default 'agent'."},
+                "ttl_s": {"type": "number", "default": 300, "description": "Seconds until it expires unless renewed again."},
             }, "required": ["lease_id"], "additionalProperties": False},
         },
         {
@@ -538,17 +551,26 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
             gpu=a.get("gpu"), priority=a.get("priority", 0), ttl_s=a.get("ttl_s"), wait=bool(a.get("wait", False))))
 
     def lane_acquire(a: dict[str, Any]) -> Any:
+        # An agent has no process the hub can watch: its lane is short (renew it) and bound to the "mcp" owner.
         try:
             return _drop_status(hub.lanes.acquire(
                 domain=str(a.get("domain") or a.get("url") or ""), holder=str(a.get("holder") or "agent"),
                 purpose=str(a.get("purpose") or ""), ttl_s=a.get("ttl_s"), wait_s=a.get("wait_s", 0),
-                profile=str(a.get("profile") or "")))
+                profile=str(a.get("profile") or ""), owner=LANE_TOOL_OWNER, max_ttl_s=LANE_TOOL_MAX_TTL_S))
+        except LaneError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def lane_renew(a: dict[str, Any]) -> Any:
+        try:
+            return _drop_status(hub.lanes.renew(str(a.get("lease_id") or ""), str(a.get("holder") or "agent"),
+                                                a.get("ttl_s"), owner=LANE_TOOL_OWNER, max_ttl_s=LANE_TOOL_MAX_TTL_S))
         except LaneError as exc:
             return {"ok": False, "error": str(exc)}
 
     def lane_release(a: dict[str, Any]) -> Any:
+        # No force from a tool: an agent cannot free a lane that is not its own (the Hub page can; a dead holder times out).
         return _drop_status(hub.lanes.release(str(a.get("lease_id") or ""), str(a.get("holder") or "agent"),
-                                              force=bool(a.get("force", False))))
+                                              owner=LANE_TOOL_OWNER))
 
     def events(a: dict[str, Any]) -> Any:
         evs = hub.events.query(since_id=int(a.get("since_id") or 0), type=a.get("type"), source=a.get("source"),
@@ -694,8 +716,9 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_lease_status": lambda a: hub.leases.status(force=bool(a.get("force", False))),
         "hub_lease_request": lease_request,
         "hub_lease_release": lambda a: _drop_status(hub.leases.release(str(a.get("lease_id") or ""))),
-        "hub_lane_status": lambda a: hub.lanes.status(),
+        "hub_lane_status": lambda a: hub.lanes.status(ids=False),
         "hub_lane_acquire": lane_acquire,
+        "hub_lane_renew": lane_renew,
         "hub_lane_release": lane_release,
     }
 

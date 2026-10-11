@@ -276,20 +276,33 @@ class _HubHandler(BaseHTTPRequestHandler):
         return self._lease_reply(res)
 
     # -- browser lanes ---------------------------------------------------------
-    def _lane_post(self, action: str, body: dict[str, Any]) -> None:
+    def _lane_post(self, action: str, body: dict[str, Any], who: str) -> None:
+        """``who`` is the authenticated caller: an app id (its own token), ``hub`` (the hub's token: Faustus, agents) or
+        ``ui`` (the hub page). A lane belongs to the token owner that took it, an app speaks only for itself (its holder name
+        is its id, whatever it sends), and ``force`` exists only on the hub page."""
         arb = self.hub.lanes
         granted: Optional[str] = None
+        if who == "ui":
+            if action != "release":
+                return self._json({"ok": False, "error": "the hub page can only release a lane"}, 403)
+            holder, owner, force = None, None, True
+        else:
+            if body.get("force"):
+                return self._json({"ok": False, "error": "force is only available from the hub page"}, 403)
+            holder = who if who != "hub" else str(body.get("holder") or "")
+            owner, force = who, False
         try:
             if action == "acquire":
-                res = arb.acquire(domain=str(body.get("domain") or body.get("url") or ""), holder=str(body.get("holder") or ""),
+                res = arb.acquire(domain=str(body.get("domain") or body.get("url") or ""), holder=holder or "",
                                   purpose=str(body.get("purpose") or ""), ttl_s=body.get("ttl_s"), wait_s=body.get("wait_s", 0),
-                                  profile=str(body.get("profile") or ""), pid=body.get("pid"), queue_seq=body.get("queue_seq"))
+                                  profile=str(body.get("profile") or ""), pid=body.get("pid"), owner=owner or "",
+                                  ticket=body.get("ticket"), final=bool(body.get("final", True)))
                 if res.get("granted"):
                     granted = res.get("lease_id")
             elif action == "renew":
-                res = arb.renew(str(body.get("lease_id") or ""), body.get("holder"), body.get("ttl_s"))
+                res = arb.renew(str(body.get("lease_id") or ""), holder, body.get("ttl_s"), owner=owner)
             else:
-                res = arb.release(str(body.get("lease_id") or ""), body.get("holder"), force=bool(body.get("force", False)))
+                res = arb.release(str(body.get("lease_id") or ""), holder, force=force, owner=owner)
         except LaneError as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
         try:
@@ -369,7 +382,8 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/memory":
                 return self._json(hub.gpu_memory())
             if path == "/api/lane":
-                return self._json(hub.lanes.status())
+                # lease ids are capabilities for the hub page and for authenticated callers, not for an anonymous reader
+                return self._json(hub.lanes.status(ids=self._family_caller() is not None))
             if path == "/api/lease":
                 return self._json(hub.leases.status(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path.startswith("/api/lease/"):
@@ -507,7 +521,10 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release"):
                 return self._lease_post(path.rsplit("/", 1)[1], body)
             if path in ("/api/lane/acquire", "/api/lane/renew", "/api/lane/release"):
-                return self._lane_post(path.rsplit("/", 1)[1], body)
+                who = self._family_ok()
+                if who is None:
+                    return None
+                return self._lane_post(path.rsplit("/", 1)[1], body, who)
             if path == "/api/events":
                 who = self._family_ok()
                 if who is None:

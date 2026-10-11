@@ -374,3 +374,38 @@ def test_real_browser_smoke(tmp_path):
             assert public.fetch(site.base + "/").error_kind == "policy"
         finally:
             r.close()
+
+def test_a_browser_that_cannot_open_because_the_site_is_busy_does_not_turn_the_http_block_into_a_cooldown(tmp_path):
+    """An app can make ``_attempt_browser`` answer ``error_kind == "busy"`` (another app holds the site's browser lane):
+    the escalation returns that answer, and neither the HTTP block nor the busy read is held against the host."""
+    httpx = pytest.importorskip("httpx")
+
+    def handler(request):
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404)
+        return httpx.Response(403, headers={"content-type": "text/html", "cf-mitigated": "challenge"}, text=CF)
+
+    class BusyFetcher(Fetcher):
+        free = False
+
+        def _attempt_browser(self, url, timeout_s, fr, *, window):
+            if self.free:
+                return super()._attempt_browser(url, timeout_s, fr, window=window)
+            fr.tier = "browser"
+            fr.error, fr.error_kind = "busy: held by another app", "busy"
+            return fr
+
+    pw = FakePW([article(60, "Browser got through")])
+    r = rung(tmp_path, pw)
+    f = BusyFetcher(transport=httpx.MockTransport(handler), resolver=resolver_from(HOSTS), browser=r, min_interval_s=0, retries=0)
+    try:
+        fr = f.get("https://shop.example/p")
+        assert fr.error_kind == "busy" and not fr.ok and not fr.blocked
+        row = f.state.get("shop.example")
+        assert not row.get("fail_count") and not row.get("blocked_until_ts") and not row.get("block_reason")
+        f.free = True                                                   # the lane is free again: the cascade is what it was
+        fr = f.get("https://shop.example/p")
+        assert fr.ok and fr.tier == "browser" and f.state.get("shop.example")["preferred_tier"] == "browser"
+    finally:
+        f.close()
+        r.close()

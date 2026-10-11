@@ -614,11 +614,16 @@ with lane("example.com", holder="argus", wait_s=0, raise_on_busy=False) as l:
   the caller proceeds (`l.via == "local"`). Unlike the GPU lease, this client never starts a hub.
 * Nesting in the same thread or task counts instead of deadlocking (`l.via == "nested"`).
 
-HTTP (loopback, no token, same cross-site guard as the UI): `POST /api/lane/acquire`
-`{domain | url, holder, purpose, ttl_s, wait_s (max 30), profile, pid[, queue_seq]}` → `{granted: true, lease_id, ...}` or
-`{granted: false, busy: true, held_by, since, expires_in_s, queue_seq}`, `POST /api/lane/renew` `{lease_id, holder, ttl_s}`,
-`POST /api/lane/release` `{lease_id, holder[, force]}` (403 for another holder), `GET /api/lane` (active lanes and who waits).
-Tools: `hub_lane_status`, `hub_lane_acquire`, `hub_lane_release`. Events: `hub.lane.acquired|released|expired`. The hub
+HTTP (loopback; **acquire, renew and release need a family token**, the same `Authorization: Bearer` an app uses for the
+rest of the hub; the lane belongs to the token owner, an app speaks only for itself and `force` exists only on the hub
+page): `POST /api/lane/acquire` `{domain | url, holder, purpose, ttl_s, wait_s (max 30), profile, pid[, ticket]}` →
+`{granted: true, lease_id, ...}` or `{granted: false, busy: true, held_by, since, expires_in_s, ticket}` (send the
+`ticket` back to keep your place in the queue; it is issued by the hub and bound to you), `POST /api/lane/renew`
+`{lease_id, holder, ttl_s}`, `POST /api/lane/release` `{lease_id, holder}` (403 for another owner), `GET /api/lane`
+(active lanes and who waits; lease ids only for authenticated callers). Clients find the token on their own
+(`HOARD_TOKEN_FILE` / `HOARD_HUB_TOKEN_FILE`, or the family descriptor) and, if the hub refuses it, carry on locally.
+Tools: `hub_lane_status`, `hub_lane_acquire` (lease capped at 10 minutes: call `hub_lane_renew` to keep it),
+`hub_lane_renew`, `hub_lane_release`. Forcing a lane free is a button of the hub window, never a tool. Events: `hub.lane.acquired|released|expired`. The hub
 window has a **Browser lanes** panel (domain, holder, since, expires, Release). Details in [docs/HUB.md](docs/HUB.md).
 
 ### Driving the hub from an agent
