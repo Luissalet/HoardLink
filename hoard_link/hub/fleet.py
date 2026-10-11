@@ -25,6 +25,16 @@ from .fleet_windows import read_tasks, metadata as windows_metadata
 
 STATES = ("healthy", "silent", "error", "paused", "unknown")
 MAX_ITEMS = 1000
+APP_CONFIRM_S = 60.0       # an app is only silent after its health probe failed for this long (and twice)
+APP_PUSH_DELAY_S = 60.0    # ...and a push for an app waits this long more, so Cassandra's own incident can cover it
+APP_PUSH_GAP_S = 1800.0    # at most one fleet push per app per half hour (a flapping app is one burst)
+CASSANDRA_WINDOW_S = 1800.0
+STORM_LIMIT = 3            # more pushable transitions than this in one tick become one summary notification
+WAITING_FRESH_S = 600.0    # a first-seen "waiting for you" receipt this recent is still worth a push
+REFRESH_WAIT_S = 1.0       # most a request waits for a background refresh before it answers with the cache
+MIN_RECONCILE_GAP_S = 3.0  # receipts arriving in a burst wake the background reconcile at most this often
+KIND_NAMES = {"es": {"app": "App", "job": "Tarea del Hub", "rule": "Regla", "watcher": "Vigilante", "scheduled_task": "Tarea programada"},
+              "en": {"app": "App", "job": "Hub job", "rule": "Rule", "watcher": "Watcher", "scheduled_task": "Scheduled task"}}
 _ID = re.compile(r"^[A-Za-z0-9_.:/-]{1,160}$")
 
 
@@ -38,6 +48,11 @@ def deadline(item: dict, baseline: float) -> float | None:
     """After two actual scheduled opportunities; weekend gaps are not missed runs."""
     slots = item.get("expected_slots")
     if isinstance(slots, list) and len(slots) == 2 and all(stamp(s) for s in slots) and slots[0] < slots[1]:
+        resumed = stamp(item.get("resumed_ts"))
+        # Slots computed from before the task was resumed would make a task paused for days "silent" the
+        # moment it is switched on again: until its producer republishes slots from the resume, no deadline.
+        if resumed and slots[1] <= resumed:
+            return None
         return float(slots[1])
     interval = parse_every(item.get("every"))
     if interval and interval >= 60:
@@ -51,7 +66,9 @@ def deadline(item: dict, baseline: float) -> float | None:
 def classify(item: dict, now: float) -> dict:
     out = {k: copy.deepcopy(item.get(k)) for k in ("id", "label", "kind", "owner", "every", "at", "days",
         "created_ts", "last_success_ts", "last_error_ts", "active", "observed_ts", "needs_user", "user_reason", "error_code",
-        "timestamp_basis", "success_observed_ts", "expected_slots", "schedule_basis", "cadence_unverified", "partial")}
+        "timestamp_basis", "success_observed_ts", "expected_slots", "schedule_basis", "cadence_unverified", "partial", "resumed_ts")}
+    out["no_cadence"] = (item.get("kind") != "app" and not (item.get("every") or item.get("at") or item.get("expected_slots"))
+                         and not item.get("cadence_unverified"))
     success, error = stamp(item.get("last_success_ts")), stamp(item.get("last_error_ts"))
     if not item.get("enabled", True) or item.get("paused"):
         state, reason = "paused", "explicit_pause"
@@ -63,8 +80,11 @@ def classify(item: dict, now: float) -> dict:
         state, reason = "unknown", "future_timestamp"
     elif item.get("kind") == "app":
         health = item.get("health")
-        state = {"healthy": "healthy", "down": "silent", "foreign": "error"}.get(health, "unknown")
-        reason = {"healthy": "health_confirmed", "down": "app_down", "foreign": "wrong_service"}.get(health, "health_unverified")
+        if health == "down" and not item.get("down_confirmed"):
+            state, reason = "unknown", "app_down_unconfirmed"   # one failed probe is not an outage
+        else:
+            state = {"healthy": "healthy", "down": "silent", "foreign": "error"}.get(health, "unknown")
+            reason = {"healthy": "health_confirmed", "down": "app_down", "foreign": "wrong_service"}.get(health, "health_unverified")
     elif error and (not success or error > success or (error == success and item.get("last_status") == "error")):
         state, reason = "error", "failure_recorded"
     elif item.get("partial"):
@@ -72,7 +92,10 @@ def classify(item: dict, now: float) -> dict:
     elif item.get("cadence_unverified"):
         state, reason = "unknown", "cadence_unverified"
     else:
-        due = deadline(item, stamp(item.get('success_observed_ts')) or success or stamp(item.get("created_ts")) or now)
+        # The clock starts at the latest of: the last success, the declaration and the last resume from a pause.
+        baseline = max([v for v in (stamp(item.get('success_observed_ts')) or success, stamp(item.get("created_ts")),
+                                    stamp(item.get("resumed_ts"))) if v] or [now])
+        due = deadline(item, baseline)
         out["silent_after_ts"] = due
         if due and now > due:
             state, reason = "silent", "two_expected_runs_missed"
@@ -85,11 +108,25 @@ def classify(item: dict, now: float) -> dict:
 
 
 def brief(items: list[dict]) -> dict:
-    return {"today": [i for i in items if i["state"] == "healthy" and not i.get("needs_user")],
+    """Five groups for the person. Items with no declared cadence (rules, event tasks) cannot be certified
+    on time, so unless they failed, wait for the person or are paused they sit apart in ``no_cadence``."""
+    loose = [i for i in items if i.get("no_cadence") and i["state"] in ("healthy", "unknown") and not i.get("needs_user")]
+    ids = {id(i) for i in loose}
+    return {"today": [i for i in items if i["state"] == "healthy" and not i.get("needs_user") and id(i) not in ids],
             "waiting_for_you": [i for i in items if i.get("needs_user") and i["state"] != "paused"],
             "blocked": [i for i in items if i["state"] in ("silent", "error") and not i.get("needs_user")],
-            "unknown": [i for i in items if i["state"] == "unknown" and not i.get("needs_user")],
-            "paused": [i for i in items if i["state"] == "paused"]}
+            "unknown": [i for i in items if i["state"] == "unknown" and not i.get("needs_user") and id(i) not in ids],
+            "paused": [i for i in items if i["state"] == "paused"],
+            "no_cadence": loose}
+
+
+def fallback_label(item: dict, language: str) -> str:
+    names = KIND_NAMES["en" if language == "en" else "es"]
+    return f"{names.get(item.get('kind'), 'Item')} {str(item.get('id') or '').rsplit(':', 1)[-1]}".strip()
+
+
+def is_paused(item: dict) -> bool:
+    return not item.get("enabled", True) or bool(item.get("paused"))
 
 
 class FleetFacet(Facet):
@@ -105,6 +142,14 @@ class FleetFacet(Facet):
         self.stop_event = threading.Event()
         self.thread = None
         self.cached = None
+        # Stale-while-revalidate: requests answer from the cache the background reconcile keeps fresh. Without a
+        # background (tests, embedded use) a read reconciles inline as before.
+        self.swr = bool(background)
+        self.dirty_seq = self.clean_seq = 0   # dirty until a reconcile that STARTED after the change has finished
+        self.version = 0
+        self.cv = threading.Condition(self.lock)
+        self.wake = threading.Event()
+        self.oneshot = None
         self.cfg = dict(getattr(hub.config, "fleet", {}) or {})
         self.data = {"schema": 1, "definitions": {}, "observations": {}, "providers": {}}
         if self.path.exists():
@@ -148,8 +193,9 @@ class FleetFacet(Facet):
             if old and item["owner"] != old.get("owner"):
                 return {"ok": False, "status": 409, "error": "Expectation owner cannot be changed"}
             item["created_ts"] = old.get("created_ts") or self.clock()
+            item["resumed_ts"] = self.clock() if (old and old.get("enabled") is False and item.get("enabled", True)) else old.get("resumed_ts")
             self.data["definitions"][item["id"]] = item
-            self.save(); self.cached = None
+            self.save(); self._dirty()
         return {"ok": True, "expectation": copy.deepcopy(item)}
 
     def report(self, body, *, caller=None):
@@ -170,6 +216,8 @@ class FleetFacet(Facet):
             record = self.data["observations"].setdefault(item["id"], {})
             if ts < (record.get("receipt_ts") or 0):
                 return {"ok": True, "ignored": "older_receipt", "id": item["id"]}
+            if record.get("paused") and body["status"] != "paused":
+                record["resumed_ts"] = ts   # the clock for "silent" restarts when the producer is switched back on
             record.update(receipt_ts=ts, paused=body["status"] == "paused", needs_user=body["status"] == "waiting")
             if body["status"] in ("ok", "error"): record["last_status"] = body["status"]
             if body["status"] == "ok": record["last_success_ts"] = ts
@@ -178,7 +226,7 @@ class FleetFacet(Facet):
             record["user_reason"] = reason if reason in ("login", "approval", "configuration", "other") else None
             code = body.get("error_code")
             record["error_code"] = code if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,60}", code) else None
-            self.save(); self.cached = None
+            self.save(); self._dirty()
         return {"ok": True, "id": item["id"]}
 
     def app_items(self, now):
@@ -225,7 +273,7 @@ class FleetFacet(Facet):
         wanted.update(str(app.id) for app in apps.values() if app.family.get("fleet") is True)
         allowed = {"id", "owner", "kind", "label", "created_ts", "every", "at", "days", "enabled", "paused",
             "last_success_ts", "last_error_ts", "last_status", "needs_user", "user_reason", "partial", "error_code",
-            "expected_slots", "schedule_basis", "cadence_unverified"}
+            "expected_slots", "schedule_basis", "cadence_unverified", "resumed_ts"}
         def fetch(app_id):
             app = apps.get(app_id) or self.hub.get(app_id)
             if not app: return app_id, None
@@ -259,8 +307,25 @@ class FleetFacet(Facet):
                     out.append(item)
         return out
 
+    def _cassandra_covers(self, app_id, now):
+        """Cassandra already tells the person about an app outage (one notice per burst): an incident it opened
+        for this app in the last half hour, open or closed, means Fleet stays quiet about the same outage."""
+        try:
+            rows = self.hub.events.query(type="cassandra.incident.opened", text=app_id, since_ts=now - CASSANDRA_WINDOW_S, limit=200)
+        except Exception:
+            return False
+        return any(isinstance(r.get("data"), dict) and r["data"].get("app") == app_id for r in rows)
+
+    def _app_push_covered(self, item, rec, now):
+        last = stamp(rec.get("last_push_ts"))
+        if last is not None and now - last < APP_PUSH_GAP_S:
+            return True
+        return self._cassandra_covers(str(item["id"]).split(":", 1)[-1], now)
+
     def _reconcile(self, *, notify=True):
+        seen_seq = self.dirty_seq   # anything that arrives while this runs asks for another pass
         now = self.clock()
+        lang = "en" if self.hub.config.language == "en" else "es"
         sources, errors = [], {}
         try: sources.extend(self.app_items(now))
         except Exception: errors["apps"] = "source_unavailable"
@@ -271,6 +336,7 @@ class FleetFacet(Facet):
                     "kind": "job", "owner": "hub", "created_ts": job.get("created_ts"),
                     "enabled": job.get("enabled", True) and self.hub.config.jobs_enabled,
                     "every": job.get("every"), "at": job.get("at"), "days": job.get("days"),
+                    "resumed_ts": job.get("resumed_ts"),
                     "active": job.get("running", False), "observed_ts": now,
                     "last_status": "ok" if last.get("ok") is True else "error" if last.get("ok") is False else None,
                     **({"last_success_ts": last.get("ts")} if last.get("ok") is True else {}),
@@ -299,14 +365,14 @@ class FleetFacet(Facet):
         with self.lock:
             sources.extend(copy.deepcopy(list(self.data["definitions"].values())))
             items = []
-            transitions = []
+            changes, pushes = [], []
             seen = set()
             for source in sources[:MAX_ITEMS]:
                 if source["id"] in seen:
                     errors["duplicate:" + source["id"]] = "conflicting_definition"
                     continue
                 seen.add(source["id"])
-                source["label"] = snippet(str(source.get("label") or source["id"]), 120)
+                source["label"] = snippet(str(source.get("label") or ""), 120) or fallback_label(source, lang)
                 rec = self.data["observations"].setdefault(source["id"], {})
                 rec.setdefault('first_seen_ts', now)
                 if not stamp(source.get('created_ts')): source['created_ts'] = rec['first_seen_ts']
@@ -325,12 +391,42 @@ class FleetFacet(Facet):
                     merged["paused"] = source.get("paused", False)
                     for key in ("needs_user", "user_reason", "last_status"):
                         if key in source: merged[key] = source[key]
+                # Resuming from a pause restarts the clock: the producer's own stamp, or the moment we saw it switch on.
+                paused_now = is_paused(merged)
+                if rec.get("was_paused") and not paused_now: rec["resumed_ts"] = now
+                rec["was_paused"] = paused_now
+                merged["resumed_ts"] = max(stamp(source.get("resumed_ts")) or 0, stamp(rec.get("resumed_ts")) or 0) or None
+                if source.get("kind") == "app":
+                    # One failed health probe (1.5 s) is not an outage: down needs two failures spanning APP_CONFIRM_S.
+                    if source.get("health") == "down":
+                        rec.setdefault("down_since", now)
+                        rec["down_probes"] = int(rec.get("down_probes") or 0) + 1
+                        merged["down_confirmed"] = rec["down_probes"] >= 2 and now - rec["down_since"] >= APP_CONFIRM_S
+                    else:
+                        rec.pop("down_since", None); rec.pop("down_probes", None)
                 item = classify(merged, now)
+                critical = item["state"] == "silent" or bool(item.get("needs_user") and item["state"] != "paused")
                 signature = (item["state"], bool(item.get("needs_user")))
+                first = rec.get("state") is None
                 previous = (rec.get("state"), bool(rec.get("needs_user_state")))
+                def push(generation, rec=rec, item=item):
+                    rec["last_push_ts"] = now
+                    pushes.append((copy.deepcopy(item), generation))
                 if notify and signature != previous:
                     rec["generation"] = int(rec.get("generation") or 0) + 1
-                    transitions.append((copy.deepcopy(item), rec["generation"]))
+                    if not first:
+                        changes.append(copy.deepcopy(item))
+                        if critical and item.get("kind") == "app":
+                            rec["push_due_ts"], rec["push_gen"] = now + APP_PUSH_DELAY_S, rec["generation"]
+                        elif critical:
+                            push(rec["generation"])
+                    elif critical and item.get("needs_user") and stamp(rec.get("receipt_ts")) and now - stamp(rec.get("receipt_ts")) < WAITING_FRESH_S:
+                        push(rec["generation"])   # a brand-new "waiting for you" receipt; everything else first seen is a baseline
+                if notify and rec.get("push_due_ts"):
+                    if not critical: rec.pop("push_due_ts", None)
+                    elif now >= rec["push_due_ts"]:
+                        rec.pop("push_due_ts", None)
+                        if not self._app_push_covered(item, rec, now): push(int(rec.get("push_gen") or rec.get("generation") or 1))
                 if notify: rec.update(state=item["state"], needs_user_state=bool(item.get("needs_user")))
                 items.append(item)
             self.save()
@@ -340,35 +436,113 @@ class FleetFacet(Facet):
                     "truncated": len(sources) > MAX_ITEMS, "errors": errors, "os_tasks": "declared_task_scheduler_metadata" if self.cfg.get('windows_tasks') else "registration_required",
                     "monitoring_enabled": self.cfg.get("enabled", True)}}
             self.cached = copy.deepcopy(value)
-        for item, generation in transitions:
-            try:
-                self.hub.events.emit("hub.fleet.changed", {"id": item["id"], "state": item["state"], "needs_user": bool(item.get("needs_user"))}, source="hub")
-                channel = self.hub.facet("notify")
-                critical = item["state"] == "silent" or (item.get("needs_user") and item["state"] != "paused")
-                if critical and self.cfg.get("enabled", True) and self.cfg.get("notifications", True) and channel:
-                    es = self.hub.config.language != "en"
-                    channel.send("Flota: necesita tu atención" if es else "Fleet: needs your attention",
-                        item["label"], app="hub", group="fleet", dedupe_key=f"fleet:{item['id']}:{generation}")
+            self.version += 1
+            self.clean_seq = max(self.clean_seq, seen_seq)
+            self.cv.notify_all()
+        for item in changes:
+            try: self.hub.events.emit("hub.fleet.changed", {"id": item["id"], "state": item["state"], "needs_user": bool(item.get("needs_user"))}, source="hub")
             except Exception: pass  # monitoring cannot break the work it observes
+        self._send(pushes, lang, now)
         return value
 
-    def status(self, *, refresh=False):
+    def _send(self, pushes, lang, now):
+        """Push the transitions into silent / waiting-for-you. A burst becomes one summary, not a storm."""
+        try:
+            channel = self.hub.facet("notify")
+            if not pushes or not channel or not self.cfg.get("enabled", True) or not self.cfg.get("notifications", True): return
+            es = lang == "es"
+            if len(pushes) > STORM_LIMIT:
+                names = [item["label"] or fallback_label(item, lang) for item, _ in pushes]
+                body = "\n".join(names[:8]) + (("\n" + (f"y {len(names) - 8} más" if es else f"and {len(names) - 8} more")) if len(names) > 8 else "")
+                channel.send(f"Flota: {len(names)} cosas necesitan tu atención" if es else f"Fleet: {len(names)} things need your attention",
+                    body, app="hub", group="fleet", dedupe_key=f"fleet:summary:{int(now)}")
+                return
+            for item, generation in pushes:
+                try:
+                    channel.send("Flota: necesita tu atención" if es else "Fleet: needs your attention",
+                        item["label"] or fallback_label(item, lang), app="hub", group="fleet", dedupe_key=f"fleet:{item['id']}:{generation}")
+                except Exception: pass
+        except Exception: pass
+
+    def _dirty(self):
+        """Something changed (a registration, a receipt): refresh in the background, never inside the request."""
+        if self.swr:
+            self.dirty_seq += 1
+            self.wake_up()
+        else:
+            self.cached = None
+
+    @property
+    def dirty(self):
+        return self.dirty_seq > self.clean_seq
+
+    def wake_up(self):
+        if self.thread and self.thread.is_alive():
+            self.wake.set()
+            return
         with self.lock:
-            if not refresh and self.cached and self.clock() - self.cached["generated_ts"] < 60:
-                return copy.deepcopy(self.cached)
-        return self.reconcile(notify=False)
+            if self.stop_event.is_set() or (self.oneshot and self.oneshot.is_alive()): return
+            self.oneshot = threading.Thread(target=self._refresh_once, daemon=True, name="hoard-fleet-refresh")
+            self.oneshot.start()
+
+    def _refresh_once(self):
+        while not self.stop_event.is_set():
+            try: self.reconcile(notify=False)   # a read never consumes a transition; only the background loop notifies
+            except Exception: pass
+            if not self.dirty: return
+            self.stop_event.wait(MIN_RECONCILE_GAP_S)
+
+    def _warming(self):
+        return {"ok": True, "generated_ts": None, "items": [], "brief": brief([]), "counts": {state: 0 for state in STATES},
+                "coverage": {"apps": "declared_and_autostart", "jobs": "hub_jobs", "rules": "last_outcome; cadence_only_when_declared",
+                    "external": "registered_receipts_and_declared_publishers", "truncated": False, "errors": {"fleet": "warming_up"},
+                    "os_tasks": "registration_required", "monitoring_enabled": self.cfg.get("enabled", True)},
+                "refreshing": True}
+
+    def status(self, *, refresh=False, wait=None):
+        """The fleet view. ``wait`` is the most (seconds) a caller waits for a background refresh; 0 never waits.
+
+        With a background thread this serves the last reconcile at once (a refresh, a receipt or an old cache only
+        start a new pass in the background and the answer says ``refreshing``). Without one it reconciles inline."""
+        if not self.swr:
+            with self.lock:
+                if not refresh and self.cached and self.clock() - self.cached["generated_ts"] < 60:
+                    return copy.deepcopy(self.cached)
+            return self.reconcile(notify=False)
+        wait = REFRESH_WAIT_S if wait is None else wait
+        looping = bool(self.thread and self.thread.is_alive())
+        with self.cv:
+            cached, version = self.cached, self.version
+            old = cached is None or self.clock() - cached["generated_ts"] >= (90 if looping else 60)
+            needs = cached is None or refresh or self.dirty or old
+        if needs:
+            self.wake_up()
+            if wait > 0 and (cached is None or refresh or self.dirty):
+                with self.cv: self.cv.wait_for(lambda: self.version > version, timeout=wait)
+        with self.lock:
+            fresh = self.cached
+            if fresh is None: return self._warming()
+            out = copy.deepcopy(fresh)
+            out["refreshing"] = bool(needs and self.version == version)
+        return out
 
     def start(self):
         if not self.background or not self.cfg.get("enabled", True): return
         def loop():
-            while not self.stop_event.wait(60):
+            if self.stop_event.wait(2): return
+            while not self.stop_event.is_set():
+                self.wake.clear()
                 try: self.reconcile()
                 except Exception: pass
+                woke = self.wake.wait(60)
+                if self.stop_event.is_set(): return
+                if woke: self.stop_event.wait(MIN_RECONCILE_GAP_S)
         self.thread = threading.Thread(target=loop, daemon=True, name="hoard-fleet")
         self.thread.start()
 
     def close(self):
         self.stop_event.set()
+        self.wake.set()
         if self.thread: self.thread.join(timeout=2)
 
     def get(self, req):

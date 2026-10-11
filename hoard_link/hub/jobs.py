@@ -224,6 +224,8 @@ class Scheduler:
                     problems = validate_job(cand)
                     if problems:
                         return {"ok": False, "error": "; ".join(problems)}
+                    if patch.get("enabled") and not j.get("enabled", True):
+                        cand["resumed_ts"] = self._now()   # a job switched back on restarts the monitoring clock
                     j.update(cand)
                     self._save()
                     return {"ok": True, "job": self._view(j)}

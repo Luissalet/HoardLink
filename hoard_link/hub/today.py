@@ -763,7 +763,7 @@ class TodayFacet(Facet):
         fleet = None
         try:
             provider = self.hub.facet("fleet")
-            if provider: fleet = provider.status()
+            if provider: fleet = provider.status(wait=0)   # the cache only: the Today page never reconciles inline
         except Exception:
             errors["fleet"] = "source_unavailable"
         return {"ok": True, "date": today.isoformat(), "sphere": sph or "all", "generated_ts": self.clock(),
@@ -856,7 +856,15 @@ class TodayFacet(Facet):
         ag = payload["agenda"]
         return (sum(len(v) for v in ag.values()) + len(payload["attention"]["mail"]) + len(payload["attention"]["chats"])
                 + len(payload["news"]) + len(payload["system"]["incidents"]) + len(payload["system"]["jobs"])
-                + len((payload["system"].get("fleet") or {}).get("items") or []))
+                + TodayFacet._fleet_count(payload["system"].get("fleet")))
+
+    @staticmethod
+    def _fleet_count(fleet: Any) -> int:
+        """Only what needs a look: healthy items and cadence-less rules are not digest items."""
+        brief = (fleet or {}).get("brief") if isinstance(fleet, dict) else None
+        if not isinstance(brief, dict):
+            return 0
+        return sum(len(brief.get(key) or []) for key in ("waiting_for_you", "blocked", "unknown", "paused"))
 
     def _default_llm(self, system: str, user: str) -> Optional[str]:
         """One chat call to the language model that is *already loaded* (never loads one); None when there is none."""
