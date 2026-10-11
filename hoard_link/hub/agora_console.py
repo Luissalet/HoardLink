@@ -792,26 +792,34 @@ class AgoraConsoleFacet(Facet):
         db = getattr(self._agora(), "db", None)
         if not identity or db is None or not hasattr(db, "query"):
             return None
-        counts = {"messages_posted": 0, "plan_messages": 0, "task_status_changes": 0, "submits": 0, "done": 0, "claims": 0,
-                  "reviews": 0, "heartbeats_with_doing": 0, "commits_reported": 0}
+        counts = {"messages_posted": 0, "plan_messages": 0, "task_status_changes": 0, "submits": 0, "done": 0,
+                  "claims": 0, "reviews": 0, "heartbeats_with_doing": 0, "commits_reported": 0}
+        # Evidence is what THIS identity authored in the window. A task row's timestamps are not enough: another
+        # agent assigning it a review, handing it a task or moving one of its tasks updates the row while the leader
+        # did nothing (review of #311 r1). Every Agora action leaves a message in the task thread signed by its actor.
         try:
-            for row in db.query("SELECT body FROM messages WHERE author=? AND kind<>'system' AND created>=? AND created<=?",
+            for row in db.query("SELECT kind, body FROM messages WHERE author=? AND created>=? AND created<=?",
                                 (identity, since, until)):
-                counts["messages_posted"] += 1
-                body = str(row["body"] or "")
-                if _COMMIT_REF_RE.search(body):
-                    counts["commits_reported"] += 1
-                elif agora_liveness.is_plan_text(body):
-                    counts["plan_messages"] += 1
-            for column, key in (("claimed_at", "claims"), ("submitted_at", "submits")):
-                counts[key] = int(db.scalar(f"SELECT COUNT(*) FROM tasks WHERE owner=? AND {column}>=? AND {column}<=?",
-                                            (identity, since, until), 0) or 0)
-            counts["done"] = int(db.scalar("SELECT COUNT(*) FROM tasks WHERE owner=? AND status='done' AND closed_at>=? AND closed_at<=?",
-                                           (identity, since, until), 0) or 0)
-            counts["task_status_changes"] = int(db.scalar("SELECT COUNT(*) FROM tasks WHERE owner=? AND updated>=? AND updated<=?",
-                                                          (identity, since, until), 0) or 0)
-            counts["reviews"] = int(db.scalar("SELECT COUNT(*) FROM tasks WHERE reviewer=? AND updated>=? AND updated<=?",
-                                              (identity, since, until), 0) or 0)
+                kind, body = str(row["kind"] or ""), str(row["body"] or "")
+                if kind in ("approve", "changes"):
+                    counts["reviews"] += 1
+                elif kind == "system":
+                    if " reclama la tarea" in body or " toma la tarea" in body:
+                        counts["claims"] += 1
+                    elif "\u2192" in body:  # "<agent>: in_progress -> review." status transitions
+                        counts["task_status_changes"] += 1
+                else:
+                    counts["messages_posted"] += 1
+                    if _COMMIT_REF_RE.search(body):
+                        counts["commits_reported"] += 1
+                    elif agora_liveness.is_plan_text(body):
+                        counts["plan_messages"] += 1
+            acted = ("EXISTS (SELECT 1 FROM messages m WHERE m.thread_id=tasks.thread_id AND m.author=? "
+                     "AND m.created>=? AND m.created<=?)")
+            counts["submits"] = int(db.scalar(f"SELECT COUNT(*) FROM tasks WHERE owner=? AND submitted_at>=? AND submitted_at<=? AND {acted}",
+                                              (identity, since, until, identity, since, until), 0) or 0)
+            counts["done"] = int(db.scalar(f"SELECT COUNT(*) FROM tasks WHERE owner=? AND status='done' AND closed_at>=? AND closed_at<=? AND {acted}",
+                                           (identity, since, until, identity, since, until), 0) or 0)
             counts["heartbeats_with_doing"] = int(db.scalar("SELECT COUNT(*) FROM agents WHERE id=? AND last_seen>=? AND COALESCE(doing,'')<>''",
                                                             (identity, since), 0) or 0)
         except Exception:  # noqa: BLE001 - liveness is advisory and must never break turn completion
