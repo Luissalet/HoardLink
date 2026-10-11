@@ -534,9 +534,11 @@ class FleetFacet(Facet):
                 self.wake.clear()
                 try: self.reconcile()
                 except Exception: pass
+                ended = time.monotonic()
                 woke = self.wake.wait(60)
                 if self.stop_event.is_set(): return
-                if woke: self.stop_event.wait(MIN_RECONCILE_GAP_S)
+                # A burst of receipts is one pass, not one per receipt; the first one after a quiet spell is immediate.
+                if woke: self.stop_event.wait(max(0.0, MIN_RECONCILE_GAP_S - (time.monotonic() - ended)))
         self.thread = threading.Thread(target=loop, daemon=True, name="hoard-fleet")
         self.thread.start()
 
