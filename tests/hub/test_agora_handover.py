@@ -128,6 +128,26 @@ def test_agent_blocked_while_the_source_is_fresh_and_allowed_after_30_minutes(ag
     assert r["ok"] and _task(ag, ids["claimed"])["task"]["owner"] == NEW
 
 
+def test_force_takes_the_work_while_the_source_still_sends_heartbeats(ag):
+    ids = _world(ag)
+    ag.heartbeat({"agent": OLD, "doing": "out of quota, launcher still beating"})
+    r = ag.handover({**_args(), "force": True})
+    assert r["ok"] and r["forced"] is True and not r["noop"]
+    assert _task(ag, ids["claimed"])["task"]["owner"] == NEW
+    assert _task(ag, ids["rev1"])["task"]["reviewer"] == NEW
+    assert "model:principal" in r["locks_moved"]
+    msgs = [m["body"] for m in _task(ag, ids["claimed"])["messages"] if m["kind"] == "system"]
+    assert any("forzado" in b and OLD in b for b in msgs)
+    assert ag.events[-1][0] == "agora.handover" and ag.events[-1][1]["forced"] is True
+
+
+def test_force_is_not_marked_when_the_source_was_already_idle(ag):
+    ids = _world(ag)                                           # 31 min of silence already
+    r = ag.handover({**_args(), "force": True})
+    assert r["ok"] and r["forced"] is False
+    assert _task(ag, ids["claimed"])["task"]["owner"] == NEW
+
+
 def test_idle_threshold_is_configurable(tmp_path):
     clock = Clock()
     a = Agora(tmp_path / "agora.db", clock=clock, handover_idle_s=5 * MIN)

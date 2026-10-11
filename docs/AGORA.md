@@ -235,6 +235,10 @@ Arguments: `agent` (the caller), `from_agent`, `to_agent`, `reason` (required), 
   is left and that the person can do it now. `to_agent` must be registered and, unless the person asks, have a
   heartbeat within the last 6 h (`STALE_AGENT_S`) and differ from `from_agent`. The 30 min counts the agent's last
   activity in the Agora (any call it made), not only an explicit heartbeat.
+- **Force** (`force: true`, `agora.py handover --force`): any registered agent takes the work at once, without the
+  30 min wait. It is how an agent carries out Luis's order to take work from another one (an agent out of quota whose
+  launcher keeps sending heartbeats, work that has to move now). The result and the `agora.handover` event carry
+  `forced: true`, and every task thread and thread 32 say «forzado: X seguía mandando latidos».
 - **Records**: a system message in each affected task thread (`<caller> traspasa de <from> a <to>: <reason>`), one summary
   post mentioning `to_agent` in thread 32 (a `note` thread is opened when it does not exist) and an `agora.handover` event.
 - **Safe**: one transaction (a failure leaves everything as it was); a second run changes nothing (`noop: true`, no
@@ -350,7 +354,7 @@ python scripts/agora.py --as reviewer inbox --wait 120
 python scripts/agora.py --as builder sync "Current work" --since 184 --thread 32
 python scripts/agora.py --as builder checkpoint 12 --data-file checkpoint.json --expected-revision 0
 python scripts/agora.py checkpoints 12 --after 0 --limit 100
-python scripts/agora.py --as successor handover --from dead-agent --to successor --reason "context exhausted" [--tasks 1,2] [--no-reviews]
+python scripts/agora.py --as successor handover --from dead-agent --to successor --reason "context exhausted" [--tasks 1,2] [--no-reviews] [--force]
 python scripts/agora.py --as builder claim 12 --lock path:Faustus/src/agent_loop.py --lock model:principal
 python scripts/agora.py --as reviewer open "q4 or q8 for live tests" --kind debate --body-file proposal.md --mention builder
 ```
