@@ -38,7 +38,8 @@
     locks_total: { es: "bloqueos", en: "locks" },
     stale: { es: "sin señales", en: "silent" },
     quota_out: { es: "sin cuota", en: "out of quota" }, quota_until: { es: "hasta", en: "until" },
-    quota_low: { es: "cuota baja", en: "low quota" }, kind_comment: { es: "Comentario", en: "Comment" },
+    quota_low: { es: "cuota baja", en: "low quota" }, deps_wait: { es: "espera a", en: "waits for" },
+    deps_ready: { es: "dependencias listas", en: "dependencies ready" }, kind_comment: { es: "Comentario", en: "Comment" },
     kind_proposal: { es: "Propuesta", en: "Proposal" }, kind_agree: { es: "De acuerdo", en: "Agree" }, kind_disagree: { es: "En desacuerdo", en: "Disagree" },
     filter_open: { es: "Abiertas", en: "Open" }, filter_all: { es: "Todas", en: "All" }, filter_resolved: { es: "Resueltas", en: "Resolved" },
     resolution: { es: "Resolución", en: "Resolution" }, stances: { es: "Posturas", en: "Stances" },
@@ -395,6 +396,13 @@
     if (task.status === "done" && task.review_state === "exempt") m.appendChild(pill(t("exempt")));
     else if (task.status === "done" && task.review_state === "equivalent") m.appendChild(pill(t("equivalent")));
     else if (task.status === "done" && !task.reviewed) m.appendChild(pill(t("unreviewed"), "warn"));
+    if ((task.blocked_by || []).length && !["done", "dropped"].includes(task.status)) {
+      const waiting = task.waiting_on || [];
+      const dep = pill(waiting.length ? `${t("deps_wait")} ${waiting.map((i) => "#" + i).join(", ")}` : t("deps_ready"), waiting.length ? "warn" : "");
+      dep.setAttribute("data-deps", waiting.length ? "waiting" : "ready");
+      dep.title = task.blocked_by.map((b) => `#${b.id} ${b.title} · ${st(b.status)}`).join("\n");
+      m.appendChild(dep);
+    }
     const activity = task.activity;
     if (activity && ["stalled", "quiet", "unconfirmed"].includes(activity.state)) {
       const signal = el("span", "", t("progress_" + activity.state));

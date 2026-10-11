@@ -172,12 +172,28 @@ def print_quota_warnings(r: dict) -> None:
         print(f"  ⛔ AVISO DE CUOTA: {note}")
 
 
+def deps_badge(t: dict) -> str:
+    """' ⏳ espera #12, #13' while blockers are pending; ' ✓ deps' once they are all through."""
+    if t.get("status") in ("done", "dropped") or not t.get("blocked_by"):
+        return ""
+    waiting = t.get("waiting_on") or []
+    return f" ⏳ espera {', '.join(f'#{i}' for i in waiting)}" if waiting else " ✓ deps"
+
+
+def print_dep_notes(r: dict) -> None:
+    for note in r.get("dep_warnings") or []:
+        print(f"  ⏳ {note}")
+    if r.get("unblocked"):
+        print("  🔓 desbloqueadas: " + ", ".join(f"#{i}" for i in r["unblocked"]))
+
+
 def print_orphans(found: list) -> None:
     if not found:
         return
     print(f"\nHUÉRFANAS ({len(found)}: nadie las mueve)")
     for f in found:
-        why = "sin revisor" if f.get("kind") == "review_unassigned" else f"{f.get('who')} {f.get('why')}"
+        why = ("sin revisor" if f.get("kind") == "review_unassigned"
+               else f.get("why") if not f.get("who") else f"{f.get('who')} {f.get('why')}")
         tail = f" → {f['suggest']}: {f['command']}" if f.get("suggest") else " → nadie libre ahora"
         print(f"  #{f['task_id']:<4} [{f.get('status'):<11}] {short(f.get('title'), 50)} · {why}{tail}")
 
@@ -194,7 +210,8 @@ def print_board(b: dict, full: bool = False) -> None:
     print("\nTAREAS")
     for t in b.get("tasks", []):
         owner = f" @{t['owner']}" if t.get("owner") else ""
-        print(f"  #{t['id']:<4} [{t['status']:<11}] p{t.get('priority')} {t.get('repo') or '':<14} {short(t['title'], 70)}{owner}")
+        print(f"  #{t['id']:<4} [{t['status']:<11}] p{t.get('priority')} {t.get('repo') or '':<14} {short(t['title'], 70)}{owner}"
+              f"{deps_badge(t)}")
     if b.get("locks") and (full or not b.get("lock_groups")):
         print("\nBLOQUEOS")
         for lk in b["locks"]:
@@ -352,6 +369,10 @@ def print_conversation(r: dict) -> None:
         if head.get("branch") or head.get("commits"):
             print(f"  rama {head.get('branch') or '-'} · commits {', '.join(head.get('commits') or []) or '-'}")
         print(f"  entrega r{head.get('submission_revision', 0)} · revisión votada {head.get('reviewed_submission_revision') or '-'}")
+        if head.get("blocked_by"):
+            print("  espera a: " + ", ".join(f"#{b['id']} [{b['status']}]" for b in head["blocked_by"]) + deps_badge(head))
+        if head.get("dependents"):
+            print("  bloquea a: " + ", ".join(f"#{i}" for i in head["dependents"]))
         for b in head.get("submission_blocks") or []:
             kind = b.get("kind")
             label = f"  ▸ [{b.get('id')}] {kind}" + (f" — {b.get('title')}" if b.get("title") else "")
@@ -460,6 +481,10 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--repo"); s.add_argument("--paths", action="append")
     s.add_argument("--kind", default="feature"); s.add_argument("--prio", type=int, default=2); s.add_argument("--claim", action="store_true")
     s.add_argument("--lock", action="append"); s.add_argument("--mention", action="append")
+    s.add_argument("--blocked-by", action="append", help="ids de las tareas a las que espera (12,13 o repetido)")
+    s = sub.add_parser("deps", help="a qué tareas espera una: --add / --remove ids, o --set (vacío las quita todas)")
+    s.add_argument("task", type=int); s.add_argument("--add", action="append"); s.add_argument("--remove", action="append")
+    s.add_argument("--set", action="append")
     s = sub.add_parser("claim"); s.add_argument("task", type=int); s.add_argument("--lock", action="append"); s.add_argument("--ttl", type=int); s.add_argument("--force", action="store_true")
     s = sub.add_parser("update"); s.add_argument("task", type=int); texts(s, "note"); s.add_argument("--status"); s.add_argument("--branch")
     s.add_argument("--paths", action="append"); s.add_argument("--lock", action="append")
@@ -575,7 +600,15 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "add":
         r = call("POST", "/api/agora/task_add", {"agent": ag, "title": a.title, "body": text_arg(a, "body") or "", "repo": a.repo or "",
                                                  "paths": csv(a.paths), "kind": a.kind, "priority": a.prio, "claim": a.claim,
-                                                 "locks": csv(a.lock), "mentions": csv(a.mention)})
+                                                 "locks": csv(a.lock), "mentions": csv(a.mention),
+                                                 "blocked_by": [x.lstrip("#") for x in csv(a.blocked_by)]})
+    elif c == "deps":
+        body = {"agent": ag, "task_id": a.task}
+        for key in ("add", "remove", "set"):
+            val = getattr(a, key)
+            if val is not None:
+                body[key] = [x.lstrip("#") for x in csv(val)]
+        r = call("POST", "/api/agora/task_deps", body)
     elif c == "claim":
         r = call("POST", "/api/agora/task_claim", {"agent": ag, "task_id": a.task, "locks": csv(a.lock), "ttl_s": a.ttl, "force": a.force})
     elif c == "update":
@@ -726,6 +759,10 @@ def main(argv: list[str] | None = None) -> int:
         if r.get("locks"):
             print("  bloqueos: " + ", ".join(r["locks"]))
         print_quota_warnings(r)
+        print_dep_notes(r)
+        if c in ("deps", "add") and isinstance(r.get("task"), dict) and r["task"].get("blocked_by"):
+            t = r["task"]
+            print("  espera a: " + ", ".join(f"#{b['id']} [{b['status']}]" for b in t["blocked_by"]) + deps_badge(t))
         if isinstance(r.get("claim"), dict):
             cl = r["claim"]
             print("  reclamada" if cl.get("ok") else "  NO reclamada: " + json.dumps(cl.get("conflicts"), ensure_ascii=False))
