@@ -636,12 +636,17 @@ except LaneBusy as busy:
   en el log y la app sigue (`l.via == "local"`). A diferencia de la reserva de GPU, este cliente nunca arranca un hub.
 * Anidar en el mismo hilo o tarea cuenta en lugar de bloquearse (`l.via == "nested"`).
 
-HTTP (loopback, sin token, con la misma protección cross-site que la interfaz): `POST /api/lane/acquire`
-`{domain | url, holder, purpose, ttl_s, wait_s (máx. 30), profile, pid[, queue_seq]}` → `{granted: true, lease_id, ...}` o
-`{granted: false, busy: true, held_by, since, expires_in_s, queue_seq}`, `POST /api/lane/renew`
-`{lease_id, holder, ttl_s}`, `POST /api/lane/release` `{lease_id, holder[, force]}` (403 si es otro titular) y
-`GET /api/lane` (carriles activos y quién espera). Herramientas: `hub_lane_status`, `hub_lane_acquire`,
-`hub_lane_release`. Eventos: `hub.lane.acquired|released|expired`. La ventana del hub tiene un panel **Carriles de
+HTTP (loopback; **acquire, renew y release exigen un token de familia**, el mismo `Authorization: Bearer` que usa una app
+para el resto del hub; el carril pertenece al dueño del token, una app solo habla por sí misma y `force` solo existe en la
+ventana del hub): `POST /api/lane/acquire` `{domain | url, holder, purpose, ttl_s, wait_s (máx. 30), profile, pid[, ticket]}`
+→ `{granted: true, lease_id, ...}` o `{granted: false, busy: true, held_by, since, expires_in_s, ticket}` (devuelve el
+`ticket` para conservar tu puesto en la cola; lo emite el hub y va ligado a ti), `POST /api/lane/renew`
+`{lease_id, holder, ttl_s}`, `POST /api/lane/release` `{lease_id, holder}` (403 si es otro dueño) y `GET /api/lane`
+(carriles activos y quién espera; los `lease_id` solo para quien se autentica). Los clientes encuentran el token solos
+(`HOARD_TOKEN_FILE` / `HOARD_HUB_TOKEN_FILE`, o el descriptor de la familia) y, si el hub lo rechaza, siguen en local.
+Herramientas: `hub_lane_status`, `hub_lane_acquire` (reserva limitada a 10 minutos: usa `hub_lane_renew` para mantenerla),
+`hub_lane_renew`, `hub_lane_release`. Forzar la liberación de un carril es un botón de la ventana del hub, nunca una
+herramienta. Eventos: `hub.lane.acquired|released|expired`. La ventana del hub tiene un panel **Carriles de
 navegador** (dominio, titular, desde, caduca, Liberar). Más detalle en [docs/HUB.md](docs/HUB.md).
 
 ### Controlar el hub desde un agente

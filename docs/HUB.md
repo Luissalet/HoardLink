@@ -237,27 +237,41 @@ keeps two apps from driving a browser against the same site, or from sharing one
 Tantalus' headless and visible reads, Faustus' browser tools and any other app that opens a browser take a lane first
 (`from hoard_link import lane`, see the README).
 
-* **Key.** The registrable root domain of the URL or host (`shop.example.co.uk` → `example.co.uk`; IPs, `localhost` and
-  single labels are used as they are; hosting suffixes such as `myshopify.com` keep the customer label). The suffix
+* **Key.** The registrable root domain of the URL or host (`shop.example.co.uk` → `example.co.uk`; internationalised
+  names are normalised to punycode; hosting and private suffixes such as `myshopify.com`, `uk.com` or `eu.org` keep the
+  customer label). IPs (bare `::1` included), `localhost` and single labels are used as they are, **with their port**
+  (`localhost:3000` and `localhost:8080` are two lanes; default ports are dropped). The suffix
   list is a small built-in table in `hoard_link/browser_lane.py`: no new dependency. An optional `profile` (a browser
   profile folder, compared case-folded and without a trailing separator) is a second key; a request for both takes both
   keys or neither.
 * **Wait.** `acquire` waits up to `wait_s` (capped at 30 s per call; the client asks again for longer waits and keeps
-  its place with `queue_seq`) and then answers `busy` with `held_by`, `since`, `purpose` and `expires_in_s`. Waiters are
-  served in arrival order and never overtake an earlier waiter for the same key.
+  its place with the `ticket` the hub gave it) and then answers `busy` with `held_by`, `since`, `purpose` and
+  `expires_in_s`. Waiters are served in arrival order and never overtake an earlier waiter for the same key; a waiter
+  between two polls keeps its place for a short grace period (20 s). The ticket is issued by the hub and bound to the
+  owner, holder and keys of the request: one made up by a client is ignored.
 * **Lifetime.** A lane lasts `ttl_s` (default 300 s, 1 s to 6 h) and is kept by `renew`. A holder whose `pid` is gone loses
-  it at once (psutil); otherwise it ends at the ttl. Only the holder (`holder` must match) can renew or release a lane;
-  `force` is the hub window's override. Granted lanes are written to `data/browser-lanes.json`, so a restarted hub still
+  it at once (psutil); otherwise it ends at the ttl. Only the holder can renew or release a lane;
+  `force` is the hub window's override and exists nowhere else. Granted lanes are written to `data/browser-lanes.json`, so a restarted hub still
   knows who holds what.
+
+* **Who may.** `acquire`, `renew` and `release` need a family token (an app's own, or the hub's). The lease belongs to
+  the **owner of the token**: an app's `holder` is its app id whatever it sends, the hub's own token (Faustus, agents)
+  keeps the holder it declares, and only the same owner and holder can renew or release. The hub page (same-origin, no
+  token) can only release, and always forced. `force` from anyone else is a 403. `GET /api/lane` shows lease ids only
+  to authenticated callers. Clients look the token up in `token_file`, the family descriptor, `HOARD_TOKEN_FILE` or
+  `HOARD_HUB_TOKEN_FILE` and, if the hub answers 401/403, carry on without a lane (like with no hub). A release that
+  fails is retried (3 tries); the renewer treats 401/403/404 as a lost lane and stops.
+* **MCP.** `hub_lane_acquire` holds for the owner `mcp`, with the lease capped at 10 minutes (renew it with
+  `hub_lane_renew`); a pid-less lease can no longer outlive its caller for hours. `hub_lane_release` cannot force.
 
 | Route | Body | Answer |
 |---|---|---|
-| `POST /api/lane/acquire` | `domain` (or `url`), `holder`, `purpose`, `ttl_s`, `wait_s`, `profile`, `pid`, `queue_seq` | `granted: true, lease_id, expires_at, lane` or `granted: false, busy: true, held_by, since, purpose, expires_in_s, waiting, queue_seq`; 400 without a domain or profile |
+| `POST /api/lane/acquire` | `domain` (or `url`), `holder`, `purpose`, `ttl_s`, `wait_s`, `profile`, `pid`, `ticket` | `granted: true, lease_id, expires_at, lane` or `granted: false, busy: true, held_by, since, purpose, expires_in_s, waiting, ticket`; 400 without a domain or profile; 401 without a token |
 | `POST /api/lane/renew` | `lease_id`, `holder`, `ttl_s` | the lane; 404 when unknown or expired, 403 for another holder |
-| `POST /api/lane/release` | `lease_id`, `holder`, `force` | `released: true\|false` (idempotent); 403 for another holder |
+| `POST /api/lane/release` | `lease_id`, `holder` (`force` from the hub page only) | `released: true\|false` (idempotent); 403 for another owner |
 | `GET /api/lane` | — | `lanes[] (domain, profile, holder, purpose, since, expires_in_s, held_for_s, lease_id)`, `waiting[]`, `reaped[]` |
 
-Tools: `hub_lane_status` (read-only), `hub_lane_acquire`, `hub_lane_release`. Events: `hub.lane.acquired`,
+Tools: `hub_lane_status` (read-only), `hub_lane_acquire`, `hub_lane_renew`, `hub_lane_release`. Events: `hub.lane.acquired`,
 `hub.lane.released`, `hub.lane.expired`. The hub window lists the active lanes (and who waits) in its **Browser lanes**
 panel, with a Release button per lane.
 

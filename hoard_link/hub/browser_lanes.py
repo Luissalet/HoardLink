@@ -10,6 +10,9 @@ long-lived local process every app can reach, so it holds the lanes:
   waiter never overtakes an earlier one for the same key) and then answers *busy, held by X since T*;
 * a lane is held for ``ttl_s`` and kept by ``renew`` (the client's heartbeat); a holder that crashes loses it when the time runs
   out, or at once when its process (``pid``) is gone. Only the holder can renew or release it (``force`` is for the hub UI);
+* a lane belongs to the **owner** that took it (the family token's owner, set by the server): only that owner can renew or
+  release it, whatever holder name it claims. A waiter that comes back after a busy answer keeps its place in the queue with
+  the ``ticket`` the hub gave it (server-issued, bound to its owner and holder, kept for a short grace period);
 * the granted lanes are written to ``<data>/browser-lanes.json`` so a restarted hub still knows who holds what.
 
 Events on the bus: ``hub.lane.acquired``, ``hub.lane.released`` and ``hub.lane.expired`` (``reason`` says ttl or process gone).
@@ -38,6 +41,8 @@ MIN_TTL_S = 1.0
 MAX_TTL_S = 6 * 3600.0
 #: One acquire call never blocks longer than this; a client that wants more simply asks again.
 MAX_WAIT_S = 30.0
+#: How long a waiter that was told "busy, ask again" keeps its place in the queue (it is polling, not gone).
+TICKET_GRACE_S = 20.0
 
 
 class LaneError(ValueError):
@@ -58,11 +63,15 @@ class LaneLease:
     expires_at: float
     pid: Optional[int] = None
     pid_created: Optional[float] = None
+    owner: str = ""          # who may renew / release it: the token owner that took it ("" = not bound, legacy)
 
-    def to_dict(self, now: Optional[float] = None) -> dict[str, Any]:
+    def to_dict(self, now: Optional[float] = None, ids: bool = True) -> dict[str, Any]:
         d = asdict(self)
         d["lease_id"] = self.id
         d["since"] = self.granted_at
+        if not ids:
+            d.pop("id", None)
+            d.pop("lease_id", None)
         if now is not None:
             d["expires_in_s"] = max(0, int(self.expires_at - now))
             d["held_for_s"] = max(0, int(now - self.granted_at))
@@ -78,6 +87,9 @@ class _Waiter:
     profile: str
     purpose: str
     since: float
+    owner: str = ""
+    ticket: str = ""
+    parked_until: float = 0.0     # > 0: told "busy" and not waiting right now; its place is kept until then
 
 
 class LaneArbiter:
@@ -156,6 +168,9 @@ class LaneArbiter:
                 gone.append((lease, "ttl"))
             elif lease.pid and not self._alive(lease.pid, lease.pid_created):
                 gone.append((lease, "owner process gone"))
+        for w in [x for x in self._waiters if x.parked_until and x.parked_until <= now]:
+            self._waiters.remove(w)                       # a parked waiter that never came back
+            self._cond.notify_all()
         for lease, why in gone:
             self._leases.pop(lease.id, None)
             self.reaped = (self.reaped + [{"lease_id": lease.id, "holder": lease.holder, "domain": lease.domain,
@@ -199,8 +214,7 @@ class LaneArbiter:
                                "waiting": len(self._waiters) - 1}
         if blocking is not None:
             out.update(held_by=blocking.holder, since=blocking.granted_at, purpose=blocking.purpose,
-                       expires_at=blocking.expires_at, expires_in_s=max(0, int(blocking.expires_at - now)),
-                       blocked_by_lease=blocking.id)
+                       expires_at=blocking.expires_at, expires_in_s=max(0, int(blocking.expires_at - now)))
         else:
             ahead = self._blocked_by_earlier(w)
             out.update(held_by=ahead.holder if ahead else "", since=ahead.since if ahead else None,
@@ -209,16 +223,19 @@ class LaneArbiter:
 
     # -- public API -------------------------------------------------------------
     def acquire(self, domain: str = "", holder: str = "", purpose: str = "", ttl_s: Any = None, wait_s: Any = 0,
-                profile: str = "", pid: Any = None, queue_seq: Any = None) -> dict[str, Any]:
+                profile: str = "", pid: Any = None, queue_seq: Any = None, owner: str = "", ticket: Any = None,
+                final: bool = True, max_ttl_s: Optional[float] = None) -> dict[str, Any]:
         """Take the lane for ``domain`` (a URL or host) and/or ``profile``; wait up to ``wait_s`` (capped at 30 s) for it.
 
-        ``queue_seq`` (from an earlier *busy* answer) keeps the caller's place in the queue when it asks again."""
+        ``owner`` is who the server authenticated (only it may renew / release the lane). With ``final=False`` a *busy*
+        answer carries a ``ticket``: asking again with it keeps the caller's place in the queue for ``TICKET_GRACE_S``
+        (the hub issues and checks it; ``queue_seq`` from the caller is ignored). ``final=True`` leaves the queue at once."""
         root, prof, keys = self._keys(domain, profile)
         try:
             ttl = float(ttl_s) if ttl_s is not None else DEFAULT_TTL_S
         except (TypeError, ValueError):
             raise LaneError("ttl_s must be a number of seconds") from None
-        ttl = max(MIN_TTL_S, min(ttl, MAX_TTL_S))
+        ttl = max(MIN_TTL_S, min(ttl, MAX_TTL_S, max_ttl_s or MAX_TTL_S))
         try:
             wait = max(0.0, min(float(wait_s or 0), MAX_WAIT_S))
         except (TypeError, ValueError):
@@ -234,21 +251,20 @@ class LaneArbiter:
             if not self._alive(pid_i, created):
                 return {"ok": False, "error": f"owner process {pid_i} is not running", "status": 404}
         who = str(holder or "unknown")[:80]
+        owner = str(owner or "")
         started = time.monotonic()
         deadline = started + wait
         with self._cond:
             self._reap()
-            self._seq += 1
-            seq = self._seq
-            try:
-                if queue_seq is not None and 0 < int(queue_seq) < seq:
-                    seq = int(queue_seq)
-            except (TypeError, ValueError):
-                pass
-            w = _Waiter(seq=seq, keys=keys, holder=who, domain=root, profile=prof, purpose=str(purpose or "")[:160],
-                        since=self._now())
-            self._waiters.append(w)
-            self._waiters.sort(key=lambda x: x.seq)
+            w = self._claim_ticket(ticket, owner, who, keys)
+            if w is None:
+                self._seq += 1
+                w = _Waiter(seq=self._seq, keys=keys, holder=who, domain=root, profile=prof, owner=owner,
+                            purpose=str(purpose or "")[:160], since=self._now(), ticket=secrets.token_hex(8))
+                self._waiters.append(w)
+                self._waiters.sort(key=lambda x: x.seq)
+            w.parked_until = 0.0
+            parked = False
             try:
                 while True:
                     self._reap()
@@ -257,20 +273,37 @@ class LaneArbiter:
                         return self._grant(w, ttl, pid_i, created, started)
                     left = deadline - time.monotonic()
                     if left <= 0:
-                        return self._busy(w, blocking, started)
+                        out = self._busy(w, blocking, started)
+                        if not final:
+                            w.parked_until = self._now() + TICKET_GRACE_S      # keep its place for the next poll
+                            out["ticket"] = w.ticket
+                            parked = True
+                        return out
                     self._cond.wait(timeout=min(1.0, left))     # re-check expiry every second
             finally:
-                try:
-                    self._waiters.remove(w)
-                except ValueError:
-                    pass
+                if not parked:
+                    try:
+                        self._waiters.remove(w)
+                    except ValueError:
+                        pass
                 self._cond.notify_all()
+
+    def _claim_ticket(self, ticket: Any, owner: str, holder: str, keys: list) -> Optional[_Waiter]:
+        """The parked waiter this ticket was issued to, if it is still parked and the caller is the same owner / holder / lane."""
+        if not ticket:
+            return None
+        for w in self._waiters:
+            if w.parked_until and w.ticket == str(ticket):
+                if w.owner == owner and w.holder == holder and w.keys == keys:
+                    return w
+                return None
+        return None
 
     def _grant(self, w: _Waiter, ttl: float, pid: Optional[int], created: Optional[float], started: float) -> dict[str, Any]:
         now = self._now()
         lease = LaneLease(id=secrets.token_hex(8), holder=w.holder, purpose=w.purpose, domain=w.domain, profile=w.profile,
                           keys=list(w.keys), ttl_s=ttl, created_at=w.since, granted_at=now, expires_at=now + ttl,
-                          pid=pid, pid_created=created)
+                          pid=pid, pid_created=created, owner=w.owner)
         self._leases[lease.id] = lease
         self._save()
         self._notify("acquired", lease, waited_s=round(time.monotonic() - started, 3))
@@ -278,35 +311,42 @@ class LaneArbiter:
                 "expires_at": lease.expires_at, "waited_s": round(time.monotonic() - started, 3), "lane": lease.to_dict(now)}
 
     def _refuse(self, lease: LaneLease, holder: Optional[str], what: str) -> dict[str, Any]:
-        return {"ok": False, "status": 403, "lease_id": lease.id,
+        return {"ok": False, "status": 403,
                 "error": f"lane {lease.domain or lease.profile} is held by {lease.holder}, not {holder or 'an unnamed caller'}: "
                          f"{what} refused", "held_by": lease.holder}
 
-    def renew(self, lease_id: str, holder: Optional[str] = None, ttl_s: Any = None) -> dict[str, Any]:
+    @staticmethod
+    def _not_owner(lease: LaneLease, owner: Optional[str]) -> bool:
+        """True when the caller was authenticated as someone other than the owner the lane is bound to."""
+        return owner is not None and bool(lease.owner) and str(owner) != lease.owner
+
+    def renew(self, lease_id: str, holder: Optional[str] = None, ttl_s: Any = None,
+              owner: Optional[str] = None, max_ttl_s: Optional[float] = None) -> dict[str, Any]:
         with self._cond:
             self._reap()
             lease = self._leases.get(str(lease_id or ""))
             if lease is None:
                 return {"ok": False, "error": "unknown or expired lane", "lease_id": lease_id, "status": 404}
-            if holder is not None and str(holder)[:80] != lease.holder:
+            if (holder is not None and str(holder)[:80] != lease.holder) or self._not_owner(lease, owner):
                 return self._refuse(lease, holder, "renew")
             if ttl_s is not None:
                 try:
-                    lease.ttl_s = max(MIN_TTL_S, min(float(ttl_s), MAX_TTL_S))
+                    lease.ttl_s = max(MIN_TTL_S, min(float(ttl_s), MAX_TTL_S, max_ttl_s or MAX_TTL_S))
                 except (TypeError, ValueError):
                     raise LaneError("ttl_s must be a number of seconds") from None
             lease.expires_at = self._now() + lease.ttl_s
             self._save()
             return {"ok": True, "lease_id": lease.id, "expires_at": lease.expires_at, "lane": lease.to_dict(self._now())}
 
-    def release(self, lease_id: str, holder: Optional[str] = None, force: bool = False) -> dict[str, Any]:
-        """Give the lane back. Only its holder may (``holder`` must match); ``force`` is the hub UI's override."""
+    def release(self, lease_id: str, holder: Optional[str] = None, force: bool = False,
+                owner: Optional[str] = None) -> dict[str, Any]:
+        """Give the lane back. Only its holder (and owner) may; ``force`` is the hub UI's override."""
         with self._cond:
             self._reap()
             lease = self._leases.get(str(lease_id or ""))
             if lease is None:
                 return {"ok": True, "released": False, "lease_id": lease_id, "detail": "already gone"}
-            if not force and (holder is None or str(holder)[:80] != lease.holder):
+            if not force and (holder is None or str(holder)[:80] != lease.holder or self._not_owner(lease, owner)):
                 return self._refuse(lease, holder, "release")
             self._leases.pop(lease.id, None)
             self._save()
@@ -314,11 +354,13 @@ class LaneArbiter:
             self._notify("released", lease, forced=bool(force), held_s=max(0, int(self._now() - lease.granted_at)))
             return {"ok": True, "released": True, "lease_id": lease.id}
 
-    def status(self) -> dict[str, Any]:
+    def status(self, ids: bool = True) -> dict[str, Any]:
+        """The lanes in use and who waits. ``ids=False`` leaves the lease ids out (what an anonymous reader sees)."""
         with self._cond:
             self._reap()
             now = self._now()
-            return {"ok": True, "lanes": [l.to_dict(now) for l in self._ordered()],
+            return {"ok": True, "lanes": [l.to_dict(now, ids) for l in self._ordered()],
                     "waiting": [{"holder": w.holder, "domain": w.domain, "profile": w.profile, "purpose": w.purpose,
                                  "since": w.since, "waiting_s": max(0, int(now - w.since))} for w in self._waiters],
-                    "reaped": list(self.reaped[-10:]), "checked_at": now}
+                    "reaped": [{k: v for k, v in r.items() if ids or k != "lease_id"} for r in self.reaped[-10:]],
+                    "checked_at": now}
