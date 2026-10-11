@@ -285,6 +285,9 @@ dropped) and `dependents`; the terminal prints «⏳ espera #12» on the board a
   `blocked` task goes back to `claimed`. It fires on the transition (`task_review` approve, `task_done`, `task_release`
   with drop, which answer `unblocked`), when an agent closes its turn (heartbeat not `working`) and from the five-minute
   sweep as a backup; table `agora_dep_wakeups` keeps it idempotent. Blockers already through when they are set never wake.
+- Each wait is a cycle: when a blocker goes back to work (claimed, a new submission, changes asked, released) its
+  dependents are re-armed, so the next time it is through wakes them again; approved → done inside one cycle does not.
+  Removing the last pending blocker of a `blocked` task puts it back to `claimed` (or `open`).
 
 ## Observer of the agents' transcripts
 

@@ -1700,6 +1700,7 @@ class Agora:
             if stale_note:
                 self._system(task, stale_note, agent)
         self._bump("agora.task.claimed", {"task_id": task["id"], "agent": agent, "locks": got["locks"]})
+        self._rearm_dependents(task["id"])
         fresh = self._task_row(task["id"])
         res = {"ok": True, "task": fresh, "locks": got["locks"]}
         if fresh["waiting_on"]:
@@ -1743,6 +1744,7 @@ class Agora:
             elif status != task["status"]:
                 self._system(task, f"{agent}: {task['status']} → {status}.", agent)
         self._bump("agora.task.status", {"task_id": task["id"], "agent": agent, "status": status})
+        self._rearm_dependents(task["id"])
         return {"ok": True, "task": self._task_row(task["id"])}
 
     def task_submit(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -1809,6 +1811,7 @@ class Agora:
         self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": snap["reviewer"],
                                           "submission_revision": revision, "commits": task["commits"],
                                           "blocks": len(blocks or [])})
+        self._rearm_dependents(task["id"])          # a new submission is a new cycle for whoever waits on it
         out = {"ok": True, "task": self._task_row(task["id"])}
         warnings = self._quota_warnings([snap["reviewer"]] if snap["reviewer"] else [])
         if warnings:
@@ -1873,6 +1876,8 @@ class Agora:
         res = {"ok": True, "task": self._task_row(task["id"])}
         if verdict == "approve":
             res["unblocked"] = self._wake_dependents(task["id"])
+        else:
+            self._rearm_dependents(task["id"])
         return self._with_unseen(a, res)
 
     def task_done(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -1965,6 +1970,8 @@ class Agora:
         res = {"ok": True, "task": self._task_row(task["id"])}
         if drop:
             res["unblocked"] = self._wake_dependents(task["id"])
+        else:
+            self._rearm_dependents(task["id"])
         return res
 
     # -- dependencies --------------------------------------------------------------------------------------------
@@ -2008,10 +2015,21 @@ class Agora:
     def _dep_key(self, task: dict[str, Any]) -> str:
         return f"deps:{task['id']}:" + ",".join(str(b["id"]) for b in task["blocked_by"])
 
+    def _rearm_dependents(self, blocker_id: int) -> None:
+        """A blocker went back to work (claimed, in progress, review, changes, blocked, open): its dependents are
+        waiting again, so the next time everything is through is a new cycle and wakes them again. Within one cycle
+        (approved → done) nothing is re-armed and the wake-up stays single."""
+        row = self.db.one("SELECT status FROM tasks WHERE id=?", (int(blocker_id),))
+        if row is None or row["status"] in DEP_CLEAR:
+            return
+        self.db.execute("DELETE FROM agora_dep_wakeups WHERE task_id IN "
+                        "(SELECT task_id FROM agora_task_deps WHERE blocker_id=?)", (int(blocker_id),))
+
     def _apply_deps(self, agent: str, task: dict[str, Any], *, add: list[int], remove: list[int],
                     replace: Optional[list[int]]) -> dict[str, list[int]]:
         """Change what ``task`` waits for inside the caller's transaction; refuses itself, unknown ids and loops."""
         tid = int(task["id"])
+        was_waiting = set(task.get("waiting_on") or [])
         current = {int(r["blocker_id"]) for r in self.db.query("SELECT blocker_id FROM agora_task_deps WHERE task_id=?", (tid,))}
         target = set(replace) if replace is not None else (current | set(add)) - set(remove)
         new, gone = sorted(target - current), sorted(current - target)
@@ -2037,6 +2055,12 @@ class Agora:
                 # Everything it waits for is already through: nothing to wake later for this set.
                 self.db.execute("INSERT OR IGNORE INTO agora_dep_wakeups(key, task_id, created) VALUES(?,?,?)",
                                 (self._dep_key(fresh), tid, now))
+            if was_waiting & set(gone) and not fresh["waiting_on"] and fresh["status"] == "blocked":
+                # It was blocked waiting for what was just removed: nothing left to wait for, back to work.
+                self.db.execute("UPDATE tasks SET status=?, updated=? WHERE id=?",
+                                ("claimed" if fresh.get("owner") else "open", now, tid))
+                self._system(fresh, f"#{tid} ya no espera a nada: vuelve a "
+                             + ("claimed." if fresh.get("owner") else "open, libre para reclamar."), agent)
         return {"added": new, "removed": gone}
 
     def task_deps(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -2068,7 +2092,11 @@ class Agora:
         with self.db.tx():
             for r in rows:
                 t = self._task_row(r["task_id"])
-                if t["status"] in FINAL or not t["blocked_by"] or t["waiting_on"]:
+                if t["waiting_on"]:
+                    # Waiting again (a hook may have missed the blocker leaving approved/done): re-arm the next cycle.
+                    self.db.execute("DELETE FROM agora_dep_wakeups WHERE task_id=?", (t["id"],))
+                    continue
+                if t["status"] in FINAL or not t["blocked_by"]:
                     continue
                 key = self._dep_key(t)
                 if self.db.one("SELECT key FROM agora_dep_wakeups WHERE key=?", (key,)) is not None:
