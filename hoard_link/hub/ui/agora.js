@@ -36,7 +36,9 @@
     exempt: { es: "exenta de revisión", en: "review exempt" },
     equivalent: { es: "integrada como equivalente", en: "integrated as equivalent" }, more_groups: { es: "más", en: "more" },
     locks_total: { es: "bloqueos", en: "locks" },
-    stale: { es: "sin señales", en: "silent" }, kind_comment: { es: "Comentario", en: "Comment" },
+    stale: { es: "sin señales", en: "silent" },
+    quota_out: { es: "sin cuota", en: "out of quota" }, quota_until: { es: "hasta", en: "until" },
+    quota_low: { es: "cuota baja", en: "low quota" }, kind_comment: { es: "Comentario", en: "Comment" },
     kind_proposal: { es: "Propuesta", en: "Proposal" }, kind_agree: { es: "De acuerdo", en: "Agree" }, kind_disagree: { es: "En desacuerdo", en: "Disagree" },
     filter_open: { es: "Abiertas", en: "Open" }, filter_all: { es: "Todas", en: "All" }, filter_resolved: { es: "Resueltas", en: "Resolved" },
     resolution: { es: "Resolución", en: "Resolution" }, stances: { es: "Posturas", en: "Stances" },
@@ -289,11 +291,20 @@
     if (!list.length && !only.length) { agentsBox.appendChild(el("div", "hint", t("no_agents"))); return; }
     for (const a of list) {
       const o = a.observed;
-      const c = el("div", `ag-agent${a.stale && !obsActive(o) ? " stale" : ""}`);
+      const q = a.quota || {};
+      const noQuota = q.state === "exhausted";
+      const c = el("div", `ag-agent${(a.stale && !obsActive(o)) || noQuota ? " stale" : ""}`);
       const head = el("div");
       const dot = el("span", `ag-dot ${a.state || ""}`); dot.setAttribute("aria-hidden", "true"); head.appendChild(dot);
       head.appendChild(el("b", "", a.name || a.id));
       head.appendChild(el("span", "hint", `${st(a.state || "idle")} · ${fmtWhen(a.last_seen)}${a.stale ? " · " + t("stale") : ""}${o ? " · " + t("observed") + ": " + obsText(o) : ""}`));
+      if (noQuota || q.state === "low") {
+        const reset = q.reset_at ? new Date(q.reset_at).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+        const chip = el("span", `chip ${noQuota ? "bad" : "warn"}`,
+          noQuota ? `${t("quota_out")}${reset ? " · " + t("quota_until") + " " + reset : ""}` : `${t("quota_low")} · ${Math.round(q.remaining_percent ?? 0)} %`);
+        chip.setAttribute("data-quota", q.state);
+        head.appendChild(chip);
+      }
       c.appendChild(head);
       if (a.doing) c.appendChild(el("div", "ag-doing", a.doing));
       if (o) {
