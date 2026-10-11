@@ -1149,6 +1149,9 @@ class Agora:
                             "used_percent": used, "remaining_percent": remaining, "reset_at": reset_at,
                             "source": _txt(raw.get("source") or source, 120, "window source", required=True)})
 
+        before_pools = self._quota_pools()
+        before = {r["id"]: self._quota_state_from(r["id"], before_pools)["state"]
+                  for r in self.db.query("SELECT id FROM agents") if self._quota_provider(r["id"]) == provider}
         now = self.clock()
         with self.db.tx():
             self._touch(agent)
@@ -1162,6 +1165,7 @@ class Agora:
                 "INSERT INTO agora_usage_reporters(provider_id,pool_id,agent_id,last_reported_at) VALUES(?,?,?,?) "
                 "ON CONFLICT(provider_id,pool_id,agent_id) DO UPDATE SET last_reported_at=excluded.last_reported_at",
                 (provider, pool_id, agent, now))
+            self._quota_exhaustion_notice(provider, before)
         self._bump("agora.usage.reported", {"provider_id": provider, "pool_id": pool_id, "agent_id": agent})
         return {"ok": True, "provider_id": provider, "pool_id": pool_id, "agent_id": agent,
                 "reported_at": datetime.fromtimestamp(now, timezone.utc).isoformat()}
@@ -1222,6 +1226,118 @@ class Agora:
                     "reported_at": reported_at, "stale": stale, "windows": json.loads(json.dumps(windows))})
         return {"ok": True, "providers": [{"provider_id": key, "pools": providers[key],
                                              "agents": provider_agents[key]} for key in sorted(providers)]}
+
+    # -- quota state of each agent (warn, never block) -------------------------------------------------------------
+
+    _QUOTA_LOW_PERCENT = 15.0
+
+    @classmethod
+    def _quota_provider(cls, agent_id: Optional[str]) -> Optional[str]:
+        """The provider whose quota an agent spends: its id is the provider or starts with ``<provider>-``
+        (``cursor-agora`` -> cursor, ``codex-ayuda`` -> codex, ``claude-capacity`` -> claude)."""
+        agent = str(agent_id or "").strip().lower()
+        for provider in sorted(cls._USAGE_PROVIDERS):
+            if agent == provider or agent.startswith(provider + "-"):
+                return provider
+        return None
+
+    @staticmethod
+    def _quota_when(reset_at: Optional[str]) -> str:
+        try:
+            when = datetime.fromisoformat(str(reset_at).replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            return when.astimezone().strftime("%d-%m %H:%M")
+        except (TypeError, ValueError, OverflowError, OSError):
+            return str(reset_at)
+
+    def _quota_pools(self) -> dict[str, list[dict[str, Any]]]:
+        return {p["provider_id"]: p["pools"] for p in self.usage()["providers"]}
+
+    def _quota_state_from(self, agent_id: str, pools_by_provider: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+        provider = self._quota_provider(agent_id)
+        out: dict[str, Any] = {"agent": agent_id, "provider": provider, "state": "none", "remaining_percent": None,
+                               "reset_at": None, "pool_label": None, "note": None}
+        pools = pools_by_provider.get(provider or "", [])
+        if not pools:
+            return out
+        mine = [p for p in pools if agent_id in (p.get("agent_ids") or [])]
+        pool = max(mine or pools, key=lambda p: str(p.get("reported_at") or ""))
+        out["pool_label"] = pool.get("pool_label")
+        if pool.get("stale"):
+            out.update(state="stale", note=f"{agent_id}: cuota sin dato reciente")
+            return out
+        measured = [w for w in pool.get("windows") or [] if not w.get("stale") and w.get("remaining_percent") is not None]
+        if not measured:
+            out.update(state="unknown")
+            return out
+        remaining = min(float(w["remaining_percent"]) for w in measured)
+        out["remaining_percent"] = round(remaining, 1)
+        exhausted = [w for w in measured if float(w["remaining_percent"]) <= 0.5]
+        if exhausted:
+            resets = [w["reset_at"] for w in exhausted if w.get("reset_at")]
+            reset_at = max(resets) if resets else None
+            out.update(state="exhausted", reset_at=reset_at,
+                       note=f"{agent_id} sin cuota" + (f" hasta {self._quota_when(reset_at)}" if reset_at else ""))
+        elif remaining < self._QUOTA_LOW_PERCENT:
+            low = min(measured, key=lambda w: float(w["remaining_percent"]))
+            out.update(state="low", reset_at=low.get("reset_at"), note=f"{agent_id} con poca cuota ({remaining:.0f} % libre)")
+        else:
+            out["state"] = "ok"
+        return out
+
+    def agent_quota_state(self, a: Any) -> dict[str, Any]:
+        """ok / low (<15 % left) / exhausted (0 %, with reset_at) / unknown / stale (no fresh report) / none (no
+        provider or no report) for one agent, from the latest report of its provider's pool."""
+        agent = str((a or {}).get("agent") if isinstance(a, dict) else a or "").strip().lower()
+        if not _AGENT_RE.match(agent):
+            raise AgoraError("agent is required")
+        return {"ok": True, **self._quota_state_from(agent, self._quota_pools())}
+
+    def _quota_warnings(self, agent_ids: Any) -> list[str]:
+        """Notes for the agents among ``agent_ids`` that are out of quota or nearly so (a warning, nothing stops)."""
+        ids = []
+        for value in agent_ids or []:
+            agent = str(value or "").strip().lower()
+            if agent and agent not in ids and agent != PERSON:
+                ids.append(agent)
+        if not ids:
+            return []
+        pools = self._quota_pools()
+        notes = []
+        for agent in ids:
+            state = self._quota_state_from(agent, pools)
+            if state["state"] in ("exhausted", "low") and state["note"]:
+                notes.append(state["note"])
+        return notes
+
+    def _quota_exhaustion_notice(self, provider: str, before: dict[str, str]) -> None:
+        """When a report leaves agents of ``provider`` out of quota (and they were not before), say in the coordination
+        thread which of their tasks and reviews should be handed over. Nothing moves by itself."""
+        pools = self._quota_pools()
+        agents = sorted({r["id"] for r in self.db.query("SELECT id FROM agents")} | set(before))
+        lines = []
+        for agent in agents:
+            if self._quota_provider(agent) != provider:
+                continue
+            state = self._quota_state_from(agent, pools)
+            if state["state"] != "exhausted" or before.get(agent) == "exhausted":
+                continue
+            final_sql = ",".join("?" * len(FINAL))
+            owned = self.db.query(f"SELECT id, title, status FROM tasks WHERE owner=? AND status NOT IN ({final_sql}) "
+                                  "ORDER BY id", (agent, *FINAL))
+            reviews = self.db.query("SELECT id, title FROM tasks WHERE reviewer=? AND status IN ('review','changes') "
+                                    "ORDER BY id", (agent,))
+            if not owned and not reviews:
+                continue
+            lines.append(f"{state['note']}.")
+            lines += [f"- #{r['id']} [{r['status']}] {r['title']}" for r in owned]
+            lines += [f"- revisión de #{r['id']} {r['title']}" for r in reviews]
+        thread_id = self.handover_thread_id
+        if not lines or thread_id is None or self.db.one("SELECT id FROM threads WHERE id=?", (thread_id,)) is None:
+            return
+        lines.append("Repartidlas con `agora handover --from <agente> --to <relevo> --force` o soltadlas; no se mueven solas.")
+        self._msg(thread_id, "system", "system", "\n".join(lines))
 
     # -- agents --------------------------------------------------------------------------------------------------
 
@@ -1354,9 +1470,11 @@ class Agora:
     def agents(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         now = self.clock()
         out = []
+        pools = self._quota_pools()
         for r in self.db.query("SELECT * FROM agents ORDER BY last_seen DESC"):
             d = dict(r)
             d["stale"] = (now - float(d.get("last_seen") or 0)) > STALE_AGENT_S
+            d["quota"] = self._quota_state_from(d["id"], pools)
             mine = [dict(x) for x in self.db.query("SELECT * FROM locks WHERE owner=? AND expires>?", (d["id"], now))]
             d["locks"] = [x["resource"] for x in mine]
             d["lock_groups"] = [{k: g[k] for k in ("task_id", "kind", "repo", "count", "label")} for g in group_locks(mine)]
@@ -1529,7 +1647,11 @@ class Agora:
         self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": snap["reviewer"],
                                           "submission_revision": revision, "commits": task["commits"],
                                           "blocks": len(blocks or [])})
-        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"])})
+        out = {"ok": True, "task": self._task_row(task["id"])}
+        warnings = self._quota_warnings([snap["reviewer"]] if snap["reviewer"] else [])
+        if warnings:
+            out["quota_warnings"] = warnings
+        return self._with_unseen(a, out)
 
     def task_review(self, a: dict[str, Any]) -> dict[str, Any]:
         """Vote on the observed submission revision using expected_submission_revision."""
@@ -1846,9 +1968,13 @@ class Agora:
         self._bump("agora.handover", {"by": caller, "from": source, "to": target, "reason": reason,
                                        "tasks": owner_moved, "reviews": reviewer_moved, "locks": locks_moved,
                                        "thread_id": thread_id, "forced": forced_active})
-        return {"ok": True, "noop": False, "by": caller, "from": source, "to": target, "reason": reason,
-                "forced": forced_active, "tasks": result_tasks, "owner_moved": owner_moved, "reviewer_moved": reviewer_moved,
-                "locks_moved": locks_moved, "skipped": skipped, "thread_id": thread_id}
+        out = {"ok": True, "noop": False, "by": caller, "from": source, "to": target, "reason": reason,
+               "forced": forced_active, "tasks": result_tasks, "owner_moved": owner_moved, "reviewer_moved": reviewer_moved,
+               "locks_moved": locks_moved, "skipped": skipped, "thread_id": thread_id}
+        warnings = self._quota_warnings([target])
+        if warnings:
+            out["quota_warnings"] = warnings
+        return out
 
     def tasks(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         a = a or {}
@@ -1912,7 +2038,11 @@ class Agora:
         self._bump("agora.thread.opened", {"thread_id": th, "kind": kind, "title": title, "by": agent})
         if a.get("escalate"):
             return self.escalate({"agent": agent, "thread_id": th, "question": body, "_person": a.get("_person")})
-        return {"ok": True, "thread": self._thread_row(th)}
+        out = {"ok": True, "thread": self._thread_row(th)}
+        warnings = self._quota_warnings(mentions)
+        if warnings:
+            out["quota_warnings"] = warnings
+        return out
 
     def post(self, a: dict[str, Any]) -> dict[str, Any]:
         person = bool(a.get("_person"))
@@ -1935,7 +2065,11 @@ class Agora:
                     (th["status"] == "escalated" and agent == PERSON):
                 self.db.execute("UPDATE threads SET status='open' WHERE id=?", (th["id"],))
         self._bump("agora.thread.message", {"thread_id": th["id"], "message_id": mid, "author": agent, "kind": kind})
-        return self._with_unseen(a, {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"])})
+        out = {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"])}
+        warnings = self._quota_warnings(_list(a.get("mentions"), "mentions"))
+        if warnings:
+            out["quota_warnings"] = warnings
+        return self._with_unseen(a, out)
 
     def resolve(self, a: dict[str, Any]) -> dict[str, Any]:
         """Close a thread with the resolution in writing. Resolved debates and decisions are the decision log."""
@@ -2181,9 +2315,15 @@ class Agora:
             "SELECT * FROM tasks WHERE created_by=? AND status IN ('claimed','in_progress','changes')", (agent,))]
         progress_alerts = [t for t in progress_alerts if t["activity"]["state"] == "stalled"]
         counts["progress_alerts"] = len(progress_alerts)
+        pools = self._quota_pools()
+        out_of_quota = []
+        for r in self.db.query("SELECT id FROM agents ORDER BY id"):
+            state = self._quota_state_from(r["id"], pools)
+            if state["state"] == "exhausted":
+                out_of_quota.append({"agent": r["id"], "reset_at": state["reset_at"], "note": state["note"]})
         return {"ok": True, "agent": agent, "since_id": since, "counts": counts, "messages": msgs,
                 "reviews": reviews, "changes": changes, "escalated": escalated, "pending": pending,
-                "progress_alerts": progress_alerts}
+                "progress_alerts": progress_alerts, "out_of_quota": out_of_quota}
 
     # -- board ---------------------------------------------------------------------------------------------------
 
@@ -2299,6 +2439,11 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_usage", "read": True,
      "description": "Read the latest sanitized quota observations for the four provider leaders. Pools shared by multiple agents are returned once, with reporter identities; expired observations are marked stale and their percentages become unknown.",
      "inputSchema": _schema({}, [])},
+    {"name": "hub_agora_agent_quota", "read": True,
+     "description": "Quota state of one agent from its provider's latest report: ok, low (<15 % left), exhausted (with "
+                    "reset_at and a note such as 'cursor-agora sin cuota hasta 15-10 11:40'), unknown, stale or none. "
+                    "Mentions, handovers and reviewer choices already warn about exhausted agents (quota_warnings).",
+     "inputSchema": _schema({"agent": {"type": "string", "description": "agent id, e.g. cursor-agora"}}, ["agent"])},
     {"name": "hub_agora_usage_report",
      "description": "Report a sanitized provider account-pool snapshot. pool_id must be an opaque local label, never an account id, email or credential. Unknown windows use null percentages; reported_at is assigned by the Hub.",
      "inputSchema": _schema({"agent": _A, "provider_id": {"type": "string", "enum": ["claude", "codex", "cursor", "faustus"]},
@@ -2745,6 +2890,8 @@ class AgoraFacet(Facet):
             return self._run(ag.agents, q)
         if p in ("/api/agora/usage", "/api/agora/console/usage"):
             return self._run(ag.usage, q)
+        if p == "/api/agora/quota":
+            return self._run(ag.agent_quota_state, q)
         return {"ok": False, "status": 404, "error": f"unknown Ágora route {p}"}
 
     def post(self, req: Request) -> Optional[Any]:
@@ -2804,6 +2951,7 @@ class AgoraFacet(Facet):
         return {
             "hub_agora_checkpoint": wrap(ag.checkpoint), "hub_agora_checkpoints": wrap(ag.checkpoints),
             "hub_agora_usage": wrap(ag.usage), "hub_agora_usage_report": wrap(ag.usage_report),
+            "hub_agora_agent_quota": wrap(ag.agent_quota_state),
             "hub_agora_activity": wrap(self._activity), "hub_agora_timeline": wrap(ag.timeline),
             "hub_agora_board": wrap(self._board), "hub_agora_inbox": wrap(self._inbox, cap_wait=True),
             "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(self._sync), "hub_agora_task_add": wrap(ag.task_add),
