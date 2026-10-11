@@ -3,16 +3,51 @@ import json
 import urllib.request
 
 
+def multipart_context(body, content_type, origin):
+    """Replace only a context field; keep uploaded bytes and MIME framing exact."""
+    import re
+    from email.message import Message
+    from email.parser import BytesHeaderParser
+    header = Message()
+    header['Content-Type'] = content_type
+    boundary = header.get_param('boundary')
+    if header.get_content_type() != 'multipart/form-data' or not boundary:
+        return body
+    separators = list(re.finditer(rb'(?:^|\r\n)--' + re.escape(boundary.encode()) + rb'(?:--)?(?:\r\n|$)', body))
+    replacements = []
+    for start, end in zip(separators, separators[1:]):
+        part = body[start.end():end.start()]
+        split = part.find(b'\r\n\r\n')
+        if split < 0:
+            continue
+        headers = BytesHeaderParser().parsebytes(part[:split] + b'\r\n\r\n')
+        if headers.get_param('name', header='Content-Disposition') not in ('context', 'hoard_context'):
+            continue
+        context = json.loads(part[split + 4:].decode('utf-8'))
+        if isinstance(context, dict):
+            context['origin'] = {**context.get('origin', {}), **origin}
+            replacements.append((start.end() + split + 4, end.start(), json.dumps(context, ensure_ascii=False).encode('utf-8')))
+    for start, end, replacement in reversed(replacements):
+        body = body[:start] + replacement + body[end:]
+    return body
+
+
 class CopilotClient:
     def __init__(self, hub_url, token):
         self.url = hub_url.rstrip("/") + "/api/link/copilot"
         self.token = token
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def open(self, path, *, method="GET", body=None, headers=None):
+    def open(self, path, *, method="GET", body=None, raw_body=None, content_type=None, headers=None):
         envelope = {"path": path, "method": method, "headers": headers or {}}
+        if isinstance(body, (bytes, bytearray)) and raw_body is None:
+            raw_body, body = body, None
         if body is not None:
             envelope["body"] = body
+        if raw_body is not None:
+            import base64
+            envelope['raw_body'] = base64.b64encode(raw_body).decode('ascii')
+            envelope['content_type'] = content_type or 'application/octet-stream'
         request = urllib.request.Request(self.url, data=json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
             headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}, method="POST")
         return self.opener.open(request, timeout=900)
@@ -118,6 +153,7 @@ def make_copilot_router(app_id, data_dir, *, faustus_urls=None, token=None, app_
             body = None
             if "raw_body" in envelope:
                 body = base64.b64decode(envelope["raw_body"], validate=True)
+                body = multipart_context(body, envelope.get('content_type', ''), {'app_id': app_id, 'data_space_id': space_id})
             elif "body" in envelope:
                 payload = envelope["body"]
                 if isinstance(payload, dict):
