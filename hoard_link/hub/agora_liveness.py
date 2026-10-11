@@ -13,15 +13,17 @@ Classification rules, applied in this order (first match wins):
                       code, or a provider error).
 * ``empty_response``  the answer is empty/whitespace and there is no concrete
                       evidence.
+* ``completed``       evidence of ``done`` or ``submits`` (a task was closed or
+                      handed to review), whatever the answer says.
 * ``blocked``         the answer says the agent is blocked or waits for the
                       owner ("blocked", "bloqueado", "waiting for Luis",
                       "necesito que Luis", "need the owner", ...).
-* ``completed``       evidence of ``done`` or ``submits`` (a task was closed or
-                      handed to review).
 * ``advanced``        any other concrete evidence: claims, task status
                       changes, reviews given, commits reported, messages
                       posted (the console's own auto-post of the answer is
-                      never counted).
+                      never counted, and a message that only announces future
+                      work without a commit reference - ``plan_messages`` -
+                      does not count either).
 * ``plan_only``       the answer only announces future work ("next I will",
                       "I'll now", "voy a", "a continuación", "siguiente paso",
                       "I will start", "plan:") and there is no concrete
@@ -36,6 +38,8 @@ the reasons but does not move a turn out of ``plan_only``/``empty_response``.
 Continuation rules (``decide_continuation``):
 
 * Only ``plan_only`` and ``empty_response`` continue.
+* A leader whose provider quota is exhausted is never continued (it would burn
+  turns that cannot run); it is picked up again by real events after its reset.
 * At most ``MAX_CONTINUATIONS`` (2) continuations per originating turn chain.
 * Throttle: after ``THROTTLE_AFTER`` (2) consecutive no-progress turns the next
   continuation waits 120 s, doubling for every further no-progress turn up to
@@ -85,6 +89,15 @@ _PLAN_RE = re.compile(
     re.IGNORECASE)
 
 
+def is_plan_text(text: str) -> bool:
+    """True when ``text`` only announces future work (a plan phrase and no commit reference)."""
+    body = text or ""
+    return bool(_PLAN_RE.search(body)) and not _COMMIT_RE.search(body)
+
+
+_COMMIT_RE = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+
+
 def _count(evidence: Optional[Mapping[str, Any]], key: str) -> int:
     try:
         return max(0, int((evidence or {}).get(key) or 0))
@@ -97,6 +110,8 @@ def classify_turn(*, state: str, exit_code: Optional[int], answer: str, evidence
     """Classify one finished console turn. See the module docstring for the rules."""
     text = (answer or "").strip()
     strong = {key: _count(evidence, key) for key in STRONG_EVIDENCE}
+    # Messages that only announce future work are not progress: "voy a hacer X" posted to the Agora is still a plan.
+    strong["messages_posted"] = max(0, strong["messages_posted"] - _count(evidence, "plan_messages"))
     weak = {key: _count(evidence, key) for key in WEAK_EVIDENCE}
     has_evidence = any(strong.values())
     reasons: list[str] = []
@@ -114,13 +129,13 @@ def classify_turn(*, state: str, exit_code: Optional[int], answer: str, evidence
             reasons.append("only a heartbeat was sent")
         return {"liveness": "empty_response", "reasons": reasons}
 
-    match = _BLOCKED_RE.search(text)
-    if match:
-        return {"liveness": "blocked", "reasons": [f"answer states a block: '{match.group(0)[:60]}'"]}
-
     if strong["done"] or strong["submits"]:
         reasons = [f"{key}={strong[key]}" for key in ("done", "submits") if strong[key]]
         return {"liveness": "completed", "reasons": reasons}
+
+    match = _BLOCKED_RE.search(text)
+    if match:
+        return {"liveness": "blocked", "reasons": [f"answer states a block: '{match.group(0)[:60]}'"]}
 
     if has_evidence:
         return {"liveness": "advanced", "reasons": [f"{key}={value}" for key, value in strong.items() if value]}
@@ -151,12 +166,14 @@ def throttle_wait(consecutive_no_progress: int) -> float:
 
 def decide_continuation(*, liveness: str, prior_continuations: int, consecutive_no_progress: int,
                         last_continuation_at: Optional[float], now: float, real_event_since: bool,
-                        root_turn_id: str = "") -> dict[str, Any]:
+                        root_turn_id: str = "", quota_exhausted: bool = False) -> dict[str, Any]:
     """Decide whether to relaunch the leader after a turn classified as ``liveness``."""
     n = max(0, int(prior_continuations or 0)) + 1
     key = continuation_key(root_turn_id, liveness, n)
     if liveness not in CONTINUING:
         return {"continue": False, "delay_s": 0.0, "key": key, "reason": f"{liveness} turns are not continued"}
+    if quota_exhausted:
+        return {"continue": False, "delay_s": 0.0, "key": key, "reason": "provider quota exhausted; not relaunched until it resets"}
     if n > MAX_CONTINUATIONS:
         return {"continue": False, "delay_s": 0.0, "key": key,
                 "reason": f"already continued {MAX_CONTINUATIONS} times for this turn chain"}

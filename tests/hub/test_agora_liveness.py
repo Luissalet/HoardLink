@@ -333,3 +333,36 @@ def test_overview_lists_liveness_on_console_turns(console):
     turns = {t["id"]: t for t in console.overview()["console_turns"]}
     assert turns["o1"]["liveness"] == "plan_only" and turns["o1"]["root_turn_id"] == "o1"
     assert "liveness" in AgoraConsoleFacet.tools()[0]["description"]
+
+
+# -- review fixes: plan-only messages, completed beats blocked, no relaunch without quota -------------------------
+
+def test_message_that_only_announces_work_is_not_progress():
+    from hoard_link.hub import agora_liveness as lv
+    res = lv.classify_turn(state="completed", exit_code=0, answer="Voy a revisar la #312 ahora.",
+                           evidence={"messages_posted": 1, "plan_messages": 1})
+    assert res["liveness"] == "plan_only"
+
+
+def test_message_with_commit_reference_is_progress():
+    from hoard_link.hub import agora_liveness as lv
+    assert lv.is_plan_text("voy a seguir") and not lv.is_plan_text("hecho en 7a11e80, voy a seguir")
+    res = lv.classify_turn(state="completed", exit_code=0, answer="Hecho en 7a11e80.",
+                           evidence={"messages_posted": 1, "plan_messages": 0, "commits_reported": 1})
+    assert res["liveness"] == "advanced"
+
+
+def test_submit_wins_over_a_blocked_word_in_the_answer():
+    from hoard_link.hub import agora_liveness as lv
+    res = lv.classify_turn(state="completed", exit_code=0,
+                           answer="The test was blocked by a lock earlier; submitted #311 for review.",
+                           evidence={"submits": 1})
+    assert res["liveness"] == "completed"
+
+
+def test_exhausted_quota_never_continues():
+    from hoard_link.hub import agora_liveness as lv
+    d = lv.decide_continuation(liveness="plan_only", prior_continuations=0, consecutive_no_progress=0,
+                               last_continuation_at=None, now=1000.0, real_event_since=True,
+                               root_turn_id="r", quota_exhausted=True)
+    assert d["continue"] is False and "quota" in d["reason"]
