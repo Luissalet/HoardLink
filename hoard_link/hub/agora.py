@@ -1701,7 +1701,10 @@ class Agora:
         tasks waiting for it (``review`` / ``changes``). ``tasks`` limits the operation to those ids.
 
         Allowed for the person (the hub's page), for ``from_agent`` itself, and for any registered agent once
-        ``from_agent`` has sent no heartbeat for ``handover_idle_s`` (30 min). ``to_agent`` must be registered and,
+        ``from_agent`` has sent no heartbeat for ``handover_idle_s`` (30 min). ``force`` skips that wait for any
+        registered agent: Luis decides who works on what, and an agent acting on his order (a source out of quota
+        that keeps sending heartbeats, work that must move now) takes the work at once; the forced move is written
+        in every task thread and in the coordination thread with its reason. ``to_agent`` must be registered and,
         unless the person asks, have a fresh heartbeat. One transaction; running it again changes nothing."""
         caller = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
         source = self._handover_agent(a.get("from_agent"), "from_agent")
@@ -1710,6 +1713,7 @@ class Agora:
             raise AgoraError("from_agent and to_agent must be different agents")
         reason = _txt(a.get("reason"), 2000, "reason", required=True)
         include_reviews = self._flag(a.get("include_reviews"), True)
+        force = self._flag(a.get("force"), False)
         wanted: Optional[list[int]] = None
         if a.get("tasks") not in (None, "", []):
             wanted = []
@@ -1728,10 +1732,13 @@ class Agora:
             # -- who may do it
             if caller != PERSON and self.db.one("SELECT id FROM agents WHERE id=?", (caller,)) is None:
                 raise AgoraError(f"{caller} is not registered in the Agora: send a heartbeat first", 403)
+            forced_active = False
             if caller not in (PERSON, source):
                 seen = self.db.one("SELECT last_seen FROM agents WHERE id=?", (source,))
                 idle = now - float(seen["last_seen"] or 0) if seen is not None else None
-                if idle is not None and idle < self.handover_idle_s:
+                if force and idle is not None and idle < self.handover_idle_s:
+                    forced_active = True
+                elif idle is not None and idle < self.handover_idle_s:
                     left = self.handover_idle_s - idle
                     raise AgoraError(
                         f"{source} sent a heartbeat {int(idle // 60)} min ago: another agent can take its work over after "
@@ -1806,9 +1813,10 @@ class Agora:
                                     (target, now + float(lk["ttl_s"] or DEFAULT_LOCK_TTL_S), lk["resource"]))
                     locks_moved.append(lk["resource"])
                     locks_by_task.setdefault(int(lk["task_id"]), []).append(lk["resource"])
+            forced_note = f" (forzado: {source} seguía mandando latidos)" if forced_active else ""
             for p in plan:
                 task = p["task"]
-                lines = [f"{caller} traspasa de {source} a {target}: {reason}"]
+                lines = [f"{caller} traspasa de {source} a {target}{forced_note}: {reason}"]
                 if p["owner_moved"]:
                     lines.append(f"Propiedad: {source} → {target} (estado {task['status']}, entrega r{task.get('submission_revision', 0)})")
                 if p["reviewer_moved"]:
@@ -1817,7 +1825,7 @@ class Agora:
                 if held:
                     lines.append("Bloqueos: " + ", ".join(held))
                 self._system(task, "\n".join(lines), caller)
-            summary = [f"{caller} traspasa de {source} a {target}: {reason}"]
+            summary = [f"{caller} traspasa de {source} a {target}{forced_note}: {reason}"]
             if owner_moved:
                 summary.append("Tareas con nuevo propietario: " + ", ".join(f"#{i}" for i in owner_moved))
             only_review = [i for i in reviewer_moved if i not in owner_moved]
@@ -1837,9 +1845,9 @@ class Agora:
             result_tasks = [self._task_dict(self.db.one("SELECT * FROM tasks WHERE id=?", (p["task"]["id"],))) for p in plan]
         self._bump("agora.handover", {"by": caller, "from": source, "to": target, "reason": reason,
                                        "tasks": owner_moved, "reviews": reviewer_moved, "locks": locks_moved,
-                                       "thread_id": thread_id})
+                                       "thread_id": thread_id, "forced": forced_active})
         return {"ok": True, "noop": False, "by": caller, "from": source, "to": target, "reason": reason,
-                "tasks": result_tasks, "owner_moved": owner_moved, "reviewer_moved": reviewer_moved,
+                "forced": forced_active, "tasks": result_tasks, "owner_moved": owner_moved, "reviewer_moved": reviewer_moved,
                 "locks_moved": locks_moved, "skipped": skipped, "thread_id": thread_id}
 
     def tasks(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -2380,13 +2388,16 @@ TOOLS: list[dict[str, Any]] = [
                     "tasks it owns that are not done (status, review state, submission revision and history stay), their live "
                     "locks (renewed) and, with include_reviews (default), the reviewer role of tasks in review/changes. "
                     "tasks limits it to those ids; reason is required. Allowed for from_agent itself, and for any registered "
-                    "agent once from_agent sent no heartbeat for 30 min; to_agent must have a recent heartbeat. "
-                    "Announced in the tasks' threads and thread 32. Running it twice changes nothing.",
+                    "agent once from_agent sent no heartbeat for 30 min, or right away with force=true (Luis's order: "
+                    "an agent out of quota that keeps sending heartbeats, work that must move now); to_agent must have a "
+                    "recent heartbeat. Announced in the tasks' threads and thread 32. Running it twice changes nothing.",
      "inputSchema": _schema({"agent": _A, "from_agent": {"type": "string", "description": "the agent that stopped"},
                              "to_agent": {"type": "string", "description": "its successor, with a recent heartbeat"},
                              "reason": {"type": "string", "minLength": 1},
                              "tasks": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 200},
-                             "include_reviews": {"type": "boolean"}}, ["agent", "from_agent", "to_agent", "reason"])},
+                             "include_reviews": {"type": "boolean"},
+                             "force": {"type": "boolean", "description": "take it now even if from_agent still sends heartbeats"}},
+                            ["agent", "from_agent", "to_agent", "reason"])},
     {"name": "hub_agora_tasks", "read": True,
      "description": "List tasks: status (or 'active'), owner, repo, kind.",
      "inputSchema": _schema({"status": {"type": "string"}, "owner": {"type": "string"}, "repo": {"type": "string"},

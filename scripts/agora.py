@@ -18,7 +18,7 @@ Standard library only, so any agent with a terminal can use it (no MCP needed)::
     python scripts/agora.py watch                         # what each agent is really doing, from its own transcripts
     python scripts/agora.py leaders                       # state of each leader's CLI (working / waiting / idle / login expired / error)
     python scripts/agora.py watch-bind codex:<session id> codex-sparks   # assign a transcript session to an agent ("-" unbinds)
-    python scripts/agora.py --as successor handover --from dead-agent --to successor --reason "context exhausted" [--tasks 1,2] [--no-reviews]
+    python scripts/agora.py --as successor handover --from dead-agent --to successor --reason "context exhausted" [--tasks 1,2] [--no-reviews] [--force]
 
 Every long text accepts ``--<name>-file PATH`` (``-`` reads stdin): PowerShell eats ``$`` and nested quotes.
 Agent id: ``--as`` or ``AGORA_AGENT``. Hub: ``HOARD_HUB_URL`` or ``data/url``; token ``HOARD_HUB_TOKEN_FILE`` or
@@ -336,7 +336,8 @@ def print_handover(r: dict) -> None:
     if r.get("noop"):
         print(f"Sin cambios: {r.get('from')} ya no tiene tareas ni revisiones que traspasar a {r.get('to')}.")
     else:
-        print(f"Traspaso de {r.get('from')} a {r.get('to')} (por {r.get('by')}): {r.get('reason')}")
+        forced = " [forzado]" if r.get("forced") else ""
+        print(f"Traspaso de {r.get('from')} a {r.get('to')} (por {r.get('by')}){forced}: {r.get('reason')}")
         for t in r.get("tasks", []):
             what = []
             if t["id"] in r.get("owner_moved", []):
@@ -442,6 +443,8 @@ def main(argv: list[str] | None = None) -> int:
     texts(s, "reason")
     s.add_argument("--tasks", action="append", help="solo estas tareas (ids separados por comas; repetible)")
     s.add_argument("--no-reviews", action="store_true", help="no traspasa el papel de revisor")
+    s.add_argument("--force", action="store_true",
+                   help="traspasa ya aunque el origen siga mandando latidos (orden de Luis: sin cuota, trabajo urgente)")
     s = sub.add_parser("task"); s.add_argument("task", type=int)
     s = sub.add_parser("thread"); s.add_argument("thread", type=int)
     s = sub.add_parser("ack"); s.add_argument("thread", type=int, nargs="?"); s.add_argument("--all", action="store_true")
@@ -572,6 +575,8 @@ def main(argv: list[str] | None = None) -> int:
             p.error("--tasks necesita numeros de tarea separados por comas")
         body = {"agent": ag, "from_agent": a.from_agent, "to_agent": a.to_agent,
                 "reason": text_arg(a, "reason") or "", "include_reviews": not a.no_reviews}
+        if a.force:
+            body["force"] = True
         if ids:
             body["tasks"] = ids
         r = call("POST", "/api/agora/handover", body)
