@@ -140,7 +140,15 @@ MIGRATIONS = [
     """
     CREATE TABLE agora_orphan_findings (key TEXT PRIMARY KEY, kind TEXT NOT NULL, task_id INTEGER, created REAL NOT NULL);
     """,
+    """
+    CREATE TABLE agora_task_deps (task_id INTEGER NOT NULL, blocker_id INTEGER NOT NULL, created_by TEXT, created REAL,
+                                  PRIMARY KEY(task_id, blocker_id));
+    CREATE INDEX agora_task_deps_blocker ON agora_task_deps(blocker_id);
+    CREATE TABLE agora_dep_wakeups (key TEXT PRIMARY KEY, task_id INTEGER NOT NULL, created REAL NOT NULL);
+    """,
 ]
+#: A blocker stops holding its dependents back once it reaches one of these.
+DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
 
@@ -779,6 +787,12 @@ class Agora:
                                        "created": latest["created"], "summary": summary[:300], "truncated": len(summary) > 300}
         if full_checkpoint:
             d["latest_checkpoint"] = self._checkpoint_dict(latest, d.get("owner")) if latest else None
+        deps = self.db.query("SELECT t.id, t.title, t.status, t.owner FROM agora_task_deps d JOIN tasks t ON t.id=d.blocker_id "
+                             "WHERE d.task_id=? ORDER BY t.id", (d["id"],))
+        d["blocked_by"] = [{"id": r["id"], "title": r["title"], "status": r["status"], "owner": r["owner"]} for r in deps]
+        d["waiting_on"] = [r["id"] for r in deps if r["status"] not in DEP_CLEAR]
+        d["dependents"] = [r["task_id"] for r in self.db.query(
+            "SELECT task_id FROM agora_task_deps WHERE blocker_id=? ORDER BY task_id", (d["id"],))]
         d["activity"] = self._task_activity(d, volatile=False)
         return d
 
@@ -1414,6 +1428,22 @@ class Agora:
                 key = f"{kind}:{t['id']}:{owner}:{int(float(t.get('claimed_at') or 0))}"
             findings.append({"key": key, "kind": kind, "task_id": t["id"], "title": t["title"], "status": t["status"],
                              "who": who, "why": why, "suggest": suggest, "command": command})
+        # A blocker nobody has claimed while someone is already waiting on it.
+        waiting: dict[int, list[int]] = {}
+        titles: dict[int, str] = {}
+        for r in self.db.query("SELECT d.blocker_id, d.task_id, b.title FROM agora_task_deps d "
+                               "JOIN tasks b ON b.id=d.blocker_id JOIN tasks t ON t.id=d.task_id "
+                               "WHERE b.status='open' AND b.owner IS NULL AND t.status IN ('claimed','in_progress','blocked') "
+                               "ORDER BY d.blocker_id, d.task_id"):
+            waiting.setdefault(int(r["blocker_id"]), []).append(int(r["task_id"]))
+            titles[int(r["blocker_id"])] = r["title"]
+        for bid, deps in waiting.items():
+            suggest = pick()
+            findings.append({"key": f"blocker_unowned:{bid}:{','.join(map(str, deps))}", "kind": "blocker_unowned",
+                             "task_id": bid, "title": titles[bid], "status": "open", "who": None,
+                             "why": "bloquea a " + ", ".join(f"#{d}" for d in deps) + " y nadie la ha reclamado",
+                             "suggest": suggest, "command": f"agora --as {suggest} claim {bid}" if suggest else None,
+                             "dependents": deps})
         return {"ok": True, "findings": findings, "idle_limit_s": int(idle_limit)}
 
     def orphan_sweep(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -1436,7 +1466,7 @@ class Agora:
                 new.append(f)
             for f in new:
                 what = {"review_unassigned": "en revisión sin revisor", "review_silent": f"su revisor {f['who']} está {f['why']}",
-                        "owner_silent": f"su dueño {f['who']} está {f['why']}"}[f["kind"]]
+                        "owner_silent": f"su dueño {f['who']} está {f['why']}", "blocker_unowned": f["why"]}[f["kind"]]
                 note = f"Huérfana: {what}." + (f" Propuesta: {f['suggest']}. `{f['command']}`" if f["suggest"] else
                                                 " No hay ningún agente libre ahora.")
                 self._system(self._task_row(f["task_id"]), note, "system")
@@ -1445,13 +1475,15 @@ class Agora:
                 lines = ["Trabajo huérfano (nadie lo mueve):"]
                 for f in new:
                     lines.append(f"- #{f['task_id']} [{f['status']}] {f['title']}: "
-                                 + ("sin revisor" if f["kind"] == "review_unassigned" else f"{f['who']} {f['why']}")
+                                 + ("sin revisor" if f["kind"] == "review_unassigned" else
+                                    f["why"] if not f["who"] else f"{f['who']} {f['why']}")
                                  + (f" → {f['suggest']}: `{f['command']}`" if f["suggest"] else " → nadie libre"))
                 mentions = sorted({f["suggest"] for f in new if f["suggest"]})
                 self._msg(thread_id, "system", "system", "\n".join(lines), mentions)
         if new:
             self._bump("agora.orphans", {"new": [f["key"] for f in new]})
-        return {"ok": True, "skipped": False, "new": new, "findings": found}
+        # Backup for dependency wake-ups a transition could have missed (each set of blockers wakes only once).
+        return {"ok": True, "skipped": False, "new": new, "findings": found, "unblocked": self._wake_dependents()}
 
     # -- agents --------------------------------------------------------------------------------------------------
 
@@ -1486,6 +1518,8 @@ class Agora:
         self._bump("agora.agent.heartbeat", {"agent": agent, "state": state})
         try:
             self.orphan_sweep()          # at most every five minutes; a heartbeat never fails because of it
+            if state != "working":
+                self._wake_dependents()  # closing a turn: dependency wake-ups go out right away
         except Exception:  # noqa: BLE001
             pass
         inbox = self.inbox({"agent": agent, "peek": True})
@@ -1616,6 +1650,7 @@ class Agora:
             raise AgoraError("priority must be 0 (urgent) .. 3 (someday)")
         paths = _list(a.get("paths"), "paths")
         repo = _txt(a.get("repo"), 120, "repo")
+        blocked_by = self._dep_ids(a.get("blocked_by"), "blocked_by")
         now = self.clock()
         with self.db.tx():
             self._touch(agent)
@@ -1626,6 +1661,8 @@ class Agora:
                                             "created_by": agent, "created": now, "updated": now})
             self.db.execute("UPDATE tasks SET thread_id=? WHERE id=?", (th, tid))
             self._msg(th, agent, "proposal", body or title, _list(a.get("mentions"), "mentions"))
+            if blocked_by:
+                self._apply_deps(agent, self._task_row(tid), add=blocked_by, remove=[], replace=None)
         self._bump("agora.task.added", {"task_id": tid, "title": title, "by": agent, "repo": repo, "kind": kind})
         res = {"ok": True, "task": self._task_row(tid)}
         if a.get("claim"):
@@ -1663,7 +1700,15 @@ class Agora:
             if stale_note:
                 self._system(task, stale_note, agent)
         self._bump("agora.task.claimed", {"task_id": task["id"], "agent": agent, "locks": got["locks"]})
-        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"]), "locks": got["locks"]})
+        self._rearm_dependents(task["id"])
+        fresh = self._task_row(task["id"])
+        res = {"ok": True, "task": fresh, "locks": got["locks"]}
+        if fresh["waiting_on"]:
+            # Informs, never refuses: the owner may prepare work while the blockers finish.
+            pending = [b for b in fresh["blocked_by"] if b["id"] in fresh["waiting_on"]]
+            res["dep_warnings"] = [f"#{fresh['id']} espera todavía a " + ", ".join(
+                f"#{b['id']} ({b['status']}" + (f", {b['owner']})" if b.get("owner") else ")") for b in pending)]
+        return self._with_unseen(a, res)
 
     def _owned(self, a: dict[str, Any], *, allow_person: bool = True) -> tuple[str, dict[str, Any]]:
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")) and allow_person)
@@ -1699,6 +1744,7 @@ class Agora:
             elif status != task["status"]:
                 self._system(task, f"{agent}: {task['status']} → {status}.", agent)
         self._bump("agora.task.status", {"task_id": task["id"], "agent": agent, "status": status})
+        self._rearm_dependents(task["id"])
         return {"ok": True, "task": self._task_row(task["id"])}
 
     def task_submit(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -1765,6 +1811,7 @@ class Agora:
         self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": snap["reviewer"],
                                           "submission_revision": revision, "commits": task["commits"],
                                           "blocks": len(blocks or [])})
+        self._rearm_dependents(task["id"])          # a new submission is a new cycle for whoever waits on it
         out = {"ok": True, "task": self._task_row(task["id"])}
         warnings = self._quota_warnings([snap["reviewer"]] if snap["reviewer"] else [])
         if warnings:
@@ -1826,7 +1873,12 @@ class Agora:
                 self.db.execute("UPDATE threads SET status='open' WHERE id=? AND status='escalated'", (task["thread_id"],))
         self._bump("agora.task.reviewed", {"task_id": task["id"], "agent": agent, "verdict": verdict,
                                             "submission_revision": expected_revision, "commits": task["commits"]})
-        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"])})
+        res = {"ok": True, "task": self._task_row(task["id"])}
+        if verdict == "approve":
+            res["unblocked"] = self._wake_dependents(task["id"])
+        else:
+            self._rearm_dependents(task["id"])
+        return self._with_unseen(a, res)
 
     def task_done(self, a: dict[str, Any]) -> dict[str, Any]:
         """Integrated: commits and result. Releases the task's locks. Refused while a review is younger than 2 h
@@ -1894,13 +1946,17 @@ class Agora:
         self._bump("agora.task.done", {"task_id": task["id"], "agent": agent, "commits": commits,
                                        "reviewed": review_state in ("approved", "equivalent"), "review_state": review_state,
                                        "reviewed_commits": seen if review_state in ("approved", "equivalent") else []})
-        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"])})
+        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"]),
+                                     "unblocked": self._wake_dependents(task["id"])})
 
     def task_release(self, a: dict[str, Any]) -> dict[str, Any]:
         """Give the task back (``open``) or drop it (``drop: true``) with a reason. Releases its locks."""
         reason = _txt(a.get("reason"), 5000, "reason")
         with self.db.tx():
             agent, task = self._owned(a)
+            if task["status"] in FINAL:
+                # A dropped task keeps its owner; releasing it again must not bring it back to open.
+                raise AgoraError(f"task {task['id']} is already {task['status']}", 409)
             self._touch(agent)
             now = self.clock()
             drop = bool(a.get("drop"))
@@ -1911,7 +1967,154 @@ class Agora:
             self._msg(int(task["thread_id"]), agent, "system" if not reason else "comment",
                       reason or f"{agent} suelta la tarea.")
         self._bump("agora.task.released", {"task_id": task["id"], "agent": agent, "dropped": drop})
-        return {"ok": True, "task": self._task_row(task["id"])}
+        res = {"ok": True, "task": self._task_row(task["id"])}
+        if drop:
+            res["unblocked"] = self._wake_dependents(task["id"])
+        else:
+            self._rearm_dependents(task["id"])
+        return res
+
+    # -- dependencies --------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _dep_ids(value: Any, field: str) -> list[int]:
+        """Task ids from a list, a number or a text like '12, #13 14'."""
+        if value is None or value == "":
+            return []
+        if isinstance(value, int):
+            value = [value]
+        elif isinstance(value, str):
+            value = value.replace(",", " ").split()
+        if not isinstance(value, list) or len(value) > 50:
+            raise AgoraError(f"{field} must be a list of at most 50 task ids")
+        out: list[int] = []
+        for v in value:
+            try:
+                n = int(str(v).strip().lstrip("#"))
+            except (TypeError, ValueError):
+                raise AgoraError(f"{field}: {v!r} is not a task id") from None
+            if n not in out:
+                out.append(n)
+        return out
+
+    def _dep_loop(self, task_id: int, blocker_id: int) -> Optional[list[int]]:
+        """If ``blocker_id`` already waits (directly or through others) for ``task_id``, the chain that proves it."""
+        stack = [(blocker_id, [blocker_id])]
+        seen: set[int] = set()
+        while stack:
+            cur, path = stack.pop()
+            if cur == task_id:
+                return path
+            if cur in seen:
+                continue
+            seen.add(cur)
+            for r in self.db.query("SELECT blocker_id FROM agora_task_deps WHERE task_id=?", (cur,)):
+                stack.append((int(r["blocker_id"]), path + [int(r["blocker_id"])]))
+        return None
+
+    def _dep_key(self, task: dict[str, Any]) -> str:
+        return f"deps:{task['id']}:" + ",".join(str(b["id"]) for b in task["blocked_by"])
+
+    def _rearm_dependents(self, blocker_id: int) -> None:
+        """A blocker went back to work (claimed, in progress, review, changes, blocked, open): its dependents are
+        waiting again, so the next time everything is through is a new cycle and wakes them again. Within one cycle
+        (approved → done) nothing is re-armed and the wake-up stays single."""
+        row = self.db.one("SELECT status FROM tasks WHERE id=?", (int(blocker_id),))
+        if row is None or row["status"] in DEP_CLEAR:
+            return
+        self.db.execute("DELETE FROM agora_dep_wakeups WHERE task_id IN "
+                        "(SELECT task_id FROM agora_task_deps WHERE blocker_id=?)", (int(blocker_id),))
+
+    def _apply_deps(self, agent: str, task: dict[str, Any], *, add: list[int], remove: list[int],
+                    replace: Optional[list[int]]) -> dict[str, list[int]]:
+        """Change what ``task`` waits for inside the caller's transaction; refuses itself, unknown ids and loops."""
+        tid = int(task["id"])
+        was_waiting = set(task.get("waiting_on") or [])
+        current = {int(r["blocker_id"]) for r in self.db.query("SELECT blocker_id FROM agora_task_deps WHERE task_id=?", (tid,))}
+        target = set(replace) if replace is not None else (current | set(add)) - set(remove)
+        new, gone = sorted(target - current), sorted(current - target)
+        now = self.clock()
+        for b in new:
+            if b == tid:
+                raise AgoraError(f"task {tid} can not wait for itself")
+            self._task_row(b)
+            loop = self._dep_loop(tid, b)
+            if loop:
+                chain = " → ".join(f"#{x}" for x in [tid, *loop])
+                raise AgoraError(f"#{tid} can not wait for #{b}: that closes a loop ({chain})", 409, cycle=[tid, *loop])
+            self.db.execute("INSERT INTO agora_task_deps(task_id, blocker_id, created_by, created) VALUES(?,?,?,?)",
+                            (tid, b, agent, now))
+        for b in gone:
+            self.db.execute("DELETE FROM agora_task_deps WHERE task_id=? AND blocker_id=?", (tid, b))
+        if new or gone:
+            parts = ([f"espera a {', '.join(f'#{b}' for b in new)}"] if new else []) + \
+                    ([f"ya no espera a {', '.join(f'#{b}' for b in gone)}"] if gone else [])
+            self._system(task, f"{agent}: #{tid} " + "; ".join(parts) + ".", agent)
+            fresh = self._task_row(tid)
+            if fresh["blocked_by"] and not fresh["waiting_on"]:
+                # Everything it waits for is already through: nothing to wake later for this set.
+                self.db.execute("INSERT OR IGNORE INTO agora_dep_wakeups(key, task_id, created) VALUES(?,?,?)",
+                                (self._dep_key(fresh), tid, now))
+            if was_waiting & set(gone) and not fresh["waiting_on"] and fresh["status"] == "blocked":
+                # It was blocked waiting for what was just removed: nothing left to wait for, back to work.
+                self.db.execute("UPDATE tasks SET status=?, updated=? WHERE id=?",
+                                ("claimed" if fresh.get("owner") else "open", now, tid))
+                self._system(fresh, f"#{tid} ya no espera a nada: vuelve a "
+                             + ("claimed." if fresh.get("owner") else "open, libre para reclamar."), agent)
+        return {"added": new, "removed": gone}
+
+    def task_deps(self, a: dict[str, Any]) -> dict[str, Any]:
+        """Say what a task waits for: ``add`` / ``remove`` blockers or ``set`` the whole list ([] clears it). Anyone
+        may do it. When every blocker reaches approved, done or dropped the task's owner is woken once (or the task is
+        announced as ready to claim)."""
+        agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+        add, remove = self._dep_ids(a.get("add"), "add"), self._dep_ids(a.get("remove"), "remove")
+        replace = self._dep_ids(a.get("set"), "set") if a.get("set") is not None else None
+        if not add and not remove and replace is None:
+            raise AgoraError("pass add, remove or set")
+        with self.db.tx():
+            self._touch(agent)
+            task = self._task_row(a.get("task_id"))
+            changed = self._apply_deps(agent, task, add=add, remove=remove, replace=replace)
+        if changed["added"] or changed["removed"]:
+            self._bump("agora.task.deps", {"task_id": task["id"], "agent": agent, **changed})
+        return {"ok": True, **changed, "task": self._task_row(task["id"])}
+
+    def _wake_dependents(self, blocker_id: Optional[int] = None) -> list[int]:
+        """Wake each task whose blockers are now all through, once per set of blockers. With ``blocker_id`` only its
+        dependents are looked at; without it, all (the periodic backup)."""
+        if blocker_id is None:
+            rows = self.db.query("SELECT DISTINCT task_id FROM agora_task_deps ORDER BY task_id")
+        else:
+            rows = self.db.query("SELECT task_id FROM agora_task_deps WHERE blocker_id=? ORDER BY task_id", (int(blocker_id),))
+        woke: list[int] = []
+        now = self.clock()
+        with self.db.tx():
+            for r in rows:
+                t = self._task_row(r["task_id"])
+                if t["waiting_on"]:
+                    # Waiting again (a hook may have missed the blocker leaving approved/done): re-arm the next cycle.
+                    self.db.execute("DELETE FROM agora_dep_wakeups WHERE task_id=?", (t["id"],))
+                    continue
+                if t["status"] in FINAL or not t["blocked_by"]:
+                    continue
+                key = self._dep_key(t)
+                if self.db.one("SELECT key FROM agora_dep_wakeups WHERE key=?", (key,)) is not None:
+                    continue
+                self.db.execute("INSERT INTO agora_dep_wakeups(key, task_id, created) VALUES(?,?,?)", (key, t["id"], now))
+                owner = t.get("owner")
+                if t["status"] == "blocked":
+                    self.db.execute("UPDATE tasks SET status=?, updated=? WHERE id=?",
+                                    ("claimed" if owner else "open", now, t["id"]))
+                ids = ", ".join(f"#{b['id']}" for b in t["blocked_by"])
+                text = f"Desbloqueada: {ids} " + ("ya está lista" if len(t["blocked_by"]) == 1 else "ya están listas") + \
+                       (f". {owner}, puedes seguir con #{t['id']}." if owner else f". #{t['id']} queda libre para reclamar.")
+                who = owner or t.get("created_by")
+                self._msg(int(t["thread_id"]), "system", "system", text, [who] if who else [])
+                woke.append(int(t["id"]))
+        for tid in woke:
+            self._bump("agora.task.unblocked", {"task_id": tid, "by": blocker_id})
+        return woke
 
     # -- handover ------------------------------------------------------------------------------------------------
 
@@ -2612,11 +2815,19 @@ TOOLS: list[dict[str, Any]] = [
                              "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, ["agent"])},
     {"name": "hub_agora_task_add",
      "description": "Propose a task (kind feature|bug|research|review|chore|eval|docs, priority 0 urgent..3 someday, "
-                    "repo and paths it touches). claim=true also claims it with locks.",
+                    "repo and paths it touches). blocked_by lists task ids it waits for. claim=true also claims it.",
      "inputSchema": _schema({"agent": _A, "title": {"type": "string"}, "body": {"type": "string"},
                              "repo": {"type": "string"}, "paths": _STRS, "kind": {"type": "string"},
                              "priority": {"type": "integer"}, "mentions": _STRS, "claim": {"type": "boolean"},
+                             "blocked_by": {"type": "array", "items": {"type": "integer"}},
                              "locks": _STRS, "ttl_s": {"type": "integer"}}, ["agent", "title"])},
+    {"name": "hub_agora_task_deps",
+     "description": "Set what a task waits for: add / remove blocker task ids, or set the whole list ([] clears). "
+                    "Loops are refused. When every blocker is approved, done or dropped the owner is woken once "
+                    "(a blocked task goes back to claimed; an unowned one is announced as ready to claim).",
+     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "add": {"type": "array", "items": {"type": "integer"}},
+                             "remove": {"type": "array", "items": {"type": "integer"}},
+                             "set": {"type": "array", "items": {"type": "integer"}}}, ["agent", "task_id"])},
     {"name": "hub_agora_task_claim",
      "description": "Claim a task and take its locks all-or-nothing (path:Repo/file-or-dir, repo:Repo, merge:Repo, "
                     "model:principal, gpu:N, port:N, app:id). Default locks: path:<repo>/<each path>. On conflict "
@@ -2745,7 +2956,7 @@ TOOLS: list[dict[str, Any]] = [
 
 _WRITE_OPS = ("checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
-              "usage_report", "orphan_sweep")
+              "usage_report", "orphan_sweep", "task_deps")
 
 
 def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -3087,6 +3298,7 @@ class AgoraFacet(Facet):
             "hub_agora_board": wrap(self._board), "hub_agora_inbox": wrap(self._inbox, cap_wait=True),
             "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(self._sync), "hub_agora_task_add": wrap(ag.task_add),
             "hub_agora_task_claim": wrap(ag.task_claim), "hub_agora_task_update": wrap(ag.task_update),
+            "hub_agora_task_deps": wrap(ag.task_deps),
             "hub_agora_task_submit": wrap(ag.task_submit), "hub_agora_task_review": wrap(ag.task_review),
             "hub_agora_task_done": wrap(ag.task_done), "hub_agora_task_release": wrap(ag.task_release),
             "hub_agora_handover": wrap(ag.handover),

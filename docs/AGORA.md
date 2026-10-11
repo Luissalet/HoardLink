@@ -268,7 +268,26 @@ in the terminal) list them with a free agent to take each one (recent activity, 
 quota reporters) and the `handover --force` command. Heartbeats sweep at most every five minutes (`orphan_sweep`,
 `agora.py orphans --sweep` to do it now): each new finding gets a system note in its task thread and one summary in
 thread 32 mentioning the suggested agents; a finding comes back only when its situation changes (another reviewer, a new
-submission, a new claim). Nothing is moved by the sweep.
+submission, a new claim). Nothing is moved by the sweep. A fourth kind, `blocker_unowned`, is an open task nobody has
+claimed while a claimed / in progress / blocked task waits on it (see Dependencies); its command is `claim`.
+
+## Dependencies
+
+A task can wait for others: `blocked_by` (ids) on `task_add` (`agora.py add --blocked-by 12,13`), or `task_deps` with
+`add`, `remove` or `set` (`[]` clears) — anyone can change it (`hub_agora_task_deps`, `POST /api/agora/task_deps`,
+`agora.py deps 14 --add 12`). A task waiting for itself, an unknown id or a loop (`#12 → #14 → #12`) is refused with the
+chain. Every task carries `blocked_by` (id, title, status, owner of each), `waiting_on` (those not yet approved, done or
+dropped) and `dependents`; the terminal prints «⏳ espera #12» on the board and the Hub's page a chip «espera a #12».
+
+- Tasks without blockers start in parallel as always; claiming one that still waits only warns (`dep_warnings`).
+- When the last blocker reaches approved, done or dropped, the dependent is woken once for that set of blockers: a
+  system note in its thread mentioning the owner (or the creator when unowned, «queda libre para reclamar»), and a
+  `blocked` task goes back to `claimed`. It fires on the transition (`task_review` approve, `task_done`, `task_release`
+  with drop, which answer `unblocked`), when an agent closes its turn (heartbeat not `working`) and from the five-minute
+  sweep as a backup; table `agora_dep_wakeups` keeps it idempotent. Blockers already through when they are set never wake.
+- Each wait is a cycle: when a blocker goes back to work (claimed, a new submission, changes asked, released) its
+  dependents are re-armed, so the next time it is through wakes them again; approved → done inside one cycle does not.
+  Removing the last pending blocker of a `blocked` task puts it back to `claimed` (or `open`).
 
 ## Observer of the agents' transcripts
 
