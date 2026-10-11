@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
+from . import agora_liveness
 from .agora_leader_state import build_leader_states
 from .facets import Facet, Reply, Request
 
@@ -44,6 +45,8 @@ PROBE_TTL_S = 60.0
 AGORA_ACTIVE_HEARTBEAT_S = 3 * 60 * 60
 CONSOLE_TURN_ACTIVE_S = 45 * 60
 MAX_TASK_CHARS = 12000
+_COMMIT_REF_RE = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+CONSOLE_IDENTITIES = {"codex": "codex-agora", "cursor": "cursor-agora"}
 
 
 class AgoraConsoleFacet(Facet):
@@ -62,6 +65,7 @@ class AgoraConsoleFacet(Facet):
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._leader_locks = {"codex": threading.Lock(), "cursor": threading.Lock()}
         self._leader_threads: dict[str, threading.Thread] = {}
+        self._wakeups: dict[str, threading.Timer] = {}
         self._init_db()
         self._reconcile_workers()
         self._start_queued_leaders()
@@ -103,6 +107,9 @@ class AgoraConsoleFacet(Facet):
             logger.info("Claude/Cursor quota reporter could not start", exc_info=False)
 
     def close(self) -> None:
+        for timer in list(self._wakeups.values()):
+            timer.cancel()
+        self._wakeups.clear()
         if not self._capacity_reporter_started:
             return
         try:
@@ -212,6 +219,15 @@ class AgoraConsoleFacet(Facet):
                                       ("provider_error", "TEXT NOT NULL DEFAULT ''")):
                 if name not in turn_columns:
                     db.execute(f"ALTER TABLE leader_turns ADD COLUMN {name} {declaration}")
+            # Turn liveness (agora_liveness): classification, automatic continuation chain and delayed start.
+            for name, declaration in (("liveness", "TEXT NOT NULL DEFAULT ''"), ("liveness_reasons", "TEXT NOT NULL DEFAULT ''"),
+                                      ("root_turn_id", "TEXT NOT NULL DEFAULT ''"), ("continuation_n", "INTEGER NOT NULL DEFAULT 0"),
+                                      ("continuation_key", "TEXT NOT NULL DEFAULT ''"), ("not_before", "REAL NOT NULL DEFAULT 0"),
+                                      ("started_at", "REAL NOT NULL DEFAULT 0")):
+                if name not in turn_columns:
+                    db.execute(f"ALTER TABLE leader_turns ADD COLUMN {name} {declaration}")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS console_leader_turns_continuation_key "
+                       "ON leader_turns(continuation_key) WHERE continuation_key<>''")
             session_columns = {row[1] for row in db.execute("PRAGMA table_info(leader_sessions)")}
             if "workspace" not in session_columns:
                 db.execute("ALTER TABLE leader_sessions ADD COLUMN workspace TEXT NOT NULL DEFAULT ''")
@@ -553,6 +569,29 @@ class AgoraConsoleFacet(Facet):
         return {"leader_id": leader_id, "status": "queued", "receipt_id": turn_id,
                 "detail": f"Queued for the independent {leader_id.title()} console session ({model}/{effort}); reply will be posted only after a real CLI turn completes."}
 
+    def _wake_leader(self, leader_id: str) -> None:
+        current = self._leader_threads.get(leader_id)
+        if current is not None and current.is_alive() and current is not threading.current_thread():
+            current.join(timeout=5)  # the drain that armed this timer is just returning
+        self._ensure_leader_drain(leader_id)
+
+    def _schedule_wakeup(self, leader_id: str) -> None:
+        """Start the drain again when the earliest delayed (not_before) queued turn becomes due.
+
+        The delay lives in the row, so after a Hub restart ``_start_queued_leaders`` and this timer pick it up again."""
+        with self._db_lock, self._db() as db:
+            due = db.execute("SELECT MIN(not_before) FROM leader_turns WHERE leader_id=? AND state='queued' AND not_before>0",
+                             (leader_id,)).fetchone()[0]
+        if due is None:
+            return
+        previous = self._wakeups.pop(leader_id, None)
+        if previous is not None:
+            previous.cancel()
+        timer = threading.Timer(max(0.05, float(due) - time.time()), self._wake_leader, args=(leader_id,))
+        timer.daemon = True
+        self._wakeups[leader_id] = timer
+        timer.start()
+
     def _drain_leader(self, leader_id: str) -> None:
         with self._leader_locks[leader_id]:
             while True:
@@ -562,10 +601,12 @@ class AgoraConsoleFacet(Facet):
                         db.execute("UPDATE leader_turns SET detail='Blocked: the prior provider turn is ambiguous after Hub restart. Confirm that session is idle before continuing.',updated_at=? WHERE leader_id=? AND state='queued'",
                                    (time.time(), leader_id))
                         return
-                    row = db.execute("SELECT * FROM leader_turns WHERE leader_id=? AND state='queued' ORDER BY created_at,id LIMIT 1", (leader_id,)).fetchone()
+                    row = db.execute("SELECT * FROM leader_turns WHERE leader_id=? AND state='queued' AND not_before<=? ORDER BY created_at,id LIMIT 1",
+                                     (leader_id, time.time())).fetchone()
                     if row is None:
+                        self._schedule_wakeup(leader_id)
                         return
-                    db.execute("UPDATE leader_turns SET state='working',updated_at=? WHERE id=? AND state='queued'", (time.time(), row["id"]))
+                    db.execute("UPDATE leader_turns SET state='working',started_at=?,updated_at=? WHERE id=? AND state='queued'", (time.time(), time.time(), row["id"]))
                     db.execute("INSERT INTO leader_sessions(leader_id,state,detail,updated_at) VALUES(?,'working','Provider turn started',?) ON CONFLICT(leader_id) DO UPDATE SET state='working',detail='Provider turn started',updated_at=excluded.updated_at",
                                (leader_id, time.time()))
                 self._run_leader_turn(dict(row))
@@ -730,6 +771,8 @@ class AgoraConsoleFacet(Facet):
                         metrics["tool_success_count"], metrics["tool_failure_count"], str(metrics["provider_error"] or "")[:1000], now, turn_id))
             db.execute("INSERT INTO leader_sessions(leader_id,session_id,model,effort,state,detail,updated_at) SELECT leader_id,?,?,?,?,?,? FROM leader_turns WHERE id=? ON CONFLICT(leader_id) DO UPDATE SET session_id=excluded.session_id,model=excluded.model,effort=excluded.effort,state=excluded.state,detail=excluded.detail,updated_at=excluded.updated_at",
                        (session_id, model, effort, "idle" if state == "completed" else state, detail[:1000], now, turn_id))
+        # Evidence is read BEFORE the console posts the answer, so its own auto-post never counts as agent activity.
+        assessment = self._assess_liveness(turn_id, leader_id, state, answer, process_exit_code, metrics)
         if state == "completed" and answer.strip():
             agora = self._agora()
             if agora is not None:
@@ -739,6 +782,134 @@ class AgoraConsoleFacet(Facet):
                 except Exception:  # noqa: BLE001
                     logger.exception("could not post real %s console response", leader_id)
         self._record("leader_turn", turn_id, state, detail or f"{leader_id} real provider response recorded.")
+        self._continue_if_idle(turn_id, leader_id, assessment)
+
+    # -- turn liveness (agora_liveness): did the turn move Agora work, and should the leader be relaunched? --------
+
+    def _liveness_evidence(self, leader_id: str, since: float, until: float) -> Optional[dict[str, int]]:
+        """Count what the leader's Agora identity did in [since, until], read-only. None when Agora cannot be read."""
+        identity = CONSOLE_IDENTITIES.get(leader_id)
+        db = getattr(self._agora(), "db", None)
+        if not identity or db is None or not hasattr(db, "query"):
+            return None
+        counts = {"messages_posted": 0, "task_status_changes": 0, "submits": 0, "done": 0, "claims": 0,
+                  "reviews": 0, "heartbeats_with_doing": 0, "commits_reported": 0}
+        try:
+            for row in db.query("SELECT body FROM messages WHERE author=? AND kind<>'system' AND created>=? AND created<=?",
+                                (identity, since, until)):
+                counts["messages_posted"] += 1
+                if _COMMIT_REF_RE.search(str(row["body"] or "")):
+                    counts["commits_reported"] += 1
+            for column, key in (("claimed_at", "claims"), ("submitted_at", "submits")):
+                counts[key] = int(db.scalar(f"SELECT COUNT(*) FROM tasks WHERE owner=? AND {column}>=? AND {column}<=?",
+                                            (identity, since, until), 0) or 0)
+            counts["done"] = int(db.scalar("SELECT COUNT(*) FROM tasks WHERE owner=? AND status='done' AND closed_at>=? AND closed_at<=?",
+                                           (identity, since, until), 0) or 0)
+            counts["task_status_changes"] = int(db.scalar("SELECT COUNT(*) FROM tasks WHERE owner=? AND updated>=? AND updated<=?",
+                                                          (identity, since, until), 0) or 0)
+            counts["reviews"] = int(db.scalar("SELECT COUNT(*) FROM tasks WHERE reviewer=? AND updated>=? AND updated<=?",
+                                              (identity, since, until), 0) or 0)
+            counts["heartbeats_with_doing"] = int(db.scalar("SELECT COUNT(*) FROM agents WHERE id=? AND last_seen>=? AND COALESCE(doing,'')<>''",
+                                                            (identity, since), 0) or 0)
+        except Exception:  # noqa: BLE001 - liveness is advisory and must never break turn completion
+            logger.info("could not read Agora evidence for %s", leader_id, exc_info=True)
+            return None
+        return counts
+
+    def _real_event_since(self, leader_id: str, since: float) -> bool:
+        """A message for the agent, a review waiting for it or a change asked of it that appeared after ``since``."""
+        identity = CONSOLE_IDENTITIES.get(leader_id)
+        agora = self._agora()
+        if not identity or agora is None or not hasattr(agora, "inbox"):
+            return False
+        try:
+            box = agora.inbox({"agent": identity, "peek": True})
+        except Exception:  # noqa: BLE001
+            return False
+        if not isinstance(box, dict):
+            return False
+        def later(rows: Any, field: str) -> bool:
+            return any(isinstance(r, dict) and float(r.get(field) or 0) > since for r in (rows or []))
+        return (any(isinstance(m, dict) and m.get("for_you") and float(m.get("created") or 0) > since
+                    for m in box.get("messages") or [])
+                or later(box.get("reviews"), "submitted_at") or later(box.get("changes"), "updated"))
+
+    def _assess_liveness(self, turn_id: str, leader_id: str, state: str, answer: str,
+                         process_exit_code: Optional[int], metrics: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """Classify the finished turn and store the result on its row. Returns None for non-leader turns or on error."""
+        if leader_id not in CONSOLE_IDENTITIES:
+            return None
+        try:
+            now = time.time()
+            with self._db_lock, self._db() as db:
+                turn = db.execute("SELECT created_at,started_at,root_turn_id,continuation_n,prompt FROM leader_turns WHERE id=?", (turn_id,)).fetchone()
+            if turn is None:
+                return None
+            since = float(turn["started_at"] or turn["created_at"] or 0)
+            evidence = self._liveness_evidence(leader_id, since, now)
+            result = agora_liveness.classify_turn(state=state, exit_code=process_exit_code, answer=answer,
+                                                  evidence=evidence or {}, provider_error=str(metrics.get("provider_error") or ""))
+            reasons = list(result["reasons"])
+            if evidence is None and result["liveness"] != "failed":
+                reasons.append("Agora evidence unavailable; no automatic continuation")
+            root = str(turn["root_turn_id"] or turn_id)
+            with self._db_lock, self._db() as db:
+                db.execute("UPDATE leader_turns SET liveness=?,liveness_reasons=?,root_turn_id=? WHERE id=?",
+                           (result["liveness"], "; ".join(reasons)[:1000], root, turn_id))
+            self._record("liveness", turn_id, result["liveness"], "; ".join(reasons))
+            return {"liveness": result["liveness"], "reasons": reasons, "root": root, "since": since, "now": now,
+                    "continuation_n": int(turn["continuation_n"] or 0), "prompt": str(turn["prompt"] or ""),
+                    "evidence_available": evidence is not None}
+        except Exception:  # noqa: BLE001
+            logger.exception("could not assess liveness of turn %s", turn_id)
+            return None
+
+    def _continue_if_idle(self, turn_id: str, leader_id: str, assessment: Optional[dict[str, Any]]) -> None:
+        """Queue one automatic continuation when the turn only announced work or said nothing. Never raises."""
+        if not assessment or not assessment["evidence_available"]:
+            return
+        try:
+            with self._db_lock, self._db() as db:
+                recent = [r["liveness"] for r in db.execute(
+                    "SELECT liveness FROM leader_turns WHERE leader_id=? AND liveness<>'' ORDER BY updated_at DESC, created_at DESC LIMIT 20",
+                    (leader_id,))]
+                last_cont = db.execute("SELECT MAX(created_at) FROM leader_turns WHERE leader_id=? AND continuation_n>0",
+                                       (leader_id,)).fetchone()[0]
+                queued = db.execute("SELECT 1 FROM leader_turns WHERE leader_id=? AND state='queued' LIMIT 1", (leader_id,)).fetchone()
+                turn = db.execute("SELECT message_id,model,effort FROM leader_turns WHERE id=?", (turn_id,)).fetchone()
+                root_prompt = db.execute("SELECT prompt FROM leader_turns WHERE id=?", (assessment["root"],)).fetchone()
+            no_progress = 0
+            for value in recent:
+                if value not in agora_liveness.NO_PROGRESS:
+                    break
+                no_progress += 1
+            now = time.time()
+            decision = agora_liveness.decide_continuation(
+                liveness=assessment["liveness"], prior_continuations=assessment["continuation_n"],
+                consecutive_no_progress=no_progress, last_continuation_at=last_cont, now=now,
+                real_event_since=self._real_event_since(leader_id, assessment["since"]), root_turn_id=assessment["root"])
+            if not decision["continue"] or turn is None:
+                return
+            if queued:
+                self._record("liveness", turn_id, "continuation_skipped", "another turn is already queued for this leader")
+                return
+            prompt = agora_liveness.continuation_prompt(assessment["liveness"], assessment["reasons"],
+                                                        str(root_prompt["prompt"]) if root_prompt else assessment["prompt"])
+            new_id = str(uuid.uuid4())
+            not_before = now + decision["delay_s"] if decision["delay_s"] > 0 else 0.0
+            try:
+                with self._db_lock, self._db() as db:
+                    db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at,"
+                               "root_turn_id,continuation_n,continuation_key,not_before) VALUES(?,?,?,?,?,?,'queued',?,?,?,?,?,?)",
+                               (new_id, leader_id, turn["message_id"], prompt, turn["model"], turn["effort"], now, now,
+                                assessment["root"], assessment["continuation_n"] + 1, decision["key"], not_before))
+            except sqlite3.IntegrityError:
+                return  # this continuation was already queued: idempotent
+            self._record("liveness", new_id, "continuation_queued",
+                         f"{decision['key']}; delay {int(decision['delay_s'])}s; {decision['reason']}")
+            self._ensure_leader_drain(leader_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not queue a liveness continuation for turn %s", turn_id)
 
     @staticmethod
     def _runner_metrics(path: Path) -> dict[str, Any]:
@@ -848,7 +1019,7 @@ class AgoraConsoleFacet(Facet):
         usage = agora.usage() if agora is not None else {"ok": False, "providers": []}
         with self._db_lock, self._db() as db:
             activity = [dict(row) for row in db.execute("SELECT id,kind,subject,state,detail,created_at FROM activity ORDER BY id DESC LIMIT 40")]
-            console_turns = [dict(row) for row in db.execute("SELECT id,leader_id,message_id,model,effort,state,result,detail,session_id,process_exit_code,outcome,tool_success_count,tool_failure_count,provider_error,created_at,updated_at FROM leader_turns ORDER BY created_at DESC LIMIT 40")]
+            console_turns = [dict(row) for row in db.execute("SELECT id,leader_id,message_id,model,effort,state,result,detail,session_id,process_exit_code,outcome,tool_success_count,tool_failure_count,provider_error,liveness,liveness_reasons,root_turn_id,continuation_n,not_before,created_at,updated_at FROM leader_turns ORDER BY created_at DESC LIMIT 40")]
             console_sessions = [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM leader_sessions")]
             native_preferences = [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM native_preferences")]
         messages = None
@@ -1786,7 +1957,7 @@ class AgoraConsoleFacet(Facet):
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
         return [
-            {"name": "hub_agora_console_overview", "description": "Read the Agora team console: live provider catalogs where the official local interface exposes them, shared quota pools, child workers and canonical group messages. Catalogs may be unavailable; no model call is made.",
+            {"name": "hub_agora_console_overview", "description": "Read the Agora team console: live provider catalogs where the official local interface exposes them, shared quota pools, child workers and canonical group messages. console_turns carry a liveness class per finished turn (completed, advanced, plan_only, empty_response, blocked, failed, needs_followup) with its reasons, and the root_turn_id/continuation_n of automatic continuations. Catalogs may be unavailable; no model call is made.",
              "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
             {"name": "hub_agora_console_leaders", "description": "Live state of each leader's CLI (Claude, Codex, Cursor, Faustus): working, waiting, idle since <time>, auth_expired, error or unknown, read from its local session files (event kinds and timestamps only, never message contents), with last_activity_at, source, detail, the open Agora task ids it owns and idle_with_work when it is idle, logged out or failed while owning open tasks. No model call is made.",
