@@ -100,7 +100,10 @@ def classify(item: dict, now: float) -> dict:
         if due and now > due:
             state, reason = "silent", "two_expected_runs_missed"
         elif success:
-            state, reason = "healthy", "success_within_schedule" if due else "last_result_only"
+            resumed = stamp(item.get("resumed_ts"))
+            state = "healthy"
+            if due and resumed and success < resumed: reason = "resumed_waiting_first_run"   # nothing has run since the switch-on
+            else: reason = "success_within_schedule" if due else "last_result_only"
         else:
             state, reason = "unknown", "no_confirmed_success"
     out.update(state=state, reason=reason)
@@ -297,6 +300,13 @@ class FleetFacet(Facet):
         with self.lock:
             for app_id, fresh in results:
                 if fresh is not None:
+                    before = self.data["providers"].get(app_id)
+                    if before is not None and not fresh["truncated"] and not before.get("truncated"):
+                        # An item that was not in the producer's previous publication (it came back after being left out,
+                        # or it just became monitorable) has not been due while it was absent: its clock starts now.
+                        known = {row.get("id") for row in before.get("items", []) if isinstance(row, dict)}
+                        for row in fresh["items"]:
+                            if row.get("id") not in known: self.data["observations"].setdefault(row["id"], {})["resumed_ts"] = now
                     self.data["providers"][app_id] = fresh
                     if fresh["truncated"]: errors["provider:" + app_id] = "truncated"
                 elif not self.hub.automation_blocked(app_id): errors["provider:" + app_id] = "source_unavailable"
@@ -307,20 +317,35 @@ class FleetFacet(Facet):
                     out.append(item)
         return out
 
-    def _cassandra_covers(self, app_id, now):
-        """Cassandra already tells the person about an app outage (one notice per burst): an incident it opened
-        for this app in the last half hour, open or closed, means Fleet stays quiet about the same outage."""
+    def _cassandra_cover(self, app_id, now):
+        """When Cassandra last opened an incident for this APP (not a service of it) inside its burst window, else None."""
         try:
             rows = self.hub.events.query(type="cassandra.incident.opened", text=app_id, since_ts=now - CASSANDRA_WINDOW_S, limit=200)
         except Exception:
-            return False
-        return any(isinstance(r.get("data"), dict) and r["data"].get("app") == app_id for r in rows)
+            return None
+        stamps = [stamp(r.get("ts")) or now for r in rows if isinstance(r.get("data"), dict)
+                  and r["data"].get("app") == app_id and r["data"].get("service_kind") == "app"]
+        return max(stamps) if stamps else None
 
-    def _app_push_covered(self, item, rec, now):
-        last = stamp(rec.get("last_push_ts"))
-        if last is not None and now - last < APP_PUSH_GAP_S:
-            return True
-        return self._cassandra_covers(str(item["id"]).split(":", 1)[-1], now)
+    def _cassandra_covers(self, app_id, now):
+        return self._cassandra_cover(app_id, now) is not None
+
+    def _push_hold(self, item, rec, now):
+        """What to do with a push that is due: ``None`` sends it, ``"wait"`` keeps it pending for a later tick (the
+        per-item half-hour gap, or a Cassandra burst that belongs to an earlier outage), ``"drop"`` forgets it
+        because Cassandra is already telling the person about this very outage."""
+        if item.get("kind") == "app":
+            cover = self._cassandra_cover(str(item["id"]).split(":", 1)[-1], now)
+            if cover is not None:
+                start = stamp(rec.get("down_since")) or now - 2 * APP_CONFIRM_S
+                if cover >= start - APP_CONFIRM_S: return "drop"
+        else:
+            cover = None
+        # The gap is about the same condition coming back (a flap). Another kind of news about the item, e.g. a silent
+        # task that now waits for the person, is not held back by it.
+        last, same = stamp(rec.get("last_push_ts")), rec.get("last_push_sig") in (None, [item["state"], bool(item.get("needs_user"))])
+        if (last is not None and same and now - last < APP_PUSH_GAP_S) or cover is not None: return "wait"
+        return None
 
     def _reconcile(self, *, notify=True):
         seen_seq = self.dirty_seq   # anything that arrives while this runs asks for another pass
@@ -410,23 +435,24 @@ class FleetFacet(Facet):
                 first = rec.get("state") is None
                 previous = (rec.get("state"), bool(rec.get("needs_user_state")))
                 def push(generation, rec=rec, item=item):
-                    rec["last_push_ts"] = now
+                    rec["last_push_ts"], rec["last_push_sig"] = now, [item["state"], bool(item.get("needs_user"))]
                     pushes.append((copy.deepcopy(item), generation))
                 if notify and signature != previous:
                     rec["generation"] = int(rec.get("generation") or 0) + 1
                     if not first:
                         changes.append(copy.deepcopy(item))
-                        if critical and item.get("kind") == "app":
-                            rec["push_due_ts"], rec["push_gen"] = now + APP_PUSH_DELAY_S, rec["generation"]
-                        elif critical:
-                            push(rec["generation"])
+                        # Every pushable change becomes a pending push; an app waits a minute for Cassandra to speak first.
+                        if critical: rec["push_due_ts"], rec["push_gen"] = now + (APP_PUSH_DELAY_S if item.get("kind") == "app" else 0), rec["generation"]
                     elif critical and item.get("needs_user") and stamp(rec.get("receipt_ts")) and now - stamp(rec.get("receipt_ts")) < WAITING_FRESH_S:
                         push(rec["generation"])   # a brand-new "waiting for you" receipt; everything else first seen is a baseline
                 if notify and rec.get("push_due_ts"):
                     if not critical: rec.pop("push_due_ts", None)
                     elif now >= rec["push_due_ts"]:
-                        rec.pop("push_due_ts", None)
-                        if not self._app_push_covered(item, rec, now): push(int(rec.get("push_gen") or rec.get("generation") or 1))
+                        # Held back by the half-hour gap, it stays pending and goes out once the gap has passed if the
+                        # item is still failing: a later outage must not be hidden by an earlier one.
+                        hold = self._push_hold(item, rec, now)
+                        if hold != "wait": rec.pop("push_due_ts", None)
+                        if hold is None: push(int(rec.get("push_gen") or rec.get("generation") or 1))
                 if notify: rec.update(state=item["state"], needs_user_state=bool(item.get("needs_user")))
                 items.append(item)
             self.save()

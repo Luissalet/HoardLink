@@ -19,7 +19,7 @@ class Hub:
         self.rules = SimpleNamespace(list=lambda: self.rule_rows)
         self.notices, self.emitted = [], []
         self.events = SimpleNamespace(emit=lambda *a, **k: self.emitted.append((a, k)),
-                                      query=lambda **k: list(self.cassandra))
+                                      query=lambda **k: [r for r in self.cassandra if r.get("ts", k.get("since_ts", 0)) >= k.get("since_ts", 0)])
         self.notifier = SimpleNamespace(send=lambda *a, **k: self.notices.append((a, k)))
 
     def get(self, app_id): return SimpleNamespace(id=app_id, name=app_id.title())
@@ -141,7 +141,7 @@ def test_flapping_app_is_one_push_for_the_whole_burst(tmp_path):
 
 def test_cassandra_incident_covers_the_app_so_fleet_does_not_push(tmp_path):
     hub, clock, health = Hub(tmp_path, apps=["qa"]), [0], ["healthy"]
-    hub.cassandra = [{"type": "cassandra.incident.opened", "data": {"app": "qa", "burst_id": "b1"}}]
+    hub.cassandra = [{"type": "cassandra.incident.opened", "data": {"app": "qa", "service_kind": "app", "burst_id": "b1"}}]
     facet = FleetFacet(hub, clock=lambda: clock[0], health_fn=lambda app: SimpleNamespace(state=health[0]), background=False)
     for at, h in [(0, "healthy"), (60, "down"), (125, "down"), (190, "down"), (250, "down")]:
         clock[0], health[0] = at, h
@@ -330,3 +330,165 @@ def test_without_a_background_the_old_inline_semantics_remain(tmp_path):
     hub.rows = [job()]
     facet = FleetFacet(hub, clock=lambda: 150, background=False)
     assert facet.status()["items"][0]["id"] == "job:qa" and "refreshing" not in facet.status(refresh=True)
+
+
+# ---------------------------------------------------------------- N1: the half-hour gap postpones a push, it never swallows it
+def drive(facet, clock, health, timeline):
+    for at, h in timeline:
+        clock[0], health[0] = at, h
+        facet.reconcile()
+
+
+def test_a_second_outage_inside_the_gap_is_notified_once_the_gap_has_passed(tmp_path):
+    hub, clock, health = Hub(tmp_path, apps=["qa"]), [0], ["healthy"]
+    facet = FleetFacet(hub, clock=lambda: clock[0], health_fn=lambda app: SimpleNamespace(state=health[0]), background=False)
+    drive(facet, clock, health, [(0, "healthy"), (60, "down"), (125, "down"), (190, "down"), (250, "down")])
+    assert len(hub.notices) == 1                                   # outage 1 -> push
+    drive(facet, clock, health, [(400, "healthy"), (500, "down"), (565, "down"), (630, "down")])
+    assert len(hub.notices) == 1                                   # outage 2 starts inside the gap: held, not lost
+    assert facet.data["observations"]["app:qa"].get("push_due_ts")
+    drive(facet, clock, health, [(at, "down") for at in range(700, 1900, 100)])
+    assert len(hub.notices) == 1
+    drive(facet, clock, health, [(at, "down") for at in range(1900, 2300, 100)])
+    assert len(hub.notices) == 2                                   # still down once the half hour is over: told
+    drive(facet, clock, health, [(at, "down") for at in range(2300, 4000, 100)])
+    assert len(hub.notices) == 2                                   # and only once
+    assert hub.notices[1][1]["dedupe_key"] != hub.notices[0][1]["dedupe_key"]
+
+
+def test_a_held_push_is_forgotten_when_the_app_recovers_on_its_own(tmp_path):
+    hub, clock, health = Hub(tmp_path, apps=["qa"]), [0], ["healthy"]
+    facet = FleetFacet(hub, clock=lambda: clock[0], health_fn=lambda app: SimpleNamespace(state=health[0]), background=False)
+    drive(facet, clock, health, [(0, "healthy"), (60, "down"), (125, "down"), (190, "down"), (400, "healthy"),
+                                 (500, "down"), (565, "down"), (630, "down"), (800, "healthy")])
+    assert not facet.data["observations"]["app:qa"].get("push_due_ts")
+    drive(facet, clock, health, [(at, "healthy") for at in range(900, 4000, 300)])
+    assert len(hub.notices) == 1
+
+
+def cass(ts, **data):
+    return {"type": "cassandra.incident.opened", "ts": ts, "data": {"app": "qa", "service_kind": "app", **data}}
+
+
+def test_cassandra_burst_of_an_earlier_outage_postpones_the_push_until_it_has_passed(tmp_path):
+    hub, clock, health = Hub(tmp_path, apps=["qa"]), [0], ["healthy"]
+    facet = FleetFacet(hub, clock=lambda: clock[0], health_fn=lambda app: SimpleNamespace(state=health[0]), background=False)
+    hub.cassandra = [cass(150)]                                    # opened while outage 1 was going on
+    drive(facet, clock, health, [(0, "healthy"), (60, "down"), (125, "down"), (190, "down"), (250, "down"), (400, "healthy")])
+    assert not hub.notices                                         # Cassandra told the person about outage 1
+    drive(facet, clock, health, [(800, "down"), (865, "down"), (930, "down")] + [(at, "down") for at in range(1000, 1900, 100)])
+    assert not hub.notices                                         # outage 2 is inside that burst window
+    drive(facet, clock, health, [(at, "down") for at in range(1900, 2600, 100)])
+    assert len(hub.notices) == 1                                   # the burst is over and the app is still down
+    drive(facet, clock, health, [(at, "down") for at in range(2600, 4200, 100)])
+    assert len(hub.notices) == 1
+
+
+def test_a_long_outage_that_cassandra_reported_is_not_pushed_again_when_its_window_ends(tmp_path):
+    hub, clock, health = Hub(tmp_path, apps=["qa"]), [0], ["healthy"]
+    facet = FleetFacet(hub, clock=lambda: clock[0], health_fn=lambda app: SimpleNamespace(state=health[0]), background=False)
+    hub.cassandra = [cass(150)]
+    drive(facet, clock, health, [(0, "healthy")] + [(at, "down") for at in range(60, 5000, 100)])
+    assert not hub.notices
+
+
+def test_only_an_incident_of_the_app_itself_covers_it(tmp_path):
+    hub, clock, health = Hub(tmp_path, apps=["qa"]), [0], ["healthy"]
+    facet = FleetFacet(hub, clock=lambda: clock[0], health_fn=lambda app: SimpleNamespace(state=health[0]), background=False)
+    hub.cassandra = [cass(150, service_kind="service"), cass(160, service_kind=None)]   # one of its services, then unspecified
+    drive(facet, clock, health, [(0, "healthy"), (60, "down"), (125, "down"), (190, "down"), (250, "down")])
+    assert len(hub.notices) == 1
+
+
+# ---------------------------------------------------------------- N3: any item is at most one push per half hour
+def test_a_flapping_item_is_one_push_per_half_hour_and_the_later_one_is_not_lost(tmp_path):
+    hub, clock = Hub(tmp_path), [10]
+    facet = FleetFacet(hub, clock=lambda: clock[0], background=False)
+    facet.register({"id": "qa:w", "owner": "qa", "kind": "watcher", "every": "1m"})
+    def at(t, ok=False):
+        clock[0] = t
+        if ok: facet.report({"id": "qa:w", "status": "ok", "ts": t})
+        return facet.reconcile()["items"][0]["state"]
+    assert at(10, ok=True) == "healthy"
+    assert at(135) == "silent" and len(hub.notices) == 1
+    assert at(140, ok=True) == "healthy"
+    assert at(300) == "silent" and len(hub.notices) == 1           # 2.5 minutes after the first push: held
+    assert at(400, ok=True) == "healthy"
+    assert at(600) == "silent" and len(hub.notices) == 1
+    assert at(1900) == "silent" and len(hub.notices) == 1
+    assert at(1940) == "silent" and len(hub.notices) == 2          # the gap is over and it is still failing
+    assert at(2500) == "silent" and len(hub.notices) == 2
+
+
+# ---------------------------------------------------------------- N4: a resume is not a success within the schedule
+def test_after_a_resume_with_an_old_success_the_reason_says_nothing_has_run_yet():
+    task = item(last_success_ts=110, resumed_ts=100000, every="1h")
+    row = classify(task, 100010)
+    assert (row["state"], row["reason"]) == ("healthy", "resumed_waiting_first_run")
+    row = classify({**task, "last_success_ts": 100050}, 100100)
+    assert (row["state"], row["reason"]) == ("healthy", "success_within_schedule")
+    assert classify(task, 100000 + 7300)["state"] == "silent"
+
+
+# ---------------------------------------------------------------- N2: an item that comes back to its producer's list restarts its clock
+class Producer:
+    def __init__(self, monkeypatch, tmp_path, health="healthy"):
+        from hoard_link.hub import fleet as fleet_module
+        self.items = []
+        self.hub = Hub(tmp_path)
+        self.hub.apps = [SimpleNamespace(id="qa", name="QA", family={"fleet": True}, url="http://qa.invalid", token_file="none")]
+        self.hub.get = lambda app_id: self.hub.apps[0]
+        monkeypatch.setattr(fleet_module.contract, "read_token", lambda path: "t")
+        monkeypatch.setattr(fleet_module.contract, "_get", lambda url, token, timeout: (200, {"ok": True, "owner": "qa", "items": [dict(i) for i in self.items]}))
+        self.clock = [100000]
+        self.facet = FleetFacet(self.hub, clock=lambda: self.clock[0], health_fn=lambda app: SimpleNamespace(state=health), background=False)
+
+    def at(self, t, items):
+        self.clock[0], self.items = t, items
+        return {i["id"]: i for i in self.facet.reconcile()["items"]}
+
+
+def published(item_id, **patch):
+    return {"id": item_id, "owner": "qa", "kind": "watcher", "label": item_id, "every": "1h", "created_ts": 100,
+            "last_success_ts": 110, "last_status": "ok", **patch}
+
+
+STEADY = published("qa:steady", every="1d", last_success_ts=99900)
+
+
+def test_an_item_that_reappears_in_the_publication_is_not_silent_on_the_spot(monkeypatch, tmp_path):
+    p = Producer(monkeypatch, tmp_path)
+    rows = p.at(100000, [STEADY])
+    assert rows["qa:steady"]["state"] == "healthy"
+    rows = p.at(150000, [STEADY])                                  # the watcher was left out (no live targets) all along
+    rows = p.at(150100, [STEADY, published("qa:w")])               # ...and it is published again with a success from long ago
+    assert rows["qa:w"]["state"] == "healthy" and rows["qa:w"]["reason"] == "resumed_waiting_first_run"
+    assert rows["qa:w"]["resumed_ts"] == 150100
+    assert not p.hub.notices
+    rows = p.at(150100 + 3 * 3600, [STEADY, published("qa:w")])    # a real silence is still found, from the new clock
+    assert rows["qa:w"]["state"] == "silent"
+
+
+def test_an_item_that_drops_out_and_returns_restarts_its_clock_each_time(monkeypatch, tmp_path):
+    p = Producer(monkeypatch, tmp_path)
+    p.at(100000, [STEADY, published("qa:w", last_success_ts=99990)])
+    p.at(100500, [STEADY])
+    rows = p.at(103000, [STEADY, published("qa:w", last_success_ts=99990)])
+    assert rows["qa:w"]["state"] == "healthy" and rows["qa:w"]["resumed_ts"] == 103000
+
+
+def test_the_first_publication_is_a_baseline_and_an_unchanged_one_resumes_nothing(monkeypatch, tmp_path):
+    p = Producer(monkeypatch, tmp_path)
+    rows = p.at(100000, [STEADY, published("qa:old")])             # seen for the first time: really silent, and no push
+    assert rows["qa:old"]["state"] == "silent" and not rows["qa:old"].get("resumed_ts")
+    assert not p.hub.notices
+    rows = p.at(100100, [STEADY, published("qa:old")])
+    assert rows["qa:old"]["state"] == "silent" and not rows["qa:old"].get("resumed_ts")
+
+
+def test_a_truncated_publication_does_not_mark_items_as_new(monkeypatch, tmp_path):
+    p = Producer(monkeypatch, tmp_path)
+    p.at(100000, [STEADY])
+    p.facet.data["providers"]["qa"]["truncated"] = True
+    rows = p.at(100100, [STEADY, published("qa:w")])
+    assert not rows["qa:w"].get("resumed_ts")
