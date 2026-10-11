@@ -29,6 +29,8 @@ def _copilot_request(hub, arguments):
     import json
     from .copilot import proxy_for
     with proxy_for(hub).open("hub", arguments) as response:
+        if response.status >= 400:
+            return {"ok": False, "status": response.status, "error": json.load(response)}
         if "text/event-stream" in response.headers.get("Content-Type", ""):
             return {"status": response.status, "run_id": response.headers.get("X-Odysseus-Run-Id"),
                     "replayed": response.headers.get("X-Faustus-Idempotent-Replay") == "1", "detached": True}

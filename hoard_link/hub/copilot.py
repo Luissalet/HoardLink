@@ -59,6 +59,9 @@ class CopilotProxy:
         data = None
         if "raw_body" in envelope:
             data = base64.b64decode(envelope["raw_body"], validate=True)
+            if caller not in ('hub', 'ui'):
+                from ..copilot import multipart_context
+                data = multipart_context(data, content_type, {'app_id': caller})
         elif "body" in envelope:
             body = envelope["body"]
             if isinstance(body, dict) and caller not in ("hub", "ui"):

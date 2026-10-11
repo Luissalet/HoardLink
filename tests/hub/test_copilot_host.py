@@ -74,3 +74,17 @@ def test_host_preserves_raw_multipart_and_upstream_error(host):
     assert len(received) == 1
     assert received[0][1] == raw
     assert received[0][2] == 'multipart/form-data; boundary=qa'
+
+
+def test_host_multipart_uses_the_same_native_namespace_as_json(host):
+    import base64
+    client, received, _ = host
+    info = client.get('/api/copilot/info').json()
+    raw = b'--qa\r\nContent-Disposition: form-data; name="hoard_context"\r\n\r\n{"origin":{"app_id":"old-app","data_space_id":"old-space"},"selection":{"text":"keep"}}\r\n--qa\r\nContent-Disposition: form-data; name="file"; filename="a.bin"\r\n\r\n\x00\xff\r\n--qa--\r\n'
+    response = client.post('/api/copilot/proxy', json={'path':'/api/chat_stream', 'method':'POST', 'raw_body':base64.b64encode(raw).decode(), 'content_type':'multipart/form-data; boundary=qa'})
+    assert response.status_code == 200
+    sent = received[0][1]
+    context = json.loads(sent.split(b'\r\n\r\n')[1].split(b'\r\n--qa')[0])
+    assert context['origin'] == {'app_id':'cicero', 'data_space_id':info['data_space_id']}
+    assert context['selection']['text'] == 'keep'
+    assert sent.split(b'name="file"')[1] == raw.split(b'name="file"')[1]

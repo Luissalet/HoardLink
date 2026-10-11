@@ -120,3 +120,23 @@ def test_invalid_operation_path_is_an_error_without_network(path):
     proxy = CopilotProxy([])
     with pytest.raises(ValueError):
         proxy.open('writer', {'path': path})
+
+
+def test_python_public_client_transports_raw_upload(relay):
+    import urllib.error
+    client, _, received = relay
+    raw = b'--qa\r\nContent-Disposition: form-data; name="file"\r\n\r\n\x00\xff\r\n--qa--\r\n'
+    with pytest.raises(urllib.error.HTTPError):
+        client.open('/api/hoard-copilot/imports', method='POST', raw_body=raw, content_type='multipart/form-data; boundary=qa')
+    assert received[0]['raw'] == raw
+
+
+def test_multipart_origin_matches_the_authenticated_family_app(relay):
+    _, proxy, received = relay
+    raw = b'--qa\r\nContent-Disposition: form-data; name="hoard_context"\r\n\r\n{"origin":{"app_id":"old","data_space_id":"keep"}}\r\n--qa\r\nContent-Disposition: form-data; name="file"; filename="a.bin"\r\nContent-Type: application/octet-stream\r\n\r\n\x00\xff\r\n--qa--\r\n'
+    with proxy.open('writer', {'path':'/api/hoard-copilot/imports', 'method':'POST', 'raw_body':base64.b64encode(raw).decode(), 'content_type':'multipart/form-data; boundary="qa"'}) as response:
+        assert response.status == 409
+    sent = received[0]['raw']
+    assert b'"app_id": "writer"' in sent
+    assert b'"data_space_id": "keep"' in sent
+    assert sent.split(b'name="file"')[1] == raw.split(b'name="file"')[1]
