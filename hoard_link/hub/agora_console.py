@@ -792,14 +792,17 @@ class AgoraConsoleFacet(Facet):
         db = getattr(self._agora(), "db", None)
         if not identity or db is None or not hasattr(db, "query"):
             return None
-        counts = {"messages_posted": 0, "task_status_changes": 0, "submits": 0, "done": 0, "claims": 0,
+        counts = {"messages_posted": 0, "plan_messages": 0, "task_status_changes": 0, "submits": 0, "done": 0, "claims": 0,
                   "reviews": 0, "heartbeats_with_doing": 0, "commits_reported": 0}
         try:
             for row in db.query("SELECT body FROM messages WHERE author=? AND kind<>'system' AND created>=? AND created<=?",
                                 (identity, since, until)):
                 counts["messages_posted"] += 1
-                if _COMMIT_REF_RE.search(str(row["body"] or "")):
+                body = str(row["body"] or "")
+                if _COMMIT_REF_RE.search(body):
                     counts["commits_reported"] += 1
+                elif agora_liveness.is_plan_text(body):
+                    counts["plan_messages"] += 1
             for column, key in (("claimed_at", "claims"), ("submitted_at", "submits")):
                 counts[key] = int(db.scalar(f"SELECT COUNT(*) FROM tasks WHERE owner=? AND {column}>=? AND {column}<=?",
                                             (identity, since, until), 0) or 0)
@@ -833,6 +836,25 @@ class AgoraConsoleFacet(Facet):
         return (any(isinstance(m, dict) and m.get("for_you") and float(m.get("created") or 0) > since
                     for m in box.get("messages") or [])
                 or later(box.get("reviews"), "submitted_at") or later(box.get("changes"), "updated"))
+
+    def _quota_exhausted(self, leader_id: str) -> bool:
+        """True when a fresh measured quota window of this leader's provider has nothing left."""
+        agora = self._agora()
+        if agora is None or not hasattr(agora, "usage"):
+            return False
+        try:
+            usage = agora.usage()
+        except Exception:  # noqa: BLE001
+            return False
+        for provider in (usage or {}).get("providers") or []:
+            if not isinstance(provider, dict) or provider.get("provider_id") != leader_id:
+                continue
+            for pool in provider.get("pools") or []:
+                for window in (pool or {}).get("windows") or []:
+                    remaining = (window or {}).get("remaining_percent")
+                    if remaining is not None and not window.get("stale") and float(remaining) <= 0:
+                        return True
+        return False
 
     def _assess_liveness(self, turn_id: str, leader_id: str, state: str, answer: str,
                          process_exit_code: Optional[int], metrics: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -887,7 +909,8 @@ class AgoraConsoleFacet(Facet):
             decision = agora_liveness.decide_continuation(
                 liveness=assessment["liveness"], prior_continuations=assessment["continuation_n"],
                 consecutive_no_progress=no_progress, last_continuation_at=last_cont, now=now,
-                real_event_since=self._real_event_since(leader_id, assessment["since"]), root_turn_id=assessment["root"])
+                real_event_since=self._real_event_since(leader_id, assessment["since"]), root_turn_id=assessment["root"],
+                quota_exhausted=self._quota_exhausted(leader_id))
             if not decision["continue"] or turn is None:
                 return
             if queued:
