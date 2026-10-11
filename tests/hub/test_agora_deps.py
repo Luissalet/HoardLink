@@ -77,6 +77,50 @@ def test_chain_wakes_each_level_once(ag):
     assert len(wc) == 1 and "queda libre para reclamar" in wc[0]["body"] and "claude" in wc[0]["mentions"]  # creator
 
 
+def test_a_second_cycle_of_the_same_blocker_wakes_again(ag):
+    a = _add(ag, "a", owner="claude")
+    b = _add(ag, "b", owner="codex-ayuda", blocked_by=[a])
+    ag.task_update({"agent": "codex-ayuda", "task_id": b, "status": "blocked"})
+    assert _approve(ag, a)["unblocked"] == [b]
+    ag.task_update({"agent": "claude", "task_id": a, "status": "claimed"})          # a goes back to work
+    ag.task_update({"agent": "codex-ayuda", "task_id": b, "status": "blocked"})
+    assert ag.task({"task_id": b})["task"]["waiting_on"] == [a]
+    assert _approve(ag, a)["unblocked"] == [b]                                     # second cycle: woken again
+    tb = ag.task({"task_id": b})["task"]
+    assert tb["status"] == "claimed" and tb["waiting_on"] == [] and len(_wakes(ag, b)) == 2
+    assert ag.task_done({"agent": "claude", "task_id": a, "commits": [f"c{a}"]})["unblocked"] == []   # same cycle
+    assert len(_wakes(ag, b)) == 2
+
+
+def test_a_missed_rearm_is_caught_by_the_sweep(ag):
+    a = _add(ag, "a", owner="claude")
+    b = _add(ag, "b", owner="codex-ayuda", blocked_by=[a])
+    _approve(ag, a)
+    ag.db.execute("UPDATE tasks SET status='in_progress' WHERE id=?", (a,))        # changed behind the hooks' back
+    assert ag.orphan_sweep({"force": True})["unblocked"] == []                    # waiting again: re-armed
+    ag.db.execute("UPDATE tasks SET status='approved' WHERE id=?", (a,))
+    assert ag.orphan_sweep({"force": True})["unblocked"] == [b] and len(_wakes(ag, b)) == 2
+
+
+def test_removing_the_last_pending_blocker_unblocks(ag):
+    a = _add(ag, "a", owner="claude")
+    b = _add(ag, "b", owner="codex-ayuda", blocked_by=[a])
+    ag.task_update({"agent": "codex-ayuda", "task_id": b, "status": "blocked"})
+    ag.task_deps({"agent": "faustus", "task_id": b, "set": []})
+    assert ag.task({"task_id": b})["task"]["status"] == "claimed"
+    c = _add(ag, "c", owner="codex-ayuda")
+    ag.task_update({"agent": "codex-ayuda", "task_id": c, "status": "blocked"})
+    ag.task_deps({"agent": "faustus", "task_id": c, "add": [a]})                  # now it waits on a pending blocker
+    ag.task_deps({"agent": "faustus", "task_id": c, "set": []})
+    assert ag.task({"task_id": c})["task"]["status"] == "claimed"                 # it was waiting on a: cleared
+    d = _add(ag, "d", owner="codex-ayuda")
+    _approve(ag, a)
+    ag.task_deps({"agent": "faustus", "task_id": d, "add": [a]})                  # a already through
+    ag.task_update({"agent": "codex-ayuda", "task_id": d, "status": "blocked"})   # blocked by something else
+    ag.task_deps({"agent": "faustus", "task_id": d, "set": []})
+    assert ag.task({"task_id": d})["task"]["status"] == "blocked"                 # a never held it back: untouched
+
+
 def test_loops_self_and_unknown_are_refused(ag):
     a = _add(ag, "a")
     b = _add(ag, "b", blocked_by=[a])
