@@ -649,6 +649,17 @@ Herramientas: `hub_lane_status`, `hub_lane_acquire` (reserva limitada a 10 minut
 herramienta. Eventos: `hub.lane.acquired|released|expired`. La ventana del hub tiene un panel **Carriles de
 navegador** (dominio, titular, desde, caduca, Liberar). Más detalle en [docs/HUB.md](docs/HUB.md).
 
+### Instancias: otra copia de una app habla como la app
+
+Una copia de una app arrancada con otra carpeta de datos (una instancia de QA, una demo, una rama) escribe allí su
+propio `mcp-token`, y el hub solo conocía el de la carpeta registrada: toda llamada de la familia desde la copia
+volvía con `the hub refused this app's token`. Con la copia en la lista, su token cuenta como esa app:
+`POST /api/instances/add` `{app, data_dir | token_file, label?}`, `POST /api/instances/remove`
+`{app?, data_dir? | token_file?}` (página o token del hub), `GET /api/instances` (cualquier llamante de la familia;
+cada fila dice si su fichero tiene token y si la app está registrada). Herramientas: `hub_instance_list`,
+`hub_instance_add`, `hub_instance_remove`. La lista vive en `data/instance-tokens.json`; un token rotado se vuelve a
+leer como el de la propia app.
+
 ### Controlar el hub desde un agente
 
 El hub habla el mismo contrato que las apps que gestiona:
@@ -660,6 +671,7 @@ ninguno escuchando. Herramientas: `hub_list_apps`, `hub_app_status`,
 `hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
 `hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
 `hub_lane_status`, `hub_lane_acquire`, `hub_lane_release`,
+`hub_instance_list`, `hub_instance_add`, `hub_instance_remove`,
 `hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
 `hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
 `hub_repo_push_command`, `hub_link_status`, `hub_link_chat`, `hub_rescan`. Más detalle en [docs/HUB.md](docs/HUB.md). El `faustus-plugin.json` del propio repositorio permite a

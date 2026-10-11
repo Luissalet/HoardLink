@@ -517,3 +517,15 @@ Their settings live next to the others in the hub's data folder:
 `mail.db` holds mail text for `retention_days` (60): add `mail.db` to `backup.exclude` if mail should not be
 copied by backups. The references for every route and tool are in [docs/facets/](facets/). The **Sesiones de agente** facet
 ([agent-sessions.md](facets/agent-sessions.md)) has no file of its own: it reads the write journals of the apps.
+
+## Instances
+
+A copy of an app started on another data folder (a QA instance, a demo, a branch) writes its own `mcp-token`
+there, and the hub only knew the token of the app's registered folder: every family call of the copy came back
+`the hub refused this app's token`. List the copy and its token counts as that app: `POST /api/instances/add`
+`{app, data_dir | token_file, label?}`, `POST /api/instances/remove` `{app?, data_dir? | token_file?}` (hub page or
+hub token), `GET /api/instances` (any family caller; each row says whether its token file has a token and whether
+the app is registered). Tools: `hub_instance_list`, `hub_instance_add`, `hub_instance_remove`. The list is kept in
+`data/instance-tokens.json`; a rotated token is read again like the app's own.
+
+The check sits in `Hub.token_owner`: the registered apps first, then the `instances` facet (`hoard_link/hub/instances.py`). A row whose app is no longer registered is listed but never matches.

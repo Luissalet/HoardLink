@@ -646,7 +646,13 @@ class Hub:
         return contract.app_tools(app)
 
     def token_owner(self, token: str) -> Optional[str]:
-        return contract.token_owner(token, self.apps, self.token)
+        owner = contract.token_owner(token, self.apps, self.token)
+        if owner is None and token:
+            # A listed instance of an app (another data folder) speaks as that app.
+            inst = self.facet("instances")
+            if inst is not None:
+                owner = inst.owner(token)
+        return owner
 
     def backup_sources(self, only: Optional[list[str]] = None) -> dict[str, str]:
         plan = self.backup_source_inventory(only)
