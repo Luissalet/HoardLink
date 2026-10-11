@@ -16,8 +16,10 @@ Classification rules, applied in this order (first match wins):
 * ``completed``       evidence of ``done`` or ``submits`` (a task was closed or
                       handed to review), whatever the answer says.
 * ``blocked``         the answer says the agent is blocked or waits for the
-                      owner ("blocked", "bloqueado", "waiting for Luis",
-                      "necesito que Luis", "need the owner", ...).
+                      owner ("I'm blocked", "estoy bloqueado", "bloqueado por
+                      Luis", "waiting for Luis", "necesito que Luis", "no puedo
+                      seguir", ...). A bare "bloqueo"/"lock" is not a block: in
+                      the Agora it names a path lock.
 * ``advanced``        any other concrete evidence: claims, task status
                       changes, reviews given, commits reported, messages
                       posted (the console's own auto-post of the answer is
@@ -66,8 +68,14 @@ THROTTLE_MAX_S = 1800.0
 STRONG_EVIDENCE = ("messages_posted", "task_status_changes", "submits", "done", "claims", "reviews", "commits_reported")
 WEAK_EVIDENCE = ("heartbeats_with_doing",)
 
+# "bloqueo"/"lock" alone is Agora vocabulary for path locks, so a block needs a first-person or "blocked by/on" phrase.
 _BLOCKED_RE = re.compile(
-    r"\b(?:blocked|bloquead[oa]s?|bloqueo)\b"
+    r"\b(?:i'?m|i\s+am|we'?re|we\s+are|i'?ve\s+been|stays?|remains?)\s+blocked\b"
+    r"|\bblocked\s+(?:on|by|until)\s+(?:luis|the\s+owner|the\s+user|you|a\s+decision|an?\s+answer|your)"
+    r"|\b(?:estoy|estamos|quedo|me\s+quedo|sigo|seguimos)\s+bloquead[oa]s?\b"
+    r"|\bbloquead[oa]s?\s+(?:por|hasta)\s+(?:luis|el\s+due[ñn]o|(?:una|la)\s+(?:decisi[oó]n|revisi[oó]n|respuesta)|falta|tu|su|que)"
+    r"|\bno\s+puedo\s+(?:seguir|continuar|avanzar)\b"
+    r"|\bcan(?:no|'t)\s+(?:continue|proceed|go\s+on)\b"
     r"|waiting\s+(?:for|on)\s+(?:luis|the\s+owner|the\s+user|your\s+(?:decision|answer|input))"
     r"|esperando\s+(?:a\s+|que\s+)?(?:luis|el\s+due[ñn]o|tu\s+(?:respuesta|decisi[oó]n))"
     r"|necesito\s+que\s+(?:luis|el\s+due[ñn]o|me\s+(?:confirm|aclar|respond|diga|des))"

@@ -366,3 +366,12 @@ def test_exhausted_quota_never_continues():
                                last_continuation_at=None, now=1000.0, real_event_since=True,
                                root_turn_id="r", quota_exhausted=True)
     assert d["continue"] is False and "quota" in d["reason"]
+
+
+def test_lock_vocabulary_is_not_a_block():
+    from hoard_link.hub import agora_liveness as lv
+    for text in ("Tomo el bloqueo path:Faustus/src y sigo.", "Reclamada con sus bloqueos; voy a implementar.",
+                 "The task was blocked by a lock, now free; I'll start."):
+        assert lv.classify_turn(state="completed", exit_code=0, answer=text, evidence={})["liveness"] != "blocked", text
+    for text in ("Estoy bloqueado: necesito la clave.", "Blocked on Luis for the GPU decision.", "No puedo seguir sin acceso."):
+        assert lv.classify_turn(state="completed", exit_code=0, answer=text, evidence={})["liveness"] == "blocked", text
