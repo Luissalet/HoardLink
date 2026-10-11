@@ -414,3 +414,16 @@ error:
 | Cicero | `theme_from_tokens` |
 | Galton | `galton_run` |
 | Writer's | `wh_character_to_prospero`, `wh_storyboard_to_prospero`, `wh_world_to_scheherazade`, `wh_world_from_scheherazade` |
+
+## Copilot shared with Faustus
+
+`POST /api/link/copilot` transports `{path, method, body?, raw_body?, content_type?, headers?}`
+to the configured Faustus service. JSON, native status/error codes, run IDs and SSE
+pass through; the Hub stores no chat and runs no model or tools. Python hosts use
+`CopilotClient`; Node hosts use `createCopilotFetch` from `js/hoard-copilot.js`.
+FastAPI hosts mount `make_copilot_router(app_id, data_dir, ...)` from
+`hoard_link.copilot` for a same-origin panel/info/proxy. It creates one stable data
+space ID, discovers the service and transports responses. The shared panel,
+conversation, prompts, tools execution and memory remain in Faustus.
+`hub_copilot_request` exposes the same operations to MCP; SSE admission returns
+the detached run identity and status is read with the normal native route.

@@ -252,6 +252,41 @@ class _HubHandler(BaseHTTPRequestHandler):
         status, payload = self.hub.link.chat(who, body)
         return self._json(payload, status)
 
+    def _copilot(self) -> None:
+        """Relay the shared agent response, including SSE, without buffering it."""
+        who = self._family_caller()
+        if who is None:
+            return self._json({"ok": False, "error": "family bearer token required"}, 401)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            from .copilot import proxy_for
+            response = proxy_for(self.hub).open(who, body)
+        except ValueError as exc:
+            return self._json({"ok": False, "error": str(exc)}, 400)
+        except OSError as exc:
+            return self._json({"ok": False, "code": "faustus_unavailable", "error": str(exc)}, 503)
+        with response:
+            self.send_response(response.status)
+            for name in ("Content-Type", "X-Odysseus-Run-Id", "X-Faustus-Idempotent-Replay", "X-Faustus-API-Version"):
+                value = response.headers.get(name)
+                if value:
+                    self.send_header(name, value)
+            self.send_header("Connection", "close")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.close_connection = True
+            try:
+                while True:
+                    chunk = response.read1(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                # Only the observer disconnected; Faustus owns the detached run.
+                pass
+
     # -- leases ---------------------------------------------------------------
     def _lease_reply(self, res: dict[str, Any]) -> None:
         status = int(res.pop("status", 0) or 0) if isinstance(res, dict) else 0
@@ -486,6 +521,8 @@ class _HubHandler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path.rstrip("/")
         hub = self.hub
+        if path == "/api/link/copilot":
+            return self._copilot()
         if path == "/api/link/chat":
             try:
                 return self._link_chat()
