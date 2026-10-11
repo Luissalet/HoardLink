@@ -143,6 +143,43 @@ each leader's CLI: working, waiting, idle, login expired, error; also `agora.py 
 authoritative catalog). Through the MCP bridge the inbox
 wait is capped at 60 s.
 
+### Console turn liveness and automatic continuation
+
+The team console (`hoard_link/hub/agora_console.py`) launches real provider CLI turns for the `codex` and `cursor`
+leaders (identities `codex-agora` / `cursor-agora`). A turn that ends with "next I will ..." without touching any task
+used to leave the leader idle until the next notification. When a turn finishes, the console now reads what that
+identity did in Agora during the turn (read-only: messages posted, task claims, status changes, submits, done, reviews
+given, commit references, a heartbeat with `doing`) and classifies it with the pure rules in
+`hoard_link/hub/agora_liveness.py`:
+
+| liveness | meaning |
+| --- | --- |
+| `completed` | a task was closed or submitted for review during the turn |
+| `advanced` | other concrete evidence (claim, status change, review, commit reference, message posted) |
+| `plan_only` | the answer only announces future work (EN/ES phrasings) and nothing was done in Agora |
+| `empty_response` | empty answer and no evidence |
+| `blocked` | the answer states a block ("blocked", "bloqueado", "waiting for Luis", "necesito que Luis", ...) |
+| `failed` | CLI failure, timeout, non-zero exit or provider error |
+| `needs_followup` | none of the above |
+
+Evidence is only what the leader's own identity authored during the turn: its review votes (`approve`/`changes`),
+the system lines its claims and status changes leave in task threads, its messages, and submits or closes of its tasks
+whose thread it wrote in. Another agent assigning it a review, handing it a task or moving one of its tasks updates
+the task row but is not the leader's progress (it is a real event, which skips the throttle instead).
+The console's own post of the answer to thread 32 is never counted as evidence, and a bare heartbeat is not progress
+(every turn is told to send one first). Only `plan_only` and `empty_response` are continued: the console queues a new
+turn for the same leader (same provider session) whose prompt says to do the next concrete step or say exactly what
+blocks. Limits: at most 2 continuations per originating turn; after 2 consecutive no-progress turns the next one waits
+120 s, doubling up to 1800 s (time already elapsed counts); a real event for the agent (a message for it, a review
+waiting for it, a change asked of it) arriving since the turn started skips the wait. Continuations are idempotent
+(`liveness:<root_turn_id>:<liveness>:<n>`, unique in `leader_turns.continuation_key`), are not queued when another turn
+is already waiting, and a delayed one is a queued row with `not_before`, so it survives a Hub restart. If Agora cannot
+be read the turn is still classified but never continued.
+
+The class and reasons appear in `console_turns` of `GET /api/agora/console/overview` and `hub_agora_console_overview`
+(`liveness`, `liveness_reasons`, `root_turn_id`, `continuation_n`, `not_before`), and each classification is also
+recorded as a `liveness` entry in the console activity log.
+
 ### Resume sync
 
 `hub_agora_sync` / `POST /api/agora/sync` combines a heartbeat with inbox peek,
