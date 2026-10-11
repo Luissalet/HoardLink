@@ -137,6 +137,9 @@ MIGRATIONS = [
         FOREIGN KEY(provider_id, pool_id) REFERENCES agora_usage_pools(provider_id, pool_id) ON DELETE CASCADE);
     CREATE INDEX agora_usage_reporters_agent ON agora_usage_reporters(agent_id);
     """,
+    """
+    CREATE TABLE agora_orphan_findings (key TEXT PRIMARY KEY, kind TEXT NOT NULL, task_id INTEGER, created REAL NOT NULL);
+    """,
 ]
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
@@ -1339,6 +1342,117 @@ class Agora:
         lines.append("Repartidlas con `agora handover --from <agente> --to <relevo> --force` o soltadlas; no se mueven solas.")
         self._msg(thread_id, "system", "system", "\n".join(lines))
 
+    # -- orphans: work nobody is moving (warn once, suggest who takes it, never move it) -----------------------------
+
+    ORPHAN_SWEEP_EVERY_S = 300.0
+
+    def _worker_ids(self) -> list[str]:
+        """Agents that can take work: not the person, not the hub, not a quota reporter (``*-capacity``)."""
+        return [r["id"] for r in self.db.query("SELECT id FROM agents ORDER BY id")
+                if r["id"] not in (PERSON, "system", "hub", "ui") and not r["id"].endswith("-capacity")]
+
+    def orphans(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Work nobody is moving, computed now: a task in review with no reviewer for ``handover_idle_s`` or whose
+        reviewer is silent (no activity for that long) or out of quota, and a claimed task whose owner is. Each
+        finding names a free agent (recent activity, quota left, fewest open tasks) and the command that moves it."""
+        now = self.clock()
+        idle_limit = self.handover_idle_s
+        pools = self._quota_pools()
+        seen = {r["id"]: float(r["last_seen"] or 0) for r in self.db.query("SELECT id, last_seen FROM agents")}
+        quota = {aid: self._quota_state_from(aid, pools)["state"] for aid in seen}
+        load: dict[str, int] = {}
+        for r in self.db.query("SELECT owner, reviewer, status FROM tasks WHERE status IN ('claimed','in_progress','changes','review')"):
+            if r["owner"]:
+                load[r["owner"]] = load.get(r["owner"], 0) + 1
+            if r["reviewer"] and r["status"] == "review":
+                load[r["reviewer"]] = load.get(r["reviewer"], 0) + 1
+
+        def silent(agent: Optional[str]) -> Optional[str]:
+            if not agent:
+                return None
+            if quota.get(agent) == "exhausted":
+                return "sin cuota"
+            last = seen.get(agent)
+            if last is None or now - last >= idle_limit:
+                return "sin actividad" if last is None else f"sin actividad desde hace {int((now - last) // 60)} min"
+            return None
+
+        free = sorted((aid for aid in self._worker_ids()
+                       if now - seen.get(aid, 0) < idle_limit and quota.get(aid) != "exhausted"),
+                      key=lambda aid: (load.get(aid, 0), -seen.get(aid, 0), aid))
+
+        def pick(*avoid: Optional[str]) -> Optional[str]:
+            return next((aid for aid in free if aid not in avoid), None)
+
+        findings: list[dict[str, Any]] = []
+        for t in self.db.query("SELECT * FROM tasks WHERE status IN ('review','claimed','in_progress','changes') ORDER BY id"):
+            t = dict(t)
+            if t["status"] == "review":
+                reviewer = t.get("reviewer")
+                rev = int(t.get("submission_revision") or 0)
+                if not reviewer:
+                    if now - float(t.get("submitted_at") or now) < idle_limit:
+                        continue
+                    who, why, kind = None, "nadie la ha revisado", "review_unassigned"
+                else:
+                    why = silent(reviewer)
+                    if not why:
+                        continue
+                    who, kind = reviewer, "review_silent"
+                suggest = pick(t.get("owner"), reviewer)
+                command = (f"agora handover --from {reviewer} --to {suggest} --tasks {t['id']} --force"
+                           if reviewer and suggest else (f"{suggest} revisa con: agora --as {suggest} task {t['id']}" if suggest else None))
+                key = f"{kind}:{t['id']}:{who or '-'}:{rev}"
+            else:
+                owner = t.get("owner")
+                why = silent(owner)
+                if not why:
+                    continue
+                who, kind = owner, "owner_silent"
+                suggest = pick(owner, t.get("reviewer"))
+                command = f"agora handover --from {owner} --to {suggest} --tasks {t['id']} --force" if suggest else None
+                key = f"{kind}:{t['id']}:{owner}:{int(float(t.get('claimed_at') or 0))}"
+            findings.append({"key": key, "kind": kind, "task_id": t["id"], "title": t["title"], "status": t["status"],
+                             "who": who, "why": why, "suggest": suggest, "command": command})
+        return {"ok": True, "findings": findings, "idle_limit_s": int(idle_limit)}
+
+    def orphan_sweep(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Say each new orphan once: a system note in the task thread and one summary in the coordination thread
+        mentioning the suggested agents. A finding comes back only when its situation changes (another reviewer,
+        a new submission, a new claim). Runs by itself from heartbeats at most every five minutes."""
+        a = a or {}
+        now = self.clock()
+        if not a.get("force") and now - getattr(self, "_last_orphan_sweep", 0.0) < self.ORPHAN_SWEEP_EVERY_S:
+            return {"ok": True, "skipped": True, "new": []}
+        self._last_orphan_sweep = now
+        found = self.orphans()["findings"]
+        new = []
+        with self.db.tx():
+            for f in found:
+                if self.db.one("SELECT key FROM agora_orphan_findings WHERE key=?", (f["key"],)) is not None:
+                    continue
+                self.db.execute("INSERT INTO agora_orphan_findings(key, kind, task_id, created) VALUES(?,?,?,?)",
+                                (f["key"], f["kind"], f["task_id"], now))
+                new.append(f)
+            for f in new:
+                what = {"review_unassigned": "en revisión sin revisor", "review_silent": f"su revisor {f['who']} está {f['why']}",
+                        "owner_silent": f"su dueño {f['who']} está {f['why']}"}[f["kind"]]
+                note = f"Huérfana: {what}." + (f" Propuesta: {f['suggest']}. `{f['command']}`" if f["suggest"] else
+                                                " No hay ningún agente libre ahora.")
+                self._system(self._task_row(f["task_id"]), note, "system")
+            thread_id = self.handover_thread_id
+            if new and thread_id is not None and self.db.one("SELECT id FROM threads WHERE id=?", (thread_id,)) is not None:
+                lines = ["Trabajo huérfano (nadie lo mueve):"]
+                for f in new:
+                    lines.append(f"- #{f['task_id']} [{f['status']}] {f['title']}: "
+                                 + ("sin revisor" if f["kind"] == "review_unassigned" else f"{f['who']} {f['why']}")
+                                 + (f" → {f['suggest']}: `{f['command']}`" if f["suggest"] else " → nadie libre"))
+                mentions = sorted({f["suggest"] for f in new if f["suggest"]})
+                self._msg(thread_id, "system", "system", "\n".join(lines), mentions)
+        if new:
+            self._bump("agora.orphans", {"new": [f["key"] for f in new]})
+        return {"ok": True, "skipped": False, "new": new, "findings": found}
+
     # -- agents --------------------------------------------------------------------------------------------------
 
     def heartbeat(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -1370,6 +1484,10 @@ class Agora:
                 self.db.execute("UPDATE locks SET expires = ? + ttl_s WHERE owner=? AND resource=? AND expires > ?",
                                 (now, agent, res, now))
         self._bump("agora.agent.heartbeat", {"agent": agent, "state": state})
+        try:
+            self.orphan_sweep()          # at most every five minutes; a heartbeat never fails because of it
+        except Exception:  # noqa: BLE001
+            pass
         inbox = self.inbox({"agent": agent, "peek": True})
         return {"ok": True, "agent": agent, "inbox": inbox["counts"],
                 "lock_renewal": {"mode": "all" if selected is None else "selected",
@@ -2338,6 +2456,7 @@ class Agora:
             [self._task_dict(r) for r in self.db.query(
                 "SELECT * FROM tasks WHERE status IN ('done','dropped') ORDER BY closed_at DESC LIMIT 15")]
         return {"ok": True, "agents": self.agents()["agents"], "counts": counts, "tasks": tasks, "locks": live,
+                "orphans": self.orphans()["findings"],
                 "lock_groups": group_locks(live),
                 "threads": self.threads({"limit": 40})["threads"],
                 "escalated": self.db.scalar("SELECT COUNT(*) FROM threads WHERE status='escalated'", default=0),
@@ -2444,6 +2563,15 @@ TOOLS: list[dict[str, Any]] = [
                     "reset_at and a note such as 'cursor-agora sin cuota hasta 15-10 11:40'), unknown, stale or none. "
                     "Mentions, handovers and reviewer choices already warn about exhausted agents (quota_warnings).",
      "inputSchema": _schema({"agent": {"type": "string", "description": "agent id, e.g. cursor-agora"}}, ["agent"])},
+    {"name": "hub_agora_orphans", "read": True,
+     "description": "Work nobody is moving: tasks in review with no reviewer for 30 min or a silent / out-of-quota reviewer, "
+                    "and claimed tasks whose owner is silent or out of quota. Each finding names a free agent and the "
+                    "handover command that moves it. The board carries the same list.",
+     "inputSchema": _schema({}, [])},
+    {"name": "hub_agora_orphan_sweep",
+     "description": "Announce new orphans now (heartbeats already do it every five minutes): a note in each task thread "
+                    "and one summary in the coordination thread mentioning the suggested agents. Each finding once.",
+     "inputSchema": _schema({"agent": _A, "force": {"type": "boolean", "description": "skip the five-minute spacing"}}, [])},
     {"name": "hub_agora_usage_report",
      "description": "Report a sanitized provider account-pool snapshot. pool_id must be an opaque local label, never an account id, email or credential. Unknown windows use null percentages; reported_at is assigned by the Hub.",
      "inputSchema": _schema({"agent": _A, "provider_id": {"type": "string", "enum": ["claude", "codex", "cursor", "faustus"]},
@@ -2617,7 +2745,7 @@ TOOLS: list[dict[str, Any]] = [
 
 _WRITE_OPS = ("checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
-              "usage_report")
+              "usage_report", "orphan_sweep")
 
 
 def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -2892,6 +3020,8 @@ class AgoraFacet(Facet):
             return self._run(ag.usage, q)
         if p == "/api/agora/quota":
             return self._run(ag.agent_quota_state, q)
+        if p == "/api/agora/orphans":
+            return self._run(ag.orphans, q)
         return {"ok": False, "status": 404, "error": f"unknown Ágora route {p}"}
 
     def post(self, req: Request) -> Optional[Any]:
@@ -2952,6 +3082,7 @@ class AgoraFacet(Facet):
             "hub_agora_checkpoint": wrap(ag.checkpoint), "hub_agora_checkpoints": wrap(ag.checkpoints),
             "hub_agora_usage": wrap(ag.usage), "hub_agora_usage_report": wrap(ag.usage_report),
             "hub_agora_agent_quota": wrap(ag.agent_quota_state),
+            "hub_agora_orphans": wrap(ag.orphans), "hub_agora_orphan_sweep": wrap(ag.orphan_sweep),
             "hub_agora_activity": wrap(self._activity), "hub_agora_timeline": wrap(ag.timeline),
             "hub_agora_board": wrap(self._board), "hub_agora_inbox": wrap(self._inbox, cap_wait=True),
             "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(self._sync), "hub_agora_task_add": wrap(ag.task_add),
