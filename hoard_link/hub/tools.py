@@ -25,8 +25,27 @@ _REPO = {"type": "string", "description": "Repository folder name as listed by h
                                           "fragment such as 'phileas' also works."}
 
 
+def _copilot_request(hub, arguments):
+    import json
+    from .copilot import proxy_for
+    with proxy_for(hub).open("hub", arguments) as response:
+        if response.status >= 400:
+            return {"ok": False, "status": response.status, "error": json.load(response)}
+        if "text/event-stream" in response.headers.get("Content-Type", ""):
+            return {"status": response.status, "run_id": response.headers.get("X-Odysseus-Run-Id"),
+                    "replayed": response.headers.get("X-Faustus-Idempotent-Replay") == "1", "detached": True}
+        return {"status": response.status, "result": json.load(response)}
+
+
 def catalogue() -> list[dict[str, Any]]:
     return [
+        {
+            "name": "hub_copilot_request",
+            "description": "Use the shared Faustus copilot: conversations, context, imports and turns. Keywords: copilot, chat Hoard.",
+            "inputSchema": {"type": "object", "properties": {
+                "path": {"type": "string"}, "method": {"type": "string", "default": "GET"},
+                "body": {"type": "object"}, "headers": {"type": "object"}}, "required": ["path"]},
+        },
         {
             "name": "hub_faustus_status",
             "description": "Faustus status and whether it can start or stop here. Keywords: Faustus, estado.",
@@ -655,6 +674,7 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
     return {
         "hub_link_status": lambda a: hub.link.status(force=bool(a.get("force", False))),
         "hub_link_chat": link_chat,
+        "hub_copilot_request": lambda a: _copilot_request(hub, a),
         "hub_repos": repos_list,
         "hub_repo": repo_detail,
         "hub_repos_refresh": repos_refresh,
