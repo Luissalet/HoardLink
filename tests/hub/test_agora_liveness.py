@@ -375,3 +375,49 @@ def test_lock_vocabulary_is_not_a_block():
         assert lv.classify_turn(state="completed", exit_code=0, answer=text, evidence={})["liveness"] != "blocked", text
     for text in ("Estoy bloqueado: necesito la clave.", "Blocked on Luis for the GPU decision.", "No puedo seguir sin acceso."):
         assert lv.classify_turn(state="completed", exit_code=0, answer=text, evidence={})["liveness"] == "blocked", text
+
+
+# -- review of r1: activity by OTHER agents on the leader's tasks is not the leader's progress ----------------------
+
+def test_a_review_assigned_during_the_turn_is_not_a_review_done(console):
+    """codex-review-writer's repro: another agent submits a task with reviewer codex-agora while the turn is open; the
+    leader only says it will review. That is a plan (and a real event), not progress."""
+    task = console.agora.task_add({"agent": "builder-agent", "title": "Needs a review"})["task"]
+    console.agora.task_claim({"agent": "builder-agent", "task_id": task["id"]})
+    _turn(console, "rv1")
+    console.agora.task_submit({"agent": "builder-agent", "task_id": task["id"], "summary": "ready",
+                               "reviewer": "codex-agora"})
+    console._finish_leader_turn("rv1", "codex", "completed", "ok", "I'll now review this task.", "sess",
+                                process_exit_code=0)
+    row = _row(console, "rv1")
+    assert row["liveness"] == "plan_only", row["liveness_reasons"]
+    assert "reviews=" not in row["liveness_reasons"]
+    conts = _continuations(console)
+    assert len(conts) == 1  # continued, and the new review assignment is a real event: no throttle delay
+    assert float(conts[0]["not_before"] or 0) == 0.0
+
+
+def test_a_vote_by_the_leader_is_a_review(console):
+    task = console.agora.task_add({"agent": "builder-agent", "title": "Needs a review"})["task"]
+    console.agora.task_claim({"agent": "builder-agent", "task_id": task["id"]})
+    sub = console.agora.task_submit({"agent": "builder-agent", "task_id": task["id"], "summary": "ready",
+                                     "reviewer": "codex-agora"})
+    revision = (sub.get("task") or {}).get("submission_revision") or 1
+    _turn(console, "rv2")
+    console.agora.task_review({"agent": "codex-agora", "task_id": task["id"], "verdict": "approve",
+                               "body": "tests pass", "expected_submission_revision": revision})
+    console._finish_leader_turn("rv2", "codex", "completed", "ok", "Reviewed.", "sess", process_exit_code=0)
+    row = _row(console, "rv2")
+    assert row["liveness"] == "advanced" and "reviews=1" in row["liveness_reasons"]
+
+
+def test_another_agent_moving_the_leaders_task_is_not_its_progress(console):
+    task = console.agora.task_add({"agent": "builder-agent", "title": "Mine"})["task"]
+    console.agora.task_claim({"agent": "codex-agora", "task_id": task["id"]})
+    time.sleep(0.02)
+    _turn(console, "rv3", created=time.time())  # the leader's own claim happened before this turn
+    console.agora.handover({"agent": "luis", "_person": True, "from_agent": "codex-agora", "to_agent": "builder-agent",
+                            "tasks": [task["id"]], "force": True, "reason": "test"})
+    console._finish_leader_turn("rv3", "codex", "completed", "ok", "Voy a seguir con la tarea.", "sess",
+                                process_exit_code=0)
+    assert _row(console, "rv3")["liveness"] == "plan_only"

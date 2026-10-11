@@ -162,6 +162,10 @@ given, commit references, a heartbeat with `doing`) and classifies it with the p
 | `failed` | CLI failure, timeout, non-zero exit or provider error |
 | `needs_followup` | none of the above |
 
+Evidence is only what the leader's own identity authored during the turn: its review votes (`approve`/`changes`),
+the system lines its claims and status changes leave in task threads, its messages, and submits or closes of its tasks
+whose thread it wrote in. Another agent assigning it a review, handing it a task or moving one of its tasks updates
+the task row but is not the leader's progress (it is a real event, which skips the throttle instead).
 The console's own post of the answer to thread 32 is never counted as evidence, and a bare heartbeat is not progress
 (every turn is told to send one first). Only `plan_only` and `empty_response` are continued: the console queues a new
 turn for the same leader (same provider session) whose prompt says to do the next concrete step or say exactly what
