@@ -851,6 +851,23 @@ selección explícita antes de aplicarlo a una entrega posterior. Se vincula el
 voto al envío registrado; no se verifica Git, archivos en disco ni que el
 revisor haya ejecutado las pruebas que declara.
 
+### Datos en vivo (`hoard_link.livefeed`)
+
+Para datos públicos que cambian cada minuto (terremotos, vuelos, tormentas, viento, elementos orbitales, precios), un
+`LiveFeed` por fuente guarda la última respuesta buena por clave en memoria y en disco, deja salir una sola petición por
+clave a la vez (los demás esperan a esa), reintenta con pausas crecientes y, si la fuente falla, sirve la última respuesta
+buena marcada `stale` con su edad y el error en vez de fallar.
+
+```python
+from hoard_link.livefeed import LiveFeed
+feed = LiveFeed("usgs", ttl_s=120, disk_dir=data_dir / "feeds")
+got = feed.get("4.5_day", lambda: fetch_json(url))
+got.data, got.freshness, got.age_s, got.meta()   # freshness: fresh | cached | stale
+```
+
+`max_stale_s` (una semana por defecto) limita la edad de una respuesta `stale`; pasada esa edad lanza `LiveFeedError`.
+Las herramientas de datos públicos de Faustus lo usan para cada fuente.
+
 ## Uso con Faustus
 
 Si Faustus corre en la misma máquina con la autenticación desactivada, no

@@ -828,6 +828,23 @@ polling and requires an explicit choice before applying it to a newer submission
 This binds a vote to the submitted record; it does not verify Git objects, files
 on disk or whether a reviewer genuinely ran the reported checks.
 
+### Live feeds (`hoard_link.livefeed`)
+
+For public data that changes by the minute (earthquakes, flights, storms, wind, orbital elements, prices), one
+`LiveFeed` per source keeps the last good answer per key in memory and on disk, lets one request per key go out at a
+time while the other callers wait for it, retries with growing pauses, and when the source fails serves the last good
+answer marked `stale` with its age and the error, instead of failing.
+
+```python
+from hoard_link.livefeed import LiveFeed
+feed = LiveFeed("usgs", ttl_s=120, disk_dir=data_dir / "feeds")
+got = feed.get("4.5_day", lambda: fetch_json(url))
+got.data, got.freshness, got.age_s, got.meta()   # freshness: fresh | cached | stale
+```
+
+`max_stale_s` (a week by default) bounds how old a stale answer may be; past it `LiveFeedError` is raised. Faustus's
+public-data tools use it for every source.
+
 ## Use with Faustus
 
 Nothing to configure when Faustus runs on the same machine with auth
