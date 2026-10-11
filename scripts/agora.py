@@ -172,6 +172,16 @@ def print_quota_warnings(r: dict) -> None:
         print(f"  ⛔ AVISO DE CUOTA: {note}")
 
 
+def print_orphans(found: list) -> None:
+    if not found:
+        return
+    print(f"\nHUÉRFANAS ({len(found)}: nadie las mueve)")
+    for f in found:
+        why = "sin revisor" if f.get("kind") == "review_unassigned" else f"{f.get('who')} {f.get('why')}"
+        tail = f" → {f['suggest']}: {f['command']}" if f.get("suggest") else " → nadie libre ahora"
+        print(f"  #{f['task_id']:<4} [{f.get('status'):<11}] {short(f.get('title'), 50)} · {why}{tail}")
+
+
 def print_board(b: dict, full: bool = False) -> None:
     print("AGENTES")
     for a in b.get("agents", []):
@@ -180,6 +190,7 @@ def print_board(b: dict, full: bool = False) -> None:
               f"  {short(a.get('doing'), 90)}")
         for g in a.get("lock_groups") or [{"label": lk} for lk in a.get("locks") or []]:
             print(f"      🔒 {g['label']}" + (f"  (tarea #{g['task_id']})" if g.get("task_id") else ""))
+    print_orphans(b.get("orphans") or [])
     print("\nTAREAS")
     for t in b.get("tasks", []):
         owner = f" @{t['owner']}" if t.get("owner") else ""
@@ -481,6 +492,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("digest"); s.add_argument("--hours", type=float, default=12)
     s = sub.add_parser("tasks"); s.add_argument("--status"); s.add_argument("--owner"); s.add_argument("--repo")
     sub.add_parser("decisions")
+    s = sub.add_parser("orphans", help="trabajo que nadie mueve (revisor o dueño callado o sin cuota) y quién puede cogerlo")
+    s.add_argument("--sweep", action="store_true", help="anunciarlas ya en los hilos (cada hallazgo una sola vez)")
     sub.add_parser("watch", help="estado real de cada agente según su transcripción, preguntas pendientes y sesiones sin asignar")
     s = sub.add_parser("watch-bind", help="asigna una sesión observada a un agente (agente '-' o vacío la desasigna)")
     s.add_argument("session_key", help="clave que da 'watch', p. ej. codex:<id de sesión>"); s.add_argument("agent_id")
@@ -491,7 +504,7 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(value, list):
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
-    reads = {"board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders"}
+    reads = {"board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
     if a.cmd not in reads and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
@@ -500,6 +513,8 @@ def main(argv: list[str] | None = None) -> int:
         r = call("GET", "/api/agora/board")
     elif c == "usage":
         r = call("GET", "/api/agora/console/usage")
+    elif c == "orphans":
+        r = call("POST", "/api/agora/orphan_sweep", {"agent": ag, "force": True}) if a.sweep else call("GET", "/api/agora/orphans")
     elif c == "leaders":
         r = call("GET", "/api/agora/console/leaders")
     elif c == "usage-report":
@@ -685,6 +700,12 @@ def main(argv: list[str] | None = None) -> int:
         print_conversation(r)
     elif c == "tasks":
         print_board({"tasks": r.get("tasks", [])})
+    elif c == "orphans":
+        if a.sweep:
+            print(f"ok · {len(r.get('new') or [])} huérfana(s) nueva(s) anunciada(s)")
+        print_orphans(r.get("findings") or [])
+        if not r.get("findings"):
+            print("Sin trabajo huérfano.")
     elif c == "decisions":
         for d in r.get("decisions", []):
             print(f"{d['id']:<4} {when(d['updated'])} {d['title']}\n     → {d['resolution']} ({d.get('resolved_by')})")
