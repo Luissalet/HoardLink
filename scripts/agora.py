@@ -145,11 +145,39 @@ def short(s, n=160) -> str:
 
 # ---- printers ---------------------------------------------------------------------------------------------------
 
+def quota_badge(q: dict | None) -> str:
+    """Out of quota or nearly so, next to the agent (the hub warns, nothing is blocked)."""
+    if not isinstance(q, dict):
+        return ""
+    if q.get("state") == "exhausted":
+        return " ⛔ " + (f"sin cuota hasta {when_iso(q.get('reset_at'))}" if q.get("reset_at") else "sin cuota")
+    if q.get("state") == "low":
+        return f" ⚠ cuota baja ({q.get('remaining_percent'):.0f} %)" if q.get("remaining_percent") is not None else " ⚠ cuota baja"
+    return ""
+
+
+def when_iso(value) -> str:
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone().strftime("%d-%m %H:%M")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return str(value)
+
+
+def print_quota_warnings(r: dict) -> None:
+    for note in r.get("quota_warnings") or []:
+        print(f"  ⛔ AVISO DE CUOTA: {note}")
+
+
 def print_board(b: dict, full: bool = False) -> None:
     print("AGENTES")
     for a in b.get("agents", []):
         flag = " (sin señales)" if a.get("stale") else ""
-        print(f"  {a['id']:<14} {a.get('state') or '-':<8} {when(a.get('last_seen'))}{flag}  {short(a.get('doing'), 90)}")
+        print(f"  {a['id']:<14} {a.get('state') or '-':<8} {when(a.get('last_seen'))}{flag}{quota_badge(a.get('quota'))}"
+              f"  {short(a.get('doing'), 90)}")
         for g in a.get("lock_groups") or [{"label": lk} for lk in a.get("locks") or []]:
             print(f"      🔒 {g['label']}" + (f"  (tarea #{g['task_id']})" if g.get("task_id") else ""))
     print("\nTAREAS")
@@ -270,6 +298,8 @@ def print_inbox(r: dict) -> None:
             print(f"    hilo {m['thread_id']} · {short(m.get('thread_title'), 60)} · {n} de {m['author']}" + ("…" if n > 1 else ""))
     for th in r.get("escalated", []):
         print(f"  ESCALADO hilo {th['id']}: {th['title']}")
+    for q in r.get("out_of_quota") or []:
+        print(f"  SIN CUOTA {q.get('note') or q.get('agent')}: no le pases trabajo ni revisiones")
     for m in r.get("messages", []):
         mark = "→" if m.get("for_you") else " "
         where = f"tarea #{m['task_id']}" if m.get("thread_kind") == "task" else f"hilo {m['thread_id']}"
@@ -650,6 +680,7 @@ def main(argv: list[str] | None = None) -> int:
         print_sync(r)
     elif c == "handover":
         print_handover(r)
+        print_quota_warnings(r)
     elif c in ("task", "thread"):
         print_conversation(r)
     elif c == "tasks":
@@ -673,6 +704,7 @@ def main(argv: list[str] | None = None) -> int:
             print("ok · " + json.dumps(brief, ensure_ascii=False))
         if r.get("locks"):
             print("  bloqueos: " + ", ".join(r["locks"]))
+        print_quota_warnings(r)
         if isinstance(r.get("claim"), dict):
             cl = r["claim"]
             print("  reclamada" if cl.get("ok") else "  NO reclamada: " + json.dumps(cl.get("conflicts"), ensure_ascii=False))
