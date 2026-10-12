@@ -192,6 +192,12 @@ def has_copilot(app):
 
 
 LAUNCHER_PATH = "/api/copilot/launcher.js"
+# What an app's own session guard must let through for the copilot to start: the page loads the launcher before the
+# session cookie exists. ``/info``, ``panel.js`` and ``/proxy`` stay behind the guard.
+COPILOT_PUBLIC_PATHS = (LAUNCHER_PATH,)
+# The anti-CSRF header the launcher sends with its own requests (``/info`` and ``/proxy``): an app that refuses
+# state-changing requests without it needs no exception for the relay.
+COPILOT_REQUEST_HEADER = ("X-Hoard-Request", "1")
 _LAUNCHER_TAG = b'<script type="module" src="/api/copilot/launcher.js"></script>'
 
 

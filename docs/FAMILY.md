@@ -451,6 +451,14 @@ Faustus copilot with no code of its own:
   (never `null`). A conversation the current Faustus no longer has is dropped and a new one starts. Keys typed in the
   panel never reach the app's shortcuts. A turn queued behind another agent on the shared model lane keeps its place
   for up to 10 minutes (`initial_response_timeout_s`) instead of failing at the endpoint's short default.
+  The panel opens under the app's own top bar (a bar pinned to the top of the window, or a `header`/`nav`/`role=banner`
+  starting in the first 64 px) so the app's header buttons stay clickable; `--hoard-copilot-top` on `:root` overrides
+  it. Escape closes the panel (inside an app dialog it is left to the dialog).
+* Strict apps need no exceptions of their own: the launcher's styles and the panel's are constructed stylesheets
+  (a `style-src 'self'` policy allows them), the launcher sends `X-Hoard-Request: 1` and the page cookies with
+  `/api/copilot/info` and `/proxy` (`COPILOT_REQUEST_HEADER`), and an app with a session guard lets
+  `COPILOT_PUBLIC_PATHS` (the launcher script, which the page loads before its cookie exists) through. Both
+  constants exist in `hoard_link.copilot` and `hoard-commons/copilot.js`.
 * Faustus is found through `<APP>_FAUSTUS_URL`, `HOARD_FAUSTUS_URL` (+ `HOARD_FAUSTUS_TOKEN`) or the link config,
   falling back to `127.0.0.1:7000` / `7001`.
 
