@@ -178,7 +178,7 @@ def _safe_file(root: Path, relative: str) -> Optional[Path]:
         return None
 
 
-_VITE_HASH = re.compile(r"[^-]-[A-Za-z0-9_-]{8}$")
+_VITE_HASH = re.compile(r".+-[A-Za-z0-9_-]{8}$")
 
 
 def _is_hashed(path: Path) -> bool:
