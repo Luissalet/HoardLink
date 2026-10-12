@@ -60,9 +60,9 @@
 
   const css = `
     .hoard-copilot-toggle{position:fixed;right:var(--hoard-copilot-right,18px);bottom:var(--hoard-copilot-bottom,18px);z-index:2147483000;font:600 13px/1 system-ui,sans-serif;
-      padding:10px 14px;border-radius:999px;border:1px solid rgba(127,127,127,.45);background:#1f1b2e;color:#f4f1ff;
+      display:grid;place-items:center;width:48px;height:48px;padding:0;border-radius:50%;border:1px solid rgba(127,127,127,.45);background:#1f1b2e;color:#e06c75;
       box-shadow:0 6px 18px rgba(0,0,0,.35);cursor:pointer}
-    .hoard-copilot-toggle:focus-visible{outline:2px solid #9b87f5;outline-offset:2px}
+    .hoard-copilot-toggle:focus-visible{outline:2px solid #e06c75;outline-offset:2px}
     html[data-hoard-copilot-position=left] .hoard-copilot-toggle{right:auto;left:var(--hoard-copilot-left,18px)}
     .hoard-copilot{position:fixed;top:14px;right:14px;bottom:calc(var(--hoard-copilot-bottom,18px) + 48px);width:min(430px,calc(100vw - 28px));z-index:2147483001;
       display:flex;flex-direction:column;background:#17141f;color:#f4f1ff;border:1px solid rgba(127,127,127,.4);
@@ -245,7 +245,9 @@
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'hoard-copilot-toggle';
-    toggle.textContent = 'Faustus';
+    toggle.innerHTML = "<svg viewBox=\"0 0 32 32\" width=\"28\" height=\"28\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M16 0.738L4.674 25.559L13.004 28.992L13.004 24.798L9.229 24.798L9.229 19.644L16 12.094L22.772 19.644L22.772 24.798L17.678 24.798L13.4 31.264L27.326 25.559Z\"/><g fill=\"currentColor\" opacity=\"0.62\"><path d=\"M5.993 5.022L0.839 13.292L6.233 18.985L9.049 13.172L4.555 11.434Z\"/><path d=\"M26.008 5.022L31.161 13.292L25.768 18.985L22.952 13.172L27.446 11.434Z\"/></g></svg>";
+    toggle.setAttribute('aria-label', 'Faustus');
+    toggle.title = 'Faustus';
     toggle.setAttribute('aria-expanded', 'false');
     toggle.addEventListener('click', () => (aside && !aside.hidden ? (aside.hidden = true, toggle.setAttribute('aria-expanded', 'false')) : open(toggle)));
     document.body.appendChild(toggle);

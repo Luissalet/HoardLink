@@ -210,7 +210,8 @@ class CopilotInjectMiddleware:
     """Pure ASGI: add the launcher script to every HTML page the app serves (its SPA shell, server-rendered pages).
 
     Only GET/HEAD answers with ``Content-Type: text/html`` outside ``/api/`` are touched; the body is buffered (pages are
-    small), ``Content-Length`` is fixed and compressed answers are left alone."""
+    small), ``Content-Length`` is fixed. Install it inside compression middleware
+    so it receives HTML before encoding."""
 
     def __init__(self, app):
         self.app = app
@@ -282,4 +283,7 @@ def install_copilot(app, app_id, data_dir, *, app_name=None, faustus_urls=None, 
     app.state.hoard_copilot = app_id
     if inject:
         app.add_middleware(CopilotInjectMiddleware)
+        # ASGI responses travel from the innermost middleware outward. Inject
+        # before a previously registered compressor sees and encodes the HTML.
+        app.user_middleware.append(app.user_middleware.pop(0))
     return {"app_id": app_id, "launcher": LAUNCHER_PATH, "inject": bool(inject)}

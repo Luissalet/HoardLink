@@ -22,7 +22,6 @@ const ALLOWED_PREFIXES = ["/api/hoard-copilot/", "/api/chat/", "/api/session/", 
 const ALLOWED_EXACT = ["/api/chat_stream", "/api/session", "/api/sessions"];
 const FORWARD_REQUEST = ["x-faustus-client-version", "x-odysseus-run-id"];
 const FORWARD_RESPONSE = ["content-type", "x-odysseus-run-id", "x-faustus-idempotent-replay", "x-faustus-api-version"];
-const MAX_BODY = 64 * 1024 * 1024;
 
 let launcherCache = null;
 /** The browser launcher (generated from hoard_link/copilot_launcher.py by scripts/sync_vendored.py). */
@@ -86,7 +85,15 @@ export function multipartContext(body, contentType, origin) {
   if (!/^multipart\/form-data/i.test(contentType || "") || !match) return body;
   const boundary = Buffer.from("--" + (match[1] || match[2]).trim());
   const marks = [];
-  for (let at = body.indexOf(boundary); at >= 0; at = body.indexOf(boundary, at + boundary.length)) marks.push(at);
+  for (let at = body.indexOf(boundary); at >= 0; at = body.indexOf(boundary, at + boundary.length)) {
+    // A MIME delimiter occupies a complete line. Boundary substrings inside
+    // an uploaded file, including JSON examples, are file bytes.
+    if (at !== 0 && (body[at - 2] !== 13 || body[at - 1] !== 10)) continue;
+    const tail = at + boundary.length;
+    const end = body[tail] === 45 && body[tail + 1] === 45 ? tail + 2 : tail;
+    if (end !== body.length && (body[end] !== 13 || body[end + 1] !== 10)) continue;
+    marks.push(at);
+  }
   const pieces = [];
   let cursor = 0;
   for (let i = 0; i + 1 < marks.length; i += 1) {
@@ -95,7 +102,8 @@ export function multipartContext(body, contentType, origin) {
     const split = body.indexOf("\r\n\r\n", start);
     if (start < 2 || split < 0 || split > end) continue;
     const head = body.subarray(start, split).toString("latin1");
-    const name = /name="([^"]*)"/i.exec(head);
+    const disposition = /(?:^|\r\n)Content-Disposition:([^\r\n]*)/i.exec(head);
+    const name = disposition && /(?:^|;)\s*name="([^"]*)"/i.exec(disposition[1]);
     if (!name || !["context", "hoard_context"].includes(name[1])) continue;
     let context;
     try { context = JSON.parse(body.subarray(split + 4, end).toString("utf8")); } catch { continue; }
@@ -114,10 +122,7 @@ async function readBody(req) {
   if (Buffer.isBuffer(req.body)) return JSON.parse(req.body.toString("utf8"));
   if (typeof req.body === "string") return JSON.parse(req.body);
   const chunks = [];
-  let size = 0;
   for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new Error("Copilot request too large");
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "null");
