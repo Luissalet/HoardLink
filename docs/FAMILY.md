@@ -440,7 +440,11 @@ Faustus copilot with no code of its own:
   route names (`/notes/42` → `{kind: "note", object_id: "42"}`) and the selected text; an app can add real ids with
   `window.hoardCopilot = { context() { return {...}; }, onTurnEnd(detail) {...} }` and listen to the
   `hoard:copilot-turn-end` event to refresh after an agent changed its data. One conversation per data space, kept
-  across reloads; a conversation the current Faustus no longer has is dropped and a new one starts. Keys typed in the
+  across reloads, and one per project when the app's context names one (`project.external_project_id` / `id`):
+  moving to another project shows that project's conversation or a fresh one, never two projects in one thread. The
+  launcher checks on every navigation, when the panel opens, when the page dispatches `hoard:copilot-context-changed`
+  (a project picked without changing the URL) and right before each turn. A view without a project omits `project`
+  (never `null`). A conversation the current Faustus no longer has is dropped and a new one starts. Keys typed in the
   panel never reach the app's shortcuts. A turn queued behind another agent on the shared model lane keeps its place
   for up to 10 minutes (`initial_response_timeout_s`) instead of failing at the endpoint's short default.
 * Faustus is found through `<APP>_FAUSTUS_URL`, `HOARD_FAUSTUS_URL` (+ `HOARD_FAUSTUS_TOKEN`) or the link config,

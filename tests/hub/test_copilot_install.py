@@ -214,3 +214,86 @@ def test_launcher_opens_closes_and_keeps_keys_in_a_real_browser():
             assert page.locator("aside.hoard-copilot").count() == 1, "reopening reuses the same panel"
         finally:
             browser.close()
+
+
+PROJECT_PAGE = """<!doctype html><html lang='es'><head><title>Projects</title></head><body><h1>Proyecto</h1>
+<script>
+window.__project = null;
+window.hoardCopilot = { context: async () => {
+  const fromHash = (location.hash.match(/#\\/p\\/(\\w+)/) || [])[1];
+  const id = window.__project || fromHash;
+  return id ? { project: { external_project_id: 'proj-' + id, title: 'Project ' + id } } : { project: null };
+} };
+</script></body></html>"""
+
+RECORDING_PANEL = """
+let next = 0;
+class RecordingChat extends HTMLElement {
+  constructor() { super(); this._session = null; this.history = 0; }
+  get session() { return this._session; }
+  set session(v) { this._session = v || null; }
+  connectedCallback() {
+    // A panel without a conversation makes one, the way <faustus-chat> does on its first send.
+    if (!this._session) {
+      this._session = 'sid-' + (++next);
+      this.dispatchEvent(new CustomEvent('faustus:session-change', { detail: { sessionId: this._session } }));
+    }
+  }
+  loadHistory() { this.history += 1; return Promise.resolve(); }
+}
+if (!customElements.get('faustus-chat')) customElements.define('faustus-chat', RecordingChat);
+"""
+
+
+def test_a_different_project_is_a_different_conversation_in_a_real_browser():
+    """Moving from project A to B in the app shows B's conversation (never A's history under B), coming back shows A's
+    again, and a project change nothing announced still routes the next turn to that project's conversation."""
+    sync_api = pytest.importorskip("playwright.sync_api")
+    info = {"app_id": "demo", "app_name": "Demo Hoard", "data_space_id": "space-p", "panel_url": "/api/copilot/panel.js",
+            "server": "/", "tool_server_id": "demo", "settings_url": "http://127.0.0.1:7000/studio/settings"}
+    routes = {
+        "http://hoard.test/": ("text/html", inject_launcher(PROJECT_PAGE.encode()).decode()),
+        "http://hoard.test" + LAUNCHER_PATH: ("application/javascript", LAUNCHER_JS),
+        "http://hoard.test/api/copilot/info": ("application/json", json.dumps(info)),
+        "http://hoard.test/api/copilot/panel.js": ("application/javascript", RECORDING_PANEL),
+    }
+
+    def fulfill(route):
+        url = route.request.url.split("#")[0]
+        if url == "http://hoard.test/api/copilot/proxy":    # saved conversations still exist upstream
+            return route.fulfill(status=200, content_type="application/json", body='{"messages": []}')
+        kind, body = routes.get(url, ("text/plain", "not found"))
+        route.fulfill(status=200 if url in routes else 404, content_type=kind, body=body)
+
+    with sync_api.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"no Chromium for Playwright: {exc}")
+        try:
+            page = browser.new_page()
+            page.route("http://hoard.test/**", fulfill)
+            page.goto("http://hoard.test/#/p/A")
+            page.locator(".hoard-copilot-toggle").click()
+            session = lambda: page.evaluate("document.querySelector('faustus-chat') && document.querySelector('faustus-chat').session")
+            page.wait_for_function("document.querySelector('faustus-chat') && document.querySelector('faustus-chat').session")
+            first = session()
+            assert page.evaluate("localStorage.getItem('hoard-copilot:space-p:project:proj-A')") == first
+            page.evaluate("location.hash = '#/p/B'")
+            page.wait_for_function(f"document.querySelector('faustus-chat').session && document.querySelector('faustus-chat').session !== {json.dumps(first)}")
+            second = session()
+            assert second != first
+            assert page.evaluate("localStorage.getItem('hoard-copilot:space-p:project:proj-B')") == second
+            page.evaluate("history.pushState({}, '', '/#/p/A')")
+            page.wait_for_function(f"document.querySelector('faustus-chat').session === {json.dumps(first)}")
+            assert page.evaluate("document.querySelector('faustus-chat').history") >= 1, "A's history is loaded again"
+            assert page.locator("faustus-chat").count() == 1
+            # No navigation and no event: the next turn's context still moves it to project C's (new) conversation.
+            page.evaluate("window.__project = 'C'")
+            page.evaluate("document.querySelector('faustus-chat').contextProvider()")
+            assert session() is None, "project C has no conversation yet: the panel makes a fresh one"
+            # A view without a project keeps the data space's own conversation and never sends project: null.
+            ctx = page.evaluate("window.__project = null; history.replaceState({}, '', '/#/home'); document.querySelector('faustus-chat').contextProvider()")
+            assert "project" not in ctx and ctx["view"]["route"] == "/home"
+        finally:
+            browser.close()
