@@ -7,7 +7,12 @@ app's own relay (``/api/copilot/proxy``), so tokens never reach the page.
 What the panel learns about the page (``contextProvider``): the app (``origin``), the view (path, title, first heading,
 language), the text selected, and the objects open in the view, guessed from the route: pairs ``/<kind>/<id>`` where the
 id looks like an id (digits, a ULID, a UUID); ``new`` is never an object. An app adds or overrides any of it by defining
-``window.hoardCopilot = { context: async () => ({ project, active_objects, ... }), onTurnEnd() {...} }``.
+``window.hoardCopilot = { context: async () => ({ project, active_objects, ... }), onTurnEnd() {...} }``; returning
+``active_objects: []`` drops the guesses from the URL.
+
+Where the button sits: bottom right by default; an app whose own controls live there moves it with the CSS variables
+``--hoard-copilot-bottom`` / ``--hoard-copilot-right`` (or ``--hoard-copilot-left`` with
+``<html data-hoard-copilot-position="left">``).
 
 Keys typed in the panel stay in the panel (the app's shortcuts never see them). The conversation is kept per data space
 (localStorage, best effort; the route of each turn travels in the context) and, when the app's context names a project
@@ -78,11 +83,12 @@ LAUNCHER_JS = r"""
   }
 
   const css = `
-    .hoard-copilot-toggle{position:fixed;right:18px;bottom:18px;z-index:2147483000;font:600 13px/1 system-ui,sans-serif;
+    .hoard-copilot-toggle{position:fixed;right:var(--hoard-copilot-right,18px);bottom:var(--hoard-copilot-bottom,18px);z-index:2147483000;font:600 13px/1 system-ui,sans-serif;
       padding:10px 14px;border-radius:999px;border:1px solid rgba(127,127,127,.45);background:#1f1b2e;color:#f4f1ff;
       box-shadow:0 6px 18px rgba(0,0,0,.35);cursor:pointer}
     .hoard-copilot-toggle:focus-visible{outline:2px solid #9b87f5;outline-offset:2px}
-    .hoard-copilot{position:fixed;top:14px;right:14px;bottom:66px;width:min(430px,calc(100vw - 28px));z-index:2147483001;
+    html[data-hoard-copilot-position=left] .hoard-copilot-toggle{right:auto;left:var(--hoard-copilot-left,18px)}
+    .hoard-copilot{position:fixed;top:14px;right:14px;bottom:calc(var(--hoard-copilot-bottom,18px) + 48px);width:min(430px,calc(100vw - 28px));z-index:2147483001;
       display:flex;flex-direction:column;background:#17141f;color:#f4f1ff;border:1px solid rgba(127,127,127,.4);
       border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.45);font:14px/1.4 system-ui,sans-serif}
     .hoard-copilot[hidden]{display:none}
