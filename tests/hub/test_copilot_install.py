@@ -159,3 +159,58 @@ def test_install_spa_respects_own_relay_opt_out_and_unconfigured_apps(tmp_path, 
         assert client.get("/api/copilot/info").status_code == 404
     with pytest.raises(RuntimeError):
         _spa_app(tmp_path, monkeypatch, faustus, configure=False, copilot=True)
+
+
+STUB_PANEL = """
+class FakeChat extends HTMLElement {
+  connectedCallback() { this.innerHTML = '<textarea aria-label="Mensaje"></textarea>'; }
+  loadHistory() { return Promise.resolve(); }
+}
+if (!customElements.get('faustus-chat')) customElements.define('faustus-chat', FakeChat);
+"""
+
+
+def test_launcher_opens_closes_and_keeps_keys_in_a_real_browser():
+    """The panel really hides when closed (a display rule must not beat [hidden]), reopens, and keys typed in it never
+    reach the app's own shortcuts. Runs in Chromium through Playwright; skipped where Playwright is not installed."""
+    sync_api = pytest.importorskip("playwright.sync_api")
+    info = {"app_id": "demo", "app_name": "Demo Hoard", "data_space_id": "space-1", "panel_url": "/api/copilot/panel.js",
+            "server": "/", "tool_server_id": "demo", "settings_url": "http://127.0.0.1:7000/studio/settings"}
+    page_html = inject_launcher(PAGE.encode()).decode()
+    routes = {
+        "http://hoard.test/": ("text/html", page_html),
+        "http://hoard.test" + LAUNCHER_PATH: ("application/javascript", LAUNCHER_JS),
+        "http://hoard.test/api/copilot/info": ("application/json", json.dumps(info)),
+        "http://hoard.test/api/copilot/panel.js": ("application/javascript", STUB_PANEL),
+    }
+    with sync_api.sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch()
+        except Exception as exc:  # noqa: BLE001 - browsers not downloaded on this machine
+            pytest.skip(f"no Chromium for Playwright: {exc}")
+        try:
+            page = browser.new_page()
+            page.route("http://hoard.test/**", lambda route: route.fulfill(
+                status=200 if route.request.url in routes else 404,
+                content_type=routes.get(route.request.url, ("text/plain", ""))[0],
+                body=routes.get(route.request.url, ("", "not found"))[1]))
+            page.goto("http://hoard.test/")
+            page.evaluate("window.__appKeys = 0; document.addEventListener('keydown', () => { window.__appKeys += 1; })")
+            toggle = page.locator(".hoard-copilot-toggle")
+            toggle.click()
+            panel = page.locator("aside.hoard-copilot")
+            panel.wait_for(state="visible")
+            page.locator("faustus-chat textarea").wait_for(state="visible")
+            assert page.locator("aside.hoard-copilot header strong").inner_text() == "Faustus · Demo Hoard"
+            page.locator("faustus-chat textarea").press("k")
+            assert page.evaluate("window.__appKeys") == 0, "a key typed in the panel reached the app"
+            page.get_by_role("button", name="Cerrar Faustus").click()
+            panel.wait_for(state="hidden")
+            assert not panel.is_visible() and toggle.get_attribute("aria-expanded") == "false"
+            toggle.click()
+            panel.wait_for(state="visible")
+            toggle.click()                                   # the button closes it too
+            panel.wait_for(state="hidden")
+            assert page.locator("aside.hoard-copilot").count() == 1, "reopening reuses the same panel"
+        finally:
+            browser.close()

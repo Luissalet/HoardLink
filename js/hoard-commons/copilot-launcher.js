@@ -66,6 +66,7 @@
     .hoard-copilot{position:fixed;top:14px;right:14px;bottom:66px;width:min(430px,calc(100vw - 28px));z-index:2147483001;
       display:flex;flex-direction:column;background:#17141f;color:#f4f1ff;border:1px solid rgba(127,127,127,.4);
       border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.45);font:14px/1.4 system-ui,sans-serif}
+    .hoard-copilot[hidden]{display:none}
     .hoard-copilot header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;
       border-bottom:1px solid rgba(127,127,127,.25)}
     .hoard-copilot header button{background:transparent;border:0;color:inherit;font-size:20px;line-height:1;cursor:pointer;padding:2px 6px}
