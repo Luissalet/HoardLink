@@ -140,17 +140,18 @@
   }
 
   // ---- form ------------------------------------------------------------------------------------------
+  let sourceForm = null;
   function openForm(src) {
     editing = src; formEl.hidden = false; formEl.innerHTML = "";
     const f = el("div", "ch-form"); formEl.appendChild(f);
     const inputs = {};
     let into = f;   // where field() / check() put their label: the form, or the per-kind body
     const field = (key, label, type = "text", value = "", cls = "") => {
-      const lab = el("label", cls, label); const inp = el("input"); inp.type = type; inp.value = value ?? ""; if (type === "password") inp.autocomplete = "off";
+      const lab = el("label", cls, label); const inp = el("input"); inp.name = key; inp.type = type; inp.value = value ?? ""; if (type === "password") inp.autocomplete = "off";
       lab.appendChild(inp); into.appendChild(lab); inputs[key] = inp; return inp;
     };
     const check = (key, label, value) => {
-      const lab = el("label", "check"); const inp = el("input"); inp.type = "checkbox"; inp.checked = !!value;
+      const lab = el("label", "check"); const inp = el("input"); inp.name = key; inp.type = "checkbox"; inp.checked = !!value;
       lab.appendChild(inp); lab.appendChild(document.createTextNode(label)); into.appendChild(lab); inputs[key] = inp; return inp;
     };
     const kindSel = el("select");
@@ -190,15 +191,21 @@
     }
     kindSel.onchange = kindFields; kindFields();
     const act = el("div", "act wide");
-    const save = el("button", "primary small", t("save"));
-    save.onclick = async () => {
+    const collect = () => {
       const kind = kindSel.value;
       const payload = { kind, name: inputs.name.value.trim(), sphere: inputs.sphere.value, interval_min: Number(inputs.interval_min.value) || 5 };
       if (src) payload.id = src.id;
       if (kind === "slack") Object.assign(payload, { token: inputs.token.value, channels: inputs.channels.value, include_dms: inputs.include_dms.checked, backfill_days: Number(inputs.backfill_days.value) || 0 });
       else if (kind === "graph") Object.assign(payload, { access_token: inputs.access_token.value, client_id: inputs.client_id.value.trim(), tenant: inputs.tenant.value.trim(), teams_chats: inputs.teams_chats.checked, outlook: inputs.outlook.checked });
       else payload.path = inputs.path.value.trim();
-      const r = await api("/api/chats/sources", payload);
+      return payload;
+    };
+    const before = collect();
+    sourceForm = {collect,before};
+    const save = el("button", "primary small", t("save"));
+    save.onclick = async () => {
+      const payload = collect();
+      const r = await api("/api/chats/sources", src ? {id:src.id,...window.HubFacets.ctx.changedFields(before,payload)} : payload);
       if (!r.ok) { toast(r.error, "err"); return; }
       toast(`${r.source.name}: ${t("saved")}`, "ok"); formEl.hidden = true; editing = null; lastSig = ""; load();
     };
@@ -292,6 +299,16 @@
   }
 
   window.HubFacets.register("chats", {
+    copilot:{async context(){
+      const part={active_objects:[],view:{section:'chats'},pending_forms:[]};
+      if (sourceForm && !formEl.hidden) {
+        const fields=sourceForm.collect();
+        if (editing) {const result=await api('/api/chats/sources');const found=result.sources?.find(s=>s.id===editing.id);
+          if(found)part.active_objects.push({kind:'chat_source',object_id:found.id,title:found.name});}
+        part.pending_forms.push({kind:'chat_source',is_new:!editing,fields,changes:window.HubFacets.ctx.changedFields(sourceForm.before,fields)});
+      }
+      return part;
+    },refresh:load},
     placement: "tab", label: T.title, order: 45, mount,
     load: () => load().catch((e) => console.error("chats tab", e)),
     tick: () => { if (!editing) load().catch(() => {}); },

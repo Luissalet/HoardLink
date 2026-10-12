@@ -196,7 +196,7 @@
   }
 
   // ---- the dialog ----------------------------------------------------------------------------------------
-  let dlg = null, draft = [], sel = 0, jsonMode = false, newIds = new Set(), form = null;
+  let dlg = null, draft = [], baseline = [], sel = 0, jsonMode = false, newIds = new Set(), form = null;
 
   function daysControl(value) {
     const wrap = el("div", "sp-checks");
@@ -352,7 +352,13 @@
       try { payload = JSON.parse(dlg.querySelector("#sp-json-body").value); } catch (e) { err.textContent = t("bad_json") + e.message; return; }
       if (Array.isArray(payload)) payload = { spheres: payload };
     } else { collect(); payload = { spheres: draft }; }
-    const r = await api("/api/spheres", payload);
+    if (!Array.isArray(payload?.spheres) || !payload.spheres.length || payload.spheres.some(s=>!s || typeof s!=='object' || !s.id)) {
+      err.textContent=t('bad_json')+'spheres must be a non-empty list of objects with IDs';return;
+    }
+    const patches=payload.spheres.map(s=>({id:s.id,...H.ctx.changedFields(baseline.find(old=>old.id===s.id) || {},s)}))
+      .filter(p=>Object.keys(p).length>1);
+    const removed=baseline.filter(old=>old.id!=='personal' && !payload.spheres.some(s=>s.id===old.id)).map(s=>s.id);
+    const r = await api("/api/spheres", {patches,removed});
     if (!r.ok) { err.textContent = r.error || "error"; return; }
     const prev = active;
     spheres = r.spheres || spheres; active = r.active || active;
@@ -393,7 +399,7 @@
         renderDialog();
       };
     }
-    draft = clone(spheres); sel = Math.max(0, draft.findIndex((s) => s.id === active)); jsonMode = false; newIds = new Set();
+    draft = clone(spheres); baseline = clone(spheres); sel = Math.max(0, draft.findIndex((s) => s.id === active)); jsonMode = false; newIds = new Set();
     renderDialog();
     if (!dlg.open) dlg.showModal();
   }
@@ -401,6 +407,17 @@
   window.HubSpheres = { openDialog, active: () => active, list: () => clone(spheres), refresh };
 
   H.register("spheres", {
+    copilot:{async context(){
+      if (!dlg?.open) return null;
+      let fields;
+      if (jsonMode) {try {const value=JSON.parse(dlg.querySelector('#sp-json-body').value);fields=Array.isArray(value)?value:value.spheres;}
+        catch {fields=null;}}
+      else {collect();fields=clone(draft);}
+      const result=await api('/api/spheres');
+      const selected=fields?.[sel];const found=result.spheres?.find(s=>s.id===selected?.id);
+      return {view:{section:'spheres',editor_mode:'modal'},active_objects:found ? [{kind:'sphere',object_id:found.id,title:L(found.name)}] : [],
+        pending_forms:[{kind:'spheres',is_new:!found,fields:Array.isArray(fields)?{spheres:fields}:{json_valid:false}}]};
+    },refresh:()=>refresh(false)},
     placement: "header",
     label: S.sphere,
     order: 10,

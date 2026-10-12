@@ -359,7 +359,7 @@ def test_the_server_never_returns_other_routes_as_ours(served):
 
 def test_tools_are_catalogued_and_described_properly():
     cat = {t["name"]: t for t in SpheresFacet.tools()}
-    assert set(cat) == {"hub_spheres", "hub_sphere_set"}
+    assert set(cat) == {"hub_spheres", "hub_sphere_set", "hub_spheres_patch"}
     for t in cat.values():
         assert len(t["description"].split("\n")[0]) <= 110
     assert cat["hub_spheres"]["annotations"] == {"readOnlyHint": True}
@@ -389,3 +389,33 @@ def test_defaults_are_independent_copies():
     a[0]["vip"].append("x")
     assert b[0]["vip"] == [] and blank_sphere("z")["vip"] == []
     assert facets_mod.FACET_MODULES.index("notify") < facets_mod.FACET_MODULES.index("spheres")
+
+
+def test_batch_patch_keeps_concurrent_fields_and_other_spheres(sp):
+    assert sp.upsert({'id':'added-by-agent','name':'Agent sphere'})['ok']
+    assert sp.upsert({'id':'work','keywords':['agent keyword'],'name':{'es':'Trabajo actual','en':'Work'}})['ok']
+    result=sp.patch_batch([{'id':'work','name':{'en':'Manual name'}}])
+    assert result['ok']
+    work=sp.get('work')
+    assert work['keywords']==['agent keyword']
+    assert work['name']=={'es':'Trabajo actual','en':'Manual name'}
+    assert sp.get('added-by-agent')['name']['en']=='Agent sphere'
+
+
+def test_batch_validation_failure_changes_nothing(sp):
+    before=sp.list()
+    result=sp.patch_batch([{'id':'work','name':'Would be changed'}, {'id':'bad','color':'invalid'}],['work'])
+    assert not result['ok'] and sp.list()==before
+    result=sp.patch_batch([{'id':'work','name':'Would be changed'}, {'id':'bad','color':'invalid'}])
+    assert not result['ok'] and sp.list()==before
+    assert not sp.patch_batch([],['personal'])['ok'] and sp.list()==before
+
+
+def test_batch_http_and_native_tool_share_the_patch(sp, served):
+    hub,url,hubh,_=served
+    status,result=_http(url+'/api/spheres',{'patches':[{'id':'work','color':'#123456'}]},headers=UI)
+    assert status==200 and result['ok'] and sp.get('work')['color']=='#123456'
+    status,result=_http(url+'/api/agent/call',{'name':'hub_spheres_patch',
+        'arguments':{'patches':[{'id':'new-fixture','name':'New fixture'}],'removed':['work']}},headers=hubh)
+    assert status==200 and result['result']['ok']
+    assert sp.get('work') is None and sp.get('new-fixture')['name']['en']=='New fixture'

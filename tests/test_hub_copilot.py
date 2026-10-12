@@ -219,7 +219,7 @@ def test_context_and_dirty_forms_in_real_browser(private_host):
             page.locator('[data-copilot-form="agora_task_new"]').get_by_role('button',name='Cancel',exact=True).click()
             rule_body={'name':'Pending rule fixture','enabled':False,'when':{'type':'private.none'},
                 'then':[{'kind':'event','type':'private.fixture','data':{'message':'Keep this',
-                    'env':{'API_KEY':'private-env-secret'},'api_key':'private-form-secret'}}]}
+                    'env':{'API_KEY':'private-env-secret'},'api_key':'private-form-secret','clientSecret':'private-client-secret'}}]}
             with request(base,'/api/rules',rule_body) as response:
                 assert json.load(response)['ok']
             with request(base,'/api/rules') as response:
@@ -233,6 +233,7 @@ def test_context_and_dirty_forms_in_real_browser(private_host):
             assert current['editor']['forms'][0]['dirty']==['name']
             assert 'private-env-secret' not in json.dumps(current)
             assert 'private-form-secret' not in json.dumps(current)
+            assert 'private-client-secret' not in json.dumps(current)
             assert current['editor']['forms'][0]['fields']['then'][0]['data']['message']=='Keep this'
             with request(base,f"/api/rules/{rule['id']}/update",{'enabled':True}) as response:
                 assert json.load(response)['ok']
@@ -246,3 +247,102 @@ def test_context_and_dirty_forms_in_real_browser(private_host):
             assert saved['then']==rule['then']
         finally:
             context.close()
+
+
+def test_native_facet_forms_keep_pending_fields_and_save_only_changes(private_host):
+    playwright=pytest.importorskip('playwright.sync_api')
+    from hoard_link.web import browser
+    from tempfile import TemporaryDirectory
+    _,base,_,tmp_path=private_host
+    with request(base,'/api/chats/sources',{'kind':'jsonl','name':'Offline source','path':str(tmp_path/'missing.jsonl'),'enabled':False}) as response:
+        source=json.load(response)['source']
+    with playwright.sync_playwright() as p, TemporaryDirectory(prefix='hub387-facets-') as profile:
+        context,_=browser.launch_context(p,profile,headless=True,viewport={'width':1440,'height':1000})
+        try:
+            page=context.new_page();page.goto(base,wait_until='networkidle')
+            page.locator('[data-tab="mailgate"]').click()
+            page.locator('#tab-mailgate').get_by_role('button',name='Settings',exact=True).click()
+            owner=page.locator('.mg-form input[name="owner"]');owner.fill('Pending owner')
+            page.evaluate('()=>window.mailInput=document.querySelector(".mg-form input[name=owner]")')
+            with request(base,'/api/mail/config',{'retention_days':45}) as response:assert json.load(response)['ok']
+            await_refresh='async()=>await window.hoardCopilot.onTurnEnd({reason:"completed"})'
+            page.evaluate(await_refresh)
+            assert page.evaluate('()=>window.mailInput===document.querySelector(".mg-form input[name=owner]")')
+            mail=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert any(f['kind']=='mail_config' and f['changes']=={'owner':'Pending owner'} for f in mail['editor']['forms'])
+            with page.expect_response(lambda response:response.url.endswith('/api/mail/config') and response.request.method=='POST') as saved:
+                page.locator('.mg-form').get_by_role('button',name='Save',exact=True).click()
+            assert saved.value.json()['ok']
+            with request(base,'/api/mail/config') as response:
+                cfg=json.load(response)['config'];assert cfg['owner']=='Pending owner' and cfg['retention_days']==45
+            page.locator('#tab-mailgate').get_by_role('button',name='Settings',exact=True).click()
+            page.locator('[data-tab="chats"]').click()
+            page.locator('#tab-chats .rule').filter(has_text='Offline source').get_by_role('button',name='Edit',exact=True).click()
+            name=page.locator('.ch-form input[name="name"]');name.fill('Pending source')
+            with request(base,'/api/chats/sources',{'id':source['id'],'interval_min':31}) as response:assert json.load(response)['ok']
+            page.evaluate('()=>window.chatInput=document.querySelector(".ch-form input[name=name]")')
+            page.evaluate(await_refresh)
+            chat=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert chat['active_objects'][0]['object_id']==source['id']
+            assert page.evaluate('()=>window.chatInput===document.querySelector(".ch-form input[name=name]")')
+            with page.expect_response(lambda response:response.url.endswith('/api/chats/sources') and response.request.method=='POST') as saved:
+                page.locator('.ch-form').get_by_role('button',name='Save',exact=True).click()
+            assert saved.value.json()['ok']
+            with request(base,'/api/chats/sources') as response:
+                row=next(s for s in json.load(response)['sources'] if s['id']==source['id'])
+                assert row['name']=='Pending source' and row['interval_min']==31 and row['enabled'] is False
+            page.locator('[data-tab="notify"]').click();page.locator('.nt-settings').click()
+            topic=page.locator('.nt-set input[name="topic"]');topic.fill('pending-topic')
+            page.locator('.nt-set input[name="token"]').fill('private-form-token')
+            with request(base,'/api/notify/config',{'rate_per_app':33}) as response:assert json.load(response)['ok']
+            page.evaluate('()=>window.notifyInput=document.querySelector(".nt-set input[name=topic]")')
+            page.evaluate(await_refresh)
+            notify=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert 'private-form-token' not in json.dumps(notify)
+            assert page.evaluate('()=>window.notifyInput===document.querySelector(".nt-set input[name=topic]")')
+            with page.expect_response(lambda response:response.url.endswith('/api/notify/config') and response.request.method=='POST') as saved:
+                page.locator('.nt-set [data-action="save"]').click()
+            assert saved.value.json()['ok'],saved.value.json()
+            with request(base,'/api/notify/config') as response:
+                cfg=json.load(response);assert cfg['rate_per_app']==33 and cfg['channels']['ntfy']['topic']=='pending-topic'
+            page.locator('.nt-settings').click()
+            page.locator('.today-head').get_by_role('button',name='Calendar',exact=True).click()
+            folder=page.locator('.today-ics input[name="export_path"]');folder.fill(str(tmp_path/'pending-export'))
+            page.evaluate('()=>window.calendarInput=document.querySelector(".today-ics input[name=export_path]")')
+            with request(base,'/api/today/ics/config',{'lan_port':0}) as response:assert json.load(response)['ok']
+            page.evaluate(await_refresh)
+            calendar=page.evaluate('async()=>await window.hoardCopilot.context()')
+            form=next(f for f in calendar['editor']['forms'] if f['kind']=='calendar_config')
+            assert form['changes']=={'export_path':str(tmp_path/'pending-export')}
+            assert page.evaluate('()=>window.calendarInput===document.querySelector(".today-ics input[name=export_path]")')
+            assert page.evaluate('()=>document.activeElement===window.calendarInput')
+            assert 'urls' not in form['fields'] and 'url' not in form['fields']
+            with page.expect_response(lambda response:response.url.endswith('/api/today/ics/config') and response.request.method=='POST') as saved:
+                page.locator('.today-ics').get_by_role('button',name='Save',exact=True).click()
+            assert saved.value.json()['ok']
+            with request(base,'/api/today/ics') as response:assert json.load(response)['export_path']==str(tmp_path/'pending-export')
+            page.locator('.today-head').get_by_role('button',name='Calendar',exact=True).click()
+            page.locator('#sphere-chip').click();page.locator('.sphere-menu [data-action="configure"]').click()
+            english=page.locator('#spheres-dialog').get_by_label('Name (English)',exact=True)
+            english.fill('Pending personal name')
+            page.evaluate('()=>window.sphereInput=document.querySelector("#spheres-dialog .sp-main input[type=text]")')
+            with request(base,'/api/spheres',{'patches':[{'id':'personal','keywords':['Agent keyword']},
+                {'id':'agent-added','name':'Agent-added sphere'}]}) as response:assert json.load(response)['ok']
+            page.evaluate(await_refresh)
+            spheres=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert spheres['active_objects'][0]['kind']=='sphere' and spheres['active_objects'][0]['object_id']=='personal'
+            assert page.evaluate('()=>window.sphereInput===document.querySelector("#spheres-dialog .sp-main input[type=text]")')
+            assert english.input_value()=='Pending personal name'
+            with page.expect_response(lambda response:response.url.endswith('/api/spheres') and response.request.method=='POST') as saved:
+                page.locator('#spheres-dialog .sp-save').click()
+            assert saved.value.json()['ok']
+            with request(base,'/api/spheres') as response:
+                data=json.load(response)['spheres'];personal=next(s for s in data if s['id']=='personal')
+                assert personal['name']['en']=='Pending personal name' and personal['keywords']==['Agent keyword']
+                assert any(s['id']=='agent-added' for s in data)
+            page.locator('#sphere-chip').click();page.locator('.sphere-menu [data-action="configure"]').click()
+            page.locator('#spheres-dialog .sp-add').click()
+            new_sphere=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert new_sphere['active_objects']==[]
+            assert new_sphere['editor']['forms'][0]['is_new'] is True
+        finally:context.close()

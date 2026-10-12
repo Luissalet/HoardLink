@@ -22,7 +22,7 @@
     if (Array.isArray(value)) return value.map(withoutCredentials);
     if (!value || typeof value !== 'object') return value;
     return Object.fromEntries(Object.entries(value)
-      .filter(([key]) => !/^(?:env|environment|backend|authorization|cookie|password|secret|token|access_token|refresh_token|api[_-]?key|.*[_-](?:key|token|secret|password))$/i.test(key))
+      .filter(([key]) => !/^(?:env|environment|backend|authorization|cookie|credentials?|password|secret|token|access_token|refresh_token|api[_-]?key|.*[_-](?:key|token|secret|password))$/i.test(key.replace(/([a-z0-9])([A-Z])/g,'$1_$2')))
       .map(([key,item]) => [key,withoutCredentials(item)]));
   }
   async function context() {
@@ -31,9 +31,9 @@
     const facet = await window.HubFacets?.copilotContext?.();
     const familyOpen = document.querySelector('#family-body') && !document.querySelector('#family-body').hidden;
     const editing = document.querySelector('#edit-dialog')?.open;
-    const selected = editing ? family : surface === 'apps' || !familyOpen ? app : facet || family;
+    const selected = editing ? family : app.pending_forms?.length && surface === 'apps' ? app : facet?.pending_forms?.length ? facet : surface === 'apps' || !familyOpen ? app : facet || family;
     const selection = window.getSelection()?.toString();
-    const forms = [...(app.pending_forms || []),...(family?.pending_forms || []),...pendingForms()];
+    const forms = [...(app.pending_forms || []),...(family?.pending_forms || []),...(facet?.pending_forms || []),...pendingForms()];
     return withoutCredentials({active_objects:selected?.active_objects || [],
       selection:selection ? {kind:'text',text:selection} : null,
       ...(forms.length ? {editor:{forms}} : {}),
