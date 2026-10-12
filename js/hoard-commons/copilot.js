@@ -16,6 +16,10 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 export const LAUNCHER_PATH = "/api/copilot/launcher.js";
+// What an app's session guard must let through (the page loads the launcher before its cookie exists) and the
+// anti-CSRF header the launcher sends with /info and /proxy (same values as hoard_link/copilot.py).
+export const COPILOT_PUBLIC_PATHS = Object.freeze([LAUNCHER_PATH]);
+export const COPILOT_REQUEST_HEADER = Object.freeze(["X-Hoard-Request", "1"]);
 const LAUNCHER_TAG = '<script type="module" src="/api/copilot/launcher.js"></script>';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ALLOWED_PREFIXES = ["/api/hoard-copilot/", "/api/chat/", "/api/session/", "/api/sessions/"];

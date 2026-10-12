@@ -12,7 +12,14 @@ id looks like an id (digits, a ULID, a UUID); ``new`` is never an object. An app
 
 Where the button sits: bottom right by default; an app whose own controls live there moves it with the CSS variables
 ``--hoard-copilot-bottom`` / ``--hoard-copilot-right`` (or ``--hoard-copilot-left`` with
-``<html data-hoard-copilot-position="left">``).
+``<html data-hoard-copilot-position="left">``). The panel opens under the app's own top bar (a fixed or sticky bar, or a
+``header``/``nav``/``role=banner`` starting in the first 64 px); ``--hoard-copilot-top`` on ``:root`` overrides it.
+Escape closes the panel, except inside an app dialog.
+
+Apps with strict defences work without exceptions of their own: the styles are a constructed stylesheet (allowed by
+``style-src 'self'``), the requests to ``/api/copilot/info`` and ``/proxy`` carry ``X-Hoard-Request: 1`` and the page
+cookies, and the launcher script itself needs no session (``COPILOT_PUBLIC_PATHS`` in ``copilot.py`` lists what a
+session guard should let through).
 
 Keys typed in the panel stay in the panel (the app's shortcuts never see them). The conversation is kept per data space
 (localStorage, best effort; the route of each turn travels in the context) and, when the app's context names a project
@@ -60,6 +67,9 @@ LAUNCHER_JS = r"""
   }
 
   const TURN_WAIT_S = 600;
+  // Apps that refuse state-changing requests without their anti-CSRF header (``X-Hoard-Request: 1``) accept the
+  // relay like any other call of their own page; apps that do not check it ignore the header.
+  const APP_HEADERS = { 'X-Hoard-Request': '1' };
 
   function relayFetch(input, init = {}) {
     const request = new Request(input, init);
@@ -87,8 +97,8 @@ LAUNCHER_JS = r"""
           envelope.raw_body = btoa(binary);
         }
       }
-      return fetch('/api/copilot/proxy', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(envelope), signal: request.signal });
+      return fetch('/api/copilot/proxy', { method: 'POST', headers: { 'Content-Type': 'application/json', ...APP_HEADERS },
+        body: JSON.stringify(envelope), signal: request.signal, credentials: 'same-origin' });
     })();
   }
 
@@ -102,7 +112,7 @@ LAUNCHER_JS = r"""
       box-shadow:0 6px 18px rgba(0,0,0,.35);cursor:pointer}
     .hoard-copilot-toggle:focus-visible{outline:2px solid __FAUSTUS_BRAND__;outline-offset:2px}
     html[data-hoard-copilot-position=left] .hoard-copilot-toggle{right:auto;left:var(--hoard-copilot-left,18px)}
-    .hoard-copilot{position:fixed;top:14px;right:14px;bottom:calc(var(--hoard-copilot-bottom,18px) + 48px);width:min(430px,calc(100vw - 28px));z-index:2147483001;
+    .hoard-copilot{position:fixed;top:var(--hoard-copilot-top,14px);right:14px;bottom:calc(var(--hoard-copilot-bottom,18px) + 48px);width:min(430px,calc(100vw - 28px));z-index:2147483001;
       display:flex;flex-direction:column;background:#17141f;color:#f4f1ff;border:1px solid rgba(127,127,127,.4);
       border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.45);font:14px/1.4 system-ui,sans-serif}
     .hoard-copilot[hidden]{display:none}
@@ -112,7 +122,7 @@ LAUNCHER_JS = r"""
     .hoard-copilot .hoard-copilot-body{flex:1;min-height:0;display:flex}
     .hoard-copilot faustus-chat{flex:1;min-height:0;border:0;border-radius:0 0 12px 12px}
     .hoard-copilot [role=alert]{margin:10px 12px;color:#ffb4a8}
-    @media (max-width:600px){.hoard-copilot{top:6px;right:6px;bottom:60px;width:calc(100vw - 12px)}}`;
+    @media (max-width:600px){.hoard-copilot{top:var(--hoard-copilot-top,6px);right:6px;bottom:60px;width:calc(100vw - 12px)}}`;
 
   let info = null;
   let aside = null;
@@ -254,7 +264,7 @@ LAUNCHER_JS = r"""
   }
 
   async function mount(body, title) {
-    const response = await fetch('/api/copilot/info');
+    const response = await fetch('/api/copilot/info', { headers: APP_HEADERS, credentials: 'same-origin' });
     if (!response.ok) throw new Error((await response.text()) || ('HTTP ' + response.status));
     info = await response.json();
     title.textContent = 'Faustus · ' + (info.app_name || info.app_id);
@@ -286,8 +296,60 @@ LAUNCHER_JS = r"""
     checkTimer = setTimeout(() => { checkProject().catch(() => {}); }, 250);
   }
 
+  // A strict content security policy (``style-src 'self'``) blocks a <style> element but not a constructed sheet, so
+  // the launcher adopts one when the browser can and falls back to <style> otherwise.
+  function addStyles() {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      return;
+    } catch { /* older browser: a <style> element */ }
+    const style = document.createElement('style');
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  // The panel opens under the app's own top bar instead of covering its buttons: the lowest bar across the panel's
+  // width (fixed or sticky at the top edge, or a header/nav/banner starting in the first 64 px) sets
+  // ``--hoard-copilot-top``.
+  // An app that sets ``--hoard-copilot-top`` itself keeps its value.
+  function fitBelowHeader() {
+    if (!aside) return;
+    aside.style.removeProperty('--hoard-copilot-top');
+    if (getComputedStyle(document.documentElement).getPropertyValue('--hoard-copilot-top').trim()) return;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const panelLeft = Math.max(0, width - Math.min(430, width - 28) - 14);
+    let bottom = 0;
+    for (const x of [width - 24, width - 120, (width + panelLeft) / 2, panelLeft + 24]) {
+      for (const y of [4, 24, 48, 72]) {
+        for (const node of document.elementsFromPoint(Math.max(0, x), y)) {
+          if (layer && layer.contains(node)) continue;
+          if (node === document.documentElement || node === document.body) break;
+          const bar = barOf(node, height);
+          if (bar) bottom = Math.max(bottom, bar.getBoundingClientRect().bottom);
+          break;
+        }
+      }
+    }
+    if (bottom > 0 && bottom < height * 0.4) aside.style.setProperty('--hoard-copilot-top', Math.ceil(bottom + 8) + 'px');
+  }
+
+  function barOf(node, height) {
+    for (let el = node; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+      const rect = el.getBoundingClientRect();
+      if (rect.height > height * 0.4 || rect.bottom <= 0) continue;
+      const position = getComputedStyle(el).position;
+      if (rect.top <= 2 && (position === 'fixed' || position === 'sticky')) return el;
+      // A page header a little below the top edge (padding, a margin) still holds the app's main buttons.
+      if (rect.top <= 64 && (/^(HEADER|NAV)$/.test(el.tagName) || el.getAttribute('role') === 'banner')) return el;
+    }
+    return null;
+  }
+
   function open(toggle) {
-    if (aside) { aside.hidden = false; toggle.setAttribute('aria-expanded', 'true'); schedule(); return; }
+    if (aside) { aside.hidden = false; fitBelowHeader(); toggle.setAttribute('aria-expanded', 'true'); schedule(); return; }
     aside = document.createElement('aside');
     aside.className = 'hoard-copilot';
     aside.setAttribute('aria-label', 'Faustus');
@@ -304,7 +366,13 @@ LAUNCHER_JS = r"""
     body.className = 'hoard-copilot-body';
     aside.append(header, body);
     stopKeys(aside);
+    // Escape closes the panel (inside an app dialog it stays for the dialog; the chat may claim it first).
+    aside.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !modalOrder.length && !event.defaultPrevented) close.click();
+    });
     layer.appendChild(aside);
+    fitBelowHeader();
+    window.addEventListener('resize', () => { if (aside && !aside.hidden) fitBelowHeader(); });
     toggle.setAttribute('aria-expanded', 'true');
     mount(body, title).catch((error) => {
       const alert = document.createElement('p');
@@ -316,9 +384,7 @@ LAUNCHER_JS = r"""
 
   function start() {
     if (document.querySelector('.hoard-copilot-toggle, faustus-chat')) return;
-    const style = document.createElement('style');
-    style.textContent = css;
-    document.head.appendChild(style);
+    addStyles();
     layer = document.createElement('div');
     layer.className = 'hoard-copilot-layer';
     if (typeof layer.showPopover === 'function') layer.setAttribute('popover', 'manual');
