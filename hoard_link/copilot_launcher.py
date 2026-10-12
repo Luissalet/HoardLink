@@ -10,7 +10,11 @@ id looks like an id (digits, a ULID, a UUID); ``new`` is never an object. An app
 ``window.hoardCopilot = { context: async () => ({ project, active_objects, ... }), onTurnEnd() {...} }``.
 
 Keys typed in the panel stay in the panel (the app's shortcuts never see them). The conversation is kept per data space
-(localStorage, best effort; the route of each turn travels in the context). When a turn ends the page gets ``hoard:copilot-turn-end`` and ``onTurnEnd``.
+(localStorage, best effort; the route of each turn travels in the context) and, when the app's context names a project
+(``project.external_project_id`` / ``id``), per project: switching project in the app shows that project's conversation
+(or a fresh one) instead of mixing two projects in one thread. The launcher checks on every navigation, when the panel
+opens, when the page dispatches ``hoard:copilot-context-changed`` and, last, right before each turn. When a turn ends
+the page gets ``hoard:copilot-turn-end`` and ``onTurnEnd``.
 """
 
 LAUNCHER_JS = r"""
@@ -93,13 +97,16 @@ LAUNCHER_JS = r"""
   let info = null;
   let aside = null;
   let panel = null;
-  let sessionKey = null;
+  let currentKey = null;          // localStorage key of the conversation on screen: data space (+ the app's project)
+  let busy = false;               // a turn is running: a project switch waits for its end
+  let lastAsk = 0;                // when the panel last asked for the context (a send is starting)
+  let refreshAfterTurn = false;   // the conversation changed under a send: show its history when the turn ends
 
   function stopKeys(node) {
     for (const type of ['keydown', 'keyup', 'keypress']) node.addEventListener(type, (event) => event.stopPropagation());
   }
 
-  async function context() {
+  async function appContext() {
     const route = routeOf();
     const selected = String(window.getSelection?.() || '').trim();
     const base = {
@@ -114,10 +121,77 @@ LAUNCHER_JS = r"""
     if (typeof hook !== 'function') return base;
     try {
       const extra = (await hook(base)) || {};
-      return { ...base, ...extra, origin: base.origin, view: { ...base.view, ...(extra.view || {}) } };
+      const merged = { ...base, ...extra, origin: base.origin, view: { ...base.view, ...(extra.view || {}) } };
+      if (merged.project == null) delete merged.project;   // a view without a project omits it
+      return merged;
     } catch (error) {
       return { ...base, context_error: String(error && error.message || error) };
     }
+  }
+
+  function projectKey(ctx) {
+    const project = ctx && ctx.project;
+    if (!project || typeof project !== 'object') return '';
+    const id = project.external_project_id ?? project.id ?? project.project_link_id ?? project.project_id ?? project.title;
+    return id == null || id === '' ? '' : String(id).slice(0, 200);
+  }
+
+  function keyFor(ctx) {
+    const project = projectKey(ctx);
+    return 'hoard-copilot:' + info.data_space_id + (project ? ':project:' + project : '');
+  }
+
+  // A conversation saved against another Faustus (or deleted there) would leave the panel stuck on a 404: check it and
+  // start fresh when it is gone. Network failures keep the saved id so a restart does not lose the thread.
+  async function savedSession(key) {
+    const saved = store.get(key);
+    if (!saved) return null;
+    let gone = false;
+    try { gone = (await relayFetch(window.location.origin + '/api/hoard-copilot/conversations/' + encodeURIComponent(saved))).status === 404; }
+    catch { gone = false; }
+    if (gone) { store.set(key, null); return null; }
+    return saved;
+  }
+
+  // What the panel sends with each turn. It asks right before picking the conversation, so a project change nothing
+  // announced still sends this turn to that project's conversation (its history is shown when the turn ends).
+  async function context() {
+    lastAsk = Date.now();
+    const ctx = await appContext();
+    const key = keyFor(ctx);
+    if (panel && key !== currentKey) {
+      currentKey = key;
+      panel.session = await savedSession(key);
+      refreshAfterTurn = true;
+    }
+    return ctx;
+  }
+
+  function buildPanel(sessionId) {
+    const element = document.createElement('faustus-chat');
+    element.server = window.location.origin;
+    element.locale = lang();
+    element.theme = 'dark';
+    element.fetch = relayFetch;
+    element.onOpenSettings = () => window.open(info.settings_url, '_blank', 'noopener');
+    element.contextProvider = context;
+    if (sessionId) element.session = sessionId;
+    element.addEventListener('faustus:session-change', (event) => {
+      if (currentKey) store.set(currentKey, event.detail && event.detail.sessionId);
+    });
+    element.addEventListener('faustus:turn-start', () => { busy = true; });
+    element.addEventListener('faustus:turn-end', (event) => {
+      busy = false;
+      window.dispatchEvent(new CustomEvent('hoard:copilot-turn-end', { detail: event.detail || {} }));
+      try { window.hoardCopilot && typeof window.hoardCopilot.onTurnEnd === 'function' && window.hoardCopilot.onTurnEnd(event.detail || {}); }
+      catch { /* the app's refresh must never break the panel */ }
+      if (refreshAfterTurn) {
+        refreshAfterTurn = false;
+        if (typeof element.loadHistory === 'function') element.loadHistory().catch(() => {});
+      }
+      schedule();   // a navigation during the turn waited for its end
+    });
+    return element;
   }
 
   async function mount(body, title) {
@@ -126,38 +200,35 @@ LAUNCHER_JS = r"""
     info = await response.json();
     title.textContent = 'Faustus · ' + (info.app_name || info.app_id);
     await import(info.panel_url);
-    panel = document.createElement('faustus-chat');
-    panel.server = window.location.origin;
-    panel.locale = lang();
-    panel.theme = 'dark';
-    panel.fetch = relayFetch;
-    panel.onOpenSettings = () => window.open(info.settings_url, '_blank', 'noopener');
-    panel.contextProvider = context;
-    // One conversation per app data space: the route of every turn travels in the context, so moving around the app
-    // keeps the thread instead of scattering it over one chat per page.
-    sessionKey = 'hoard-copilot:' + info.data_space_id;
-    const saved = store.get(sessionKey);
-    // A conversation saved against another Faustus (or deleted there) would leave the panel stuck on a 404: check it
-    // first and start fresh when it is gone. Network failures keep the saved id so a restart does not lose the thread.
-    if (saved) {
-      let gone = false;
-      try { gone = (await relayFetch(window.location.origin + '/api/hoard-copilot/conversations/' + encodeURIComponent(saved))).status === 404; }
-      catch { gone = false; }
-      if (gone) store.set(sessionKey, null);
-      else panel.session = saved;
-    }
-    panel.addEventListener('faustus:session-change', (event) => store.set(sessionKey, event.detail && event.detail.sessionId));
-    panel.addEventListener('faustus:turn-end', (event) => {
-      window.dispatchEvent(new CustomEvent('hoard:copilot-turn-end', { detail: event.detail || {} }));
-      try { window.hoardCopilot && typeof window.hoardCopilot.onTurnEnd === 'function' && window.hoardCopilot.onTurnEnd(event.detail || {}); }
-      catch { /* the app's refresh must never break the panel */ }
-    });
+    // One conversation per app data space (and per project when the app names one): the route of every turn travels
+    // in the context, so moving around the app keeps the thread instead of scattering it over one chat per page.
+    currentKey = keyFor(await appContext());
+    panel = buildPanel(await savedSession(currentKey));
     body.replaceChildren(panel);
     if (typeof panel.loadHistory === 'function') await panel.loadHistory();
   }
 
+  // A different project in the app is a different conversation: put that one (or a fresh one) on screen. Never in the
+  // middle of a turn or of a send that is asking for its context.
+  async function checkProject() {
+    if (!panel || !info || !aside || aside.hidden || busy || Date.now() - lastAsk < 3000) return;
+    const key = keyFor(await appContext());
+    if (key === currentKey || busy || Date.now() - lastAsk < 3000) return;
+    currentKey = key;
+    const next = buildPanel(await savedSession(key));
+    panel.replaceWith(next);
+    panel = next;
+    if (typeof next.loadHistory === 'function') await next.loadHistory();
+  }
+
+  let checkTimer = 0;
+  function schedule() {
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(() => { checkProject().catch(() => {}); }, 250);
+  }
+
   function open(toggle) {
-    if (aside) { aside.hidden = false; toggle.setAttribute('aria-expanded', 'true'); return; }
+    if (aside) { aside.hidden = false; toggle.setAttribute('aria-expanded', 'true'); schedule(); return; }
     aside = document.createElement('aside');
     aside.className = 'hoard-copilot';
     aside.setAttribute('aria-label', 'Faustus');
@@ -196,6 +267,14 @@ LAUNCHER_JS = r"""
     toggle.setAttribute('aria-expanded', 'false');
     toggle.addEventListener('click', () => (aside && !aside.hidden ? (aside.hidden = true, toggle.setAttribute('aria-expanded', 'false')) : open(toggle)));
     document.body.appendChild(toggle);
+    for (const name of ['pushState', 'replaceState']) {
+      const original = history[name];
+      if (typeof original !== 'function') continue;
+      history[name] = function (...args) { const out = original.apply(this, args); schedule(); return out; };
+    }
+    window.addEventListener('popstate', schedule);
+    window.addEventListener('hashchange', schedule);
+    window.addEventListener('hoard:copilot-context-changed', schedule);
   }
 
   window.hoardCopilotGuessObjects = guessObjects;
