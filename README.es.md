@@ -408,6 +408,13 @@ En Windows, doble clic en `Hoard Hub.cmd`. La configuración vive en
 variables de entorno `HOARD_HUB_*`; `pip install "hoard-link[desktop]"`
 añade pywebview para una ventana nativa del hub.
 
+El Hub usa el panel y el arnés de sesiones compartidos de Faustus. Su adaptador
+aporta la app, el perfil, la pestaña de familia o la tarea/hilo del Ágora seleccionados,
+junto con los campos pendientes; al terminar un turno refresca esas vistas y conserva
+las entradas modificadas. Los cambios de miembros de un perfil se envían por app,
+para conservar miembros y comandos ajenos ante ediciones simultáneas. Consulta
+[el contrato del copilot del Hub](docs/HUB.md#shared-copilot).
+
 `launch_overrides` arranca una app en esta máquina de otra forma que la que
 trae su manifiesto, sin tocarlo: por ejemplo la versión de desarrollo de una
 app de escritorio cuya biblioteca vive en el origen del servidor de desarrollo:

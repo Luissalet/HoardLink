@@ -538,12 +538,18 @@ class Hub:
 
     # -- profiles -------------------------------------------------------------
     def profiles(self) -> dict[str, Profile]:
-        return parse_profiles(self.config.profiles)[0]
+        with self._lock:
+            return parse_profiles(self.config.read_profiles())[0]
+
+    def profile_patch(self, name, apps=None, desktop=None):
+        from .profile_editor import patch
+        return patch(self, name, {} if apps is None else apps, {} if desktop is None else desktop)
 
     def profiles_status(self, app_states: Optional[dict[str, str]] = None) -> dict[str, Any]:
         """Every profile with the state of each member. ``app_states``
         (id -> state, from a snapshot) avoids probing the apps twice."""
-        profiles, problems = parse_profiles(self.config.profiles)
+        with self._lock:
+            profiles, problems = parse_profiles(self.config.read_profiles())
         if app_states is None:
             wanted = {a for p in profiles.values() for a in p.members}
             apps = [a for a in self.apps if a.id in wanted]

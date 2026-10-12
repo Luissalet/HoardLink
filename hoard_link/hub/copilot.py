@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -86,3 +87,19 @@ def proxy_for(hub):
         from hoard_link.config import LinkConfig
         hub.copilot = CopilotProxy(hub.config.faustus_urls, LinkConfig.load().faustus_token)
     return hub.copilot
+
+
+def host_relay(hub):
+    """The canonical stdlib host transport; the family /link alias stays unchanged."""
+    from ..copilot_stdlib import CopilotRelay
+    with hub._lock:
+        if getattr(hub, 'copilot_host', None) is None:
+            hub.copilot_host = CopilotRelay('hoardhub', hub.config.data_dir, app_name='Hoard Hub',
+                faustus_urls=hub.config.faustus_urls, token=proxy_for(hub).token)
+        return hub.copilot_host
+
+
+def host_info(hub):
+    return {"app_id": "hoardhub", "app_name": "Hoard Hub", "data_space_id": host_relay(hub).space_id,
+            "tool_server_id": os.environ.get('HOARD_HUB_COPILOT_TOOL_SERVER_ID') or "hoardhub", "server": "/", "panel_url": "/api/copilot/panel.js",
+            "settings_url": proxy_for(hub).resolve() + "/studio/settings"}

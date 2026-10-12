@@ -396,6 +396,12 @@ On Windows, double-click `Hoard Hub.cmd`. Configuration lives in
 `HOARD_HUB_*` environment variables; `pip install "hoard-link[desktop]"`
 adds pywebview for a native hub window.
 
+The Hub uses Faustus's shared copilot panel and session harness. Its host adapter
+supplies the selected app, profile, family tab or Agora task/thread, plus pending
+form fields; a completed turn refreshes those views without replacing dirty inputs.
+Profile membership edits use per-app patches so concurrent edits keep unrelated
+members and commands. See [the Hub copilot contract](docs/HUB.md#shared-copilot).
+
 `launch_overrides` starts an app on this machine differently from how its
 manifest ships it, without touching the manifest — a developer build of a
 desktop app, say, whose library lives in the dev server's origin:

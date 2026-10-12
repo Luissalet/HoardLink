@@ -69,6 +69,15 @@ never painted (a blank window with only the caption buttons).
 
 ## Profiles
 
+`POST /api/profiles/<name>/patch` and MCP `hub_profile_patch` update only the
+membership flags supplied by the caller. For example,
+`{"apps":{"writer":true},"desktop":{"writer":false}}` adds Writer without
+opening its window. Omitted app flags, command definitions, other profiles and
+extra profile fields remain intact. The editor sends changed flags rather than
+a stale copy of the whole profile. Profile writes read the current configuration
+under a process/file lock and replace the JSON file atomically, including when
+two Hub processes share a data folder.
+
 `data/hub.json` → `profiles`: `{ "<name>": { "apps": [...], "commands": [...], "desktop": [...] } }`.
 
 | Key | Meaning |
@@ -517,6 +526,28 @@ Their settings live next to the others in the hub's data folder:
 `mail.db` holds mail text for `retention_days` (60): add `mail.db` to `backup.exclude` if mail should not be
 copied by backups. The references for every route and tool are in [docs/facets/](facets/). The **Sesiones de agente** facet
 ([agent-sessions.md](facets/agent-sessions.md)) has no file of its own: it reads the write journals of the apps.
+
+## Shared copilot
+
+The Hub serves the shared Faustus launcher at `/api/copilot/launcher.js`, its panel
+at `/api/copilot/panel.js`, host metadata at `/api/copilot/info`, and the streaming
+relay at `/api/copilot/proxy`. The transport is `hoard_link.copilot_stdlib.CopilotRelay`;
+the existing `/api/link/copilot` family route remains available. Origin `app_id` is
+`hoardhub`, and `data_space_id` is stable for the Hub's data folder. Backend credentials
+remain in the backend. `HOARD_HUB_COPILOT_TOOL_SERVER_ID` optionally identifies a
+separately registered MCP instance; its default is `hoardhub`.
+
+`window.hoardCopilot.context()` contributes the active app/profile, family tab, Agora
+task/thread or rule/job editor, using IDs read from the Hub API. New forms have no
+invented object ID. Pending fields live in the top-level `editor.forms`; environment
+values and credentials are omitted. `onTurnEnd()` refreshes the domain views while
+keeping dirty profile fields and the Agora reply's text, caret and review revision.
+JSON rule/job editors save only changed top-level fields for an existing object.
+Faustus owns the panel, sessions, history, model configuration and execution loop.
+
+The adapter is tested through the Hub API, native stdio MCP and Chromium. Opening
+the common panel while a native modal dialog is active still depends on the shared
+launcher's native-dialog integration; that flow is tracked separately in task #415.
 
 ## Instances
 

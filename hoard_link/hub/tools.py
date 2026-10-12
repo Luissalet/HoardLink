@@ -250,6 +250,16 @@ def catalogue() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "hub_profile_patch",
+            "description": "Change selected profile members without replacing other edits. Keywords: editar grupo, perfil.\n"
+                           "apps and desktop map real app IDs to true/false. External commands and untouched members remain.",
+            "inputSchema": {"type": "object", "properties": {
+                "name": {"type": "string"},
+                "apps": {"type": "object", "additionalProperties": {"type": "boolean"}},
+                "desktop": {"type": "object", "additionalProperties": {"type": "boolean"}},
+            }, "required": ["name"], "additionalProperties": False},
+        },
+        {
             "name": "hub_profile_import_preview",
             "description": "Preview profile import dependencies and conflicts. Keywords: import preview, revisar perfil.\n"
                            "Shows app-ID mappings, machine-specific command paths and missing local environment values; does not save or start.",
@@ -724,6 +734,7 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_service_stop": lambda a: hub.service_stop(str(a.get("id") or "")),
         "hub_rescan": lambda _: {"ok": True, "apps": [a.id for a in hub.rescan()]},
         "hub_profile_list": lambda _: _compact_profiles(hub.profiles_status()),
+        "hub_profile_patch": lambda a: hub.profile_patch(str(a.get('name') or ''), a.get('apps', {}), a.get('desktop', {})),
         "hub_profile_export": lambda a: portable_profiles.export_profile(hub, str(a.get("name") or "")),
         "hub_profile_import_preview": lambda a: portable_profiles.preview_import(
             hub, a.get("document"), name=a.get("name"), app_map=a.get("app_map"),

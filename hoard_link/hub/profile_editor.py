@@ -22,23 +22,58 @@ def save(hub, name, body):
     if unknown:
         return {'ok': False, 'error': 'unknown apps: ' + ', '.join(unknown)}
     with hub._lock:
-        old = copy.deepcopy(hub.config.profiles)
-        if body.get('create') and name in old:
-            return {'ok': False, 'error': 'a group with this name already exists'}
-        spec = copy.deepcopy(old.get(name, {}))
-        spec.update(apps=apps, desktop=desktop)  # preserve external commands from config
-        hub.config.profiles = {**old, name: spec}
+        def change(profiles):
+            if body.get('create') and name in profiles:
+                raise ValueError('a group with this name already exists')
+            spec = copy.deepcopy(profiles.get(name, {}))
+            spec.update(apps=apps, desktop=desktop)
+            return {**profiles, name: spec}
         try:
-            hub.config.save()
-        except OSError as exc:
-            hub.config.profiles = old
+            hub.config.update_profiles(change)
+        except (OSError, ValueError) as exc:
+            return {'ok': False, 'error': str(exc)}
+    return {'ok': True, 'name': name}
+
+
+def patch(hub, name, apps, desktop):
+    """Change selected membership flags against the latest stored profile."""
+    if not isinstance(name, str) or not re.fullmatch(r'\w[\w .-]{0,63}', name, re.UNICODE) or name != name.strip():
+        return {'ok': False, 'error': 'invalid group name'}
+    for values in (apps, desktop):
+        if not isinstance(values, dict) or any(not isinstance(k, str) or not isinstance(v, bool) for k, v in values.items()):
+            return {'ok': False, 'error': 'membership changes must map app IDs to booleans'}
+        if any(value and hub.get(app_id) is None for app_id, value in values.items()):
+            return {'ok': False, 'error': 'unknown app in membership changes'}
+    def apply_flags(old, changes):
+        return [value for value in old if changes.get(value, True)] + [key for key, value in changes.items() if value and key not in old]
+    def change(profiles):
+        from .profiles import parse
+        if name not in profiles:
+            raise ValueError('unknown group')
+        spec = copy.deepcopy(profiles[name])
+        profile = parse({name: spec})[0][name]
+        next_apps = apply_flags(profile.apps, apps)
+        next_desktop = apply_flags(profile.desktop, {**{key: False for key, value in apps.items() if not value}, **desktop})
+        if set(next_desktop) - set(next_apps + profile.desktop) or any(not apps.get(key, True) for key in next_desktop):
+            raise ValueError('desktop apps must belong to the group')
+        if not next_apps and not next_desktop and not profile.commands:
+            raise ValueError('select at least one app')
+        if apps:
+            spec['apps'] = next_apps
+        if desktop or any(not value for value in apps.values()):
+            spec['desktop'] = next_desktop
+        return {**profiles, name: spec}
+    with hub._lock:
+        try:
+            hub.config.update_profiles(change)
+        except (OSError, ValueError) as exc:
             return {'ok': False, 'error': str(exc)}
     return {'ok': True, 'name': name}
 
 
 def remove(hub, name):
     with hub._lock:
-        if name not in hub.config.profiles:
+        if name not in hub.config.read_profiles():
             return {'ok': False, 'error': 'unknown group'}
         group = hub.profile_status(name)
         if any(m.get('state') in {'running', 'starting'} for m in group.get('members', [])):
@@ -46,12 +81,9 @@ def remove(hub, name):
         current = autostart.status()
         if current.get('installed') and current.get('profile') == name:
             return {'ok': False, 'error': 'disable this group’s Windows startup before removing it'}
-        old = hub.config.profiles
-        hub.config.profiles = {k: v for k, v in old.items() if k != name}
         try:
-            hub.config.save()
-        except OSError as exc:
-            hub.config.profiles = old
+            hub.config.update_profiles(lambda profiles: {k: v for k, v in profiles.items() if k != name})
+        except (OSError, ValueError) as exc:
             return {'ok': False, 'error': str(exc)}
     return {'ok': True, 'name': name}
 

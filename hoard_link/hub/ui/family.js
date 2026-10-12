@@ -181,14 +181,37 @@
   $("#events-emit").onclick = async () => { const r = await api("/api/events", { type: "ui.test", data: { at: new Date().toISOString() } }); toast(r.ok ? `#${r.event.id} ui.test` : r.error, r.ok ? "ok" : "err"); };
 
   // ---- generic JSON editor dialog --------------------------------------------------------------------
-  function editJson(title, hint, value, onSave) {
+  let copilotEditor = null;
+  window.hubCopilotFamily = {
+    async context() {
+      const part = {active_objects:[],view:{section:tab},pending_forms:[]};
+      if ($('#edit-dialog').open && copilotEditor) {
+        let value;
+        try { value = JSON.parse($('#edit-body').value); }
+        catch { value = {json_valid:false}; }
+        const dirty = Object.keys(value).filter(key => JSON.stringify(value[key]) !== JSON.stringify(copilotEditor.baseline?.[key]));
+        part.pending_forms.push({kind:copilotEditor.kind || tab,is_new:!copilotEditor.object_id,fields:value,dirty});
+        if (copilotEditor.object_id && ['rules','jobs'].includes(copilotEditor.kind)) {
+          const result = await api('/api/' + copilotEditor.kind);
+          const found = result[copilotEditor.kind]?.find(row => row.id === copilotEditor.object_id);
+          if (found) part.active_objects.push({kind:copilotEditor.kind.slice(0,-1),object_id:found.id,title:found.name});
+        }
+      }
+      return part;
+    },
+    refresh: () => loaders[tab]?.(),
+  };
+  function editJson(title, hint, value, onSave, context = {}) {
     const dlg = $("#edit-dialog");
+    copilotEditor = {...context,baseline:value};
     $("#edit-title").textContent = title; $("#edit-hint").textContent = hint; $("#edit-error").textContent = "";
     $("#edit-body").value = JSON.stringify(value, null, 2);
     $("#edit-save").onclick = async () => {
       let parsed;
       try { parsed = JSON.parse($("#edit-body").value); } catch (e) { $("#edit-error").textContent = String(e.message); return; }
-      const r = await onSave(parsed);
+      const patch = context.object_id ? Object.fromEntries(Object.entries(parsed).filter(([key,v]) => JSON.stringify(v) !== JSON.stringify(value[key]))) : parsed;
+      if (context.object_id && !Object.keys(patch).length) { dlg.close(); return; }
+      const r = await onSave(patch);
       if (r && r.ok === false) { $("#edit-error").textContent = r.error || "error"; return; }
       dlg.close();
     };
@@ -227,7 +250,7 @@
         toast(res.ok ? `${r.name}: ok · ${res.ms} ms` : `${r.name}: ${res.error || (res.results || []).filter((x) => !x.ok).map((x) => x.error).join("; ")}`, res.ok ? "ok" : "err");
         loaders[kind]();
       });
-      b(t("edit"), "small ghost", () => editJson(`${r.name || r.id}`, t(kind === "rules" ? "edit_rule_hint" : "edit_job_hint"), stripRuntime(r), async (v) => { const res = await api(`/api/${kind}/${encodeURIComponent(r.id)}/update`, v); if (res.ok) loaders[kind](); return res; }));
+      b(t("edit"), "small ghost", () => editJson(`${r.name || r.id}`, t(kind === "rules" ? "edit_rule_hint" : "edit_job_hint"), stripRuntime(r), async (v) => { const res = await api(`/api/${kind}/${encodeURIComponent(r.id)}/update`, v); if (res.ok) loaders[kind](); return res; }, {kind,object_id:r.id}));
       b(r.enabled === false ? t("enable") : t("disable"), "small ghost", async () => { await api(`/api/${kind}/${encodeURIComponent(r.id)}/update`, { enabled: r.enabled === false }); loaders[kind](); });
       b(t("remove"), "small ghost danger", async () => { if (!confirm(t("confirm_remove"))) return; await api(`/api/${kind}/${encodeURIComponent(r.id)}/remove`, {}); loaders[kind](); });
       card.appendChild(acts);

@@ -13,13 +13,66 @@ from __future__ import annotations
 
 import json
 import os
+import copy
+import threading
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from . import DEFAULT_PORT
+from ..atomic import write_json_atomic
 
 REPO_DIR = Path(__file__).resolve().parents[2]
+
+_config_lock = threading.RLock()
+
+
+@contextmanager
+def _locked_config(path):
+    """Coordinate writers of the same configuration across threads and processes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _config_lock, path.with_suffix(path.suffix + '.lock').open('a+b') as lock:
+        if lock.seek(0, os.SEEK_END) == 0:
+            lock.write(b'\0'); lock.flush()
+        lock.seek(0)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            if os.name == 'nt':
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _changed_fields(current, before, after):
+    """Apply only this writer's changes, preserving unrelated concurrent fields."""
+    result = copy.deepcopy(current) if isinstance(current, dict) else {}
+    for key in before.keys() | after.keys():
+        if key not in after:
+            result.pop(key, None)
+        elif key not in before or before[key] != after[key]:
+            if isinstance(before.get(key), dict) and isinstance(after[key], dict):
+                result[key] = _changed_fields(result.get(key, {}), before[key], after[key])
+            else:
+                result[key] = copy.deepcopy(after[key])
+    return result
+
+
+def _read_config(path, fallback):
+    if not path.exists():
+        return copy.deepcopy(fallback)
+    raw = json.loads(path.read_text(encoding='utf-8-sig'))
+    if not isinstance(raw, dict):
+        raise ValueError('Hub configuration must be an object')
+    return raw
 
 
 def _split_paths(raw: str) -> list[str]:
@@ -70,6 +123,44 @@ class HubConfig:
     # The Ágora: {"freshness": "warn" | "off"} — whether an answer says that the agent acted on a task without
     # having read what others wrote there since (never a block; docs/AGORA.md). Default warn.
     agora: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self._saved_payload = self._payload()
+        self._has_saved_state = False
+
+    def _payload(self):
+        value = asdict(self)
+        value.pop('data_dir', None)
+        return value
+
+    def read_profiles(self):
+        with _config_lock:
+            raw = _read_config(Path(self.data_dir) / 'hub.json', self._payload())
+            self.profiles = copy.deepcopy(raw.get('profiles', self.profiles))
+            self._saved_payload['profiles'] = copy.deepcopy(self.profiles)
+            return self.profiles
+
+    def update_profiles(self, change):
+        path = Path(self.data_dir) / 'hub.json'
+        with _locked_config(path):
+            raw = _read_config(path, self._payload())
+            profiles = copy.deepcopy(raw.get('profiles', self.profiles))
+            updated = change(profiles)
+            before = self.profiles, copy.deepcopy(self._saved_payload), self._has_saved_state
+            self.profiles = copy.deepcopy(updated)
+            self._saved_payload['profiles'] = profiles
+            self._has_saved_state = True
+            self._store_owner = (threading.get_ident(), path.resolve())
+            self._profile_write = copy.deepcopy(updated)
+            try:
+                self.save()
+            except Exception:
+                self.profiles, self._saved_payload, self._has_saved_state = before
+                raise
+            finally:
+                self._store_owner = None
+                self._profile_write = None
+        return self.profiles
 
     @property
     def protected_gpus(self) -> list[int]:
@@ -204,14 +295,27 @@ class HubConfig:
         cfg.icon_dirs = [os.path.abspath(os.path.expanduser(r)) for r in cfg.icon_dirs]
         if not isinstance(cfg.window_size, list) or len(cfg.window_size) != 2:
             cfg.window_size = [1280, 860]
+        cfg._saved_payload = cfg._payload()
+        cfg._has_saved_state = True
         return cfg
 
     def save(self, path: Optional[str | Path] = None) -> str:
         file = Path(path) if path else Path(self.data_dir) / "hub.json"
-        file.parent.mkdir(parents=True, exist_ok=True)
-        payload = asdict(self)
-        payload.pop("data_dir", None)
-        tmp = file.with_suffix(file.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(tmp, file)
+        if getattr(self, '_store_owner', None) == (threading.get_ident(), file.resolve()):
+            return self._save_locked(file)
+        with _locked_config(file):
+            return self._save_locked(file)
+
+    def _save_locked(self, file):
+        payload = self._payload()
+        current = _read_config(file, payload)
+        if getattr(self, '_profile_write', None) is not None:
+            current['profiles'] = copy.deepcopy(self._profile_write)
+            write_json_atomic(file, current)
+            self._saved_payload['profiles'] = copy.deepcopy(self.profiles)
+            return str(file)
+        before = self._saved_payload if self._has_saved_state else {}
+        write_json_atomic(file, _changed_fields(current, before, payload))
+        self._saved_payload = copy.deepcopy(payload)
+        self._has_saved_state = True
         return str(file)

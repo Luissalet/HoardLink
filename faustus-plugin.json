@@ -1,4 +1,12 @@
 {
+  "x-family": {
+    "copilot": {
+      "contract_version": "1.0",
+      "info": "/api/copilot/info",
+      "panel": "/api/copilot/panel.js",
+      "proxy": "/api/copilot/proxy"
+    }
+  },
   "schema": 1,
   "id": "hoardhub",
   "name": "Hoard Hub",
