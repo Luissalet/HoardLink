@@ -125,6 +125,7 @@
   }
 
   const state = { open: lsGet("hub.today.open", "1") !== "0", sphere: "", data: null, loadedAt: 0, loading: false, error: "", icsOpen: false, ics: null, sending: false };
+  let icsForm = null;
   let root = null;
 
   function currentSphere() {
@@ -240,6 +241,7 @@
   }
 
   function icsPanel() {
+    if (icsForm) {icsForm.relabel();return icsForm.node;}
     const box = el("div", "today-ics");
     const info = state.ics;
     if (!info) { box.appendChild(el("div", "hint", t("loading"))); return box; }
@@ -252,10 +254,12 @@
     const input = el("input"); input.type = "text"; input.readOnly = true; input.value = full(url) || ""; input.onfocus = () => input.select();
     row1.appendChild(input);
     const copy = el("button", "primary small", t("copy"));
+    let copyLanButton = null;
     copy.onclick = async () => { if (await copyText(input.value)) toast(t("copied"), "ok"); };
     row1.appendChild(copy);
     if (lan) {
       const copyLan = el("button", "ghost small", t("copy_lan"));
+      copyLanButton = copyLan;
       copyLan.onclick = async () => { if (await copyText(full(lan))) toast(t("copied"), "ok"); };
       row1.appendChild(copyLan);
     }
@@ -263,7 +267,7 @@
     rot.onclick = async () => {
       if (!window.confirm(t("rotate_confirm"))) return;
       const res = await api("/api/today/ics/rotate", {});
-      if (res && res.ok) { state.ics = res; toast(t("rotated"), "ok"); renderBody(); } else toast((res && res.error) || t("failed"), "err");
+      if (res && res.ok) { state.ics = res; icsForm=null; toast(t("rotated"), "ok"); renderBody(); } else toast((res && res.error) || t("failed"), "err");
     };
     row1.appendChild(rot);
     box.appendChild(row1);
@@ -271,14 +275,22 @@
     const row2 = el("div", "row");
     const lab1 = el("label", "", t("export_folder")); const ef = el("input"); ef.type = "text"; ef.value = info.export_path || ""; lab1.appendChild(ef);
     const lab2 = el("label", "", t("lan_port")); const lp = el("input", "narrow"); lp.type = "text"; lp.value = String(info.lan_port || 0); lab2.appendChild(lp);
+    const collect = () => ({export_path:ef.value.trim(),lan_port:parseInt(lp.value,10) || 0});
+    ef.name='export_path';lp.name='lan_port';
+    const before = collect();
+    icsForm = {node:box,collect,before,relabel:()=>{
+      lab1.firstChild.textContent=t('export_folder');lab2.firstChild.textContent=t('lan_port');
+      copy.textContent=t('copy');rot.textContent=t('rotate');save.textContent=t('save');
+      if(copyLanButton)copyLanButton.textContent=t('copy_lan');hint.textContent=t('ics_hint');
+    }};
     const save = el("button", "ghost small", t("save"));
     save.onclick = async () => {
-      const res = await api("/api/today/ics/config", { export_path: ef.value.trim(), lan_port: parseInt(lp.value, 10) || 0 });
-      if (res && res.ok) { state.ics = res; toast(t("saved"), "ok"); renderBody(); } else toast((res && res.error) || t("failed"), "err");
+      const res = await api("/api/today/ics/config", window.HubFacets.ctx.changedFields(before,collect()));
+      if (res && res.ok) { state.ics = res; icsForm=null; toast(t("saved"), "ok"); renderBody(); } else toast((res && res.error) || t("failed"), "err");
     };
     row2.appendChild(lab1); row2.appendChild(lab2); row2.appendChild(save);
     box.appendChild(row2);
-    box.appendChild(el("div", "hint", t("ics_hint")));
+    const hint=el("div", "hint", t("ics_hint"));box.appendChild(hint);
     return box;
   }
 
@@ -286,17 +298,18 @@
     if (!root) return;
     const body = root.querySelector(".today-body");
     if (!body) return;
-    body.textContent = "";
+    const keep = state.icsOpen ? icsForm?.node : null;
+    for (const child of [...body.childNodes]) if (child !== keep) child.remove();
     body.hidden = !state.open;
     if (!state.open) return;
     const data = state.data;
     if (!data) { body.appendChild(el("div", "today-empty", state.error || t("loading"))); return; }
     const cols = el("div", "today-cols");
     cols.appendChild(agendaCol(data)); cols.appendChild(attentionCol(data)); cols.appendChild(newsCol(data)); cols.appendChild(systemCol(data));
-    body.appendChild(cols);
+    body.insertBefore(cols,keep || null);
     const bad = (data.errors && data.errors.agenda) || [];
-    if (bad.length) body.appendChild(el("div", "today-warn", `${t("problems")}: ${bad.map((e) => e.app).join(", ")}`));
-    if (state.icsOpen) body.appendChild(icsPanel());
+    if (bad.length) body.insertBefore(el("div", "today-warn", `${t("problems")}: ${bad.map((e) => e.app).join(", ")}`),keep || null);
+    if (state.icsOpen) {const panel=icsPanel();if(panel.parentNode!==body)body.appendChild(panel);}
   }
 
   function renderHead() {
@@ -322,6 +335,7 @@
     const cal = el("button", "ghost small", t("calendar"));
     cal.onclick = async () => {
       state.icsOpen = !state.icsOpen;
+      if (!state.icsOpen) icsForm = null;
       if (state.icsOpen) { state.open = true; lsSet("hub.today.open", "1"); state.ics = null; renderHead(); renderBody(); state.ics = await api("/api/today/ics"); renderHead(); }
       renderBody();
     };
@@ -358,6 +372,8 @@
   }
 
   window.HubFacets.register("today", {
+    copilot:{context:() => ({active_objects:[],view:{section:'today'},pending_forms:state.icsOpen && icsForm
+      ? [{kind:'calendar_config',is_new:false,fields:icsForm.collect(),changes:window.HubFacets.ctx.changedFields(icsForm.before,icsForm.collect())}] : []}),refresh:()=>load(true)},
     placement: "top",
     label: T.title,
     order: 10,

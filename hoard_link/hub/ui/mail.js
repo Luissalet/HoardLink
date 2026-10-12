@@ -60,6 +60,7 @@
 
   let box, statusEl, formEl, colsEl, sphereSel, cat = "all", lastSig = "", lastStatus = null, lastActive = "";
   const open = new Set();
+  let mailForm = null;
 
   const ago = (ts) => {
     if (!ts) return t("never");
@@ -156,19 +157,25 @@
   }
 
   function buildForm() {
+    if (mailForm && !formEl.hidden) return;
+    mailForm = null;
     formEl.innerHTML = "";
     if (!lastStatus) return;
     api("/api/mail/config").then((r) => {
       if (!r || !r.ok) return;
       const c = r.config; formEl.innerHTML = "";
       const mk = (label, key, type, width) => {
-        const inp = el("input"); inp.type = type; inp.value = c[key]; if (width) inp.style.width = width;
+        const inp = el("input"); inp.name = key; inp.type = type; inp.value = c[key]; if (width) inp.style.width = width;
         const lab = el("label", "", label); lab.appendChild(inp); formEl.appendChild(lab); return inp;
       };
       const iv = mk(t("interval"), "interval_min", "number"), rt = mk(t("retention"), "retention_days", "number"), ow = mk(t("owner"), "owner", "text", "180px");
+      const collect = () => ({interval_min:Number(iv.value),retention_days:Number(rt.value),owner:ow.value});
+      const before = collect();
+      mailForm = {collect,before};
       const save = el("button", "primary small", t("save"));
       save.onclick = async () => {
-        const res = await api("/api/mail/config", { interval_min: Number(iv.value), retention_days: Number(rt.value), owner: ow.value });
+        const res = await api("/api/mail/config", window.HubFacets.ctx.changedFields(before,collect()));
+        if (res.ok) mailForm.before = Object.assign(before,collect());
         toast(res.ok ? t("saved") : res.error, res.ok ? "ok" : "err"); loadStatus(true);
       };
       formEl.appendChild(save);
@@ -296,6 +303,8 @@
   }
 
   window.HubFacets.register("mailgate", {
+    copilot:{context:() => ({active_objects:[],view:{section:'mailgate'},pending_forms:mailForm && !formEl.hidden
+      ? [{kind:'mail_config',is_new:false,fields:mailForm.collect(),changes:window.HubFacets.ctx.changedFields(mailForm.before,mailForm.collect())}] : []}),refresh:load},
     placement: "tab", label: T.title, order: 40, mount,
     load: () => load().catch((e) => console.error("mail tab", e)),
     tick: async () => {

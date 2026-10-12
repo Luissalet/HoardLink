@@ -463,6 +463,44 @@ class SpheresFacet(Facet):
             return {"ok": True, "sphere": copy.deepcopy(sphere), "active": self._state["active"],
                     "spheres": copy.deepcopy(self._state["spheres"])}
 
+    def patch_batch(self, patches: Any, removed: Any = None) -> dict[str, Any]:
+        """Validate all field changes against the latest state before one write."""
+        removed = [] if removed is None else removed
+        if not isinstance(patches, list) or any(not isinstance(p, dict) or not p.get('id') for p in patches):
+            return {'ok': False, 'status': 400, 'error': 'patches must be objects with an id'}
+        if not isinstance(removed, list) or any(not isinstance(sid, str) for sid in removed):
+            return {'ok': False, 'status': 400, 'error': 'removed must be a list of sphere IDs'}
+        removed = {sid.strip().lower() for sid in removed}
+        ids = [str(p['id']).strip().lower() for p in patches]
+        if DEFAULT_SPHERE in removed or len(set(ids)) != len(ids) or set(ids) & removed:
+            return {'ok': False, 'status': 400, 'error': 'duplicate/conflicting IDs or removal of personal sphere'}
+        def merge(before, patch):
+            value = copy.deepcopy(before)
+            for key, item in patch.items():
+                value[key] = merge(value[key], item) if isinstance(item, dict) and isinstance(value.get(key), dict) else copy.deepcopy(item)
+            return value
+        with self._lock:
+            self._load()
+            current = {s['id']: copy.deepcopy(s) for s in self._state['spheres'] if s['id'] not in removed}
+            errors = []
+            for sid, patch in zip(ids, patches):
+                base = current.get(sid) or blank_sphere(sid)
+                sphere, problems = normalize_sphere(merge(base, {**patch, 'id': sid}), base=base)
+                errors.extend(f'{sid}: {error}' for error in problems)
+                current[sid] = sphere
+            if errors:
+                return {'ok': False, 'status': 400, 'error': '; '.join(errors), 'errors': errors}
+            prev = self._state['active']
+            self._state['spheres'] = list(current.values())
+            if prev not in current:
+                self._state['active'] = DEFAULT_SPHERE
+            active = self._state['active']
+            self._save()
+            result = {'ok': True, 'active': active, 'spheres': copy.deepcopy(self._state['spheres'])}
+        if active != prev:
+            self._emit('hub.sphere.changed', {'from': prev, 'to': active})
+        return result
+
     def save_all(self, raw_list: Any) -> dict[str, Any]:
         """Replace the whole list (every entry validated; ``personal`` cannot be dropped)."""
         if not isinstance(raw_list, list) or not raw_list:
@@ -644,6 +682,8 @@ class SpheresFacet(Facet):
         if who not in ("ui", "hub"):
             return {"ok": False, "status": 403, "error": "only the hub's page or the hub token may edit spheres"}
         if req.path == "/api/spheres":
+            if 'patches' in body or 'removed' in body:
+                return self.patch_batch(body.get('patches', []), body.get('removed', []))
             if isinstance(body.get("spheres"), list):
                 return self.save_all(body["spheres"])
             if isinstance(body.get("sphere"), dict):
@@ -657,6 +697,13 @@ class SpheresFacet(Facet):
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
         return [
+            {
+                'name': 'hub_spheres_patch',
+                'description': 'Patch sphere fields and removals atomically / editar esferas sin pisar otros cambios.',
+                'inputSchema': {'type': 'object', 'properties': {
+                    'patches': {'type': 'array', 'items': {'type': 'object', 'properties': {'id': {'type': 'string'}}, 'required': ['id']}},
+                    'removed': {'type': 'array', 'items': {'type': 'string'}}}, 'additionalProperties': False},
+            },
             {
                 "name": "hub_spheres",
                 "description": "Show the person's spheres (personal, work) and the active one / esferas y cuál está activa.\n"
@@ -677,6 +724,7 @@ class SpheresFacet(Facet):
 
     def handlers(self) -> dict[str, Callable[[dict[str, Any]], Any]]:
         return {
+            'hub_spheres_patch': lambda a: self.patch_batch(a.get('patches', []), a.get('removed', [])),
             "hub_spheres": lambda a: self._payload(),
             "hub_sphere_set": lambda a: self.set_active(str(a.get("id") or "")),
         }

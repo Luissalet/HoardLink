@@ -543,6 +543,13 @@ invented object ID. Pending fields live in the top-level `editor.forms`; environ
 values and credentials are omitted. `onTurnEnd()` refreshes the domain views while
 keeping dirty profile fields and the Agora reply's text, caret and review revision.
 JSON rule/job editors save only changed top-level fields for an existing object.
+Mail settings, chat sources, notification channels, sphere editors and Today calendar
+settings also supply their native pending fields and preserve their input nodes on
+refresh. Passwords, tokens, environment values and credential fields are omitted.
+These editors send only changed fields. Sphere JSON/list edits use
+`POST /api/spheres {patches:[{id,...fields}],removed:[id]}` or MCP
+`hub_spheres_patch`: the backend merges against the current list and validates the
+whole batch before one write, preserving other spheres and nested fields.
 Faustus owns the panel, sessions, history, model configuration and execution loop.
 
 The adapter is tested through the Hub API, native stdio MCP and Chromium. Opening

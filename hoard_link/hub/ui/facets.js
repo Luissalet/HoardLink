@@ -30,20 +30,32 @@
     return d.toLocaleString(lang() === "es" ? "es-ES" : undefined, { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
   const registry = [];
-  const ctx = { $, el, api, toast, lang, L, fmtWhen, bus: new EventTarget() };
+  let focused = null;
+  const remember = event => {const facet=registry.find(f=>f._root?.contains(event.target) || f._btn?.contains(event.target));if(facet)focused=facet;};
+  document.addEventListener('pointerdown',remember,true);
+  document.addEventListener('focusin',remember,true);
+  function changedFields(before, after) {
+    return Object.fromEntries(Object.entries(after).filter(([key,value]) => JSON.stringify(value) !== JSON.stringify(before?.[key]))
+      .map(([key,value]) => [key,value && typeof value === 'object' && !Array.isArray(value) && before?.[key] && typeof before[key] === 'object'
+        ? changedFields(before[key],value) : value]));
+  }
+  const ctx = { $, el, api, toast, lang, L, fmtWhen, changedFields, bus: new EventTarget() };
   window.HubFacets = {
     ctx,
     register(id, spec) { registry.push({ id, ...spec }); },
     async copilotContext() {
       const active = registry.find(f => f._btn?.classList.contains('on'));
-      if (!active || $('#family-body')?.hidden) return null;
-      return active.copilot?.context ? active.copilot.context(ctx) : {active_objects:[],view:{section:active.id}};
+      const candidates = registry.filter(f => f === active && !$('#family-body')?.hidden || ['top','header'].includes(f.placement));
+      const parts = await Promise.all(candidates.map(f => f.copilot?.context ? f.copilot.context(ctx) : f === active ? {active_objects:[],view:{section:f.id}} : null));
+      const selected = parts.find(part => part?.view?.editor_mode === 'modal') || parts[candidates.indexOf(focused)] || parts[candidates.indexOf(active)] ||
+        parts.find(part => part?.pending_forms?.length) ||
+        (active && !$('#family-body')?.hidden ? {active_objects:[],view:{section:active.id}} : null);
+      return selected ? {...selected,pending_forms:parts.flatMap(part => part?.pending_forms || [])} : null;
     },
     async refreshCopilot() {
       const active = registry.find(f => f._btn?.classList.contains('on'));
-      if (!active || $('#family-body')?.hidden) return;
-      if (active.copilot?.refresh) return active.copilot.refresh(ctx);
-      return active.load?.(ctx);
+      await Promise.allSettled(registry.filter(f => f === active && !$('#family-body')?.hidden || ['top','header'].includes(f.placement) && f.copilot)
+        .map(f => f.copilot?.refresh ? f.copilot.refresh(ctx) : f.load?.(ctx)));
     },
   };
 
@@ -55,6 +67,7 @@
     const badge = el("span", "badge"); badge.id = `${f.id}-badge`; btn.appendChild(badge);
     tabs.appendChild(btn);
     const box = el("div", "tab-body facet-body"); box.id = `tab-${f.id}`; box.hidden = true;
+    f._root = box;
     body.appendChild(box);
     f.mount && f.mount(box, ctx);
     f._select = ({ openPanel = true } = {}) => {
@@ -70,6 +83,7 @@
   function mountTop(f) {
     const anchor = $("#family-panel") || $("main");
     const sec = el("section", "facet-top"); sec.id = `facet-${f.id}`;
+    f._root = sec;
     anchor.parentNode.insertBefore(sec, anchor);
     f.mount && f.mount(sec, ctx);
     f.load && f.load(ctx);
@@ -77,6 +91,7 @@
   function mountHeader(f) {
     const bar = $(".top-actions") || $("header");
     const slot = el("span", "facet-slot"); slot.id = `facet-${f.id}`;
+    f._root = slot;
     bar.insertBefore(slot, bar.firstChild);
     f.mount && f.mount(slot, ctx);
     f.load && f.load(ctx);

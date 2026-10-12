@@ -68,6 +68,7 @@
   let cfgView = null;
   let shownIds = new Set();      // rows already on screen during a previous tick: those get auto-marked
   let settingsOpen = false;
+  let settingsForm = null;
 
   function injectCss() {
     if (document.getElementById("css-notify")) return;
@@ -178,7 +179,7 @@
   // ---- settings ---------------------------------------------------------------------------------------------
   function fieldText(labelKey, value, opts = {}) {
     const lab = el("label", "nt-f"); lab.appendChild(el("span", "", t(labelKey)));
-    const inp = el("input"); inp.type = opts.password ? "password" : (opts.number ? "number" : "text"); inp.value = value == null ? "" : String(value);
+    const inp = el("input"); inp.name = labelKey; inp.type = opts.password ? "password" : (opts.number ? "number" : "text"); inp.value = value == null ? "" : String(value);
     if (opts.password) inp.autocomplete = "new-password";
     if (opts.placeholder) inp.placeholder = opts.placeholder;
     lab.appendChild(inp);
@@ -277,6 +278,8 @@
           from: f.e_from.input.value.trim(), tls: f.e_tls.input.checked },
       },
     });
+    const before = collectAll();
+    settingsForm = {collect:collectAll,before};
 
     const act = el("div", "nt-actions");
     const save = el("button", "primary small", t("save")); save.dataset.action = "save";
@@ -300,9 +303,11 @@
   }
 
   async function saveAll(patch, quiet) {
+    if (settingsForm) patch = ctx.changedFields(settingsForm.before,patch);
     const r = await api("/api/notify/config", patch);
     if (!r.ok) { toast(r.error || "error", "err"); return r; }
     cfgView = r;
+    if (settingsForm) settingsForm.before = settingsForm.collect();
     if (!quiet) { toast(t("saved"), "ok"); renderSettings(); }
     return r;
   }
@@ -329,6 +334,9 @@
   }
 
   H.register("notify", {
+    copilot:{context:() => ({active_objects:[],view:{section:'notify'},pending_forms:settingsOpen && settingsForm
+      ? [{kind:'notify_config',is_new:false,fields:settingsForm.collect(),changes:ctx.changedFields(settingsForm.before,settingsForm.collect())}] : []}),
+      refresh:loadRows},
     placement: "tab",
     label: S.label,
     order: 30,
