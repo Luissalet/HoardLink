@@ -43,6 +43,7 @@ def upstream():
         records = []
         release = threading.Event()
         sent = threading.Event()
+        disconnected = threading.Event()
 
         def log_message(self, *args):
             pass
@@ -66,19 +67,34 @@ def upstream():
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             self.records.append((self.command, self.path, dict(self.headers), body))
-            if self.path == "/api/chat_stream":
+            if self.path == "/api/chat/disconnect":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                try:
+                    for _ in range(512):
+                        self.wfile.write(b"data: " + b"x" * 65528 + b"\n\n")
+                        self.wfile.flush()
+                except OSError:
+                    self.disconnected.set()
+                return
+            if self.path in ("/api/chat_stream", "/api/chat/chunked"):
+                chunked = self.path.endswith("chunked")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("X-Odysseus-Run-Id", "run-fixture")
+                if chunked:
+                    self.send_header("Transfer-Encoding", "chunked")
                 self.end_headers()
-                self.wfile.write(b'data: {"type":"start"}\n\n')
+                first, last = b'data: {"type":"start"}\n\n', b'data: {"type":"end"}\n\n'
+                self.wfile.write((f"{len(first):X}\r\n".encode() + first + b"\r\n") if chunked else first)
                 self.wfile.flush()
                 self.sent.set()
                 self.release.wait(3)
-                self.wfile.write(b'data: {"type":"end"}\n\n')
+                self.wfile.write((f"{len(last):X}\r\n".encode() + last + b"\r\n0\r\n\r\n") if chunked else last)
                 return
-            if self.path.endswith("/error"):
-                self.send_response(422)
+            if self.path.endswith(("/error", "/error502")):
+                self.send_response(502 if self.path.endswith("502") else 422)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("X-Faustus-Api-Version", "1")
                 self.end_headers()
@@ -209,10 +225,11 @@ def test_multipart_preserves_uploaded_bytes(host):
     assert upstream.records[-1][2]["Content-Type"] == 'multipart/form-data; boundary="fixture"'
 
 
-def test_sse_first_event_arrives_before_upstream_finishes(host):
+@pytest.mark.parametrize("target", ["/api/chat_stream", "/api/chat/chunked"])
+def test_sse_first_event_arrives_before_upstream_finishes(host, target):
     server, _, upstream = host
     connection = http.client.HTTPConnection(*server.server_address, timeout=2)
-    connection.request("POST", "/api/copilot/proxy", json.dumps({"path": "/api/chat_stream", "method": "POST", "body": {"text": "fixture"}}), {"Content-Type": "application/json"})
+    connection.request("POST", "/api/copilot/proxy", json.dumps({"path": target, "method": "POST", "body": {"text": "fixture"}}), {"Content-Type": "application/json"})
     response = connection.getresponse()
     assert upstream.sent.wait(1)
     assert response.status == 200
@@ -225,11 +242,23 @@ def test_sse_first_event_arrives_before_upstream_finishes(host):
     connection.close()
 
 
-def test_upstream_http_error_keeps_status_body_and_headers(host):
-    status, headers, body = request(host[0], "POST", "/api/copilot/proxy", {"path": "/api/chat/error", "method": "POST", "body": {}})
-    assert status == 422
+@pytest.mark.parametrize("target, expected", [("/api/chat/error", 422), ("/api/chat/error502", 502)])
+def test_upstream_http_error_keeps_status_body_and_headers(host, target, expected):
+    status, headers, body = request(host[0], "POST", "/api/copilot/proxy", {"path": target, "method": "POST", "body": {}})
+    assert status == expected
     assert json.loads(body) == {"error": "fixture validation"}
     assert headers["X-Faustus-Api-Version"] == "1"
+
+
+def test_downstream_disconnect_closes_upstream(host):
+    server, _, upstream = host
+    connection = http.client.HTTPConnection(*server.server_address, timeout=2)
+    connection.request("POST", "/api/copilot/proxy", json.dumps({"path": "/api/chat/disconnect", "method": "POST", "body": {}}), {"Content-Type": "application/json"})
+    response = connection.getresponse()
+    assert response.readline().startswith(b"data: ")
+    response.close()
+    connection.close()
+    assert upstream.disconnected.wait(2), "Faustus connection closed when panel disconnects"
 
 
 @pytest.mark.parametrize("envelope", [[], {"path": "https://elsewhere.invalid/api/chat_stream"}, {"path": "//elsewhere.invalid/api/chat_stream"},
