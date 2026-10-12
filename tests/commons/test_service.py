@@ -126,7 +126,11 @@ def test_excepthook_logs_then_chains(clean_logging):
 # ------------------------------------------------------------------------------------------------ SPA
 
 @pytest.fixture
-def dist(tmp_path):
+def dist(tmp_path, monkeypatch):
+    # A bare SPA host has no family configuration. Other test modules configure
+    # the process singleton; do not inherit their app identity into this fixture.
+    from hoard_link import family
+    monkeypatch.setattr(family, '_state', {**family._state, 'app': '', 'token_file': ''})
     root = tmp_path / "site"
     (root / "dist" / "assets").mkdir(parents=True)
     (root / "dist" / "index.html").write_text("<!doctype html><title>app</title><script type=module src=/assets/app-AbCd1234.js></script>", encoding="utf-8")
