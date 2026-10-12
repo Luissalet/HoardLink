@@ -69,6 +69,7 @@
     .hoard-copilot-toggle{position:fixed;right:var(--hoard-copilot-right,18px);bottom:var(--hoard-copilot-bottom,18px);z-index:2147483000;font:600 13px/1 system-ui,sans-serif;
       display:grid;place-items:center;width:48px;height:48px;padding:0;border-radius:50%;border:1px solid rgba(127,127,127,.45);background:#1f1b2e;color:#e06c75;
       box-shadow:0 6px 18px rgba(0,0,0,.35);cursor:pointer}
+    .hoard-copilot-toggle svg{pointer-events:none}
     .hoard-copilot-toggle:focus-visible{outline:2px solid #e06c75;outline-offset:2px}
     html[data-hoard-copilot-position=left] .hoard-copilot-toggle{right:auto;left:var(--hoard-copilot-left,18px)}
     .hoard-copilot{position:fixed;top:var(--hoard-copilot-top,14px);right:14px;bottom:calc(var(--hoard-copilot-bottom,18px) + 48px);width:min(430px,calc(100vw - 28px));z-index:2147483001;
