@@ -103,8 +103,8 @@ export function multipartContext(body, contentType, origin) {
     if (start < 2 || split < 0 || split > end) continue;
     const head = body.subarray(start, split).toString("latin1");
     const disposition = /(?:^|\r\n)Content-Disposition:([^\r\n]*)/i.exec(head);
-    const name = disposition && /(?:^|;)\s*name="([^"]*)"/i.exec(disposition[1]);
-    if (!name || !["context", "hoard_context"].includes(name[1])) continue;
+    const name = disposition && /(?:^|;)\s*name\s*=\s*(?:"([^"]*)"|([^;\s]+))/i.exec(disposition[1]);
+    if (!name || !["context", "hoard_context"].includes(name[1] ?? name[2])) continue;
     let context;
     try { context = JSON.parse(body.subarray(split + 4, end).toString("utf8")); } catch { continue; }
     if (!context || typeof context !== "object" || Array.isArray(context)) continue;

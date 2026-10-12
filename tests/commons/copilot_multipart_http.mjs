@@ -32,10 +32,10 @@ const files = [
   Buffer.from('{"origin":{"app_id":"uploaded-json"}}'),
 ];
 try {
-  for (const file of files) {
+  for (const formName of ['"hoard_context"', 'hoard_context']) for (const file of files) {
     const prefix = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; filename="context"; name="file"\r\n`+
       'Content-Type: application/octet-stream\r\n\r\n');
-    const suffix = Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="hoard_context"\r\n\r\n`+
+    const suffix = Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name=${formName}\r\n\r\n`+
       `{"origin":{"app_id":"spoof"}}\r\n--${boundary}--\r\n`);
     const source = Buffer.concat([prefix, file, suffix]);
     const result = await fetch('http://127.0.0.1:'+server.address().port+'/api/copilot/proxy', {
@@ -46,7 +46,7 @@ try {
     await result.text();
     assert.ok(captured.subarray(0, prefix.length+file.length).equals(Buffer.concat([prefix,file])),
       'HTTP relay changed an uploaded file or its headers');
-    const start = captured.indexOf(Buffer.from('name="hoard_context"'), prefix.length+file.length);
+    const start = captured.indexOf(Buffer.from('name='+formName), prefix.length+file.length);
     const value = captured.indexOf(Buffer.from('\r\n\r\n'), start)+4;
     const end = captured.indexOf(Buffer.from('\r\n--'+boundary+'--'), value);
     const context = JSON.parse(captured.subarray(value,end));
