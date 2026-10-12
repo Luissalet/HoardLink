@@ -540,7 +540,11 @@ separately registered MCP instance; its default is `hoardhub`.
 `window.hoardCopilot.context()` contributes the active app/profile, family tab, Agora
 task/thread or rule/job editor, using IDs read from the Hub API. New forms have no
 invented object ID. Pending fields live in the top-level `editor.forms`; environment
-values and credentials are omitted. `onTurnEnd()` refreshes the domain views while
+values and credentials are omitted. The active modal takes priority over background
+forms; closing the sphere editor returns to the underlying work surface. Calendar
+settings remain selectable outside the family panel. UI intent and pending fields
+are captured before asynchronous API validation, while other open forms stay available.
+`onTurnEnd()` refreshes the domain views while
 keeping dirty profile fields and the Agora reply's text, caret and review revision.
 JSON rule/job editors save only changed top-level fields for an existing object.
 Mail settings, chat sources, notification channels, sphere editors and Today calendar
