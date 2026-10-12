@@ -614,14 +614,16 @@
     return wrap;
   }
 
-  function composer(thread, task, draftRevision) {
-    const wrap = el("div", "ag-compose");
-    const ta = el("textarea"); ta.placeholder = t("write");
+  function composer(thread, task, draftRevision, controls = {}) {
+    const wrap = controls.wrap || el("div", "ag-compose"); wrap.replaceChildren();
+    const ta = controls.textarea || el("textarea"); ta.placeholder = t("write"); ta.name = 'body';
     let reviewRevision = draftRevision ?? (task && task.submission_revision);
     if (task && reviewRevision != null) ta.dataset.reviewRevision = String(reviewRevision);
     const row = el("div", "ag-row");
-    const kind = el("select");
+    const kind = controls.kind || el("select"); const selectedKind = kind.value;
+    kind.replaceChildren(); kind.name = 'kind';
     for (const k of ["comment", "proposal", "agree", "disagree"]) { const o = el("option", "", t("kind_" + k)); o.value = k; kind.appendChild(o); }
+    if (selectedKind) kind.value = selectedKind;
     const send = el("button", "primary small", t("send"));
     const need = () => { const v = ta.value.trim(); if (!v) toast(t("need_text"), "err"); return v; };
     send.onclick = async () => {
@@ -700,12 +702,8 @@
 
   async function refreshDetail() {
     if (!current) return;
-    const keep = detailBox.querySelector("textarea");
-    const draft = keep ? keep.value : "";
-    const focused = keep && document.activeElement === keep;
     const selectionKey = `${current.type}-${current.id}`;
     const previousAfter = detailBox.dataset.key === selectionKey ? Number(detailBox.dataset.timelineAfter || 0) : 0;
-    const draftRevision = draft.trim() && keep.dataset.reviewRevision ? Number(keep.dataset.reviewRevision) : undefined;
     const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}?agent=luis`);
     if (!current || `${current.type}-${current.id}` !== selectionKey) return;
     if (!r || !r.ok) return;
@@ -718,11 +716,26 @@
     const thread = r.thread || { id: task && task.thread_id, kind: "task", status: task && task.status, title: task && task.title };
     const cp = task && task.latest_checkpoint;
     const lockStatus = cp && cp.current_lock_status;
+    const timelinePages = r.timeline && task ? [r.timeline] : [];
+    while (timelinePages.length && timelinePages.at(-1).has_more && timelinePages.at(-1).next_after_id < previousAfter) {
+      const page = timelinePages.at(-1);
+      const next = await api(`/api/agora/timeline?task_id=${task.id}&after_id=${page.next_after_id}&limit=100`);
+      if (!current || `${current.type}-${current.id}` !== selectionKey) return;
+      if (!next?.ok || next.next_after_id <= page.next_after_id) break;
+      timelinePages.push(next);
+    }
     const sig = JSON.stringify([(r.messages || []).length, task && task.status, task && task.submission_revision, task && task.commits, thread.status,
       cp && cp.revision, task && task.activity && task.activity.state,
       r.timeline && r.timeline.last_event_id,
       lockStatus && [lockStatus.owner, lockStatus.missing, lockStatus.conflicts, lockStatus.owner_changed]]);
     if (detailBox.dataset.sig === sig && detailBox.dataset.key === `${current.type}-${current.id}`) return;
+    // Read the controls after the request: edits made during the fetch also survive.
+    const previousComposer = detailBox.dataset.key === selectionKey ? detailBox.querySelector('.ag-compose') : null;
+    const keep = previousComposer?.querySelector('textarea');
+    const draft = keep?.value || '', focused = keep && document.activeElement === keep;
+    const caret = keep ? [keep.selectionStart,keep.selectionEnd] : null;
+    const draftRevision = draft.trim() && keep?.dataset.reviewRevision ? Number(keep.dataset.reviewRevision) : undefined;
+    const controls = {wrap:previousComposer,textarea:keep,kind:previousComposer?.querySelector('select')};
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
     detailBox.replaceChildren(); ready(detailBox);
     const head = el("div", "ag-dhead");
@@ -754,15 +767,8 @@
     const seen = detailBox.dataset.seen ? Number(detailBox.dataset.seen) : null;
     if (r.timeline && task) {
       detailBox.appendChild(el("h4", "", t("chronology")));
-      let page = r.timeline;
-      for (const event of page.events) msgs.appendChild(timelineEvent(event, task, seen));
-      while (page.has_more && page.next_after_id < previousAfter) {
-        const next = await api(`/api/agora/timeline?task_id=${task.id}&after_id=${page.next_after_id}&limit=100`);
-        if (!current || `${current.type}-${current.id}` !== selectionKey) return;
-        if (!next || !next.ok || next.next_after_id <= page.next_after_id) break;
-        for (const event of next.events) msgs.appendChild(timelineEvent(event, task, seen));
-        page = next;
-      }
+      let page = timelinePages.at(-1);
+      for (const part of timelinePages) for (const event of part.events) msgs.appendChild(timelineEvent(event, task, seen));
       detailBox.dataset.timelineAfter = String(page.next_after_id);
       if (page.has_more) {
         const more = el("button", "small", t("more_events"));
@@ -798,9 +804,10 @@
     }
     detailBox.appendChild(msgs);
     if (thread.id) {
-      const c = composer(thread, task, draftRevision);
+      const c = composer(thread, task, draftRevision, controls);
       detailBox.appendChild(c);
-      const ta = c.querySelector("textarea"); ta.value = draft; if (focused) ta.focus();
+      const ta = c.querySelector("textarea"); ta.value = draft;
+      if (focused) { ta.focus(); if (caret) ta.setSelectionRange(...caret); }
     }
     const firstNew = msgs.querySelector(".ag-msg.new");
     if (firstNew) firstNew.scrollIntoView({ block: "nearest" }); else msgs.scrollTop = msgs.scrollHeight;
@@ -827,9 +834,11 @@
   function taskForm(holder) {
     holder.replaceChildren();
     const f = el("div", "ag-form");
+    f.dataset.copilotForm = 'agora_task_new';
     const title = el("input"); const body = el("textarea"); const repo = el("input"); const paths = el("input"); const mention = el("input");
     const prio = el("select"); for (const p of [0, 1, 2, 3]) { const o = el("option", "", String(p)); o.value = String(p); if (p === 2) o.selected = true; prio.appendChild(o); }
     const kind = el("select"); for (const k of ["feature", "bug", "research", "review", "chore", "eval", "docs"]) { const o = el("option", "", k); o.value = k; kind.appendChild(o); }
+    for (const [name,input] of Object.entries({title,body,repo,paths,mentions:mention,priority:prio,kind})) input.name = name;
     f.appendChild(field("title", title)); f.appendChild(field("body", body));
     const g = el("div", "ag-grid2"); g.appendChild(field("repo", repo)); g.appendChild(field("paths", paths)); g.appendChild(field("prio", prio)); g.appendChild(field("mention", mention));
     f.appendChild(g); f.appendChild(kind);
@@ -848,8 +857,10 @@
   function threadForm(holder) {
     holder.replaceChildren();
     const f = el("div", "ag-form");
+    f.dataset.copilotForm = 'agora_thread_new';
     const title = el("input"); const body = el("textarea"); const mention = el("input");
     const kind = el("select"); for (const k of ["question", "debate", "decision", "note", "handoff"]) { const o = el("option", "", t("k_" + k)); o.value = k; kind.appendChild(o); }
+    for (const [name,input] of Object.entries({title,body,mentions:mention,kind})) input.name = name;
     f.appendChild(field("title", title)); f.appendChild(field("body", body));
     const g = el("div", "ag-grid2"); g.appendChild(kind); g.appendChild(field("mention", mention)); f.appendChild(g);
     const row = el("div", "ag-row"); const ok = el("button", "primary small", t("create")); const no = el("button", "small ghost", t("cancel"));
@@ -888,6 +899,26 @@
   }
 
   H.register("agora", {
+    copilot: {
+      async context() {
+        const part = {active_objects:[],view:{section:'agora'}};
+        if (box?.querySelector('[data-copilot-form]')) { part.view.form_mode = 'create'; return part; }
+        if (!current || detailBox.hidden) return part;
+        const selection = {...current};
+        const result = await api(`/api/agora/${selection.type === 'task' ? 'tasks' : 'threads'}/${selection.id}`);
+        if (!current || current.id !== selection.id || current.type !== selection.type || !result?.ok) return part;
+        const object = result[selection.type];
+        if (!object || object.id !== selection.id) return part;
+        part.active_objects.push({kind:'agora_' + selection.type,object_id:String(object.id),title:object.title});
+        part.view[selection.type + '_id'] = object.id;
+        if (selection.type === 'task') {
+          part.view.thread_id = object.thread_id;
+          part.view.submission_revision = object.submission_revision;
+        }
+        return part;
+      },
+      refresh: load,
+    },
     placement: "tab",
     label: S.label,
     order: 15,

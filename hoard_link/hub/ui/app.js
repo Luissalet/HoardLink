@@ -245,9 +245,68 @@
   }
 
   let profileBusy = new Set(), loginState = null, editingGroup = null, loginPending = false;
+  let groupBaseline = {}, selectedApp = null;
+  document.addEventListener('focusin', rememberApp);
+  document.addEventListener('click', rememberApp);
+  function rememberApp(event) {
+    const card = event.target.closest?.('.card[data-id]');
+    if (card) selectedApp = card.dataset.id;
+  }
+  function groupChanges() {
+    const apps = {}, desktop = {}, values = {};
+    document.querySelectorAll('.group-member').forEach(row => {
+      const choice = $('.group-choice', row), window = $('.group-window', row);
+      values[choice.value] = {selected:choice.checked, desktop:choice.checked && window.checked};
+      const before = groupBaseline[choice.value] || {selected:false,desktop:false};
+      if (choice.checked !== before.selected) apps[choice.value] = choice.checked;
+      if (values[choice.value].desktop !== before.desktop) desktop[choice.value] = values[choice.value].desktop;
+    });
+    return {apps,desktop,values};
+  }
+  window.hubCopilotApp = {
+    async context() {
+      const part = {active_objects:[],view:{section:'apps'},pending_forms:[]};
+      if (!$('#group-editor').hidden) {
+        part.view.section = 'profiles';
+        const changes = groupChanges();
+        part.pending_forms.push({kind:'profile',is_new:!editingGroup,fields:{name:$('#group-name').value,members:changes.values},changes:{apps:changes.apps,desktop:changes.desktop}});
+        if (editingGroup) {
+          const name = editingGroup;
+          try {
+            const profile = await api('/api/profiles/' + encodeURIComponent(name));
+            if (profile.ok !== false && profile.name === name && editingGroup === name) part.active_objects.push({kind:'profile',object_id:name,title:name});
+          } catch { /* A deleted group is not an active object. */ }
+        }
+      } else if (selectedApp) {
+        const id = selectedApp;
+        try {
+          const app = await api('/api/apps/' + encodeURIComponent(id));
+          if (app.id === id && selectedApp === id) {
+            part.active_objects.push({kind:'app',object_id:id,title:app.name});
+            part.view.app = {id,name:app.name,state:app.state,purpose:app.purpose,url:app.url};
+          }
+        } catch { /* A missing app must never be started by context collection. */ }
+      }
+      return part;
+    },
+    refresh: () => Promise.allSettled([refresh(),refreshBackends(),refreshServices()]),
+  };
   function renderProfiles() {
     const box = $("#profiles");
     const profiles = snapshot.profiles || [];
+    const latestGroup = editingGroup && profiles.find(p => p.name === editingGroup);
+    if (latestGroup && !$('#group-editor').hidden) {
+      document.querySelectorAll('.group-member').forEach(row => {
+        const choice = $('.group-choice',row), window = $('.group-window',row);
+        const before = groupBaseline[choice.value] || {selected:false,desktop:false};
+        const next = {selected:latestGroup.members.some(m => m.kind === 'app' && m.id === choice.value),desktop:latestGroup.desktop.includes(choice.value)};
+        if (choice.checked === before.selected) choice.checked = next.selected;
+        if (window.checked === before.desktop) window.checked = next.desktop;
+        window.disabled = !choice.checked;
+        if (!choice.checked) window.checked = false;
+        groupBaseline[choice.value] = next;
+      });
+    }
     box.hidden = false;
     box.innerHTML = "";
     const label = document.createElement("span"); label.className = "profiles-label"; label.textContent = t("profiles");
@@ -300,6 +359,7 @@
   }
   function editGroup(p) {
     editingGroup = p?.name || null;
+    groupBaseline = {};
     $("#group-editor").hidden = false;
     $("#group-heading").textContent = t(p ? "edit_group" : "new_group");
     $("#group-name").value = p?.name || "";
@@ -316,6 +376,7 @@
       const windowLabel = document.createElement("label"), windowCheck = document.createElement("input");
       windowCheck.type = "checkbox"; windowCheck.className = "group-window"; windowCheck.checked = !!p?.desktop.includes(app.id);
       windowCheck.disabled = !check.checked;
+      groupBaseline[app.id] = {selected:check.checked,desktop:windowCheck.checked};
       check.onchange = () => { windowCheck.disabled = !check.checked; if (!check.checked) windowCheck.checked = false; };
       windowLabel.append(windowCheck, document.createTextNode(t("group_window")));
       row.append(label, windowLabel); members.appendChild(row);
@@ -334,7 +395,9 @@
     const name = $("#group-name").value.trim();
     $("#group-save").disabled = true; $("#group-error").textContent = "";
     try {
-      const r = await api(`/api/profiles/${encodeURIComponent(name)}/save`, {apps, desktop, create: !editingGroup});
+      const changes = groupChanges();
+      const r = await api(`/api/profiles/${encodeURIComponent(name)}/${editingGroup ? 'patch' : 'save'}`,
+        editingGroup ? {apps:changes.apps,desktop:changes.desktop} : {apps,desktop,create:true});
       if (!r.ok) { $("#group-error").textContent = r.error; return; }
       $("#group-editor").hidden = true; toast(t("group_saved"), "ok"); await refresh();
     } catch (e) { $("#group-error").textContent = String(e); }

@@ -394,6 +394,16 @@ class _HubHandler(BaseHTTPRequestHandler):
         try:
             if path == "/":
                 return self._file(os.path.join(UI_DIR, "index.html"))
+            if path == "/api/copilot/info":
+                from .copilot import host_info
+                try:
+                    return self._json(host_info(hub))
+                except OSError as exc:
+                    return self._json({"ok": False, "code": "faustus_unavailable", "error": str(exc)}, 503)
+            if path in ("/api/copilot/panel.js", "/api/copilot/launcher.js"):
+                from .copilot import host_relay
+                host_relay(hub).handle(self)
+                return
             if path == "/ui/hoard-theme.css":
                 return self._file(THEME_CSS, cache=False)
             if path.startswith("/ui/"):
@@ -523,6 +533,12 @@ class _HubHandler(BaseHTTPRequestHandler):
         hub = self.hub
         if path == "/api/link/copilot":
             return self._copilot()
+        if path == "/api/copilot/proxy":
+            if self._family_caller() is None:
+                return self._json({"ok": False, "error": "family bearer token required"}, 401)
+            from .copilot import host_relay
+            host_relay(hub).handle(self)
+            return
         if path == "/api/link/chat":
             try:
                 return self._link_chat()
@@ -641,9 +657,12 @@ class _HubHandler(BaseHTTPRequestHandler):
                 fn = portable_profiles.preview_import if path.endswith("/preview") else portable_profiles.import_profile
                 result = fn(hub, body.get("document"), **options)
                 return self._json(result, 200 if result.get("ok") or path.endswith("/preview") else 400)
-            if len(parts) == 5 and parts[1:3] == ["api", "profiles"] and parts[4] in ("save", "remove"):
+            if len(parts) == 5 and parts[1:3] == ["api", "profiles"] and parts[4] in ("save", "remove", "patch"):
                 name = unquote(parts[3])
-                res = profile_editor.save(hub, name, body) if parts[4] == "save" else profile_editor.remove(hub, name)
+                if parts[4] == "patch":
+                    res = hub.profile_patch(name, body.get('apps', {}), body.get('desktop', {}))
+                else:
+                    res = profile_editor.save(hub, name, body) if parts[4] == "save" else profile_editor.remove(hub, name)
                 return self._json(res, 200 if res.get("ok") else 400)
             if len(parts) == 5 and parts[1] == "api" and parts[2] == "profiles" and parts[4] in ("start", "stop"):
                 name = unquote(parts[3])

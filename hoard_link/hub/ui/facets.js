@@ -34,6 +34,17 @@
   window.HubFacets = {
     ctx,
     register(id, spec) { registry.push({ id, ...spec }); },
+    async copilotContext() {
+      const active = registry.find(f => f._btn?.classList.contains('on'));
+      if (!active || $('#family-body')?.hidden) return null;
+      return active.copilot?.context ? active.copilot.context(ctx) : {active_objects:[],view:{section:active.id}};
+    },
+    async refreshCopilot() {
+      const active = registry.find(f => f._btn?.classList.contains('on'));
+      if (!active || $('#family-body')?.hidden) return;
+      if (active.copilot?.refresh) return active.copilot.refresh(ctx);
+      return active.load?.(ctx);
+    },
   };
 
   function mountTab(f) {
