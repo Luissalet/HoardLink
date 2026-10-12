@@ -5,7 +5,7 @@
 //
 //   Guard     LOCAL_HOSTS DEV_ORIGINS hostOf portOf parseAllowedHosts isAllowedHost checkRequest createGuard
 //   Agent     capResult makeAgentRoutes
-//   Service   installSpa installErrorHandlers runServer
+//   Service   installSpa installErrorHandlers runServer   (installSpa also mounts the Faustus copilot: copilot.js)
 //   Bridge    createBridge
 //
 // The guard and capResult behave exactly like the Python modules (tests/vectors/guard.json and agentkit.json run against both).
@@ -14,6 +14,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { checkBearer } from "./server.js";
+import { autoCopilot, injectLauncher } from "./copilot.js";
 
 // ------------------------------------------------------------------------------------------------ guard
 
@@ -272,9 +273,14 @@ const STATIC_EXTENSIONS = new Set([".js", ".mjs", ".css", ".json", ".map", ".svg
 
 /** Serve a built single-page app (the Vite `dist`): `express` is the app's own `express` import. /api/* that nothing matched is a
  * JSON 404; hashed /assets/ files are immutable, everything else no-cache (no stale index.html); a missing asset is a 404, not an
- * HTML page; client-side routes get index.html; an unbuilt folder answers 503. Call it after the API routes. */
-export function installSpa(app, distDir, { express = null, apiPrefix = "/api" } = {}) {
+ * HTML page; client-side routes get index.html; an unbuilt folder answers 503. Call it after the API routes.
+ *
+ * It also gives the app the Faustus copilot (copilot.js: /api/copilot/* and the launcher in index.html) when the app
+ * called `family.configure({ app, dataDir })`; `copilot: false` or `HOARD_COPILOT=0` turns that off, `copilot: true`
+ * makes a missing family identity an error, and an app that mounted its own /api/copilot/info first is left alone. */
+export function installSpa(app, distDir, { express = null, apiPrefix = "/api", copilot = undefined } = {}) {
   if (!express || typeof express.static !== "function") throw new Error("installSpa needs the app's express module: installSpa(app, dist, { express })");
+  if (copilot !== false) autoCopilot(app, { distDir, required: copilot === true });
   const prefix = "/" + apiPrefix.replace(/^\/+|\/+$/g, "");
   const escaped = prefix.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
   app.all(new RegExp(`^${escaped}(/.*)?$`), (req, res) => res.status(404).json({ error: "Not found.", code: "not_found" }));
@@ -292,7 +298,12 @@ export function installSpa(app, distDir, { express = null, apiPrefix = "/api" } 
     if (STATIC_EXTENSIONS.has(path.extname(req.path).toLowerCase())) return res.status(404).json({ error: "Not found.", code: "not_found" });
     if (!fs.existsSync(index)) return res.status(503).json({ error: "The client is not built yet: run `npm install && npm run build`.", code: "not_built" });
     res.setHeader("Cache-Control", "no-cache");
-    return res.sendFile(path.resolve(index));
+    const ready = app.locals?.hoardCopilotReady;
+    if (typeof ready !== "function") return res.sendFile(path.resolve(index));
+    return Promise.resolve(ready()).then((info) => {
+      if (!info?.inject) return res.sendFile(path.resolve(index));
+      return res.type("html").send(injectLauncher(fs.readFileSync(index, "utf8")));
+    }).catch(() => res.sendFile(path.resolve(index)));
   });
 }
 

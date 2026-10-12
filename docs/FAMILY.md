@@ -427,3 +427,28 @@ space ID, discovers the service and transports responses. The shared panel,
 conversation, prompts, tools execution and memory remain in Faustus.
 `hub_copilot_request` exposes the same operations to MCP; SSE admission returns
 the detached run identity and status is read with the normal native route.
+
+### Every Hoard gets the copilot from `install_spa` / `installSpa`
+
+An app that called `family.configure(...)` and serves its UI with `install_spa` (Python) or `installSpa` (Node) has the
+Faustus copilot with no code of its own:
+
+* `/api/copilot/info`, `/api/copilot/panel.js`, `/api/copilot/proxy` (the relay above; the Faustus token stays on the
+  server and the proxy forces `origin.app_id` / `data_space_id`), and `/api/copilot/launcher.js`;
+* the launcher tag is added to the app's HTML: a floating **Faustus** button opens a side panel with `<faustus-chat>`.
+  Each turn carries the context Faustus needs: origin, the view (route, title, main heading, locale), the objects the
+  route names (`/notes/42` → `{kind: "note", object_id: "42"}`) and the selected text; an app can add real ids with
+  `window.hoardCopilot = { context() { return {...}; }, onTurnEnd(detail) {...} }` and listen to the
+  `hoard:copilot-turn-end` event to refresh after an agent changed its data. One conversation per data space, kept
+  across reloads; a conversation the current Faustus no longer has is dropped and a new one starts. Keys typed in the
+  panel never reach the app's shortcuts. A turn queued behind another agent on the shared model lane keeps its place
+  for up to 10 minutes (`initial_response_timeout_s`) instead of failing at the endpoint's short default.
+* Faustus is found through `<APP>_FAUSTUS_URL`, `HOARD_FAUSTUS_URL` (+ `HOARD_FAUSTUS_TOKEN`) or the link config,
+  falling back to `127.0.0.1:7000` / `7001`.
+
+Off switches: `install_spa(..., copilot=False)` / `installSpa(app, dist, { express, copilot: false })` or
+`HOARD_COPILOT=0`. Apps that mount their own relay first (`make_copilot_router`, their own `/api/copilot/info`) are
+detected and left alone. Apps without `install_spa` call `install_copilot(app, app_id, data_dir, app_name=...)`
+(`hoard_link.copilot`) or `installCopilot(app, { appId, appName, dataDir })` (`hoard-commons/copilot.js`) themselves.
+The browser launcher is written once in `hoard_link/copilot_launcher.py`; `scripts/sync_vendored.py` mirrors it to
+`js/hoard-commons/copilot-launcher.js` (a test fails when the two differ).
