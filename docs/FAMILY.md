@@ -467,3 +467,13 @@ compression regardless of middleware registration order. Multipart transport
 matches complete MIME delimiter lines and preserves file bytes, even when an
 upload contains boundary substrings or a filename named `context`. The Node relay
 adds no arbitrary attachment-size cap; the normal upstream transport remains in use.
+
+The same launcher remains available inside native `dialog.showModal()` editors,
+including nested dialogs and containers with clipping or transforms. It moves the
+existing panel into the active dialog using a manual popover; it keeps the same
+conversation, draft and active turn. Closing an editor returns that panel to the
+page. Escape typed inside the chat does not close the app's editor. Hosts can open
+it through `window.dispatchEvent(new Event('hoard:copilot-open'))` without creating
+another launcher. Faustus's component supports both state-preserving `moveBefore`
+and synchronous append-based moves; only genuine removal detaches its local stream
+observer, and remote work continues.

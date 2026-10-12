@@ -93,6 +93,10 @@ LAUNCHER_JS = r"""
   }
 
   const css = `
+    .hoard-copilot-layer{position:fixed;inset:0;margin:0;padding:0;border:0;width:100vw;height:100dvh;
+      max-width:none;max-height:none;background:transparent;overflow:visible;pointer-events:none}
+    .hoard-copilot-layer::backdrop{background:transparent;pointer-events:none}
+    .hoard-copilot-layer>.hoard-copilot-toggle,.hoard-copilot-layer>.hoard-copilot{pointer-events:auto}
     .hoard-copilot-toggle{position:fixed;right:var(--hoard-copilot-right,18px);bottom:var(--hoard-copilot-bottom,18px);z-index:2147483000;font:600 13px/1 system-ui,sans-serif;
       display:grid;place-items:center;width:48px;height:48px;padding:0;border-radius:50%;border:1px solid rgba(127,127,127,.45);background:#1f1b2e;color:__FAUSTUS_BRAND__;
       box-shadow:0 6px 18px rgba(0,0,0,.35);cursor:pointer}
@@ -117,9 +121,48 @@ LAUNCHER_JS = r"""
   let busy = false;               // a turn is running: a project switch waits for its end
   let lastAsk = 0;                // when the panel last asked for the context (a send is starting)
   let refreshAfterTurn = false;   // the conversation changed under a send: show its history when the turn ends
+  let layer = null;
+  const modalOrder = [];
+
+  function isModal(node) {
+    if (!node || !node.isConnected || node.tagName !== 'DIALOG' || !node.open) return false;
+    try { return node.matches(':modal'); } catch { return true; }
+  }
+
+  // A popover escapes clipping, but it must still be a DOM descendant of the
+  // active modal to remain interactive. Move the host, never recreate its chat.
+  function placeLayer(records = []) {
+    if (!layer) return;
+    for (const record of records) {
+      if (record.type === 'attributes' && isModal(record.target)) {
+        const index = modalOrder.indexOf(record.target);
+        if (index >= 0) modalOrder.splice(index, 1);
+        modalOrder.push(record.target);
+      }
+    }
+    for (const node of document.querySelectorAll('dialog[open]')) {
+      if (isModal(node) && !modalOrder.includes(node)) modalOrder.push(node);
+    }
+    for (let index = modalOrder.length - 1; index >= 0; index--) {
+      if (!isModal(modalOrder[index])) modalOrder.splice(index, 1);
+    }
+    const parent = modalOrder[modalOrder.length - 1] || document.body;
+    let focus = layer.contains(document.activeElement) ? document.activeElement : null;
+    while (focus && focus.shadowRoot && focus.shadowRoot.activeElement) focus = focus.shadowRoot.activeElement;
+    if (layer.parentNode !== parent) {
+      if (typeof layer.hidePopover === 'function' && layer.matches(':popover-open')) layer.hidePopover();
+      if (typeof parent.moveBefore === 'function') parent.moveBefore(layer, null);
+      else parent.appendChild(layer);
+    }
+    if (typeof layer.showPopover === 'function' && !layer.matches(':popover-open')) layer.showPopover();
+    if (focus && focus.isConnected && document.activeElement !== focus) focus.focus({ preventScroll: true });
+  }
 
   function stopKeys(node) {
-    for (const type of ['keydown', 'keyup', 'keypress']) node.addEventListener(type, (event) => event.stopPropagation());
+    for (const type of ['keydown', 'keyup', 'keypress']) node.addEventListener(type, (event) => {
+      event.stopPropagation();
+      if (type === 'keydown' && event.key === 'Escape' && modalOrder.length) event.preventDefault();
+    });
   }
 
   async function appContext() {
@@ -261,7 +304,7 @@ LAUNCHER_JS = r"""
     body.className = 'hoard-copilot-body';
     aside.append(header, body);
     stopKeys(aside);
-    document.body.appendChild(aside);
+    layer.appendChild(aside);
     toggle.setAttribute('aria-expanded', 'true');
     mount(body, title).catch((error) => {
       const alert = document.createElement('p');
@@ -276,6 +319,10 @@ LAUNCHER_JS = r"""
     const style = document.createElement('style');
     style.textContent = css;
     document.head.appendChild(style);
+    layer = document.createElement('div');
+    layer.className = 'hoard-copilot-layer';
+    if (typeof layer.showPopover === 'function') layer.setAttribute('popover', 'manual');
+    document.body.appendChild(layer);
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'hoard-copilot-toggle';
@@ -284,7 +331,11 @@ LAUNCHER_JS = r"""
     toggle.title = 'Faustus';
     toggle.setAttribute('aria-expanded', 'false');
     toggle.addEventListener('click', () => (aside && !aside.hidden ? (aside.hidden = true, toggle.setAttribute('aria-expanded', 'false')) : open(toggle)));
-    document.body.appendChild(toggle);
+    layer.appendChild(toggle);
+    const modalObserver = new MutationObserver(placeLayer);
+    modalObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] });
+    placeLayer();
+    window.addEventListener('hoard:copilot-open', () => open(toggle));
     for (const name of ['pushState', 'replaceState']) {
       const original = history[name];
       if (typeof original !== 'function') continue;
