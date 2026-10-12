@@ -439,7 +439,11 @@ Faustus copilot with no code of its own:
   Each turn carries the context Faustus needs: origin, the view (route, title, main heading, locale), the objects the
   route names (`/notes/42` → `{kind: "note", object_id: "42"}`) and the selected text; an app can add real ids with
   `window.hoardCopilot = { context() { return {...}; }, onTurnEnd(detail) {...} }` and listen to the
-  `hoard:copilot-turn-end` event to refresh after an agent changed its data. One conversation per data space, kept
+  `hoard:copilot-turn-end` event to refresh after an agent changed its data. `context()` returning
+  `active_objects: []` drops the guesses from the URL (a route like `/trabajos/j_123abcde` would otherwise be guessed
+  as an object). The button sits bottom right; an app whose own controls live there moves it with
+  `--hoard-copilot-bottom` / `--hoard-copilot-right` (or `<html data-hoard-copilot-position="left">` plus
+  `--hoard-copilot-left`). Every HTML page the app serves gets the launcher, including a second SPA under a sub-path. One conversation per data space, kept
   across reloads, and one per project when the app's context names one (`project.external_project_id` / `id`):
   moving to another project shows that project's conversation or a fresh one, never two projects in one thread. The
   launcher checks on every navigation, when the panel opens, when the page dispatches `hoard:copilot-context-changed`

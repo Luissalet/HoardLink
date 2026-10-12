@@ -196,6 +196,14 @@ def test_launcher_opens_closes_and_keeps_keys_in_a_real_browser():
                 body=routes.get(route.request.url, ("", "not found"))[1]))
             page.goto("http://hoard.test/")
             page.evaluate("window.__appKeys = 0; document.addEventListener('keydown', () => { window.__appKeys += 1; })")
+            # An app whose own controls sit bottom right moves the button with CSS variables or to the left.
+            assert page.evaluate("getComputedStyle(document.querySelector('.hoard-copilot-toggle')).bottom") == "18px"
+            page.evaluate("document.documentElement.style.setProperty('--hoard-copilot-bottom', '90px')")
+            assert page.evaluate("getComputedStyle(document.querySelector('.hoard-copilot-toggle')).bottom") == "90px"
+            page.evaluate("document.documentElement.dataset.hoardCopilotPosition = 'left'")
+            assert page.evaluate("getComputedStyle(document.querySelector('.hoard-copilot-toggle')).left") == "18px"
+            page.evaluate("document.documentElement.removeAttribute('data-hoard-copilot-position');"
+                          "document.documentElement.style.removeProperty('--hoard-copilot-bottom')")
             toggle = page.locator(".hoard-copilot-toggle")
             toggle.click()
             panel = page.locator("aside.hoard-copilot")
