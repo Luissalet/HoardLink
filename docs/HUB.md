@@ -552,9 +552,11 @@ These editors send only changed fields. Sphere JSON/list edits use
 whole batch before one write, preserving other spheres and nested fields.
 Faustus owns the panel, sessions, history, model configuration and execution loop.
 
-The adapter is tested through the Hub API, native stdio MCP and Chromium. Opening
-the common panel while a native modal dialog is active still depends on the shared
-launcher's native-dialog integration; that flow is tracked separately in task #415.
+The adapter is tested through the Hub API, native stdio MCP and Chromium. The shared
+launcher keeps the same panel interactive inside native modal editors, preserving
+its session and draft when the editor opens or closes. Escape in the chat retains
+the editor. This uses the common native-dialog lifecycle in HoardLink and Faustus;
+the Hub has no separate launcher implementation.
 
 ## Instances
 
