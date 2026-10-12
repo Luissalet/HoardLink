@@ -35,6 +35,14 @@ SRC_JS = REPO / "js" / "hoard-link.js"
 SRC_JS_COMMONS = REPO / "js" / "hoard-commons"      # the Node commons, vendored as server/hoard-commons/
 
 
+def launcher_text() -> str:
+    """The copilot launcher as the Node commons serve it: the Python ``LAUNCHER_JS`` is canonical."""
+    spec = importlib.util.spec_from_file_location("_copilot_launcher", SRC_PY / "copilot_launcher.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.LAUNCHER_JS
+
+
 def _load_drift():
     """The comparison logic lives in hoard_link/hub/drift.py, shared with the hub's Repos facet (which only
     reports what this script fixes). Loaded by path: it is standard library only and the package import
@@ -148,9 +156,17 @@ def main() -> int:
             shutil.copy2(contract_src, contract_dst)
         else:
             print("Node family-services.json needs regeneration [dry run]")
+    launcher_dst = SRC_JS_COMMONS / "copilot-launcher.js"
+    launcher_src = launcher_text().encode("utf-8")
+    launcher_stale = not launcher_dst.is_file() or launcher_dst.read_bytes() != launcher_src
+    if launcher_stale:
+        if not args.dry_run:
+            launcher_dst.write_bytes(launcher_src)
+        else:
+            print("Node copilot-launcher.js needs regeneration [dry run]")
     wanted = {a.lower() for a in (args.apps or [])}
     install = {a.lower() for a in (args.install or [])}
-    total = int(contract_stale)
+    total = int(contract_stale) + int(launcher_stale)
     for root in args.roots:
         for folder in sorted(Path(root).iterdir()):
             if not folder.is_dir() or folder.resolve() == REPO.resolve():

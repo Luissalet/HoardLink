@@ -185,7 +185,8 @@ def _is_hashed(path: Path) -> bool:
 
 # ------------------------------------------------------------------------------------------------ SPA
 
-def install_spa(app: Any, static_dir: Union[str, "os.PathLike[str]"], *, api_prefix: str = "/api") -> None:
+def install_spa(app: Any, static_dir: Union[str, "os.PathLike[str]"], *, api_prefix: str = "/api",
+                copilot: Optional[bool] = None) -> None:
     """Serve a built single-page app (``static_dir``, the Vite ``dist``) from ``app``.
 
     * ``<api_prefix>/*`` that nothing matched: ``404 {"error": "Not found.", "code": "not_found"}`` (any method).
@@ -194,7 +195,9 @@ def install_spa(app: Any, static_dir: Union[str, "os.PathLike[str]"], *, api_pre
       ``immutable``; everything else is ``no-cache`` (the stale ``index.html`` that pointed at deleted hashed assets).
     * A missing file under ``assets/`` or with a static extension: 404 (an HTML page served as a script is worse).
     * Anything else: ``index.html`` with ``Cache-Control: no-cache`` (client-side routes).
-    * ``static_dir`` not built (no ``index.html``): ``503 {"error": ..., "code": "not_built"}``."""
+    * ``static_dir`` not built (no ``index.html``): ``503 {"error": ..., "code": "not_built"}``.
+    * The Faustus copilot on every page (relay + launcher, ``hoard_link.copilot.install_copilot``) when the app called
+      ``family.configure`` and has no relay of its own; ``copilot=False`` or ``HOARD_COPILOT=0`` leaves it out."""
     from starlette.requests import Request
     from starlette.responses import FileResponse, JSONResponse, Response
 
@@ -225,6 +228,35 @@ def install_spa(app: Any, static_dir: Union[str, "os.PathLike[str]"], *, api_pre
                   include_in_schema=False)
     app.add_route("/{path:path}", spa, methods=["GET", "HEAD"], include_in_schema=False)
     app.state.hoard_spa = (prefix, str(root))
+    if copilot is not False:
+        _auto_copilot(app, required=copilot is True)
+
+
+def _auto_copilot(app: Any, *, required: bool = False) -> None:
+    """Give a family app the Faustus copilot on every page (``hoard_link.copilot.install_copilot``) when it is wired into
+    the family (``family.configure``) and did not mount its own relay. ``HOARD_COPILOT=0`` turns it off. Never fails the
+    app unless the caller asked for it explicitly (``copilot=True``)."""
+    if os.environ.get("HOARD_COPILOT", "1").strip().lower() in ("0", "false", "no", "off"):
+        return
+    from .copilot import has_copilot
+    if has_copilot(app):
+        return
+    try:
+        from . import family
+        from .copilot import install_copilot
+        state = family.status()
+        app_id = str(state.get("app") or "").strip()
+        if not app_id:
+            if required:
+                raise RuntimeError("install_spa(copilot=True) needs family.configure(app_id, data_dir) first")
+            return
+        token_file = str(state.get("token_file") or "")
+        data_dir = os.path.dirname(token_file) if token_file else os.path.join(os.path.expanduser("~"), ".hoard-link", app_id)
+        install_copilot(app, app_id, data_dir, app_name=getattr(app, "title", None) or app_id)
+    except Exception:  # noqa: BLE001 - the copilot is an addition; a missing dependency must not stop the app
+        if required:
+            raise
+        logging.getLogger("hoard_link.service").warning("copilot not installed", exc_info=True)
 
 
 def _keep_spa_last(app: Any) -> None:

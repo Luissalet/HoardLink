@@ -85,6 +85,7 @@ def make_copilot_router(app_id, data_dir, *, faustus_urls=None, token=None, app_
     token = token if token is not None else config.faustus_token
     headers = {"Authorization": "Bearer " + token} if token else {}
     router = APIRouter(prefix="/api/copilot")
+    router.hoard_copilot = app_id  # lets install_spa see that this app already has its relay
     space_file = Path(data_dir) / "copilot-space-id"
     space_file.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -168,3 +169,117 @@ def make_copilot_router(app_id, data_dir, *, faustus_urls=None, token=None, app_
             raise HTTPException(400, "Invalid copilot transport request") from exc
 
     return router
+
+
+def has_copilot(app):
+    """True when ``app`` already serves ``/api/copilot/info`` (its own relay, or ``install_copilot`` ran), looking through
+    included routers too (FastAPI keeps them as one route object)."""
+    def walk(routes, prefix=""):
+        for route in routes or []:
+            path = getattr(route, "path", None)
+            if path and prefix + path == "/api/copilot/info":
+                return True
+            inner = getattr(route, "original_router", None) or getattr(route, "router", None)
+            if inner is not None and inner is not route:
+                if getattr(inner, "hoard_copilot", None):
+                    return True
+                context = getattr(route, "include_context", None)
+                extra = getattr(context, "prefix", "") or ""
+                if walk(getattr(inner, "routes", None), prefix + extra):
+                    return True
+        return False
+    return bool(getattr(getattr(app, "state", None), "hoard_copilot", None)) or walk(getattr(getattr(app, "router", None), "routes", None))
+
+
+LAUNCHER_PATH = "/api/copilot/launcher.js"
+_LAUNCHER_TAG = b'<script type="module" src="/api/copilot/launcher.js"></script>'
+
+
+def inject_launcher(html):
+    """``html`` (bytes) with the launcher script before ``</body>`` (or at the end); unchanged when already there."""
+    if b"/api/copilot/launcher.js" in html:
+        return html
+    lower = html.lower()
+    at = lower.rfind(b"</body>")
+    if at < 0:
+        return html + _LAUNCHER_TAG
+    return html[:at] + _LAUNCHER_TAG + html[at:]
+
+
+class CopilotInjectMiddleware:
+    """Pure ASGI: add the launcher script to every HTML page the app serves (its SPA shell, server-rendered pages).
+
+    Only GET/HEAD answers with ``Content-Type: text/html`` outside ``/api/`` are touched; the body is buffered (pages are
+    small), ``Content-Length`` is fixed and compressed answers are left alone."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("method") not in ("GET", "HEAD") or str(scope.get("path", "")).startswith("/api/"):
+            await self.app(scope, receive, send)
+            return
+        state = {"start": None, "html": False, "chunks": []}
+
+        async def wrapped(message):
+            if message["type"] == "http.response.start":
+                headers = {k.lower(): v for k, v in message.get("headers", [])}
+                kind = headers.get(b"content-type", b"").lower()
+                state["html"] = kind.startswith(b"text/html") and not headers.get(b"content-encoding")
+                if not state["html"]:
+                    await send(message)
+                    return
+                state["start"] = message
+                return
+            if message["type"] == "http.response.body" and state["html"]:
+                state["chunks"].append(message.get("body", b""))
+                if message.get("more_body"):
+                    return
+                body = inject_launcher(b"".join(state["chunks"]))
+                start = state["start"]
+                headers = [(k, v) for k, v in start.get("headers", []) if k.lower() not in (b"content-length", b"etag")]
+                headers.append((b"content-length", str(len(body)).encode()))
+                await send({**start, "headers": headers})
+                await send({"type": "http.response.body", "body": body if scope.get("method") == "GET" else b""})
+                return
+            await send(message)
+
+        await self.app(scope, receive, wrapped)
+
+
+def install_copilot(app, app_id, data_dir, *, app_name=None, faustus_urls=None, token=None, inject=True, config_path=None):
+    """Give a FastAPI Hoard the Faustus copilot: the relay (``/api/copilot/info``, ``panel.js``, ``proxy``), the launcher
+    (``/api/copilot/launcher.js``) and, with ``inject``, the launcher added to every HTML page the app serves. Apps that
+    already mount their own panel component pass ``inject=False``. Routes go before any SPA catch-all.
+
+    The panel's conversation, model and tools live in Faustus; the app keeps no loop and no history. Faustus is found
+    through ``faustus_urls`` (or ``HOARD_FAUSTUS_URL`` / the link config) and the token stays on the server."""
+    import os
+    from starlette.responses import Response
+    from .config import LinkConfig
+    from .copilot_launcher import LAUNCHER_JS
+
+    if faustus_urls is None or token is None:
+        link = LinkConfig.load(path=config_path, app=app_id)
+        env_url = os.environ.get(app_id.upper().replace("-", "_") + "_FAUSTUS_URL") or os.environ.get("HOARD_FAUSTUS_URL")
+        if faustus_urls is None:
+            faustus_urls = [env_url] if env_url else list(link.faustus_urls)
+        if token is None:
+            token = link.faustus_token
+    router = make_copilot_router(app_id, data_dir, faustus_urls=faustus_urls, token=token, app_name=app_name)
+
+    async def launcher():
+        return Response(LAUNCHER_JS, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+    router.add_api_route("/launcher.js", launcher, methods=["GET"], include_in_schema=False)
+    before = len(getattr(app.router, "routes", []))
+    app.include_router(router)
+    routes = getattr(app.router, "routes", None)
+    if isinstance(routes, list) and len(routes) > before:
+        ours = routes[before:]
+        del routes[before:]
+        routes[0:0] = ours
+    app.state.hoard_copilot = app_id
+    if inject:
+        app.add_middleware(CopilotInjectMiddleware)
+    return {"app_id": app_id, "launcher": LAUNCHER_PATH, "inject": bool(inject)}

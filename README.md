@@ -85,6 +85,10 @@ server) and run it again to see that capability resolve. Pass a
 
 ## What's new in 0.7
 
+- **Faustus copilot in every app.** `install_spa` / `installSpa` give any app that called `family.configure` a
+  Faustus button and side panel: the relay, the launcher in the app's HTML and each turn's context (route, heading,
+  objects in the URL, selection, plus what the app adds with `window.hoardCopilot`), with no app code. Off with
+  `copilot=False` / `HOARD_COPILOT=0`; details in [docs/FAMILY.md](docs/FAMILY.md#every-hoard-gets-the-copilot-from-install_spa--installspa).
 - **Spheres.** Personal and work (or freelance) lives kept apart: each sphere has its own mail accounts,
   chat sources, VIP senders, keywords, quiet hours, notification routing and morning digest. A chip in the
   hub's top bar (and in Faustus) switches the active one; work mail never reaches personal apps.
