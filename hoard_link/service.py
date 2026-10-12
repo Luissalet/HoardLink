@@ -21,6 +21,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 import threading
 from logging.handlers import RotatingFileHandler
@@ -177,10 +178,17 @@ def _safe_file(root: Path, relative: str) -> Optional[Path]:
         return None
 
 
+_VITE_HASH = re.compile(r"[^-]-[A-Za-z0-9_-]{8}$")
+
+
 def _is_hashed(path: Path) -> bool:
     stem = path.stem
     tail = stem.rsplit("-", 1)[-1] if "-" in stem else stem.rsplit(".", 1)[-1] if "." in stem else ""
-    return len(tail) >= 8 and tail.replace("_", "").isalnum()
+    if len(tail) >= 8 and tail.replace("_", "").isalnum():
+        return True
+    # Vite names a build file [name]-[hash] with an 8-character base64url hash, which can itself hold "-" or "_"
+    # (index-DAV-ezrw.js): the last split above would only see "ezrw".
+    return _VITE_HASH.search(stem) is not None
 
 
 # ------------------------------------------------------------------------------------------------ SPA
