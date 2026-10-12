@@ -40,6 +40,13 @@ def test_launcher_file_matches_the_python_launcher():
     assert (JS_DIR / "copilot-launcher.js").read_text(encoding="utf-8") == LAUNCHER_JS
 
 
+@needs_real
+def test_http_multipart_preserves_boundary_substrings_and_filename_context():
+    script = Path(__file__).with_name('copilot_multipart_http.mjs').read_text(encoding='utf8')
+    out = run(script, env={'COPILOT_MODULE':MODULE})
+    assert out == {'passed':True,'files':2}
+
+
 def test_inject_multipart_and_config():
     out = run(f"""
         import * as c from {json.dumps(MODULE)};

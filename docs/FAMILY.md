@@ -435,7 +435,7 @@ Faustus copilot with no code of its own:
 
 * `/api/copilot/info`, `/api/copilot/panel.js`, `/api/copilot/proxy` (the relay above; the Faustus token stays on the
   server and the proxy forces `origin.app_id` / `data_space_id`), and `/api/copilot/launcher.js`;
-* the launcher tag is added to the app's HTML: a floating **Faustus** button opens a side panel with `<faustus-chat>`.
+* the launcher tag is added to the app's HTML: a round 48 px button with the **Faustus mark** opens a side panel with `<faustus-chat>`.
   Each turn carries the context Faustus needs: origin, the view (route, title, main heading, locale), the objects the
   route names (`/notes/42` → `{kind: "note", object_id: "42"}`) and the selected text; an app can add real ids with
   `window.hoardCopilot = { context() { return {...}; }, onTurnEnd(detail) {...} }` and listen to the
@@ -460,3 +460,10 @@ detected and left alone. Apps without `install_spa` call `install_copilot(app, a
 (`hoard_link.copilot`) or `installCopilot(app, { appId, appName, dataDir })` (`hoard-commons/copilot.js`) themselves.
 The browser launcher is written once in `hoard_link/copilot_launcher.py`; `scripts/sync_vendored.py` mirrors it to
 `js/hoard-commons/copilot-launcher.js` (a test fails when the two differ).
+`FAUSTUS_MARK_SVG` and `FAUSTUS_BRAND` (`#e06c75`) in that module supply the same
+mark and colour to apps with their own button. The icon button has an accessible
+Faustus label, with no visible text. FastAPI inserts the launcher before response
+compression regardless of middleware registration order. Multipart transport
+matches complete MIME delimiter lines and preserves file bytes, even when an
+upload contains boundary substrings or a filename named `context`. The Node relay
+adds no arbitrary attachment-size cap; the normal upstream transport remains in use.

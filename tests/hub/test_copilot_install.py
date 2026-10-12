@@ -16,6 +16,35 @@ from hoard_link.copilot_launcher import LAUNCHER_JS
 PAGE = "<!doctype html><html lang='es'><head><title>App</title></head><body><div id='root'></div></body></html>"
 
 
+@pytest.mark.parametrize('compression_first', [True, False])
+def test_launcher_is_injected_before_gzip(tmp_path, compression_first):
+    from starlette.middleware.gzip import GZipMiddleware
+    app = FastAPI()
+    if compression_first:
+        app.add_middleware(GZipMiddleware, minimum_size=50)
+    install_copilot(app, 'gzip-qa', tmp_path, faustus_urls=['http://127.0.0.1:9'], token='')
+    if not compression_first:
+        app.add_middleware(GZipMiddleware, minimum_size=50)
+    @app.get('/')
+    def page():
+        return HTMLResponse(PAGE.replace('<div id="root"></div>', '<p>'+('Real HTML ' * 200)+'</p>'))
+    with TestClient(app) as client:
+        reply = client.get('/', headers={'Accept-Encoding':'gzip'})
+        assert reply.headers['content-encoding'] == 'gzip'
+        assert reply.text.count(LAUNCHER_PATH) == 1
+        assert reply.text.index(LAUNCHER_PATH) < reply.text.index('</body>')
+
+
+def test_launcher_uses_the_shared_faustus_mark():
+    from hoard_link.copilot_launcher import FAUSTUS_BRAND, FAUSTUS_MARK_SVG
+    assert FAUSTUS_BRAND == '#e06c75'
+    assert 'viewBox="0 0 32 32"' in FAUSTUS_MARK_SVG
+    assert 'opacity="0.62"' in FAUSTUS_MARK_SVG
+    assert "toggle.setAttribute('aria-label', 'Faustus')" in LAUNCHER_JS
+    assert "toggle.textContent = 'Faustus'" not in LAUNCHER_JS
+    assert 'width:48px;height:48px' in LAUNCHER_JS
+
+
 @pytest.fixture
 def faustus():
     class Upstream(BaseHTTPRequestHandler):
