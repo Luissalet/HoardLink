@@ -32,6 +32,27 @@ def multipart_context(body, content_type, origin):
     return body
 
 
+ALLOWED_PREFIXES = ("/api/hoard-copilot/", "/api/chat/", "/api/session/", "/api/sessions/")
+ALLOWED_EXACT = ("/api/chat_stream", "/api/session", "/api/sessions")
+
+
+def allowed_route(path):
+    """True when ``path`` (what the browser asks the relay to forward) is one of the copilot operations.
+
+    Dot segments are refused, plain or percent-encoded (``/api/chat/../settings``, ``/api/chat/%2e%2e/settings``): an
+    upstream that resolves them would otherwise be reached outside the list with the server's token."""
+    from urllib.parse import unquote, urlsplit
+    if not isinstance(path, str) or not path.startswith("/") or path.startswith("//") or "\\" in path:
+        return False
+    parts = urlsplit(path)
+    if parts.scheme or parts.netloc:
+        return False
+    decoded = unquote(unquote(parts.path))
+    if "\\" in decoded or any(segment in (".", "..") for segment in decoded.split("/")):
+        return False
+    return parts.path.startswith(ALLOWED_PREFIXES) or parts.path in ALLOWED_EXACT
+
+
 class CopilotClient:
     def __init__(self, hub_url, token):
         self.url = hub_url.rstrip("/") + "/api/link/copilot"
@@ -148,8 +169,7 @@ def make_copilot_router(app_id, data_dir, *, faustus_urls=None, token=None, app_
             envelope = await request.json()
             path = envelope.get("path", "")
             route = urlsplit(path).path
-            allowed = route.startswith(("/api/hoard-copilot/", "/api/chat/", "/api/session/", "/api/sessions/")) or route in ("/api/chat_stream", "/api/session", "/api/sessions")
-            if not isinstance(path, str) or not path.startswith("/") or path.startswith("//") or not allowed:
+            if not allowed_route(path):
                 raise ValueError("Unknown copilot operation")
             body = None
             if "raw_body" in envelope:

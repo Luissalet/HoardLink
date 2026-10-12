@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import LinkConfig
-from .copilot import inject_launcher, multipart_context
+from .copilot import allowed_route, inject_launcher, multipart_context
 
 
 class CopilotRelay:
@@ -124,9 +124,7 @@ class CopilotRelay:
         envelope = json.loads(handler.rfile.read(length))
         target = envelope.get("path", "")
         route = urlsplit(target)
-        allowed = route.path.startswith(("/api/hoard-copilot/", "/api/chat/", "/api/session/", "/api/sessions/"))
-        allowed |= route.path in ("/api/chat_stream", "/api/session", "/api/sessions")
-        if not isinstance(target, str) or not target.startswith("/") or route.scheme or route.netloc or route.fragment or not allowed:
+        if not allowed_route(target) or route.fragment:
             raise ValueError("Unknown copilot operation")
         body = None
         content_type = envelope.get("content_type", "application/json")

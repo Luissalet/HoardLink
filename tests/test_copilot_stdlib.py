@@ -286,3 +286,14 @@ def test_unavailable_and_cached_endpoint_failure(host):
     status, _, _ = request(server, "GET", "/api/copilot/panel.js")
     assert status == 503
     assert relay._selected is None
+
+
+def test_dot_segments_never_leave_the_copilot_routes():
+    from hoard_link.copilot import allowed_route
+    for ok in ("/api/chat_stream", "/api/hoard-copilot/conversations/x", "/api/chat/resume/s?cursor=3", "/api/sessions"):
+        assert allowed_route(ok), ok
+    for bad in ("/api/chat/../settings", "/api/hoard-copilot/%2e%2e/tokens", "/api/chat/%2E%2E/admin",
+                "/api/session/./../x", "/api/chat/%252e%252e/x", "/api/chat/..%5csettings", "//evil/api/chat_stream",
+                "http://evil/api/chat_stream", "/api/settings", "api/chat_stream", None, 3):
+        assert not allowed_route(bad), bad
+
