@@ -4,7 +4,10 @@
   let surface = 'family';
   function rememberSurface(event) {
     const target = event.target;
+    // Modal navigation and chat focus do not replace the underlying work surface.
+    if (target.closest?.('.hoard-copilot-layer,#spheres-dialog,#facet-spheres')) return;
     if (target.closest?.('.card[data-id],#group-editor,#detail-dialog,#log-dialog')) surface = 'apps';
+    else if (target.closest?.('.facet-top')) surface = 'top';
     else if (target.closest?.('#family-panel,#edit-dialog')) surface = 'family';
   }
   document.addEventListener('pointerdown',rememberSurface,true);
@@ -26,18 +29,27 @@
       .map(([key,item]) => [key,withoutCredentials(item)]));
   }
   async function context() {
-    const app = await window.hubCopilotApp?.context?.() || {active_objects:[],view:{section:'apps'},pending_forms:[]};
-    const family = await window.hubCopilotFamily?.context?.();
-    const facet = await window.HubFacets?.copilotContext?.();
+    // Capture UI intent and start every collector before yielding to API validation.
+    const requestedSurface = surface;
     const familyOpen = document.querySelector('#family-body') && !document.querySelector('#family-body').hidden;
     const editing = document.querySelector('#edit-dialog')?.open;
-    const selected = editing ? family : app.pending_forms?.length && surface === 'apps' ? app : facet?.pending_forms?.length ? facet : surface === 'apps' || !familyOpen ? app : facet || family;
+    const activeTab = document.querySelector('#family-tabs .tab.on')?.dataset.tab;
     const selection = window.getSelection()?.toString();
-    const forms = [...(app.pending_forms || []),...(family?.pending_forms || []),...(facet?.pending_forms || []),...pendingForms()];
+    const locale = document.documentElement.lang || 'en';
+    const pending = pendingForms();
+    const [appPart,family,facet] = await Promise.all([window.hubCopilotApp?.context?.(),
+      window.hubCopilotFamily?.context?.(),window.HubFacets?.copilotContext?.()]);
+    const app = appPart || {active_objects:[],view:{section:'apps'},pending_forms:[]};
+    let selected = app;
+    if (editing) selected = family;
+    else if (facet?.view?.editor_mode === 'modal') selected = facet;
+    else if (requestedSurface === 'top') selected = facet || family;
+    else if (requestedSurface === 'family' && familyOpen) selected = facet?.view?.section === activeTab ? facet : family || facet;
+    const forms = [...(app.pending_forms || []),...(family?.pending_forms || []),...(facet?.pending_forms || []),...pending];
     return withoutCredentials({active_objects:selected?.active_objects || [],
       selection:selection ? {kind:'text',text:selection} : null,
       ...(forms.length ? {editor:{forms}} : {}),
-      view:{...selected?.view,locale:document.documentElement.lang || 'en'}});
+      view:{...selected?.view,locale}});
   }
   async function onTurnEnd() {
     await Promise.allSettled([window.hubCopilotApp?.refresh?.(),window.hubCopilotFamily?.refresh?.(),window.HubFacets?.refreshCopilot?.()]);

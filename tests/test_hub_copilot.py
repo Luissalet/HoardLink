@@ -346,3 +346,73 @@ def test_native_facet_forms_keep_pending_fields_and_save_only_changes(private_ho
             assert new_sphere['active_objects']==[]
             assert new_sphere['editor']['forms'][0]['is_new'] is True
         finally:context.close()
+
+
+def test_active_modal_and_top_editors_win_without_losing_background_forms(private_host):
+    playwright=pytest.importorskip('playwright.sync_api')
+    from hoard_link.web import browser
+    from tempfile import TemporaryDirectory
+    hub,base,_,tmp_path=private_host
+    family=tmp_path/'family'
+    for app_id in ('alpha','beta'):
+        folder=family/app_id;folder.mkdir(parents=True)
+        manifest={'schema':1,'id':app_id,'name':app_id.title(),'purpose':'Private context fixture',
+            'capabilities':['fixture'],'app':{'url_default':hub.config.faustus_urls[0],
+            'health':{'path':'/api/health','expect':{'contract_version':'1.0'}}},
+            'mcp':{'transport':'stdio','command':'python','args':[],'env':{}}}
+        (folder/'faustus-plugin.json').write_text(json.dumps(manifest),encoding='utf8')
+    hub.config.roots=[str(family)];hub.config.profiles={'Group':{'apps':['alpha'],'desktop':[]}}
+    hub.config.save();hub.rescan()
+    with request(base,'/api/rules',{'name':'Other modal fixture','enabled':False,'when':{'type':'private.none'},
+        'then':[{'kind':'event','type':'private.fixture','data':{}}]}) as response:assert json.load(response)['ok']
+    with playwright.sync_playwright() as p, TemporaryDirectory(prefix='hub387-mixed-editors-') as profile:
+        context,_=browser.launch_context(p,profile,headless=True,viewport={'width':1440,'height':1000})
+        try:
+            page=context.new_page();page.goto(base,wait_until='networkidle')
+            page.locator('.profile').filter(has=page.get_by_text('Group',exact=True)).get_by_role('button',name='Edit group',exact=True).click()
+            alpha=page.locator('#group-members .group-member').filter(has=page.locator('input[value="alpha"]')).locator('.group-window')
+            alpha.check()
+            # A later editor opening must not alter an already requested snapshot.
+            page.evaluate('''()=>{const original=window.fetch;let release;const gate=new Promise(resolve=>release=resolve);
+                window.releaseSnapshot=release;window.fetch=async(input,init)=>{if(String(input).includes('/api/profiles/Group'))await gate;return original(input,init)};
+                window.snapshot=window.hoardCopilot.context();}''')
+            page.locator('#sphere-chip').click();page.locator('.sphere-menu [data-action="configure"]').click()
+            english=page.locator('#spheres-dialog').get_by_label('Name (English)',exact=True);english.fill('Pending sphere with profile below')
+            before=page.evaluate('async()=>{window.releaseSnapshot();return await window.snapshot}')
+            assert before['active_objects'][0]['kind']=='profile' and before['view']['section']=='profiles'
+            assert [form['kind'] for form in before['editor']['forms']]==['profile']
+            modal=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert modal['active_objects'][0]['kind']=='sphere' and modal['active_objects'][0]['object_id']=='personal'
+            assert modal['view']['section']=='spheres'
+            assert {form['kind'] for form in modal['editor']['forms']}=={'profile','spheres'}
+            page.locator('#spheres-dialog .sp-close').click()
+            restored=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert restored['active_objects'][0]['object_id']=='Group' and restored['view']['section']=='profiles'
+            assert alpha.is_checked()
+            # Today is outside the family panel, and multiple pending editors remain available.
+            page.locator('#family-toggle').click();assert page.locator('#family-body').evaluate('(body)=>body.hidden')
+            page.locator('.today-head').get_by_role('button',name='Calendar',exact=True).click()
+            folder=page.locator('.today-ics input[name="export_path"]');folder.fill(str(tmp_path/'pending-calendar'))
+            calendar=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert calendar['view']['section']=='today' and calendar['active_objects']==[]
+            assert {form['kind'] for form in calendar['editor']['forms']}=={'profile','calendar_config'}
+            page.locator('[data-tab="mailgate"]').click()
+            page.locator('#tab-mailgate').get_by_role('button',name='Settings',exact=True).click()
+            page.locator('.mg-form input[name="owner"]').fill('Other pending editor')
+            mail=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert mail['view']['section']=='mailgate'
+            assert {form['kind'] for form in mail['editor']['forms']}=={'profile','calendar_config','mail_config'}
+            # Base-family modals retain priority even with a top editor open.
+            page.locator('[data-tab="rules"]').click()
+            page.locator('#rules-list .rule').filter(has_text='Other modal fixture').get_by_role('button',name='Edit',exact=True).click()
+            rule=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert rule['view']['section']=='rules' and rule['active_objects'][0]['kind']=='rule'
+            assert {form['kind'] for form in rule['editor']['forms']}=={'profile','calendar_config','rules'}
+            page.locator('#edit-close').click()
+            page.locator('#sphere-chip').click();page.locator('.sphere-menu [data-action="configure"]').click()
+            mixed=page.evaluate('async()=>await window.hoardCopilot.context()')
+            assert mixed['view']['section']=='spheres' and mixed['active_objects'][0]['object_id']=='personal'
+            assert {form['kind'] for form in mixed['editor']['forms']}=={'profile','calendar_config','spheres'}
+            page.locator('#spheres-dialog .sp-close').click()
+            assert alpha.is_checked() and folder.input_value()==str(tmp_path/'pending-calendar')
+        finally:context.close()
