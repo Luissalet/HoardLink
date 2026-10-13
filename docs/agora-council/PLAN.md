@@ -1,10 +1,10 @@
-# Agora Council and group coordination
+# Shared Agora coordination
 
-Luis authorised planning, debate and implementation on 13 October 2026. Agora becomes the common coordination product with multiple persistent spaces. Council and Group remain available as ways to work inside a space. The migration preserves their existing capabilities and the development team's history.
+Luis authorised planning, debate and complete implementation on 13 October 2026. Agora is the common coordination product with multiple persistent spaces. The interface offers Conversation, Deliberation and Tasks and decisions. Council and Group remain internal compatible contracts, with all their capabilities and the development team's history preserved.
 
 ## Product and ownership
 
-A space groups conversations, participants, tasks and decisions for a project or purpose. The current development Agora becomes the `ecosystem` space without changing its task, thread or message identifiers. A space contains sessions; a Council session is not itself a second space. Renaming a space changes its title, never its identity or history.
+A space groups conversations, participants, tasks and decisions for a project or purpose. The current development Agora becomes **Faustus y Hoards**, retaining the `ecosystem` space and its existing common project link without changing its task, thread or message identifiers. A space contains sessions; a Council session is not itself a second space. Renaming a space changes its title, never its identity or history.
 
 HoardLink owns common coordination contracts and their canonical service. Faustus owns model turns, tools, Dispatch and its native participant sessions. Provider-specific external agents keep their existing execution integrations. Hub and Faustus are clients of the same coordination objects; a copied transcript or a pair of synchronised task ledgers does not complete the migration.
 
@@ -24,6 +24,26 @@ Reference: NousResearch Hermes Agent, local revision `7c6f21a5e12ba9b1c674ec9b41
 Hermes uses persistent member sessions and a durable server driver; messages arriving during a turn wait in a queue. It supports membership edits and renaming while preserving room history, directed mentions, intentional silence and threaded replies. These are useful behaviours to compare with the existing Faustus Group 443 and Council before adding code. Its distributed room machinery is not required for a single local Hub, and its documented fixed room/round caps are not our defaults.
 
 The comparison includes `gateway/hosted_rooms.py`, `gateway/hosted_room_driver.py`, `gateway/hosted_rooms_common.py` and the desktop group client. No Hermes runtime dependency is introduced. Any incorporated source keeps its licence and provenance and evolves as our own implementation.
+
+Other references checked on 13 October: [AutoGen teams](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html) and [state](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/state.html) document serial teams, selection and saved team state. [CrewAI hierarchical process](https://docs.crewai.com/v1.15.27/en/learn/hierarchical-process) documents manager-led delegation and task review. Their useful patterns complement native Faustus policies and Dispatch; they do not establish a comparative quality ranking.
+
+| Behaviour | Reference pattern | Native implementation and evidence |
+| --- | --- | --- |
+| Durable room and member identities | Hermes persistent room/member sessions | Existing Group443 plus shared repositories496; membership edits retain the parent and unchanged sessions. Browser/API/MCP receipt and independent R2 tests. |
+| FIFO and reconnect | Hermes server driver and room lease | Group driver reused; Council now has canonical ownership and FIFO. Independent retry/completed/interrupted and two-turn reproductions pass. |
+| Membership during work | Hermes edits without replacing room history | Atomic current-step acquisition prevents removed queued members running; already started members finish once. Independent R2 reproductions pass. |
+| Participant context | Hermes unseen room history | Native participant cursor supplies new peer messages and preserves parallel-round visibility. Native context tests cover the boundary. |
+| Turn choice and saved state | AutoGen teams/state | Existing Council policies and Group serial/parallel modes remain; shared canonical state survives observers and preserves explicit budgets. |
+| Delegation and review | CrewAI manager-led work | Existing Council roles, objections, synthesis and native Dispatch remain; Agora retains exact submission revisions and Git review. |
+| Product integration | Project-specific comparison criterion | One Agora navigation, shared room catalogue, separate drafts and remembered room per mode/space; private browser tests and visual F1–F3 verdict. |
+
+Limits of this comparison: native room functions are verified against deterministic model fixtures. No cross-project quality benchmark, multi-gateway parity, universal ranking or production activation is inferred from those tests. Remote-provider runners retain their original integrations; no reference project's runtime is added.
+
+## Delivery evidence
+
+Backend496 R2 is independently approved on Hub `649d257e` and Faustus `320c945e`: 176 tests pass, one retired boundary assertion is deselected. The two R1 failures and their original logs are retained. Interface497 R3 is independently approved on Hub548a4ddc and native77e9a5ff with457PASS+6JS. Visual F1–F3 and the final mobile selector target FINAL-F1 are scored resolved in separate limited verdicts; touch-only fe12f44f is composed as fc23b884. Parent494 stays open until composition, activation and preservation checks finish.
+
+The isolated native composition starts at current shared `f7d974b6` and retains peer response-quality and Sparks-continuity source unchanged. Its broad test run records 762 passing, one skipped and two failed name assertions for intentional shared-module aliases. The corrected identity/fresh-import criterion passes all 16 tests in that file; the earlier failures are not overwritten or relabelled. The later broad native composition passes765 tests; the final coordination area passes216. Hub's full suite records4334PASS/86SKIP/2FAIL: one unchanged fake-DOM baseline failure and a2s quota wait that passes alone. Those failures remain in their original logs; the full suite is not labelled green. Private browser/API/MCP and offline desktop-relay evidence live in `D:/LocalAI/research-inbox/council-agora-20261013`.
 
 ## Acceptance criteria
 
