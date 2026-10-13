@@ -16,6 +16,16 @@ input::placeholder,textarea::placeholder{color:#bebbb4;opacity:1}.quota-label st
 .message.agent .message-meta strong{color:color-mix(in srgb,var(--c) 55%,#ffffff)}
 .message.agent .message-avatar{background:color-mix(in srgb,var(--c) 22%,#24221b);color:color-mix(in srgb,var(--c) 45%,#ffffff);border:1px solid color-mix(in srgb,var(--c) 60%,transparent)}
 .leader .avatar{border-color:var(--c,#68604f);background:color-mix(in srgb,var(--c,#353128) 22%,#24221b);color:color-mix(in srgb,var(--c,#ece9e1) 45%,#ffffff)}
+.app--embedded .topbar {min-width:0;}
+.app--embedded .topbar .brand,.app--embedded .workspace-name {display:none;}
+.space-context {flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px;}
+.app--embedded .connection {margin-left:0; flex-shrink:0;}
+.app--embedded .topbar .icon-button {flex-shrink:0;}
+@media (max-width:640px) {
+ .topbar .space-selector {display:flex; flex-direction:column; align-items:flex-start; min-width:0; max-width:110px;}
+ .topbar .space-selector select {width:100%; min-width:0;}
+ .topbar .icon-button,.topbar .brand {flex-shrink:0;}
+}
 .swatch{--c:#888;width:18px;height:18px;border-radius:50%;background:var(--c);border:2px solid #24221b;box-shadow:0 0 0 1px #68604f;cursor:pointer;flex-shrink:0;position:relative;margin-left:auto}
 .swatch:focus-within{box-shadow:0 0 0 2px var(--accent)}
 .swatch input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;border:0;padding:0}

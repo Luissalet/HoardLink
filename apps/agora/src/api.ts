@@ -1,7 +1,9 @@
 import {invoke, isTauri} from '@tauri-apps/api/core';
 export const spaceId = new URLSearchParams(location.search).get('space_id') || 'ecosystem';
+export const embedded = new URLSearchParams(location.search).get('embedded') === '1';
+export const hubUrl = 'http://127.0.0.1:8810/?space_id=' + encodeURIComponent(spaceId) + '#agora';
 export async function openHub(event:{preventDefault:()=>void}){
-  if(isTauri()){event.preventDefault();await invoke('open_hub');}
+  if(isTauri()){event.preventDefault();await invoke('open_hub',{spaceId});}
 }
 export async function api<T=any>(path:string,body?:unknown):Promise<T>{
   if(path.startsWith('/api/agora/') && spaceId !== 'ecosystem') {
