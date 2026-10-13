@@ -9,6 +9,7 @@ pretend that a queued message woke or received a reply from them.
 from __future__ import annotations
 
 import json
+import copy
 import logging
 import mimetypes
 import os
@@ -57,6 +58,8 @@ class AgoraConsoleFacet(Facet):
         data_dir = Path(hub.config.data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = data_dir / "agora-console.db"
+        self.space_id = 'ecosystem'
+        self._space_views: dict[str, Any] = {}
         self._db_lock = threading.RLock()
         self._provider_lock = threading.Lock()
         self._native_preference_lock = threading.Lock()
@@ -73,6 +76,12 @@ class AgoraConsoleFacet(Facet):
 
     def start(self) -> None:
         """Start the read-only Codex quota reporter bound to this Hub instance."""
+        agora = self._agora()
+        if agora is not None and hasattr(agora, 'space_store'):
+            for space in agora.space_store.list():
+                path = Path(self.hub.config.data_dir) / ('agora-console-' + space['id'] + '.db')
+                if space['id'] != 'ecosystem' and path.exists():
+                    self.for_space(space['id'])
         config = getattr(self.hub, "config", None)
         hub_url = str(getattr(config, "url", "") or "").rstrip("/")
         data_dir = str(getattr(config, "data_dir", "") or "")
@@ -107,6 +116,9 @@ class AgoraConsoleFacet(Facet):
             logger.info("Claude/Cursor quota reporter could not start", exc_info=False)
 
     def close(self) -> None:
+        for view in list(self._space_views.values()):
+            view.close()
+        self._space_views.clear()
         for timer in list(self._wakeups.values()):
             timer.cancel()
         self._wakeups.clear()
@@ -543,7 +555,7 @@ class AgoraConsoleFacet(Facet):
             return {"leader_id": leader_id, "status": "unavailable", "receipt_id": None,
                     "detail": provider.get("detail") or "No verified model and effort are configured for this independent leader session."}
         agora = self._agora()
-        recent = agora.thread_recent({"thread_id": THREAD_ID, "limit": 40}) if agora is not None else {}
+        recent = agora.thread_recent({"thread_id": self.thread_id, "limit": 40}) if agora is not None else {}
         messages = recent.get("messages", []) if isinstance(recent, dict) else []
         context = []
         for row in messages[-20:]:
@@ -552,14 +564,15 @@ class AgoraConsoleFacet(Facet):
                 text = str(row.get("body") or row.get("text") or "")[:4000]
                 if text:
                     context.append(f"{author}: {text}")
-        identity = "codex-agora" if leader_id == "codex" else "cursor-agora"
+        identity = self._leader_identity(leader_id)
         prompt = ("You are the independent Agora console leader " + identity + ". Continue the shared work chat. "
-                  "At the start of each turn, use `D:\\LocalAI\\agora.cmd --as " + identity + " hb \"...\"`, then read inbox and board. "
+                  "At the start of each turn, use `D:\\LocalAI\\agora.cmd --space " + self.space_id + " --as " + identity + " hb \"...\"`, then read inbox and board. "
                   "Before editing, read `D:\\LocalAI\\CRITERIOS.md` first and `D:\\LocalAI\\MEMORY.md` second; also read the repo AGENTS.md. "
                   "Use this exact identity for all Agora operations; never impersonate Luis or another agent. "
                   "Do not claim that queued messages woke another agent. Answer the latest message with useful work or a concise status. "
                   "If you change files, follow the repo's skills and Agora protocol, work in an isolated worktree, create/claim the Agora task, "
-                  "and take path locks first. Do not fake reviews or claim a task complete without evidence.\n\nRecent canonical thread 32:\n" + "\n".join(context))[-30000:]
+                  "and take path locks first. Do not fake reviews or claim a task complete without evidence."
+                  + f"\n\nRecent canonical thread {self.thread_id}:\n" + "\n".join(context))[-30000:]
         turn_id, now = str(uuid.uuid4()), time.time()
         with self._db_lock, self._db() as db:
             db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'queued',?,?)",
@@ -776,9 +789,9 @@ class AgoraConsoleFacet(Facet):
         if state == "completed" and answer.strip():
             agora = self._agora()
             if agora is not None:
-                actor = "codex-agora" if leader_id == "codex" else "cursor-agora"
+                actor = self._leader_identity(leader_id)
                 try:
-                    agora.post({"agent": actor, "thread_id": THREAD_ID, "body": answer[:20000], "kind": "comment", "mentions": []})
+                    agora.post({"agent": actor, "thread_id": self.thread_id, "body": answer[:20000], "kind": "comment", "mentions": []})
                 except Exception:  # noqa: BLE001
                     logger.exception("could not post real %s console response", leader_id)
         self._record("leader_turn", turn_id, state, detail or f"{leader_id} real provider response recorded.")
@@ -788,7 +801,7 @@ class AgoraConsoleFacet(Facet):
 
     def _liveness_evidence(self, leader_id: str, since: float, until: float) -> Optional[dict[str, int]]:
         """Count what the leader's Agora identity did in [since, until], read-only. None when Agora cannot be read."""
-        identity = CONSOLE_IDENTITIES.get(leader_id)
+        identity = self._leader_identity(leader_id) if leader_id in CONSOLE_IDENTITIES else None
         db = getattr(self._agora(), "db", None)
         if not identity or db is None or not hasattr(db, "query"):
             return None
@@ -829,7 +842,7 @@ class AgoraConsoleFacet(Facet):
 
     def _real_event_since(self, leader_id: str, since: float) -> bool:
         """A message for the agent, a review waiting for it or a change asked of it that appeared after ``since``."""
-        identity = CONSOLE_IDENTITIES.get(leader_id)
+        identity = self._leader_identity(leader_id) if leader_id in CONSOLE_IDENTITIES else None
         agora = self._agora()
         if not identity or agora is None or not hasattr(agora, "inbox"):
             return False
@@ -1055,10 +1068,10 @@ class AgoraConsoleFacet(Facet):
             native_preferences = [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM native_preferences")]
         messages = None
         if agora is not None:
-            recent = agora.thread_recent({"thread_id": THREAD_ID, "limit": 40})
+            recent = agora.thread_recent({"thread_id": self.thread_id, "limit": 40})
             if recent.get("ok"):
                 messages = recent
-        return {"ok": True, "thread_id": THREAD_ID, "leaders": leaders,
+        return {"ok": True, "thread_id": self.thread_id, "leaders": leaders,
                 "workers": self._worker_rows(), "quota_pools": usage.get("providers", []),
                 "activity": activity, "messages": messages, "console_turns": console_turns,
                 "console_sessions": console_sessions, "native_preferences": native_preferences,
@@ -1132,7 +1145,49 @@ class AgoraConsoleFacet(Facet):
 
     def _agora(self) -> Any:
         facet = self.hub.facet("agora") if hasattr(self.hub, "facet") else None
-        return getattr(facet, "agora", None)
+        agora = getattr(facet, "agora", None)
+        return agora.for_space(self.space_id) if agora is not None and self.space_id != 'ecosystem' else agora
+
+    @property
+    def thread_id(self):
+        if self.space_id == 'ecosystem':
+            return THREAD_ID
+        agora = self._agora()
+        with agora.db.tx():
+            found = agora.db.one("SELECT id FROM threads WHERE space_id=? AND kind='handoff' ORDER BY id LIMIT 1", (self.space_id,))
+            if found:
+                return found['id']
+            return agora.thread_open({'agent': 'codex-console', 'title': 'Conversacion de trabajo', 'kind': 'handoff',
+                                      'body': 'Conversacion de este espacio.'})['thread']['id']
+
+    def for_space(self, sid):
+        sid = sid or 'ecosystem'
+        if sid == self.space_id:
+            return self
+        self._agora().for_space(sid)
+        with self._db_lock:
+            if sid not in self._space_views:
+                view = copy.copy(self)
+                view._space_views = {}
+                view.space_id = sid
+                # Provider execution sessions are per space; messages/tasks
+                # remain canonical in Agora's one coordination database.
+                view._db_path = Path(self.hub.config.data_dir) / ('agora-console-' + sid + '.db')
+                view._leader_threads = {}; view._wakeups = {}; view._processes = {}
+                view._leader_locks = {'codex': threading.Lock(), 'cursor': threading.Lock()}
+                view._capacity_reporter_started = False
+                view._init_db()
+                view._reconcile_workers()
+                view._start_queued_leaders()
+                self._space_views[sid] = view
+            return self._space_views[sid]
+
+    def _leader_identity(self, leader_id):
+        base = 'codex-agora' if leader_id == 'codex' else 'cursor-agora'
+        if self.space_id == 'ecosystem':
+            return base
+        import hashlib
+        return leader_id + '-agora-' + hashlib.sha256(self.space_id.encode()).hexdigest()[:12]
 
     def _faustus_bound_session(self) -> tuple[Optional[dict[str, Any]], str]:
         runtime = getattr(self.hub, "faustus_runtime", None)
@@ -1571,7 +1626,7 @@ class AgoraConsoleFacet(Facet):
         known = {str(row.get("id")) for row in agora.agents().get("agents", []) if isinstance(row, dict)}
         mentions = list(dict.fromkeys(leader_map[x] for x in recipients if leader_map[x] in known))
         post = agora.post({"agent": actor, "_person": actor.lower() == "luis",
-                           "thread_id": THREAD_ID, "body": body, "kind": "comment", "mentions": mentions})
+                           "thread_id": self.thread_id, "body": body, "kind": "comment", "mentions": mentions})
         if not post.get("ok"):
             return post
         message_id = post.get("message_id")
@@ -1594,8 +1649,8 @@ class AgoraConsoleFacet(Facet):
                                  "legacy_mention": {"status": "queued" if present else "unavailable",
                                                     "receipt_id": message_id if present else None,
                                                     "detail": "Canonical mention waits for Claude's next turn." if present else "No matching existing agent identity is registered."}})
-        self._record("message", str(message_id or THREAD_ID), "queued", f"thread={THREAD_ID}; recipients={','.join(recipients)}")
-        return {"ok": True, "thread_id": THREAD_ID, "message_id": message_id, "author": actor,
+        self._record("message", str(message_id or self.thread_id), "queued", f"thread={self.thread_id}; recipients={','.join(recipients)}")
+        return {"ok": True, "thread_id": self.thread_id, "message_id": message_id, "author": actor,
                 "dispatch": dispatch, "delivery_semantics": "queued; a mention does not wake an idle agent immediately"}
 
     def _create_worker(self, args: dict[str, Any], actor: str = "codex-console") -> dict[str, Any]:
@@ -1707,7 +1762,7 @@ class AgoraConsoleFacet(Facet):
             base_url = str(self.hub.faustus_status().get("url") or "http://127.0.0.1:7000").rstrip("/")
             context = []
             agora = self._agora()
-            recent = agora.thread_recent({"thread_id": THREAD_ID, "limit": 40}) if agora is not None else {}
+            recent = agora.thread_recent({"thread_id": self.thread_id, "limit": 40}) if agora is not None else {}
             for message in (recent.get("messages", []) if isinstance(recent, dict) else [])[-8:]:
                 if isinstance(message, dict) and str(message.get("body") or "").strip():
                     context.append(f"{str(message.get('author') or 'unknown')[:80]}: {str(message.get('body'))[:1200]}")
@@ -1911,6 +1966,9 @@ class AgoraConsoleFacet(Facet):
             return None
         if not self._operator(req):
             return {"ok": False, "status": 401, "error": "use the Hub page or its bearer token"}
+        sid = req.q('space_id', 'ecosystem')
+        if sid != self.space_id:
+            return self.for_space(sid).get(req)
         if req.path == "/api/agora/console/overview":
             return self.overview(req.q_bool("refresh"))
         if req.path == "/api/agora/console/leaders":
@@ -1924,6 +1982,9 @@ class AgoraConsoleFacet(Facet):
         if not self._operator(req):
             return {"ok": False, "status": 401, "error": "use the Hub page or its bearer token"}
         args = dict(req.body or {})
+        sid = args.get('space_id') or 'ecosystem'
+        if sid != self.space_id:
+            return self.for_space(sid).post(req)
         # Browser requests represent the signed-in operator. Agent/API callers
         # receive only their authenticated caller identity; body fields cannot
         # forge another author.
@@ -1987,7 +2048,7 @@ class AgoraConsoleFacet(Facet):
 
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
-        return [
+        tools = [
             {"name": "hub_agora_console_overview", "description": "Read the Agora team console: live provider catalogs where the official local interface exposes them, shared quota pools, child workers and canonical group messages. console_turns carry a liveness class per finished turn (completed, advanced, plan_only, empty_response, blocked, failed, needs_followup) with its reasons, and the root_turn_id/continuation_n of automatic continuations. Catalogs may be unavailable; no model call is made.",
              "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
@@ -2014,33 +2075,25 @@ class AgoraConsoleFacet(Facet):
                  "result": {"type": "string", "maxLength": 20000}, "actor": {"type": "string", "maxLength": 64}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
         ]
+        for tool in tools:
+            tool['inputSchema']['properties']['space_id'] = {'type': 'string'}
+        return tools
 
     def handlers(self) -> dict[str, Any]:
-        def post_message(args: dict[str, Any]) -> dict[str, Any]:
+        return {name: (lambda args, tool=name: self.for_space(args.get('space_id')).handlers_local()[tool](args))
+                for name in self.handlers_local()}
+
+    def handlers_local(self):
+        # The scoped view's implementation, without a second scope dispatch.
+        def write(method, args):
             values = dict(args)
             actor, error = self._mcp_actor(values)
-            return error or self.send_message(values, actor)
-
-        def post_preferences(args: dict[str, Any]) -> dict[str, Any]:
-            values = dict(args)
-            actor, error = self._mcp_actor(values)
-            return error or self.set_preferences(values, actor)
-
-        def post_color(args: dict[str, Any]) -> dict[str, Any]:
-            values = dict(args)
-            actor, error = self._mcp_actor(values)
-            return error or self.set_color(values, actor)
-
-        def post_worker(args: dict[str, Any]) -> dict[str, Any]:
-            values = dict(args)
-            actor, error = self._mcp_actor(values)
-            return error or self.worker(values, actor)
-
+            return error or method(values, actor)
         return {
-            "hub_agora_console_overview": lambda a: self.overview(bool(a.get("refresh"))),
-            "hub_agora_console_leaders": lambda a: self.leader_states(bool(a.get("refresh"))),
-            "hub_agora_console_message": post_message,
-            "hub_agora_console_preferences": post_preferences,
-            "hub_agora_console_color": post_color,
-            "hub_agora_console_worker": post_worker,
+            'hub_agora_console_overview': lambda a: self.overview(bool(a.get('refresh'))),
+            'hub_agora_console_leaders': lambda a: self.leader_states(bool(a.get('refresh'))),
+            'hub_agora_console_message': lambda a: write(self.send_message, a),
+            'hub_agora_console_preferences': lambda a: write(self.set_preferences, a),
+            'hub_agora_console_color': lambda a: write(self.set_color, a),
+            'hub_agora_console_worker': lambda a: write(self.worker, a),
         }

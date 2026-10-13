@@ -472,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
                                     "leído de sus ficheros de sesión")
     s = sub.add_parser("usage-report", help="publica un snapshot de cuota sanitizado desde JSON UTF-8")
     s.add_argument("--data-file", required=True, help="JSON UTF-8 con provider_id, pool_id, pool_label, source y windows")
-    s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true"); s.add_argument("--meta", action="store_true", help="solo metadatos (quién, dónde, tipo), sin cuerpos ni mover la marca")
+    s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true"); s.add_argument("--meta", action="store_true", help="solo metadatos (quién, dónde, tipo), sin cuerpos ni mover la marca"); s.add_argument('--all-spaces', action='store_true', help='buzón de todos los espacios con cursores independientes')
     s = sub.add_parser("hb"); s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
     renewal = s.add_mutually_exclusive_group()
     renewal.add_argument("--renew-resource", action="append", help="renueva solo estos recursos exactos; repetible")
@@ -614,7 +614,7 @@ def main(argv: list[str] | None = None) -> int:
             {"task_id": a.task, "after_revision": a.after, "limit": a.limit}))
     elif c == "inbox":
         q = {"agent": ag, "wait_s": a.wait, "peek": "1" if a.peek else "", "mine_only": "1" if a.mine else "",
-             "metadata_only": "1" if a.meta else ""}
+             "metadata_only": "1" if a.meta else "", 'all_spaces': '1' if a.all_spaces else ''}
         r = call("GET", "/api/agora/inbox?" + urllib.parse.urlencode(q), timeout=max(30.0, a.wait + 30))
     elif c == "activity":
         q = {"task_id": a.task}

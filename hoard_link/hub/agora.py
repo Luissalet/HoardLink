@@ -685,7 +685,7 @@ def project_inbox_metadata(out: dict[str, Any]) -> dict[str, Any]:
     """Reduce an inbox answer to metadata: message and task bodies, checkpoint summaries, submission blocks and
     escalation questions become their length. Applied after any enrichment, so nothing added later leaks text."""
     def keep(item: dict[str, Any], fields: tuple[str, ...], texts: dict[str, Any]) -> dict[str, Any]:
-        slim = {k: item[k] for k in fields if k in item}
+        slim = {k: item[k] for k in (*fields, 'space_id') if k in item}
         for name, value in texts.items():
             slim[name] = len(str(value or ""))
         return slim
@@ -2672,6 +2672,8 @@ class Agora:
         """What is new for this agent: messages from others since the last read (``for_you`` when it is mentioned,
         owns the task or took part), reviews waiting for it, changes asked of it, escalations answered.
         ``wait_s`` (≤120) waits for something new; ``peek`` does not move the read mark."""
+        if a.get('all_spaces'):
+            return self._inbox_all_spaces(a)
         agent = self._agent(a.get("agent"), allow_person=True)
         wait = 0.0
         try:
@@ -2696,6 +2698,41 @@ class Agora:
             upto = max(m["id"] for m in out["messages"])
             self.space_store.mark_read(self.space_id, agent, upto)
         return out
+
+    def _inbox_all_spaces(self, a):
+        """An explicit receiver view; each space retains its own read cursor."""
+        agent = self._agent(a.get('agent'), allow_person=True)
+        deadline = self.clock() + max(0, min(float(a.get('wait_s') or 0), MAX_WAIT_S))
+        fields = ('messages', 'reviews', 'changes', 'escalated', 'pending', 'progress_alerts')
+        while True:
+            version = self._version[0]
+            out = {'ok': True, 'agent': agent, 'all_spaces': True, **{name: [] for name in fields}}
+            out['read_cursors'] = {}
+            for space in self.space_store.list():
+                sid = space['id']
+                local = {**a, 'space_id': sid, 'all_spaces': False, 'peek': True, 'wait_s': 0, 'metadata_only': False}
+                page = self.for_space(sid).inbox(local)
+                out['read_cursors'][sid] = page['since_id']
+                for name in fields:
+                    out[name].extend({**row, 'space_id': sid} for row in page[name])
+                out['out_of_quota'] = page['out_of_quota']
+            out['messages'].sort(key=lambda row: row['id'])
+            limit = max(1, min(int(a.get('limit') or 100), 500))
+            out['messages'] = out['messages'][:limit]
+            out['counts'] = {name: len(out[name]) for name in fields}
+            out['counts']['for_you'] = sum(bool(m.get('for_you')) for m in out['messages'])
+            out['counts']['total'] = sum(out['counts'][name] for name in ('messages', 'reviews', 'changes', 'escalated'))
+            if out['messages'] or self.clock() >= deadline:
+                break
+            with self._changed:
+                if self._version[0] == version:
+                    self._changed.wait(timeout=max(.05, min(5, deadline - self.clock())))
+        if not a.get('peek') and not a.get('metadata_only'):
+            for sid in out['read_cursors']:
+                ids = [m['id'] for m in out['messages'] if m['space_id'] == sid]
+                if ids:
+                    self.space_store.mark_read(sid, agent, max(ids))
+        return project_inbox_metadata(out) if a.get('metadata_only') else out
 
     def _inbox_once(self, agent: str, a: dict[str, Any]) -> dict[str, Any]:
         since = int(a.get("since_id") or self.space_store.read_upto(self.space_id, agent))
@@ -2914,7 +2951,8 @@ TOOLS: list[dict[str, Any]] = [
                     "peek keeps the read mark. metadata_only returns who/where/what kind without bodies and keeps "
                     "the read mark: read the bodies with hub_agora_thread or hub_agora_task (with agent).",
      "inputSchema": _schema({"agent": _A, "wait_s": {"type": "number"}, "peek": {"type": "boolean"},
-                             "metadata_only": {"type": "boolean"}, "mine_only": {"type": "boolean"}, "since_id": {"type": "integer"}}, ["agent"])},
+                             "metadata_only": {"type": "boolean"}, "mine_only": {"type": "boolean"}, "since_id": {"type": "integer"},
+                             "all_spaces": {"type": "boolean", "description": "Read all spaces explicitly, with per-space cursors and space_id on each item."}}, ["agent"])},
     {"name": "hub_agora_heartbeat",
      "description": "Tell the Ágora you are here and what you are doing (state working|idle|waiting|away). "
                     "Renews every owned lock by default. Optional renew_resources selects exact live owned locks; [] reports state without renewal.",
@@ -3316,6 +3354,7 @@ class AgoraFacet(Facet):
             q["peek"] = str(q.get("peek", "")).lower() in ("1", "true", "yes")
             q["mine_only"] = str(q.get("mine_only", "")).lower() in ("1", "true", "yes")
             q["metadata_only"] = str(q.get("metadata_only", "")).lower() in ("1", "true", "yes")
+            q['all_spaces'] = str(q.get('all_spaces', '')).lower() in ('1', 'true', 'yes')
             return self._run(self._inbox, q)
         if p == "/api/agora/tasks":
             return self._run(self._tasks, q)
