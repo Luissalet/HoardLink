@@ -9,6 +9,7 @@ copies equal to this repository's ``hoard_link/`` again:
     python scripts/sync_vendored.py --apps funes scribe
     python scripts/sync_vendored.py --install borges argus   # vendor it where it is missing
     python scripts/sync_vendored.py --dry-run
+    python scripts/sync_vendored.py --apps funes --files copilot.py --check
 
 A Python app vendors the package at ``<app>/<package>/hoard_link/``; a
 Node app vendors ``<app>/server/hoard-link.js`` and the Node commons
@@ -84,9 +85,12 @@ def _version() -> str:
     return m.group(1) if m else "?"
 
 
-def copy_tree(src: Path, dst: Path, dry: bool) -> tuple[int, int]:
-    """Copy src over dst; returns (changed, removed)."""
+def copy_tree(src: Path, dst: Path, dry: bool, files: set[str] | None = None) -> tuple[int, int]:
+    """Copy canonical paths over dst; selected files keep unrelated code and stamps."""
     changed, removed = drift.plan_tree(src, dst)
+    if files is not None:
+        changed = [rel for rel in changed if rel in files]
+        removed = [rel for rel in removed if rel in files]
     if not dry:
         for rel in changed:
             d = dst / rel
@@ -95,14 +99,14 @@ def copy_tree(src: Path, dst: Path, dry: bool) -> tuple[int, int]:
         for rel in removed:  # files that no longer exist upstream (a vendored hub/ subpackage goes too)
             (dst / rel).unlink()
         # empty folders left behind
-        for root, _dirs, _names in os.walk(dst, topdown=False):
+        for root, _dirs, _names in (os.walk(dst, topdown=False) if files is None else ()):
             if Path(root) != dst:
                 try:
                     if not any(Path(root).iterdir()):
                         Path(root).rmdir()
                 except OSError:
                     pass
-    if not dry:
+    if not dry and files is None:
         note = dst / "VENDORED.txt"
         text = (f"Vendored from HoardLink (https://github.com/Luissalet/HoardLink), version {_version()}\n\n"
                 "Byte-identical copy of the upstream hoard_link/ package (every .py file except the\n"
@@ -116,7 +120,7 @@ def copy_tree(src: Path, dst: Path, dry: bool) -> tuple[int, int]:
     return len(changed), len(removed)
 
 
-def _sync_js_commons(folder: Path, dry: bool) -> int:
+def _sync_js_commons(folder: Path, dry: bool, files: set[str] | None = None) -> int:
     """Copy ``js/hoard-commons/`` over ``<app>/server/hoard-commons/`` (Node apps only); returns the changes."""
     if not SRC_JS_COMMONS.is_dir():
         return 0
@@ -124,6 +128,9 @@ def _sync_js_commons(folder: Path, dry: bool) -> int:
         return 0
     dst = folder / "server" / "hoard-commons"
     changed, removed = drift.plan_tree(SRC_JS_COMMONS, dst)
+    if files is not None:
+        changed = [rel for rel in changed if rel in files]
+        removed = [rel for rel in removed if rel in files]
     if not dry:
         for rel in changed:
             d = dst / rel
@@ -144,13 +151,15 @@ def main() -> int:
     ap.add_argument("--install", nargs="*", help="vendor the package into these apps where missing")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--check", action="store_true", help="read-only verification; exit 1 when copies differ")
+    ap.add_argument("--files", nargs="+", help="refresh only these canonical relative paths in existing copies")
     args = ap.parse_args()
     args.dry_run = args.dry_run or args.check
+    selected = {value.replace('\\', '/') for value in args.files} if args.files else None
     # The Python contract is canonical. Mirror it before copying Node commons;
     # dry runs report drift but never write the source or destination.
     contract_src = SRC_PY / "_data" / "family-services.json"
     contract_dst = SRC_JS_COMMONS / "family-services.json"
-    contract_stale = not contract_dst.is_file() or contract_src.read_bytes() != contract_dst.read_bytes()
+    contract_stale = (selected is None or 'family-services.json' in selected) and (not contract_dst.is_file() or contract_src.read_bytes() != contract_dst.read_bytes())
     if contract_stale:
         if not args.dry_run:
             shutil.copy2(contract_src, contract_dst)
@@ -158,7 +167,7 @@ def main() -> int:
             print("Node family-services.json needs regeneration [dry run]")
     launcher_dst = SRC_JS_COMMONS / "copilot-launcher.js"
     launcher_src = launcher_text().encode("utf-8")
-    launcher_stale = not launcher_dst.is_file() or launcher_dst.read_bytes() != launcher_src
+    launcher_stale = (selected is None or 'copilot-launcher.js' in selected) and (not launcher_dst.is_file() or launcher_dst.read_bytes() != launcher_src)
     if launcher_stale:
         if not args.dry_run:
             launcher_dst.write_bytes(launcher_src)
@@ -202,18 +211,20 @@ def main() -> int:
                 total += 1 + _sync_js_commons(folder, args.dry_run)
                 continue
             for t in targets:
-                ch, rm = copy_tree(SRC_PY, t, args.dry_run)
+                ch, rm = copy_tree(SRC_PY, t, args.dry_run, selected if t.is_dir() else None)
                 total += ch + rm
                 print(f"  {folder.name}: {t.relative_to(folder)}  {ch} file(s) updated, {rm} removed" + (" [dry run]" if args.dry_run else ""))
             if js.is_file():
-                if filecmp.cmp(SRC_JS, js, shallow=False):
+                if selected is not None and 'hoard-link.js' not in selected:
+                    pass
+                elif filecmp.cmp(SRC_JS, js, shallow=False):
                     print(f"  {folder.name}: server/hoard-link.js up to date")
                 else:
                     if not args.dry_run:
                         shutil.copy2(SRC_JS, js)
                     total += 1
                     print(f"  {folder.name}: server/hoard-link.js updated" + (" [dry run]" if args.dry_run else ""))
-                total += _sync_js_commons(folder, args.dry_run)
+                total += _sync_js_commons(folder, args.dry_run, selected)
     print(f"{total} change(s)" + (" (dry run)" if args.dry_run else ""))
     return int(args.check and total > 0)
 
