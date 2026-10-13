@@ -18,7 +18,7 @@
     const epoch = spaceEpoch, sid = activeSpace;
     if (body !== undefined) body = {space_id: sid, ...body};
     else if (sid !== 'ecosystem') path += (path.includes('?') ? '&' : '?') + 'space_id=' + encodeURIComponent(sid);
-    const result = await rawApi(path, body);
+    const result = await H.ctx.api(path, body);
     return epoch === spaceEpoch ? result : {ok: false, spaceChanged: true};
   }
 
@@ -729,6 +729,7 @@
   async function refreshDetail() {
     if (!current) return;
     const selectionKey = `${current.type}-${current.id}`;
+    detailBox.dataset.spaceId = activeSpace;
     const previousAfter = detailBox.dataset.key === selectionKey ? Number(detailBox.dataset.timelineAfter || 0) : 0;
     const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}?agent=luis`);
     if (!current || `${current.type}-${current.id}` !== selectionKey) return;
@@ -912,6 +913,7 @@
     current = saved?.current || null; lastBoard = saved?.lastBoard || null;
     const nextDetail = saved?.detail || el('div', 'ag-detail');
     detailBox.replaceWith(nextDetail); detailBox = nextDetail;
+    detailBox.dataset.spaceId = sid;
     formsBox.replaceChildren(...(saved?.forms || []));
     showDetail(Boolean(current));
     if (spacePicker) spacePicker.value = sid;

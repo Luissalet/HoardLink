@@ -222,6 +222,9 @@ def test_browser_spaces_preserve_draft_create_rename_and_ignore_late_board(tmp_p
         first = task(ag, "ecosystem", "Original work")
         sid = create(ag, "Project")
         own = task(ag, sid, "Project work")
+        ag.task_claim({'agent': 'builder', 'space_id': sid, 'task_id': own['id']})
+        ag.task_submit({'agent': 'builder', 'space_id': sid, 'task_id': own['id'], 'summary': 'Project delivery',
+                        'blocks': [{'id': 'reason', 'kind': 'what_why', 'title': 'Project rationale', 'body': 'Only this project'}]})
         with browser_api.sync_playwright() as playwright:
             if not Path(playwright.chromium.executable_path).exists():
                 pytest.fail("Chromium required for the space delivery")
@@ -243,6 +246,8 @@ def test_browser_spaces_preserve_draft_create_rename_and_ignore_late_board(tmp_p
             tab.locator('.ag-card', has_text='Project work').wait_for()
             assert not tab.locator('.ag-card', has_text='Original work').count()
             tab.locator('.ag-card', has_text='Project work').click()
+            tab.locator('.ag-blocks', has_text='Project rationale').wait_for()
+            tab.locator('.ag-block textarea').fill('Note for this project block')
             tab.locator('.ag-compose textarea').fill('Project draft')
             picker.select_option('ecosystem')
             assert tab.locator('.ag-compose textarea').input_value() == 'Draft in original space'
@@ -255,6 +260,12 @@ def test_browser_spaces_preserve_draft_create_rename_and_ignore_late_board(tmp_p
             picker.locator('option', has_text='Renamed project').wait_for(state='attached')
             assert ag.space({'space_id': sid})['space']['title'] == 'Renamed project'
             assert ag.task({'space_id': sid, 'task_id': own['id']})['task']['id'] == own['id']
+            tab.locator('.ag-compose button', has_text='Aprobar').click()
+            page.wait_for_function('([base,sid,id]) => fetch(`${base}/api/agora/tasks/${id}?space_id=${sid}`)'
+                                   '.then(r => r.json()).then(r => r.task.status === "approved")',
+                                   arg=[hub.config.url.rstrip('/'), sid, own['id']])
+            reviewed = ag.task({'space_id': sid, 'task_id': own['id']})
+            assert any('Note for this project block' in m['body'] for m in reviewed['messages'])
 
             # A completed old request cannot replace the new space's board.
             delayed = []
@@ -280,3 +291,22 @@ def test_browser_spaces_preserve_draft_create_rename_and_ignore_late_board(tmp_p
             assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
             page.screenshot(path=str(tmp_path / f'spaces-{width}.png'), full_page=False)
             browser.close()
+
+
+def test_escalation_link_keeps_nondefault_space(tmp_path):
+    from ._hub_fakes import make_hub
+    hub = make_hub(tmp_path, [])
+    try:
+        facet = hub.facet('agora')
+        sid = create(facet.agora, 'Review project')
+        opened = facet.agora.thread_open({'agent': 'builder', 'space_id': sid, 'title': 'Choice', 'body': 'A or B'})
+        sent = []
+        class Notify:
+            def send(self, *args, **kwargs):
+                sent.append(kwargs)
+        original_facet = hub.facet
+        hub.facet = lambda name: Notify() if name == 'notify' else original_facet(name)
+        facet.agora.escalate({'agent': 'builder', 'space_id': sid, 'thread_id': opened['thread']['id'], 'question': 'A or B?'})
+        assert sent and f'?space_id={sid}#agora-' in sent[-1]['url']
+    finally:
+        hub.close()

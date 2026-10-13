@@ -3284,8 +3284,10 @@ class AgoraFacet(Facet):
         if notify is None:
             return
         url = str(getattr(self.hub.config, "url", "") or "").rstrip("/")
+        sid = thread.get("space_id", DEFAULT_SPACE_ID)
+        target = f"{url}/" + (f"?space_id={sid}" if sid != DEFAULT_SPACE_ID else "") + f"#agora-{thread['id']}"
         notify.send(f"Ágora: {agent} necesita tu decisión", f"{thread['title']}\n\n{question}"[:1900],
-                    app="hub", priority="high", url=f"{url}/#agora-{thread['id']}" if url else "",
+                    app="hub", priority="high", url=target if url else "",
                     dedupe_key=f"agora-escalation-{thread['id']}-{int(time.time() // 60)}", tags=["agora"])
 
     def _run(self, fn: Callable[[dict[str, Any]], dict[str, Any]], args: dict[str, Any]) -> dict[str, Any]:
