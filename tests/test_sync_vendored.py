@@ -49,6 +49,41 @@ def _run(*args):
     return out.stdout
 
 
+def test_selected_python_relay_preserves_other_files_and_version_stamp(tmp_path):
+    folder = tmp_path / 'Selected Hoard'
+    _vendored(folder)
+    vendor = folder / 'pkg/hoard_link'
+    (vendor / 'copilot.py').write_text('# prior relay\n', encoding='utf-8')
+    (vendor / 'extra.py').write_text('# app copy remains\n', encoding='utf-8')
+    (vendor / 'empty-preserved').mkdir()
+    before = {path.name: path.read_bytes() for path in vendor.iterdir() if path.is_file()}
+    _run('--roots', str(tmp_path), '--files', 'copilot.py')
+    assert (vendor / 'copilot.py').read_bytes() == (SCRIPT.parent.parent / 'hoard_link/copilot.py').read_bytes()
+    for name in ('__init__.py', 'VENDORED.txt', 'extra.py'):
+        assert (vendor / name).read_bytes() == before[name]
+    assert {path.name for path in vendor.iterdir() if path.is_file()} == set(before)
+    assert (vendor / 'empty-preserved').is_dir()
+    check = subprocess.run([sys.executable, str(SCRIPT), '--roots', str(tmp_path), '--files', 'copilot.py', '--check'], capture_output=True, text=True)
+    assert check.returncode == 0, check.stdout
+
+
+def test_selected_node_relay_preserves_other_common_files(tmp_path):
+    folder = tmp_path / 'Node Selected Hoard'
+    vendor = folder / 'server/hoard-commons'
+    vendor.mkdir(parents=True)
+    (folder / 'server/hoard-link.js').write_text('// prior transport\n', encoding='utf-8')
+    (vendor / 'copilot.js').write_text('// prior relay\n', encoding='utf-8')
+    (vendor / 'copilot-launcher.js').write_text('// prior launcher\n', encoding='utf-8')
+    (vendor / 'other.js').write_text('// preserve other\n', encoding='utf-8')
+    before = {path.relative_to(folder).as_posix(): path.read_bytes() for path in folder.rglob('*') if path.is_file()}
+    _run('--roots', str(tmp_path), '--files', 'copilot.js')
+    assert (vendor / 'copilot.js').read_bytes() == (SCRIPT.parent.parent / 'js/hoard-commons/copilot.js').read_bytes()
+    for name, content in before.items():
+        if name != 'server/hoard-commons/copilot.js':
+            assert (folder / name).read_bytes() == content
+    assert {path.relative_to(folder).as_posix() for path in folder.rglob('*') if path.is_file()} == set(before)
+
+
 def test_galton_and_pygmalion_are_found_by_folder_name_and_vendored_package(tmp_path):
     for folder, pkg in (("Galton's Hoard", "galton_hoard"), ("Pygmalion's Hoard", "pygmalion_hoard")):
         _vendored(tmp_path / folder)
