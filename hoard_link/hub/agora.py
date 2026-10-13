@@ -32,6 +32,8 @@ the caller's durable message-id cursor. The caller stores ``next_since_id`` and 
 from __future__ import annotations
 
 import fnmatch
+import copy
+import functools
 import json
 import math
 import os
@@ -45,6 +47,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..sqlkit import Database
+from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError, SpaceStore, space_id
 from . import agent_watch
 from .facets import Facet, Request
 
@@ -147,6 +150,7 @@ MIGRATIONS = [
     CREATE TABLE agora_dep_wakeups (key TEXT PRIMARY KEY, task_id INTEGER NOT NULL, created REAL NOT NULL);
     """,
 ]
+MIGRATIONS.append(SPACES_MIGRATION)
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -165,6 +169,22 @@ class AgoraError(ValueError):
         super().__init__(message)
         self.status = status
         self.extra = extra
+
+
+def _space_operation(fn: Callable) -> Callable:
+    """Bind a request to an immutable view, without changing shared request state."""
+    @functools.wraps(fn)
+    def scoped(self: Any, args: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        args = dict(args or {})
+        sid = args.pop("space_id", self.space_id)
+        try:
+            view = self.for_space(sid)
+            out = fn(view, args)
+        except SpaceError as exc:
+            raise AgoraError(str(exc), exc.status, **exc.extra) from exc
+        out.setdefault("space_id", view.space_id)
+        return out
+    return scoped
 
 
 # ---- resources -------------------------------------------------------------------------------------------------
@@ -709,8 +729,58 @@ class Agora:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = Database(path, migrations=MIGRATIONS)
         self.db.migrate()
+        self.space_id = DEFAULT_SPACE_ID
+        self.space_store = SpaceStore(self.db, clock=self.clock)
         self._changed = threading.Condition()
-        self._version = 0
+        self._version = [0]
+        self._space_sweeps: dict[str, float] = {}
+
+    def for_space(self, value: Any = None) -> "Agora":
+        sid = space_id(value)
+        self.space_store.get(sid)
+        if sid == self.space_id:
+            return self
+        view = copy.copy(self)
+        view.space_id = sid
+        view.handover_thread_id = HANDOVER_THREAD_ID if sid == DEFAULT_SPACE_ID else None
+        return view
+
+    @property
+    def _last_orphan_sweep(self) -> float:
+        return self._space_sweeps.get(self.space_id, 0.0)
+
+    @_last_orphan_sweep.setter
+    def _last_orphan_sweep(self, value: float) -> None:
+        self._space_sweeps[self.space_id] = value
+
+    def spaces(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        return {"ok": True, "spaces": self.space_store.list(), "default_space_id": DEFAULT_SPACE_ID}
+
+    def space(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        try:
+            return {"ok": True, "space": self.space_store.get((a or {}).get("space_id"))}
+        except SpaceError as exc:
+            raise AgoraError(str(exc), exc.status, **exc.extra) from exc
+
+    def space_create(self, a: dict[str, Any]) -> dict[str, Any]:
+        agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+        try:
+            with self.db.tx():
+                self._touch(agent)
+                created = self.space_store.create(a, agent=agent)
+        except SpaceError as exc:
+            raise AgoraError(str(exc), exc.status, **exc.extra) from exc
+        self._bump("agora.space.created", {"space_id": created["id"], "by": agent})
+        return {"ok": True, "space": created}
+
+    def space_update(self, a: dict[str, Any]) -> dict[str, Any]:
+        agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+        try:
+            updated = self.space_store.update(a)
+        except SpaceError as exc:
+            raise AgoraError(str(exc), exc.status, **exc.extra) from exc
+        self._bump("agora.space.updated", {"space_id": updated["id"], "by": agent})
+        return {"ok": True, "space": updated}
 
     def close(self) -> None:
         self.db.close()
@@ -719,10 +789,10 @@ class Agora:
 
     def _bump(self, event: str, data: dict[str, Any]) -> None:
         with self._changed:
-            self._version += 1
+            self._version[0] += 1
             self._changed.notify_all()
         try:
-            self.emit(event, data)
+            self.emit(event, {"space_id": self.space_id, **data})
         except Exception:  # noqa: BLE001 — the bus must never break the Ágora
             pass
 
@@ -746,13 +816,14 @@ class Agora:
             "INSERT INTO agents(id, name, kind, state, last_seen, created) VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen",
             (agent, agent, kind, "working", now, now))
+        self.space_store.join(self.space_id, agent)
 
     def _task_row(self, task_id: Any) -> dict[str, Any]:
         try:
             tid = int(task_id)
         except (TypeError, ValueError):
             raise AgoraError("task_id must be a number") from None
-        row = self.db.one("SELECT * FROM tasks WHERE id=?", (tid,))
+        row = self.db.one("SELECT * FROM tasks WHERE id=? AND space_id=?", (tid, self.space_id))
         if row is None:
             raise AgoraError(f"no task {tid}", 404)
         return self._task_dict(row, full_checkpoint=True)
@@ -762,7 +833,7 @@ class Agora:
             tid = int(thread_id)
         except (TypeError, ValueError):
             raise AgoraError("thread_id must be a number") from None
-        row = self.db.one("SELECT * FROM threads WHERE id=?", (tid,))
+        row = self.db.one("SELECT * FROM threads WHERE id=? AND space_id=?", (tid, self.space_id))
         if row is None:
             raise AgoraError(f"no thread {tid}", 404)
         return dict(row)
@@ -844,6 +915,7 @@ class Agora:
             result.update(checked_at=now, idle_s=elapsed)
         return result
 
+    @_space_operation
     def activity(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         a = a or {}
         if set(a) - {"task_id", "idle_after_s"}:
@@ -852,6 +924,7 @@ class Agora:
         task = self._task_row(_checkpoint_int(a.get("task_id"), "task_id", 1))
         return {"ok": True, "task_id": task["id"], "activity": self._task_activity(task, idle_s=threshold)}
 
+    @_space_operation
     def timeline(self, a: dict[str, Any]) -> dict[str, Any]:
         """Chronology is stable across equal timestamps and process restarts: cursor = message ID."""
         if set(a) - {"task_id", "after_id", "limit"}:
@@ -906,6 +979,7 @@ class Agora:
                                     "owner_changed": current_owner != d["author"], "checked_at": self.clock()}
         return d
 
+    @_space_operation
     def checkpoint(self, a: dict[str, Any]) -> dict[str, Any]:
         agent = self._agent(a.get("agent"))
         if set(a) - {"agent", "task_id", "expected_revision", "payload"}:
@@ -947,6 +1021,7 @@ class Agora:
             self._bump("agora.checkpoint", {"task_id": task_id, "revision": result["revision"], "author": agent})
         return {"ok": True, "checkpoint": result, "duplicate": duplicate}
 
+    @_space_operation
     def checkpoints(self, a: dict[str, Any]) -> dict[str, Any]:
         if set(a) - {"task_id", "after_revision", "limit"}:
             raise AgoraError("unknown checkpoints argument")
@@ -987,8 +1062,7 @@ class Agora:
         """Messages from others in this task's threads that the agent has not seen yet: newer than its ack of that
         thread (thread/task reads with the agent, its own posts) and than its inbox read mark (a non-peek inbox
         delivers the bodies). Bookkeeping lines (kind ``system``) and the task's own description do not count."""
-        row = self.db.one("SELECT last_msg_id FROM reads WHERE agent=?", (agent,))
-        read_upto = int(row["last_msg_id"]) if row else 0
+        read_upto = self.space_store.read_upto(self.space_id, agent)
         return [dict(r) for r in self.db.query(
             "SELECT m.id, m.thread_id, m.author, m.kind, m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
             "LEFT JOIN acks k ON k.agent=? AND k.thread_id=m.thread_id "
@@ -1063,6 +1137,7 @@ class Agora:
             raise AgoraError(f"ttl_s must be between 60 and {MAX_LOCK_TTL_S}")
         return ttl
 
+    @_space_operation
     def lock(self, a: dict[str, Any]) -> dict[str, Any]:
         """Take (or renew) locks outside a task: ``model:principal`` for a live evaluation, ``merge:Repo`` to integrate."""
         agent = self._agent(a.get("agent"))
@@ -1079,6 +1154,7 @@ class Agora:
             self._bump("agora.lock.conflict", {"agent": agent, "conflicts": res["conflicts"]})
         return res
 
+    @_space_operation
     def unlock(self, a: dict[str, Any]) -> dict[str, Any]:
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
         resources = [normalize_resource(r) for r in _list(a.get("resources") or a.get("resource"), "resources")]
@@ -1096,6 +1172,7 @@ class Agora:
             self._bump("agora.lock.released", {"agent": agent, "locks": released})
         return {"ok": True, "released": released}
 
+    @_space_operation
     def locks(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         with self.db.tx():
             live = self._live_locks()
@@ -1365,6 +1442,7 @@ class Agora:
         return [r["id"] for r in self.db.query("SELECT id FROM agents ORDER BY id")
                 if r["id"] not in (PERSON, "system", "hub", "ui") and not r["id"].endswith("-capacity")]
 
+    @_space_operation
     def orphans(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """Work nobody is moving, computed now: a task in review with no reviewer for ``handover_idle_s`` or whose
         reviewer is silent (no activity for that long) or out of quota, and a claimed task whose owner is. Each
@@ -1375,7 +1453,8 @@ class Agora:
         seen = {r["id"]: float(r["last_seen"] or 0) for r in self.db.query("SELECT id, last_seen FROM agents")}
         quota = {aid: self._quota_state_from(aid, pools)["state"] for aid in seen}
         load: dict[str, int] = {}
-        for r in self.db.query("SELECT owner, reviewer, status FROM tasks WHERE status IN ('claimed','in_progress','changes','review')"):
+        for r in self.db.query("SELECT owner, reviewer, status FROM tasks WHERE status IN ('claimed','in_progress','changes','review') "
+                               "AND space_id=?", (self.space_id,)):
             if r["owner"]:
                 load[r["owner"]] = load.get(r["owner"], 0) + 1
             if r["reviewer"] and r["status"] == "review":
@@ -1399,7 +1478,8 @@ class Agora:
             return next((aid for aid in free if aid not in avoid), None)
 
         findings: list[dict[str, Any]] = []
-        for t in self.db.query("SELECT * FROM tasks WHERE status IN ('review','claimed','in_progress','changes') ORDER BY id"):
+        for t in self.db.query("SELECT * FROM tasks WHERE status IN ('review','claimed','in_progress','changes') "
+                               "AND space_id=? ORDER BY id", (self.space_id,)):
             t = dict(t)
             if t["status"] == "review":
                 reviewer = t.get("reviewer")
@@ -1434,7 +1514,7 @@ class Agora:
         for r in self.db.query("SELECT d.blocker_id, d.task_id, b.title FROM agora_task_deps d "
                                "JOIN tasks b ON b.id=d.blocker_id JOIN tasks t ON t.id=d.task_id "
                                "WHERE b.status='open' AND b.owner IS NULL AND t.status IN ('claimed','in_progress','blocked') "
-                               "ORDER BY d.blocker_id, d.task_id"):
+                               "AND t.space_id=? ORDER BY d.blocker_id, d.task_id", (self.space_id,)):
             waiting.setdefault(int(r["blocker_id"]), []).append(int(r["task_id"]))
             titles[int(r["blocker_id"])] = r["title"]
         for bid, deps in waiting.items():
@@ -1446,13 +1526,14 @@ class Agora:
                              "dependents": deps})
         return {"ok": True, "findings": findings, "idle_limit_s": int(idle_limit)}
 
+    @_space_operation
     def orphan_sweep(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """Say each new orphan once: a system note in the task thread and one summary in the coordination thread
         mentioning the suggested agents. A finding comes back only when its situation changes (another reviewer,
         a new submission, a new claim). Runs by itself from heartbeats at most every five minutes."""
         a = a or {}
         now = self.clock()
-        if not a.get("force") and now - getattr(self, "_last_orphan_sweep", 0.0) < self.ORPHAN_SWEEP_EVERY_S:
+        if not a.get("force") and now - self._last_orphan_sweep < self.ORPHAN_SWEEP_EVERY_S:
             return {"ok": True, "skipped": True, "new": []}
         self._last_orphan_sweep = now
         found = self.orphans()["findings"]
@@ -1487,6 +1568,7 @@ class Agora:
 
     # -- agents --------------------------------------------------------------------------------------------------
 
+    @_space_operation
     def heartbeat(self, a: dict[str, Any]) -> dict[str, Any]:
         """Report state; renew all owned locks by default, or an exact selection."""
         agent = self._agent(a.get("agent"))
@@ -1527,6 +1609,7 @@ class Agora:
                 "lock_renewal": {"mode": "all" if selected is None else "selected",
                                  "renewed_resources": renewed}}
 
+    @_space_operation
     def sync(self, a: dict[str, Any]) -> dict[str, Any]:
         """Resume an agent in one call without consuming inbox messages or mentions.
 
@@ -1567,8 +1650,7 @@ class Agora:
             if thread_id < 1:
                 raise AgoraError("thread_ids must contain positive thread ids")
             if thread_id not in thread_ids:
-                if self.db.one("SELECT id FROM threads WHERE id=?", (thread_id,)) is None:
-                    raise AgoraError(f"no thread {thread_id}", 404)
+                self._thread_row(thread_id)
                 thread_ids.append(thread_id)
         thread_ids.sort()
 
@@ -1594,10 +1676,10 @@ class Agora:
                 "SELECT resource, note, expires FROM locks WHERE task_id=? AND owner=? AND expires>? ORDER BY acquired",
                 (task["id"], agent, now))]
 
-        filters = ""
-        params: list[Any] = [since_id]
+        filters = " AND t.space_id=?"
+        params: list[Any] = [since_id, self.space_id]
         if thread_ids:
-            filters = f" AND m.thread_id IN ({','.join('?' for _ in thread_ids)})"
+            filters += f" AND m.thread_id IN ({','.join('?' for _ in thread_ids)})"
             params.extend(thread_ids)
         params.append(limit + 1)
         rows = self.db.query(
@@ -1619,11 +1701,13 @@ class Agora:
                 "board": board, "leased_tasks": leased_tasks, "posts": posts, "cursor": cursor,
                 "next_since_id": next_since_id}
 
+    @_space_operation
     def agents(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         now = self.clock()
         out = []
         pools = self._quota_pools()
-        for r in self.db.query("SELECT * FROM agents ORDER BY last_seen DESC"):
+        for r in self.db.query("SELECT a.* FROM agents a JOIN coordination_members m ON m.agent=a.id "
+                               "WHERE m.space_id=? ORDER BY a.last_seen DESC", (self.space_id,)):
             d = dict(r)
             d["stale"] = (now - float(d.get("last_seen") or 0)) > STALE_AGENT_S
             d["quota"] = self._quota_state_from(d["id"], pools)
@@ -1635,6 +1719,7 @@ class Agora:
 
     # -- tasks ---------------------------------------------------------------------------------------------------
 
+    @_space_operation
     def task_add(self, a: dict[str, Any]) -> dict[str, Any]:
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
         title = _txt(a.get("title"), 200, "title", required=True)
@@ -1656,9 +1741,10 @@ class Agora:
             self._touch(agent)
             tid = self.db.insert("tasks", {"title": title, "body": body, "repo": repo, "paths": _j(paths), "kind": kind,
                                            "priority": priority, "status": "open", "created_by": agent,
-                                           "created": now, "updated": now})
+                                           "created": now, "updated": now, "space_id": self.space_id})
             th = self.db.insert("threads", {"title": title, "kind": "task", "task_id": tid, "status": "open",
-                                            "created_by": agent, "created": now, "updated": now})
+                                            "created_by": agent, "created": now, "updated": now,
+                                            "space_id": self.space_id})
             self.db.execute("UPDATE tasks SET thread_id=? WHERE id=?", (th, tid))
             self._msg(th, agent, "proposal", body or title, _list(a.get("mentions"), "mentions"))
             if blocked_by:
@@ -1669,6 +1755,7 @@ class Agora:
             res["claim"] = self.task_claim({"agent": agent, "task_id": tid, "locks": a.get("locks"), "ttl_s": a.get("ttl_s")})
         return res
 
+    @_space_operation
     def task_claim(self, a: dict[str, Any]) -> dict[str, Any]:
         """Take a task and its locks, all or nothing. A task held by an agent silent for 6 hours can be taken with force."""
         agent = self._agent(a.get("agent"))
@@ -1717,6 +1804,7 @@ class Agora:
             raise AgoraError(f"task {task['id']} belongs to {task.get('owner') or 'nobody'}: claim it first", 409)
         return agent, task
 
+    @_space_operation
     def task_update(self, a: dict[str, Any]) -> dict[str, Any]:
         """Progress note, status in_progress/blocked, branch, more paths (with their locks)."""
         with self.db.tx():
@@ -1747,6 +1835,7 @@ class Agora:
         self._rearm_dependents(task["id"])
         return {"ok": True, "task": self._task_row(task["id"])}
 
+    @_space_operation
     def task_submit(self, a: dict[str, Any]) -> dict[str, Any]:
         """Ask for review: what changed, where (branch/commits) and how it was verified.
 
@@ -1818,6 +1907,7 @@ class Agora:
             out["quota_warnings"] = warnings
         return self._with_unseen(a, out)
 
+    @_space_operation
     def task_review(self, a: dict[str, Any]) -> dict[str, Any]:
         """Vote on the observed submission revision using expected_submission_revision."""
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
@@ -1880,6 +1970,7 @@ class Agora:
             self._rearm_dependents(task["id"])
         return self._with_unseen(a, res)
 
+    @_space_operation
     def task_done(self, a: dict[str, Any]) -> dict[str, Any]:
         """Integrated: commits and result. Releases the task's locks. Refused while a review is younger than 2 h
         unless ``force`` with a ``reason``; finishing without any review is recorded as such."""
@@ -1949,6 +2040,7 @@ class Agora:
         return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"]),
                                      "unblocked": self._wake_dependents(task["id"])})
 
+    @_space_operation
     def task_release(self, a: dict[str, Any]) -> dict[str, Any]:
         """Give the task back (``open``) or drop it (``drop: true``) with a reason. Releases its locks."""
         reason = _txt(a.get("reason"), 5000, "reason")
@@ -2063,6 +2155,7 @@ class Agora:
                              + ("claimed." if fresh.get("owner") else "open, libre para reclamar."), agent)
         return {"added": new, "removed": gone}
 
+    @_space_operation
     def task_deps(self, a: dict[str, Any]) -> dict[str, Any]:
         """Say what a task waits for: ``add`` / ``remove`` blockers or ``set`` the whole list ([] clears it). Anyone
         may do it. When every blocker reaches approved, done or dropped the task's owner is woken once (or the task is
@@ -2084,7 +2177,8 @@ class Agora:
         """Wake each task whose blockers are now all through, once per set of blockers. With ``blocker_id`` only its
         dependents are looked at; without it, all (the periodic backup)."""
         if blocker_id is None:
-            rows = self.db.query("SELECT DISTINCT task_id FROM agora_task_deps ORDER BY task_id")
+            rows = self.db.query("SELECT DISTINCT d.task_id FROM agora_task_deps d JOIN tasks t ON t.id=d.task_id "
+                                 "WHERE t.space_id=? ORDER BY d.task_id", (self.space_id,))
         else:
             rows = self.db.query("SELECT task_id FROM agora_task_deps WHERE blocker_id=? ORDER BY task_id", (int(blocker_id),))
         woke: list[int] = []
@@ -2135,6 +2229,7 @@ class Agora:
             raise AgoraError(f"{field} is required: the id of an agent such as codex-relevo")
         return agent
 
+    @_space_operation
     def handover(self, a: dict[str, Any]) -> dict[str, Any]:
         """Move the half-done work of one agent to another one (a chat that died, a context that ran out).
 
@@ -2199,12 +2294,12 @@ class Agora:
             if wanted is None:
                 review_sql = " OR (reviewer=? AND status IN ('review','changes'))" if include_reviews else ""
                 candidates = self.db.query(
-                    f"SELECT * FROM tasks WHERE status NOT IN ({final_sql}) AND (owner=?{review_sql}) ORDER BY id",
-                    (*FINAL, source, *((source,) if include_reviews else ())))
+                    f"SELECT * FROM tasks WHERE status NOT IN ({final_sql}) AND (owner=?{review_sql}) AND space_id=? ORDER BY id",
+                    (*FINAL, source, *((source,) if include_reviews else ()), self.space_id))
             else:
                 candidates = []
                 for tid in wanted:
-                    found = self.db.one("SELECT * FROM tasks WHERE id=?", (tid,))
+                    found = self.db.one("SELECT * FROM tasks WHERE id=? AND space_id=?", (tid, self.space_id))
                     if found is None:
                         raise AgoraError(f"no task {tid}", 404)
                     candidates.append(found)
@@ -2281,7 +2376,7 @@ class Agora:
             if thread_id is None or self.db.one("SELECT id FROM threads WHERE id=?", (thread_id,)) is None:
                 thread_id = self.db.insert("threads", {"title": f"Traspaso de tareas: {source} → {target}", "kind": "note",
                                                        "task_id": None, "status": "open", "created_by": caller,
-                                                       "created": now, "updated": now})
+                                                       "created": now, "updated": now, "space_id": self.space_id})
                 self._msg(thread_id, caller, "proposal", body, [target])
             else:
                 self._msg(thread_id, caller, "comment", body, [target])
@@ -2297,9 +2392,10 @@ class Agora:
             out["quota_warnings"] = warnings
         return out
 
+    @_space_operation
     def tasks(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         a = a or {}
-        where, params = [], []
+        where, params = ["space_id=?"], [self.space_id]
         status = a.get("status")
         if status == "active":
             where.append(f"status IN ({','.join('?' * len(ACTIVE))})")
@@ -2316,6 +2412,7 @@ class Agora:
               " ORDER BY CASE WHEN status IN ('done','dropped') THEN 1 ELSE 0 END, priority, updated DESC LIMIT ?"
         return {"ok": True, "tasks": [self._task_dict(r) for r in self.db.query(sql, (*params, limit))]}
 
+    @_space_operation
     def task(self, a: dict[str, Any]) -> dict[str, Any]:
         task = self._task_row(a.get("task_id"))
         msgs = self._messages(int(task["thread_id"])) if task.get("thread_id") else []
@@ -2339,6 +2436,7 @@ class Agora:
             out.append(d)
         return out
 
+    @_space_operation
     def thread_open(self, a: dict[str, Any]) -> dict[str, Any]:
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
         title = _txt(a.get("title"), 200, "title", required=True)
@@ -2354,7 +2452,8 @@ class Agora:
         with self.db.tx():
             self._touch(agent)
             th = self.db.insert("threads", {"title": title, "kind": kind, "task_id": task_id, "status": "open",
-                                            "created_by": agent, "created": now, "updated": now})
+                                            "created_by": agent, "created": now, "updated": now,
+                                            "space_id": self.space_id})
             self._msg(th, agent, "proposal", body, mentions)
         self._bump("agora.thread.opened", {"thread_id": th, "kind": kind, "title": title, "by": agent})
         if a.get("escalate"):
@@ -2365,6 +2464,7 @@ class Agora:
             out["quota_warnings"] = warnings
         return out
 
+    @_space_operation
     def post(self, a: dict[str, Any]) -> dict[str, Any]:
         person = bool(a.get("_person"))
         agent = self._agent(a.get("agent"), allow_person=person)
@@ -2392,6 +2492,7 @@ class Agora:
             out["quota_warnings"] = warnings
         return self._with_unseen(a, out)
 
+    @_space_operation
     def resolve(self, a: dict[str, Any]) -> dict[str, Any]:
         """Close a thread with the resolution in writing. Resolved debates and decisions are the decision log."""
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
@@ -2408,6 +2509,7 @@ class Agora:
         self._bump("agora.thread.resolved", {"thread_id": th["id"], "by": agent, "title": th["title"]})
         return {"ok": True, "thread": self._thread_row(th["id"])}
 
+    @_space_operation
     def escalate(self, a: dict[str, Any]) -> dict[str, Any]:
         """No agreement (or it is the person's call): the thread waits for the person, who is notified."""
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
@@ -2426,6 +2528,7 @@ class Agora:
                 pass
         return {"ok": True, "thread": self._thread_row(th["id"])}
 
+    @_space_operation
     def reopen(self, a: dict[str, Any]) -> dict[str, Any]:
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
         reason = _txt(a.get("reason"), 5000, "reason", required=True)
@@ -2437,9 +2540,10 @@ class Agora:
         self._bump("agora.thread.reopened", {"thread_id": th["id"], "by": agent})
         return {"ok": True, "thread": self._thread_row(th["id"])}
 
+    @_space_operation
     def threads(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         a = a or {}
-        where, params = [], []
+        where, params = ["t.space_id=?"], [self.space_id]
         if a.get("status"):
             where.append("t.status=?")
             params.append(str(a["status"]))
@@ -2454,11 +2558,10 @@ class Agora:
         viewer = str(a.get("agent") or "").strip().lower()
         unread_sql, unread_params = "", []
         if viewer and _AGENT_RE.match(viewer):
-            mark = self.db.one("SELECT last_msg_id FROM reads WHERE agent=?", (viewer,))
             seen = ("MAX(COALESCE((SELECT upto FROM acks k WHERE k.agent=? AND k.thread_id=t.id), 0), ?)")
             unread_sql = (f", {seen} AS seen_upto, (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id "
                           f"AND m.author<>? AND m.kind<>'system' AND m.id > {seen}) AS unread")
-            last = int(mark["last_msg_id"]) if mark else 0
+            last = self.space_store.read_upto(self.space_id, viewer)
             unread_params = [viewer, last, viewer, viewer, last]
         sql = ("SELECT t.*, (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id) AS messages, "
                "(SELECT author FROM messages m WHERE m.thread_id=t.id ORDER BY id DESC LIMIT 1) AS last_author"
@@ -2466,12 +2569,14 @@ class Agora:
                " ORDER BY CASE t.status WHEN 'escalated' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, t.updated DESC LIMIT ?")
         return {"ok": True, "threads": [dict(r) for r in self.db.query(sql, (*unread_params, *params, limit))]}
 
+    @_space_operation
     def ack(self, a: dict[str, Any]) -> dict[str, Any]:
         """Mark a thread (or every thread with ``all``) as seen: its mentions of the agent stop being pending."""
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
         if a.get("all"):
             ids = [r["thread_id"] for r in self.db.query(
-                "SELECT DISTINCT thread_id FROM messages WHERE mentions LIKE ?", (f'%"{agent}"%',))]
+                "SELECT DISTINCT m.thread_id FROM messages m JOIN threads t ON t.id=m.thread_id "
+                "WHERE m.mentions LIKE ? AND t.space_id=?", (f'%"{agent}"%', self.space_id))]
         else:
             ids = [self._thread_row(a.get("thread_id"))["id"]]
         with self.db.tx():
@@ -2479,6 +2584,7 @@ class Agora:
                 self._ack(agent, tid)
         return {"ok": True, "acked": ids}
 
+    @_space_operation
     def thread(self, a: dict[str, Any]) -> dict[str, Any]:
         th = self._thread_row(a.get("thread_id"))
         seen_before = None
@@ -2486,8 +2592,7 @@ class Agora:
             reader = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
             # what the reader had seen before this read, so a page can mark what is new to it
             ack = self.db.one("SELECT upto FROM acks WHERE agent=? AND thread_id=?", (reader, th["id"]))
-            mark = self.db.one("SELECT last_msg_id FROM reads WHERE agent=?", (reader,))
-            seen_before = max(int(ack["upto"]) if ack else 0, int(mark["last_msg_id"]) if mark else 0)
+            seen_before = max(int(ack["upto"]) if ack else 0, self.space_store.read_upto(self.space_id, reader))
             self._ack(reader, th["id"])
         stances: dict[str, str] = {}
         msgs = self._messages(th["id"])
@@ -2502,6 +2607,7 @@ class Agora:
             out["timeline"] = self.timeline({"task_id": th["task_id"], "limit": 100})
         return out
 
+    @_space_operation
     def thread_recent(self, a: dict[str, Any]) -> dict[str, Any]:
         """A bounded newest-first page, returned chronologically, without ACK.
 
@@ -2551,14 +2657,17 @@ class Agora:
                                "body_char_limit": 20_000, "page_body_char_limit": 200_000},
                 "hub_acknowledged": False}
 
+    @_space_operation
     def decisions(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         limit = max(1, min(int((a or {}).get("limit") or 50), 500))
-        rows = self.db.query("SELECT id, title, kind, resolution, resolved_by, updated FROM threads "
-                             "WHERE status='resolved' AND kind<>'task' ORDER BY updated DESC LIMIT ?", (limit,))
+        rows = self.db.query("SELECT id, title, kind, resolution, resolved_by, updated, space_id FROM threads "
+                             "WHERE status='resolved' AND kind<>'task' AND space_id=? ORDER BY updated DESC LIMIT ?",
+                             (self.space_id, limit))
         return {"ok": True, "decisions": [dict(r) for r in rows]}
 
     # -- inbox ---------------------------------------------------------------------------------------------------
 
+    @_space_operation
     def inbox(self, a: dict[str, Any]) -> dict[str, Any]:
         """What is new for this agent: messages from others since the last read (``for_you`` when it is mentioned,
         owns the task or took part), reviews waiting for it, changes asked of it, escalations answered.
@@ -2572,12 +2681,12 @@ class Agora:
         deadline = self.clock() + wait
         while True:
             with self._changed:
-                version = self._version
+                version = self._version[0]
             out = self._inbox_once(agent, a)
             if out["counts"]["messages"] or wait <= 0 or self.clock() >= deadline:
                 break
             with self._changed:
-                if self._version == version:
+                if self._version[0] == version:
                     self._changed.wait(timeout=max(0.05, min(5.0, deadline - self.clock())))
         if a.get("metadata_only"):
             # A2: who wrote, where and what kind, without bodies; the body is read with thread/task (which marks it
@@ -2585,21 +2694,18 @@ class Agora:
             return project_inbox_metadata(out)
         if not a.get("peek") and out["messages"]:
             upto = max(m["id"] for m in out["messages"])
-            self.db.execute("INSERT INTO reads(agent, last_msg_id, updated) VALUES(?,?,?) ON CONFLICT(agent) DO "
-                            "UPDATE SET last_msg_id=MAX(reads.last_msg_id, excluded.last_msg_id), updated=excluded.updated",
-                            (agent, upto, self.clock()))
+            self.space_store.mark_read(self.space_id, agent, upto)
         return out
 
     def _inbox_once(self, agent: str, a: dict[str, Any]) -> dict[str, Any]:
-        row = self.db.one("SELECT last_msg_id FROM reads WHERE agent=?", (agent,))
-        since = int(a.get("since_id") or (row["last_msg_id"] if row else 0))
+        since = int(a.get("since_id") or self.space_store.read_upto(self.space_id, agent))
         limit = max(1, min(int(a.get("limit") or 100), 500))
         msgs = []
         rows = self.db.query(
             "SELECT m.*, t.title AS thread_title, t.kind AS thread_kind, t.status AS thread_status, t.task_id AS task_id, "
             "t.created_by AS thread_by, k.owner AS task_owner FROM messages m JOIN threads t ON t.id=m.thread_id "
-            "LEFT JOIN tasks k ON k.id=t.task_id WHERE m.id>? AND m.author<>? ORDER BY m.id LIMIT ?",
-            (since, agent, limit))
+            "LEFT JOIN tasks k ON k.id=t.task_id WHERE m.id>? AND m.author<>? AND t.space_id=? ORDER BY m.id LIMIT ?",
+            (since, agent, self.space_id, limit))
         took_part = {r["thread_id"] for r in self.db.query("SELECT DISTINCT thread_id FROM messages WHERE author=?", (agent,))}
         for r in rows:
             d = dict(r)
@@ -2612,19 +2718,20 @@ class Agora:
             msgs = [m for m in msgs if m["for_you"]]
         reviews = [self._task_dict(r) for r in self.db.query(
             "SELECT * FROM tasks WHERE status='review' AND owner<>? AND (reviewer IS NULL OR reviewer='' OR reviewer=?) "
-            "ORDER BY submitted_at", (agent, agent))]
+            "AND space_id=? ORDER BY submitted_at", (agent, agent, self.space_id))]
         changes = [self._task_dict(r) for r in self.db.query(
-            "SELECT * FROM tasks WHERE status='changes' AND owner=?", (agent,))]
+            "SELECT * FROM tasks WHERE status='changes' AND owner=? AND space_id=?", (agent, self.space_id))]
         escalated = [dict(r) for r in self.db.query(
             "SELECT t.*, (SELECT body FROM messages m WHERE m.thread_id=t.id AND m.kind='escalation' ORDER BY m.id DESC LIMIT 1) "
             "AS question, (SELECT author FROM messages m WHERE m.thread_id=t.id AND m.kind='escalation' ORDER BY m.id DESC "
-            "LIMIT 1) AS escalated_by FROM threads t WHERE t.status='escalated' ORDER BY t.updated")] if agent == PERSON else []
+            "LIMIT 1) AS escalated_by FROM threads t WHERE t.status='escalated' AND t.space_id=? ORDER BY t.updated",
+            (self.space_id,))] if agent == PERSON else []
         pending = []
         for r in self.db.query(
                 "SELECT m.*, t.title AS thread_title, t.kind AS thread_kind, t.task_id AS task_id FROM messages m "
                 "JOIN threads t ON t.id=m.thread_id LEFT JOIN acks k ON k.agent=? AND k.thread_id=m.thread_id "
-                "WHERE m.author<>? AND m.mentions LIKE ? AND m.id>COALESCE(k.upto, 0) ORDER BY m.id LIMIT 200",
-                (agent, agent, f'%"{agent}"%')):
+                "WHERE m.author<>? AND m.mentions LIKE ? AND m.id>COALESCE(k.upto, 0) AND t.space_id=? ORDER BY m.id LIMIT 200",
+                (agent, agent, f'%"{agent}"%', self.space_id)):
             d = dict(r)
             d["mentions"] = _l(d.get("mentions"))
             if agent in d["mentions"]:
@@ -2633,7 +2740,8 @@ class Agora:
                   "changes": len(changes), "escalated": len(escalated), "pending": len(pending)}
         counts["total"] = counts["messages"] + counts["reviews"] + counts["changes"] + counts["escalated"]
         progress_alerts = [self._task_dict(r) for r in self.db.query(
-            "SELECT * FROM tasks WHERE created_by=? AND status IN ('claimed','in_progress','changes')", (agent,))]
+            "SELECT * FROM tasks WHERE created_by=? AND status IN ('claimed','in_progress','changes') AND space_id=?",
+            (agent, self.space_id))]
         progress_alerts = [t for t in progress_alerts if t["activity"]["state"] == "stalled"]
         counts["progress_alerts"] = len(progress_alerts)
         pools = self._quota_pools()
@@ -2648,24 +2756,29 @@ class Agora:
 
     # -- board ---------------------------------------------------------------------------------------------------
 
+    @_space_operation
     def board(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         with self.db.tx():
             live = self._live_locks()
         counts = {s: 0 for s in TASK_STATUSES}
-        for r in self.db.query("SELECT status, COUNT(*) AS n FROM tasks GROUP BY status"):
+        for r in self.db.query("SELECT status, COUNT(*) AS n FROM tasks WHERE space_id=? GROUP BY status", (self.space_id,)):
             counts[r["status"]] = r["n"]
         active = self.tasks({"limit": 300})["tasks"]
         tasks = [t for t in active if t["status"] not in FINAL] + \
             [self._task_dict(r) for r in self.db.query(
-                "SELECT * FROM tasks WHERE status IN ('done','dropped') ORDER BY closed_at DESC LIMIT 15")]
+                "SELECT * FROM tasks WHERE status IN ('done','dropped') AND space_id=? ORDER BY closed_at DESC LIMIT 15",
+                (self.space_id,))]
         return {"ok": True, "agents": self.agents()["agents"], "counts": counts, "tasks": tasks, "locks": live,
                 "orphans": self.orphans()["findings"],
                 "lock_groups": group_locks(live),
                 "threads": self.threads({"limit": 40})["threads"],
-                "escalated": self.db.scalar("SELECT COUNT(*) FROM threads WHERE status='escalated'", default=0),
+                "space": self.space_store.get(self.space_id),
+                "escalated": self.db.scalar("SELECT COUNT(*) FROM threads WHERE status='escalated' AND space_id=?",
+                                             (self.space_id,), default=0),
                 "decisions": self.decisions({"limit": 8})["decisions"]}
 
 
+    @_space_operation
     def digest(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """What happened in the last ``hours`` (default 12): per agent, tasks opened, claimed, sent to review and
         finished (with how they were reviewed), reviews given, decisions taken and escalations, plus what waits now."""
@@ -2682,25 +2795,29 @@ class Agora:
                 per.setdefault(agent, {"opened": 0, "claimed": 0, "submitted": 0, "done": 0, "reviews": 0, "messages": 0})
                 per[agent][key] += 1
 
-        for r in self.db.query("SELECT created_by FROM tasks WHERE created>=?", (since,)):
+        for r in self.db.query("SELECT created_by FROM tasks WHERE created>=? AND space_id=?", (since, self.space_id)):
             bump(r["created_by"], "opened")
-        for r in self.db.query("SELECT owner FROM tasks WHERE claimed_at>=?", (since,)):
+        for r in self.db.query("SELECT owner FROM tasks WHERE claimed_at>=? AND space_id=?", (since, self.space_id)):
             bump(r["owner"], "claimed")
-        for r in self.db.query("SELECT owner FROM tasks WHERE submitted_at>=?", (since,)):
+        for r in self.db.query("SELECT owner FROM tasks WHERE submitted_at>=? AND space_id=?", (since, self.space_id)):
             bump(r["owner"], "submitted")
-        for r in self.db.query("SELECT author, kind FROM messages WHERE created>=? AND author NOT IN ('system')", (since,)):
+        for r in self.db.query("SELECT m.author, m.kind FROM messages m JOIN threads t ON t.id=m.thread_id "
+                               "WHERE m.created>=? AND m.author NOT IN ('system') AND t.space_id=?", (since, self.space_id)):
             bump(r["author"], "reviews" if r["kind"] in ("approve", "changes") else "messages")
         done = [self._task_dict(r) for r in self.db.query(
-            "SELECT * FROM tasks WHERE status='done' AND closed_at>=? ORDER BY closed_at", (since,))]
+            "SELECT * FROM tasks WHERE status='done' AND closed_at>=? AND space_id=? ORDER BY closed_at", (since, self.space_id))]
         for t in done:
             bump(t.get("owner"), "done")
         decisions = [dict(r) for r in self.db.query(
             "SELECT id, title, resolution, resolved_by, updated FROM threads WHERE status='resolved' AND kind<>'task' "
-            "AND updated>=? ORDER BY updated", (since,))]
+            "AND updated>=? AND space_id=? ORDER BY updated", (since, self.space_id))]
         waiting = {
-            "reviews": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='review' ORDER BY submitted_at")],
-            "changes": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='changes'")],
-            "escalated": [dict(r) for r in self.db.query("SELECT id, title, updated FROM threads WHERE status='escalated'")],
+            "reviews": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='review' AND space_id=? "
+                                                                 "ORDER BY submitted_at", (self.space_id,))],
+            "changes": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='changes' AND space_id=?",
+                                                                 (self.space_id,))],
+            "escalated": [dict(r) for r in self.db.query("SELECT id, title, updated FROM threads WHERE status='escalated' "
+                                                        "AND space_id=?", (self.space_id,))],
             "progress": [t for t in self.tasks({"status": "active"})["tasks"] if t["activity"]["state"] == "stalled"],
         }
         by_state = {k: sum(1 for t in done if (t.get("review_state") or ("approved" if t["reviewed"] else "unreviewed")) == k)
@@ -2715,6 +2832,7 @@ _A = {"type": "string", "description": "Your agent id, the same in every call: b
 _TASK = {"type": "integer"}
 _THREAD = {"type": "integer"}
 _STRS = {"type": "array", "items": {"type": "string"}}
+_SPACE = {"type": "string", "description": "Coordination space ID; omitted selects the original ecosystem space."}
 
 
 def _schema(props: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -2954,7 +3072,25 @@ TOOLS: list[dict[str, Any]] = [
                              "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
 ]
 
-_WRITE_OPS = ("checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
+for _tool in TOOLS:
+    _tool["inputSchema"]["properties"]["space_id"] = _SPACE
+TOOLS.extend([
+    {"name": "hub_agora_spaces", "read": True, "description": "List persistent coordination spaces and their members.",
+     "inputSchema": _schema({}, [])},
+    {"name": "hub_agora_space", "read": True, "description": "Read one coordination space, preserving its canonical identity.",
+     "inputSchema": _schema({"space_id": _SPACE}, [])},
+    {"name": "hub_agora_space_create", "description": "Create a coordination space for a project or purpose; resources and quota remain globally shared.",
+     "inputSchema": _schema({"agent": _A, "id": _SPACE, "title": {"type": "string"},
+                             "description": {"type": "string"}, "project_id": {"type": "string"},
+                             "workspace": {"type": "string"}}, ["agent", "title"])},
+    {"name": "hub_agora_space_update", "description": "Rename or edit a space without replacing its identity or history. Use the revision you read.",
+     "inputSchema": _schema({"agent": _A, "space_id": _SPACE, "expected_revision": {"type": "integer", "minimum": 1},
+                             "title": {"type": "string"}, "description": {"type": "string"},
+                             "project_id": {"type": "string"}, "workspace": {"type": "string"}},
+                            ["agent", "space_id", "expected_revision"])},
+])
+
+_WRITE_OPS = ("space_create", "space_update", "checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
               "usage_report", "orphan_sweep", "task_deps")
 
@@ -3119,7 +3255,7 @@ class AgoraFacet(Facet):
 
     def _activity(self, a: dict[str, Any]) -> dict[str, Any]:
         out = self.agora.activity(a)
-        task = self.agora._task_row(out["task_id"])
+        task = self.agora.for_space(out["space_id"])._task_row(out["task_id"])
         task["activity"] = out["activity"]
         if self._watch_enabled():
             try:
@@ -3164,6 +3300,10 @@ class AgoraFacet(Facet):
             return None
         q = {k: v[0] for k, v in req.query.items() if v}
         ag = self.agora
+        if p == "/api/agora/spaces":
+            return self._run(ag.spaces, q)
+        if p.startswith("/api/agora/spaces/"):
+            return self._run(ag.space, {"space_id": p.rsplit("/", 1)[1]})
         if p in ("/api/agora", "/api/agora/board"):
             return self._board(q)
         if p == "/api/agora/watch":
@@ -3199,7 +3339,8 @@ class AgoraFacet(Facet):
             person = who == PERSON and req.caller() == "ui"
             if who == PERSON and not person:
                 who = ""   # the person's read is recorded only from the hub's page
-            return self._run(self._task, {"task_id": p.rsplit("/", 1)[1], **({"agent": who, "_person": person} if who else {})})
+            return self._run(self._task, {"task_id": p.rsplit("/", 1)[1], "space_id": q.get("space_id"),
+                                         **({"agent": who, "_person": person} if who else {})})
         if p == "/api/agora/threads":
             q["include_tasks"] = str(q.get("include_tasks", "")).lower() in ("1", "true")
             return self._run(ag.threads, q)
@@ -3218,7 +3359,8 @@ class AgoraFacet(Facet):
             person = who == PERSON and req.caller() == "ui"
             if who == PERSON and not person:
                 who = ""
-            return self._run(self._thread, {"thread_id": p.rsplit("/", 1)[1], "agent": who, "_person": person})
+            return self._run(self._thread, {"thread_id": p.rsplit("/", 1)[1], "agent": who, "_person": person,
+                                           "space_id": q.get("space_id")})
         if p == "/api/agora/locks":
             return self._run(ag.locks, q)
         if p == "/api/agora/decisions":
@@ -3290,6 +3432,8 @@ class AgoraFacet(Facet):
             return call
 
         return {
+            "hub_agora_spaces": wrap(ag.spaces), "hub_agora_space": wrap(ag.space),
+            "hub_agora_space_create": wrap(ag.space_create), "hub_agora_space_update": wrap(ag.space_update),
             "hub_agora_checkpoint": wrap(ag.checkpoint), "hub_agora_checkpoints": wrap(ag.checkpoints),
             "hub_agora_usage": wrap(ag.usage), "hub_agora_usage_report": wrap(ag.usage_report),
             "hub_agora_agent_quota": wrap(ag.agent_quota_state),
