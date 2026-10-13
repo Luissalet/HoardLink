@@ -99,6 +99,17 @@ def test_multipart_bytes_and_native_error(private_host):
     assert context['origin']=={'app_id':'hoardhub','data_space_id':info['data_space_id']}
 
 
+def test_native_upload_route_preserves_the_uploaded_bytes(private_host):
+    _, base, received, _ = private_host
+    raw = (b'--upload343\r\nContent-Disposition: form-data; name="files"; filename="a.bin"\r\n'
+           b'Content-Type: application/octet-stream\r\n\r\n\x00\xff\x80\r\n--upload343--\r\n')
+    with request(base, '/api/copilot/proxy', {'path': '/api/upload', 'method': 'POST',
+            'raw_body': base64.b64encode(raw).decode(), 'content_type': 'multipart/form-data; boundary=upload343'}) as response:
+        assert response.status == 200
+    assert received[0][0] == '/api/upload'
+    assert received[0][1] == raw
+
+
 def profile_hub(tmp_path):
     from types import SimpleNamespace
     cfg=HubConfig(data_dir=str(tmp_path),roots=[],profiles={'Group':{'apps':['base'],'desktop':[],

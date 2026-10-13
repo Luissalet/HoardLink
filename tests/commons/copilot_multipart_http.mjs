@@ -32,7 +32,7 @@ const files = [
   Buffer.from('{"origin":{"app_id":"uploaded-json"}}'),
 ];
 try {
-  for (const formName of ['"hoard_context"', 'hoard_context']) for (const file of files) {
+  for (const route of ['/api/chat_stream', '/api/upload']) for (const formName of ['"hoard_context"', 'hoard_context']) for (const file of files) {
     const prefix = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; filename="context"; name="file"\r\n`+
       'Content-Type: application/octet-stream\r\n\r\n');
     const suffix = Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name=${formName}\r\n\r\n`+
@@ -40,7 +40,7 @@ try {
     const source = Buffer.concat([prefix, file, suffix]);
     const result = await fetch('http://127.0.0.1:'+server.address().port+'/api/copilot/proxy', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({path:'/api/chat_stream',method:'POST',
+      body:JSON.stringify({path:route,method:'POST',
         content_type:'multipart/form-data; boundary='+boundary,raw_body:source.toString('base64')})});
     assert.equal(result.status, 200);
     await result.text();

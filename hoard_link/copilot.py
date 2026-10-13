@@ -33,7 +33,7 @@ def multipart_context(body, content_type, origin):
 
 
 ALLOWED_PREFIXES = ("/api/hoard-copilot/", "/api/chat/", "/api/session/", "/api/sessions/")
-ALLOWED_EXACT = ("/api/chat_stream", "/api/session", "/api/sessions")
+ALLOWED_EXACT = ("/api/chat_stream", "/api/session", "/api/sessions", "/api/upload")
 
 
 def allowed_route(path):

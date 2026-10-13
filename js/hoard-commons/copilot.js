@@ -23,7 +23,7 @@ export const COPILOT_REQUEST_HEADER = Object.freeze(["X-Hoard-Request", "1"]);
 const LAUNCHER_TAG = '<script type="module" src="/api/copilot/launcher.js"></script>';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ALLOWED_PREFIXES = ["/api/hoard-copilot/", "/api/chat/", "/api/session/", "/api/sessions/"];
-const ALLOWED_EXACT = ["/api/chat_stream", "/api/session", "/api/sessions"];
+const ALLOWED_EXACT = ["/api/chat_stream", "/api/session", "/api/sessions", "/api/upload"];
 const FORWARD_REQUEST = ["x-faustus-client-version", "x-odysseus-run-id"];
 const FORWARD_RESPONSE = ["content-type", "x-odysseus-run-id", "x-faustus-idempotent-replay", "x-faustus-api-version"];
 
