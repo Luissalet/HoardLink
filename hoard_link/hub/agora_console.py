@@ -691,7 +691,7 @@ class AgoraConsoleFacet(Facet):
                 result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                         text=True, cwd=(str(cursor_workspace) if leader_id == "cursor" else
                                                        str(work_dir) if use_saved_cwd else None),
-                                        timeout=1800, check=False,
+                                        timeout=1800, check=False, env=self._runner_env(),
                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             observer_done.set()
             observer.join(timeout=1)
@@ -1189,6 +1189,16 @@ class AgoraConsoleFacet(Facet):
         import hashlib
         return leader_id + '-agora-' + hashlib.sha256(self.space_id.encode()).hexdigest()[:12]
 
+    def _runner_env(self):
+        """Keep subsequent CLI reads and writes in this Hub and space."""
+        env = dict(os.environ, AGORA_SPACE=self.space_id)
+        for key, field in (('HOARD_HUB_URL','url'), ('HOARD_HUB_DATA_DIR','data_dir'),
+                           ('HOARD_HUB_TOKEN_FILE','token_file')):
+            value = getattr(self.hub.config, field, '')
+            if value:
+                env[key] = str(value)
+        return env
+
     def _faustus_bound_session(self) -> tuple[Optional[dict[str, Any]], str]:
         runtime = getattr(self.hub, "faustus_runtime", None)
         try:
@@ -1378,6 +1388,9 @@ class AgoraConsoleFacet(Facet):
                        ("operations", "resources", "repos", "thread_ids"))):
             return {"session_id": session_id}, "Faustus child setup failed at stage=child_coordination_scope: the parent binding has no complete active scope."
         binding_fields["actor"] = agent_id
+        binding_fields['space_id'] = self.space_id
+        if self.space_id != 'ecosystem':
+            binding_fields['thread_ids'] = [self.thread_id]
         bind_status, saved_binding = self._faustus_session_request(
             "PUT", f"/api/coordination/{quote(session_id, safe='')}", binding_fields)
         verified_status, verified_binding_data = self._faustus_session_request(
@@ -1389,6 +1402,7 @@ class AgoraConsoleFacet(Facet):
                 or verified_binding.get("session_id") != session_id
                 or verified_binding.get("project_id") != parent["project_id"]
                 or verified_binding.get("actor") != agent_id
+                or verified_binding.get('space_id', 'ecosystem') != self.space_id
                 or verified_binding.get("active") is not True):
             return {"session_id": session_id}, (f"Faustus child setup failed at stage=child_identity_verify "
                                                  f"(PUT HTTP {bind_status}, GET HTTP {verified_status}, "
@@ -1719,7 +1733,7 @@ class AgoraConsoleFacet(Facet):
             model_source = "installed Codex CLI catalog + independent `codex exec --worktree` session"
             worker_cwd = work_dir
             session_id = ""
-            process_env = None
+            process_env = self._runner_env()
         elif leader_id == "cursor":
             command = [str(cursor_runner), str(cursor_entry), "--print", "--output-format", "stream-json",
                        "--model", model, "--workspace", str(work_dir),
@@ -1727,7 +1741,7 @@ class AgoraConsoleFacet(Facet):
             model_source = "installed managed Cursor Agent `models` catalog + independent `--worktree` session"
             worker_cwd = work_dir
             session_id = ""
-            process_env = None
+            process_env = self._runner_env()
         else:
             setup_failed = False
             try:
@@ -1777,7 +1791,7 @@ class AgoraConsoleFacet(Facet):
                 command.extend(["--workspace", workspace])
             model_source = "installed Faustus runner + owner-verified native project child session"
             worker_cwd = root
-            process_env = os.environ.copy()
+            process_env = self._runner_env()
             process_env.pop("FAUSTUS_API_TOKEN", None)
             owner_token = os.environ.get("FAUSTUS_OWNER_API_TOKEN", "").strip()
             if owner_token:

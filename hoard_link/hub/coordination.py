@@ -103,7 +103,8 @@ class CoordinationFacet(Facet):
             if args.get('space_id') and room.space_id != args['space_id']:
                 return {'ok': False, 'status': 404, 'error': 'Room not found in this space'}
             return {'ok': True, 'kind': kind, 'session': room.to_dict(),
-                    'participants': [p.to_dict() for p in self.council.list_participants(ident)]}
+                    'participants': [p.to_dict() for p in self.council.list_participants(ident)],
+                    'last_close': self.council.last_close(ident)}
         try:
             group = self.groups.group(ident, owner)
             if args.get('space_id') and group.get('space_id', DEFAULT_SPACE_ID) != args['space_id']:

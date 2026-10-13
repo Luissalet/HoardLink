@@ -103,7 +103,12 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
         return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": catalogue()}}
     if method == "tools/call":
         name = str(params.get("name") or "")
-        args = params.get("arguments") or {}
+        args = dict(params.get("arguments") or {})
+        default_space = os.environ.get('AGORA_SPACE')
+        if default_space and 'space_id' not in args:
+            spec = next((tool for tool in catalogue() if tool['name'] == name), {})
+            if 'space_id' in spec.get('inputSchema', {}).get('properties', {}):
+                args['space_id'] = default_space
         if not _ensure_hub():
             return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text({"ok": False, "error": f"hub not reachable at {_url()} and could not be started"}), "isError": True}}
         wait = 90.0
