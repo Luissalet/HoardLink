@@ -77,6 +77,8 @@
 
   function paint(detail, task) {
     injectCss();
+    if (!detail?.isConnected || detail.dataset.key !== `task-${task?.id}`
+        || (detail.dataset.spaceId || 'ecosystem') !== (task?.space_id || 'ecosystem')) return;
     const blocks = task && task.submission_blocks;
     if (!detail || !Array.isArray(blocks) || !blocks.length) return;
     if (detail.querySelector(".ag-blocks")) return;
@@ -132,8 +134,11 @@
     const key = detail.dataset.key || "";
     const m = /^task-(\d+)$/.exec(key);
     if (!m) return;
-    original(`/api/agora/tasks/${m[1]}`).then((r) => {
-      if (r && r.ok && r.task) paint(detail, r.task);
+    const sid = detail.dataset.spaceId || 'ecosystem';
+    const query = sid === 'ecosystem' ? '' : '?space_id=' + encodeURIComponent(sid);
+    original(`/api/agora/tasks/${m[1]}${query}`).then((r) => {
+      if (r && r.ok && r.task && detail.dataset.key === key
+          && (detail.dataset.spaceId || 'ecosystem') === sid) paint(detail, r.task);
     }).catch(() => {});
   });
   const start = () => {
