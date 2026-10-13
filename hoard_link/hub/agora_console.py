@@ -1705,7 +1705,7 @@ class AgoraConsoleFacet(Facet):
         prompt = (f"You are independent Agora child worker {agent_id}, assigned by leader {leader_id} for task {worker_id}. "
                   f"Use `{agent_id}` as your own Agora identity and parent the work to `{leader_id}`; never speak or act "
                   "as the console operator, the leader, or another agent. At the start, use `D:\\LocalAI\\agora.cmd "
-                  f"--as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Read `D:\\LocalAI\\CRITERIOS.md` "
+                  f"--space {self.space_id} --as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Read `D:\\LocalAI\\CRITERIOS.md` "
                   "before `D:\\LocalAI\\MEMORY.md`, then read the repository's AGENTS.md. Before changing a repository, "
                   "create or claim an Agora task under your identity and take the required path locks. Work only in an "
                   "isolated worktree and follow repository skills. Do not claim results that are not supported by your work; "
