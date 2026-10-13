@@ -8,10 +8,25 @@
   "use strict";
   const H = window.HubFacets;
   if (!H) return;
-  const { el, api, toast, L, fmtWhen } = H.ctx;
+  const { el, api: rawApi, toast, L, fmtWhen } = H.ctx;
+  let activeSpace = 'ecosystem';
+  let spaceEpoch = 0;
+  let spacePicker, formsBox;
+  const spaceViews = new Map();
+
+  async function api(path, body) {
+    const epoch = spaceEpoch, sid = activeSpace;
+    if (body !== undefined) body = {space_id: sid, ...body};
+    else if (sid !== 'ecosystem') path += (path.includes('?') ? '&' : '?') + 'space_id=' + encodeURIComponent(sid);
+    const result = await rawApi(path, body);
+    return epoch === spaceEpoch ? result : {ok: false, spaceChanged: true};
+  }
 
   const S = {
     label: { es: "Ágora", en: "Agora" },
+    space: { es: "Espacio", en: "Space" },
+    new_space: { es: "Nuevo espacio", en: "New space" },
+    rename_space: { es: "Renombrar espacio", en: "Rename space" },
     hint: { es: "Donde los agentes y tú os repartís el trabajo, debatís y decidís.", en: "Where the agents and you split the work, argue and decide." },
     waiting: { es: "Te esperan", en: "Waiting for you" },
     agents: { es: "Agentes", en: "Agents" },
@@ -197,8 +212,10 @@
       .ag-newtag { font-weight: 700; color: var(--accent-2); text-transform: uppercase; font-size: 10.5px; letter-spacing: .4px; }
       .ag-prio { font-weight: 700; font-size: 11px; }
       .ag-p0 .ag-prio { color: var(--red); } .ag-p1 .ag-prio { color: var(--amber); }
-      .ag-filterbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-      .ag-filterbar input, .ag-filterbar select { background: var(--hoard-sunken); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; min-width: 0; }
+      .ag-filterbar, .ag-spacebar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+      .ag-spacebar label { display: flex; gap: 8px; align-items: center; min-width: 0; }
+      .ag-spacebar select { max-width: min(360px, 65vw); }
+      .ag-filterbar input, .ag-filterbar select, .ag-spacebar select { background: var(--hoard-sunken); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; min-width: 0; }
       .ag-filterbar input { flex: 1 1 220px; }
       .ag-card:focus-visible, .ag-th:focus-visible, .ag-dec:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       .ag-skel { border-radius: 8px; background: linear-gradient(90deg, var(--card-2) 25%, var(--line) 50%, var(--card-2) 75%); background-size: 200% 100%; animation: ag-skel 1.4s linear infinite; min-height: 34px; }
@@ -459,6 +476,7 @@
     if (threadFilter !== "all") q.set("status", threadFilter);
     if (kindFilter) q.set("kind", kindFilter);
     const r = await api(`/api/agora/threads?${q}`);
+    if (r?.spaceChanged) return;
     if (!r || !r.ok) throw new Error((r && r.error) || "threads");
     threadsBox.replaceChildren(); ready(threadsBox);
     const all = r.threads || [];
@@ -502,6 +520,7 @@
 
   async function renderWaiting() {
     const r = await api("/api/agora/inbox?agent=luis&peek=1");
+    if (r?.spaceChanged) return;
     waitBox.replaceChildren();
     const esc = (r && r.escalated) || [];
     const reviews = ((r && r.reviews) || []).filter((x) => x.reviewer === "luis");
@@ -537,18 +556,21 @@
 
   async function load() {
     if (!box) return;
+    const epoch = spaceEpoch;
     try {
       const b = await api("/api/agora/board");
+      if (b?.spaceChanged) return;
       if (!b || !b.ok) throw new Error((b && b.error) || "board");
       lastBoard = b;
       renderAgents(b); renderBoard(b); renderLocks(b); renderDecisions(b);
       // the observer is optional (404 when disabled) and must never block the rest of the page
-      api("/api/agora/watch").then((w) => { lastWatch = w && w.ok ? w : null; renderQuestions(lastWatch); renderUnbound(lastWatch, b); }).catch(() => {});
+      api("/api/agora/watch").then((w) => { if (w?.spaceChanged) return; lastWatch = w && w.ok ? w : null; renderQuestions(lastWatch); renderUnbound(lastWatch, b); }).catch(() => {});
       await Promise.all([renderThreads(), renderWaiting()]);
+      if (epoch !== spaceEpoch) return;
       showError(null);
       if (current) await refreshDetail();
     } catch (e) {
-      showError(e);
+      if (epoch === spaceEpoch) showError(e);
     }
   }
 
@@ -629,6 +651,7 @@
     send.onclick = async () => {
       const body = need(); if (!body) return;
       const r = await api("/api/agora/post", { agent: "luis", thread_id: thread.id, body, kind: kind.value });
+      if (r?.spaceChanged) return;
       if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
     };
     row.appendChild(kind); row.appendChild(send);
@@ -638,6 +661,7 @@
         dec.onclick = async () => {
           const resolution = need(); if (!resolution) return;
           const r = await api("/api/agora/resolve", { agent: "luis", thread_id: thread.id, resolution });
+      if (r?.spaceChanged) return;
           if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
         };
         row.appendChild(dec);
@@ -646,6 +670,7 @@
         ro.onclick = async () => {
           const reason = need(); if (!reason) return;
           const r = await api("/api/agora/reopen", { agent: "luis", thread_id: thread.id, reason });
+      if (r?.spaceChanged) return;
           if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
         };
         row.appendChild(ro);
@@ -674,6 +699,7 @@
         b.onclick = async () => {
           const body = need(); if (!body) return;
           const r = await api("/api/agora/task_review", { agent: "luis", task_id: task.id, verdict, body, expected_submission_revision: reviewRevision });
+      if (r?.spaceChanged) return;
           if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
         };
         b.disabled = stale; voteButtons.push(b); row.appendChild(b);
@@ -739,7 +765,7 @@
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
     detailBox.replaceChildren(); ready(detailBox);
     const head = el("div", "ag-dhead");
-    const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); renderThreads().catch(() => {}); try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignore */ } };
+    const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); renderThreads().catch(() => {}); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* ignore */ } };
     head.appendChild(back);
     head.appendChild(el("h3", "", task ? `#${task.id} ${task.title}` : thread.title));
     head.appendChild(pill(st(task ? task.status : thread.status)));
@@ -848,6 +874,7 @@
       if (!title.value.trim()) { toast(t("need_text"), "err"); return; }
       const r = await api("/api/agora/task_add", { agent: "luis", title: title.value, body: body.value, repo: repo.value, paths: paths.value,
         priority: Number(prio.value), kind: kind.value, mentions: mention.value });
+      if (r?.spaceChanged) return;
       if (r && r.ok) { holder.replaceChildren(); load(); } else toast((r && r.error) || "error", "err");
     };
     row.appendChild(ok); row.appendChild(no); f.appendChild(row);
@@ -868,6 +895,7 @@
     ok.onclick = async () => {
       if (!title.value.trim() || !body.value.trim()) { toast(t("need_text"), "err"); return; }
       const r = await api("/api/agora/thread_open", { agent: "luis", title: title.value, body: body.value, kind: kind.value, mentions: mention.value });
+      if (r?.spaceChanged) return;
       if (r && r.ok) { holder.replaceChildren(); load(); openThread(r.thread.id); } else toast((r && r.error) || "error", "err");
     };
     row.appendChild(ok); row.appendChild(no); f.appendChild(row);
@@ -875,6 +903,65 @@
   }
 
   // ---- mount -------------------------------------------------------------------------------------------------
+
+  function selectSpace(sid) {
+    if (sid === activeSpace) return;
+    spaceViews.set(activeSpace, {current, lastBoard, detail: detailBox, forms: [...formsBox.childNodes]});
+    activeSpace = sid; spaceEpoch++;
+    const saved = spaceViews.get(sid);
+    current = saved?.current || null; lastBoard = saved?.lastBoard || null;
+    const nextDetail = saved?.detail || el('div', 'ag-detail');
+    detailBox.replaceWith(nextDetail); detailBox = nextDetail;
+    formsBox.replaceChildren(...(saved?.forms || []));
+    showDetail(Boolean(current));
+    if (spacePicker) spacePicker.value = sid;
+    const url = new URL(location.href);
+    if (sid === 'ecosystem') url.searchParams.delete('space_id'); else url.searchParams.set('space_id', sid);
+    url.hash = current?.type === 'thread' ? `agora-${current.id}` : '';
+    history.replaceState(null, '', url);
+    renderAgents(lastBoard || {agents: []}); renderBoard(lastBoard || {tasks: []});
+    renderDecisions(lastBoard || {decisions: []}); threadsBox.replaceChildren(); waitBox.hidden = true;
+    load();
+  }
+
+  async function loadSpaces() {
+    const r = await rawApi('/api/agora/spaces');
+    if (!r?.ok || !spacePicker) return;
+    spacePicker.replaceChildren();
+    for (const space of r.spaces || []) {
+      const option = el('option', '', space.title); option.value = space.id;
+      spacePicker.appendChild(option);
+    }
+    spacePicker.value = activeSpace;
+  }
+
+  function spaceForm(rename = false) {
+    formsBox.replaceChildren();
+    const f = el('div', 'ag-form'), title = el('input');
+    if (rename) title.value = lastBoard?.space?.title || '';
+    f.appendChild(field('title', title));
+    const row = el('div', 'ag-row');
+    const save = el('button', 'small primary', rename ? t('rename_space') : t('create'));
+    const cancel = el('button', 'small ghost', t('cancel'));
+    cancel.onclick = () => formsBox.replaceChildren();
+    save.onclick = async () => {
+      if (!title.value.trim()) { toast(t('need_text'), 'err'); return; }
+      const epoch = spaceEpoch;
+      save.disabled = true;
+      try {
+        const body = {agent: 'luis', title: title.value};
+        if (rename) { body.space_id = activeSpace; body.expected_revision = lastBoard?.space?.revision; }
+        const r = await api('/api/agora/' + (rename ? 'space_update' : 'space_create'), body);
+        if (epoch !== spaceEpoch || r?.spaceChanged) return;
+        if (!r?.ok) { toast(r?.error || 'error', 'err'); return; }
+        formsBox.replaceChildren();
+        await loadSpaces();
+        if (!rename) selectSpace(r.space.id); else load();
+      } catch (error) { if (epoch === spaceEpoch) toast(String(error), 'err'); }
+      finally { save.disabled = false; }
+    };
+    row.appendChild(save); row.appendChild(cancel); f.appendChild(row); formsBox.appendChild(f); title.focus();
+  }
 
   function section(titleKey, extra) {
     const s = el("div", "ag-sec");
@@ -901,7 +988,7 @@
   H.register("agora", {
     copilot: {
       async context() {
-        const part = {active_objects:[],view:{section:'agora'}};
+        const part = {active_objects:[],view:{section:'agora',space_id:activeSpace}};
         if (box?.querySelector('[data-copilot-form]')) { part.view.form_mode = 'create'; return part; }
         if (!current || detailBox.hidden) return part;
         const selection = {...current};
@@ -924,15 +1011,25 @@
     order: 15,
     mount(container) {
       injectCss();
+      activeSpace = new URLSearchParams(location.search).get('space_id') || 'ecosystem';
       box = container;
       const tools = el("div", "tab-tools");
-      const forms = el("div");
+      const forms = el("div"); formsBox = forms;
       const nt = el("button", "small", "+ " + t("new_task")); nt.onclick = () => taskForm(forms);
       const nth = el("button", "small", "+ " + t("new_thread")); nth.onclick = () => threadForm(forms);
       const full = el("a", "small", L({ es: "Abrir Ágora completo", en: "Open full Agora" }));
       full.href = "/agora/"; full.target = "_blank"; full.rel = "noopener";
       tools.appendChild(full); tools.appendChild(nt); tools.appendChild(nth); tools.appendChild(el("span", "hint", t("hint")));
       box.appendChild(tools);
+      const spacesBar = el('div', 'ag-spacebar');
+      spacePicker = el('select'); spacePicker.setAttribute('aria-label', t('space'));
+      const initialSpace = el('option', '', activeSpace === 'ecosystem' ? L({es:'Ecosistema', en:'Ecosystem'}) : activeSpace);
+      initialSpace.value = activeSpace; spacePicker.appendChild(initialSpace);
+      spacePicker.onchange = () => selectSpace(spacePicker.value);
+      const spaceLabel = el('label', 'hint', t('space')); spaceLabel.appendChild(spacePicker);
+      const ns = el('button', 'small', t('new_space')); ns.onclick = () => spaceForm();
+      const renameSpace = el('button', 'small ghost', t('rename_space')); renameSpace.onclick = () => spaceForm(true);
+      spacesBar.appendChild(spaceLabel); spacesBar.appendChild(ns); spacesBar.appendChild(renameSpace); box.appendChild(spacesBar);
       box.appendChild(forms);
       const bar = el("div", "ag-filterbar");
       const search = el("input"); search.type = "search"; search.placeholder = t("filter_ph"); search.setAttribute("aria-label", t("filter_ph"));
@@ -969,6 +1066,7 @@
       pollBadge(); setInterval(pollBadge, 15000);
       window.addEventListener("hashchange", openFromHash);
       setTimeout(openFromHash, 300);
+      loadSpaces().catch(() => {});
     },
     load,
     tick: load,

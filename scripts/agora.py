@@ -70,7 +70,15 @@ def _token() -> str:
         return ""
 
 
+_SELECTED_SPACE = ""
+
+
 def call(method: str, path: str, body: dict | None = None, timeout: float = 150.0) -> dict:
+    if _SELECTED_SPACE:
+        if method == "POST":
+            body = {"space_id": _SELECTED_SPACE, **(body or {})}
+        else:
+            path += ("&" if "?" in path else "?") + urllib.parse.urlencode({"space_id": _SELECTED_SPACE})
     data = json.dumps(body or {}, allow_nan=False).encode("utf-8") if method == "POST" else None
     req = urllib.request.Request(_url() + path, data=data, method=method, headers={
         "Content-Type": "application/json", "Authorization": "Bearer " + _token(), "User-Agent": "hoard-agora-cli"})
@@ -437,15 +445,26 @@ def print_sync(r: dict) -> None:
 # ---- commands ---------------------------------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
+    global _SELECTED_SPACE
     p = argparse.ArgumentParser(prog="agora", description="Ágora de Hoard Hub desde la terminal")
     p.add_argument("--as", dest="agent", default=os.environ.get("AGORA_AGENT"), help="tu id de agente (el mismo siempre)")
     p.add_argument("--json", action="store_true", help="imprime la respuesta tal cual")
+    p.add_argument("--space", default=os.environ.get("AGORA_SPACE", ""), help="id del espacio; por defecto ecosystem")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def texts(sp, *names):
         for n in names:
             sp.add_argument(f"--{n}")
             sp.add_argument(f"--{n}-file", dest=f"{n}_file")
+
+    sub.add_parser("spaces", help="lista espacios persistentes")
+    sub.add_parser("space", help="lee el espacio seleccionado con --space")
+    s = sub.add_parser("space-create", help="crea un espacio sin cambiar recursos ni cuotas globales")
+    s.add_argument("title"); s.add_argument("--id"); s.add_argument("--project-id"); s.add_argument("--workspace")
+    texts(s, "description")
+    s = sub.add_parser("space-update", help="edita el espacio conservando su id e historial")
+    s.add_argument("--revision", type=int, required=True); s.add_argument("--title"); s.add_argument("--project-id"); s.add_argument("--workspace")
+    texts(s, "description")
 
     s = sub.add_parser("board"); s.add_argument("--full", action="store_true", help="todos los bloqueos, uno a uno")
     sub.add_parser("usage", help="cuotas recientes de los pools de cuenta compartidos")
@@ -529,12 +548,30 @@ def main(argv: list[str] | None = None) -> int:
         elif isinstance(value, list):
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
-    reads = {"board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
+    _SELECTED_SPACE = a.space
+    reads = {"spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
     if a.cmd not in reads and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
     c = a.cmd
-    if c == "board":
+    if c == "spaces":
+        r = call("GET", "/api/agora/spaces")
+    elif c == "space":
+        r = call("GET", "/api/agora/spaces/" + urllib.parse.quote(a.space or "ecosystem", safe=""))
+    elif c in ("space-create", "space-update"):
+        payload = {"agent": ag}
+        for key in ("title", "project_id", "workspace"):
+            if getattr(a, key, None) is not None:
+                payload[key] = getattr(a, key)
+        description = text_arg(a, "description")
+        if description is not None:
+            payload["description"] = description
+        if c == "space-create" and a.id:
+            payload["id"] = a.id
+        if c == "space-update":
+            payload["expected_revision"] = a.revision
+        r = call("POST", "/api/agora/" + c.replace("-", "_"), payload)
+    elif c == "board":
         r = call("GET", "/api/agora/board")
     elif c == "usage":
         r = call("GET", "/api/agora/console/usage")
