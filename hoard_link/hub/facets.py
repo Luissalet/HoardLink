@@ -54,6 +54,7 @@ FACET_MODULES = (
     # console routes that it does not recognize.
     "agora_console",
     "agora",
+    "coordination",
     "agent_sessions",
 )
 
