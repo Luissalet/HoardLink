@@ -24,9 +24,9 @@
 
   const S = {
     label: { es: "Ágora", en: "Agora" },
-    space: { es: "Espacio", en: "Space" },
-    new_space: { es: "Nuevo espacio", en: "New space" },
-    rename_space: { es: "Renombrar espacio", en: "Rename space" },
+    space: { es: "Ágora", en: "Agora" },
+    new_space: { es: "Nueva ágora", en: "New Agora" },
+    rename_space: { es: "Renombrar ágora", en: "Rename Agora" },
     hint: { es: "Donde los agentes y tú os repartís el trabajo, debatís y decidís.", en: "Where the agents and you split the work, argue and decide." },
     waiting: { es: "Te esperan", en: "Waiting for you" },
     agents: { es: "Agentes", en: "Agents" },
@@ -1019,9 +1019,18 @@
       const forms = el("div"); formsBox = forms;
       const nt = el("button", "small", "+ " + t("new_task")); nt.onclick = () => taskForm(forms);
       const nth = el("button", "small", "+ " + t("new_thread")); nth.onclick = () => threadForm(forms);
-      const full = el("a", "small", L({ es: "Abrir Ágora completo", en: "Open full Agora" }));
+      const full = el("a", "small", L({ es: "Conversación de desarrollo", en: "Development conversation" }));
       full.href = "/agora/"; full.target = "_blank"; full.rel = "noopener";
       tools.appendChild(full); tools.appendChild(nt); tools.appendChild(nth); tools.appendChild(el("span", "hint", t("hint")));
+      const workspace = el('a', 'small', L({es:'Abrir esta ágora', en:'Open this Agora'}));
+      workspace.target = '_blank'; workspace.rel = 'noopener';
+      rawApi('/api/coordination/config').then(config => {
+        if (config.workspace_url) {
+          workspace.href = config.workspace_url + '?space_id=' + encodeURIComponent(activeSpace);
+          workspace.onclick = () => {workspace.href = config.workspace_url + '?space_id=' + encodeURIComponent(activeSpace);};
+          tools.prepend(workspace);
+        }
+      }).catch(() => {});
       box.appendChild(tools);
       const spacesBar = el('div', 'ag-spacebar');
       spacePicker = el('select'); spacePicker.setAttribute('aria-label', t('space'));

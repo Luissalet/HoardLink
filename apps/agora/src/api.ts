@@ -1,8 +1,13 @@
 import {invoke, isTauri} from '@tauri-apps/api/core';
+export const spaceId = new URLSearchParams(location.search).get('space_id') || 'ecosystem';
 export async function openHub(event:{preventDefault:()=>void}){
   if(isTauri()){event.preventDefault();await invoke('open_hub');}
 }
 export async function api<T=any>(path:string,body?:unknown):Promise<T>{
+  if(path.startsWith('/api/agora/') && spaceId !== 'ecosystem') {
+    if(body===undefined) path+=(path.includes('?')?'&':'?')+'space_id='+encodeURIComponent(spaceId);
+    else body={space_id:spaceId,...(body as Record<string,unknown>)};
+  }
   let data:any;
   if(isTauri()) data=await invoke('hub_request',{path,body:body===undefined?null:body});
   else {const response=await fetch(path,{headers:body===undefined?{}:{'Content-Type':'application/json'},method:body===undefined?'GET':'POST',body:body===undefined?undefined:JSON.stringify(body)});data=await response.json();if(!response.ok)throw new Error(data.error || `Error ${response.status}`);}
