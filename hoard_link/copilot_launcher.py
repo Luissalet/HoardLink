@@ -123,6 +123,10 @@ LAUNCHER_JS = r"""
     .hoard-copilot .hoard-copilot-body{flex:1;min-height:0;display:flex}
     .hoard-copilot faustus-chat{flex:1;min-height:0;border:0;border-radius:0 0 12px 12px}
     .hoard-copilot [role=alert]{margin:10px 12px;color:#ffb4a8}
+.hoard-copilot .hoard-copilot-unavailable{display:flex;flex-direction:column;align-items:flex-start;gap:8px;color:inherit;line-height:1.45}
+.hoard-copilot .hoard-copilot-unavailable p{margin:0}
+.hoard-copilot .hoard-copilot-unavailable button{font:inherit;padding:6px 12px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer}
+.hoard-copilot .hoard-copilot-unavailable small{opacity:.65;overflow-wrap:anywhere}
     @media (max-width:600px){.hoard-copilot{top:var(--hoard-copilot-top,6px);right:6px;bottom:60px;width:calc(100vw - 12px)}}`;
 
   let info = null;
@@ -349,8 +353,41 @@ LAUNCHER_JS = r"""
     return null;
   }
 
+  // Faustus down or unreachable: the app keeps working; the panel says so in plain words and offers to try again
+  // (the draft lives in Faustus and comes back with the conversation).
+  function unavailable(body, title, error) {
+    const es = lang() === 'es';
+    const box = document.createElement('div');
+    box.setAttribute('role', 'alert');
+    box.className = 'hoard-copilot-unavailable';
+    const text = document.createElement('p');
+    text.textContent = es
+      ? 'Faustus no está disponible ahora mismo. La aplicación sigue funcionando y tu borrador se conserva; vuelve a intentarlo cuando Faustus esté en marcha.'
+      : 'Faustus is not available right now. The app keeps working and your draft is kept; try again once Faustus is running.';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = es ? 'Reintentar' : 'Try again';
+    retry.addEventListener('click', () => { attach(body, title); });
+    const detail = document.createElement('small');
+    detail.textContent = String(error && error.message || error || '');
+    box.append(text, retry, detail);
+    body.replaceChildren(box);
+  }
+
+  function attach(body, title) {
+    mounting = mount(body, title).catch((error) => { panel = null; unavailable(body, title, error); }).finally(() => { mounting = null; });
+    return mounting;
+  }
+
+  let mounting = null;
+  let mountTarget = null;
+
   function open(toggle) {
-    if (aside) { aside.hidden = false; fitBelowHeader(); toggle.setAttribute('aria-expanded', 'true'); schedule(); return; }
+    if (aside) {
+      aside.hidden = false; fitBelowHeader(); toggle.setAttribute('aria-expanded', 'true');
+      if (!panel && !mounting && mountTarget) attach(mountTarget.body, mountTarget.title); else schedule();
+      return;
+    }
     aside = document.createElement('aside');
     aside.className = 'hoard-copilot';
     aside.setAttribute('aria-label', 'Faustus');
@@ -375,12 +412,8 @@ LAUNCHER_JS = r"""
     fitBelowHeader();
     window.addEventListener('resize', () => { if (aside && !aside.hidden) fitBelowHeader(); });
     toggle.setAttribute('aria-expanded', 'true');
-    mount(body, title).catch((error) => {
-      const alert = document.createElement('p');
-      alert.setAttribute('role', 'alert');
-      alert.textContent = String(error && error.message || error);
-      body.replaceChildren(alert);
-    });
+    mountTarget = { body, title };
+    attach(body, title);
   }
 
   function start() {
