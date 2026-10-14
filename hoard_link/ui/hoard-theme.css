@@ -726,6 +726,26 @@ html[data-hoard-app="scheherazade"] {
   --hoard-accent-line: rgba(108, 130, 236, 0.38);
 }
 
+html[data-hoard-app="silver"] {
+  --hoard-deep: #1c1415;
+  --hoard-sunken: #161011;
+  --hoard-surface: #241b1c;
+  --hoard-elevated: #2f2526;
+  --hoard-hover: #382b2d;
+  --hoard-border: #433536;
+  --hoard-border-hover: #6a5859;
+  --hoard-text: #ece1e2;
+  --hoard-text-muted: #beb4b5;
+  --hoard-text-dim: #a69b9c;
+  --hoard-accent: #e2404f;
+  --hoard-accent-strong: #e76370;
+  --hoard-accent-dim: #b62f3b;
+  --hoard-accent-ink: #ffffff;
+  --hoard-accent-rgb: 226, 64, 79;
+  --hoard-accent-soft: rgba(226, 64, 79, 0.14);
+  --hoard-accent-line: rgba(226, 64, 79, 0.38);
+}
+
 html[data-hoard-app="tantalus"] {
   --hoard-deep: #1c1814;
   --hoard-sunken: #161310;
