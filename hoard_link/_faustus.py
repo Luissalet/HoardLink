@@ -122,8 +122,30 @@ def model_items(data: Any) -> list[dict]:
     return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
 
 
+_NO_IMAGE_PROBE_BACKENDS = {"llamacpp", "llama.cpp", "ollama", "lmstudio"}
+
+
 def find_model_items(models: list[dict], capability: str) -> list[dict]:
-    return [item for item in models if item.get("model_type") == capability]
+    """The registry entries that can serve ``capability``.
+
+    For ``vision`` a chat endpoint counts too: one whose ``models_vision`` lists models that accept images (narrowed to
+    those), and an OpenAI-compatible server on this machine or the local network that Faustus has no answer for yet
+    (vLLM on the Sparks: a multimodal checkpoint such as glm-5.3-flash says nothing in its name). The second kind is
+    marked ``vision_probe`` and is only used once a one-token request with a tiny image succeeds.
+    """
+    out = [item for item in models if item.get("model_type") == capability]
+    if capability != "vision":
+        return out
+    probe: list[dict] = []
+    for item in models:
+        if item.get("model_type") not in (None, "", "llm"):
+            continue
+        seeing = [m for m in (item.get("models_vision") or []) if isinstance(m, str) and m]
+        if seeing:
+            out.append({**item, "models": seeing, "models_extra": []})
+        elif str(item.get("backend") or "").lower() not in _NO_IMAGE_PROBE_BACKENDS and host_scope(item.get("url")) in ("loopback", "lan"):
+            probe.append({**item, "vision_probe": True})
+    return out + probe
 
 
 def api_for_backend(backend: Optional[str]) -> str:
