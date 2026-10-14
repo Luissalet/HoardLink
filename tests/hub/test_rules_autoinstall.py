@@ -142,6 +142,7 @@ def test_new_rules_match_their_events_and_only_those():
     assert rule_matches(by["rule-mercator-sales-ledger"], ev("mercator.sales.imported"))
     exp = by["rule-exports-to-vulcan"]
     assert rule_matches(exp, ev("plato.export.done")) and rule_matches(exp, ev("gepetto.export.done")) and not rule_matches(exp, ev("plato.export.failed"))
+    assert rule_matches(exp, ev("gulliver.export.done")) and exp.get("rev") == 2
     assert not any("links.highlight.added" in json.dumps(r["when"]) for r in example_rules())     # nothing by default
 
 
