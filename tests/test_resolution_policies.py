@@ -365,3 +365,68 @@ async def test_nothing_is_remembered_before_faustus_answers_once():
     assert link_mod._remembered_registry() is None
     res = await make_link(llama_ready(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", _timeout))).resolve("llm")
     assert res.url == LLAMA_ITEM["url"]
+
+
+# ---- vision on a chat server: what Faustus lists as seeing, or a multimodal model on the Sparks found by a test image -----
+
+
+@pytest.fixture
+def _fresh_image_probes():
+    from hoard_link import link as link_mod
+
+    link_mod._image_probe_cache.clear()
+    yield
+    link_mod._image_probe_cache.clear()
+
+
+@pytest.mark.asyncio
+async def test_vision_uses_a_chat_endpoint_whose_models_faustus_lists_as_seeing(_fresh_image_probes):
+    item = dict(SPARKS_ITEM, models=["glm-5.3-flash-nvfp4"], models_vision=["glm-5.3-flash-nvfp4"])
+    router = sparks_serving(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(item)), models=("glm-5.3-flash-nvfp4",))
+    res = await make_link(router).resolve("vision")
+    assert res.resolved and res.model == "glm-5.3-flash-nvfp4" and res.url == SPARKS_ITEM["url"]
+
+
+@pytest.mark.asyncio
+async def test_vision_on_a_network_server_is_used_once_a_test_image_works(_fresh_image_probes):
+    item = dict(SPARKS_ITEM, models=["glm-5.3-flash-nvfp4"], models_vision=[])
+    calls = []
+
+    def accept(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "o"}}]})
+
+    router = sparks_serving(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(item)), models=("glm-5.3-flash-nvfp4",))
+    router.post(8003, "/v1/chat/completions", accept)
+    link = make_link(router)
+    res = await link.resolve("vision")
+    assert res.resolved and res.model == "glm-5.3-flash-nvfp4"
+    body = calls[0].read().decode()
+    assert '"image_url"' in body and '"max_tokens":1' in body
+    await link.resolve("vision")
+    assert len(calls) == 1, "the answer is kept, not asked again on every resolve"
+
+
+@pytest.mark.asyncio
+async def test_a_text_only_network_server_is_not_used_for_vision(_fresh_image_probes):
+    router = sparks_serving(Router().get(7000, "/api/health", HEALTHY).get(7000, "/api/models", registry(SPARKS_ITEM)))
+    router.post(8003, "/v1/chat/completions", httpx.Response(400, json={"error": {"message": "This model does not support image input"}}))
+    res = await make_link(router).resolve("vision")
+    assert not res.resolved
+    assert any("refused a test image" in r for r in res.details.get("reasons", [])) or "refused a test image" in res.reason
+
+
+def test_find_model_items_vision_rules():
+    from hoard_link._faustus import find_model_items
+
+    items = [
+        {"model_type": "vision", "url": "http://127.0.0.1:11434", "models": ["qwen3-vl:8b"], "backend": "ollama"},
+        dict(LLAMA_ITEM, models_vision=[]),
+        dict(SPARKS_ITEM, models_vision=["qwen3.8-27b-nvfp4"]),
+        dict(SPARKS_ITEM, url="http://192.168.0.236:8002/v1/chat/completions", models=["glm-5.3-flash-nvfp4"], models_vision=[]),
+        dict(SPARKS_ITEM, url="https://api.example.com/v1/chat/completions", models_vision=[]),
+    ]
+    found = find_model_items(items, "vision")
+    assert [i.get("vision_probe", False) for i in found] == [False, False, True]
+    assert found[1]["models"] == ["qwen3.8-27b-nvfp4"]
+    assert find_model_items(items, "llm") == items[1:]

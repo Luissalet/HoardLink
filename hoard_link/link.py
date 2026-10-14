@@ -102,6 +102,17 @@ def _server_root(url: str) -> str:
     return u.rstrip("/")
 
 
+# An 8x8 white PNG: the smallest image every vision runner accepts.
+_PROBE_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP8//8/A27AhFtqBAD/"
+    "1QMPDVr0nAAAAABJRU5ErkJggg=="
+)
+_IMAGE_PROBE_TTL_S = 3600.0
+_IMAGE_PROBE_TIMEOUT_S = 25.0
+# (chat completions url, model) -> (accepts images, expiry on the monotonic clock). Definite answers only.
+_image_probe_cache: dict[tuple[str, str], tuple[bool, float]] = {}
+
+
 def _openai_endpoint(url: str, path: str) -> str:
     """Accept a base URL, a ``/v1`` URL or a full endpoint URL alike."""
     u = url.rstrip("/")
@@ -624,6 +635,35 @@ class Link:
 
         return None
 
+    async def _accepts_images(self, url: str, model: str) -> Optional[bool]:
+        """Whether an OpenAI-compatible server takes images for ``model``: one 1-token request with an 8x8 PNG.
+        2xx = yes; 400/422 that talks about images or multimodal input = no; anything else (down, slow) = unknown,
+        asked again next time. Definite answers are kept for an hour."""
+        target = _openai_endpoint(url, "/chat/completions")
+        key = (target, model)
+        hit = _image_probe_cache.get(key)
+        if hit and hit[1] > time.monotonic():
+            return hit[0]
+        body = {
+            "model": model, "max_tokens": 1, "temperature": 0,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "ok"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + _PROBE_PNG}},
+            ]}],
+        }
+        try:
+            resp = await self._client.post(target, json=body, timeout=_IMAGE_PROBE_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 - down or slow: unknown
+            return None
+        if 200 <= resp.status_code < 300:
+            answer = True
+        elif resp.status_code in (400, 422) and any(w in resp.text.lower() for w in ("image", "multimodal", "multi-modal", "vision")):
+            answer = False
+        else:
+            return None
+        _image_probe_cache[key] = (answer, time.monotonic() + _IMAGE_PROBE_TTL_S)
+        return answer
+
     async def _resolution_from_registry_item(
         self, capability: str, item: dict, reasons: list[str], ctx: Optional[_RouteCtx] = None
     ) -> Optional[Resolution]:
@@ -704,6 +744,14 @@ class Link:
             model = ranked[0]
             by_routes = _promoted(model, ranked, base)
             resident = True
+            if capability == "vision" and item.get("vision_probe"):
+                sees = await self._accepts_images(url, model)
+                if sees is not True:
+                    reasons.append(
+                        f"{model} at {_host(url)} refused a test image" if sees is False
+                        else f"could not check whether {model} at {_host(url)} accepts images (no answer to a test image)"
+                    )
+                    return None
         else:
             ranked, base = self._rank(listed, preferred, ctx)
             model = ranked[0] if listed else None

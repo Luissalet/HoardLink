@@ -1045,6 +1045,13 @@ buttons, and exposes `GET /api/services`, `POST /api/services/start|stop`,
   but `link.tts()` raises `Unavailable`.
 - **No cloud endpoints.** Faustus registry entries that are not local
   are ignored on purpose.
+- **Vision on a chat server.** `vision` also resolves to a chat endpoint
+  of the registry: one whose `models_vision` lists models that accept
+  images, or an OpenAI-compatible server on this machine or the local
+  network (a model served on the cluster) that Faustus has no answer for
+  yet. The second kind is used only after a one-token request with an
+  8x8 image succeeds; a 400 about images rules it out, and both answers
+  are kept for an hour.
 
 ## Tests
 
