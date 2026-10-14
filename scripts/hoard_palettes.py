@@ -29,6 +29,7 @@ PALETTES: dict[str, tuple[str, float | None, float]] = {
     "galton":       ("#c9a227", None, 0.16),
     "gepetto":      ("#d58448", None, 0.16),
     "homehoard":    ("#e5913f", None, 0.16),
+    "gulliver":     ("#6fb36a", None, 0.16),
     "hypatia":      ("#50c67e", None, 0.16),
     "jobhunter":    ("#e8a83c", None, 0.16),
     "kafka":        ("#a8aa5c", None, 0.16),
