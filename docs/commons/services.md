@@ -110,6 +110,13 @@ Client behaviour: `download(url, ..., wait=True, timeout_s=150)` calls `media_do
 `media_status(id, wait_s <= 150)` until done or `timeout_s`. `wait=False` returns the queued view at once. `info()` falls back to `media_probe`,
 `audio_for_asr()` to an MP3 download (`converted: False`) when Links is older. Timeouts the client gives the hub: wait chunk + 20 s.
 
+Attempts (owner side, `media.js` / `bins.py`): `cookie_attempts` gives the order (no cookies, then each browser; a cookies file wins),
+`with_fallback_clients(attempts, url)` adds, on YouTube, the same attempt without cookies through the player clients
+`default,web_embedded,mweb` (what still answers when the address gets "confirm you're not a bot"), and `attempt_args` turns an attempt
+into yt-dlp options (cookies plus its `extra`). Links also slots in the session saved by its "Iniciar sesión con…" window
+(`site_sessions`, `site_login`, `site_logout`) right after the attempts without cookies; a failure that needs an account carries
+`details.login = {site, label}`.
+
 ## 3. Speech to text: owner `funes` (Funes's Hoard)
 
 Code: `funes_hoard/audio_memory/agent_tools.py` (a `Tool(...)` + a pydantic input model each, like `ImportFileArgs`/`run_import_file`),

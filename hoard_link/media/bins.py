@@ -55,7 +55,7 @@ from ..launch import hoard_home
 __all__ = [
     "TOOL_NAMES", "Tool", "find", "status", "bin_dir", "update", "reset_cache", "install_hint", "tool_missing", "parse_command_spec",
     "ytdlp_base_args", "ytdlp_age_days", "ytdlp_stale", "OUTPUT_TEMPLATE", "COOKIE_BROWSERS", "video_selector", "cookie_args",
-    "cookie_attempts", "build_ytdlp_args", "build_gallery_args", "build_probe_args", "parse_ytdlp_line", "classify_failure",
+    "cookie_attempts", "attempt_args", "with_fallback_clients", "YOUTUBE_FALLBACK_CLIENTS", "build_ytdlp_args", "build_gallery_args", "build_probe_args", "parse_ytdlp_line", "classify_failure",
     "detect_platform", "OTHER_PLATFORM", "file_kind", "normalize_media_url", "MediaUrlError", "format_speed", "format_eta",
     "JS_RUNTIME_MIN_VERSION",
 ]
@@ -543,6 +543,31 @@ def cookie_args(attempt: Optional[dict[str, Any]]) -> list[str]:
     return ["--cookies-from-browser", attempt["name"]]
 
 
+def attempt_args(attempt: Optional[dict[str, Any]]) -> list[str]:
+    """One attempt as yt-dlp arguments: its cookies, then the attempt's own extra options (the YouTube fallback clients).
+    gallery-dl only takes :func:`cookie_args`."""
+    extra = (attempt or {}).get("extra")
+    return [*cookie_args(attempt), *([str(x) for x in extra] if isinstance(extra, (list, tuple)) else [])]
+
+
+#: YouTube player clients that still answer when the address is asked to "confirm you're not a bot": embedded player, mobile web.
+YOUTUBE_FALLBACK_CLIENTS = "default,web_embedded,mweb"
+
+
+def with_fallback_clients(attempts: Sequence[dict[str, Any]], url: str) -> list[dict[str, Any]]:
+    """The attempts for one URL: on YouTube every attempt without cookies is followed by the same one through
+    :data:`YOUTUBE_FALLBACK_CLIENTS`, so a public video still downloads without an account when the default client gets the
+    bot check. Other sites keep their attempts."""
+    if detect_platform(url) != "YouTube":
+        return list(attempts)
+    out: list[dict[str, Any]] = []
+    for a in attempts:
+        out.append(a)
+        if a.get("type") == "none" and not a.get("extra"):
+            out.append({"type": "none", "extra": ["--extractor-args", f"youtube:player_client={YOUTUBE_FALLBACK_CLIENTS}"]})
+    return out
+
+
 def cookie_attempts(request: str = "auto", *, cookies_file: str = "", browsers: Sequence[str] = COOKIE_BROWSERS) -> list[dict[str, str]]:
     """The ordered cookie attempts for a request (``auto`` | ``none`` | a browser name): no cookies first, then each browser,
     until one works; a cookies file wins over ``auto``."""
@@ -576,7 +601,7 @@ def build_ytdlp_args(*, url: str, format: str = "video", quality: Any = "best", 
         args += ["-f", video_selector(quality, has_ffmpeg)]
         if has_ffmpeg:
             args += ["--merge-output-format", "mp4"]
-    args += cookie_args(cookie)
+    args += attempt_args(cookie)
     args += [
         "--progress-template", "download:LHP|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.status)s",
         "--progress-template", "postprocess:LHPP|%(progress.postprocessor)s|%(progress.status)s",
@@ -595,7 +620,7 @@ def build_probe_args(*, url: str, playlist: bool = False, cookie: Optional[dict[
                      ytdlp_version: Any = None) -> list[str]:
     base = ytdlp_base_args(node=node_path, version=ytdlp_version) if node_path else ["--ignore-config"]
     return [*base, "--dump-single-json", "--no-warnings", "--skip-download", *(["--flat-playlist"] if playlist else ["--no-playlist"]),
-            *cookie_args(cookie), "--", url]
+            *attempt_args(cookie), "--", url]
 
 
 def _num(v: Any) -> "int | float | None":

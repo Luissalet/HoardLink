@@ -206,6 +206,131 @@ null
 ]
 },
 {
+"fn": "attempt_args",
+"args": [
+{
+"type": "none",
+"extra": [
+"--extractor-args",
+"youtube:player_client=default,web_embedded,mweb"
+]
+}
+],
+"expect": [
+"--extractor-args",
+"youtube:player_client=default,web_embedded,mweb"
+]
+},
+{
+"fn": "attempt_args",
+"args": [
+{
+"type": "file",
+"path": "/tmp/c.txt"
+}
+],
+"expect": [
+"--cookies",
+"/tmp/c.txt"
+]
+},
+{
+"fn": "with_fallback_clients",
+"args": [
+[
+{
+"type": "none"
+},
+{
+"type": "browser",
+"name": "firefox"
+}
+],
+"https://youtu.be/abc"
+],
+"expect": [
+{
+"type": "none"
+},
+{
+"type": "none",
+"extra": [
+"--extractor-args",
+"youtube:player_client=default,web_embedded,mweb"
+]
+},
+{
+"type": "browser",
+"name": "firefox"
+}
+]
+},
+{
+"fn": "with_fallback_clients",
+"args": [
+[
+{
+"type": "none"
+},
+{
+"type": "file",
+"path": "/tmp/c.txt"
+}
+],
+"https://www.youtube.com/watch?v=abc"
+],
+"expect": [
+{
+"type": "none"
+},
+{
+"type": "none",
+"extra": [
+"--extractor-args",
+"youtube:player_client=default,web_embedded,mweb"
+]
+},
+{
+"type": "file",
+"path": "/tmp/c.txt"
+}
+]
+},
+{
+"fn": "with_fallback_clients",
+"args": [
+[
+{
+"type": "none"
+}
+],
+"https://x.com/a/status/1"
+],
+"expect": [
+{
+"type": "none"
+}
+]
+},
+{
+"fn": "with_fallback_clients",
+"args": [
+[
+{
+"type": "file",
+"path": "/tmp/c.txt"
+}
+],
+"https://youtube.com/watch?v=abc"
+],
+"expect": [
+{
+"type": "file",
+"path": "/tmp/c.txt"
+}
+]
+},
+{
 "fn": "build_gallery_args",
 "args": [],
 "opts": {
