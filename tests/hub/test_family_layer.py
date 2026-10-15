@@ -424,6 +424,22 @@ def test_rules_jobs_backups_over_http_and_tools(fserved, tmp_path):
 
 # ---- backups (store) ---------------------------------------------------------------
 
+def test_backup_skips_cache_folders_but_keeps_files_named_like_caches(tmp_path):
+    src = tmp_path / "app" / "data"
+    for rel in ("lib/cache_utils.py", "lib/codecache.py", "lib/lru_cache.py", "cache/blob.bin", ".cache/hf/x.bin",
+                "models/hf_cache/w.bin", "__pycache__/m.pyc", "notes.txt"):
+        p = src / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(rel, encoding="utf-8")
+    store = BackupStore(str(tmp_path / "bk"))
+    res = store.snapshot({"app": str(src)})
+    m = store.load_snapshot(res["snapshot"])
+    kept = sorted(f["path"] for f in m["apps"]["app"]["files"])
+    assert kept == ["lib/cache_utils.py", "lib/codecache.py", "lib/lru_cache.py", "notes.txt"]
+    skipped = " ".join(s["path"] for s in m["apps"]["app"]["skipped"])
+    assert "cache/" in skipped and ".cache/" in skipped and "hf_cache/" in skipped and "__pycache__/" in skipped
+
+
 def test_backup_store_dedupe_sqlite_restore_prune(tmp_path):
     src = tmp_path / "app" / "data"
     src.mkdir(parents=True)
