@@ -679,6 +679,28 @@ export function cookieArgs(attempt) {
   return ["--cookies-from-browser", attempt.name];
 }
 
+/** One attempt as yt-dlp arguments: its cookies, then the attempt's own extra options (the YouTube fallback clients). gallery-dl only takes cookieArgs. */
+export function attemptArgs(attempt) {
+  return [...cookieArgs(attempt), ...(Array.isArray(attempt?.extra) ? attempt.extra.map(String) : [])];
+}
+
+/** YouTube player clients that still answer when the address is asked to "confirm you're not a bot": the embedded player and mobile web. */
+export const YOUTUBE_FALLBACK_CLIENTS = "default,web_embedded,mweb";
+
+/**
+ * The attempts for one URL: on YouTube every attempt without cookies is followed by the same one through YOUTUBE_FALLBACK_CLIENTS, so a
+ * public video still downloads without an account when the default client gets the bot check. Other sites keep their attempts.
+ */
+export function withFallbackClients(attempts, url) {
+  if (detectPlatform(url) !== "YouTube") return attempts;
+  const out = [];
+  for (const a of attempts) {
+    out.push(a);
+    if (a.type === "none" && !a.extra) out.push({ type: "none", extra: ["--extractor-args", `youtube:player_client=${YOUTUBE_FALLBACK_CLIENTS}`] });
+  }
+  return out;
+}
+
 /** The ordered cookie attempts for a request ("auto" | "none" | a browser name) and an optional cookies file. */
 export function cookieAttempts(request = "auto", { cookiesFile = "", browsers = COOKIE_BROWSERS } = {}) {
   const r = String(request || "auto").trim().toLowerCase();
@@ -721,7 +743,7 @@ export function buildYtdlpArgs({ url, format = "video", quality = "best", dir, p
     args.push("-f", videoSelector(quality, hasFfmpeg));
     if (hasFfmpeg) args.push("--merge-output-format", "mp4");
   }
-  args.push(...cookieArgs(cookie));
+  args.push(...attemptArgs(cookie));
   args.push(
     "--progress-template", "download:LHP|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.status)s",
     "--progress-template", "postprocess:LHPP|%(progress.postprocessor)s|%(progress.status)s",
@@ -740,7 +762,7 @@ export function buildGalleryArgs({ url, dir, cookie = null, maxItems = DEFAULT_M
 export function buildProbeArgs({ url, playlist = false, cookie = null, nodePath, ytdlpVersion = null }) {
   return [
     ...ytdlpBaseArgs({ node: nodePath === undefined ? process.execPath : nodePath, version: ytdlpVersion }),
-    "--dump-single-json", "--no-warnings", "--skip-download", ...(playlist ? ["--flat-playlist"] : ["--no-playlist"]), ...cookieArgs(cookie), "--", url,
+    "--dump-single-json", "--no-warnings", "--skip-download", ...(playlist ? ["--flat-playlist"] : ["--no-playlist"]), ...attemptArgs(cookie), "--", url,
   ];
 }
 
