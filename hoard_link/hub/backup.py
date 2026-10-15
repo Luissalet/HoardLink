@@ -14,7 +14,8 @@ temporary file first, so what is stored is a consistent database even
 while the app writes. Their ``-wal`` / ``-shm`` sidecars are skipped.
 
 What is skipped by default: ``logs/``, ``profiles/`` (browser profiles),
-caches (``*cache*``, ``__pycache__``), temporary files, anything over
+cache folders (``cache``, ``.cache``, ``caches``, ``*_cache``, ``*-cache``, ``__pycache__``; a file whose
+name merely contains "cache", such as ``cache_utils.py``, is kept), temporary files, anything over
 ``max_file_mb`` (models and renders belong to their own backup), and
 what ``backup.exclude`` in ``hub.json`` adds. Every skip is counted and
 listed by reason so "why is X not in the backup?" is answered by the
@@ -43,7 +44,10 @@ from datetime import datetime
 from typing import Any, Callable, Iterable, Optional
 
 DEFAULT_EXCLUDE = ["logs", "logs/**", "profiles", "profiles/**", "*.log", "*.tmp", "*.part", "*-wal", "*-shm",
-                   "*-journal", "__pycache__", "__pycache__/**", "*cache*", "*cache*/**", "tmp", "tmp/**",
+                   "*-journal", "__pycache__", "__pycache__/**", "tmp", "tmp/**",
+                   # cache FOLDERS only: "*cache*" also dropped source files such as transformers/cache_utils.py,
+                   # so a restored environment came back broken
+                   "cache", ".cache", "caches", "*_cache", "*-cache",
                    "*.lock", "url", "commands.json", "leases.json"]
 SQLITE_EXT = (".db", ".sqlite", ".sqlite3", ".db3")
 DEFAULT_MAX_FILE_MB = 512
