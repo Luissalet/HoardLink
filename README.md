@@ -1092,3 +1092,7 @@ The team console has its own Rust/Tauri Windows window and a full browser view a
 ## Ágora compartida
 
 Agora provides persistent project spaces, conversations, deliberations, tasks and decisions. The original ecosystem Agora becomes **Faustus y Hoards**, preserving its history and identifiers. Canonical room and coordination repositories live in the Hub; native Faustus model/tool execution remains unchanged. Physical reservations and quotas stay global. Normal HTTP, MCP and CLI expose spaces and rooms; old Council/Group contracts remain compatible. [Architecture and evidence](docs/agora-council/PLAN.md) · [spaces](docs/agora-council/SPACES.md).
+
+Completed copilot tools notify host views immediately, while the turn continues.
+Hosts may provide `hoardCopilot.onChange`; existing refresh callbacks remain
+compatible. See [live copilot updates](docs/copilot-live-refresh.md).
