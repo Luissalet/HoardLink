@@ -1,6 +1,6 @@
 # Hoard Link
 
-Faustus project tasks share canonical task IDs with agent clients. `hub_agora_task_edit` edits descriptions, acceptance, priority, assignment and clarifications using the task etag; concurrent writes are rejected. Existing leases and review submissions remain shared. Stable origin IDs make earlier project-record imports idempotent. The user-facing board and editor live natively in each Faustus project.
+Faustus project tasks share canonical task IDs with agent clients. `hub_agora_task_edit` edits descriptions, acceptance, priority, assignment and clarifications using the task etag; concurrent writes are rejected. Task detail exposes ordered `edits` with actor, timestamp and before/after values, including initial acceptance criteria. Existing leases and review submissions remain shared. Stable origin IDs make earlier project-record imports idempotent. The user-facing board and editor live natively in each Faustus project.
 
 ### One shared answer to "which model server do I use right now?"
 

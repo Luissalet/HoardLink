@@ -77,3 +77,42 @@ def test_invalid_edit_is_atomic(store, fields):
     with pytest.raises(AgoraError):
         store.task_edit({'agent': 'faustus', 'task_id': task['id'], 'expected_etag': task['etag'], **fields})
     assert store.task({'task_id': task['id']})['task']['etag'] == task['etag']
+
+
+def test_text_versions_keep_original_and_intermediate_values_with_actor(store):
+    task = add(store, acceptance='Original criterion', body='Original goal')
+    for text in ['Intermediate', 'Current']:
+        task = store.task_edit({'agent': 'editor', 'task_id': task['id'], 'expected_etag': task['etag'],
+            'body': text + ' goal', 'acceptance': text + ' criterion'})['task']
+    history = store.task({'task_id': task['id']})['edits']
+    assert [edit['revision'] for edit in history] == [0, 1, 2]
+    assert history[0]['author'] == 'builder' and history[0]['kind'] == 'created'
+    assert history[0]['after']['acceptance'] == 'Original criterion'
+    assert history[1]['before'] == history[0]['after']
+    assert history[1]['after']['body'] == 'Intermediate goal'
+    assert history[2]['before'] == history[1]['after']
+    assert history[2]['author'] == 'editor' and history[2]['created'] == store.clock()
+
+
+def test_preexisting_tasks_receive_truthful_baseline_on_schema_upgrade(tmp_path):
+    from hoard_link.sqlkit import Database
+    from hoard_link.hub.agora import MIGRATIONS
+    path = tmp_path / 'old.db'
+    db = Database(path, migrations=MIGRATIONS[:-1])
+    tid = db.insert('tasks', {'title': 'Old', 'body': 'Existing goal', 'acceptance': 'Existing criterion',
+        'priority': 1, 'created_by': 'builder', 'space_id': 'ecosystem', 'updated': 123.0})
+    db.close()
+    upgraded = Agora(path)
+    try:
+        baseline = upgraded.task({'task_id': tid})['edits'][0]
+        assert baseline['kind'] == 'baseline' and baseline['author'] == 'system'
+        assert baseline['created'] == 123.0 and baseline['after']['acceptance'] == 'Existing criterion'
+    finally:
+        upgraded.close()
+
+
+def test_valid_legacy_title_and_body_fit_shared_editor(store):
+    task = add(store, title='X' * 300, body='Y' * 200000, acceptance='Z' * 200000)
+    changed = store.task_edit({'agent': 'editor', 'task_id': task['id'], 'expected_etag': task['etag'],
+        'title': 'A' * 250})['task']
+    assert changed['title'] == 'A' * 250 and changed['body'] == task['body']
