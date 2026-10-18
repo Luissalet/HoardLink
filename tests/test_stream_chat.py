@@ -62,7 +62,18 @@ def upstream():
                     self.wfile.write((json.dumps({"message": {}, "done": True, "done_reason": "length", "eval_count": 2}) + "\n").encode())
                     self.wfile.flush()
                     return
-                if mode == "reasoning":
+                if mode in ("empty-json", "empty-usage", "tool-activity", "usage-activity"):
+                    for _ in range(10):
+                        chunk = {"choices": [{"delta": {}}]}
+                        if mode == "tool-activity":
+                            chunk["choices"][0]["delta"] = {"tool_calls": [{"index": 0, "function": {"arguments": " "}}]}
+                        elif mode == "usage-activity":
+                            chunk["usage"] = {"completion_tokens": 1}
+                        elif mode == "empty-usage":
+                            chunk["usage"] = {}
+                        send(chunk)
+                        time.sleep(0.025)
+                elif mode == "reasoning":
                     for _ in range(8):
                         send({"choices": [{"delta": {"reasoning_content": "thinking "}}]})
                         time.sleep(0.035)
@@ -225,6 +236,31 @@ async def test_provider_comment_keepalives_are_not_generation_activity(upstream)
                 pass
     finally:
         await link.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["empty-json", "empty-usage"])
+async def test_empty_provider_json_does_not_renew_inactivity(upstream, mode):
+    link = real_link(upstream)
+    try:
+        with pytest.raises(TimeoutError, match="inactivity"):
+            async for _ in link.stream_chat([{"role": "user", "content": mode}], idle_timeout=0.1):
+                pass
+    finally:
+        await link.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["tool-activity", "usage-activity"])
+async def test_real_tool_or_usage_chunks_renew_inactivity(upstream, mode):
+    link = real_link(upstream)
+    try:
+        events = [e async for e in link.stream_chat([{"role": "user", "content": mode}], idle_timeout=0.1)]
+    finally:
+        await link.aclose()
+    assert events[-1]["type"] == "finish" and events[-1]["completed"]
+    assert events[-1]["usage"]["total_tokens"] == 7
+    assert len([e for e in events if e["type"] == ("tool_call" if mode == "tool-activity" else "usage")]) >= 10
 
 
 @pytest.mark.asyncio

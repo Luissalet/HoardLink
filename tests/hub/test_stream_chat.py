@@ -189,6 +189,35 @@ def test_queue_total_deadline_and_ticket_cleanup(streaming_hub):
         hub.link.gate.release()
 
 
+@pytest.mark.parametrize("pause_state", ["queued", "starting"])
+def test_expired_request_never_enters_backend_after_consumer_pause(tmp_path, pause_state):
+    calls = []
+
+    class FastModel:
+        async def stream_chat(self, *_args, **_kwargs):
+            calls.append(True)
+            yield {"type": "finish", "ok": True, "text": "late", "completed": True}
+
+    service = LinkService(HubConfig(data_dir=str(tmp_path), link_chat_concurrency=1), link_factory=lambda _: FastModel())
+    if pause_state == "queued":
+        assert service.gate.acquire(1)
+    stream = service.stream_chat("expired", {"messages": msgs(), "timeout_s": 1})
+    try:
+        assert next(stream)["state"] == pause_state
+        time.sleep(1.1)
+        if pause_state == "queued":
+            service.gate.release()
+        events = list(stream)
+        assert not calls
+        assert events[-1]["type"] == "error" and events[-1]["error"] == "timeout"
+        assert events[-1]["timeout_kind"] == "total"
+        assert not any(e["type"] == "finish" for e in events)
+        assert service.gate.active == 0 and service.gate.waiting == 0
+    finally:
+        stream.close()
+        service.close()
+
+
 def test_timeout_frees_model_slot_even_when_consumer_stops_reading(tmp_path):
     closed = threading.Event()
 

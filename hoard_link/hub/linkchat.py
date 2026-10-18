@@ -514,15 +514,21 @@ class LinkService:
             try:
                 if cancelled.is_set():
                     return
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError("total timeout before generation")
                 link = self._link(app)
                 messages = with_json_instruction(req.messages, req.schema) if req.json_mode else req.messages
                 fmt = ({"type": "json_schema", "json_schema": {"name": "response", "schema": req.schema}} if req.schema
                        else {"type": "json_object"}) if req.json_mode else None
                 finished = None
-                async with asyncio.timeout(max(0.001, deadline - time.monotonic())):
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError("total timeout before generation")
+                async with asyncio.timeout_at(deadline):
                     async with aclosing(link.stream_chat(messages, images=req.images or None,
                             max_tokens=req.max_tokens, temperature=req.temperature, capability=req.capability,
-                            response_format=fmt, effort=req.effort, timeout=max(0.001, deadline - time.monotonic()),
+                            response_format=fmt, effort=req.effort, timeout=left,
                             idle_timeout=req.idle_timeout_s, tools=req.tools, tool_choice=req.tool_choice)) as stream:
                         async for item in stream:
                             if cancelled.is_set():
@@ -569,7 +575,7 @@ class LinkService:
         terminal = None
         try:
             last_heartbeat = time.monotonic()
-            while not self.gate.take(ticket):
+            while True:
                 if disconnected and disconnected():
                     return
                 now = time.monotonic()
@@ -578,6 +584,8 @@ class LinkService:
                                 "detail": "the total time ran out in the queue", "partial": False}
                     yield event(terminal)
                     return
+                if self.gate.take(ticket):
+                    break
                 if seq == 0 or now - last_heartbeat >= heartbeat_s:
                     last_heartbeat = now
                     yield event({"type": "status" if seq == 0 else "heartbeat", "state": "queued",

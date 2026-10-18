@@ -1212,7 +1212,11 @@ class Link:
                 last_activity = time.monotonic()
                 while True:
                     try:
-                        budget = min(max(0.001, idle_timeout - (time.monotonic() - last_activity)), remaining())
+                        left = remaining()
+                        idle_left = idle_timeout - (time.monotonic() - last_activity)
+                        if idle_left <= 0:
+                            raise TimeoutError("upstream inactivity timeout")
+                        budget = min(idle_left, left)
                         line = await asyncio.wait_for(anext(lines), budget)
                     except StopAsyncIteration:
                         break
@@ -1240,7 +1244,6 @@ class Link:
                         raise BackendError(res.provider, 200, "invalid streaming JSON") from exc
                     if not isinstance(chunk, dict) or chunk.get("error"):
                         raise BackendError(res.provider, 200, str(chunk.get("error") if isinstance(chunk, dict) else chunk)[:300])
-                    last_activity = time.monotonic()
                     if res.api == "ollama":
                         delta = chunk.get("message") or {}
                         if chunk.get("done"):
@@ -1255,6 +1258,19 @@ class Link:
                             usage = chunk["usage"]
                     content = delta.get("content")
                     think = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
+                    # Empty JSON/role frames are keepalives, not generation.
+                    # Count real fields before yielding so a paused consumer
+                    # cannot postpone the activity timestamp.
+                    activity = (any(isinstance(value, str) and value for value in (content, think))
+                                or bool(chunk.get("done") if res.api == "ollama" else choice.get("finish_reason"))
+                                or isinstance(chunk.get("usage"), dict) and bool(chunk["usage"]))
+                    for tool in delta.get("tool_calls") or []:
+                        function = tool.get("function") or {}
+                        activity = activity or bool(tool.get("id")) or any(
+                            isinstance(function.get(key), (str, dict)) and bool(function[key])
+                            for key in ("name", "arguments"))
+                    if activity:
+                        last_activity = time.monotonic()
                     for kind, value, parts in (("text", content, text), ("reasoning", think, reasoning)):
                         if isinstance(value, str) and value:
                             parts.append(value)
