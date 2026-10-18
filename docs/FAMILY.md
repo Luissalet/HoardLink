@@ -307,6 +307,10 @@ up to the existing 1800-second maximum. Set the total explicitly for long
 reasoning tasks. Reasoning and tool-argument chunks count as upstream activity;
 the lack of visible answer text is not an inactivity timeout. Hub heartbeats
 neither claim upstream activity nor extend the total deadline.
+Empty JSON deltas, empty usage objects and provider keepalive comments do not
+renew inactivity. Nonempty usage and finish fields remain valid provider events.
+A request whose total deadline has expired cannot start generation after leaving
+the queue or after a paused consumer resumes reading its starting status.
 
 After validation the response is `text/event-stream`, with one JSON object per
 SSE event. Every event has `type`, `request_id`, monotonic `seq`, and
