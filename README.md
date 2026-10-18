@@ -1,5 +1,22 @@
 # Hoard Link
 
+The family's text inference uses the configured Sparks service. Native reasoning
+levels, explicit thinking budgets and supported structured-output requests survive
+the Python, Hub and Node chat paths. Streaming distinguishes the initial wait,
+meaningful output inactivity and the whole request deadline; comments and empty
+frames do not renew output activity. Incomplete streams remain errors and are
+not replayed after output has begun. Existing synchronous extension hooks retain
+their original signatures. [Family controls](docs/FAMILY.md) ·
+[Extension contract](docs/commons/link-extension-contract.md).
+
+Long MCP tools advertise their wait allowance in discovery. The bridge preserves
+text, images and native error results across MCP SDK 1.9, 1.30 and 2.3; structured
+content is included when that SDK's protocol schema supports it. An explicit
+caller timeout still applies, and progress does not restart the whole-operation
+deadline. [MCP compatibility](docs/commons/mcp-bridge-compatibility.md).
+Vendored consumers must synchronize the shared files and restart their own
+processes to adopt them; updating the Hub alone does not update those consumers.
+
 Faustus project tasks share canonical task IDs with agent clients. `hub_agora_task_edit` edits descriptions, acceptance, priority, assignment and clarifications using the task etag; concurrent writes are rejected. Task detail exposes ordered `edits` with actor, timestamp and before/after values, including initial acceptance criteria. Existing leases and review submissions remain shared. Stable origin IDs make earlier project-record imports idempotent. The user-facing board and editor live natively in each Faustus project.
 
 ### One shared answer to "which model server do I use right now?"
