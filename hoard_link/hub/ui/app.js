@@ -131,16 +131,26 @@
     document.documentElement.lang = lang;
   }
 
+  // Retired identities stay in the API for family calls, not in the app launcher.
+  function catalogApps(apps = snapshot?.apps || []) {
+    return apps.filter((app) => !(app.family?.absorbed_by && app.family?.standalone === false));
+  }
+
   function render() {
     if (!snapshot) return;
-    const apps = snapshot.apps.filter((a) => {
+    const availableApps = catalogApps();
+    const apps = availableApps.filter((a) => {
       if (!filter) return true;
       const hay = `${a.name} ${a.id} ${a.purpose} ${(a.capabilities || []).join(" ")}`.toLowerCase();
       return hay.includes(filter);
     });
-    counts.textContent = t("counts", snapshot.counts);
+    counts.textContent = t("counts", {
+      total: availableApps.length,
+      running: availableApps.filter((app) => app.state === "running").length,
+      windows: availableApps.reduce((sum, app) => sum + (app.windows || []).length, 0),
+    });
     empty.hidden = apps.length > 0;
-    empty.textContent = snapshot.apps.length ? "" : t("no_apps");
+    empty.textContent = availableApps.length ? "" : t("no_apps");
 
     const existing = new Map([...grid.children].map((el) => [el.dataset.id, el]));
     const order = [];
@@ -367,7 +377,7 @@
     $("#group-error").textContent = p?.commands?.length ? t("commands_kept") : "";
     $("#group-remove").hidden = !p;
     const members = $("#group-members"); members.replaceChildren();
-    for (const app of snapshot.apps) {
+    for (const app of catalogApps()) {
       const row = document.createElement("div"); row.className = "group-member";
       const label = document.createElement("label"), check = document.createElement("input");
       check.type = "checkbox"; check.value = app.id; check.className = "group-choice";
@@ -745,7 +755,7 @@
 
   // ---- top bar --------------------------------------------------------------------
   $("#search").addEventListener("input", (e) => { filter = e.target.value.trim().toLowerCase(); render(); });
-  $("#btn-rescan").onclick = async () => { const r = await api("/api/apps/rescan", {}); toast(`${t("rescan")}: ${(r.apps || []).length} apps`, "ok"); await refresh(); await refreshBackends(true); };
+  $("#btn-rescan").onclick = async () => { const r = await api("/api/apps/rescan", {}); toast(`${t("rescan")}: ${catalogApps(r.apps || []).length} apps`, "ok"); await refresh(); await refreshBackends(true); };
   async function runBatch(action) {
     if (batchBusy || (action === "start" && faustusPending.size)) return;
     batchBusy = true;
