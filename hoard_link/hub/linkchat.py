@@ -29,10 +29,14 @@ import base64
 import binascii
 import dataclasses
 import json
+import math
 import os
+import queue
 import re
 import threading
 import time
+import uuid
+from contextlib import aclosing
 from collections import deque
 from typing import Any, Callable, Optional
 
@@ -138,6 +142,9 @@ class ChatRequest:
     max_tokens: Optional[int] = None
     temperature: Optional[float] = None
     timeout_s: float = DEFAULT_TIMEOUT_S
+    idle_timeout_s: float = 120.0
+    tools: Optional[list[dict[str, Any]]] = None
+    tool_choice: Any = None
 
 
 def parse_request(body: Any) -> ChatRequest:
@@ -215,11 +222,20 @@ def parse_request(body: Any) -> ChatRequest:
     timeout_s = body.get("timeout_s")
     if timeout_s is None:
         timeout_s = DEFAULT_TIMEOUT_S
-    elif isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or timeout_s <= 0:
+    elif isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not math.isfinite(timeout_s) or timeout_s <= 0:
         raise BadRequest("timeout_s must be a positive number")
     timeout_s = max(1.0, min(float(timeout_s), MAX_TIMEOUT_S))
+    idle = body.get("idle_timeout_s", 120.0)
+    if isinstance(idle, bool) or not isinstance(idle, (int, float)) or not math.isfinite(idle) or idle <= 0:
+        raise BadRequest("idle_timeout_s must be a positive finite number")
+    if "stream" in body and not isinstance(body["stream"], bool):
+        raise BadRequest("stream must be a boolean")
+    tools = body.get("tools")
+    if tools is not None and (not isinstance(tools, list) or any(not isinstance(t, dict) for t in tools)):
+        raise BadRequest("tools must be a list of objects")
     return ChatRequest(messages=messages, capability=capability, images=images, json_mode=json_mode, schema=schema,
-                       effort=effort, max_tokens=max_tokens, temperature=temperature, timeout_s=timeout_s)
+                       effort=effort, max_tokens=max_tokens, temperature=temperature, timeout_s=timeout_s,
+                       idle_timeout_s=min(float(idle), MAX_TIMEOUT_S), tools=tools, tool_choice=body.get("tool_choice"))
 
 
 def with_json_instruction(messages: list[dict[str, Any]], schema: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -284,6 +300,27 @@ class Gate:
         with self._cv:
             self._active = max(0, self._active - 1)
             self._cv.notify_all()
+
+    def enqueue(self) -> object:
+        with self._cv:
+            ticket = object()
+            self._queue.append(ticket)
+            return ticket
+
+    def take(self, ticket: object) -> bool:
+        with self._cv:
+            if self._queue and self._queue[0] is ticket and self._active < self.limit:
+                self._queue.popleft()
+                self._active += 1
+                self._cv.notify_all()
+                return True
+            return False
+
+    def withdraw(self, ticket: object) -> None:
+        with self._cv:
+            if ticket in self._queue:
+                self._queue.remove(ticket)
+                self._cv.notify_all()
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +464,162 @@ class LinkService:
         return out
 
     # -- chat -----------------------------------------------------------------
+    def stream_chat(self, app: str, body: Any, *, disconnected: Optional[Callable[[], bool]] = None,
+                    heartbeat_s: float = 5.0):
+        """SSE event iterator. Closing it cancels upstream and withdraws its FIFO ticket."""
+        from ..errors import BackendError, Unavailable
+
+        req = parse_request(body)
+        started = time.monotonic()
+        deadline = started + req.timeout_s
+        request_id = uuid.uuid4().hex
+        seq = 0
+        phase = "queued"
+        partial = {"text": [], "reasoning": []}
+        tool_deltas = []
+        meta = {}
+        ticket = self.gate.enqueue()
+        acquired = False
+        future = None
+        cancelled, entered, cleaned = threading.Event(), threading.Event(), threading.Event()
+        release_lock = threading.Lock()
+        released = False
+        events: queue.Queue = queue.Queue(maxsize=64)
+
+        def release():
+            nonlocal released
+            with release_lock:
+                if acquired and not released:
+                    self.gate.release()
+                    released = True
+
+        def event(value):
+            nonlocal seq, phase
+            seq += 1
+            if value.get("state"):
+                phase = value["state"]
+            return {**value, "request_id": request_id, "seq": seq,
+                    "elapsed_ms": int((time.monotonic() - started) * 1000)}
+
+        async def put(value):
+            while not cancelled.is_set():
+                try:
+                    events.put_nowait(value)
+                    return
+                except queue.Full:
+                    await asyncio.sleep(0.01)
+
+        async def run():
+            entered.set()
+            try:
+                if cancelled.is_set():
+                    return
+                link = self._link(app)
+                messages = with_json_instruction(req.messages, req.schema) if req.json_mode else req.messages
+                fmt = ({"type": "json_schema", "json_schema": {"name": "response", "schema": req.schema}} if req.schema
+                       else {"type": "json_object"}) if req.json_mode else None
+                finished = None
+                async with asyncio.timeout(max(0.001, deadline - time.monotonic())):
+                    async with aclosing(link.stream_chat(messages, images=req.images or None,
+                            max_tokens=req.max_tokens, temperature=req.temperature, capability=req.capability,
+                            response_format=fmt, effort=req.effort, timeout=max(0.001, deadline - time.monotonic()),
+                            idle_timeout=req.idle_timeout_s, tools=req.tools, tool_choice=req.tool_choice)) as stream:
+                        async for item in stream:
+                            if cancelled.is_set():
+                                break
+                            kind = item.get("type")
+                            meta.update({k: item[k] for k in ("model", "provider", "effort") if k in item})
+                            if kind in partial:
+                                partial[kind].append(item.get("delta", ""))
+                            elif kind == "tool_call":
+                                tool_deltas.append(item.get("delta"))
+                            if kind == "finish":
+                                item = {**item, "json": None, "queued_ms": queued_ms}
+                                if req.json_mode:
+                                    value, found = parse_json_loose(item.get("text"))
+                                    item["json"] = value
+                                    if not found:
+                                        item["json_error"] = "the model's answer contains no parseable JSON; read text"
+                                finished = item
+                                break
+                            await put(item)
+                # Delivery to a slow client must not hold a model slot after
+                # the upstream iterator and its lease have been closed.
+                release()
+                if finished is not None:
+                    await put(finished)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                code = "backend_error"
+                if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+                    code = "timeout"
+                elif isinstance(exc, Unavailable):
+                    code = "gpu_busy" if any("GPU busy" in r for r in exc.reasons) else "no_model"
+                release()
+                await put({"type": "error", "ok": False, "error": code, "detail": str(exc)[:300],
+                           "timeout_kind": ("inactivity" if "inactivity" in str(exc) else "total") if code == "timeout" else None,
+                           "partial": bool(partial["text"] or partial["reasoning"] or tool_deltas),
+                           "tool_call_deltas": tool_deltas, "backend_status": exc.status if isinstance(exc, BackendError) else None,
+                           **{k: "".join(v) for k, v in partial.items()}, **meta})
+            finally:
+                release()
+                cleaned.set()
+
+        terminal = None
+        try:
+            last_heartbeat = time.monotonic()
+            while not self.gate.take(ticket):
+                if disconnected and disconnected():
+                    return
+                now = time.monotonic()
+                if now >= deadline:
+                    terminal = {"type": "error", "ok": False, "error": "timeout", "timeout_kind": "total",
+                                "detail": "the total time ran out in the queue", "partial": False}
+                    yield event(terminal)
+                    return
+                if seq == 0 or now - last_heartbeat >= heartbeat_s:
+                    last_heartbeat = now
+                    yield event({"type": "status" if seq == 0 else "heartbeat", "state": "queued",
+                                 "active": self.gate.active, "queued": self.gate.waiting, "upstream_activity": False})
+                time.sleep(0.05)
+            acquired = True
+            queued_ms = int((time.monotonic() - started) * 1000)
+            yield event({"type": "status", "state": "starting", "queued_ms": queued_ms})
+            future = asyncio.run_coroutine_threadsafe(run(), self._ensure_loop())
+            last_heartbeat = time.monotonic()
+            while True:
+                if disconnected and disconnected():
+                    return
+                try:
+                    item = events.get(timeout=0.1)
+                except queue.Empty:
+                    if cleaned.is_set():
+                        break
+                    if time.monotonic() - last_heartbeat >= heartbeat_s:
+                        last_heartbeat = time.monotonic()
+                        yield event({"type": "heartbeat", "state": phase, "upstream_activity": False})
+                    continue
+                if item.get("type") in ("text", "reasoning", "tool_call"):
+                    phase = "generating"
+                if item.get("type") in ("finish", "error"):
+                    terminal = item
+                yield event(item)
+                if terminal is not None:
+                    break
+        finally:
+            cancelled.set()
+            self.gate.withdraw(ticket)
+            if future is not None and not cleaned.is_set():
+                future.cancel()
+                if entered.is_set():
+                    cleaned.wait(2.0)
+            if future is None or not entered.is_set():
+                release()
+            self._record(app, req.capability, bool(terminal and terminal.get("ok")), started,
+                         terminal.get("model") if terminal else None,
+                         terminal.get("error") if terminal else "cancelled")
+
     def chat(self, app: str, body: Any) -> tuple[int, dict[str, Any]]:
         """Run one call for ``app``. Returns ``(http status, payload)``; never raises."""
         started = time.monotonic()
@@ -502,6 +695,8 @@ class LinkService:
             "ms": int(res.elapsed_ms), "queued_ms": queued_ms, "effort": res.effort,
             "usage": res.usage.to_dict() if hasattr(res.usage, "to_dict") else None,
         }
+        if getattr(res, "finish_reason", None) is not None:
+            payload.update(finish_reason=res.finish_reason, completed=res.completed)
         if req.json_mode:
             value, found = parse_json_loose(res.text)
             payload["json"] = value

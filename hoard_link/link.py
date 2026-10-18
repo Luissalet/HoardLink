@@ -12,12 +12,15 @@ import asyncio
 import base64
 import dataclasses
 import logging
+import json
+import math
 import os
 import re
 import subprocess
 import sys
 import tempfile
 import time
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -1136,10 +1139,160 @@ class Link:
             elapsed_ms=elapsed_ms,
             reasoning=_join_reasoning(extra_reasoning, think),
             effort=level,
+            finish_reason=(raw.get("done_reason") if res.api == "ollama" else
+                           ((raw.get("choices") or [{}])[0].get("finish_reason"))),
         )
 
-    async def _chat_openai(
-        self,
+    async def stream_chat(
+        self, messages: list[dict[str, Any]], images: Optional[list[bytes]] = None,
+        max_tokens: Optional[int] = None, temperature: Optional[float] = None,
+        capability: str = "llm", response_format: Optional[dict[str, Any]] = None,
+        effort: Optional[str] = None, task: Optional[str] = None,
+        timeout: float = 300.0, idle_timeout: float = 120.0,
+        tools: Optional[list[dict[str, Any]]] = None, tool_choice: Any = None,
+    ):
+        """Yield real status/text/reasoning/tool_call/usage/finish events.
+
+        Closing this async iterator closes the upstream response and its lease.
+        No request is retried. ``timeout`` covers resolution and generation;
+        ``idle_timeout`` bounds upstream reads, independently of Hub heartbeats.
+        A finish with ``completed=False`` retains a truncated/filtered response.
+        """
+        if not math.isfinite(timeout) or not math.isfinite(idle_timeout) or timeout <= 0 or idle_timeout <= 0:
+            raise ValueError("timeout and idle_timeout must be positive")
+        level = _reasoning.normalize(effort)
+        if level is None and (effort is None or str(effort).strip().lower() in ("", "auto")):
+            level = _reasoning.normalize(self.config.capability(capability).effort)
+        started = time.monotonic()
+        text, reasoning, calls, usage = [], [], {}, None
+        finish_reason = None
+        deadline = started + timeout
+
+        def remaining():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("total timeout")
+            return left
+
+        async def bounded(awaitable):
+            # Do not keep a task timeout active across a yield to the caller.
+            async with asyncio.timeout_at(deadline):
+                return await awaitable
+
+        remaining()
+        yield {"type": "status", "state": "resolving"}
+        res = await bounded(self.resolve(capability, task))
+        if not res.resolved or not res.url:
+            raise Unavailable(capability, res.details.get("reasons", [res.reason]))
+        meta = {"model": res.model, "provider": res.provider, "effort": level}
+        payload = self._chat_payload(res, messages, images, max_tokens, temperature, response_format, level)
+        payload["stream"] = True
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+        if res.api != "ollama":
+            payload["stream_options"] = {"include_usage": True}
+        endpoint = (_ollama_endpoint(res.url, "/api/chat") if res.api == "ollama" else
+                    _openai_endpoint(res.url, "/chat/completions"))
+        remaining()
+        yield {"type": "status", "state": "waiting_backend", **meta}
+        try:
+            async with AsyncExitStack() as stack:
+                remaining()
+                await bounded(stack.enter_async_context(self._load_lease(res)))
+                remaining()
+                response = await bounded(stack.enter_async_context(self._client.stream("POST", endpoint, json=payload,
+                    timeout=httpx.Timeout(idle_timeout, connect=min(idle_timeout, 15.0)))))
+                if response.status_code >= 400:
+                    raw = await bounded(response.aread())
+                    raise BackendError(res.provider, response.status_code, raw.decode("utf-8", "replace")[:300])
+                data_lines = []
+                lines = response.aiter_lines()
+                last_activity = time.monotonic()
+                while True:
+                    try:
+                        budget = min(max(0.001, idle_timeout - (time.monotonic() - last_activity)), remaining())
+                        line = await asyncio.wait_for(anext(lines), budget)
+                    except StopAsyncIteration:
+                        break
+                    except TimeoutError as exc:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("total timeout") from exc
+                        raise TimeoutError("upstream inactivity timeout") from exc
+                    if res.api == "ollama":
+                        raw = line.strip()
+                    else:
+                        if line.startswith("data:"):
+                            data_lines.append(line[5:].lstrip())
+                            continue
+                        if line or not data_lines:
+                            continue
+                        raw = "\n".join(data_lines)
+                        data_lines.clear()
+                    if raw == "[DONE]":
+                        break
+                    if not raw:
+                        continue
+                    try:
+                        chunk = json.loads(raw)
+                    except ValueError as exc:
+                        raise BackendError(res.provider, 200, "invalid streaming JSON") from exc
+                    if not isinstance(chunk, dict) or chunk.get("error"):
+                        raise BackendError(res.provider, 200, str(chunk.get("error") if isinstance(chunk, dict) else chunk)[:300])
+                    last_activity = time.monotonic()
+                    if res.api == "ollama":
+                        delta = chunk.get("message") or {}
+                        if chunk.get("done"):
+                            finish_reason = chunk.get("done_reason") or "stop"
+                            usage = _extract_usage(chunk, res.api).to_dict()
+                    else:
+                        choices = chunk.get("choices") or []
+                        choice = next((c for c in choices if c.get("index", 0) == 0), {})
+                        delta = choice.get("delta") or {}
+                        finish_reason = choice.get("finish_reason") or finish_reason
+                        if chunk.get("usage") is not None:
+                            usage = chunk["usage"]
+                    content = delta.get("content")
+                    think = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
+                    for kind, value, parts in (("text", content, text), ("reasoning", think, reasoning)):
+                        if isinstance(value, str) and value:
+                            parts.append(value)
+                            remaining()
+                            yield {"type": kind, "delta": value, **meta}
+                    for ordinal, tool in enumerate(delta.get("tool_calls") or []):
+                        index = tool.get("index", ordinal)
+                        saved = calls.setdefault(index, {"index": index, "function": {"name": "", "arguments": ""}})
+                        for key in ("id", "type"):
+                            if key in tool:
+                                saved[key] = tool[key]
+                        for key in ("name", "arguments"):
+                            value = (tool.get("function") or {}).get(key)
+                            if isinstance(value, str):
+                                saved["function"][key] += value
+                            elif key == "arguments" and isinstance(value, dict):
+                                saved["function"][key] = value
+                        remaining()
+                        yield {"type": "tool_call", "delta": tool, **meta}
+                    if chunk.get("usage") is not None or (res.api == "ollama" and chunk.get("done")):
+                        remaining()
+                        yield {"type": "usage", "usage": usage, **meta}
+                    if res.api == "ollama" and chunk.get("done"):
+                        break
+        except httpx.ReadTimeout as exc:
+            raise TimeoutError("upstream inactivity timeout") from exc
+        except httpx.HTTPError as exc:
+            raise BackendError(res.provider, 0, f"{type(exc).__name__}: {exc}"[:200]) from exc
+        if finish_reason is None:
+            raise BackendError(res.provider, 200, "stream ended without a finish reason")
+        remaining()
+        yield {"type": "finish", "ok": True, "text": "".join(text), "reasoning": "".join(reasoning),
+               "tool_calls": list(calls.values()), "usage": usage, "finish_reason": finish_reason,
+               "completed": finish_reason in ("stop", "tool_calls", "function_call"),
+               "ms": int((time.monotonic() - started) * 1000), **meta}
+
+    @staticmethod
+    def _chat_payload(
         res: Resolution,
         messages: list[dict[str, Any]],
         images: Optional[list[bytes]],
@@ -1147,7 +1300,7 @@ class Link:
         temperature: Optional[float],
         response_format: Optional[dict[str, Any]],
         level: Optional[str] = None,
-    ) -> tuple[str, Optional[str], dict]:
+    ) -> dict[str, Any]:
         msgs = [dict(m) for m in messages]
         if images:
             content: list[dict[str, Any]] = []
@@ -1164,16 +1317,31 @@ class Link:
                 content.append({"type": "text", "text": existing})
             elif isinstance(existing, list):
                 content.extend(existing)
-            for img in images:
+            for img in images if res.api != "ollama" else []:
                 content.append(
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:{_image_mime(img)};base64,{_b64_image(img)}"},
                     }
                 )
-            last_user["content"] = content
+            last_user["content"] = content if res.api != "ollama" else existing
+            if res.api == "ollama":
+                last_user["images"] = [_b64_image(img) for img in images]
 
         payload: dict[str, Any] = {"model": res.model, "messages": msgs, "stream": False}
+        if res.api == "ollama":
+            options = {}
+            if max_tokens is not None:
+                options["num_predict"] = max_tokens
+            if temperature is not None:
+                options["temperature"] = temperature
+            if options:
+                payload["options"] = options
+            fmt = _ollama_format(response_format)
+            if fmt is not None:
+                payload["format"] = fmt
+            _reasoning.apply_ollama(payload, level)
+            return payload
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if temperature is not None:
@@ -1182,7 +1350,14 @@ class Link:
             payload["response_format"] = response_format
 
         _reasoning.apply_openai(payload, level)
+        return payload
 
+    async def _chat_openai(
+        self, res: Resolution, messages: list[dict[str, Any]], images: Optional[list[bytes]],
+        max_tokens: Optional[int], temperature: Optional[float], response_format: Optional[dict[str, Any]],
+        level: Optional[str] = None,
+    ) -> tuple[str, Optional[str], dict]:
+        payload = self._chat_payload(res, messages, images, max_tokens, temperature, response_format, level)
         endpoint = _openai_endpoint(res.url or "", "/chat/completions")
         resp = await self._post_chat(res.provider, endpoint, payload, level)
         data = self._json(res.provider, resp)

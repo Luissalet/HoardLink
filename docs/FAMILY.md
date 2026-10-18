@@ -292,6 +292,99 @@ running) or `http_<code>`, and `code` repeats the hub's own word (`gpu_busy`,
 `bad_request`, `backend_error`). They use the app's own token like `call()`.
 Python apps that vendor `hoard_link.Link` should keep calling it directly.
 
+### Incremental generation
+
+The blocking calls above keep their existing behavior. When the provider supplies
+it, their result also includes `finish_reason` and `completed`: `length` means
+`completed: false`, even though the HTTP exchange succeeded. A missing reason
+from an older provider remains unknown. Do not execute or publish a truncated
+answer as a completed result.
+
+For incremental delivery, send the same authenticated `POST /api/link/chat`
+with `"stream": true`. Optional `idle_timeout_s` defaults to 120 seconds;
+`timeout_s` still defaults to 300 and covers queue, resolution and generation,
+up to the existing 1800-second maximum. Set the total explicitly for long
+reasoning tasks. Reasoning and tool-argument chunks count as upstream activity;
+the lack of visible answer text is not an inactivity timeout. Hub heartbeats
+neither claim upstream activity nor extend the total deadline.
+
+After validation the response is `text/event-stream`, with one JSON object per
+SSE event. Every event has `type`, `request_id`, monotonic `seq`, and
+`elapsed_ms`; the SSE `id` is `<request_id>:<seq>` (identity, not a replay API).
+
+| `type` | Contents |
+|---|---|
+| `status` | `state`: `queued`, `starting`, `resolving`, or `waiting_backend`; queue counts/timing when known. |
+| `heartbeat` | Current waiting/generating state; `upstream_activity: false` when no provider event has arrived. This is not token progress. |
+| `text` | `delta`: actual content supplied by the provider. |
+| `reasoning` | `delta`: actual out-of-band reasoning supplied by the provider. |
+| `tool_call` | `delta`: provider tool-call index/id/name/argument fragment; concatenate arguments by index, do not parse individual fragments. |
+| `usage` | `usage`: provider token counts, including usage-only chunks after the last content delta. |
+| `finish` | Aggregate `text`, `reasoning`, `tool_calls`, `usage`, `model`, `provider`, `finish_reason`, `completed`, timing, and optional parsed `json`. |
+| `error` | `ok: false`, typed `error`, `detail`, and partial text/reasoning/tool deltas when available. `timeout_kind` distinguishes `total` and upstream `inactivity`. |
+
+`finish.ok` describes successful transport, not satisfaction of the requested
+task: check `completed`. A `length` finish is incomplete. EOF without a provider
+finish reason becomes an error, never a synthetic successful finish. Errors
+after SSE headers have HTTP status 200 and arrive as `error` events; auth/body
+validation errors still use their ordinary HTTP statuses before SSE starts.
+
+Streaming sends one upstream request. It does not retry unsupported reasoning,
+format or tool options, or retry after any partial response. JSON mode adds the
+same instruction as blocking mode and parses the final text; it does not silently
+restart a stream when the server refuses `response_format`. `tools` and
+`tool_choice` are optional streaming request fields forwarded to the provider.
+SSE events are delivered only to the caller, not stored on the family event bus.
+
+```python
+from contextlib import closing
+from hoard_link import family
+
+# Set an optional threading.Event through cancel=... to interrupt a pending read.
+with closing(family.stream_chat(messages, timeout=900, idle_timeout=120)) as events:
+    for event in events:
+        if event["type"] == "text":
+            append_text(event["delta"])
+        elif event["type"] == "reasoning":
+            append_reasoning(event["delta"])
+        elif event["type"] == "finish":
+            show_result(event, incomplete=not event["completed"])
+        elif event["type"] == "error":
+            show_error(event)
+```
+
+```js
+const ctl = new AbortController();
+// ctl.abort() cancels while reading/queued; break also closes the stream.
+for await (const event of family.streamChat({ messages, timeoutMs: 900000,
+    idleTimeoutMs: 120000, signal: ctl.signal })) {
+  if (event.type === "text") appendText(event.delta);
+  if (event.type === "reasoning") appendReasoning(event.delta);
+  if (event.type === "finish") showResult(event, { incomplete: !event.completed });
+  if (event.type === "error") showError(event);
+}
+```
+
+Native async Python apps can use `Link.stream_chat(..., timeout=900,
+idle_timeout=120)` with `contextlib.aclosing` and `async for`. It supports the
+same capability/images/effort/format options as `Link.chat`, plus optional
+`tools`/`tool_choice`. OpenAI-compatible SSE and Ollama NDJSON both stream
+incrementally. The normalized reasoning event uses the provider's
+`reasoning_content`, `reasoning`, or `thinking` field; inline `<think>` content
+remains provider text. Native Link raises backend/timeout exceptions after any
+already-yielded events; family clients yield terminal error objects instead.
+Pausing a native async iterator does not cancel the consumer's unrelated work;
+its next read checks the elapsed total deadline. The Hub enforces its deadline
+independently and releases the model slot once upstream cleanup finishes, even
+when terminal delivery is waiting for a slow client.
+
+Close the iterator when abandoning a request. Python's `closing`/`aclosing`,
+JavaScript `return`/`break`, cancellation, or an HTTP disconnect closes the
+upstream response, releases its GPU lease, and removes the FIFO ticket or
+releases the active Hub slot. SDK total timers include a 15-second transport
+grace so the Hub's own deadline error can arrive; that grace does not extend
+the generation budget.
+
 For an assistant, the same call is the hub tool `hub_link_chat` (not
 read-only: it can make the server load a model; never destructive) and the
 state is `hub_link_status` (read-only).

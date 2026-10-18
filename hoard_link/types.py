@@ -75,9 +75,18 @@ class ChatResult:
     elapsed_ms: float
     reasoning: Optional[str] = None
     effort: Optional[str] = None       # reasoning level the call asked for (None: server default)
+    finish_reason: Optional[str] = None
+
+    @property
+    def completed(self) -> Optional[bool]:
+        return None if self.finish_reason is None else self.finish_reason in ("stop", "tool_calls", "function_call")
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+        if self.finish_reason is None:
+            d.pop("finish_reason")
+        else:
+            d["completed"] = self.completed
         return d
 
 

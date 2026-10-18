@@ -30,10 +30,13 @@ from __future__ import annotations
 
 import base64
 import json
+import http.client
 import os
+import socket
 import threading
 import time
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 from ._hubclient import fetch, fetch_detailed, hub_url
 
@@ -166,6 +169,8 @@ def chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Opt
     if status_ == 200 and d.get("ok"):
         out = {"ok": True, "text": d.get("text") or "", "json": d.get("json"), "model": d.get("model"),
                "provider": d.get("provider"), "ms": d.get("ms"), "usage": d.get("usage"), "error": None, "detail": None}
+        if d.get("finish_reason") is not None:
+            out.update(finish_reason=d["finish_reason"], completed=d.get("completed"))
         if d.get("json_error"):
             out["json_error"] = d["json_error"]
         return out
@@ -174,6 +179,111 @@ def chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Opt
               if status_ == 401 else str(d.get("detail") or code))
     return {"ok": False, "error": code if code in ("no_model", "timeout") else f"http_{status_}", "code": code,
             "detail": detail, **blank}
+
+
+def stream_chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Optional[list[Any]] = None,
+                json: Any = None, effort: Optional[str] = None, max_tokens: Optional[int] = None,
+                temperature: Optional[float] = None, timeout: float = 300.0, idle_timeout: float = 120.0,
+                cancel: Optional[threading.Event] = None, tools: Optional[list[dict[str, Any]]] = None, tool_choice: Any = None):
+    """Iterate Hub SSE events using only stdlib. Close the iterator in a finally
+    block (or ``contextlib.closing``); ``cancel.set()`` also interrupts a read.
+    Heartbeats identify Hub waiting, never tokens. No retry after partial output.
+    ``timeout`` includes queue/model; ``idle_timeout`` bounds upstream inactivity.
+    """
+    body = {"messages": list(messages or []), "capability": capability, "stream": True,
+            "timeout_s": timeout, "idle_timeout_s": idle_timeout}
+    if images:
+        body["images"] = [i if isinstance(i, str) else base64.b64encode(bytes(i)).decode("ascii") for i in images]
+    for key, value in (("json", json), ("effort", effort), ("max_tokens", max_tokens), ("temperature", temperature),
+                       ("tools", tools), ("tool_choice", tool_choice)):
+        if value is not None:
+            body[key] = value
+    # The argument named json is part of the existing family API.
+    import json as jsonlib
+
+    target = urlsplit(_hub() + "/api/link/chat")
+    cls = http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
+    connection = cls(target.hostname, target.port, timeout=min(timeout + 15, max(15.0, idle_timeout)))
+    stopped = threading.Event()
+    started = time.monotonic()
+    why = {"error": None}
+    active_socket = {"socket": None}
+    response = None
+    partial = {"text": [], "reasoning": []}
+    tool_deltas = []
+
+    def interrupt():
+        while not stopped.wait(0.05):
+            reason = "cancelled" if cancel and cancel.is_set() else "timeout" if time.monotonic() - started > timeout + 15 else None
+            if reason:
+                why["error"] = reason
+                sock = active_socket["socket"] or connection.sock
+                if sock:
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                connection.close()
+                return
+
+    watcher = threading.Thread(target=interrupt, name="hoard-stream-cancel", daemon=True)
+    watcher.start()
+    try:
+        if cancel and cancel.is_set():
+            yield {"type": "error", "ok": False, "error": "cancelled", "partial": False}
+            return
+        connection.request("POST", target.path, body=jsonlib.dumps(body).encode("utf-8"),
+                           headers={**_headers(), "Content-Type": "application/json", "Accept": "text/event-stream"})
+        active_socket["socket"] = connection.sock
+        response = connection.getresponse()
+        if response.status != 200:
+            raw = response.read()
+            try:
+                detail = jsonlib.loads(raw)
+            except ValueError:
+                detail = {"detail": raw.decode("utf-8", "replace")[:300]}
+            yield {**detail, "type": "error", "ok": False, "error": detail.get("error", f"http_{response.status}"), "status": response.status}
+            return
+        if "text/event-stream" not in response.getheader("Content-Type", ""):
+            yield {"type": "error", "ok": False, "error": "protocol_error", "detail": "Hub did not return SSE"}
+            return
+        lines = []
+        while True:
+            raw = response.readline()
+            if not raw:
+                break
+            line = raw.decode("utf-8").rstrip("\r\n")
+            if line.startswith("data:"):
+                lines.append(line[5:].lstrip())
+            elif not line and lines:
+                item = jsonlib.loads("\n".join(lines))
+                lines.clear()
+                if item.get("type") in partial:
+                    partial[item["type"]].append(item.get("delta", ""))
+                elif item.get("type") == "tool_call":
+                    tool_deltas.append(item.get("delta"))
+                yield item
+                if item.get("type") in ("finish", "error"):
+                    return
+        yield {"type": "error", "ok": False, "error": why["error"] or "stream_interrupted",
+               "partial": bool(partial["text"] or partial["reasoning"] or tool_deltas), "tool_call_deltas": tool_deltas,
+               **{k: "".join(v) for k, v in partial.items()}}
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        yield {"type": "error", "ok": False, "error": why["error"] or ("timeout" if isinstance(exc, TimeoutError) else "hub_down"),
+               "detail": str(exc)[:300], "partial": bool(partial["text"] or partial["reasoning"] or tool_deltas),
+               "tool_call_deltas": tool_deltas, **{k: "".join(v) for k, v in partial.items()}}
+    finally:
+        stopped.set()
+        sock = active_socket["socket"]
+        if sock:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        if response is not None:
+            response.close()
+        connection.close()
+        watcher.join(0.2)
 
 
 def link_status(*, force: bool = False, timeout: float = 30.0) -> dict[str, Any]:
@@ -509,5 +619,5 @@ def _looks_read_only(name: str) -> bool:
                                                                   "update", "review", "import") for p in parts)
 
 
-__all__ = ["configure", "status", "emit", "call", "chat", "link_status", "record_call", "health_block", "install_fastapi",
+__all__ = ["configure", "status", "emit", "call", "chat", "stream_chat", "link_status", "record_call", "health_block", "install_fastapi",
            "descriptions_from_fastmcp_source", "FAMILY_VERSION"]

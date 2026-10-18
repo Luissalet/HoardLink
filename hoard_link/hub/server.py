@@ -71,6 +71,8 @@ import json
 import logging
 import mimetypes
 import os
+import select
+import socket
 import threading
 import time
 from http import HTTPStatus
@@ -86,7 +88,7 @@ from .lease import LeaseError
 from .rules import example_rules
 from .jobs import example_jobs
 from .events import event_types_help
-from .linkchat import LINK_MAX_BODY
+from .linkchat import LINK_MAX_BODY, BadRequest, parse_request
 
 logger = logging.getLogger("hoard_hub")
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
@@ -249,6 +251,37 @@ class _HubHandler(BaseHTTPRequestHandler):
             body = None
         if not isinstance(body, dict):
             return self._json({"ok": False, "error": "bad_request", "detail": "the body must be a JSON object"}, 400)
+        if body.get("stream"):
+            try:
+                parse_request(body)
+            except BadRequest as exc:
+                return self._json({"ok": False, "error": "bad_request", "detail": str(exc)}, 400)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            self.close_connection = True
+
+            def disconnected():
+                try:
+                    ready, _, _ = select.select([self.connection], [], [], 0)
+                    return bool(ready) and not self.connection.recv(1, socket.MSG_PEEK)
+                except OSError:
+                    return True
+
+            stream = self.hub.link.stream_chat(who, body, disconnected=disconnected)
+            try:
+                for item in stream:
+                    payload = json.dumps(item, ensure_ascii=False)
+                    self.wfile.write(f"id: {item['request_id']}:{item['seq']}\nevent: {item['type']}\ndata: {payload}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                stream.close()
+            return
         status, payload = self.hub.link.chat(who, body)
         return self._json(payload, status)
 
