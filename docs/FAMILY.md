@@ -386,7 +386,8 @@ when terminal delivery is waiting for a slow client.
 
 The client verifies GLM-5.3-Flash checkpoint identity against the selected
 server's `/v1/models` and checks that the actual chat request in `/openapi.json`
-advertises `thinking_token_budget` and `chat_template_kwargs`. It caches this
+advertises an integer `thinking_token_budget` and object `chat_template_kwargs`,
+including nullable schema variants. Names alone do not verify support. It caches this
 read-only check for 30 seconds with shared in-flight probes. A registry label
 such as `provider: unknown` neither grants nor prevents native support; no host
 or deployed model is hard-coded. An unavailable or incompatible schema leaves
