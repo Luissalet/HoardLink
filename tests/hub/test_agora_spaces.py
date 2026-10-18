@@ -137,7 +137,8 @@ def test_legacy_migration_preserves_fields_reviews_and_read_cursors(tmp_path):
     from hoard_link.sqlkit import Database
 
     path = tmp_path / "legacy.db"
-    old = Database(path, migrations=MIGRATIONS[:-1])
+    from hoard_link.coordination.spaces import SPACES_MIGRATION
+    old = Database(path, migrations=MIGRATIONS[:MIGRATIONS.index(SPACES_MIGRATION)])
     old.execute("INSERT INTO agents(id,name,kind,last_seen,created) VALUES('builder','Builder','agent',10,10)")
     old.execute("INSERT INTO tasks(id,title,body,kind,status,owner,reviewed,submission_revision,reviewed_submission_revision,"
                 "commits,reviewed_commits,thread_id) VALUES(42,'Original','History','feature','approved','builder',1,7,7,"

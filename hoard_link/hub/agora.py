@@ -34,6 +34,7 @@ from __future__ import annotations
 import fnmatch
 import copy
 import functools
+import hashlib
 import json
 import math
 import os
@@ -151,6 +152,12 @@ MIGRATIONS = [
     """,
 ]
 MIGRATIONS.append(SPACES_MIGRATION)
+MIGRATIONS.append("""
+    ALTER TABLE tasks ADD COLUMN acceptance TEXT NOT NULL DEFAULT '';
+    ALTER TABLE tasks ADD COLUMN origin_ref TEXT;
+    ALTER TABLE tasks ADD COLUMN origin_snapshot TEXT;
+    CREATE UNIQUE INDEX tasks_origin ON tasks(space_id, origin_ref) WHERE origin_ref IS NOT NULL;
+""")
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -840,6 +847,9 @@ class Agora:
 
     def _task_dict(self, row: Any, *, full_checkpoint: bool = False) -> dict[str, Any]:
         d = dict(row)
+        # Includes workflow fields: a concurrent claim/review must invalidate an editor too.
+        d['etag'] = hashlib.sha256(_j(d).encode('utf-8')).hexdigest()
+        d['origin_snapshot'] = json.loads(d['origin_snapshot']) if full_checkpoint and d.get('origin_snapshot') else None
         d["paths"] = _l(d.get("paths"))
         d["commits"] = _l(d.get("commits"))
         d["reviewed_commits"] = _l(d.get("reviewed_commits"))
@@ -1734,26 +1744,96 @@ class Agora:
         if not 0 <= priority <= 3:
             raise AgoraError("priority must be 0 (urgent) .. 3 (someday)")
         paths = _list(a.get("paths"), "paths")
+        assigned = self._agent(a['owner'], allow_person=True) if a.get('owner') else None
+        clarification = _txt(a.get('note'), 20000, 'note')
+        snapshot = _txt(a.get('origin_snapshot'), 600000, 'origin_snapshot') or None
+        if snapshot:
+            try:
+                if not isinstance(json.loads(snapshot), dict):
+                    raise ValueError('Expected object')
+            except (TypeError, ValueError):
+                raise AgoraError('origin_snapshot must be a JSON object') from None
         repo = _txt(a.get("repo"), 120, "repo")
         blocked_by = self._dep_ids(a.get("blocked_by"), "blocked_by")
         now = self.clock()
         with self.db.tx():
             self._touch(agent)
+            origin = _txt(a.get('origin_ref'), 240, 'origin_ref') or None
+            if origin:
+                existing = self.db.one('SELECT * FROM tasks WHERE space_id=? AND origin_ref=?', (self.space_id, origin))
+                if existing:
+                    return {'ok': True, 'task': self._task_dict(existing), 'existing': True}
+            imported_status = a.get('origin_status', 'open') if origin else 'open'
+            if imported_status not in ('open', 'in_progress', 'blocked', 'done', 'dropped'):
+                raise AgoraError('Invalid imported task status')
             tid = self.db.insert("tasks", {"title": title, "body": body, "repo": repo, "paths": _j(paths), "kind": kind,
-                                           "priority": priority, "status": "open", "created_by": agent,
-                                           "created": now, "updated": now, "space_id": self.space_id})
+                                           "priority": priority, "status": imported_status, "created_by": agent,
+                                           "created": now, "updated": now, "space_id": self.space_id,
+                                           'acceptance': _txt(a.get('acceptance'), 20000, 'acceptance'), 'origin_ref': origin,
+                                           'owner': assigned,
+                                           'origin_snapshot': snapshot})
             th = self.db.insert("threads", {"title": title, "kind": "task", "task_id": tid, "status": "open",
                                             "created_by": agent, "created": now, "updated": now,
                                             "space_id": self.space_id})
             self.db.execute("UPDATE tasks SET thread_id=? WHERE id=?", (th, tid))
             self._msg(th, agent, "proposal", body or title, _list(a.get("mentions"), "mentions"))
+            if clarification:
+                self._msg(th, agent, 'comment', clarification, [assigned] if assigned else [])
             if blocked_by:
                 self._apply_deps(agent, self._task_row(tid), add=blocked_by, remove=[], replace=None)
         self._bump("agora.task.added", {"task_id": tid, "title": title, "by": agent, "repo": repo, "kind": kind})
         res = {"ok": True, "task": self._task_row(tid)}
         if a.get("claim"):
             res["claim"] = self.task_claim({"agent": agent, "task_id": tid, "locks": a.get("locks"), "ttl_s": a.get("ttl_s")})
+            res['task'] = self._task_row(tid)
         return res
+
+    @_space_operation
+    def task_edit(self, a: dict[str, Any]) -> dict[str, Any]:
+        """Shared project editor. Workflow approvals still use submit/review/done."""
+        agent = self._agent(a.get('agent'), allow_person=bool(a.get('_person')))
+        with self.db.tx():
+            task = self._task_row(a.get('task_id'))
+            if not a.get('expected_etag') or a['expected_etag'] != task['etag']:
+                raise AgoraError('The task changed. Reload it before saving your changes.', 409)
+            fields = {}
+            for key, limit in (('title', 200), ('body', 20000), ('acceptance', 20000)):
+                if key in a:
+                    fields[key] = _txt(a[key], limit, key, required=key == 'title')
+            if 'priority' in a:
+                if isinstance(a['priority'], bool) or not isinstance(a['priority'], int) or not 0 <= a['priority'] <= 3:
+                    raise AgoraError('priority must be 0 (urgent) .. 3 (someday)')
+                fields['priority'] = a['priority']
+            if 'owner' in a:
+                fields['owner'] = self._agent(a['owner'], allow_person=True) if a['owner'] else None
+            fields = {key: value for key, value in fields.items() if task.get(key) != value}
+            if fields.get('owner') != task.get('owner') and 'owner' in fields:
+                if fields['owner']:
+                    self._touch(fields['owner'])
+                    self.db.execute('UPDATE locks SET owner=? WHERE task_id=?', (fields['owner'], task['id']))
+                else:
+                    # Unassignment is an explicit release, not a stranded active lease.
+                    self.db.execute('DELETE FROM locks WHERE task_id=?', (task['id'],))
+                    if task['status'] in ACTIVE:
+                        fields['status'] = 'open'
+            if any(key in fields for key in ('body', 'acceptance')) and task['status'] in ('review', 'approved'):
+                fields.update(status='changes', reviewed=0, review_state=None,
+                              submission_revision=task['submission_revision'] + 1)
+            note = _txt(a.get('note'), 20000, 'note')
+            self._touch(agent)
+            if fields or note:
+                fields['updated'] = self.clock()
+                self.db.execute('UPDATE tasks SET ' + ', '.join(key + '=?' for key in fields) + ' WHERE id=?',
+                                (*fields.values(), task['id']))
+                if 'title' in fields:
+                    self.db.execute('UPDATE threads SET title=? WHERE id=?', (fields['title'], task['thread_id']))
+                if fields.keys() - {'updated'}:
+                    self._system(task, f"{agent} edited: " + ', '.join(key for key in fields if key != 'updated'), agent)
+                if note:
+                    self._msg(task['thread_id'], agent, 'comment', note,
+                              [fields.get('owner') or task.get('owner')] if fields.get('owner') or task.get('owner') else [])
+        self._bump('agora.task.edited', {'task_id': task['id'], 'agent': agent})
+        return {'ok': True, 'task': self._task_row(task['id'])}
 
     @_space_operation
     def task_claim(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -2408,9 +2488,12 @@ class Agora:
                 where.append(f"lower({key})=lower(?)")
                 params.append(str(a[key]))
         limit = max(1, min(int(a.get("limit") or 200), 500))
+        offset = max(0, int(a.get('cursor') or 0))
         sql = "SELECT * FROM tasks" + (" WHERE " + " AND ".join(where) if where else "") + \
-              " ORDER BY CASE WHEN status IN ('done','dropped') THEN 1 ELSE 0 END, priority, updated DESC LIMIT ?"
-        return {"ok": True, "tasks": [self._task_dict(r) for r in self.db.query(sql, (*params, limit))]}
+              " ORDER BY CASE WHEN status IN ('done','dropped') THEN 1 ELSE 0 END, priority, updated DESC, id DESC LIMIT ? OFFSET ?"
+        rows = self.db.query(sql, (*params, limit + 1, offset))
+        return {"ok": True, "tasks": [self._task_dict(r) for r in rows[:limit]],
+                'next_cursor': str(offset + limit) if len(rows) > limit else None}
 
     @_space_operation
     def task(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -2973,10 +3056,18 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Propose a task (kind feature|bug|research|review|chore|eval|docs, priority 0 urgent..3 someday, "
                     "repo and paths it touches). blocked_by lists task ids it waits for. claim=true also claims it.",
      "inputSchema": _schema({"agent": _A, "title": {"type": "string"}, "body": {"type": "string"},
+                             "acceptance": {"type": "string"}, "origin_ref": {"type": "string"},
+                             "owner": {"type": ["string", "null"]}, "note": {"type": "string"},
+                             "origin_snapshot": {"type": "string", "description": "Lossless original record when migrating existing project work."},
+                             "origin_status": {"type": "string", "enum": ["open", "in_progress", "blocked", "done", "dropped"]},
                              "repo": {"type": "string"}, "paths": _STRS, "kind": {"type": "string"},
                              "priority": {"type": "integer"}, "mentions": _STRS, "claim": {"type": "boolean"},
                              "blocked_by": {"type": "array", "items": {"type": "integer"}},
                              "locks": _STRS, "ttl_s": {"type": "integer"}}, ["agent", "title"])},
+    {"name": "hub_agora_task_edit", "description": "Edit the shared project task: description, acceptance, priority, assignment and clarifications. Read the task first and send its etag; stale edits are rejected. Reassignment transfers its leases; changes to acceptance during review require review again.",
+     "inputSchema": _schema({"agent": _A, "task_id": _TASK, "expected_etag": {"type": "string"},
+         "title": {"type": "string"}, "body": {"type": "string"}, "acceptance": {"type": "string"},
+         "priority": {"type": "integer"}, "owner": {"type": ["string", "null"]}, "note": {"type": "string"}}, ['agent', 'task_id', 'expected_etag'])},
     {"name": "hub_agora_task_deps",
      "description": "Set what a task waits for: add / remove blocker task ids, or set the whole list ([] clears). "
                     "Loops are refused. When every blocker is approved, done or dropped the owner is woken once "
@@ -3039,9 +3130,9 @@ TOOLS: list[dict[str, Any]] = [
                              "force": {"type": "boolean", "description": "take it now even if from_agent still sends heartbeats"}},
                             ["agent", "from_agent", "to_agent", "reason"])},
     {"name": "hub_agora_tasks", "read": True,
-     "description": "List tasks: status (or 'active'), owner, repo, kind.",
+     "description": "List tasks: status (or 'active'), owner, repo, kind. Follow next_cursor to read all tasks.",
      "inputSchema": _schema({"status": {"type": "string"}, "owner": {"type": "string"}, "repo": {"type": "string"},
-                             "kind": {"type": "string"}, "limit": {"type": "integer"}}, [])},
+                             "kind": {"type": "string"}, "limit": {"type": "integer"}, "cursor": {"type": "string"}}, [])},
     {"name": "hub_agora_task", "read": True,
      "description": "One task with its whole conversation and its locks.",
      "inputSchema": _schema({"task_id": _TASK, "agent": {"type": "string", "description": "who reads; marks the task thread as read"}}, ["task_id"])},
@@ -3128,7 +3219,7 @@ TOOLS.extend([
                             ["agent", "space_id", "expected_revision"])},
 ])
 
-_WRITE_OPS = ("space_create", "space_update", "checkpoint", "heartbeat", "sync", "task_add", "task_claim", "task_update", "task_submit", "task_review", "task_done",
+_WRITE_OPS = ("space_create", "space_update", "checkpoint", "heartbeat", "sync", "task_add", "task_edit", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
               "usage_report", "orphan_sweep", "task_deps")
 
@@ -3482,6 +3573,7 @@ class AgoraFacet(Facet):
             "hub_agora_activity": wrap(self._activity), "hub_agora_timeline": wrap(ag.timeline),
             "hub_agora_board": wrap(self._board), "hub_agora_inbox": wrap(self._inbox, cap_wait=True),
             "hub_agora_heartbeat": wrap(ag.heartbeat), "hub_agora_sync": wrap(self._sync), "hub_agora_task_add": wrap(ag.task_add),
+            "hub_agora_task_edit": wrap(ag.task_edit),
             "hub_agora_task_claim": wrap(ag.task_claim), "hub_agora_task_update": wrap(ag.task_update),
             "hub_agora_task_deps": wrap(ag.task_deps),
             "hub_agora_task_submit": wrap(ag.task_submit), "hub_agora_task_review": wrap(ag.task_review),
