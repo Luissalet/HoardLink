@@ -74,7 +74,7 @@ MAX_WAIT_S = 120.0
 TASK_STATUSES = ("open", "claimed", "in_progress", "review", "changes", "approved", "blocked", "done", "dropped")
 ACTIVE = ("claimed", "in_progress", "review", "changes", "approved", "blocked")
 FINAL = ("done", "dropped")
-TASK_KINDS = ("feature", "bug", "research", "review", "chore", "eval", "docs")
+TASK_KINDS = ("feature", "bug", "research", "review", "chore", "eval", "docs", "task", "idea")
 THREAD_KINDS = ("task", "debate", "question", "decision", "review", "handoff", "note")
 THREAD_STATUSES = ("open", "resolved", "escalated")
 MSG_KINDS = ("comment", "proposal", "agree", "disagree", "approve", "changes", "resolution", "escalation", "system")
@@ -165,6 +165,10 @@ MIGRATIONS.append("""
     INSERT INTO task_edits(task_id,revision,author,created,kind,after_json)
         SELECT id,0,'system',coalesce(updated,created,0),'baseline',json_object('title',title,'body',body,
             'acceptance',acceptance,'priority',priority,'owner',owner) FROM tasks;
+""")
+MIGRATIONS.append("""
+    ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE tasks ADD COLUMN context TEXT NOT NULL DEFAULT '{}';
 """)
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
@@ -858,6 +862,8 @@ class Agora:
         # Includes workflow fields: a concurrent claim/review must invalidate an editor too.
         d['etag'] = hashlib.sha256(_j(d).encode('utf-8')).hexdigest()
         d['origin_snapshot'] = json.loads(d['origin_snapshot']) if full_checkpoint and d.get('origin_snapshot') else None
+        d['labels'] = _l(d.get('labels'))
+        d['context'] = json.loads(d.get('context') or '{}')
         d["paths"] = _l(d.get("paths"))
         d["commits"] = _l(d.get("commits"))
         d["reviewed_commits"] = _l(d.get("reviewed_commits"))
@@ -1752,8 +1758,8 @@ class Agora:
         if not 0 <= priority <= 3:
             raise AgoraError("priority must be 0 (urgent) .. 3 (someday)")
         paths = _list(a.get("paths"), "paths")
-        assigned = self._agent(a['owner'], allow_person=True) if a.get('owner') else None
-        clarification = _txt(a.get('note'), 20000, 'note')
+        assigned = self._task_assignee(a.get('owner'))
+        clarification = _txt(a.get('note'), 200000, 'note')
         snapshot = _txt(a.get('origin_snapshot'), 600000, 'origin_snapshot') or None
         if snapshot:
             try:
@@ -1779,6 +1785,8 @@ class Agora:
                                            "created": now, "updated": now, "space_id": self.space_id,
                                            'acceptance': _txt(a.get('acceptance'), 200000, 'acceptance'), 'origin_ref': origin,
                                            'owner': assigned,
+                                           'labels': _j(self._task_labels(a.get('labels'))),
+                                           'context': self._task_context(a.get('context')),
                                            'origin_snapshot': snapshot})
             th = self.db.insert("threads", {"title": title, "kind": "task", "task_id": tid, "status": "open",
                                             "created_by": agent, "created": now, "updated": now,
@@ -1798,7 +1806,7 @@ class Agora:
         return res
 
     def _record_edit(self, task, author, before, kind='edit'):
-        keys = ('title', 'body', 'acceptance', 'priority', 'owner')
+        keys = ('title', 'body', 'acceptance', 'priority', 'owner', 'kind', 'status', 'labels', 'context')
         snapshot = lambda value: {key: value.get(key) for key in keys}
         latest = self.db.one('SELECT MAX(revision) AS n FROM task_edits WHERE task_id=?', (task['id'],))['n']
         self.db.insert('task_edits', {'task_id': task['id'], 'revision': 0 if latest is None else latest + 1,
@@ -1822,11 +1830,34 @@ class Agora:
                     raise AgoraError('priority must be 0 (urgent) .. 3 (someday)')
                 fields['priority'] = a['priority']
             if 'owner' in a:
-                fields['owner'] = self._agent(a['owner'], allow_person=True) if a['owner'] else None
+                fields['owner'] = self._task_assignee(a['owner'])
             fields = {key: value for key, value in fields.items() if task.get(key) != value}
+            if 'kind' in a:
+                if a['kind'] not in TASK_KINDS:
+                    raise AgoraError('Invalid task kind')
+                if a['kind'] != task['kind']:
+                    fields['kind'] = a['kind']
+            if 'labels' in a and (labels := self._task_labels(a['labels'])) != task['labels']:
+                fields['labels'] = _j(labels)
+            if 'context' in a and json.loads(context := self._task_context(a['context'])) != task['context']:
+                fields['context'] = context
+            if 'status' in a and a['status'] != task['status']:
+                status = a['status']
+                if status not in ('open', 'in_progress', 'blocked', 'done', 'dropped'):
+                    raise AgoraError('Use the submission/review workflow to enter review or approved')
+                if status == 'done' and task['status'] in ('review', 'changes'):
+                    raise AgoraError('Address the pending review and use the submission workflow before closing', 409)
+                if status == 'done' and task['status'] == 'approved' and task.get('reviewed_submission_revision') != task.get('submission_revision'):
+                    raise AgoraError('Approval does not match the current submission', 409)
+                fields.update(status=status, closed_at=self.clock() if status in FINAL else None)
+                if status == 'done':
+                    fields['review_state'] = 'approved' if task['status'] == 'approved' else 'unreviewed'
+                else:
+                    fields.update(reviewed=0, review_state=None, submission_revision=task['submission_revision'] + 1)
             if fields.get('owner') != task.get('owner') and 'owner' in fields:
                 if fields['owner']:
-                    self._touch(fields['owner'])
+                    if _AGENT_RE.fullmatch(fields['owner']) and fields['owner'] not in ('hub','ui','system'):
+                        self._touch(fields['owner'])
                     self.db.execute('UPDATE locks SET owner=? WHERE task_id=?', (fields['owner'], task['id']))
                 else:
                     # Unassignment is an explicit release, not a stranded active lease.
@@ -1836,10 +1867,13 @@ class Agora:
             if any(key in fields for key in ('body', 'acceptance')) and task['status'] in ('review', 'approved'):
                 fields.update(status='changes', reviewed=0, review_state=None,
                               submission_revision=task['submission_revision'] + 1)
-            note = _txt(a.get('note'), 20000, 'note')
+                fields['closed_at'] = None
+            if fields.get('status') in (*FINAL, 'open'):
+                self.db.execute('DELETE FROM locks WHERE task_id=?', (task['id'],))
+            note = _txt(a.get('note'), 200000, 'note')
             self._touch(agent)
             if fields or note:
-                fields['updated'] = self.clock()
+                fields['updated'] = max(self.clock(), float(task.get('updated') or 0) + 0.000001)
                 self.db.execute('UPDATE tasks SET ' + ', '.join(key + '=?' for key in fields) + ' WHERE id=?',
                                 (*fields.values(), task['id']))
                 if 'title' in fields:
@@ -1851,7 +1885,29 @@ class Agora:
                     self._msg(task['thread_id'], agent, 'comment', note,
                               [fields.get('owner') or task.get('owner')] if fields.get('owner') or task.get('owner') else [])
         self._bump('agora.task.edited', {'task_id': task['id'], 'agent': agent})
+        if fields.get('status') in DEP_CLEAR:
+            self._wake_dependents(task['id'])
+        elif 'status' in fields:
+            self._rearm_dependents(task['id'])
         return {'ok': True, 'task': self._task_row(task['id'])}
+
+    @staticmethod
+    def _task_labels(value):
+        labels = list(dict.fromkeys(_list(value, 'labels', 40)))
+        if len(json.dumps(labels, ensure_ascii=False).encode('utf-8')) > 200000:
+            raise AgoraError('labels are too large')
+        return labels
+
+    @staticmethod
+    def _task_assignee(value):
+        text = _txt(value, 120, 'owner')
+        return text or None
+
+    @staticmethod
+    def _task_context(value):
+        if value is not None and not isinstance(value, dict):
+            raise AgoraError('context must be an object')
+        return _txt(json.dumps(value or {}, ensure_ascii=False), 600000, 'context')
 
     @_space_operation
     def task_claim(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -3082,6 +3138,7 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _schema({"agent": _A, "title": {"type": "string"}, "body": {"type": "string"},
                              "acceptance": {"type": "string"}, "origin_ref": {"type": "string"},
                              "owner": {"type": ["string", "null"]}, "note": {"type": "string"},
+                             "labels": _STRS, "context": {"type": "object"},
                              "origin_snapshot": {"type": "string", "description": "Lossless original record when migrating existing project work."},
                              "origin_status": {"type": "string", "enum": ["open", "in_progress", "blocked", "done", "dropped"]},
                              "repo": {"type": "string"}, "paths": _STRS, "kind": {"type": "string"},
@@ -3091,6 +3148,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_task_edit", "description": "Edit the shared project task: description, acceptance, priority, assignment and clarifications. Read the task first and send its etag; stale edits are rejected. Reassignment transfers its leases; changes to acceptance during review require review again.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "expected_etag": {"type": "string"},
          "title": {"type": "string"}, "body": {"type": "string"}, "acceptance": {"type": "string"},
+         "kind": {"type": "string"}, "status": {"type": "string"}, "labels": _STRS, "context": {"type": "object"},
          "priority": {"type": "integer"}, "owner": {"type": ["string", "null"]}, "note": {"type": "string"}}, ['agent', 'task_id', 'expected_etag'])},
     {"name": "hub_agora_task_deps",
      "description": "Set what a task waits for: add / remove blocker task ids, or set the whole list ([] clears). "
