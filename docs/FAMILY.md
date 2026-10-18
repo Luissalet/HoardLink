@@ -245,6 +245,11 @@ the call is still `ok`, and `json_error` says so.
 (`data/hub.json`, default 2, 1 to 16; `HOARD_HUB_LINK_CHAT_CONCURRENCY`);
 the rest wait in arrival order, inside their own `timeout_s`. A call that
 gives up while queued never reaches the model.
+The remaining budget is passed through Link to the backend HTTP call, including
+any reasoning/format negotiation. An explicit long timeout is not shortened by
+Link's default backend read timeout. Native Python callers can also use
+`await link.chat(messages, timeout=900)`; omitting `timeout` retains the existing
+timeout selected for the reasoning effort.
 
 **What it resolves with.** The hub's own Link, configured from
 `<hub data>/backend.json` (the same schema as an app's, see the README) plus
@@ -305,7 +310,10 @@ with `"stream": true`. Optional `idle_timeout_s` defaults to 120 seconds;
 `timeout_s` still defaults to 300 and covers queue, resolution and generation,
 up to the existing 1800-second maximum. Set the total explicitly for long
 reasoning tasks. Reasoning and tool-argument chunks count as upstream activity;
-the lack of visible answer text is not an inactivity timeout. Hub heartbeats
+the lack of visible answer text is not an inactivity timeout. The first real
+provider data may wait for prefill within the total budget; the inactivity clock
+starts only then. Role-only and empty frames do not start or renew that clock.
+Hub heartbeats
 neither claim upstream activity nor extend the total deadline.
 Empty JSON deltas, empty usage objects and provider keepalive comments do not
 renew inactivity. Nonempty usage and finish fields remain valid provider events.

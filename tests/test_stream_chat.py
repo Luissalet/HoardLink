@@ -63,6 +63,10 @@ def upstream():
                     self.wfile.flush()
                     return
                 if mode in ("empty-json", "empty-usage", "tool-activity", "usage-activity"):
+                    # These cases measure idle *after* generation starts;
+                    # the initial prefill wait is bounded by total timeout.
+                    if mode in ("empty-json", "empty-usage"):
+                        send({"choices": [{"delta": {"content": "started"}}]})
                     for _ in range(10):
                         chunk = {"choices": [{"delta": {}}]}
                         if mode == "tool-activity":

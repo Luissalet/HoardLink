@@ -1073,13 +1073,22 @@ class Link:
         return resp
 
     async def _post_chat(
-        self, provider: Optional[str], url: str, payload: dict[str, Any], level: Optional[str]
+        self, provider: Optional[str], url: str, payload: dict[str, Any], level: Optional[str],
+        deadline: Optional[float] = None,
     ) -> httpx.Response:
         """A chat POST whose timeout grows with the reasoning asked for; a
         server that refuses the reasoning fields (400 naming them) gets the
         call once more without them, at its own default."""
+        def remaining():
+            if deadline is None:
+                return _reasoning.timeout_for(120.0, level)
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("total timeout")
+            return left
+
         try:
-            return await self._post_json(provider, url, payload, timeout=_reasoning.timeout_for(120.0, level))
+            return await self._post_json(provider, url, payload, timeout=remaining())
         except BackendError as exc:
             body = getattr(exc, "body", None) or exc.body_excerpt
             if not _reasoning.looks_like_reasoning_error(exc.status, body):
@@ -1089,14 +1098,14 @@ class Link:
             if _reasoning.remap_effort(payload, _reasoning.supported_efforts(body)):
                 try:
                     return await self._post_json(provider, url, payload,
-                                                 timeout=_reasoning.timeout_for(120.0, level))
+                                                 timeout=remaining())
                 except BackendError as exc2:
                     body2 = getattr(exc2, "body", None) or exc2.body_excerpt
                     if not _reasoning.looks_like_reasoning_error(exc2.status, body2):
                         raise
             if not _reasoning.strip(payload):
                 raise
-            return await self._post_json(provider, url, payload, timeout=_reasoning.timeout_for(120.0, level))
+            return await self._post_json(provider, url, payload, timeout=remaining())
 
     @staticmethod
     def _json(provider: Optional[str], resp: httpx.Response) -> Any:
@@ -1116,6 +1125,7 @@ class Link:
         effort: Optional[str] = None,
         task: Optional[str] = None,
         chat_template_kwargs: Optional[dict[str, Any]] = None,
+        timeout: Optional[float] = None,
     ) -> ChatResult:
         """One chat call to the resolved model.
 
@@ -1128,43 +1138,53 @@ class Link:
         capability's configured default (``HOARD_LLM_EFFORT``), and with none
         configured the server's own. Quality work (a graded answer, a report,
         a plan) should ask for ``max``; titles and tags ``off``. See
-        :mod:`hoard_link.reasoning`."""
-        level = _reasoning.normalize(effort)
-        if level is None and (effort is None or str(effort).strip().lower() in ("", "auto")):
-            level = _reasoning.normalize(self.config.capability(capability).effort)
-        res = await self.resolve(capability, task)
-        if not res.resolved:
-            raise Unavailable(capability, res.details.get("reasons", [res.reason]))
-        if not res.url:
-            raise Unavailable(capability, [f"resolved provider '{res.provider}' has no URL to chat with"])
+        :mod:`hoard_link.reasoning`.
 
-        start = self._now()
-        controls_meta = None
-        async with self._load_lease(res):
-            if res.api == "ollama":
-                text, extra_reasoning, raw = await self._chat_ollama(
-                    res, messages, images, max_tokens, temperature, response_format, level
-                )
-            else:
-                text, extra_reasoning, raw, controls_meta = await self._chat_openai(
-                    res, messages, images, max_tokens, temperature, response_format, level, chat_template_kwargs
-                )
-        elapsed_ms = (self._now() - start) * 1000.0
+        ``timeout`` optionally bounds the whole call, including resolution,
+        loading and reasoning negotiation. Omitted, the existing backend
+        timeout chosen for the reasoning effort remains in effect.
+        """
+        if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                                    or not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("timeout must be a positive finite number")
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        async with asyncio.timeout_at(deadline):
+            level = _reasoning.normalize(effort)
+            if level is None and (effort is None or str(effort).strip().lower() in ("", "auto")):
+                level = _reasoning.normalize(self.config.capability(capability).effort)
+            res = await self.resolve(capability, task)
+            if not res.resolved:
+                raise Unavailable(capability, res.details.get("reasons", [res.reason]))
+            if not res.url:
+                raise Unavailable(capability, [f"resolved provider '{res.provider}' has no URL to chat with"])
 
-        clean_text, think = _strip_think(text)
-        usage = _extract_usage(raw, res.api)
-        return ChatResult(
-            text=clean_text,
-            model=res.model,
-            provider=res.provider,
-            usage=usage,
-            elapsed_ms=elapsed_ms,
-            reasoning=_join_reasoning(extra_reasoning, think),
-            effort=level,
-            reasoning_controls=controls_meta,
-            finish_reason=(raw.get("done_reason") if res.api == "ollama" else
-                           ((raw.get("choices") or [{}])[0].get("finish_reason"))),
-        )
+            start = self._now()
+            controls_meta = None
+            async with self._load_lease(res):
+                if res.api == "ollama":
+                    text, extra_reasoning, raw = await self._chat_ollama(
+                        res, messages, images, max_tokens, temperature, response_format, level, deadline
+                    )
+                else:
+                    text, extra_reasoning, raw, controls_meta = await self._chat_openai(
+                        res, messages, images, max_tokens, temperature, response_format, level, chat_template_kwargs, deadline
+                    )
+            elapsed_ms = (self._now() - start) * 1000.0
+
+            clean_text, think = _strip_think(text)
+            usage = _extract_usage(raw, res.api)
+            return ChatResult(
+                text=clean_text,
+                model=res.model,
+                provider=res.provider,
+                usage=usage,
+                elapsed_ms=elapsed_ms,
+                reasoning=_join_reasoning(extra_reasoning, think),
+                effort=level,
+                reasoning_controls=controls_meta,
+                finish_reason=(raw.get("done_reason") if res.api == "ollama" else
+                               ((raw.get("choices") or [{}])[0].get("finish_reason"))),
+            )
 
     async def stream_chat(
         self, messages: list[dict[str, Any]], images: Optional[list[bytes]] = None,
@@ -1179,7 +1199,8 @@ class Link:
 
         Closing this async iterator closes the upstream response and its lease.
         No request is retried. ``timeout`` covers resolution and generation;
-        ``idle_timeout`` bounds upstream reads, independently of Hub heartbeats.
+        ``idle_timeout`` bounds upstream inactivity after its first real data,
+        independently of Hub heartbeats. Initial prefill uses the total budget.
         A finish with ``completed=False`` retains a truncated/filtered response.
         """
         if not math.isfinite(timeout) or not math.isfinite(idle_timeout) or timeout <= 0 or idle_timeout <= 0:
@@ -1232,20 +1253,22 @@ class Link:
                 await bounded(stack.enter_async_context(self._load_lease(res)))
                 remaining()
                 response = await bounded(stack.enter_async_context(self._client.stream("POST", endpoint, json=payload,
-                    timeout=httpx.Timeout(idle_timeout, connect=min(idle_timeout, 15.0)))))
+                    timeout=httpx.Timeout(None, connect=min(idle_timeout, 15.0)))))
                 if response.status_code >= 400:
                     raw = await bounded(response.aread())
                     raise BackendError(res.provider, response.status_code, raw.decode("utf-8", "replace")[:300])
                 data_lines = []
                 lines = response.aiter_lines()
-                last_activity = time.monotonic()
+                last_activity = None
                 while True:
                     try:
                         left = remaining()
-                        idle_left = idle_timeout - (time.monotonic() - last_activity)
-                        if idle_left <= 0:
-                            raise TimeoutError("upstream inactivity timeout")
-                        budget = min(idle_left, left)
+                        budget = left
+                        if last_activity is not None:
+                            idle_left = idle_timeout - (time.monotonic() - last_activity)
+                            if idle_left <= 0:
+                                raise TimeoutError("upstream inactivity timeout")
+                            budget = min(idle_left, left)
                         line = await asyncio.wait_for(anext(lines), budget)
                     except StopAsyncIteration:
                         break
@@ -1406,12 +1429,13 @@ class Link:
         max_tokens: Optional[int], temperature: Optional[float], response_format: Optional[dict[str, Any]],
         level: Optional[str] = None,
         chat_template_kwargs: Optional[dict[str, Any]] = None,
+        deadline: Optional[float] = None,
     ) -> tuple[str, Optional[str], dict, Optional[dict[str, Any]]]:
         controls = await self.reasoning_controls(res)
         payload = self._chat_payload(res, messages, images, max_tokens, temperature, response_format, level,
                                      controls, chat_template_kwargs)
         endpoint = _openai_endpoint(res.url or "", "/chat/completions")
-        resp = await self._post_chat(res.provider, endpoint, payload, level)
+        resp = await self._post_chat(res.provider, endpoint, payload, level, deadline)
         data = self._json(res.provider, resp)
         try:
             message = data["choices"][0]["message"]
@@ -1435,6 +1459,7 @@ class Link:
         temperature: Optional[float],
         response_format: Optional[dict[str, Any]] = None,
         level: Optional[str] = None,
+        deadline: Optional[float] = None,
     ) -> tuple[str, Optional[str], dict]:
         msgs = [dict(m) for m in messages]
         if images:
@@ -1464,7 +1489,7 @@ class Link:
         _reasoning.apply_ollama(payload, level)
 
         endpoint = _ollama_endpoint(res.url or "", "/api/chat")
-        resp = await self._post_chat(res.provider, endpoint, payload, level)
+        resp = await self._post_chat(res.provider, endpoint, payload, level, deadline)
         data = self._json(res.provider, resp)
         message = data.get("message") if isinstance(data, dict) else None
         if not isinstance(message, dict):
