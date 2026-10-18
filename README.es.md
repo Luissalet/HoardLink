@@ -964,6 +964,14 @@ with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
   en `backend.json` o `HOARD_<CAP>_EFFORT`. El trabajo de calidad (corregir,
   informes, planes) debería pedir `effort="max"`; títulos y etiquetas
   `effort="off"`.
+- Para GLM-5.3-Flash con soporte nativo verificado por HTTP, ambos modos usan
+  Low/High/Max: off y medium eligen Low, max conserva Max y el presupuesto
+  nativo `thinking_token_budget` sustituye los alias de llama-server. Se
+  mantienen los presupuestos de perfil explícitos; sin esfuerzo no se añade
+  cap. `clear_thinking` vale true por defecto y `chat_template_kwargs` permite
+  conservar false explícito. Los metadatos distinguen esfuerzo pedido/efectivo
+  e indican que el pensamiento no se desactiva. API/MCP del Hub y clientes
+  family pasan las mismas opciones. [Contrato](docs/FAMILY.md#model-specific-reasoning-controls).
 - `response_format` se pasa tal cual en el dialecto OpenAI y se traduce al
   `format` de Ollama (`json_object` -> `"json"`, `json_schema` -> el
   esquema). Las imágenes llevan su tipo MIME real (JPEG, PNG, GIF, WebP).

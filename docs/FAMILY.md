@@ -382,6 +382,58 @@ its next read checks the elapsed total deadline. The Hub enforces its deadline
 independently and releases the model slot once upstream cleanup finishes, even
 when terminal delivery is waiting for a slow client.
 
+### Model-specific reasoning controls
+
+The client verifies GLM-5.3-Flash checkpoint identity against the selected
+server's `/v1/models` and checks that the actual chat request in `/openapi.json`
+advertises `thinking_token_budget` and `chat_template_kwargs`. It caches this
+read-only check for 30 seconds with shared in-flight probes. A registry label
+such as `provider: unknown` neither grants nor prevents native support; no host
+or deployed model is hard-coded. An unavailable or incompatible schema leaves
+the existing generic/Ollama path unchanged.
+
+For this verified model, generic efforts map as follows:
+
+| Requested | Native effort | Existing profile budget |
+|---|---|---|
+| omitted / auto without configured effort | server default | omitted |
+| off | low | omitted; never a forced zero |
+| low | low | 1024 |
+| medium | low | 4096 |
+| high | high | 8192 |
+| max | max | 16384 |
+
+These budgets preserve the SDK's existing explicit effort profiles; they are
+not a new default cap. Its existing output widening by profile budget also
+remains. Native requests send `thinking_token_budget`, without llama-server's
+`thinking_budget_tokens`/`reasoning_budget` aliases. GLM-5.3-Flash always reasons:
+off selects its faster Low mode and does not claim to disable thought.
+The official model contract has Low/High/Max and recommends `clear_thinking=true`
+for chat. [Model card](https://huggingface.co/zai-org/GLM-5.3-Flash),
+[vLLM recipe](https://recipes.vllm.ai/zai-org/GLM-5.3-Flash),
+[native budget semantics](https://docs.vllm.ai/en/latest/features/reasoning_outputs/#thinking-budget-control).
+
+`chat_template_kwargs` is optional on `Link.chat`, `Link.stream_chat`, both Python
+family helpers, `POST /api/link/chat` and MCP `hub_link_chat`; Node helpers use
+`chatTemplateKwargs`. For example, `{"clear_thinking": false}` stays false.
+Verified GLM defaults that option to true, enables thinking, and puts the chosen
+effort only at top level. An explicit template `enable_thinking:false` also maps
+to Low rather than forcing an empty thinking block. Other template options are
+preserved. No new argument is needed by existing callers.
+
+Verified responses add `reasoning_controls` with advertised levels, source,
+`requested_effort`, `effective_effort`, actual budget/clear option, and
+`thinking_off_behavior: low_effort` / `thinking_can_disable: false`. The same
+capability is visible in native status details and Hub `/api/link/status`.
+Unverified models do not gain this metadata. Capability means advertised HTTP
+support, not demonstrated semantic quality or correctness of a forced budget.
+
+Blocking calls retain the existing reasoning-error fallback. A refusal strips
+native and legacy budgets plus template thinking/effort/clear options before
+retrying at server defaults, preserving unrelated template kwargs; metadata
+then says `applied:false`, `effective_effort:server_default`. Streaming keeps its
+one-request contract and never replays a rejected or partial generation.
+
 Close the iterator when abandoning a request. Python's `closing`/`aclosing`,
 JavaScript `return`/`break`, cancellation, or an HTTP disconnect closes the
 upstream response, releases its GPU lease, and removes the FIFO ticket or

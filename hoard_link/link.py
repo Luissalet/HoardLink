@@ -419,6 +419,26 @@ class Link:
             "openai_compat", lambda: _probes.probe_openai_compat(self._client)
         )
 
+    async def reasoning_controls(self, res: Resolution) -> Optional[dict[str, Any]]:
+        """Read-only, cached model/schema verification; provider labels are insufficient."""
+        if (not res.resolved or res.capability not in ("llm", "vision") or res.api != "openai"
+                or not res.url or not _reasoning.glm53_flash(res.model)):
+            return None
+        base = _server_root(res.url)
+
+        async def probe():
+            try:
+                models, schema = await asyncio.gather(
+                    self._client.get(_openai_endpoint(res.url, "/models"), timeout=2),
+                    self._client.get(base + "/openapi.json", timeout=2))
+                if models.status_code != 200 or schema.status_code != 200:
+                    return None
+                return _reasoning.native_glm_controls(res.model, models.json(), schema.json())
+            except (httpx.HTTPError, ValueError):
+                return None
+
+        return await self._cached(f"glm_controls:{base}:{res.model}", probe)
+
     async def _probe_comfy(self, url: str) -> Optional[dict]:
         return await self._cached(f"comfy:{url}", lambda: _probes.probe_comfy(self._client, url))
 
@@ -1062,7 +1082,7 @@ class Link:
             return await self._post_json(provider, url, payload, timeout=_reasoning.timeout_for(120.0, level))
         except BackendError as exc:
             body = getattr(exc, "body", None) or exc.body_excerpt
-            if level is None or not _reasoning.looks_like_reasoning_error(exc.status, body):
+            if not _reasoning.looks_like_reasoning_error(exc.status, body):
                 raise
             # A chat template that only knows some effort names says which;
             # ask again with the nearest one before giving the reasoning up.
@@ -1095,6 +1115,7 @@ class Link:
         response_format: Optional[dict[str, Any]] = None,
         effort: Optional[str] = None,
         task: Optional[str] = None,
+        chat_template_kwargs: Optional[dict[str, Any]] = None,
     ) -> ChatResult:
         """One chat call to the resolved model.
 
@@ -1118,14 +1139,15 @@ class Link:
             raise Unavailable(capability, [f"resolved provider '{res.provider}' has no URL to chat with"])
 
         start = self._now()
+        controls_meta = None
         async with self._load_lease(res):
             if res.api == "ollama":
                 text, extra_reasoning, raw = await self._chat_ollama(
                     res, messages, images, max_tokens, temperature, response_format, level
                 )
             else:
-                text, extra_reasoning, raw = await self._chat_openai(
-                    res, messages, images, max_tokens, temperature, response_format, level
+                text, extra_reasoning, raw, controls_meta = await self._chat_openai(
+                    res, messages, images, max_tokens, temperature, response_format, level, chat_template_kwargs
                 )
         elapsed_ms = (self._now() - start) * 1000.0
 
@@ -1139,6 +1161,7 @@ class Link:
             elapsed_ms=elapsed_ms,
             reasoning=_join_reasoning(extra_reasoning, think),
             effort=level,
+            reasoning_controls=controls_meta,
             finish_reason=(raw.get("done_reason") if res.api == "ollama" else
                            ((raw.get("choices") or [{}])[0].get("finish_reason"))),
         )
@@ -1150,6 +1173,7 @@ class Link:
         effort: Optional[str] = None, task: Optional[str] = None,
         timeout: float = 300.0, idle_timeout: float = 120.0,
         tools: Optional[list[dict[str, Any]]] = None, tool_choice: Any = None,
+        chat_template_kwargs: Optional[dict[str, Any]] = None,
     ):
         """Yield real status/text/reasoning/tool_call/usage/finish events.
 
@@ -1185,7 +1209,12 @@ class Link:
         if not res.resolved or not res.url:
             raise Unavailable(capability, res.details.get("reasons", [res.reason]))
         meta = {"model": res.model, "provider": res.provider, "effort": level}
-        payload = self._chat_payload(res, messages, images, max_tokens, temperature, response_format, level)
+        controls = await bounded(self.reasoning_controls(res))
+        payload = self._chat_payload(res, messages, images, max_tokens, temperature, response_format, level,
+                                     controls, chat_template_kwargs)
+        controls_meta = _reasoning.applied_controls(payload, level, controls)
+        if controls_meta:
+            meta["reasoning_controls"] = controls_meta
         payload["stream"] = True
         if tools is not None:
             payload["tools"] = tools
@@ -1316,6 +1345,8 @@ class Link:
         temperature: Optional[float],
         response_format: Optional[dict[str, Any]],
         level: Optional[str] = None,
+        controls: Optional[dict[str, Any]] = None,
+        chat_template_kwargs: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         msgs = [dict(m) for m in messages]
         if images:
@@ -1365,15 +1396,20 @@ class Link:
         if response_format is not None:
             payload["response_format"] = response_format
 
-        _reasoning.apply_openai(payload, level)
+        if chat_template_kwargs is not None:
+            payload["chat_template_kwargs"] = dict(chat_template_kwargs)
+        _reasoning.apply_openai(payload, level, controls)
         return payload
 
     async def _chat_openai(
         self, res: Resolution, messages: list[dict[str, Any]], images: Optional[list[bytes]],
         max_tokens: Optional[int], temperature: Optional[float], response_format: Optional[dict[str, Any]],
         level: Optional[str] = None,
-    ) -> tuple[str, Optional[str], dict]:
-        payload = self._chat_payload(res, messages, images, max_tokens, temperature, response_format, level)
+        chat_template_kwargs: Optional[dict[str, Any]] = None,
+    ) -> tuple[str, Optional[str], dict, Optional[dict[str, Any]]]:
+        controls = await self.reasoning_controls(res)
+        payload = self._chat_payload(res, messages, images, max_tokens, temperature, response_format, level,
+                                     controls, chat_template_kwargs)
         endpoint = _openai_endpoint(res.url or "", "/chat/completions")
         resp = await self._post_chat(res.provider, endpoint, payload, level)
         data = self._json(res.provider, resp)
@@ -1387,7 +1423,8 @@ class Link:
         # llama-server --reasoning-format and several OpenAI-compatible
         # servers return the thinking out of band rather than in <think>.
         extra = message.get("reasoning_content") or message.get("reasoning")
-        return (text if isinstance(text, str) else ""), (extra if isinstance(extra, str) else None), data
+        return ((text if isinstance(text, str) else ""), (extra if isinstance(extra, str) else None), data,
+                _reasoning.applied_controls(payload, level, controls))
 
     async def _chat_ollama(
         self,
@@ -1597,5 +1634,9 @@ class Link:
         ``tasks``, ``problem``)."""
         results = await asyncio.gather(*(self.resolve(cap, task) for cap in CAPABILITIES))
         out: dict[str, Any] = {cap: res.to_dict() for cap, res in zip(CAPABILITIES, results)}
+        for cap, res in zip(CAPABILITIES, results):
+            controls = await self.reasoning_controls(res)
+            if controls:
+                out[cap]["details"]["reasoning_controls"] = controls
         out["routes"] = self._routes().summary()
         return out

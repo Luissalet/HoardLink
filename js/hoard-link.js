@@ -130,11 +130,12 @@ function toBase64(img) {
  * e.g. gpu_busy, bad_request, backend_error). `timeoutMs` is how long the hub may take (queue and model);
  * `graceMs` is the extra time before this client gives up on a hub that stopped answering. The evidence for any answer is the text you sent: keep it.
  */
-export async function chat({ messages, capability = "llm", images, json, effort, maxTokens, temperature, timeoutMs = 300000, graceMs = 15000 } = {}) {
+export async function chat({ messages, capability = "llm", images, json, effort, maxTokens, temperature, timeoutMs = 300000, graceMs = 15000, chatTemplateKwargs } = {}) {
   const body = { capability, messages: messages || [] };
   if (images && images.length) body.images = images.map(toBase64);
   if (json !== undefined && json !== null && json !== false) body.json = json;
   if (effort) body.effort = effort;
+  if (chatTemplateKwargs !== undefined) body.chat_template_kwargs = chatTemplateKwargs;
   if (maxTokens) body.max_tokens = maxTokens;
   if (temperature !== undefined && temperature !== null) body.temperature = temperature;
   body.timeout_s = timeoutMs / 1000;
@@ -149,6 +150,7 @@ export async function chat({ messages, capability = "llm", images, json, effort,
     return { ok: true, text: d.text ?? "", json: d.json ?? null, model: d.model ?? null, provider: d.provider ?? null,
              ms: d.ms ?? null, usage: d.usage ?? null,
              ...(d.finish_reason != null ? { finish_reason: d.finish_reason, completed: d.completed ?? null } : {}),
+             ...(d.reasoning_controls != null ? { reasoning_controls: d.reasoning_controls } : {}),
              ...(d.json_error ? { json_error: d.json_error } : {}), error: null, detail: null };
   }
   const code = d.error || "";
@@ -162,7 +164,7 @@ export async function chat({ messages, capability = "llm", images, json, effort,
  * Heartbeats are waiting events. A length finish has completed:false. Never retries.
  */
 export async function* streamChat({ messages, capability = "llm", images, json, effort, maxTokens, temperature,
-    tools, toolChoice, timeoutMs = 300000, idleTimeoutMs = 120000, signal, graceMs = 15000 } = {}) {
+    tools, toolChoice, timeoutMs = 300000, idleTimeoutMs = 120000, signal, graceMs = 15000, chatTemplateKwargs } = {}) {
   const body = { messages: messages || [], capability, stream: true, timeout_s: timeoutMs / 1000,
                  idle_timeout_s: idleTimeoutMs / 1000 };
   if (images?.length) body.images = images.map(toBase64);
@@ -172,6 +174,7 @@ export async function* streamChat({ messages, capability = "llm", images, json, 
   if (temperature !== undefined) body.temperature = temperature;
   if (tools !== undefined) body.tools = tools;
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
+  if (chatTemplateKwargs !== undefined) body.chat_template_kwargs = chatTemplateKwargs;
   const ctl = new AbortController();
   let why = null, reader;
   const abort = () => { why = "cancelled"; ctl.abort(); };
