@@ -92,8 +92,13 @@ class PortAssignments:
             if observed.state == 'healthy':
                 return {'ok': True}
             listeners = procs.listening_pids()
-            conflicts = {hub_port, *(a.port for a in apps if a.id != app.id)}
-            conflicts.update(urlsplit(getattr(a, '_manifest_url', a.url)).port for a in apps if a.id != app.id and _loopback(a.url))
+            peers = [a for a in apps if not (
+                isinstance(a.family.get('absorbed_by'), dict)
+                and a.family['absorbed_by'].get('id') == app.id
+                and a.family['absorbed_by'].get('standalone') is False
+                and not a.launchable)]
+            conflicts = {hub_port, *(a.port for a in peers if a.id != app.id)}
+            conflicts.update(urlsplit(getattr(a, '_manifest_url', a.url)).port for a in peers if a.id != app.id and _loopback(a.url))
             reserved = conflicts | {urlsplit(getattr(app, '_manifest_url', app.url)).port}
             if observed.state != 'foreign' and app.port not in listeners and app.port not in conflicts:
                 if app.launch and app.launch.port_argument and _loopback(app.url):

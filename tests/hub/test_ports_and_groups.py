@@ -122,6 +122,35 @@ def _app(app_id, port, tmp_path):
                f'http://127.0.0.1:{port}/api/health', 10, {}, '--port'), launchable=True)
 
 
+def test_absorbed_compatibility_entry_does_not_reserve_its_owner_port(tmp_path, monkeypatch):
+    app, alias = _app('talos', 5220, tmp_path), _app('argus', 5220, tmp_path)
+    app.launch.port_argument = ''
+    alias.launch, alias.launchable = None, False
+    alias.family = {'absorbed_by': {'id': 'talos', 'standalone': False}}
+    book = PortAssignments(tmp_path / 'ports.json')
+    monkeypatch.setattr(procs, 'health', lambda app: procs.Health('down'))
+    monkeypatch.setattr(procs, 'listening_pids', lambda: {})
+    assert book.prepare(app, [app, alias], 8810)['ok']
+    assert app.port == 5220 and not book.path.exists()
+    monkeypatch.setattr(procs, 'health', lambda app: procs.Health('foreign', 200, 'other'))
+    monkeypatch.setattr(procs, 'listening_pids', lambda: {5220: 12345})
+    assert not book.prepare(app, [app, alias], 8810)['ok']
+
+
+@pytest.mark.parametrize('owner,standalone,launchable', [
+    ('hermes', False, False), ('talos', True, False), ('talos', False, True),
+])
+def test_unrelated_or_launchable_entries_keep_their_reservation(tmp_path, monkeypatch, owner, standalone, launchable):
+    app, alias = _app('talos', 5220, tmp_path), _app('argus', 5220, tmp_path)
+    app.launch.port_argument = ''
+    alias.launchable = launchable
+    alias.family = {'absorbed_by': {'id': owner, 'standalone': standalone}}
+    book = PortAssignments(tmp_path / 'ports.json')
+    monkeypatch.setattr(procs, 'health', lambda app: procs.Health('down'))
+    monkeypatch.setattr(procs, 'listening_pids', lambda: {})
+    assert not book.prepare(app, [app, alias], 8810)['ok']
+
+
 def test_busy_port_allocates_skips_registered_ports_persists_and_reuses(tmp_path, fake_app):
     port, _ = fake_app
     book = PortAssignments(tmp_path/'ports.json')
