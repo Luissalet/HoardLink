@@ -71,7 +71,7 @@ def test_all_task_pages_and_native_tool_contract(store):
     assert any(tool['name'] == 'hub_agora_task_edit' for tool in AgoraFacet.tools())
 
 
-@pytest.mark.parametrize('fields', [{'priority': True}, {'priority': 4}, {'title': ''}, {'owner': 'Bad Actor'}])
+@pytest.mark.parametrize('fields', [{'priority': True}, {'priority': 4}, {'title': ''}, {'owner': 'x' * 121}])
 def test_invalid_edit_is_atomic(store, fields):
     task = add(store)
     with pytest.raises(AgoraError):
@@ -98,7 +98,7 @@ def test_preexisting_tasks_receive_truthful_baseline_on_schema_upgrade(tmp_path)
     from hoard_link.sqlkit import Database
     from hoard_link.hub.agora import MIGRATIONS
     path = tmp_path / 'old.db'
-    db = Database(path, migrations=MIGRATIONS[:-1])
+    db = Database(path, migrations=MIGRATIONS[:next(i for i,step in enumerate(MIGRATIONS) if 'CREATE TABLE task_edits' in step)])
     tid = db.insert('tasks', {'title': 'Old', 'body': 'Existing goal', 'acceptance': 'Existing criterion',
         'priority': 1, 'created_by': 'builder', 'space_id': 'ecosystem', 'updated': 123.0})
     db.close()
@@ -116,3 +116,29 @@ def test_valid_legacy_title_and_body_fit_shared_editor(store):
     changed = store.task_edit({'agent': 'editor', 'task_id': task['id'], 'expected_etag': task['etag'],
         'title': 'A' * 250})['task']
     assert changed['title'] == 'A' * 250 and changed['body'] == task['body']
+
+
+def test_editor_status_kind_labels_and_review_contract(store):
+    task = add(store, claim=True, locks=['path:Repo/edited'])
+    task = store.task_edit({'agent':'editor','task_id':task['id'],'expected_etag':task['etag'],
+        'status':'done','kind':'idea','labels':['urgent','urgent','review']})['task']
+    assert task['status']=='done' and task['kind']=='idea' and task['labels']==['urgent','review']
+    assert store.task({'task_id':task['id']})['locks']==[]
+    task=store.task_edit({'agent':'editor','task_id':task['id'],'expected_etag':task['etag'],'status':'open'})['task']
+    assert task['closed_at'] is None and not task['reviewed']
+    store.task_claim({'agent':'builder','task_id':task['id']})
+    task=store.task_submit({'agent':'builder','task_id':task['id'],'summary':'Review me','commits':['abc123']})['task']
+    with pytest.raises(AgoraError): store.task_edit({'agent':'editor','task_id':task['id'],'expected_etag':task['etag'],'status':'done'})
+    with pytest.raises(AgoraError): store.task_edit({'agent':'editor','task_id':task['id'],'expected_etag':task['etag'],'status':'approved'})
+    assert store.task({'task_id':task['id']})['task']['etag']==task['etag']
+
+
+def test_compatibility_assignment_and_long_comments_preserve_text(store):
+    task = add(store, owner='Ana García', note='A' * 21000, labels=['long label ' * 100])
+    assert task['owner']=='Ana García'
+    task=store.task_edit({'agent':'editor','task_id':task['id'],'expected_etag':task['etag'],'owner':'Ana','note':'B' * 21000})['task']
+    assert task['owner']=='Ana'
+    before=store.task({'task_id':task['id']})
+    assert len(before['messages'][-1]['body'])==21000
+    with pytest.raises(AgoraError): store.task_edit({'agent':'editor','task_id':task['id'],'expected_etag':task['etag'],'status':'done','note':'C' * 200001})
+    assert store.task({'task_id':task['id']})['task']['etag']==task['etag']
