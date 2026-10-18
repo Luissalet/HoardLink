@@ -1,5 +1,22 @@
 # Hoard Link
 
+La inferencia de texto de la familia utiliza el servicio Sparks configurado.
+Los niveles nativos de razonamiento, presupuestos explícitos y solicitudes de
+salida estructurada compatibles se conservan en Python, Hub y Node. El streaming
+distingue espera inicial, inactividad de salida significativa y plazo completo;
+comentarios y tramas vacías no simulan generación. Un stream incompleto conserva
+su error y no se repite tras recibir salida. Los hooks síncronos de extensión
+mantienen sus firmas anteriores. [Controles](docs/FAMILY.md) ·
+[Contrato de extensión](docs/commons/link-extension-contract.md).
+
+Las herramientas MCP largas publican su espera en el catálogo. El puente conserva
+texto, imágenes y errores nativos con los SDK MCP 1.9, 1.30 y 2.3; incluye contenido
+estructurado cuando el esquema del SDK lo admite. Se respeta el timeout explícito
+del llamador y el progreso no renueva el plazo completo.
+[Compatibilidad MCP](docs/commons/mcp-bridge-compatibility.md).
+Los consumidores con SDK vendorizado deben sincronizar los archivos y reiniciar
+su proceso para adoptarlos; actualizar sólo el Hub no actualiza esos consumidores.
+
 Cohesión de la familia: [responsabilidades, solapes y carencias](docs/commons/cohesion.md).
 El Hub comprueba diferencias del código común y requisitos de los flujos;
 las importaciones de audio conservan checkpoints y se reanudan expresamente
