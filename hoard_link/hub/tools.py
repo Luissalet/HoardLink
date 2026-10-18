@@ -546,6 +546,7 @@ def catalogue() -> list[dict[str, Any]]:
                 "images": {"type": "array", "items": {"type": "string"}, "description": "Base64 images (vision only)."},
                 "json": {"description": "true, or a JSON Schema object, to get a JSON answer in `json`."},
                 "effort": {"type": "string", "enum": ["off", "low", "medium", "high", "max"]},
+                "chat_template_kwargs": {"type": "object", "description": "Explicit template options, e.g. clear_thinking:false. Verified GLM off uses Low effort."},
                 "max_tokens": {"type": "integer"}, "temperature": {"type": "number"},
                 "timeout_s": {"type": "number", "default": 300}},
                 "additionalProperties": False},

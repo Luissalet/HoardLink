@@ -76,6 +76,7 @@ class ChatResult:
     reasoning: Optional[str] = None
     effort: Optional[str] = None       # reasoning level the call asked for (None: server default)
     finish_reason: Optional[str] = None
+    reasoning_controls: Optional[dict[str, Any]] = None
 
     @property
     def completed(self) -> Optional[bool]:
@@ -83,6 +84,8 @@ class ChatResult:
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+        if self.reasoning_controls is None:
+            d.pop("reasoning_controls")
         if self.finish_reason is None:
             d.pop("finish_reason")
         else:

@@ -944,6 +944,14 @@ with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
   `capabilities.<cap>.effort` in `backend.json` or `HOARD_<CAP>_EFFORT`.
   Quality work (grading, reports, plans) should pass `effort="max"`; titles
   and tags `effort="off"`.
+- For HTTP-verified GLM-5.3-Flash native budget support, both chat modes use
+  Low/High/Max: off and medium select Low, max stays Max, and native
+  `thinking_token_budget` replaces the llama-server aliases. Existing explicit
+  profile budgets remain; no effort adds no cap. `clear_thinking` defaults to
+  true and optional `chat_template_kwargs` preserves explicit false. Response
+  metadata identifies requested/effective effort and says thought cannot be
+  disabled. The same options pass through Hub API/MCP and family clients.
+  See [the verified-model contract](docs/FAMILY.md#model-specific-reasoning-controls).
 - `response_format` is passed through on the OpenAI dialect and mapped to
   Ollama's `format` (`json_object` -> `"json"`, `json_schema` -> the
   schema). Images get their real MIME type (JPEG, PNG, GIF, WebP).

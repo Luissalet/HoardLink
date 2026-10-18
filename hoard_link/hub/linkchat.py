@@ -145,6 +145,7 @@ class ChatRequest:
     idle_timeout_s: float = 120.0
     tools: Optional[list[dict[str, Any]]] = None
     tool_choice: Any = None
+    chat_template_kwargs: Optional[dict[str, Any]] = None
 
 
 def parse_request(body: Any) -> ChatRequest:
@@ -233,9 +234,13 @@ def parse_request(body: Any) -> ChatRequest:
     tools = body.get("tools")
     if tools is not None and (not isinstance(tools, list) or any(not isinstance(t, dict) for t in tools)):
         raise BadRequest("tools must be a list of objects")
+    ctk = body.get("chat_template_kwargs")
+    if ctk is not None and not isinstance(ctk, dict):
+        raise BadRequest("chat_template_kwargs must be an object")
     return ChatRequest(messages=messages, capability=capability, images=images, json_mode=json_mode, schema=schema,
                        effort=effort, max_tokens=max_tokens, temperature=temperature, timeout_s=timeout_s,
-                       idle_timeout_s=min(float(idle), MAX_TIMEOUT_S), tools=tools, tool_choice=body.get("tool_choice"))
+                       idle_timeout_s=min(float(idle), MAX_TIMEOUT_S), tools=tools, tool_choice=body.get("tool_choice"),
+                       chat_template_kwargs=ctk)
 
 
 def with_json_instruction(messages: list[dict[str, Any]], schema: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -442,9 +447,18 @@ class LinkService:
         return {**base, "chat": {"concurrency": self.gate.limit, "active": self.gate.active, "queued": self.gate.waiting}}
 
     def _status_now(self) -> dict[str, Any]:
+        controls = {}
         async def run() -> list[Any]:
             link = self._link("hoard-hub")
-            return list(await asyncio.gather(*(link.resolve(cap) for _, cap in STATUS_CAPABILITIES), return_exceptions=True))
+            async def resolve(cap):
+                res = await link.resolve(cap)
+                probe = getattr(link, "reasoning_controls", None)
+                if callable(probe):
+                    found = await probe(res)
+                    if found:
+                        controls[cap] = found
+                return res
+            return list(await asyncio.gather(*(resolve(cap) for _, cap in STATUS_CAPABILITIES), return_exceptions=True))
 
         out: dict[str, Any] = {"ok": True}
         try:
@@ -460,6 +474,8 @@ class LinkService:
                 continue
             out[key] = {"available": bool(getattr(res, "resolved", False)), "model": getattr(res, "model", None),
                         "provider": getattr(res, "provider", None), "reason": getattr(res, "reason", "") or ""}
+            if _cap in controls:
+                out[key]["reasoning_controls"] = controls[_cap]
         out["checked_at"] = self._now()
         return out
 
@@ -529,12 +545,13 @@ class LinkService:
                     async with aclosing(link.stream_chat(messages, images=req.images or None,
                             max_tokens=req.max_tokens, temperature=req.temperature, capability=req.capability,
                             response_format=fmt, effort=req.effort, timeout=left,
-                            idle_timeout=req.idle_timeout_s, tools=req.tools, tool_choice=req.tool_choice)) as stream:
+                            idle_timeout=req.idle_timeout_s, tools=req.tools, tool_choice=req.tool_choice,
+                            **({"chat_template_kwargs": req.chat_template_kwargs} if req.chat_template_kwargs is not None else {}))) as stream:
                         async for item in stream:
                             if cancelled.is_set():
                                 break
                             kind = item.get("type")
-                            meta.update({k: item[k] for k in ("model", "provider", "effort") if k in item})
+                            meta.update({k: item[k] for k in ("model", "provider", "effort", "reasoning_controls") if k in item})
                             if kind in partial:
                                 partial[kind].append(item.get("delta", ""))
                             elif kind == "tool_call":
@@ -674,7 +691,8 @@ class LinkService:
                 try:
                     return await link.chat(messages, images=req.images or None, max_tokens=req.max_tokens,
                                            temperature=req.temperature, capability=req.capability,
-                                           response_format=fmt, effort=req.effort)
+                                           response_format=fmt, effort=req.effort,
+                                           **({"chat_template_kwargs": req.chat_template_kwargs} if req.chat_template_kwargs is not None else {}))
                 except BackendError as exc:
                     last = exc
                     if fmt is not None and exc.status in (400, 422):
@@ -705,6 +723,8 @@ class LinkService:
         }
         if getattr(res, "finish_reason", None) is not None:
             payload.update(finish_reason=res.finish_reason, completed=res.completed)
+        if getattr(res, "reasoning_controls", None) is not None:
+            payload["reasoning_controls"] = res.reasoning_controls
         if req.json_mode:
             value, found = parse_json_loose(res.text)
             payload["json"] = value

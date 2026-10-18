@@ -136,7 +136,8 @@ def call(app: str, tool: str, arguments: Optional[dict[str, Any]] = None, *, tim
 
 def chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Optional[list[Any]] = None,
          json: Any = None, effort: Optional[str] = None, max_tokens: Optional[int] = None,
-         temperature: Optional[float] = None, timeout: float = 300.0) -> dict[str, Any]:
+         temperature: Optional[float] = None, timeout: float = 300.0,
+         chat_template_kwargs: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Ask the local model through the hub (``POST /api/link/chat``), for apps that cannot load models
     themselves (standard library only; apps that have :class:`hoard_link.Link` should use it directly).
 
@@ -154,6 +155,8 @@ def chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Opt
         body["json"] = json
     if effort:
         body["effort"] = effort
+    if chat_template_kwargs is not None:
+        body["chat_template_kwargs"] = chat_template_kwargs
     if max_tokens:
         body["max_tokens"] = max_tokens
     if temperature is not None:
@@ -171,6 +174,8 @@ def chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Opt
                "provider": d.get("provider"), "ms": d.get("ms"), "usage": d.get("usage"), "error": None, "detail": None}
         if d.get("finish_reason") is not None:
             out.update(finish_reason=d["finish_reason"], completed=d.get("completed"))
+        if d.get("reasoning_controls") is not None:
+            out["reasoning_controls"] = d["reasoning_controls"]
         if d.get("json_error"):
             out["json_error"] = d["json_error"]
         return out
@@ -184,7 +189,8 @@ def chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Opt
 def stream_chat(messages: list[dict[str, Any]], *, capability: str = "llm", images: Optional[list[Any]] = None,
                 json: Any = None, effort: Optional[str] = None, max_tokens: Optional[int] = None,
                 temperature: Optional[float] = None, timeout: float = 300.0, idle_timeout: float = 120.0,
-                cancel: Optional[threading.Event] = None, tools: Optional[list[dict[str, Any]]] = None, tool_choice: Any = None):
+                cancel: Optional[threading.Event] = None, tools: Optional[list[dict[str, Any]]] = None, tool_choice: Any = None,
+                chat_template_kwargs: Optional[dict[str, Any]] = None):
     """Iterate Hub SSE events using only stdlib. Close the iterator in a finally
     block (or ``contextlib.closing``); ``cancel.set()`` also interrupts a read.
     Heartbeats identify Hub waiting, never tokens. No retry after partial output.
@@ -195,7 +201,7 @@ def stream_chat(messages: list[dict[str, Any]], *, capability: str = "llm", imag
     if images:
         body["images"] = [i if isinstance(i, str) else base64.b64encode(bytes(i)).decode("ascii") for i in images]
     for key, value in (("json", json), ("effort", effort), ("max_tokens", max_tokens), ("temperature", temperature),
-                       ("tools", tools), ("tool_choice", tool_choice)):
+                       ("tools", tools), ("tool_choice", tool_choice), ("chat_template_kwargs", chat_template_kwargs)):
         if value is not None:
             body[key] = value
     # The argument named json is part of the existing family API.

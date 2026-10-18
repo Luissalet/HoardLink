@@ -14,11 +14,15 @@ Levels: ``off`` | ``low`` | ``medium`` | ``high`` | ``max`` (``xhigh``,
 
 Per server:
 
-* OpenAI-compatible (llama-server, vLLM, LM Studio):
+* OpenAI-compatible (llama-server, vLLM, LM Studio), by default:
   ``chat_template_kwargs.enable_thinking``, plus the budget under both names
   llama-server builds read (``thinking_budget_tokens`` is the one the current
   build honours; ``reasoning_budget`` the older one) and ``reasoning_effort``.
 * Ollama: ``think`` (true/false).
+* GLM-5.3-Flash with served identity and native budget support verified by
+  HTTP: Low/High/Max, off/medium map to Low, and only ``thinking_token_budget``.
+  No effort leaves the server's budget alone; chat defaults clear_thinking
+  to true. These models have no genuinely non-thinking mode.
 
 When the model is asked to think and the caller capped the output, the cap
 grows by the budget (reasoning comes out of the same tokens as the answer),
@@ -47,7 +51,38 @@ _ALIASES = {
 _SECONDS_PER_TOKEN = 0.1
 
 #: Fields this module may add; a 400 that names one drops them all.
-REASONING_KEYS = ("reasoning_effort", "reasoning_budget", "thinking_budget_tokens", "think")
+REASONING_KEYS = ("reasoning_effort", "reasoning_budget", "thinking_budget_tokens", "thinking_token_budget", "think")
+
+
+def glm53_flash(model: Any) -> bool:
+    """Match the published model family, including quantized checkpoint suffixes."""
+    name = re.sub(r"[_. ]", "-", str(model or "").lower())
+    return bool(re.search(r"(?:^|/)glm-5-3-flash(?:-|$)", name))
+
+
+def native_glm_controls(model: str, models: Any, schema: Any) -> Optional[dict[str, Any]]:
+    """Only trust the served identity and the actual chat request's HTTP schema."""
+    if not glm53_flash(model) or not isinstance(models, dict) or not isinstance(schema, dict):
+        return None
+    served = models.get("data")
+    if not isinstance(served, list) or not any(isinstance(item, dict) and item.get("id") == model for item in served):
+        return None
+    try:
+        request = schema["paths"]["/v1/chat/completions"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        if "$ref" in request:
+            ref = request["$ref"]
+            if not ref.startswith("#/components/schemas/"):
+                return None
+            request = schema["components"]["schemas"][ref.rsplit("/", 1)[-1]]
+        fields = request["properties"]
+        if not all(key in fields for key in ("thinking_token_budget", "chat_template_kwargs")):
+            return None
+    except (KeyError, TypeError, AttributeError):
+        return None
+    return {"source": "http_model_and_openapi", "model": model,
+            "levels": ["low", "high", "max"], "default": "max",
+            "thinking_off_behavior": "low_effort", "thinking_can_disable": False,
+            "budget_field": "thinking_token_budget"}
 
 
 def normalize(level: Any) -> Optional[str]:
@@ -67,8 +102,28 @@ def budget_for(level: Optional[str]) -> int:
     return BUDGETS.get(level or "", 0)
 
 
-def apply_openai(payload: dict[str, Any], level: Optional[str]) -> None:
+def apply_openai(payload: dict[str, Any], level: Optional[str], controls: Optional[dict[str, Any]] = None) -> None:
     """Reasoning fields for an OpenAI-compatible chat payload."""
+    if controls:
+        ctk = payload.setdefault("chat_template_kwargs", {})
+        template_effort = ctk.pop("reasoning_effort", None)
+        requested = level if level is not None else payload.get("reasoning_effort", template_effort)
+        if ctk.get("enable_thinking") is False or requested in ("off", "medium", "none", "minimal"):
+            requested = "low"
+        if requested is not None:
+            payload["reasoning_effort"] = requested if requested in controls["levels"] else "max"
+        ctk["enable_thinking"] = True
+        ctk.setdefault("clear_thinking", True)
+        # Existing profiles are intentional. No level means no invented cap;
+        # off maps to Low and must not force an empty think block with zero.
+        budget = payload.pop("reasoning_budget", payload.pop("thinking_budget_tokens", None))
+        if budget is None and level is not None and level != "off":
+            budget = BUDGETS[level]
+        if "thinking_token_budget" not in payload and budget is not None:
+            payload["thinking_token_budget"] = budget
+        if level is not None and level != "off":
+            _widen(payload, "max_tokens", BUDGETS[level])
+        return
     if level is None:
         return
     ctk = payload.setdefault("chat_template_kwargs", {})
@@ -81,6 +136,17 @@ def apply_openai(payload: dict[str, Any], level: Optional[str]) -> None:
     payload["reasoning_budget"] = budget
     payload["reasoning_effort"] = "high" if level == "max" else level
     _widen(payload, "max_tokens", budget)
+
+
+def applied_controls(payload: dict[str, Any], level: Optional[str], controls: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not controls:
+        return None
+    ctk = payload.get("chat_template_kwargs") or {}
+    return {**controls, "requested_effort": level,
+            "effective_effort": payload.get("reasoning_effort", "server_default"),
+            "thinking_token_budget": payload.get("thinking_token_budget"),
+            "clear_thinking": ctk.get("clear_thinking"),
+            "applied": "enable_thinking" in ctk or "reasoning_effort" in payload}
 
 
 def apply_ollama(payload: dict[str, Any], level: Optional[str]) -> None:
@@ -152,11 +218,13 @@ def strip(payload: dict[str, Any]) -> bool:
             payload.pop(key, None)
             removed = True
     ctk = payload.get("chat_template_kwargs")
-    if isinstance(ctk, dict) and "enable_thinking" in ctk:
-        ctk.pop("enable_thinking", None)
+    if isinstance(ctk, dict):
+        for key in ("enable_thinking", "reasoning_effort", "clear_thinking"):
+            if key in ctk:
+                ctk.pop(key)
+                removed = True
         if not ctk:
             payload.pop("chat_template_kwargs", None)
-        removed = True
     return removed
 
 
