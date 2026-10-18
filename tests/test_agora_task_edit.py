@@ -142,3 +142,12 @@ def test_compatibility_assignment_and_long_comments_preserve_text(store):
     assert len(before['messages'][-1]['body'])==21000
     with pytest.raises(AgoraError): store.task_edit({'agent':'editor','task_id':task['id'],'expected_etag':task['etag'],'status':'done','note':'C' * 200001})
     assert store.task({'task_id':task['id']})['task']['etag']==task['etag']
+
+
+def test_creation_blocks_are_atomic_and_cannot_leave_partial_tasks_on_cycle(store):
+    first=add(store,title='First')
+    second=add(store,title='Second',blocks=[first['id']])
+    assert store.task({'task_id':first['id']})['task']['blocked_by'][0]['id']==second['id']
+    count=len(store.tasks()['tasks'])
+    with pytest.raises(AgoraError): add(store,title='Cycle',blocked_by=[first['id']],blocks=[second['id']])
+    assert len(store.tasks()['tasks'])==count
