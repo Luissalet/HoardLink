@@ -525,6 +525,8 @@ class CatalogBridge:
             from mcp.server.mcpserver import MCPServer as Base  # type: ignore[no-redef]  # mcp 2.x
             version = 2
         from mcp.types import CallToolResult, ImageContent, TextContent, Tool as MCPTool, ToolAnnotations
+        structured_result = any(name == "structuredContent" or field.alias == "structuredContent"
+                                for name, field in CallToolResult.model_fields.items())
 
         def to_tool(entry: Mapping[str, Any]) -> Any:
             annotations = {k: v for k, v in (entry.get("annotations") or {}).items() if k in _ANNOTATION_KEYS}
@@ -540,19 +542,31 @@ class CatalogBridge:
         def to_result(result: BridgeResult) -> Any:
             parts = [TextContent(type="text", text=p["text"]) if p["type"] == "text"
                      else ImageContent(type="image", data=p["data"], mimeType=p["mimeType"]) for p in result.content]
-            return CallToolResult(content=parts, isError=result.is_error)
+            body: dict[str, Any] = {"content": parts, "isError": result.is_error}
+            if structured_result and isinstance(result.body, dict):
+                body["structuredContent"] = result.body
+            return CallToolResult.model_validate(body)
 
         if version == 1:
             class Server(Base):  # type: ignore[misc, valid-type]
+                def _setup_handlers(self) -> None:
+                    super()._setup_handlers()
+                    from mcp.types import CallToolRequest, ServerResult
+
+                    async def typed_call(request: Any) -> Any:
+                        return ServerResult(await self.call_tool(request.params.name, request.params.arguments or {}))
+
+                    # SDK1.9's call_tool decorator accepts an iterable, rebuilds
+                    # CallToolResult and forces isError=False. Its native typed
+                    # dispatcher preserves the full protocol result instead.
+                    # This same dispatcher contract is retained by SDK1.30.
+                    self._mcp_server.request_handlers[CallToolRequest] = typed_call
+
                 async def list_tools(self) -> list[Any]:
                     return [to_tool(t) for t in await core.tools()]
 
                 async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-                    try:
-                        context = self.get_context()
-                    except Exception:  # noqa: BLE001
-                        context = None
-                    return to_result(await core.call(name, arguments, _progress_of(context)))
+                    return to_result(await core.call(name, arguments, _progress_of(self.get_context())))
         else:
             class Server(Base):  # type: ignore[no-redef, misc, valid-type]
                 async def list_tools(self) -> list[Any]:
