@@ -18,6 +18,29 @@ SCHEMA = {'paths': {'/v1/chat/completions': {'post': {'requestBody': {'content':
 MESSAGES = [{'role':'user','content':'fixture'}]
 
 
+@pytest.mark.parametrize('field,invalid', [
+    ('thinking_token_budget', {'type':'string'}),
+    ('chat_template_kwargs', {'type':'string'}),
+    (None, ['thinking_token_budget','chat_template_kwargs']),
+])
+def test_incompatible_native_schema_is_unverified(field, invalid):
+    schema = copy.deepcopy(SCHEMA)
+    request = schema['components']['schemas']['ChatCompletionRequest']
+    if field is None:
+        request['properties'] = invalid
+    else:
+        request['properties'][field] = invalid
+    assert reasoning.native_glm_controls(MODEL, {'data':[{'id':MODEL}]}, schema) is None
+
+
+def test_native_nullable_schema_types_are_supported():
+    schema = copy.deepcopy(SCHEMA)
+    fields = schema['components']['schemas']['ChatCompletionRequest']['properties']
+    fields['thinking_token_budget'] = {'anyOf':[{'type':'integer'},{'type':'null'}]}
+    fields['chat_template_kwargs'] = {'anyOf':[{'type':'object'},{'type':'null'}]}
+    assert reasoning.native_glm_controls(MODEL, {'data':[{'id':MODEL}]}, schema)['budget_field'] == 'thinking_token_budget'
+
+
 def fixture_link(*, model=MODEL, served=None, schema=None, refuse=False):
     requests = []
     posts = []

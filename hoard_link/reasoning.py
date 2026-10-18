@@ -75,7 +75,18 @@ def native_glm_controls(model: str, models: Any, schema: Any) -> Optional[dict[s
                 return None
             request = schema["components"]["schemas"][ref.rsplit("/", 1)[-1]]
         fields = request["properties"]
-        if not all(key in fields for key in ("thinking_token_budget", "chat_template_kwargs")):
+        def accepts(field, kind):
+            if not isinstance(field, dict):
+                return False
+            declared = field.get("type")
+            if declared == kind or isinstance(declared, list) and kind in declared:
+                return True
+            return any(isinstance(field.get(union), list) and
+                       any(accepts(option, kind) for option in field[union])
+                       for union in ("anyOf", "oneOf"))
+        if (not isinstance(fields, dict)
+                or not accepts(fields.get("thinking_token_budget"), "integer")
+                or not accepts(fields.get("chat_template_kwargs"), "object")):
             return None
     except (KeyError, TypeError, AttributeError):
         return None
