@@ -689,9 +689,12 @@ class LinkService:
             last: Optional[BaseException] = None
             for fmt in formats:
                 try:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("total timeout")
                     return await link.chat(messages, images=req.images or None, max_tokens=req.max_tokens,
                                            temperature=req.temperature, capability=req.capability,
-                                           response_format=fmt, effort=req.effort,
+                                           response_format=fmt, effort=req.effort, timeout=remaining,
                                            **({"chat_template_kwargs": req.chat_template_kwargs} if req.chat_template_kwargs is not None else {}))
                 except BackendError as exc:
                     last = exc

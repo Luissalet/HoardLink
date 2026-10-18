@@ -46,7 +46,7 @@ class FakeLink:
         self.peak = 0
 
     async def chat(self, messages, images=None, max_tokens=None, temperature=None, capability="llm",
-                   response_format=None, effort=None):
+                   response_format=None, effort=None, timeout=None):
         kw = dict(messages=messages, images=images, max_tokens=max_tokens, temperature=temperature,
                   capability=capability, response_format=response_format, effort=effort)
         self.calls.append(kw)
