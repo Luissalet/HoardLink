@@ -784,6 +784,16 @@ Python sin Link: `hoard_link.family.chat(messages, json=True)` y
 están en [docs/FAMILY.md](docs/FAMILY.md#10-models-for-every-app); los
 ajustes del hub, en [docs/HUB.md](docs/HUB.md#models-for-every-app).
 
+Para recibir la respuesta por partes están `family.streamChat(...)` (Node),
+`family.stream_chat(...)` (Python estándar) y `Link.stream_chat(...)` (async).
+Por HTTP se añade `stream: true` a `/api/link/chat`. Los eventos llevan texto,
+razonamiento, argumentos de herramientas, uso y motivo de fin reales, además
+de estados de cola y latidos identificados. Cerrar o cancelar el iterador
+cancela la petición al proveedor y libera la cola. El tiempo total y el de
+inactividad son independientes; `finish_reason: length` indica
+`completed: false`. Las llamadas bloqueantes siguen disponibles. El
+[contrato de streaming](docs/FAMILY.md#incremental-generation) incluye ejemplos.
+
 ### Esferas, avisos, correo, Hoy y más (0.7)
 
 Nueve *facetas* viven en el hub, cada una con sus rutas, herramientas y pestaña (`hoard_link/hub/facets.py`):

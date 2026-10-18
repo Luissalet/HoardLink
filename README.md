@@ -758,6 +758,16 @@ Python without Link: `hoard_link.family.chat(messages, json=True)` and
 in [docs/FAMILY.md](docs/FAMILY.md#10-models-for-every-app); the hub's
 settings in [docs/HUB.md](docs/HUB.md#models-for-every-app).
 
+For incremental answers use `family.streamChat(...)` (Node),
+`family.stream_chat(...)` (stdlib Python), or native async
+`Link.stream_chat(...)`; HTTP callers add `stream: true` to `/api/link/chat`.
+Events carry real text, reasoning, tool arguments, usage and the provider's
+finish reason, plus identified queue/heartbeat states. Closing/cancelling the
+iterator cancels upstream and releases the queue slot. Total and upstream
+inactivity timeouts are independent; `finish_reason: length` has
+`completed: false`. Blocking calls remain available. See the
+[streaming contract and examples](docs/FAMILY.md#incremental-generation).
+
 ### Spheres, notifications, mail, Today and more (0.7)
 
 Ten *facets* sit on the hub, each with its own routes, tools and tab (`hoard_link/hub/facets.py`):
