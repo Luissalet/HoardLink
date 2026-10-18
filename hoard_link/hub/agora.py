@@ -158,6 +158,14 @@ MIGRATIONS.append("""
     ALTER TABLE tasks ADD COLUMN origin_snapshot TEXT;
     CREATE UNIQUE INDEX tasks_origin ON tasks(space_id, origin_ref) WHERE origin_ref IS NOT NULL;
 """)
+MIGRATIONS.append("""
+    CREATE TABLE task_edits (task_id INTEGER NOT NULL REFERENCES tasks(id), revision INTEGER NOT NULL,
+        author TEXT NOT NULL, created REAL NOT NULL, kind TEXT NOT NULL,
+        before_json TEXT, after_json TEXT NOT NULL, PRIMARY KEY(task_id, revision));
+    INSERT INTO task_edits(task_id,revision,author,created,kind,after_json)
+        SELECT id,0,'system',coalesce(updated,created,0),'baseline',json_object('title',title,'body',body,
+            'acceptance',acceptance,'priority',priority,'owner',owner) FROM tasks;
+""")
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -1732,8 +1740,8 @@ class Agora:
     @_space_operation
     def task_add(self, a: dict[str, Any]) -> dict[str, Any]:
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
-        title = _txt(a.get("title"), 200, "title", required=True)
-        body = _txt(a.get("body"), 20000, "body")
+        title = _txt(a.get("title"), 300, "title", required=True)
+        body = _txt(a.get("body"), 200000, "body")
         kind = str(a.get("kind") or "feature").lower()
         if kind not in TASK_KINDS:
             raise AgoraError(f"kind must be one of {', '.join(TASK_KINDS)}")
@@ -1769,13 +1777,14 @@ class Agora:
             tid = self.db.insert("tasks", {"title": title, "body": body, "repo": repo, "paths": _j(paths), "kind": kind,
                                            "priority": priority, "status": imported_status, "created_by": agent,
                                            "created": now, "updated": now, "space_id": self.space_id,
-                                           'acceptance': _txt(a.get('acceptance'), 20000, 'acceptance'), 'origin_ref': origin,
+                                           'acceptance': _txt(a.get('acceptance'), 200000, 'acceptance'), 'origin_ref': origin,
                                            'owner': assigned,
                                            'origin_snapshot': snapshot})
             th = self.db.insert("threads", {"title": title, "kind": "task", "task_id": tid, "status": "open",
                                             "created_by": agent, "created": now, "updated": now,
                                             "space_id": self.space_id})
             self.db.execute("UPDATE tasks SET thread_id=? WHERE id=?", (th, tid))
+            self._record_edit(self._task_row(tid), agent, None, 'created')
             self._msg(th, agent, "proposal", body or title, _list(a.get("mentions"), "mentions"))
             if clarification:
                 self._msg(th, agent, 'comment', clarification, [assigned] if assigned else [])
@@ -1788,6 +1797,14 @@ class Agora:
             res['task'] = self._task_row(tid)
         return res
 
+    def _record_edit(self, task, author, before, kind='edit'):
+        keys = ('title', 'body', 'acceptance', 'priority', 'owner')
+        snapshot = lambda value: {key: value.get(key) for key in keys}
+        latest = self.db.one('SELECT MAX(revision) AS n FROM task_edits WHERE task_id=?', (task['id'],))['n']
+        self.db.insert('task_edits', {'task_id': task['id'], 'revision': 0 if latest is None else latest + 1,
+            'author': author, 'created': self.clock(), 'kind': kind,
+            'before_json': _j(snapshot(before)) if before is not None else None, 'after_json': _j(snapshot(task))})
+
     @_space_operation
     def task_edit(self, a: dict[str, Any]) -> dict[str, Any]:
         """Shared project editor. Workflow approvals still use submit/review/done."""
@@ -1797,7 +1814,7 @@ class Agora:
             if not a.get('expected_etag') or a['expected_etag'] != task['etag']:
                 raise AgoraError('The task changed. Reload it before saving your changes.', 409)
             fields = {}
-            for key, limit in (('title', 200), ('body', 20000), ('acceptance', 20000)):
+            for key, limit in (('title', 300), ('body', 200000), ('acceptance', 200000)):
                 if key in a:
                     fields[key] = _txt(a[key], limit, key, required=key == 'title')
             if 'priority' in a:
@@ -1828,6 +1845,7 @@ class Agora:
                 if 'title' in fields:
                     self.db.execute('UPDATE threads SET title=? WHERE id=?', (fields['title'], task['thread_id']))
                 if fields.keys() - {'updated'}:
+                    self._record_edit(self._task_row(task['id']), agent, task)
                     self._system(task, f"{agent} edited: " + ', '.join(key for key in fields if key != 'updated'), agent)
                 if note:
                     self._msg(task['thread_id'], agent, 'comment', note,
@@ -2506,7 +2524,13 @@ class Agora:
             with self.db.tx():
                 self._ack(reader, int(task["thread_id"]), max((m["id"] for m in msgs), default=0) or None)
         locks = [dict(r) for r in self.db.query("SELECT * FROM locks WHERE task_id=? AND expires>?", (task["id"], self.clock()))]
+        edits = [{**dict(row), 'before': json.loads(row['before_json']) if row['before_json'] else None,
+                  'after': json.loads(row['after_json'])} for row in self.db.query(
+                      'SELECT * FROM task_edits WHERE task_id=? ORDER BY revision', (task['id'],))]
+        for edit in edits:
+            del edit['before_json'], edit['after_json']
         return {"ok": True, "task": task, "messages": msgs, "locks": locks,
+                'edits': edits,
                 "timeline": self.timeline({"task_id": task["id"], "limit": 100})}
 
     # -- threads -------------------------------------------------------------------------------------------------
