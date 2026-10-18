@@ -528,8 +528,14 @@ class CatalogBridge:
 
         def to_tool(entry: Mapping[str, Any]) -> Any:
             annotations = {k: v for k, v in (entry.get("annotations") or {}).items() if k in _ANNOTATION_KEYS}
-            return MCPTool(name=entry["name"], description=entry.get("description") or "", inputSchema=entry.get("inputSchema") or {"type": "object"},
-                           annotations=ToolAnnotations(**annotations) if annotations else None)
+            schema = entry.get("inputSchema") or {"type": "object"}
+            if "x-timeout-s" in entry:
+                # MCP 1.x keeps Tool extras; 2.x filters them on the wire.
+                # Preserve the existing JSON Schema fallback as well.
+                schema = {**schema, "x-timeout-s": entry["x-timeout-s"]}
+            return MCPTool(name=entry["name"], description=entry.get("description") or "", inputSchema=schema,
+                           annotations=ToolAnnotations(**annotations) if annotations else None,
+                           **({"x-timeout-s": entry["x-timeout-s"]} if "x-timeout-s" in entry else {}))
 
         def to_result(result: BridgeResult) -> Any:
             parts = [TextContent(type="text", text=p["text"]) if p["type"] == "text"

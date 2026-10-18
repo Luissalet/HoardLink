@@ -922,6 +922,13 @@ def test_stdio_server_lists_calls_and_heartbeats(app, data_dir):
         assert {t["name"] for t in tools} == {"echo", "slow", "slow_write", "fail", "pic", "html", "hang_up"}
         echo = next(t for t in tools if t["name"] == "echo")
         assert echo["annotations"]["readOnlyHint"] is True and echo["inputSchema"]["type"] == "object"
+        slow = next(t for t in tools if t["name"] == "slow")
+        assert slow["inputSchema"]["x-timeout-s"] == 10
+        import importlib.metadata
+        if importlib.metadata.version("mcp").split(".")[0] == "1":
+            assert slow["x-timeout-s"] == 10
+        assert "x-timeout-s" not in echo
+        assert "x-timeout-s" not in app.tools[1]["inputSchema"]  # Catalog input remains untouched.
         send({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "echo", "arguments": {"a": "b"}}})
         ok = wait_for(lambda m: m.get("id") == 3)["result"]
         assert ok["isError"] is False and json.loads(ok["content"][0]["text"]) == {"echo": {"a": "b"}}
