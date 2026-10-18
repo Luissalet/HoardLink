@@ -522,6 +522,8 @@ CatalogBridge(app="kafka", service="kafka-hoard", package="kafka_hoard", default
   a `wait_s` argument stretches it to `clamp_wait(wait_s) + 30` s so the bridge never cuts before the app's own wait ends (Galton 660 s, Lumiere 300 s,
   Kafka's 175 s for `pdf_*` become `default_timeout` / `tool_timeouts` / `x-timeout-s`). Calls longer than `heartbeat_s` send `report_progress`
   **heartbeats** (a no-op unless the client asked for progress) so clients that reset their timeout on progress keep waiting (Links' Node bridge only).
+  MCP discovery preserves that hint both as a Tool extension when supported and in `inputSchema["x-timeout-s"]`, the existing fallback for SDKs that filter Tool extras. It does not change the app catalogue in place.
+  The Hub's stdio bridge observes `hub_call_app` for its official `timeout_s` budget (default 120 s, existing clamp 1..900 s) plus 15 s transport grace, with the previous 90 s floor. Other tools keep 90 s; `hub_link_chat` keeps its existing override. A lost response is not retried.
 * **`outcome_unknown`:** a tool that is not read-only whose request was sent but got no answer (timeout, connection dropped) returns
   `{"error", "code": "outcome_unknown", "status": "outcome_unknown", "outcome_unknown": true, "reconcile_action": "read_current_state_before_retry"}`
   (Ledger's and People's Node semantics; a Python bridge gave an error identical to "nothing happened"). A refused connection is **not** unknown: the request never left.
