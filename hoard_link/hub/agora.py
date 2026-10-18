@@ -1769,6 +1769,7 @@ class Agora:
                 raise AgoraError('origin_snapshot must be a JSON object') from None
         repo = _txt(a.get("repo"), 120, "repo")
         blocked_by = self._dep_ids(a.get("blocked_by"), "blocked_by")
+        blocks = self._dep_ids(a.get('blocks'), 'blocks')
         now = self.clock()
         with self.db.tx():
             self._touch(agent)
@@ -1798,6 +1799,8 @@ class Agora:
                 self._msg(th, agent, 'comment', clarification, [assigned] if assigned else [])
             if blocked_by:
                 self._apply_deps(agent, self._task_row(tid), add=blocked_by, remove=[], replace=None)
+            for dependent in blocks:
+                self._apply_deps(agent, self._task_row(dependent), add=[tid], remove=[], replace=None)
         self._bump("agora.task.added", {"task_id": tid, "title": title, "by": agent, "repo": repo, "kind": kind})
         res = {"ok": True, "task": self._task_row(tid)}
         if a.get("claim"):
@@ -3144,6 +3147,7 @@ TOOLS: list[dict[str, Any]] = [
                              "repo": {"type": "string"}, "paths": _STRS, "kind": {"type": "string"},
                              "priority": {"type": "integer"}, "mentions": _STRS, "claim": {"type": "boolean"},
                              "blocked_by": {"type": "array", "items": {"type": "integer"}},
+                             "blocks": {"type": "array", "items": {"type": "integer"}},
                              "locks": _STRS, "ttl_s": {"type": "integer"}}, ["agent", "title"])},
     {"name": "hub_agora_task_edit", "description": "Edit the shared project task: description, acceptance, priority, assignment and clarifications. Read the task first and send its etag; stale edits are rejected. Reassignment transfers its leases; changes to acceptance during review require review again.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "expected_etag": {"type": "string"},
