@@ -54,8 +54,12 @@ def _nvidia_smi() -> str:
     return "nvidia-smi"
 
 
-def probe_gpu_memory(timeout_s: float = 2.0) -> GpuProbe:
-    """Blocking query with diagnostics; from async code use asyncio.to_thread."""
+def probe_gpu_memory(timeout_s: float = 10.0) -> GpuProbe:
+    """Blocking query with diagnostics; from async code use asyncio.to_thread.
+
+    Driver startup on a busy Windows host can take more than two seconds.
+    Keep a bounded wait without treating that normal startup as missing VRAM.
+    """
     creationflags = 0
     if sys.platform == "win32":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -104,6 +108,6 @@ def probe_gpu_memory(timeout_s: float = 2.0) -> GpuProbe:
     return GpuProbe(tuple(out))
 
 
-def gpu_free_mb(timeout_s: float = 2.0) -> list[GpuMemory]:
+def gpu_free_mb(timeout_s: float = 10.0) -> list[GpuMemory]:
     """Legacy best-effort view. Admission decisions must use probe_gpu_memory."""
     return list(probe_gpu_memory(timeout_s).gpus)
