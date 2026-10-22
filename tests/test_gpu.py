@@ -1,10 +1,36 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 
 import pytest
 
 from hoard_link import gpu
+
+
+def test_gpu_probe_allows_slow_driver_startup(monkeypatch):
+    run = subprocess.run
+
+    def slow_driver(*args, **kwargs):
+        return run([sys.executable, "-c", "import time; time.sleep(2.2); print('3, 16311, 56')"], **kwargs)
+
+    monkeypatch.setattr(gpu.subprocess, "run", slow_driver)
+    result = gpu.probe_gpu_memory()
+    assert result.status == "ready"
+    assert result.gpus[0].free_mb == 16255
+
+
+def test_gpu_probe_respects_explicit_short_deadline(monkeypatch):
+    run = subprocess.run
+
+    def slow_driver(*args, **kwargs):
+        return run([sys.executable, "-c", "import time; time.sleep(2.2)"], **kwargs)
+
+    monkeypatch.setattr(gpu.subprocess, "run", slow_driver)
+    result = gpu.probe_gpu_memory(timeout_s=0.1)
+    assert result.status == "error"
+    assert result.error_type == "timeout"
+    assert result.gpus == ()
 
 
 def test_gpu_free_mb_parses_nvidia_smi_output(monkeypatch):
