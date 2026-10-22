@@ -54,6 +54,16 @@ def _psutil():
 # health
 # ---------------------------------------------------------------------------
 
+class _LazyHTTPSHandler(urllib.request.HTTPSHandler):
+    """Load Windows certificates only when a request actually uses HTTPS."""
+
+    def __init__(self):
+        urllib.request.AbstractHTTPHandler.__init__(self)
+
+    def https_open(self, req):
+        return urllib.request.HTTPSHandler().https_open(req)
+
+
 @dataclass
 class Health:
     state: str                       # healthy | foreign | down
@@ -75,7 +85,7 @@ def fetch_json(url: str, timeout: float = HEALTH_TIMEOUT_S, *, follow_redirects:
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             return None
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LazyHTTPSHandler(),
                                          *([] if follow_redirects else [NoRedirect()]))
     try:
         with opener.open(req, timeout=timeout) as resp:
@@ -101,7 +111,7 @@ def fetch_json_post(url: str, body: Any, timeout: float = 120.0) -> tuple[Option
     """POST JSON to a loopback URL; same contract as :func:`fetch_json`."""
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
                                  headers={"Content-Type": "application/json", "User-Agent": "hoard-hub"})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LazyHTTPSHandler())
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw, status = resp.read(), resp.status

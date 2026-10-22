@@ -19,3 +19,10 @@ concurrent opener independence are checked separately.
 This removes unnecessary TLS initialization from HTTP. The fetch functions are
 still synchronous; it does not establish event-loop availability during network
 I/O or certify application health.
+
+App health probes and startup POSTs in `hub.procs` also avoid loading certificate
+stores for plain HTTP. Their HTTPS handler initializes the standard TLS context
+only when an HTTPS request is opened, including an allowed HTTP-to-HTTPS redirect.
+Certificate verification, disabled proxies, optional redirect refusal, response
+size limits and timeouts keep their existing behavior. This prevents repeated
+local catalogue polling from repeatedly loading the Windows certificate stores.
