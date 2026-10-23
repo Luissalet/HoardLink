@@ -83,7 +83,7 @@
     if (!ms.length) { out.appendChild(el("div", "hint", t("no_match"))); return; }
     out.appendChild(el("div", "rf-title", t("matches")));
     for (const m of ms) {
-      const row = el("div", "rf-node");
+      const row = el("button", "rf-node");
       row.appendChild(el("span", "rf-label", m.title));
       row.appendChild(el("span", "rf-uri", short(m.uri)));
       row.appendChild(el("span", "hint", `${m.links} ${t("links")}`));
@@ -107,7 +107,7 @@
     for (const app of Object.keys(groups).sort()) {
       const g = el("div", "rf-group"); g.appendChild(appHead(app, groups[app][0].app_url));
       for (const n of groups[app]) {
-        const row = el("div", "rf-node");
+        const row = el("button", "rf-node");
         const rels = r.edges.filter((e) => (e.from === n.uri && e.to === r.uri) || (e.to === n.uri && e.from === r.uri));
         row.appendChild(el("span", "rf-label", labelOf(n)));
         row.appendChild(el("span", "rf-uri", short(n.uri)));
@@ -125,7 +125,7 @@
 
   function edgeRow(e, byUri, withRemove) {
     const row = el("div", "rf-edge");
-    const end = (uri, label) => { const s = el("span", "rf-end", label || (byUri && byUri[uri] ? labelOf(byUri[uri]) : short(uri))); s.title = uri; s.onclick = () => go(uri); return s; };
+    const end = (uri, label) => { const s = el("button", "rf-end", label || (byUri && byUri[uri] ? labelOf(byUri[uri]) : short(uri))); s.title = uri; s.onclick = () => go(uri); return s; };
     row.appendChild(end(e.from, e.from_label));
     row.appendChild(el("span", "rf-arrow", `—${e.rel}→`));
     row.appendChild(end(e.to, e.to_label));
@@ -157,7 +157,7 @@
       injectCss();
       box = container;
       const tools = el("div", "tab-tools");
-      input = el("input", "rf-q"); input.type = "search"; input.placeholder = t("ph"); input.style.minWidth = "320px";
+      input = el("input", "rf-q"); input.type = "search"; input.placeholder = t("ph"); input.setAttribute("aria-label", t("ph"));
       input.onkeydown = (e) => { if (e.key === "Enter") go(); };
       depthSel = el("select"); for (const [v, k] of [["1", "depth1"], ["2", "depth2"]]) { const o = el("option", "", t(k)); o.value = v; depthSel.appendChild(o); }
       const btn = el("button", "primary small", t("go")); btn.onclick = () => go();

@@ -288,12 +288,15 @@
 
     // routing (read-only here)
     const rt = el("fieldset"); rt.appendChild(el("legend", "", t("routing")));
-    const tbl = el("table"); const hd = el("tr", "hdr"); hd.appendChild(el("th"));
+    const tbl = el("table", "nt-routing"); const hd = el("tr", "hdr"); hd.appendChild(el("th"));
     for (const p of PRIOS) hd.appendChild(el("th", "", t(p)));
     tbl.appendChild(hd);
     for (const [id, s] of Object.entries(cfgView.routing || {})) {
-      const row = el("tr"); const th = el("th", "", L(s.name) || id); row.appendChild(th);
-      for (const p of PRIOS) row.appendChild(el("td", "", ((s.notify || {})[p] || []).map((c) => c === "digest" ? t("digest_ch") : c).join(", ") || "–"));
+      const row = el("tr"); const th = el("th", "", L(s.name) || id); th.scope = "row"; row.appendChild(th);
+      for (const p of PRIOS) {
+        const td = el("td", "", ((s.notify || {})[p] || []).map((c) => c === "digest" ? t("digest_ch") : c).join(", ") || "–");
+        td.dataset.label = t(p); row.appendChild(td);
+      }
       tbl.appendChild(row);
     }
     rt.appendChild(tbl); rt.appendChild(el("div", "hint", t("routing_hint")));

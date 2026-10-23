@@ -84,7 +84,9 @@
     container.appendChild(tools);
     loginEl = el("div"); loginEl.hidden = true; container.appendChild(loginEl);
     formEl = el("div"); formEl.hidden = true; container.appendChild(formEl);
-    sourcesEl = el("div", "ch-sources"); container.appendChild(sourcesEl);
+    const sourceDetails = el("details", "ch-source-settings");
+    const sourceSummary = el("summary", "", L({es:"Fuentes y conexiones",en:"Sources and connections"})); sourceDetails.appendChild(sourceSummary);
+    sourcesEl = el("div", "ch-sources"); sourceDetails.appendChild(sourcesEl); container.appendChild(sourceDetails);
     const head = el("div", "tab-tools");
     head.appendChild(el("b", "", t("recent")));
     srcSel = el("select", "small"); srcSel.onchange = () => { lastSig = ""; loadMessages(); };
@@ -94,7 +96,7 @@
     for (const x of [srcSel, sphSel, qInp]) head.appendChild(x);
     container.appendChild(head);
     groupsEl = el("div"); container.appendChild(groupsEl);
-    bus.addEventListener("lang", () => { addBtn.textContent = t("add"); qInp.placeholder = t("search"); lastSig = ""; load(); });
+    bus.addEventListener("lang", () => { sourceSummary.textContent = L({es:"Fuentes y conexiones",en:"Sources and connections"}); addBtn.textContent = t("add"); qInp.placeholder = t("search"); lastSig = ""; load(); });
     bus.addEventListener("sphere", () => { /* the sphere filter stays what the person chose here */ });
   }
 

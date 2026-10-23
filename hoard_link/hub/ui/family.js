@@ -337,6 +337,7 @@
       row.appendChild(el("td", a.data_dir_exists ? "" : "warn", a.data_size ? fmtBytes(a.data_size.bytes) : "—"));
       row.appendChild(el("td", a.data_gitignored === false ? "bad" : (a.data_gitignored ? "ok" : "muted"), a.data_gitignored === false ? "✗" : (a.data_gitignored ? "✓" : "?")));
       row.appendChild(el("td", "muted", a.tools ? String(a.tools.length) : "—"));
+      [...row.children].forEach((cell, i) => { cell.dataset.label = tr.children[i].textContent; });
       tb.appendChild(row);
     }
     tbl.appendChild(tb); const box = $("#audit-table"); box.innerHTML = ""; box.appendChild(tbl);
@@ -435,6 +436,7 @@
       row.title = r.error || r.issues.map(issueText).join("\n");
       row.onclick = () => openRepo(r.name);
       row.onkeydown = (ev) => { if (ev.key === "Enter") openRepo(r.name); };
+      [...row.children].forEach((cell, i) => { cell.dataset.label = tr.children[i].textContent; });
       tb.appendChild(row);
     }
     tbl.appendChild(tb); box.appendChild(tbl);

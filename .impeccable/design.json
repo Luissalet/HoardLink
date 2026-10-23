@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-23T07:40:52.7760171+02:00",
+  "generatedAt": "2026-10-23T13:52:23.8606765+02:00",
   "title": "Design System: HoardLink Hub and Ágora",
   "extensions": {
     "colorMeta": {
@@ -471,16 +471,30 @@
       {
         "name": "hub-mobile",
         "value": "760px"
+      },
+      {
+        "value": "1400px",
+        "name": "hub-interior-records"
+      },
+      {
+        "name": "hub-low-desktop",
+        "value": "850px height",
+        "purpose": "At max-height 850px and min-width 761px the rail is static in document flow."
       }
     ],
     "surfaceScopes": {
       "hub": {
-        "description": "Project library navigation shell. Final navigation.css overrides own the shell palette; some inherited facet fields retain direct shared-theme values. Hub-prefixed component samples use these actual resolved defaults.",
+        "description": "Project library navigation and shared-tool interiors. navigation.css owns the existing graphite/sage palette; later interiors.css applies the shared reading/control scale and field surface to main content and dialogs. Separate apps/agora guidance remains scoped and intact.",
         "source": [
           "hoard_link/hub/ui/index.html",
           "hoard_link/hub/ui/navigation.js",
           "hoard_link/hub/ui/navigation.css",
-          "hoard_link/ui/hoard-theme.css"
+          "hoard_link/ui/hoard-theme.css",
+          "hoard_link/hub/ui/interiors.css",
+          "hoard_link/hub/ui/mail.js",
+          "hoard_link/hub/ui/chats.js",
+          "hoard_link/hub/ui/refs.js",
+          "hoard_link/hub/ui/family.js"
         ],
         "tokenPrefix": "hub-"
       },
@@ -525,6 +539,33 @@
           "Do derive the native workspace URL from coordination configuration and preserve the selected `space_id`."
         ]
       }
+    },
+    "interiorPatterns": {
+      "references": {
+        "description": "Result rows and relation endpoints use native buttons; search has an accessible label and long URIs wrap.",
+        "source": "hoard_link/hub/ui/refs.js"
+      },
+      "chatSources": {
+        "description": "Sources and connections is a native details/summary disclosure so history remains the primary reading surface. Disabled sources retain full opacity with an explicit written state.",
+        "source": "hoard_link/hub/ui/chats.js"
+      },
+      "mail": {
+        "drafts": "Settings/status are hidden in reader. Unsaved configuration survives polling but hidden reader drafts are excluded from copilot pending_forms.",
+        "source": "hoard_link/hub/ui/mail.js",
+        "errors": "Loading and error/retry remain explicit. Same-sphere cached list survives transient loading failure.",
+        "structure": "One active Attention/Unclaimed/Recent queue, local filter, divided message list and full reader replace each other in document flow.",
+        "returnState": "Back preserves queue/category/query/page within the sphere and restores row focus. Sphere changes reset scope and invalidate superseded list/detail responses.",
+        "dataScope": "20 rows per client page; requests up to40 Attention and100 Unclaimed from7 days, plus40 Recent. Search covers loaded subject, sender name/address and snippet, not server archive or full bodies.",
+        "content": "Text DOM renders paragraphs and simple headings. Only resolved HTTP/HTTPS URLs become links; attachments retain available labels/sizes. No message HTML interpretation."
+      },
+      "responsiveRows": {
+        "description": "Work, notifications, chats, references and agent sessions wrap at760px. Mail summaries span below sender/date and repo/audit tables become header-labeled three-column records at1400px, two at760px. Repository dialog owns its vertical scrolling; its mobile header stacks title and44px actions. Session summaries/reasons use14px.",
+        "source": "hoard_link/hub/ui/interiors.css"
+      },
+      "sharedScale": {
+        "description": "Controls 14px, row titles 15px, mail body 16px/1.8 at max 72ch; metadata 12–13px. Buttons/selectors min-height 38px desktop, content buttons/selectors 44px at 760px. Main max-width1640px; heading margin-bottom28px. No palette or frontmatter token changes.",
+        "source": "hoard_link/hub/ui/interiors.css"
+      }
     }
   },
   "components": [
@@ -555,9 +596,9 @@
     {
       "name": "Hub — Project Search",
       "kind": "input",
-      "description": "Inherited warm shared-theme field, with the shell divider and sage focus border.",
+      "description": "Project search uses the later interior field rules: graphite Hub surface, 6px corners,14px control type and sage focus border.",
       "html": "<input class=\"ds-hub-search\" type=\"search\" placeholder=\"Buscar proyecto…\" aria-label=\"Buscar proyecto\">",
-      "css": ".ds-hub-search{font:400 14px var(--font,'Segoe UI',sans-serif);color:var(--text,#f0f1ed);background:var(--hoard-surface,#24221b);border:1px solid var(--line,#3b4240);border-radius:var(--hoard-radius,8px);padding:8px 12px;min-width:220px;width:min(100%,440px);outline:none;caret-color:var(--accent,#c4d9b5)}.ds-hub-search:focus{border-color:var(--accent,#c4d9b5)}"
+      "css": ".ds-hub-search{font:400 14px var(--font,'Segoe UI',sans-serif);color:var(--text,#f0f1ed);background:var(--bg-2,#202323);border:1px solid var(--line,#3b4240);border-radius:6px;padding:9px 11px;min-width:0;max-width:100%;width:min(100%,440px);outline:none;caret-color:var(--accent,#c4d9b5)}.ds-hub-search:focus{border-color:var(--accent,#c4d9b5)}"
     },
     {
       "name": "Hub — Shared Tool Row",
