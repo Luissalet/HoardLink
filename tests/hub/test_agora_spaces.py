@@ -236,7 +236,7 @@ def test_browser_spaces_preserve_draft_create_rename_and_ignore_late_board(tmp_p
             page.goto(hub.config.url)
             page.evaluate("localStorage.setItem('hub.lang', 'es')")
             page.reload()
-            page.goto(hub.config.url + '/#hub/project')
+            page.goto(hub.config.url + '/#hub/agora')
             tab = page.locator("#tab-agora")
             picker = tab.locator('.ag-spacebar select')
             picker.locator(f'option[value="{sid}"]').wait_for(state="attached")

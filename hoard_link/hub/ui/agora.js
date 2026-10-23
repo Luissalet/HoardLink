@@ -17,6 +17,7 @@
   const inboxFlights = new Map();
   let loadFlight = null;
   let loadEpoch = -1;
+  let waitingEpoch = 0;
 
   function waitingInbox() {
     const key = `${activeSpace}:${spaceEpoch}`;
@@ -582,7 +583,10 @@
         if (!result?.ok) throw new Error(result?.error || t('quick_error'));
         ta.value = ''; form.hidden = true;
         quickReplies.delete(key); node.remove();
-        if (sid === activeSpace) { toast(t('quick_sent')); renderWaiting().catch(showError); }
+        if (sid === activeSpace) {
+          inboxFlights.delete(`${sid}:${spaceEpoch}`);
+          toast(t('quick_sent')); renderWaiting().catch(showError);
+        }
       } catch (_) {
         error.textContent = t('quick_error');
       } finally {
@@ -605,8 +609,9 @@
   }
 
   async function renderWaiting() {
+    const generation = ++waitingEpoch;
     const r = await waitingInbox();
-    if (r?.spaceChanged) return;
+    if (r?.spaceChanged || generation !== waitingEpoch) return;
     if (!r?.ok) throw new Error(r?.error || t('load_error'));
     const esc = (r && r.escalated) || [];
     const reviews = ((r && r.reviews) || []).filter((x) => x.reviewer === "luis");
@@ -1013,7 +1018,7 @@
     }
     const url = new URL(location.href);
     if (sid === 'ecosystem') url.searchParams.delete('space_id'); else url.searchParams.set('space_id', sid);
-    url.hash = location.hash.startsWith('#hub/') ? 'hub/project' : current?.type === 'thread' ? `agora-${current.id}` : '';
+    url.hash = location.hash.startsWith('#hub/') ? (location.hash === '#hub/agora' ? 'hub/agora' : 'hub/project') : current?.type === 'thread' ? `agora-${current.id}` : '';
     history.replaceState(null, '', url);
     renderAgents(lastBoard || {agents: []}); renderBoard(lastBoard || {tasks: []});
     renderDecisions(lastBoard || {decisions: []}); threadsBox.replaceChildren(); waitBox.hidden = true;

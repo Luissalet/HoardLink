@@ -38,7 +38,7 @@ def test_agora_tab_unread_filters_keyboard_errors_and_layout(tmp_path, width, he
                 page.goto(base + "/")
                 page.evaluate("language => localStorage.setItem('hub.lang', language)", language)
                 page.goto(base + "/")
-                page.goto(base + "/#hub/project")
+                page.goto(base + "/#hub/agora")
                 tab = page.locator("#tab-agora")
                 row = tab.locator(".ag-th", has_text="Plan de la interfaz")
                 row.wait_for()
