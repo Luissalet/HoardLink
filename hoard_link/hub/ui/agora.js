@@ -13,6 +13,20 @@
   let spaceEpoch = 0;
   let spacePicker, formsBox;
   const spaceViews = new Map();
+  const quickReplies = new Map();
+  const inboxFlights = new Map();
+  let loadFlight = null;
+  let loadEpoch = -1;
+
+  function waitingInbox() {
+    const key = `${activeSpace}:${spaceEpoch}`;
+    if (!inboxFlights.has(key)) {
+      const flight = api('/api/agora/inbox?agent=luis&peek=1&limit=1');
+      inboxFlights.set(key, flight);
+      flight.finally(() => { if (inboxFlights.get(key) === flight) inboxFlights.delete(key); }).catch(() => {});
+    }
+    return inboxFlights.get(key);
+  }
 
   async function api(path, body) {
     const epoch = spaceEpoch, sid = activeSpace;
@@ -29,6 +43,12 @@
     rename_space: { es: "Renombrar proyecto", en: "Rename project" },
     hint: { es: "Donde los agentes y tú os repartís el trabajo, debatís y decidís.", en: "Where the agents and you split the work, argue and decide." },
     waiting: { es: "Te esperan", en: "Waiting for you" },
+    quick_reply: { es: "Responder aquí", en: "Reply here" },
+    quick_text: { es: "Tu respuesta", en: "Your reply" },
+    quick_close: { es: "Responder y cerrar", en: "Reply and resolve" },
+    quick_sent: { es: "Respuesta enviada", en: "Reply sent" },
+    quick_error: { es: "No se ha podido enviar. Tu respuesta sigue aquí; vuelve a intentarlo.", en: "Could not send. Your reply is still here; try again." },
+    view_thread: { es: "Ver conversación", en: "View conversation" },
     agents: { es: "Agentes", en: "Agents" },
     no_agents: { es: "Ningún agente se ha presentado todavía.", en: "No agent has checked in yet." },
     tasks: { es: "Tareas", en: "Tasks" },
@@ -518,30 +538,95 @@
     }
   }
 
+  function quickReply(th) {
+    const sid = activeSpace, key = `${sid}:${th.id}`;
+    let draft = quickReplies.get(key);
+    if (draft) { draft.updateLabels(); return draft.node; }
+    const node = el('article', 'ag-quick-item');
+    node.dataset.threadId = String(th.id);
+    const title = el('h5', 'ag-quick-title', th.title);
+    const question = el('p', 'ag-quick-question', th.question || '');
+    const meta = el('div', 'hint', `${th.escalated_by || ''} · ${fmtWhen(th.updated)}`);
+    const actions = el('div', 'ag-quick-actions');
+    const reply = el('button', 'primary small', t('quick_reply'));
+    const view = el('button', 'small', t('view_thread'));
+    view.onclick = () => openThread(th.id);
+    const form = el('div', 'ag-quick-form'); form.hidden = true;
+    const label = el('label'), labelText = el('span', '', t('quick_text'));
+    const ta = el('textarea'); ta.maxLength = 20000; label.append(labelText, ta);
+    const controls = el('div', 'ag-quick-actions');
+    const send = el('button', 'primary small', t('send'));
+    const cancel = el('button', 'small', t('cancel'));
+    const error = el('div', 'ag-quick-error'); error.setAttribute('role', 'alert');
+    let resolveButton;
+    draft = {node, title, question, meta, th, ta, form, sending:false, updateLabels() {
+      reply.textContent = t('quick_reply'); view.textContent = t('view_thread');
+      labelText.textContent = t('quick_text'); send.textContent = t('send'); cancel.textContent = t('cancel');
+      if (resolveButton) resolveButton.textContent = t('quick_close');
+    }};
+    quickReplies.set(key, draft);
+    reply.onclick = () => { form.hidden = false; reply.setAttribute('aria-expanded', 'true'); ta.focus(); };
+    reply.setAttribute('aria-expanded', 'false');
+    cancel.onclick = () => { form.hidden = true; reply.setAttribute('aria-expanded', 'false'); reply.focus(); };
+    const submit = async (resolve) => {
+      const body = ta.value.trim();
+      if (!body) { error.textContent = t('need_text'); ta.focus(); return; }
+      if (draft.sending) return;
+      draft.sending = true; error.textContent = '';
+      controls.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      try {
+        // Capture the project now. Changing projects while sending must never redirect this reply.
+        const payload = {agent:'luis', space_id:sid, thread_id:th.id};
+        const result = await rawApi('/api/agora/' + (resolve ? 'resolve' : 'post'),
+          {...payload, ...(resolve ? {resolution:body} : {body, kind:'comment'})});
+        if (!result?.ok) throw new Error(result?.error || t('quick_error'));
+        ta.value = ''; form.hidden = true;
+        quickReplies.delete(key); node.remove();
+        if (sid === activeSpace) { toast(t('quick_sent')); renderWaiting().catch(showError); }
+      } catch (_) {
+        error.textContent = t('quick_error');
+      } finally {
+        draft.sending = false;
+        controls.querySelectorAll('button').forEach(b => { b.disabled = false; });
+      }
+    };
+    send.onclick = () => submit(false);
+    ta.addEventListener('keydown', event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); submit(false); }
+    });
+    controls.append(send);
+    if (th.kind !== 'task') {
+      resolveButton = el('button', 'small', t('quick_close'));
+      resolveButton.onclick = () => submit(true); controls.appendChild(resolveButton);
+    }
+    controls.appendChild(cancel); form.append(label, controls, error);
+    actions.append(reply, view); node.append(title, meta, question, actions, form);
+    return node;
+  }
+
   async function renderWaiting() {
-    const r = await api("/api/agora/inbox?agent=luis&peek=1");
+    const r = await waitingInbox();
     if (r?.spaceChanged) return;
-    waitBox.replaceChildren();
+    if (!r?.ok) throw new Error(r?.error || t('load_error'));
     const esc = (r && r.escalated) || [];
     const reviews = ((r && r.reviews) || []).filter((x) => x.reviewer === "luis");
     const progress = (r && r.progress_alerts) || [];
     setBadge(esc.length);
     if (!esc.length && !reviews.length && !progress.length) { waitBox.hidden = true; return; }
     waitBox.hidden = false;
-    waitBox.appendChild(el("h4", "", `${t("waiting")} (${esc.length + reviews.length + progress.length})`));
+    let heading = waitBox.querySelector('h4');
+    if (!heading) { heading = el('h4'); waitBox.prepend(heading); }
+    heading.textContent = `${t("waiting")} (${esc.length + reviews.length + progress.length})`;
+    const retained = new Set([heading]);
     for (const th of esc) {
-      const row = el("div", "ag-th escalated");
-      row.appendChild(pill(S["k_" + th.kind] ? t("k_" + th.kind) : th.kind));
-      const txt = el("span", "ag-t");
-      txt.appendChild(el("b", "", th.title));
-      if (th.question) txt.appendChild(el("div", "hint", `${th.escalated_by || ""}: ${th.question}`));
-      row.appendChild(txt);
-      row.appendChild(el("span", "hint", fmtWhen(th.updated)));
-      row.onclick = () => openThread(th.id);
-      waitBox.appendChild(row);
+      const row = quickReply(th), draft = quickReplies.get(`${activeSpace}:${th.id}`);
+      draft.th = th; draft.title.textContent = th.title; draft.question.textContent = th.question || '';
+      draft.meta.textContent = `${th.escalated_by || ''} · ${fmtWhen(th.updated)}`;
+      retained.add(row);
+      if (row.parentNode !== waitBox) waitBox.appendChild(row);
     }
-    for (const task of reviews) waitBox.appendChild(taskCard(task));
-    for (const task of progress) waitBox.appendChild(taskCard(task));
+    for (const task of [...reviews, ...progress]) { const row = taskCard(task); retained.add(row); waitBox.appendChild(row); }
+    for (const child of [...waitBox.children]) if (!retained.has(child)) child.remove();
   }
 
   function showError(err) {
@@ -554,24 +639,30 @@
     const again = el("button", "small", t("retry")); again.onclick = () => load(); errorBox.appendChild(again);
   }
 
-  async function load() {
+  function load() {
     if (!box) return;
     const epoch = spaceEpoch;
-    try {
-      const b = await api("/api/agora/board");
+    if (loadFlight && loadEpoch === epoch) return loadFlight;
+    loadEpoch = epoch;
+    // A slow board/observer must not hold up the person's questions or conversations.
+    const board = api('/api/agora/board').then(b => {
       if (b?.spaceChanged) return;
-      if (!b || !b.ok) throw new Error((b && b.error) || "board");
+      if (!b?.ok) throw new Error(b?.error || 'board');
       lastBoard = b;
       renderAgents(b); renderBoard(b); renderLocks(b); renderDecisions(b);
-      // the observer is optional (404 when disabled) and must never block the rest of the page
-      api("/api/agora/watch").then((w) => { if (w?.spaceChanged) return; lastWatch = w && w.ok ? w : null; renderQuestions(lastWatch); renderUnbound(lastWatch, b); }).catch(() => {});
-      await Promise.all([renderThreads(), renderWaiting()]);
+      api('/api/agora/watch').then(w => {
+        if (w?.spaceChanged) return;
+        lastWatch = w?.ok ? w : null; renderQuestions(lastWatch); renderUnbound(lastWatch, b);
+      }).catch(() => {});
+    });
+    const flight = Promise.allSettled([board, renderThreads(), renderWaiting()]).then(async results => {
       if (epoch !== spaceEpoch) return;
-      showError(null);
+      const failed = results.find(r => r.status === 'rejected');
+      showError(failed ? failed.reason : null);
       if (current) await refreshDetail();
-    } catch (e) {
-      if (epoch === spaceEpoch) showError(e);
-    }
+    }).finally(() => { if (loadFlight === flight) loadFlight = null; });
+    loadFlight = flight;
+    return flight;
   }
 
   function rerenderFiltered() { if (lastBoard) { renderBoard(lastBoard); renderDecisions(lastBoard); } renderThreads().catch(showError); }
@@ -978,7 +1069,7 @@
     return s;
   }
 
-  async function pollBadge() { const r = await api("/api/agora/inbox?agent=luis&peek=1"); if (r && r.ok) setBadge((r.escalated || []).length); }
+  async function pollBadge() { const r = await waitingInbox(); if (r && r.ok) setBadge((r.escalated || []).length); }
 
   function openFromHash() {
     const m = /^#agora-(\d+)$/.exec(location.hash || "");
