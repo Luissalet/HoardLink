@@ -1,5 +1,5 @@
 """#132 in a real browser on the hub page: unread per thread, «new» marks, filters, keyboard, errors with retry, and the
-list/detail layout at 1280x720 (side by side) and 390 px (one column, no horizontal scroll)."""
+list/detail pages at 1280x720 and 390 px, with document scrolling and no horizontal scroll."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def test_agora_tab_unread_filters_keyboard_errors_and_layout(tmp_path, width, he
                 page.goto(base + "/")
                 page.evaluate("language => localStorage.setItem('hub.lang', language)", language)
                 page.goto(base + "/")
-                page.locator('#family-tabs .tab[data-tab="agora"]').click()
+                page.goto(base + "/#hub/project")
                 tab = page.locator("#tab-agora")
                 row = tab.locator(".ag-th", has_text="Plan de la interfaz")
                 row.wait_for()
@@ -54,7 +54,9 @@ def test_agora_tab_unread_filters_keyboard_errors_and_layout(tmp_path, width, he
                 assert tab.locator(".ag-detail .ag-msg.new").count() == 2
                 assert ("NUEVO" if language == "es" else "NEW") in tab.locator(".ag-detail .ag-newtag").first.inner_text().upper()
                 side_by_side = tab.locator(".ag-wrap").is_visible()
-                assert side_by_side == (width >= 1200)
+                assert not side_by_side
+                assert page.locator('#family-body').evaluate("e => getComputedStyle(e).maxHeight") == 'none'
+                assert page.locator('.ag-msgs').evaluate("e => getComputedStyle(e).overflowY") == 'visible'
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                 page.screenshot(path=str(evidence_path(tmp_path, f"agora-ui-detail-{width}.png")), full_page=False)
                 # reading it cleared the count in the list (visible beside it on wide screens, after Back on narrow ones)

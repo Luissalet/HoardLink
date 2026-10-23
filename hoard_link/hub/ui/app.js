@@ -139,6 +139,7 @@
   function render() {
     if (!snapshot) return;
     const availableApps = catalogApps();
+    window.dispatchEvent(new CustomEvent('hub:apps', {detail: {apps: availableApps}}));
     const apps = availableApps.filter((a) => {
       if (!filter) return true;
       const hay = `${a.name} ${a.id} ${a.purpose} ${(a.capabilities || []).join(" ")}`.toLowerCase();

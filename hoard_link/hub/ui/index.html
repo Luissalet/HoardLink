@@ -8,8 +8,17 @@
 <meta name="theme-color" content="#1b1916">
 <link rel="stylesheet" href="/ui/hoard-theme.css">
 <link rel="stylesheet" href="/ui/style.css">
+<link rel="stylesheet" href="/ui/navigation.css">
 </head>
 <body>
+<a class="hub-skip" href="#hub-content">Saltar al contenido / Skip to content</a>
+<aside class="hub-sidebar" aria-label="Hoard Hub">
+  <a class="hub-home-link" href="#hub/home"><img src="/ui/hub-icon.svg" alt="" width="34" height="34"><span>Hoard Hub</span></a>
+  <button id="hub-menu-toggle" aria-expanded="false" aria-controls="hub-navigation">Menú / Menu</button>
+  <nav id="hub-navigation" aria-label="Navegación / Navigation"></nav>
+  <p class="hub-sidebar-note" id="hub-sidebar-note"></p>
+</aside>
+<div class="hub-workspace">
 <header class="top">
   <div class="brand">
     <img src="/ui/hub-icon.svg" alt="" width="36" height="36">
@@ -26,6 +35,11 @@
     <button id="btn-lang" class="ghost small" title="Idioma / Language">ES</button>
   </div>
 </header>
+
+<main id="hub-content" tabindex="-1">
+<div class="hub-page-heading"><div><p id="hub-breadcrumb" hidden></p><h1 id="hub-page-title">Hoard Hub</h1><p id="hub-page-description"></p></div><div id="hub-page-actions"></div></div>
+<section id="hub-landing" aria-labelledby="hub-page-title"></section>
+<section id="hub-resources" hidden></section>
 
 <section class="strip" id="strip">
   <div class="faustus" id="faustus"></div>
@@ -123,7 +137,8 @@
   </div>
 </section>
 
-<main>
+<section id="hub-apps" hidden>
+  <div id="hub-app-toolbar" class="hub-app-toolbar"></div>
   <div id="profiles" class="profiles" hidden></div>
   <section id="group-editor" class="group-editor" hidden aria-labelledby="group-heading">
     <form id="group-form">
@@ -142,9 +157,12 @@
   </section>
   <div id="grid" class="grid"></div>
   <div id="empty" class="empty" hidden></div>
+</section>
+
 </main>
 
 <footer class="foot" id="foot"></footer>
+</div>
 
 <div id="toasts" class="toasts"></div>
 
@@ -170,7 +188,7 @@
 <template id="card-tpl">
   <article class="card">
     <div class="card-head">
-      <img class="icon" alt="" width="64" height="64">
+      <img class="icon" src="/ui/fallback-icon.svg" alt="" width="64" height="64">
       <div class="title">
         <h2></h2>
         <div class="meta"><span class="pill state"></span><span class="port"></span><span class="pid"></span></div>
@@ -223,6 +241,7 @@
 <script src="/ui/app.js"></script>
 <script src="/ui/family.js"></script>
 <script src="/ui/facets.js"></script>
+<script src="/ui/navigation.js"></script>
 <script src="/ui/copilot.js"></script>
 <script src="/api/copilot/launcher.js"></script>
 </body>

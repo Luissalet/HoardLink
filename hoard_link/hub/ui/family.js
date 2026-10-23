@@ -117,6 +117,7 @@
       try { localStorage.setItem("hub.fopen", "1"); } catch (e) { /* ignore */ }
     }
     (loaders[name] || (() => {}))();
+    window.dispatchEvent(new CustomEvent('hub:tab', {detail: {name, openPanel}}));
   }
   document.querySelectorAll("#family-tabs .tab").forEach((b) => { b.onclick = () => showTab(b.dataset.tab); });
   window.hubShowTab = showTab;  // facets.js adds its own tabs and switches through this
