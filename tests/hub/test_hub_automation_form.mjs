@@ -24,7 +24,7 @@ function mount(value,kind) {
   h.field('name').value='Renamed'; h.field('event_type').value='writer.save.done';
   assert.deepEqual(h.read().when,{...rule.when,type:'writer.save.done'});
   assert.deepEqual(h.read().then,rule.then); assert.equal(h.read().enabled,false);
-  const type=h.root.all('select')[0]; type.value='start_app';type.events.change();
+  const type=h.root.all('select').find(x=>x.children.some(o=>o.value==='backup')); type.value='start_app';type.events.change();
   assert.deepEqual(h.read().then,[{kind:'start_app',app:'atlas'}]);
   const add=h.root.all('button').find(x=>x.textContent==='Add action');add.onclick();
   assert.equal(h.read().then.length,2);

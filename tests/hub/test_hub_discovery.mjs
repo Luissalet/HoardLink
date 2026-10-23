@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const window={};vm.runInNewContext(readFileSync(new URL('../../hoard_link/hub/ui/discovery.js',import.meta.url),'utf8'),{window});
+const d=window.HubDiscovery;
+assert(d.matches({id:'writer',name:"Writer's Hoard",purpose:'Manuscripts'},'escribir una novela'));
+assert(d.matches({id:'cookhoard',name:'CookHoard'},'mis recetas'));
+assert(d.matches({id:'nightingale',name:'Nightingale'},'analizar datos'));
+assert(!d.matches({id:'cookhoard',name:'CookHoard'},'escribir una novela'));
+assert(d.matches({id:'custom',name:'Custom',purpose:'An unknown application for maps'},'maps'));
+assert.equal(d.description({id:'custom',purpose:'Actual manifest purpose'},true),'Actual manifest purpose');
+assert.equal(d.category({id:'cookhoard'}),'vida');
+console.log('PASS discovery: Spanish tasks and accents, irrelevant app excluded, unknown manifests retained');

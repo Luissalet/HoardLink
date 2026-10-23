@@ -24,7 +24,7 @@
     search: { es: "Buscar…", en: "Search…" },
     mark_all: { es: "Marcar todo como visto", en: "Mark all as seen" },
     settings: { es: "Ajustes", en: "Settings" },
-    empty: { es: "Aún no hay avisos. Las apps envían los suyos a /api/notify.", en: "No notifications yet. Apps send theirs to /api/notify." },
+    empty: { es: "No hay avisos que coincidan con estos filtros.", en: "No notifications match these filters." },
     held_why: { es: "Retenido", en: "Held" },
     skipped: { es: "no usado", en: "not used" },
     unsupported: { es: "no disponible aquí", en: "not available here" },
@@ -128,7 +128,12 @@
     row.appendChild(el("span", "nt-bar"));
     const main = el("div");
     main.appendChild(el("div", "nt-title" + (n.seen ? "" : " unseen"), n.title));
-    if (n.body) main.appendChild(el("div", "nt-body", n.body));
+    if (n.body) {
+      const details=el('details','nt-message');
+      const preview=n.body.replace(/!?(\[([^\]]*)\])\([^)]*\)/g,'$2').replace(/[#*_`>]/g,'').replace(/\s+/g,' ').trim();
+      details.appendChild(el('summary','',preview.slice(0,180)+(preview.length>180?'…':'')));
+      details.appendChild(el('div','nt-body',n.body));main.appendChild(details);
+    }
     const meta = el("div", "nt-meta");
     const appChip = chip(n.app, "info"); meta.appendChild(appChip);
     meta.appendChild(chip(n.sphere));

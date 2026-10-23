@@ -18,10 +18,10 @@
     queued: { es: "en cola", en: "queued" }, running: { es: "en marcha", en: "running" },
     done: { es: "hecho", en: "done" }, failed: { es: "fallido", en: "failed" }, cancelled: { es: "cancelado", en: "cancelled" },
     paused: { es: "en pausa", en: "paused" },
-    stale: { es: "sin noticias", en: "stale" },
+    stale: { es: "Sin actualización reciente · comprueba la aplicación", en: "No recent update · check the application" },
     eta: { es: "faltan", en: "left" },
     all_apps: { es: "Todas las apps", en: "All apps" },
-    hint: { es: "Los trabajos largos que anuncian las apps (<app>.job.*).", en: "Long jobs the apps announce (<app>.job.*)." },
+    hint: { es: "Ejecuciones comunicadas por las aplicaciones. Si dejan de actualizarse, consulta su estado antes de repetir una acción.", en: "Runs reported by applications. If updates stop, check their status before repeating an action." },
     open: { es: "Abrir", en: "Open" },
   };
   const t = (k) => L(S[k]);

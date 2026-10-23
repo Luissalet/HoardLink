@@ -12,7 +12,7 @@
     ph: { es: "Busca en todas las apps y en el correo… (Ctrl+K)", en: "Search every app and the mail… (Ctrl+K)" },
     go: { es: "Buscar", en: "Search" },
     searching: { es: "buscando…", en: "searching…" },
-    nothing: { es: "Sin resultados.", en: "No results." },
+    nothing: { es: "No encontramos contenido con esas palabras. Prueba con un término más corto o explora las aplicaciones por lo que hacen.", en: "No content matched those words. Try a shorter term or explore applications by purpose." },
     hits: { es: "resultados", en: "results" },
     in_ms: { es: "ms", en: "ms" },
     skipped: { es: "Sin búsqueda propia", en: "No search of their own" },
@@ -21,7 +21,7 @@
     own_mail: { es: "Correo y chats", en: "Mail and chats" },
     own_refs: { es: "Enlaces", en: "Links" },
     own_notify: { es: "Avisos", en: "Notifications" },
-    hint: { es: "Pregunta a cada app por su cuenta y junta las respuestas.", en: "Asks each app on its own and gathers the answers." },
+    hint: { es: "Busca una tarea, una aplicación, un proyecto o contenido guardado.", en: "Find a task, an application, a project or saved content." },
   };
   const t = (k) => L(S[k]);
   const OWN = { mail: "own_mail", refs: "own_refs", notify: "own_notify" };
@@ -66,6 +66,7 @@
       const local = el('section','sr-destinations'); local.appendChild(el('h2','',L({es:'Aplicaciones y herramientas',en:'Applications and tools'})));
       for (const item of destinations) {
         const a = el('a','sr-destination',item.title); a.href = item.href;
+        if(item.description) a.appendChild(el('small','',item.description));
         if (item.app_id) a.onclick = () => window.hubFocusApplication?.(item.app_id);
         local.appendChild(a);
       }
@@ -76,18 +77,17 @@
     try { r = await api(`/api/search?q=${encodeURIComponent(q)}&limit=8`); }
     catch (_) { r = {ok:false,error:L({es:'No se ha podido completar la búsqueda. Vuelve a intentarlo.',en:'Search could not be completed. Please try again.'})}; }
     if (revision !== request) return;
-    if (!r.ok) { status.textContent = ""; out.appendChild(el("div", "hint", r.error || "error")); return; }
-    status.textContent = `${r.hits} ${t("hits")} · ${r.took_ms} ${t("in_ms")}`;
+    if (!r.ok) { status.textContent = L({es:'No se ha podido consultar el contenido. Los accesos a aplicaciones y proyectos siguen disponibles.',en:'Content could not be searched. Application and project shortcuts are still available.'}); const retry=el('button','ghost',L({es:'Reintentar',en:'Retry'}));retry.onclick=run;out.appendChild(retry);return; }
+    status.textContent = `${destinations.length + r.hits} ${t("hits")}`;
     const withHits = r.groups.filter((g) => g.results.length);
     const failed = r.groups.filter((g) => !g.results.length && g.error);
-    if (!withHits.length) out.appendChild(el("div", "hint", t("nothing")));
+    if (!withHits.length && !destinations.length) {out.appendChild(el("div", "hint", t("nothing")));const explore=el('a','hub-text-link',L({es:'Explorar aplicaciones',en:'Explore applications'}));explore.href='#hub/apps';out.appendChild(explore);}
     for (const g of withHits) {
       const box2 = el("div", "sr-group");
       const head = el("div", "sr-ghead");
       if (g.own) head.appendChild(el("span", "sr-glyph", GLYPH[g.app] || "·"));
       else { const img = el("img"); img.src = (window.hubAppIcon ? window.hubAppIcon(g.app) : `/api/apps/${encodeURIComponent(g.app)}/icon`); img.alt = ""; img.onerror = () => img.remove(); head.appendChild(img); }
       head.appendChild(el("span", "", g.own ? t(OWN[g.app] || "label") : g.name));
-      head.appendChild(el("small", "", `${g.tool} · ${g.ms} ms`));
       box2.appendChild(head);
       for (const h of g.results) {
         const row = el("button", "sr-hit"); row.type = "button";
@@ -99,9 +99,13 @@
       }
       out.appendChild(box2);
     }
-    for (const g of failed) out.appendChild(el("div", "sr-err", `${g.name || g.app} · ${g.tool}: ${t("err")} (${g.error})`));
     const nos = (r.skipped || []).filter((s) => s.reason === "no search tool");
-    if (nos.length) out.appendChild(el("div", "sr-skipped", `${t("skipped")}: ${nos.map((s) => s.app).join(", ")}`));
+    if(failed.length || nos.length) {
+      const details=el('details','sr-source-status');details.appendChild(el('summary','',L({es:'Algunas fuentes no se han podido consultar · ver detalle',en:'Some sources could not be searched · view details'})));
+      for(const g of failed)details.appendChild(el('p','',`${g.name || g.app}: `+(g.error==='module_disabled'?L({es:'búsqueda desactivada en esta fuente',en:'search is disabled for this source'}):t('err'))));
+      if(nos.length)details.appendChild(el('p','',`${t('skipped')}: ${nos.map(s=>s.app).join(', ')}`));
+      const technical=el('details','');technical.appendChild(el('summary','',L({es:'Información técnica',en:'Technical information'})),el('pre','',JSON.stringify(failed.map(g=>({source:g.app,tool:g.tool,error:g.error})),null,2)));details.appendChild(technical);out.appendChild(details);
+    }
   }
 
   function focusSearch() {
