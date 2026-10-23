@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-10T07:47:48+02:00",
-  "title": "Design System: HoardLink Ágora",
+  "generatedAt": "2026-10-23T07:40:52.7760171+02:00",
+  "title": "Design System: HoardLink Hub and Ágora",
   "extensions": {
     "colorMeta": {
       "amber": {
@@ -198,6 +198,186 @@
           "oklch(75% 0.09 83)",
           "oklch(95% 0.09 83)"
         ]
+      },
+      "hub-canvas": {
+        "role": "neutral",
+        "canonical": "#191b1b",
+        "tonalRamp": [
+          "oklch(15% 0.004 180)",
+          "oklch(25% 0.004 180)",
+          "oklch(35% 0.004 180)",
+          "oklch(45% 0.004 180)",
+          "oklch(55% 0.004 180)",
+          "oklch(65% 0.004 180)",
+          "oklch(75% 0.004 180)",
+          "oklch(95% 0.004 180)"
+        ],
+        "displayName": "Hub Graphite Canvas"
+      },
+      "hub-raised": {
+        "role": "neutral",
+        "canonical": "#272b2a",
+        "tonalRamp": [
+          "oklch(15% 0.008 165)",
+          "oklch(25% 0.008 165)",
+          "oklch(35% 0.008 165)",
+          "oklch(45% 0.008 165)",
+          "oklch(55% 0.008 165)",
+          "oklch(65% 0.008 165)",
+          "oklch(75% 0.008 165)",
+          "oklch(95% 0.008 165)"
+        ],
+        "displayName": "Hub Raised Graphite"
+      },
+      "hub-nav-hover": {
+        "role": "neutral",
+        "canonical": "#2d3430",
+        "tonalRamp": [
+          "oklch(15% 0.014 150)",
+          "oklch(25% 0.014 150)",
+          "oklch(35% 0.014 150)",
+          "oklch(45% 0.014 150)",
+          "oklch(55% 0.014 150)",
+          "oklch(65% 0.014 150)",
+          "oklch(75% 0.014 150)",
+          "oklch(95% 0.014 150)"
+        ],
+        "displayName": "Hub Navigation Hover"
+      },
+      "hub-selected": {
+        "role": "primary",
+        "canonical": "#354332",
+        "tonalRamp": [
+          "oklch(15% 0.035 135)",
+          "oklch(25% 0.035 135)",
+          "oklch(35% 0.035 135)",
+          "oklch(45% 0.035 135)",
+          "oklch(55% 0.035 135)",
+          "oklch(65% 0.035 135)",
+          "oklch(75% 0.035 135)",
+          "oklch(95% 0.035 135)"
+        ],
+        "displayName": "Hub Selected Surface"
+      },
+      "hub-divider": {
+        "role": "neutral",
+        "canonical": "#3b4240",
+        "tonalRamp": [
+          "oklch(15% 0.012 165)",
+          "oklch(25% 0.012 165)",
+          "oklch(35% 0.012 165)",
+          "oklch(45% 0.012 165)",
+          "oklch(55% 0.012 165)",
+          "oklch(65% 0.012 165)",
+          "oklch(75% 0.012 165)",
+          "oklch(95% 0.012 165)"
+        ],
+        "displayName": "Hub Divider"
+      },
+      "hub-muted": {
+        "role": "neutral",
+        "canonical": "#b3bdb8",
+        "tonalRamp": [
+          "oklch(15% 0.015 158)",
+          "oklch(25% 0.015 158)",
+          "oklch(35% 0.015 158)",
+          "oklch(45% 0.015 158)",
+          "oklch(55% 0.015 158)",
+          "oklch(65% 0.015 158)",
+          "oklch(75% 0.015 158)",
+          "oklch(95% 0.015 158)"
+        ],
+        "displayName": "Hub Muted Sage Gray"
+      },
+      "hub-ink": {
+        "role": "neutral",
+        "canonical": "#192319",
+        "tonalRamp": [
+          "oklch(15% 0.02 140)",
+          "oklch(25% 0.02 140)",
+          "oklch(35% 0.02 140)",
+          "oklch(45% 0.02 140)",
+          "oklch(55% 0.02 140)",
+          "oklch(65% 0.02 140)",
+          "oklch(75% 0.02 140)",
+          "oklch(95% 0.02 140)"
+        ],
+        "displayName": "Hub Action Ink"
+      },
+      "hub-sage": {
+        "role": "primary",
+        "canonical": "#c4d9b5",
+        "tonalRamp": [
+          "oklch(15% 0.05 132)",
+          "oklch(25% 0.05 132)",
+          "oklch(35% 0.05 132)",
+          "oklch(45% 0.05 132)",
+          "oklch(55% 0.05 132)",
+          "oklch(65% 0.05 132)",
+          "oklch(75% 0.05 132)",
+          "oklch(95% 0.05 132)"
+        ],
+        "displayName": "Hub Sage"
+      },
+      "hub-text": {
+        "role": "neutral",
+        "canonical": "#f0f1ed",
+        "tonalRamp": [
+          "oklch(15% 0.006 110)",
+          "oklch(25% 0.006 110)",
+          "oklch(35% 0.006 110)",
+          "oklch(45% 0.006 110)",
+          "oklch(55% 0.006 110)",
+          "oklch(65% 0.006 110)",
+          "oklch(75% 0.006 110)",
+          "oklch(95% 0.006 110)"
+        ],
+        "displayName": "Hub Warm White"
+      },
+      "hub-sage-hover": {
+        "role": "primary",
+        "canonical": "#d7e7cd",
+        "tonalRamp": [
+          "oklch(15% 0.04 132)",
+          "oklch(25% 0.04 132)",
+          "oklch(35% 0.04 132)",
+          "oklch(45% 0.04 132)",
+          "oklch(55% 0.04 132)",
+          "oklch(65% 0.04 132)",
+          "oklch(75% 0.04 132)",
+          "oklch(95% 0.04 132)"
+        ],
+        "displayName": "Hub Sage Hover"
+      },
+      "hub-selected-text": {
+        "role": "neutral",
+        "canonical": "#e1efda",
+        "tonalRamp": [
+          "oklch(15% 0.03 132)",
+          "oklch(25% 0.03 132)",
+          "oklch(35% 0.03 132)",
+          "oklch(45% 0.03 132)",
+          "oklch(55% 0.03 132)",
+          "oklch(65% 0.03 132)",
+          "oklch(75% 0.03 132)",
+          "oklch(95% 0.03 132)"
+        ],
+        "displayName": "Hub Selected Text"
+      },
+      "hub-surface": {
+        "role": "neutral",
+        "canonical": "#202323",
+        "tonalRamp": [
+          "oklch(15% 0.006 180)",
+          "oklch(25% 0.006 180)",
+          "oklch(35% 0.006 180)",
+          "oklch(45% 0.006 180)",
+          "oklch(55% 0.006 180)",
+          "oklch(65% 0.006 180)",
+          "oklch(75% 0.006 180)",
+          "oklch(95% 0.006 180)"
+        ],
+        "displayName": "Hub Graphite Surface"
       }
     },
     "typographyMeta": {
@@ -220,6 +400,22 @@
       "label": {
         "purpose": "Small status, quota, timestamp and control text.",
         "displayName": "Operational label"
+      },
+      "hub-heading": {
+        "displayName": "Hub Page Heading",
+        "purpose": "Route title; 32px desktop and 27px at the Hub mobile breakpoint."
+      },
+      "hub-title": {
+        "displayName": "Hub Section and Project Title",
+        "purpose": "17px semibold project and section names; project names become 16px on mobile."
+      },
+      "hub-body": {
+        "displayName": "Hub Body",
+        "purpose": "Shared native sans stack for descriptions and controls."
+      },
+      "hub-label": {
+        "displayName": "Hub Metadata",
+        "purpose": "Project workspace and compact operational context."
       }
     },
     "shadows": [
@@ -239,6 +435,16 @@
         "value": "@media (prefers-reduced-motion: reduce)",
         "name": "reduced-motion",
         "purpose": "Disables smooth scrolling when reduced motion is requested."
+      },
+      {
+        "value": "background .12s, border-color .12s, transform .05s",
+        "purpose": "Inherited Hub button transitions; active buttons translate down 1px.",
+        "name": "hub-button-state"
+      },
+      {
+        "value": "@media (prefers-reduced-motion: reduce)",
+        "purpose": "Hub removes transitions, animation and smooth scrolling.",
+        "name": "hub-reduced-motion"
       }
     ],
     "breakpoints": [
@@ -257,10 +463,117 @@
       {
         "name": "mobile",
         "value": "640px"
+      },
+      {
+        "name": "hub-stacked-home",
+        "value": "1180px"
+      },
+      {
+        "name": "hub-mobile",
+        "value": "760px"
       }
-    ]
+    ],
+    "surfaceScopes": {
+      "hub": {
+        "description": "Project library navigation shell. Final navigation.css overrides own the shell palette; some inherited facet fields retain direct shared-theme values. Hub-prefixed component samples use these actual resolved defaults.",
+        "source": [
+          "hoard_link/hub/ui/index.html",
+          "hoard_link/hub/ui/navigation.js",
+          "hoard_link/hub/ui/navigation.css",
+          "hoard_link/ui/hoard-theme.css"
+        ],
+        "tokenPrefix": "hub-"
+      },
+      "agora": {
+        "description": "Separate leader roster, conversation and operations console. Existing tokens, component samples and top-level narrative remain scoped here.",
+        "source": [
+          "apps/agora"
+        ],
+        "tokenPrefix": "unprefixed"
+      }
+    },
+    "tonalRampNotes": "Hub tonal ramps are synthesized preview metadata, not additional shipping CSS tokens. Canonical hex values are extracted from navigation.css.",
+    "focus": {
+      "hub-search": "Inherited search field suppresses the outline and changes border-color to var(--accent) on focus.",
+      "hub-shell": "outline: 2px solid var(--accent); outline-offset: 4px"
+    },
+    "surfaceNarratives": {
+      "hub": {
+        "overview": "The Hub is a graphite directory of project spaces and shared tools. Sage marks selection and the explicit action to enter a project's native workspace. Familiar shared sans typography, outline icons and generous divided rows make destinations readable without turning the directory into a dashboard of metrics.",
+        "keyCharacteristics": [
+          "Graphite canvas, sage selection and warm white text.",
+          "Six navigation groups with contextual subnavigation.",
+          "Broad project rows, restrained running-app summaries and full document scrolling.",
+          "Code-led interface with authored SVG outline icons; no new shipping raster imagery."
+        ],
+        "northStar": "The Project Library",
+        "donts": [
+          "Don't infer running apps, activity or successful native-workspace availability from placeholders.",
+          "Don't add raster decoration or import the separate Ágora console's amber display typography into the shell."
+        ],
+        "rules": [
+          {
+            "section": "colors",
+            "body": "Use the `hub-` palette for the navigation shell; keep legacy facet-specific and separate Ágora tokens scoped to their own controls and surface.",
+            "name": "The Hub Scope Rule"
+          }
+        ],
+        "dos": [
+          "Do keep project spaces separate from shared resources and tools, with the six destinations and all original facets reachable.",
+          "Do preserve full document scrolling, contextual selection, readable wrapping and keyboard access at desktop and mobile sizes.",
+          "Do treat the project directory as persistent Ágora spaces, not a complete registry of every Faustus project.",
+          "Do derive the native workspace URL from coordination configuration and preserve the selected `space_id`."
+        ]
+      }
+    }
   },
   "components": [
+    {
+      "name": "Hub — Open Agora Link",
+      "kind": "button",
+      "refersTo": "hub-primary-link",
+      "description": "Explicit native workspace destination; the live URL is supplied by coordination configuration with a project space_id.",
+      "html": "<a class=\"ds-hub-primary\" href=\"#project\">Abrir ágora<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 12h16m-6-6 6 6-6 6\"/></svg></a>",
+      "css": ".ds-hub-primary{display:inline-flex;align-items:center;justify-content:center;gap:12px;text-decoration:none;color:var(--hub-ink,#192319);background:var(--accent,#c4d9b5);padding:10px 15px;border-radius:6px;font:600 13px var(--font,'Segoe UI',sans-serif)}.ds-hub-primary svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.ds-hub-primary:hover{background:var(--accent-2,#d7e7cd)}.ds-hub-primary:focus-visible{outline:2px solid var(--accent,#c4d9b5);outline-offset:4px}"
+    },
+    {
+      "name": "Hub — Navigation",
+      "kind": "nav",
+      "refersTo": "hub-nav-link-selected",
+      "description": "Sage selected rail group, authored outline icon and contextual subnavigation; the six groups remain the primary level.",
+      "html": "<nav class=\"ds-hub-nav\"><a class=\"ds-hub-nav-link\" href=\"#system\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"5\" y=\"5\" width=\"14\" height=\"14\" rx=\"2\"/><path d=\"M9 9h6v6H9ZM9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3\"/></svg>Sistema</a><div class=\"ds-hub-subnav\"><a href=\"#events\" aria-current=\"page\">Eventos</a><a href=\"#resources\">Recursos</a></div></nav>",
+      "css": ".ds-hub-nav{width:188px;background:var(--bg-2,#202323);font-family:var(--font,'Segoe UI',sans-serif)}.ds-hub-nav-link{display:flex;gap:12px;align-items:center;padding:12px;color:var(--muted,#b3bdb8);text-decoration:none;border-radius:7px;font-size:14px}.ds-hub-nav-link svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.ds-hub-nav-link:hover,.ds-hub-subnav a:hover{background:#2d3430;color:var(--text,#f0f1ed)}.ds-hub-nav-link[aria-current]{background:#354332;color:#e1efda;font-weight:600}.ds-hub-subnav{display:grid;gap:2px;margin:0 0 12px 20px;padding-left:12px;border-left:1px solid var(--line,#3b4240)}.ds-hub-subnav a{color:var(--muted,#b3bdb8);font-size:13px;padding:8px 10px;text-decoration:none;border-radius:5px}.ds-hub-subnav a[aria-current]{color:var(--accent,#c4d9b5);background:#2b342a}.ds-hub-nav a:focus-visible{outline:2px solid var(--accent,#c4d9b5);outline-offset:4px}"
+    },
+    {
+      "name": "Hub — Project Row",
+      "kind": "custom",
+      "refersTo": "hub-project-row",
+      "description": "Generous divided directory row; selecting the project opens its embedded tasks and discussions.",
+      "html": "<article class=\"ds-hub-row\"><button class=\"ds-hub-project\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 6h7l2 3h9v11H3Z\"/><path d=\"M3 9V4h7l2 2h7v3\"/></svg><span><strong>Proyecto</strong><small>Espacio de proyecto</small></span></button></article>",
+      "css": ".ds-hub-row{padding:23px 0;border-bottom:1px solid var(--line,#3b4240)}.ds-hub-project{display:flex;align-items:center;gap:16px;color:var(--text,#f0f1ed);background:transparent;border:0;padding:6px 0;border-radius:4px;text-align:left;font-family:var(--font,'Segoe UI',sans-serif);cursor:pointer;transition:background .12s,border-color .12s,transform .05s}.ds-hub-project svg{width:26px;height:26px;fill:none;stroke:var(--accent,#c4d9b5);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.ds-hub-project span{display:grid;gap:7px}.ds-hub-project strong{font-size:17px;font-weight:600}.ds-hub-project small{font-size:12px;line-height:1.5;color:var(--muted,#b3bdb8)}.ds-hub-project:hover{color:var(--accent,#c4d9b5)}.ds-hub-project:focus-visible{outline:2px solid var(--accent,#c4d9b5);outline-offset:4px}.ds-hub-project:active{transform:translateY(1px)}@media(prefers-reduced-motion:reduce){.ds-hub-project{transition:none}}"
+    },
+    {
+      "name": "Hub — Project Search",
+      "kind": "input",
+      "description": "Inherited warm shared-theme field, with the shell divider and sage focus border.",
+      "html": "<input class=\"ds-hub-search\" type=\"search\" placeholder=\"Buscar proyecto…\" aria-label=\"Buscar proyecto\">",
+      "css": ".ds-hub-search{font:400 14px var(--font,'Segoe UI',sans-serif);color:var(--text,#f0f1ed);background:var(--hoard-surface,#24221b);border:1px solid var(--line,#3b4240);border-radius:var(--hoard-radius,8px);padding:8px 12px;min-width:220px;width:min(100%,440px);outline:none;caret-color:var(--accent,#c4d9b5)}.ds-hub-search:focus{border-color:var(--accent,#c4d9b5)}"
+    },
+    {
+      "name": "Hub — Shared Tool Row",
+      "kind": "nav",
+      "description": "Open divided row with readable title, supporting text and trailing authored arrow.",
+      "html": "<a class=\"ds-hub-tool\" href=\"#system\"><span><strong>Sistema</strong><small>Recursos, servidores y mantenimiento del entorno compartido.</small></span><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 12h16m-6-6 6 6-6 6\"/></svg></a>",
+      "css": ".ds-hub-tool{display:flex;align-items:center;gap:18px;padding:22px 4px;color:var(--text,#f0f1ed);text-decoration:none;border-bottom:1px solid var(--line,#3b4240);font-family:var(--font,'Segoe UI',sans-serif)}.ds-hub-tool span{flex:1;display:grid;gap:7px}.ds-hub-tool strong{font-size:15px;font-weight:600}.ds-hub-tool small{font-size:13px;line-height:1.5;color:var(--muted,#b3bdb8)}.ds-hub-tool svg{width:17px;height:20px;fill:none;stroke:var(--muted,#b3bdb8);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.ds-hub-tool:hover{background:#222825}.ds-hub-tool:focus-visible{outline:2px solid var(--accent,#c4d9b5);outline-offset:4px}"
+    },
+    {
+      "name": "Hub — Application Card",
+      "kind": "card",
+      "refersTo": "hub-app-card",
+      "description": "Catalog container with a restrained border and no card shadow; state remains owned by the existing application logic.",
+      "html": "<article class=\"ds-hub-card\"><h2>Aplicación</h2><p>Descripción de la aplicación.</p></article>",
+      "css": ".ds-hub-card{background:var(--card,#202323);color:var(--text,#f0f1ed);border:1px solid var(--line,#3b4240);border-radius:10px;padding:22px;box-shadow:none;font-family:var(--font,'Segoe UI',sans-serif);transition:border-color .15s,transform .15s}.ds-hub-card h2{margin:0;font-size:18px;font-weight:600}.ds-hub-card p{line-height:1.6;font-size:13px;margin-top:8px;color:var(--muted,#b3bdb8)}.ds-hub-card:hover{border-color:var(--hoard-border-hover,#6a6458)}@media(prefers-reduced-motion:reduce){.ds-hub-card{transition:none}}"
+    },
     {
       "description": "Amber send or confirm action.",
       "html": "<button class=\"ds-primary\">Enviar</button>",

@@ -43,3 +43,9 @@ Architecture discussion is thread222. Details of provider runner discovery and s
 Inferred visual assumption: a calm dark workspace fits the existing Hub family; this is a design choice delegated by the user, not a claimed user preference.
 No assumption of instant replies when a provider runner is unavailable.
 
+
+## Hub navigation shell (separate scope)
+
+This section applies to `hoard_link/hub/ui/index.html` and its navigation assets; the Ágora console requirements above remain unchanged. The Hub is the entry directory for persistent Ágora project spaces and shared tools, with Home, Projects, Applications, Communication, Automation and System destinations plus contextual subnavigation and Hub search. Every original facet remains accessible; resources live under System and application catalog/startup controls under Applications.
+
+The project directory reads `/api/agora/spaces`, not the full Faustus project catalog. Selecting a project carries its `space_id` into the embedded tasks/discussions view. Open Agora uses `workspace_url` from `/api/coordination/config` with that same scope; no URL is fabricated when configuration is unavailable. Project list and selected detail alternate, with normal document scrolling. On mobile, Menu expands in document flow. Loading, empty, no-match and failed loads remain explicit, with Retry for failed project loading. Preserve the existing facet APIs, forms, identity, state and data.
