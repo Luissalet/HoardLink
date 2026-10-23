@@ -4,6 +4,10 @@ The overview lives in the [README](../README.md#hoard-hub-the-desktop-launcher)
 ([español](../README.es.md#hoard-hub-el-lanzador-de-escritorio)). This page
 is the reference for the parts that need more than a paragraph.
 
+## Project-first navigation
+
+The [Hub navigation guide](hub-navigation.md) describes the project directory, scoped Agora links, grouped shared tools and full-page task/conversation flow. The native Faustus Agora remains the main project workspace. Existing CLI, HTTP and MCP interfaces continue to use the same spaces and data.
+
 ## Command line
 
 ```

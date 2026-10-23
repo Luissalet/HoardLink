@@ -31,7 +31,8 @@
   async function context() {
     // Capture UI intent and start every collector before yielding to API validation.
     const requestedSurface = surface;
-    const familyOpen = document.querySelector('#family-body') && !document.querySelector('#family-body').hidden;
+    const familyOpen = document.querySelector('#family-body') && !document.querySelector('#family-body').hidden && !document.querySelector('#family-panel')?.hidden;
+    const appsVisible = !document.querySelector('#hub-apps')?.hidden;
     const editing = document.querySelector('#edit-dialog')?.open;
     const activeTab = document.querySelector('#family-tabs .tab.on')?.dataset.tab;
     const selection = window.getSelection()?.toString();
@@ -43,9 +44,10 @@
     let selected = app;
     if (editing) selected = family;
     else if (facet?.view?.editor_mode === 'modal') selected = facet;
-    else if (requestedSurface === 'top') selected = facet || family;
-    else if (requestedSurface === 'family' && familyOpen) selected = facet?.view?.section === activeTab ? facet : family || facet;
-    const forms = [...(app.pending_forms || []),...(family?.pending_forms || []),...(facet?.pending_forms || []),...pending];
+    else if (requestedSurface === 'top' && facet) selected = facet;
+    else if (familyOpen && (!appsVisible || requestedSurface === 'family')) selected = facet?.view?.section === activeTab ? facet : family || facet;
+    else if (!familyOpen && !appsVisible) selected = {active_objects:[],view:window.hubNavigationView?.() || {section:'home'}};
+    const forms = [...(appsVisible ? app.pending_forms || [] : []),...((editing || familyOpen) ? family?.pending_forms || [] : []),...(facet?.pending_forms || []),...pending];
     return withoutCredentials({active_objects:selected?.active_objects || [],
       selection:selection ? {kind:'text',text:selection} : null,
       ...(forms.length ? {editor:{forms}} : {}),

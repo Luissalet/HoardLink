@@ -44,8 +44,8 @@
     ctx,
     register(id, spec) { registry.push({ id, ...spec }); },
     async copilotContext() {
-      const active = registry.find(f => f._btn?.classList.contains('on'));
-      const candidates = registry.filter(f => f === active && !$('#family-body')?.hidden || ['top','header'].includes(f.placement));
+      const active = !$('#family-panel')?.hidden && registry.find(f => f._btn?.classList.contains('on'));
+      const candidates = registry.filter(f => f === active && !$('#family-body')?.hidden || ['top','header'].includes(f.placement) && !f._root?.hidden);
       const parts = await Promise.all(candidates.map(f => f.copilot?.context ? f.copilot.context(ctx) : f === active ? {active_objects:[],view:{section:f.id}} : null));
       const selected = parts.find(part => part?.view?.editor_mode === 'modal') || parts[candidates.indexOf(focused)] || parts[candidates.indexOf(active)] ||
         parts.find(part => part?.pending_forms?.length) ||
@@ -53,8 +53,8 @@
       return selected ? {...selected,pending_forms:parts.flatMap(part => part?.pending_forms || [])} : null;
     },
     async refreshCopilot() {
-      const active = registry.find(f => f._btn?.classList.contains('on'));
-      await Promise.allSettled(registry.filter(f => f === active && !$('#family-body')?.hidden || ['top','header'].includes(f.placement) && f.copilot)
+      const active = !$('#family-panel')?.hidden && registry.find(f => f._btn?.classList.contains('on'));
+      await Promise.allSettled(registry.filter(f => f === active && !$('#family-body')?.hidden || ['top','header'].includes(f.placement) && !f._root?.hidden && f.copilot)
         .map(f => f.copilot?.refresh ? f.copilot.refresh(ctx) : f.load?.(ctx)));
     },
   };
@@ -100,8 +100,8 @@
 
   async function boot() {
     let info;
-    try { info = await api("/api/facets"); } catch (e) { return; }
-    if (!info || !info.ok) return;
+    try { info = await api("/api/facets"); } catch (e) { window.dispatchEvent(new Event('hub:facets-ready')); return; }
+    if (!info || !info.ok) { window.dispatchEvent(new Event('hub:facets-ready')); return; }
     const scripts = [];
     for (const f of info.facets || []) for (const s of f.ui_scripts || []) if (!scripts.includes(s)) scripts.push(s);
     for (const s of scripts) {
@@ -122,8 +122,9 @@
     else if (saved && !document.getElementById(`tab-${saved}`) && window.hubShowTab) window.hubShowTab('events', { openPanel: false });
     const langBtn = $("#btn-lang");
     if (langBtn) langBtn.addEventListener("click", () => setTimeout(() => { relabel(); ctx.bus.dispatchEvent(new Event("lang")); for (const f of registry) if (f.placement !== "tab" || (f._btn && f._btn.classList.contains("on"))) f.load && f.load(ctx); }, 0));
+    window.dispatchEvent(new Event('hub:facets-ready'));
     // facets poll on their own clock (ctx.every); one shared timer keeps it cheap
-    setInterval(() => { for (const f of registry) if (f.tick && (f.placement !== "tab" || (f._btn && f._btn.classList.contains("on")))) { try { f.tick(ctx); } catch (e) { /* ignore */ } } }, 5000);
+    setInterval(() => { for (const f of registry) if (f.tick && (f.placement !== "tab" || (!$('#family-panel').hidden && !$('#family-body').hidden && f._btn?.classList.contains("on")))) { try { f.tick(ctx); } catch (e) { /* ignore */ } } }, 5000);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

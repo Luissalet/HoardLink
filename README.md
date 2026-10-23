@@ -355,6 +355,8 @@ Environment overrides (highest priority, layered on top of the file):
 
 ## Hoard Hub: the desktop launcher
 
+The Hub opens on a project directory. Each project links to its own native Faustus Agora with an explicit `space_id`; the Hub's task and discussion view stays in that same space. Six navigation groups replace the scrolling tab strip: Home, Projects, Applications, Communication, Automation and System. Shared tools and GPU resources have full pages with document scrolling. See the [navigation guide](docs/hub-navigation.md).
+
 ![Hoard Hub](docs/hub.png)
 
 The repository also ships **Hoard Hub** (`hoard_link.hub`), the other

@@ -578,12 +578,11 @@
 
   // ---- detail ------------------------------------------------------------------------------------------------
 
-  // Wide screens keep the lists next to the open conversation; narrower ones switch between list and detail.
-  const wide = () => window.matchMedia("(min-width: 1200px)").matches;
+  // List and conversation each use the full page and the document's single scroll.
   function showDetail(on) {
     detailBox.hidden = !on;
-    splitBox.classList.toggle("ag-split", on && wide());
-    mainBox.hidden = on && !wide();
+    splitBox.classList.remove("ag-split");
+    mainBox.hidden = on;
   }
 
   function msgView(m, seen) {
@@ -766,7 +765,7 @@
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
     detailBox.replaceChildren(); ready(detailBox);
     const head = el("div", "ag-dhead");
-    const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); renderThreads().catch(() => {}); try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* ignore */ } };
+    const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); renderThreads().catch(() => {}); try { history.replaceState(null, "", location.pathname + location.search + '#hub/project'); } catch (e) { /* ignore */ } };
     head.appendChild(back);
     head.appendChild(el("h3", "", task ? `#${task.id} ${task.title}` : thread.title));
     head.appendChild(pill(st(task ? task.status : thread.status)));
@@ -917,13 +916,18 @@
     formsBox.replaceChildren(...(saved?.forms || []));
     showDetail(Boolean(current));
     if (spacePicker) spacePicker.value = sid;
+    for (const link of box.querySelectorAll('[data-ag-space-link]')) {
+      const target = new URL(link.href, location.origin);
+      target.searchParams.set('space_id', sid); link.href = target.href;
+    }
     const url = new URL(location.href);
     if (sid === 'ecosystem') url.searchParams.delete('space_id'); else url.searchParams.set('space_id', sid);
-    url.hash = current?.type === 'thread' ? `agora-${current.id}` : '';
+    url.hash = location.hash.startsWith('#hub/') ? 'hub/project' : current?.type === 'thread' ? `agora-${current.id}` : '';
     history.replaceState(null, '', url);
     renderAgents(lastBoard || {agents: []}); renderBoard(lastBoard || {tasks: []});
     renderDecisions(lastBoard || {decisions: []}); threadsBox.replaceChildren(); waitBox.hidden = true;
     load();
+    window.dispatchEvent(new CustomEvent('hub:space', {detail: {space_id: sid}}));
   }
 
   async function loadSpaces() {
@@ -958,7 +962,8 @@
         if (!r?.ok) { toast(r?.error || 'error', 'err'); return; }
         formsBox.replaceChildren();
         await loadSpaces();
-        if (!rename) selectSpace(r.space.id); else load();
+        if (!rename) selectSpace(r.space.id);
+        else { load(); window.dispatchEvent(new Event('hub:spaces-changed')); }
       } catch (error) { if (epoch === spaceEpoch) toast(String(error), 'err'); }
       finally { save.disabled = false; }
     };
@@ -1019,28 +1024,26 @@
       const forms = el("div"); formsBox = forms;
       const nt = el("button", "small", "+ " + t("new_task")); nt.onclick = () => taskForm(forms);
       const nth = el("button", "small", "+ " + t("new_thread")); nth.onclick = () => threadForm(forms);
-      const full = el("a", "small", L({ es: "Conversación de desarrollo", en: "Development conversation" }));
-      full.href = "/agora/"; full.target = "_blank"; full.rel = "noopener";
-      tools.appendChild(full); tools.appendChild(nt); tools.appendChild(nth); tools.appendChild(el("span", "hint", t("hint")));
-      const workspace = el('a', 'small', L({es:'Abrir esta ágora', en:'Open this Agora'}));
-      workspace.target = '_blank'; workspace.rel = 'noopener';
-      rawApi('/api/coordination/config').then(config => {
-        if (config.workspace_url) {
-          workspace.href = config.workspace_url + '?space_id=' + encodeURIComponent(activeSpace);
-          workspace.onclick = () => {workspace.href = config.workspace_url + '?space_id=' + encodeURIComponent(activeSpace);};
-          tools.prepend(workspace);
-        }
-      }).catch(() => {});
+      const full = el("a", "small", L({ es: "Vista clásica del proyecto", en: "Classic project view" }));
+      full.dataset.agSpaceLink = '';
+      full.href = "/agora/?space_id=" + encodeURIComponent(activeSpace); full.target = "_blank"; full.rel = "noopener";
+      full.onclick = () => { full.href = "/agora/?space_id=" + encodeURIComponent(activeSpace); };
+      tools.appendChild(nt); tools.appendChild(nth);
       box.appendChild(tools);
       const spacesBar = el('div', 'ag-spacebar');
       spacePicker = el('select'); spacePicker.setAttribute('aria-label', t('space'));
       const initialSpace = el('option', '', activeSpace === 'ecosystem' ? L({es:'Ecosistema', en:'Ecosystem'}) : activeSpace);
       initialSpace.value = activeSpace; spacePicker.appendChild(initialSpace);
       spacePicker.onchange = () => selectSpace(spacePicker.value);
+      H.ctx.bus.addEventListener('select-space', event => selectSpace(event.detail.space_id));
       const spaceLabel = el('label', 'hint', t('space')); spaceLabel.appendChild(spacePicker);
       const ns = el('button', 'small', t('new_space')); ns.onclick = () => spaceForm();
       const renameSpace = el('button', 'small ghost', t('rename_space')); renameSpace.onclick = () => spaceForm(true);
-      spacesBar.appendChild(spaceLabel); spacesBar.appendChild(ns); spacesBar.appendChild(renameSpace); box.appendChild(spacesBar);
+      const management = el('details', 'ag-space-actions');
+      management.appendChild(el('summary', '', L({es:'Gestionar espacio', en:'Manage space'})));
+      const managementActions = el('div', 'ag-row');
+      managementActions.append(ns, renameSpace, full); management.appendChild(managementActions);
+      spacesBar.append(spaceLabel, management); box.appendChild(spacesBar);
       box.appendChild(forms);
       const bar = el("div", "ag-filterbar");
       const search = el("input"); search.type = "search"; search.placeholder = t("filter_ph"); search.setAttribute("aria-label", t("filter_ph"));
