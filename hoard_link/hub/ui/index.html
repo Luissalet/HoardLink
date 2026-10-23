@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hoard Hub</title>
 <link rel="icon" href="/ui/hub-icon.svg" type="image/svg+xml">
-<meta name="theme-color" content="#1b1916">
+<meta name="theme-color" content="#14243c">
 <link rel="stylesheet" href="/ui/hoard-theme.css">
 <link rel="stylesheet" href="/ui/style.css">
 <link rel="stylesheet" href="/ui/navigation.css">
@@ -17,10 +17,11 @@
   <a class="hub-home-link" href="#hub/home"><img src="/ui/hub-icon.svg" alt="" width="34" height="34"><span>Hoard Hub</span></a>
   <button id="hub-menu-toggle" aria-expanded="false" aria-controls="hub-navigation">Menú / Menu</button>
   <nav id="hub-navigation" aria-label="Navegación / Navigation"></nav>
-  <p class="hub-sidebar-note" id="hub-sidebar-note"></p>
+  <div class="hub-sidebar-footer"><span class="hub-connection-dot"></span><p class="hub-sidebar-note" id="hub-sidebar-note"></p></div>
 </aside>
 <div class="hub-workspace">
 <header class="top">
+  <button id="hub-global-search" class="hub-global-search"><span>Buscar en tu espacio</span><kbd>Ctrl K</kbd></button>
   <div class="brand">
     <img src="/ui/hub-icon.svg" alt="" width="36" height="36">
     <div>
@@ -39,6 +40,7 @@
 
 <main id="hub-content" tabindex="-1">
 <div class="hub-page-heading"><div><p id="hub-breadcrumb" hidden></p><h1 id="hub-page-title">Hoard Hub</h1><p id="hub-page-description"></p></div><div id="hub-page-actions"></div></div>
+<div id="hub-context-tools" hidden></div>
 <section id="hub-landing" aria-labelledby="hub-page-title"></section>
 <section id="hub-resources" hidden></section>
 
@@ -139,8 +141,11 @@
 </section>
 
 <section id="hub-apps" hidden>
-  <div id="hub-app-toolbar" class="hub-app-toolbar"></div>
-  <div id="profiles" class="profiles" hidden></div>
+  <div id="hub-app-toolbar" class="hub-app-toolbar">
+    <label class="hub-app-state"><span data-hub-copy="state">Estado</span><select id="app-state-filter"><option value="all">Todas</option><option value="running">En marcha</option><option value="stopped">Paradas</option><option value="attention">Con incidencias</option></select></label>
+    <details class="hub-catalog-actions"><summary data-hub-copy="catalog_actions">Gestionar catálogo</summary><div id="hub-catalog-actions"></div></details>
+  </div>
+  <details class="hub-startup-groups"><summary data-hub-copy="startup_groups">Grupos de arranque</summary><div id="profiles" class="profiles" hidden></div></details>
   <section id="group-editor" class="group-editor" hidden aria-labelledby="group-heading">
     <form id="group-form">
       <h2 id="group-heading" data-i18n="edit_group">Edit group</h2>
@@ -192,22 +197,27 @@
       <img class="icon" src="/ui/fallback-icon.svg" alt="" width="64" height="64">
       <div class="title">
         <h2></h2>
-        <div class="meta"><span class="pill state"></span><span class="port"></span><span class="pid"></span></div>
+        <div class="meta"><span class="pill state"></span></div>
       </div>
     </div>
     <p class="purpose"></p>
     <div class="reason" hidden></div>
-    <div class="proc" hidden></div>
     <div class="actions">
-      <button class="primary act-window" data-i18n="open_window">Open window</button>
-      <button class="act-browser" data-i18n="open_browser">Browser</button>
-      <button class="act-start" data-i18n="start">Start</button>
-      <button class="act-stop danger" data-i18n="stop">Stop</button>
-      <button class="act-restart ghost" data-i18n="restart">Restart</button>
-      <button class="act-close ghost" data-i18n="close_windows">Close windows</button>
-      <button class="act-folder ghost" data-i18n="folder">Folder</button>
-      <button class="act-log ghost" data-i18n="log">Log</button>
-      <button class="act-detail ghost" title="details">⋯</button>
+      <button class="primary act-window" data-i18n="open_window">Open</button>
+      <details class="app-management"><summary data-i18n="manage_app">Manage</summary>
+        <div class="app-management-actions">
+          <button class="act-browser" data-i18n="open_browser">Browser</button>
+          <button class="act-start" data-i18n="start">Start</button>
+          <button class="act-stop danger" data-i18n="stop">Stop</button>
+          <button class="act-restart ghost" data-i18n="restart">Restart</button>
+          <button class="act-close ghost" data-i18n="close_windows">Close windows</button>
+          <button class="act-folder ghost" data-i18n="folder">Folder</button>
+          <button class="act-log ghost" data-i18n="log">Log</button>
+          <button class="act-detail ghost" data-i18n="app_details">Details</button>
+        </div>
+        <p class="app-technical"><span class="port"></span> <span class="pid"></span></p>
+        <div class="proc" hidden></div>
+      </details>
     </div>
   </article>
 </template>
@@ -234,12 +244,13 @@
       <button id="edit-close" class="ghost small" data-i18n="close">Close</button>
     </div>
   </div>
-  <p class="hint" id="edit-hint"></p>
-  <textarea id="edit-body" spellcheck="false"></textarea>
+  <div id="edit-fields" hidden></div>
+  <details id="edit-advanced"><summary>Configuración avanzada · JSON</summary><p class="hint" id="edit-hint"></p><textarea id="edit-body" spellcheck="false"></textarea></details>
   <div id="edit-error" class="err"></div>
 </dialog>
 
 <script src="/ui/app.js"></script>
+<script src="/ui/automation_form.js"></script>
 <script src="/ui/family.js"></script>
 <script src="/ui/facets.js"></script>
 <script src="/ui/navigation.js"></script>

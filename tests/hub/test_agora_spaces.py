@@ -236,7 +236,7 @@ def test_browser_spaces_preserve_draft_create_rename_and_ignore_late_board(tmp_p
             page.goto(hub.config.url)
             page.evaluate("localStorage.setItem('hub.lang', 'es')")
             page.reload()
-            page.locator('#family-tabs .tab[data-tab="agora"]').click()
+            page.goto(hub.config.url + '/#hub/project')
             tab = page.locator("#tab-agora")
             picker = tab.locator('.ag-spacebar select')
             picker.locator(f'option[value="{sid}"]').wait_for(state="attached")
@@ -255,6 +255,7 @@ def test_browser_spaces_preserve_draft_create_rename_and_ignore_late_board(tmp_p
             picker.select_option(sid)
             assert tab.locator('.ag-compose textarea').input_value() == 'Project draft'
             assert 'space_id=' in page.url
+            tab.locator('.ag-space-actions summary').click()
             tab.locator('.ag-spacebar button', has_text='Renombrar').click()
             tab.locator('.ag-form input').fill('Renamed project')
             tab.locator('.ag-form button', has_text='Renombrar').click()

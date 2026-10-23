@@ -245,7 +245,7 @@
 
       box.appendChild(el("div", "wb-head", t("fetch_title")));
       const ft = el("div", "tab-tools");
-      urlIn = el("input"); urlIn.type = "url"; urlIn.placeholder = t("url_ph"); urlIn.style.minWidth = "360px";
+      urlIn = el("input"); urlIn.type = "url"; urlIn.placeholder = t("url_ph"); urlIn.setAttribute('aria-label', t('url_ph')); urlIn.className = 'wb-query';
       urlIn.onkeydown = (e) => { if (e.key === "Enter") doFetch(); };
       modeSel = el("select");
       for (const m of ["readable", "markdown", "meta", "feed"]) { const o = el("option", "", t("mode_" + m)); o.value = m; modeSel.appendChild(o); }
@@ -258,7 +258,7 @@
 
       box.appendChild(el("div", "wb-head", t("search_title")));
       const st = el("div", "tab-tools");
-      queryIn = el("input"); queryIn.type = "search"; queryIn.placeholder = t("q_ph"); queryIn.style.minWidth = "320px";
+      queryIn = el("input"); queryIn.type = "search"; queryIn.placeholder = t("q_ph"); queryIn.setAttribute('aria-label', t('q_ph')); queryIn.className = 'wb-query';
       queryIn.onkeydown = (e) => { if (e.key === "Enter") doSearch(); };
       const nl = el("label", "hint"); newsCb = el("input"); newsCb.type = "checkbox"; nl.appendChild(newsCb); nl.appendChild(document.createTextNode(" " + t("news")));
       const sb = el("button", "primary small", t("search")); sb.onclick = doSearch;
