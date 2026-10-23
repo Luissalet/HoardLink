@@ -1072,6 +1072,7 @@
       const th = section("threads", filters); threadsBox = el("div", "ag-threads"); th.appendChild(threadsBox); mainBox.appendChild(th);
       const lk = section("locks"); locksBox = el("div"); lk.appendChild(locksBox); mainBox.appendChild(lk);
       const dc = section("decisions"); decisionsBox = el("div", "ag-threads"); dc.appendChild(decisionsBox); mainBox.appendChild(dc);
+      mainBox.append(a, un, lk, dc);
       splitBox.appendChild(mainBox);
       detailBox = el("div", "ag-detail"); detailBox.hidden = true; splitBox.appendChild(detailBox);
       box.appendChild(splitBox);

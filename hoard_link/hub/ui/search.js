@@ -26,7 +26,7 @@
   const t = (k) => L(S[k]);
   const OWN = { mail: "own_mail", refs: "own_refs", notify: "own_notify" };
   const GLYPH = { mail: "@", refs: "↔", notify: "!" };
-  let box, input, out, status, tabKey = "search";
+  let box, input, out, status, tabKey = "search", request = 0;
 
   function injectCss() {
     if (document.getElementById("css-search")) return;
@@ -57,11 +57,25 @@
   }
 
   async function run() {
+    const revision = ++request;
     const q = input.value.trim();
     out.innerHTML = "";
     if (!q) { status.textContent = ""; return; }
+    const destinations = window.hubSearchDestinations?.(q) || [];
+    if (destinations.length) {
+      const local = el('section','sr-destinations'); local.appendChild(el('h2','',L({es:'Aplicaciones y herramientas',en:'Applications and tools'})));
+      for (const item of destinations) {
+        const a = el('a','sr-destination',item.title); a.href = item.href;
+        if (item.app_id) a.onclick = () => window.hubFocusApplication?.(item.app_id);
+        local.appendChild(a);
+      }
+      out.appendChild(local);
+    }
     status.textContent = t("searching");
-    const r = await api(`/api/search?q=${encodeURIComponent(q)}&limit=8`);
+    let r;
+    try { r = await api(`/api/search?q=${encodeURIComponent(q)}&limit=8`); }
+    catch (_) { r = {ok:false,error:L({es:'No se ha podido completar la búsqueda. Vuelve a intentarlo.',en:'Search could not be completed. Please try again.'})}; }
+    if (revision !== request) return;
     if (!r.ok) { status.textContent = ""; out.appendChild(el("div", "hint", r.error || "error")); return; }
     status.textContent = `${r.hits} ${t("hits")} · ${r.took_ms} ${t("in_ms")}`;
     const withHits = r.groups.filter((g) => g.results.length);
@@ -76,7 +90,7 @@
       head.appendChild(el("small", "", `${g.tool} · ${g.ms} ms`));
       box2.appendChild(head);
       for (const h of g.results) {
-        const row = el("div", "sr-hit");
+        const row = el("button", "sr-hit"); row.type = "button";
         row.appendChild(el("div", "sr-title", h.title));
         if (h.snippet) row.appendChild(el("div", "sr-snip", h.snippet));
         if (h.url) row.appendChild(el("div", "sr-url", h.url));
@@ -111,7 +125,7 @@
       injectCss();
       box = container;
       const tools = el("div", "tab-tools");
-      input = el("input", "sr-q"); input.type = "search"; input.placeholder = t("ph"); input.style.minWidth = "360px";
+      input = el("input", "sr-q"); input.type = "search"; input.placeholder = t("ph"); input.setAttribute("aria-label", t("ph"));
       input.onkeydown = (e) => { if (e.key === "Enter") run(); };
       const btn = el("button", "primary small", t("go")); btn.onclick = run;
       status = el("span", "hint");

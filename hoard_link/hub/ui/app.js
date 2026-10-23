@@ -5,7 +5,7 @@
   const I18N = {
     en: {
       start_all: "Start all", stop_all: "Stop all", rescan: "Rescan", refresh: "Refresh", close: "Close",
-      open_window: "Open window", open_browser: "Browser", start: "Start", stop: "Stop", restart: "Restart",
+      manage_app: "Manage", app_details: "Details", start_open: "Start and open", no_match: "No applications match these filters.", open_window: "Open", open_browser: "Browser", start: "Start", stop: "Stop", restart: "Restart",
       close_windows: "Close windows", folder: "Folder", log: "Log", filter: "Filter apps…",
       counts: (c) => `${c.total} apps · ${c.running} running · ${c.windows} windows`,
       state: { running: "running", starting: "starting", foreign: "port busy", down: "stopped" },
@@ -44,7 +44,7 @@
     },
     es: {
       start_all: "Arrancar todo", stop_all: "Parar todo", rescan: "Reescanear", refresh: "Actualizar", close: "Cerrar",
-      open_window: "Abrir ventana", open_browser: "Navegador", start: "Arrancar", stop: "Parar", restart: "Reiniciar",
+      manage_app: "Gestionar", app_details: "Detalles", start_open: "Iniciar y abrir", no_match: "No hay aplicaciones que coincidan con estos filtros.", open_window: "Abrir", open_browser: "Navegador", start: "Arrancar", stop: "Parar", restart: "Reiniciar",
       close_windows: "Cerrar ventanas", folder: "Carpeta", log: "Log", filter: "Filtrar apps…",
       counts: (c) => `${c.total} apps · ${c.running} en marcha · ${c.windows} ventanas`,
       state: { running: "en marcha", starting: "arrancando", foreign: "puerto ocupado", down: "parada" },
@@ -92,7 +92,8 @@
   const $ = (s, r = document) => r.querySelector(s);
   const grid = $("#grid"), empty = $("#empty"), counts = $("#counts"), foot = $("#foot");
   const tpl = $("#card-tpl");
-  let snapshot = null, busy = new Set(), filter = "", timer = null, backendsTimer = null;
+  let snapshot = null, busy = new Set(), filter = "", timer = null, backendsTimer = null, stateFilter = "all";
+  $("#app-state-filter").onchange = () => { stateFilter = $("#app-state-filter").value; render(); };
 
   // ---- API ----------------------------------------------------------------
   async function api(path, body) {
@@ -141,6 +142,9 @@
     const availableApps = catalogApps();
     window.dispatchEvent(new CustomEvent('hub:apps', {detail: {apps: availableApps}}));
     const apps = availableApps.filter((a) => {
+      if (stateFilter === "running" && a.state !== "running") return false;
+      if (stateFilter === "stopped" && a.state !== "down") return false;
+      if (stateFilter === "attention" && !["foreign", "starting"].includes(a.state) && a.launchable) return false;
       if (!filter) return true;
       const hay = `${a.name} ${a.id} ${a.purpose} ${(a.capabilities || []).join(" ")}`.toLowerCase();
       return hay.includes(filter);
@@ -151,7 +155,7 @@
       windows: availableApps.reduce((sum, app) => sum + (app.windows || []).length, 0),
     });
     empty.hidden = apps.length > 0;
-    empty.textContent = availableApps.length ? "" : t("no_apps");
+    empty.textContent = availableApps.length ? t("no_match") : t("no_apps");
 
     const existing = new Map([...grid.children].map((el) => [el.dataset.id, el]));
     const order = [];
@@ -203,7 +207,10 @@
       `${(snapshot.roots || []).join(" ; ")}`,
     ];
     if (h.psutil === false) bits.push("⚠ " + t("psutil_missing"));
-    bits.forEach((b) => { const s = document.createElement("span"); s.textContent = b; foot.appendChild(s); });
+    const environment = document.createElement("details");
+    const summary = document.createElement("summary"); summary.textContent = lang === "es" ? "Información del entorno" : "Environment information";
+    environment.appendChild(summary);
+    bits.forEach((b) => { const line = document.createElement("p"); line.textContent = b; environment.appendChild(line); }); foot.appendChild(environment);
   }
 
   // Facets and other views create app-icon images outside the dashboard cards.
@@ -332,8 +339,8 @@
       chip.innerHTML = `<span class="dot"></span><b></b><span class="pcount"></span>`;
       $("b", chip).textContent = p.name;
       $(".pcount", chip).textContent = `${p.running}/${p.total}`;
-      const start = document.createElement("button"); start.className = "ghost small pbtn"; start.textContent = "▶"; start.title = t("start_profile");
-      const stop = document.createElement("button"); stop.className = "ghost small pbtn danger"; stop.textContent = "■"; stop.title = t("stop_profile");
+      const start = document.createElement("button"); start.className = "ghost small pbtn"; start.textContent = t("start"); start.title = t("start_profile");
+      const stop = document.createElement("button"); stop.className = "ghost small pbtn danger"; stop.textContent = t("stop"); stop.title = t("stop_profile");
       start.hidden = on; stop.hidden = p.state === "stopped" || p.state === "empty";
       start.disabled = stop.disabled = profileBusy.has(p.name);
       start.onclick = () => runProfile(p.name, "start");
@@ -475,6 +482,7 @@
     else if (badge) badge.remove();
 
     const running = a.state === "running";
+    $(".act-window", el).textContent = t(running ? "open_window" : "start_open");
     $(".act-window", el).disabled = !(running || a.launchable);
     $(".act-browser", el).disabled = !(running || a.launchable);
     $(".act-start", el).hidden = running || a.state === "starting";
@@ -485,6 +493,20 @@
     $(".act-restart", el).disabled = !a.launchable;
     $(".act-close", el).hidden = !wins;
   }
+
+  window.hubApplications = () => catalogApps();
+  window.hubFocusApplication = (id) => {
+    stateFilter = 'all'; filter = id; $('#search').value = id; $('#app-state-filter').value = 'all'; render();
+  };
+  window.hubOpenApplication = async (id) => {
+    if (busy.has(id)) return;
+    selectedApp = id; busy.add(id); render();
+    try {
+      const result = await api(`/api/apps/${encodeURIComponent(id)}/open`, {mode:"window"});
+      toast(result.ok ? t("opened") : result.error || "error", result.ok ? "ok" : "err");
+    } catch (e) { toast(String(e), "err"); }
+    finally { busy.delete(id); await refresh(); }
+  };
 
   function bindCard(el) {
     const id = () => el.dataset.id;
@@ -504,7 +526,7 @@
       busy.delete(id());
       await refresh();
     };
-    $(".act-window", el).onclick = () => run("open", { mode: "window" }, t("opened"));
+    $(".act-window", el).onclick = () => window.hubOpenApplication(id());
     $(".act-browser", el).onclick = () => run("open", { mode: "browser" }, t("opened"));
     $(".act-start", el).onclick = () => run("start", {}, t("started"));
     $(".act-stop", el).onclick = () => run("stop", {}, t("stopped"));
@@ -548,15 +570,10 @@
         chip.className = `chip ${on ? "on" : "off"}`;
         chip.title = r.reason || "";
         const where = on ? `${r.provider || ""}${r.model ? " · " + r.model : ""}` : t("unavailable");
-        chip.innerHTML = `<span class="dot"></span><b>${cap}</b> <span></span>`;
+        chip.innerHTML = `<span class="dot"></span><b></b><span></span>`;
+        const capLabels = {llm:["Texto","Text"],vision:["Visión","Vision"],embeddings:["Embeddings","Embeddings"],tts:["Voz","Voice"],stt:["Transcripción","Transcription"],image:["Imágenes","Images"],video:["Vídeo","Video"],music:["Música","Music"]};
+        chip.querySelector("b").textContent = capLabels[cap]?.[lang === "es" ? 0 : 1] || cap;
         chip.lastElementChild.textContent = where;
-        box.appendChild(chip);
-      }
-      for (const g of b.gpus || []) {
-        const chip = document.createElement("span");
-        chip.className = "chip gpu";
-        chip.innerHTML = `<b>GPU ${g.index}</b> <span></span>`;
-        chip.lastElementChild.textContent = `${(g.free_mb / 1024).toFixed(1)} / ${(g.total_mb / 1024).toFixed(1)} GB ${t("gpu_free")}`;
         box.appendChild(chip);
       }
       if (b.error) { const s = document.createElement("span"); s.className = "chip off"; s.textContent = b.error; box.appendChild(s); }
@@ -588,8 +605,8 @@
       chip.innerHTML = `<span class="dot"></span><b></b><span class="pcount"></span>`;
       $("b", chip).textContent = s.label;
       $(".pcount", chip).textContent = t("sstate")[s.state] || s.state;
-      const start = document.createElement("button"); start.className = "ghost small pbtn"; start.textContent = "▶"; start.title = t("start_service");
-      const stop = document.createElement("button"); stop.className = "ghost small pbtn danger"; stop.textContent = "■"; stop.title = t("stop_service");
+      const start = document.createElement("button"); start.className = "ghost small pbtn"; start.textContent = t("start"); start.title = t("start_service");
+      const stop = document.createElement("button"); stop.className = "ghost small pbtn danger"; stop.textContent = t("stop"); stop.title = t("stop_service");
       start.hidden = !s.startable; stop.hidden = !s.stoppable;
       start.disabled = stop.disabled = serviceBusy.has(s.id);
       start.onclick = () => runService(s, "start");

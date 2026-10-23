@@ -182,13 +182,13 @@
   $("#events-emit").onclick = async () => { const r = await api("/api/events", { type: "ui.test", data: { at: new Date().toISOString() } }); toast(r.ok ? `#${r.event.id} ui.test` : r.error, r.ok ? "ok" : "err"); };
 
   // ---- generic JSON editor dialog --------------------------------------------------------------------
-  let copilotEditor = null;
+  let copilotEditor = null, automationEditor = null;
   window.hubCopilotFamily = {
     async context() {
       const part = {active_objects:[],view:{section:tab},pending_forms:[]};
       if ($('#edit-dialog').open && copilotEditor) {
         let value;
-        try { value = JSON.parse($('#edit-body').value); }
+        try { value = automationEditor && !$('#edit-advanced').open ? automationEditor.read() : JSON.parse($('#edit-body').value); }
         catch { value = {json_valid:false}; }
         const dirty = Object.keys(value).filter(key => JSON.stringify(value[key]) !== JSON.stringify(copilotEditor.baseline?.[key]));
         part.pending_forms.push({kind:copilotEditor.kind || tab,is_new:!copilotEditor.object_id,fields:value,dirty});
@@ -207,9 +207,28 @@
     copilotEditor = {...context,baseline:value};
     $("#edit-title").textContent = title; $("#edit-hint").textContent = hint; $("#edit-error").textContent = "";
     $("#edit-body").value = JSON.stringify(value, null, 2);
+    const advanced = $("#edit-advanced"), fields = $("#edit-fields");
+    const kind = context.kind || tab;
+    const visual = ['rules','jobs'].includes(kind);
+    fields.hidden = !visual; advanced.open = !visual;
+    advanced.querySelector('summary').textContent = langOf() === 'es' ? 'Configuración avanzada · JSON' : 'Advanced configuration · JSON';
+    const buildForm = (data) => {
+      automationEditor = window.HubAutomationForm.mount(fields, data, kind, {
+        text:(es,en) => langOf() === 'es' ? es : en,
+        apps:window.hubApplications?.() || [],
+        onChange:() => { if (advanced.open) return; try { $('#edit-body').value = JSON.stringify(automationEditor.read(),null,2); $('#edit-error').textContent = ''; } catch (e) { $('#edit-error').textContent = e.message; } },
+      });
+    };
+    automationEditor = null; if (visual) buildForm(value);
+    advanced.ontoggle = () => {
+      if (!visual) return;
+      if (advanced.open) { fields.hidden = true; return; }
+      try { buildForm(JSON.parse($('#edit-body').value)); fields.hidden = false; $('#edit-error').textContent = ''; }
+      catch (e) { $('#edit-error').textContent = e.message; fields.hidden = true; advanced.open = true; }
+    };
     $("#edit-save").onclick = async () => {
       let parsed;
-      try { parsed = JSON.parse($("#edit-body").value); } catch (e) { $("#edit-error").textContent = String(e.message); return; }
+      try { parsed = automationEditor && !advanced.open ? automationEditor.read() : JSON.parse($("#edit-body").value); } catch (e) { $("#edit-error").textContent = String(e.message); return; }
       const patch = context.object_id ? Object.fromEntries(Object.entries(parsed).filter(([key,v]) => JSON.stringify(v) !== JSON.stringify(value[key]))) : parsed;
       if (context.object_id && !Object.keys(patch).length) { dlg.close(); return; }
       const r = await onSave(patch);
