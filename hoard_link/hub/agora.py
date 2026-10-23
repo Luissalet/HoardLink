@@ -2966,7 +2966,11 @@ class Agora:
         counts = {s: 0 for s in TASK_STATUSES}
         for r in self.db.query("SELECT status, COUNT(*) AS n FROM tasks WHERE space_id=? GROUP BY status", (self.space_id,)):
             counts[r["status"]] = r["n"]
-        active = self.tasks({"limit": 300})["tasks"]
+        # Finished tasks are loaded separately below. Do not hydrate their bodies,
+        # checkpoints and activity just to throw them away from the active board.
+        active = [self._task_dict(row) for row in self.db.query(
+            "SELECT * FROM tasks WHERE status NOT IN ('done','dropped') AND space_id=? "
+            "ORDER BY priority, updated DESC, id DESC LIMIT 300", (self.space_id,))]
         tasks = [t for t in active if t["status"] not in FINAL] + \
             [self._task_dict(r) for r in self.db.query(
                 "SELECT * FROM tasks WHERE status IN ('done','dropped') AND space_id=? ORDER BY closed_at DESC LIMIT 15",
