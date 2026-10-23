@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-23T13:07:15.382014+00:00",
+  "generatedAt": "2026-10-23T16:21:02.161449+00:00",
   "title": "Design System: HoardLink Hub and Ágora",
   "extensions": {
     "colorMeta": {
@@ -199,185 +199,350 @@
           "oklch(95% 0.09 83)"
         ]
       },
+      "hub-accent": {
+        "role": "primary",
+        "displayName": "Primary green",
+        "canonical": "#096d59",
+        "tonalRamp": [
+          "oklch(15% 0.0887 173.78)",
+          "oklch(26% 0.0887 173.78)",
+          "oklch(38% 0.0887 173.78)",
+          "oklch(49% 0.0887 173.78)",
+          "oklch(61% 0.0887 173.78)",
+          "oklch(72% 0.0887 173.78)",
+          "oklch(84% 0.0887 173.78)",
+          "oklch(95% 0.0887 173.78)"
+        ]
+      },
+      "hub-accent-hover": {
+        "role": "primary",
+        "displayName": "Deep action green",
+        "canonical": "#075444",
+        "tonalRamp": [
+          "oklch(15% 0.0735 173.57)",
+          "oklch(26% 0.0735 173.57)",
+          "oklch(38% 0.0735 173.57)",
+          "oklch(49% 0.0735 173.57)",
+          "oklch(61% 0.0735 173.57)",
+          "oklch(72% 0.0735 173.57)",
+          "oklch(84% 0.0735 173.57)",
+          "oklch(95% 0.0735 173.57)"
+        ]
+      },
       "hub-canvas": {
         "role": "neutral",
-        "canonical": "#f2f5fa",
+        "displayName": "Workspace canvas",
+        "canonical": "#f6f8f8",
         "tonalRamp": [
-          "oklch(15% 0.02 255)",
-          "oklch(25% 0.02 255)",
-          "oklch(35% 0.02 255)",
-          "oklch(45% 0.02 255)",
-          "oklch(55% 0.02 255)",
-          "oklch(65% 0.02 255)",
-          "oklch(75% 0.02 255)",
-          "oklch(95% 0.02 255)"
-        ],
-        "displayName": "Hub Cool Canvas"
+          "oklch(15% 0.0021 197.12)",
+          "oklch(26% 0.0021 197.12)",
+          "oklch(38% 0.0021 197.12)",
+          "oklch(49% 0.0021 197.12)",
+          "oklch(61% 0.0021 197.12)",
+          "oklch(72% 0.0021 197.12)",
+          "oklch(84% 0.0021 197.12)",
+          "oklch(95% 0.0021 197.12)"
+        ]
       },
-      "hub-raised": {
+      "hub-sunken": {
         "role": "neutral",
-        "canonical": "#f5f7fb",
+        "displayName": "Sunken neutral",
+        "canonical": "#f0f4f3",
         "tonalRamp": [
-          "oklch(15% 0.02 255)",
-          "oklch(25% 0.02 255)",
-          "oklch(35% 0.02 255)",
-          "oklch(45% 0.02 255)",
-          "oklch(55% 0.02 255)",
-          "oklch(65% 0.02 255)",
-          "oklch(75% 0.02 255)",
-          "oklch(95% 0.02 255)"
-        ],
-        "displayName": "Hub Raised Cool"
-      },
-      "hub-nav-hover": {
-        "role": "neutral",
-        "canonical": "#203552",
-        "tonalRamp": [
-          "oklch(15% 0.02 255)",
-          "oklch(25% 0.02 255)",
-          "oklch(35% 0.02 255)",
-          "oklch(45% 0.02 255)",
-          "oklch(55% 0.02 255)",
-          "oklch(65% 0.02 255)",
-          "oklch(75% 0.02 255)",
-          "oklch(95% 0.02 255)"
-        ],
-        "displayName": "Hub Navigation Hover"
-      },
-      "hub-selected": {
-        "role": "primary",
-        "canonical": "#315ed6",
-        "tonalRamp": [
-          "oklch(15% 0.1 264)",
-          "oklch(25% 0.1 264)",
-          "oklch(35% 0.1 264)",
-          "oklch(45% 0.1 264)",
-          "oklch(55% 0.1 264)",
-          "oklch(65% 0.1 264)",
-          "oklch(75% 0.1 264)",
-          "oklch(95% 0.1 264)"
-        ],
-        "displayName": "Hub Selected Surface"
-      },
-      "hub-divider": {
-        "role": "neutral",
-        "canonical": "#dce3ee",
-        "tonalRamp": [
-          "oklch(15% 0.02 255)",
-          "oklch(25% 0.02 255)",
-          "oklch(35% 0.02 255)",
-          "oklch(45% 0.02 255)",
-          "oklch(55% 0.02 255)",
-          "oklch(65% 0.02 255)",
-          "oklch(75% 0.02 255)",
-          "oklch(95% 0.02 255)"
-        ],
-        "displayName": "Hub Divider"
-      },
-      "hub-muted": {
-        "role": "neutral",
-        "canonical": "#586a83",
-        "tonalRamp": [
-          "oklch(15% 0.02 255)",
-          "oklch(25% 0.02 255)",
-          "oklch(35% 0.02 255)",
-          "oklch(45% 0.02 255)",
-          "oklch(55% 0.02 255)",
-          "oklch(65% 0.02 255)",
-          "oklch(75% 0.02 255)",
-          "oklch(95% 0.02 255)"
-        ],
-        "displayName": "Hub Muted Cobalt Gray"
-      },
-      "hub-ink": {
-        "role": "neutral",
-        "canonical": "#ffffff",
-        "tonalRamp": [
-          "oklch(15% 0.02 255)",
-          "oklch(25% 0.02 255)",
-          "oklch(35% 0.02 255)",
-          "oklch(45% 0.02 255)",
-          "oklch(55% 0.02 255)",
-          "oklch(65% 0.02 255)",
-          "oklch(75% 0.02 255)",
-          "oklch(95% 0.02 255)"
-        ],
-        "displayName": "Hub Action Ink"
-      },
-      "hub-cobalt": {
-        "role": "primary",
-        "canonical": "#315ed6",
-        "tonalRamp": [
-          "oklch(15% 0.1 264)",
-          "oklch(25% 0.1 264)",
-          "oklch(35% 0.1 264)",
-          "oklch(45% 0.1 264)",
-          "oklch(55% 0.1 264)",
-          "oklch(65% 0.1 264)",
-          "oklch(75% 0.1 264)",
-          "oklch(95% 0.1 264)"
-        ],
-        "displayName": "Hub Cobalt"
-      },
-      "hub-text": {
-        "role": "neutral",
-        "canonical": "#172842",
-        "tonalRamp": [
-          "oklch(15% 0.02 255)",
-          "oklch(25% 0.02 255)",
-          "oklch(35% 0.02 255)",
-          "oklch(45% 0.02 255)",
-          "oklch(55% 0.02 255)",
-          "oklch(65% 0.02 255)",
-          "oklch(75% 0.02 255)",
-          "oklch(95% 0.02 255)"
-        ],
-        "displayName": "Hub Warm White"
-      },
-      "hub-cobalt-hover": {
-        "role": "primary",
-        "canonical": "#244ab4",
-        "tonalRamp": [
-          "oklch(15% 0.1 264)",
-          "oklch(25% 0.1 264)",
-          "oklch(35% 0.1 264)",
-          "oklch(45% 0.1 264)",
-          "oklch(55% 0.1 264)",
-          "oklch(65% 0.1 264)",
-          "oklch(75% 0.1 264)",
-          "oklch(95% 0.1 264)"
-        ],
-        "displayName": "Hub Cobalt Hover"
-      },
-      "hub-selected-text": {
-        "role": "neutral",
-        "canonical": "#ffffff",
-        "tonalRamp": [
-          "oklch(15% 0.1 264)",
-          "oklch(25% 0.1 264)",
-          "oklch(35% 0.1 264)",
-          "oklch(45% 0.1 264)",
-          "oklch(55% 0.1 264)",
-          "oklch(65% 0.1 264)",
-          "oklch(75% 0.1 264)",
-          "oklch(95% 0.1 264)"
-        ],
-        "displayName": "Hub Selected Text"
+          "oklch(15% 0.0044 179.73)",
+          "oklch(26% 0.0044 179.73)",
+          "oklch(38% 0.0044 179.73)",
+          "oklch(49% 0.0044 179.73)",
+          "oklch(61% 0.0044 179.73)",
+          "oklch(72% 0.0044 179.73)",
+          "oklch(84% 0.0044 179.73)",
+          "oklch(95% 0.0044 179.73)"
+        ]
       },
       "hub-surface": {
         "role": "neutral",
+        "displayName": "White surface",
         "canonical": "#ffffff",
         "tonalRamp": [
-          "oklch(15% 0.02 255)",
-          "oklch(25% 0.02 255)",
-          "oklch(35% 0.02 255)",
-          "oklch(45% 0.02 255)",
-          "oklch(55% 0.02 255)",
-          "oklch(65% 0.02 255)",
-          "oklch(75% 0.02 255)",
-          "oklch(95% 0.02 255)"
-        ],
-        "displayName": "Hub Cool Surface"
+          "oklch(15% 0.0000 89.88)",
+          "oklch(26% 0.0000 89.88)",
+          "oklch(38% 0.0000 89.88)",
+          "oklch(49% 0.0000 89.88)",
+          "oklch(61% 0.0000 89.88)",
+          "oklch(72% 0.0000 89.88)",
+          "oklch(84% 0.0000 89.88)",
+          "oklch(95% 0.0000 89.88)"
+        ]
+      },
+      "hub-raised": {
+        "role": "neutral",
+        "displayName": "Raised neutral",
+        "canonical": "#f3f6f5",
+        "tonalRamp": [
+          "oklch(15% 0.0034 174.48)",
+          "oklch(26% 0.0034 174.48)",
+          "oklch(38% 0.0034 174.48)",
+          "oklch(49% 0.0034 174.48)",
+          "oklch(61% 0.0034 174.48)",
+          "oklch(72% 0.0034 174.48)",
+          "oklch(84% 0.0034 174.48)",
+          "oklch(95% 0.0034 174.48)"
+        ]
+      },
+      "hub-elevated": {
+        "role": "neutral",
+        "displayName": "Elevated neutral",
+        "canonical": "#edf3f0",
+        "tonalRamp": [
+          "oklch(15% 0.0075 164.94)",
+          "oklch(26% 0.0075 164.94)",
+          "oklch(38% 0.0075 164.94)",
+          "oklch(49% 0.0075 164.94)",
+          "oklch(61% 0.0075 164.94)",
+          "oklch(72% 0.0075 164.94)",
+          "oklch(84% 0.0075 164.94)",
+          "oklch(95% 0.0075 164.94)"
+        ]
+      },
+      "hub-text": {
+        "role": "neutral",
+        "displayName": "Reading ink",
+        "canonical": "#20362f",
+        "tonalRamp": [
+          "oklch(15% 0.0308 172.17)",
+          "oklch(26% 0.0308 172.17)",
+          "oklch(38% 0.0308 172.17)",
+          "oklch(49% 0.0308 172.17)",
+          "oklch(61% 0.0308 172.17)",
+          "oklch(72% 0.0308 172.17)",
+          "oklch(84% 0.0308 172.17)",
+          "oklch(95% 0.0308 172.17)"
+        ]
+      },
+      "hub-muted": {
+        "role": "neutral",
+        "displayName": "Secondary text",
+        "canonical": "#566b63",
+        "tonalRamp": [
+          "oklch(15% 0.0281 170.03)",
+          "oklch(26% 0.0281 170.03)",
+          "oklch(38% 0.0281 170.03)",
+          "oklch(49% 0.0281 170.03)",
+          "oklch(61% 0.0281 170.03)",
+          "oklch(72% 0.0281 170.03)",
+          "oklch(84% 0.0281 170.03)",
+          "oklch(95% 0.0281 170.03)"
+        ]
+      },
+      "hub-divider": {
+        "role": "neutral",
+        "displayName": "Quiet divider",
+        "canonical": "#dce4e1",
+        "tonalRamp": [
+          "oklch(15% 0.0095 171.78)",
+          "oklch(26% 0.0095 171.78)",
+          "oklch(38% 0.0095 171.78)",
+          "oklch(49% 0.0095 171.78)",
+          "oklch(61% 0.0095 171.78)",
+          "oklch(72% 0.0095 171.78)",
+          "oklch(84% 0.0095 171.78)",
+          "oklch(95% 0.0095 171.78)"
+        ]
+      },
+      "hub-border-hover": {
+        "role": "neutral",
+        "displayName": "Hover border",
+        "canonical": "#96b5a9",
+        "tonalRamp": [
+          "oklch(15% 0.0379 169.82)",
+          "oklch(26% 0.0379 169.82)",
+          "oklch(38% 0.0379 169.82)",
+          "oklch(49% 0.0379 169.82)",
+          "oklch(61% 0.0379 169.82)",
+          "oklch(72% 0.0379 169.82)",
+          "oklch(84% 0.0379 169.82)",
+          "oklch(95% 0.0379 169.82)"
+        ]
+      },
+      "hub-scrollbar": {
+        "role": "neutral",
+        "displayName": "Scrollbar thumb",
+        "canonical": "#aabbb3",
+        "tonalRamp": [
+          "oklch(15% 0.0218 165.91)",
+          "oklch(26% 0.0218 165.91)",
+          "oklch(38% 0.0218 165.91)",
+          "oklch(49% 0.0218 165.91)",
+          "oklch(61% 0.0218 165.91)",
+          "oklch(72% 0.0218 165.91)",
+          "oklch(84% 0.0218 165.91)",
+          "oklch(95% 0.0218 165.91)"
+        ]
+      },
+      "hub-selection": {
+        "role": "primary",
+        "displayName": "Text selection",
+        "canonical": "#c6e8dc",
+        "tonalRamp": [
+          "oklch(15% 0.0391 172.07)",
+          "oklch(26% 0.0391 172.07)",
+          "oklch(38% 0.0391 172.07)",
+          "oklch(49% 0.0391 172.07)",
+          "oklch(61% 0.0391 172.07)",
+          "oklch(72% 0.0391 172.07)",
+          "oklch(84% 0.0391 172.07)",
+          "oklch(95% 0.0391 172.07)"
+        ]
+      },
+      "hub-selection-text": {
+        "role": "neutral",
+        "displayName": "Selected text ink",
+        "canonical": "#163b2c",
+        "tonalRamp": [
+          "oklch(15% 0.0507 164.27)",
+          "oklch(26% 0.0507 164.27)",
+          "oklch(38% 0.0507 164.27)",
+          "oklch(49% 0.0507 164.27)",
+          "oklch(61% 0.0507 164.27)",
+          "oklch(72% 0.0507 164.27)",
+          "oklch(84% 0.0507 164.27)",
+          "oklch(95% 0.0507 164.27)"
+        ]
+      },
+      "hub-focus": {
+        "role": "primary",
+        "displayName": "Keyboard focus",
+        "canonical": "#168069",
+        "tonalRamp": [
+          "oklch(15% 0.0972 173.42)",
+          "oklch(26% 0.0972 173.42)",
+          "oklch(38% 0.0972 173.42)",
+          "oklch(49% 0.0972 173.42)",
+          "oklch(61% 0.0972 173.42)",
+          "oklch(72% 0.0972 173.42)",
+          "oklch(84% 0.0972 173.42)",
+          "oklch(95% 0.0972 173.42)"
+        ]
+      },
+      "hub-nav-text": {
+        "role": "neutral",
+        "displayName": "Navigation text",
+        "canonical": "#52665d",
+        "tonalRamp": [
+          "oklch(15% 0.0281 166.13)",
+          "oklch(26% 0.0281 166.13)",
+          "oklch(38% 0.0281 166.13)",
+          "oklch(49% 0.0281 166.13)",
+          "oklch(61% 0.0281 166.13)",
+          "oklch(72% 0.0281 166.13)",
+          "oklch(84% 0.0281 166.13)",
+          "oklch(95% 0.0281 166.13)"
+        ]
+      },
+      "hub-nav-hover-text": {
+        "role": "neutral",
+        "displayName": "Navigation hover ink",
+        "canonical": "#164c3b",
+        "tonalRamp": [
+          "oklch(15% 0.0637 168.45)",
+          "oklch(26% 0.0637 168.45)",
+          "oklch(38% 0.0637 168.45)",
+          "oklch(49% 0.0637 168.45)",
+          "oklch(61% 0.0637 168.45)",
+          "oklch(72% 0.0637 168.45)",
+          "oklch(84% 0.0637 168.45)",
+          "oklch(95% 0.0637 168.45)"
+        ]
+      },
+      "hub-nav-hover": {
+        "role": "neutral",
+        "displayName": "Navigation hover fill",
+        "canonical": "#edf4f0",
+        "tonalRamp": [
+          "oklch(15% 0.0091 161.35)",
+          "oklch(26% 0.0091 161.35)",
+          "oklch(38% 0.0091 161.35)",
+          "oklch(49% 0.0091 161.35)",
+          "oklch(61% 0.0091 161.35)",
+          "oklch(72% 0.0091 161.35)",
+          "oklch(84% 0.0091 161.35)",
+          "oklch(95% 0.0091 161.35)"
+        ]
+      },
+      "hub-selected": {
+        "role": "primary",
+        "displayName": "Current navigation/category",
+        "canonical": "#e2f0e9",
+        "tonalRamp": [
+          "oklch(15% 0.0175 164.65)",
+          "oklch(26% 0.0175 164.65)",
+          "oklch(38% 0.0175 164.65)",
+          "oklch(49% 0.0175 164.65)",
+          "oklch(61% 0.0175 164.65)",
+          "oklch(72% 0.0175 164.65)",
+          "oklch(84% 0.0175 164.65)",
+          "oklch(95% 0.0175 164.65)"
+        ]
+      },
+      "hub-folder": {
+        "role": "neutral",
+        "displayName": "Project folder icon",
+        "canonical": "#668274",
+        "tonalRamp": [
+          "oklch(15% 0.0386 163.26)",
+          "oklch(26% 0.0386 163.26)",
+          "oklch(38% 0.0386 163.26)",
+          "oklch(49% 0.0386 163.26)",
+          "oklch(61% 0.0386 163.26)",
+          "oklch(72% 0.0386 163.26)",
+          "oklch(84% 0.0386 163.26)",
+          "oklch(95% 0.0386 163.26)"
+        ]
+      },
+      "hub-project-hover": {
+        "role": "neutral",
+        "displayName": "Project action hover",
+        "canonical": "#e7f2ec",
+        "tonalRamp": [
+          "oklch(15% 0.0141 162.47)",
+          "oklch(26% 0.0141 162.47)",
+          "oklch(38% 0.0141 162.47)",
+          "oklch(49% 0.0141 162.47)",
+          "oklch(61% 0.0141 162.47)",
+          "oklch(72% 0.0141 162.47)",
+          "oklch(84% 0.0141 162.47)",
+          "oklch(95% 0.0141 162.47)"
+        ]
+      },
+      "hub-profile": {
+        "role": "neutral",
+        "displayName": "Startup group surface",
+        "canonical": "#edf3ef",
+        "tonalRamp": [
+          "oklch(15% 0.0083 157.09)",
+          "oklch(26% 0.0083 157.09)",
+          "oklch(38% 0.0083 157.09)",
+          "oklch(49% 0.0083 157.09)",
+          "oklch(61% 0.0083 157.09)",
+          "oklch(72% 0.0083 157.09)",
+          "oklch(84% 0.0083 157.09)",
+          "oklch(95% 0.0083 157.09)"
+        ]
+      },
+      "hub-project-agora": {
+        "role": "neutral",
+        "displayName": "Project Agora entry",
+        "canonical": "#edf5f0",
+        "tonalRamp": [
+          "oklch(15% 0.0107 158.85)",
+          "oklch(26% 0.0107 158.85)",
+          "oklch(38% 0.0107 158.85)",
+          "oklch(49% 0.0107 158.85)",
+          "oklch(61% 0.0107 158.85)",
+          "oklch(72% 0.0107 158.85)",
+          "oklch(84% 0.0107 158.85)",
+          "oklch(95% 0.0107 158.85)"
+        ]
       }
     },
     "typographyMeta": {
@@ -402,20 +567,20 @@
         "displayName": "Operational label"
       },
       "hub-heading": {
-        "displayName": "Hub Page Heading",
-        "purpose": "36px desktop heading;32px at900px and30px at600px."
+        "displayName": "hub-heading",
+        "purpose": "34px desktop page heading;30px at600px."
       },
-      "hub-title": {
-        "displayName": "Hub Section and Project Title",
-        "purpose": "19px project/catalog names;17px app launch names and16px Home project names."
+      "hub-section": {
+        "displayName": "hub-section",
+        "purpose": "21px section heading;20px at600px."
       },
       "hub-body": {
-        "displayName": "Hub Body",
-        "purpose": "15px body;global buttons14px;later interior controls15px."
+        "displayName": "hub-body",
+        "purpose": "16px/1.55 final body;retained controls15px and mail16px/1.8."
       },
       "hub-label": {
-        "displayName": "Hub Metadata",
-        "purpose": "Project workspace and compact operational context."
+        "displayName": "hub-label",
+        "purpose": "12px metadata;local supporting text13–15px."
       }
     },
     "shadows": [
@@ -466,7 +631,7 @@
       },
       {
         "name": "hub-stacked-home",
-        "value": "1180px"
+        "value": "1150px"
       },
       {
         "name": "hub-menu",
@@ -475,11 +640,6 @@
       {
         "value": "1400px",
         "name": "hub-interior-records"
-      },
-      {
-        "name": "hub-low-desktop",
-        "value": "850px height",
-        "purpose": "Later interior low-height rule returns the rail to document flow."
       },
       {
         "name": "hub-single-column",
@@ -492,7 +652,7 @@
     ],
     "surfaceScopes": {
       "hub": {
-        "description": "Project library navigation and shared-tool interiors. navigation.css owns the existing cool white/cobalt palette; later interiors.css applies the shared reading/control scale and field surface to main content and dialogs. Separate apps/agora guidance remains scoped and intact.",
+        "description": "Task-first Hub workspace. workspace.css loads after navigation.css/interiors.css and defines final white/green-neutral palette,224px rail and16px body. Separate apps/agora contract remains unchanged.",
         "source": [
           "hoard_link/hub/ui/index.html",
           "hoard_link/hub/ui/navigation.js",
@@ -502,7 +662,10 @@
           "hoard_link/hub/ui/mail.js",
           "hoard_link/hub/ui/chats.js",
           "hoard_link/hub/ui/refs.js",
-          "hoard_link/hub/ui/family.js"
+          "hoard_link/hub/ui/family.js",
+          "hoard_link/hub/ui/workspace.css",
+          "hoard_link/hub/ui/discovery.js",
+          "hoard_link/hub/ui/automation_form.js"
         ],
         "tokenPrefix": "hub-"
       },
@@ -514,38 +677,38 @@
         "tokenPrefix": "unprefixed"
       }
     },
-    "tonalRampNotes": "Hub tonal ramps are synthesized preview metadata, not additional shipping CSS tokens. Canonical hex values are extracted from navigation.css.",
+    "tonalRampNotes": "Hub eight-step OKLCH ramps are synthesized preview metadata, not shipping CSS tokens. Canonical colors are the distinct intentional workspace.css values; ramp lightness15–95% holds source chroma/hue and may require display gamut mapping. Existing Agora ramps are preserved.",
     "focus": {
-      "hub-search": "Component-specific field border/focus rules use cobalt.",
-      "hub-shell": "outline:3px solid #4c73dd;outline-offset:3px"
+      "hub-search": "Green component borders plus the final visible focus outline.",
+      "hub-shell": "outline:3px solid #168069;outline-offset:3px"
     },
     "surfaceNarratives": {
       "hub": {
-        "northStar": "The Personal Workbench",
-        "overview": "The Hub separates opening an application, entering a project and managing shared work. A deep navy rail sits beside cool white working surfaces; cobalt marks selection and primary action. Existing application identities, dark ink and quiet status labels keep the local environment readable.",
+        "northStar": "The Personal Workspace",
+        "overview": "The Hub begins with attention and continuity: pending work, a project to continue and tools described by purpose. White navigation and a green-neutral canvas support divided lists and readable documents. Green marks an action, the current destination and keyboard focus; application identities remain their actual icons.",
         "keyCharacteristics": [
-          "Navy navigation, cool white surfaces and cobalt actions.",
-          "Six primary destinations with a labelled local tool selector.",
-          "Home pairs application launch rows with a project stack.",
+          "White rail, neutral green surfaces and restrained green actions.",
+          "Six primary destinations, visible contextual links and a Help/settings route.",
+          "Attention and project continuity before application launch entries.",
           "Authored navigation SVG and existing app icons; no new shipping raster imagery."
         ],
         "rules": [
           {
             "name": "The Hub Scope Rule",
             "section": "colors",
-            "body": "Use the Hub workbench palette in hoard_link/hub/ui; keep the separate apps/agora amber console and its tokens scoped to that application."
+            "body": "Use the Hub workspace palette in hoard_link/hub/ui; keep the separate apps/agora amber console and its tokens scoped to that application."
           }
         ],
         "dos": [
-          "Do keep opening apps, entering projects and managing shared tools distinct, with every original tool reachable.",
-          "Do preserve full document scrolling, labelled local tool selection, wrapping and keyboard access.",
+          "Do begin with pending work, a project to continue and tools described by purpose.",
+          "Do preserve document scrolling, visible contextual links, wrapping and keyboard access.",
           "Do treat projects as persistent Ágora spaces and preserve coordination workspace_url and space_id.",
           "Do preserve unknown fields and invalid JSON while editing automation."
         ],
         "donts": [
-          "Don't infer running apps or successful workspace availability from placeholders.",
+          "Don't infer running apps, complete catalogs or successful work from placeholders.",
           "Don't add raster decoration or import the separate Ágora amber display typography.",
-          "Don't describe the navigation redesign as new backend, data or MCP capabilities."
+          "Don't describe this frontend change as new backend, data or MCP capabilities."
         ]
       }
     },
@@ -572,61 +735,68 @@
         "source": "hoard_link/hub/ui/interiors.css"
       },
       "sharedScale": {
-        "description": "15px body;global buttons/rail14px;later interior controls15px,38px minimum or44px at760px. Mail16px/1.8,max72ch. Main1576px;heading gap28px.",
-        "source": "hoard_link/hub/ui/interiors.css"
+        "description": "Final workspace.css:16px/1.55 body,34px page heading(30px mobile),21px section(20px mobile),224px rail,1480px content. Retained controls15px/38px minimum or44px at760px;mail16px/1.8,max72ch.",
+        "source": "hoard_link/hub/ui/workspace.css;hoard_link/hub/ui/interiors.css"
       },
       "automation": {
         "source": "hoard_link/hub/ui/automation_form.js;hoard_link/hub/ui/family.js",
-        "description": "Labelled native rule/job forms;exclusive full JSON disclosure;invalid JSON retains text/error;unknown fields preserved unless action kind changes."
+        "description": "Intention landing;five labelled known events;backup and app/group actions without IDs/JSON. Custom tools/events retain advanced technical fields;exclusive full JSON;invalid text/error and same-kind unknown fields preserved."
       }
     }
   },
   "components": [
     {
-      "name": "Hub — Open Agora Link",
+      "name": "Hub — Primary Action",
       "kind": "button",
-      "refersTo": "hub-primary-link",
-      "description": "Explicit native workspace destination; the live URL is supplied by coordination configuration with a project space_id.",
-      "html": "<a class=\"ds-hub-primary\" href=\"#project\">Abrir ágora<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 12h16m-6-6 6 6-6 6\"/></svg></a>",
-      "css": ".ds-hub-primary{display:inline-flex;align-items:center;justify-content:center;gap:12px;text-decoration:none;color:var(--hub-ink,#ffffff);background:var(--accent,#315ed6);padding:11px 14px;border-radius:8px;font:600 13px var(--font,'Segoe UI',sans-serif)}.ds-hub-primary svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.ds-hub-primary:hover{background:var(--accent-2,#244ab4)}.ds-hub-primary:focus-visible{outline:3px solid var(--accent,#315ed6);outline-offset:3px}"
+      "description": "Green primary action.",
+      "html": "<button class=\"ds-hub-primary\">Programar una acción</button>",
+      "css": ".ds-hub-primary{font-family:'Source Sans 3','Segoe UI',sans-serif;color:#20362f;background:#096d59;color:#fff;border:1px solid transparent;padding:10px 15px;border-radius:8px;font-size:14px}.ds-hub-primary:hover{background:#075444}.ds-hub-primary:focus-visible{outline:3px solid #168069;outline-offset:3px}",
+      "refersTo": "hub-primary-link"
     },
     {
       "name": "Hub — Navigation",
       "kind": "nav",
-      "refersTo": "hub-nav-link-selected",
-      "description": "Navy primary navigation with cobalt selection;tools switch in a labelled native selector.",
-      "html": "<nav class=\"ds-hub-nav\"><a class=\"ds-hub-nav-link\" href=\"#hub/system\" aria-current=\"page\">Sistema</a></nav>",
-      "css": ".ds-hub-nav{width:180px;padding:18px;background:#14243c;font-family:sans-serif}.ds-hub-nav-link{display:flex;padding:13px 14px;color:#b9cbe3;border-radius:9px;font-size:14px;text-decoration:none}.ds-hub-nav-link:hover{background:#203552;color:#fff}.ds-hub-nav-link[aria-current]{background:#315ed6;color:#fff;font-weight:600}.ds-hub-nav-link:focus-visible{outline:3px solid #4c73dd;outline-offset:3px}"
+      "description": "White rail with green-neutral selection.",
+      "html": "<nav class=\"ds-hub-nav\"><a href=\"#hub/projects\" aria-current=\"page\">Proyectos</a><a href=\"#hub/apps\">Aplicaciones</a></nav>",
+      "css": ".ds-hub-nav{font-family:'Source Sans 3','Segoe UI',sans-serif;color:#20362f;background:#fff;padding:16px;width:192px}.ds-hub-nav a{display:block;color:#52665d;padding:12px 14px;border-radius:8px;font-size:15px;text-decoration:none}.ds-hub-nav a:hover{color:#164c3b;background:#edf4f0}.ds-hub-nav a[aria-current]{background:#e2f0e9;color:#075444;font-weight:650}.ds-hub-nav a:focus-visible{outline:3px solid #168069;outline-offset:3px}",
+      "refersTo": "hub-nav-link-selected"
     },
     {
-      "name": "Hub — Project Card",
+      "name": "Hub — Project Row",
       "kind": "custom",
-      "refersTo": "hub-project-card",
-      "description": "White12px project card;embedded board and native Agora remain separate actions.",
-      "html": "<article class=\"ds-hub-row\"><button class=\"ds-hub-project\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 6h7l2 3h9v11H3Z\"/><path d=\"M3 9V4h7l2 2h7v3\"/></svg><span><strong>Proyecto</strong><small>Espacio de proyecto</small></span></button></article>",
-      "css": ".ds-hub-row{padding:28px;background:#fff;border-radius:12px;border:1px solid var(--line,#dce3ee)}.ds-hub-project{display:flex;align-items:center;gap:16px;color:var(--text,#172842);background:transparent;border:0;padding:6px 0;border-radius:4px;text-align:left;font-family:var(--font,'Segoe UI',sans-serif);cursor:pointer;transition:background .12s,border-color .12s,transform .05s}.ds-hub-project svg{width:26px;height:26px;fill:none;stroke:var(--accent,#315ed6);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.ds-hub-project span{display:grid;gap:7px}.ds-hub-project strong{font-size:19px;font-weight:600}.ds-hub-project small{font-size:12px;line-height:1.5;color:var(--muted,#586a83)}.ds-hub-project:hover{color:var(--accent,#315ed6)}.ds-hub-project:focus-visible{outline:3px solid var(--accent,#315ed6);outline-offset:3px}.ds-hub-project:active{transform:translateY(1px)}@media(prefers-reduced-motion:reduce){.ds-hub-project{transition:none}}"
+      "description": "Divided project row entering its overview.",
+      "html": "<button class=\"ds-hub-project\"><strong>Proyecto</strong><small>Espacio de proyecto</small></button>",
+      "css": ".ds-hub-project{font-family:'Source Sans 3','Segoe UI',sans-serif;color:#20362f;display:grid;gap:6px;width:100%;text-align:left;padding:20px 0;border:0;border-bottom:1px solid #dce4e1;border-radius:0;background:transparent}.ds-hub-project strong{font-size:17px;font-weight:650}.ds-hub-project small{color:#566b63;font-size:13px}.ds-hub-project:hover strong{color:#096d59}.ds-hub-project:focus-visible{outline:3px solid #168069;outline-offset:3px}",
+      "refersTo": "hub-project-row"
     },
     {
       "name": "Hub — Project Search",
       "kind": "input",
-      "description": "Light local project filter with dark text and cobalt focus.",
+      "description": "Existing local project filter with final neutral palette.",
       "html": "<input class=\"ds-hub-search\" type=\"search\" placeholder=\"Buscar proyecto…\" aria-label=\"Buscar proyecto\">",
-      "css": ".ds-hub-search{font:400 15px var(--font,'Segoe UI',sans-serif);color:var(--text,#172842);background:var(--bg-2,#ffffff);border:1px solid var(--line,#dce3ee);border-radius:6px;padding:9px 11px;min-width:0;max-width:100%;width:min(100%,520px);outline:none;caret-color:var(--accent,#315ed6)}.ds-hub-search:focus{border-color:var(--accent,#315ed6)}"
+      "css": ".ds-hub-search{font-family:'Source Sans 3','Segoe UI',sans-serif;color:#20362f;background:#f0f4f3;border:1px solid #dce4e1;border-radius:6px;padding:9px 11px;font-size:15px;max-width:100%;width:300px}.ds-hub-search:hover{border-color:#96b5a9}.ds-hub-search:focus{border-color:#096d59}.ds-hub-search:focus-visible{outline:3px solid #168069;outline-offset:3px}"
     },
     {
-      "name": "Hub — Local Tool Selector",
+      "name": "Hub — Context Links",
       "kind": "nav",
-      "description": "Labelled native selector switches one complete working surface.",
-      "html": "<label class=\"ds-hub-view\">Vista de sistema<select><option>Recursos</option><option>Servicios</option><option>Eventos</option></select></label>",
-      "css": ".ds-hub-view{display:flex;align-items:center;gap:14px;color:#586a83;font:13px sans-serif}.ds-hub-view select{padding:9px 11px;min-width:220px;min-height:38px;background:#fff;color:#172842;border:1px solid #dce3ee;border-radius:9px;font:600 15px sans-serif}.ds-hub-view select:hover{border-color:#a8b9d3}.ds-hub-view select:focus-visible{outline:3px solid #4c73dd;outline-offset:3px}"
+      "description": "Visible wrapping links replace the local tool selector.",
+      "html": "<nav class=\"ds-hub-context\"><a href=\"#hub/project\" aria-current=\"page\">Resumen</a><a href=\"#hub/agora\">Ágora · tareas y conversaciones</a></nav>",
+      "css": ".ds-hub-context{font-family:'Source Sans 3','Segoe UI',sans-serif;color:#20362f;display:flex;flex-wrap:wrap;gap:6px 20px;border-bottom:1px solid #dce4e1;padding-bottom:10px}.ds-hub-context a{padding:9px 2px;min-height:40px;box-sizing:border-box;border-bottom:2px solid transparent;font-size:14px;color:#566b63;text-decoration:none}.ds-hub-context a:hover{color:#096d59}.ds-hub-context a[aria-current]{color:#096d59;border-color:#096d59;font-weight:650}.ds-hub-context a:focus-visible{outline:3px solid #168069;outline-offset:3px}"
+    },
+    {
+      "name": "Hub — Purpose Category",
+      "kind": "chip",
+      "description": "Purpose filter backed by known catalog entries.",
+      "html": "<button class=\"ds-hub-category\" aria-pressed=\"true\">Crear y escribir</button>",
+      "css": ".ds-hub-category{font-family:'Source Sans 3','Segoe UI',sans-serif;color:#20362f;background:transparent;border:1px solid #dce4e1;border-radius:6px;padding:9px 11px;font-size:14px}.ds-hub-category[aria-pressed=true]{background:#e2f0e9;color:#075444;border-color:#96b5a9;font-weight:600}.ds-hub-category:hover{border-color:#96b5a9}.ds-hub-category:focus-visible{outline:3px solid #168069;outline-offset:3px}"
     },
     {
       "name": "Hub — Application Card",
       "kind": "card",
-      "refersTo": "hub-app-card",
-      "description": "White12px catalog card;one Open action plus native Manage disclosure preserves controls.",
-      "html": "<article class=\"ds-hub-card\"><h2>Aplicación</h2><p>Descripción de la aplicación.</p><button>Abrir</button><details><summary>Gestionar</summary><button>Logs</button></details></article>",
-      "css": ".ds-hub-card{background:var(--card,#ffffff);color:var(--text,#172842);border:1px solid var(--line,#dce3ee);border-radius:12px;padding:26px;box-shadow:none;font-family:var(--font,'Segoe UI',sans-serif);transition:border-color .15s,transform .15s}.ds-hub-card h2{margin:0;font-size:19px;font-weight:600}.ds-hub-card p{line-height:1.6;font-size:13px;margin-top:8px;color:var(--muted,#586a83)}.ds-hub-card:hover{border-color:var(--hoard-border-hover,#6a6458)}@media(prefers-reduced-motion:reduce){.ds-hub-card{transition:none}}"
+      "description": "Catalog card keeps one opening action and Manage disclosure.",
+      "html": "<article class=\"ds-hub-card\"><h2>Aplicación</h2><p>Descripción de su propósito.</p><button>Abrir</button><details><summary>Gestionar</summary>Controles de la aplicación</details></article>",
+      "css": ".ds-hub-card{font-family:'Source Sans 3','Segoe UI',sans-serif;color:#20362f;background:#fff;border:1px solid #dce4e1;border-radius:12px;padding:24px;box-shadow:none}.ds-hub-card h2{font-size:19px;margin:0}.ds-hub-card p{font-size:15px;line-height:1.6;margin:18px 0}.ds-hub-card button{background:#096d59;color:white;border:0;border-radius:6px;padding:9px 11px}.ds-hub-card button:hover{background:#075444}.ds-hub-card button:focus-visible{outline:3px solid #168069;outline-offset:3px}.ds-hub-card summary{cursor:pointer;color:#566b63}.ds-hub-card summary:focus-visible{outline:3px solid #168069;outline-offset:3px}",
+      "refersTo": "hub-app-card"
     },
     {
       "description": "Amber send or confirm action.",
