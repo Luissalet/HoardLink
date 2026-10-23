@@ -7,19 +7,19 @@
     prospero:['crear','Crea y edita vídeo, audio y proyectos audiovisuales.','Create and edit video, audio and audiovisual projects.','video vídeo audio película editar montaje multimedia'],
     daguerre:['crear','Organiza y trabaja con fotografías e imágenes.','Organize and work with photographs and images.','foto fotografía imagen imágenes álbum galería'],
     vulcan:['crear','Crea y trabaja con modelos y escenas en 3D.','Create and work with 3D models and scenes.','3d modelo modelado escena objeto malla'],
-    vitruvius:['crear','Organiza proyectos de diseño y sus documentos.','Organize design projects and their documents.','diseño diseñar proyecto plano documento'],
-    pygmalion:['crear','Trabaja con contenido visual y generación de imágenes.','Work with visual content and image generation.','imagen imágenes generar dibujo ilustración'],
+    vitruvius:['crear','Desarrolla software y organiza proyectos de diseño y código.','Develop software and organize design and source projects.','software desarrollo desarrollar código diseño diseñar documentación api'],
+    pygmalion:['analizar','Prepara datos, desarrolla y evalúa modelos de inteligencia artificial.','Prepare datasets, develop and evaluate AI models.','modelo modelos entrenar entrenamiento evaluación evaluar dataset lora pruebas comparación'],
     scheherazade:['crear','Desarrolla historias y experiencias narrativas.','Develop stories and narrative experiences.','historia narración narrativa cuento ficción'],
-    atlas:['organizar','Organiza conocimiento y consulta tus documentos.','Organize knowledge and consult your documents.','conocimiento documento documentos buscar notas biblioteca'],
+    atlas:['organizar','Organiza archivos y carpetas compartidos de tus proyectos.','Organize shared project files and folders.','archivo archivos ficheros carpeta carpetas proyecto compartido revisión versiones'],
     nightingale:['analizar','Analiza datos, tablas y hojas de cálculo.','Analyze data, tables and spreadsheets.','datos tabla tablas excel hoja cálculo estadística csv'],
     hypatia:['analizar','Resuelve y explora problemas de matemáticas.','Solve and explore mathematics problems.','matemática matemáticas ecuación función cálculo álgebra'],
-    galton:['analizar','Estudia datos y análisis estadísticos.','Study data and statistical analyses.','estadística datos análisis distribución'],
+    galton:['analizar','Evalúa modelos desde el estudio de Pygmalion.','Evaluate models through the Pygmalion studio.','modelo modelos evaluación evaluar pruebas comparación'],
     coase:['analizar','Investiga empresas y prepara informes empresariales.','Research companies and prepare business reports.','empresa empresas informe informes negocio análisis'],
     mercator:['organizar','Organiza contactos comerciales, ventas y seguimiento.','Organize business contacts, sales and follow-up.','ventas venta cliente clientes comercial crm calendario'],
     ledger:['vida','Lleva tus cuentas, movimientos y finanzas personales.','Track accounts, transactions and personal finances.','dinero gastos ingreso finanzas cuenta presupuesto movimiento'],
     homehoard:['vida','Organiza la casa y las tareas del hogar.','Organize your home and household tasks.','casa hogar tarea mantenimiento doméstico'],
     people:['vida','Organiza tus contactos y relaciones personales.','Organize contacts and personal relationships.','persona personas contacto contactos relación agenda'],
-    dorian:['vida','Organiza tu ropa y tu armario.','Organize your clothes and wardrobe.','ropa armario prenda conjunto vestir moda'],
+    dorian:['vida','Consulta tu contexto personal y revisa reflexiones con sus fuentes.','Consult personal context and review reflections with their sources.','contexto personal reflexión reflexiones perfil diario fuentes'],
     jobhunter:['vida','Busca empleo y sigue tus candidaturas.','Find jobs and track applications.','empleo trabajo oferta ofertas candidatura currículum'],
     gamerhoard:['vida','Organiza tu colección de videojuegos.','Organize your video game collection.','juego juegos videojuego videojuegos colección jugar'],
     silver:['vida','Consulta y organiza tus proyectos de Pokémon.','Explore and organize your Pokémon projects.','pokemon pokémon criatura equipo juego'],
@@ -33,11 +33,15 @@
   const entry = app => entries[app.id] || null;
   window.HubDiscovery = {
     description(app, spanish) { const e=entry(app); return e ? e[spanish ? 1 : 2] : app.purpose || app.name; },
+    launchMessage(app, spanish) {
+      const missing=/manifest.*launch|no.*launch hint|no process launch/i.test(app.launch_reason || '');
+      return spanish ? (missing?'El inicio desde el Hub no está configurado. Abre Gestionar → Detalles para consultar la configuración.':'No se puede iniciar con la configuración actual. Abre Gestionar → Detalles para consultar el motivo.') : (missing?'Starting from the Hub is not configured. Open Manage → Details to review the configuration.':'This app cannot start with its current configuration. Open Manage → Details to review the reason.');
+    },
     category(app) { return entry(app)?.[0] || 'otras'; },
     matches(app, query) {
       const tokens=words(query); if (!tokens.length) return !normalize(query).trim() || normalize(app.name).includes(normalize(query));
       const hay=normalize([app.name,app.id,app.purpose,...(entry(app) || []),...(app.capabilities || [])].join(' '));
-      return tokens.every(w => hay.includes(w));
+      return tokens.every(w => hay.includes(w) || w.length>5 && hay.includes(w.replace(/(?:es|os|as)$/,'')));
     },
     categories(spanish) { return spanish ? [['todas','Todas'],['crear','Crear y escribir'],['organizar','Organizar y consultar'],['analizar','Analizar'],['vida','Vida cotidiana'],['sistema','Equipo y modelos'],['otras','Otras herramientas']] : [['todas','All'],['crear','Create and write'],['organizar','Organize and find'],['analizar','Analyze'],['vida','Everyday life'],['sistema','Computer and models'],['otras','Other tools']]; },
   };

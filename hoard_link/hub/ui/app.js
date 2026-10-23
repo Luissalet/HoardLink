@@ -464,7 +464,7 @@
     $(".purpose", el).textContent = window.HubDiscovery.description(a, lang === "es");
     $(".purpose", el).title = a.purpose;
     const reason = $(".reason", el);
-    if (!a.launchable) { reason.hidden = false; reason.textContent = `${t("cannot_start")}: ${a.launch_reason}`; } else { reason.hidden = true; }
+    if (!a.launchable) { reason.hidden = false; reason.textContent = window.HubDiscovery.launchMessage(a,lang==='es'); } else { reason.hidden = true; }
     const proc = $(".proc", el);
     if (p) {
       proc.hidden = false;

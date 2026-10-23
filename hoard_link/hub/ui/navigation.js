@@ -123,7 +123,7 @@
         const a=link(title,'#hub/'+id); if(route===id) a.setAttribute('aria-current','page'); nav.append(a);
       } box.append(nav); return;
     }
-    const group = groups.find(g => g.id === route || g.facets?.includes(activeView()));
+    const group = groups.find(g => g.id === route || g.facets?.includes(activeView())) || (facetButtons().some(b=>b.dataset.tab===activeView())?groups.find(g=>g.id==='system'):null);
     box.hidden=!group?.facets; if(box.hidden) return;
     const nav=node('nav','hub-local-nav'); nav.setAttribute('aria-label',tr('Herramientas de ','Tools in ')+labels(group.label));
     const ids=[...group.facets,...facetButtons().filter(b => !groups.some(g => g.facets?.includes(b.dataset.tab)) && b.dataset.tab!=='agora').map(b=>b.dataset.tab).filter(()=>group.id==='system')];
