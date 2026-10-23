@@ -65,7 +65,7 @@ button.primary:hover { background:var(--accent-2); }
 .hub-app-launch img { border-radius:12px; width:52px; height:52px; object-fit:contain; }
 .hub-app-launch > span { display:grid; gap:6px; min-width:0; }
 .hub-app-launch strong { font-size:17px; font-weight:650; overflow-wrap:anywhere; }
-.hub-app-launch small { font-size:13px; color:var(--muted); line-height:1.55; overflow-wrap:anywhere; }
+.hub-app-launch small { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; font-size:13px; color:var(--muted); line-height:1.55; overflow-wrap:anywhere; }
 .hub-app-launch .hub-launch-state { font-size:12px; color:var(--accent); }
 .hub-app-launch svg { color:var(--accent); width:18px; }
 .hub-home-more { margin-top:28px; }
