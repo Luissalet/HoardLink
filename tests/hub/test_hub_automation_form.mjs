@@ -40,4 +40,24 @@ function mount(value,kind) {
   const h=mount({when:{type:'test'},then:[{kind:'event',type:'result',data:{keep:true}}]},'rules');
   h.root.all('textarea')[0].value='{broken';assert.throws(()=>h.read(),{name:'SyntaxError'});
 }
+{
+  const action={kind:'tool',app:'writer',tool:'export',args:{format:'pdf'},on_error:'continue'};
+  const h=mount({when:{type:'test'},then:[action]},'rules');
+  const type=h.root.all('select').find(x=>x.children.some(o=>o.value==='backup'));
+  type.value='backup';type.events.change();
+  type.value='tool';type.events.change();
+  assert.deepEqual(h.read().then,[action],'Changing type and returning must preserve the tool draft');
+  type.value='event';type.events.change();h.field('type').value='my.event';h.root.all('textarea')[0].value='{unfinished';
+  type.value='backup';type.events.change();type.value='event';type.events.change();
+  assert.equal(h.field('type').value,'my.event');assert.equal(h.root.all('textarea')[0].value,'{unfinished');
+}
+{
+  const h=mount({when:{type:'links.watch.new',source:'links'},then:[{kind:'hub',tool:'hub_backup_run',args:{}}]},'rules');
+  const trigger=h.root.all('select').find(x=>x.children.some(o=>o.value==='hub.app.started'));
+  trigger.value='hub.app.started';trigger.events.change();
+  const affected=h.root.all('select').find(x=>x.name==='affected_app');affected.value='writer';affected.events.change();
+  assert.deepEqual(h.read().when,{type:'hub.app.started',source:'hub',where:{'data.app':'writer'}});
+  trigger.value='links.watch.new';trigger.events.change();
+  assert.deepEqual(h.read().when,{type:'links.watch.new',source:'links'});
+}
 console.log('PASS automation form: preserved advanced fields, disabled state, action replacement/removal, schedule switch, invalid parameters');

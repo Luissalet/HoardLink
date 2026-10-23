@@ -20,18 +20,23 @@
       const name = field(common, text('Nombre','Name'), 'name', base.name);
       const enabled = field(common, text('Activada','Enabled'), 'enabled', base.enabled, 'checkbox'); enabled.parentElement.classList.add('hub-form-checkbox');
       const whenBox = node('section', 'hub-form-section'); whenBox.append(node('h3', '', text('Cuándo se ejecuta','When it runs'))); root.append(whenBox);
-      let eventType, source, cooldown, schedule, at, every;
+      let eventType, eventPreset, affectedApp, source, cooldown, schedule, at, every, affectedChanged=false;
+      const lifecycle = type => ['hub.app.started','hub.app.stopped'].includes(type);
       const triggers = [['links.watch.new',text('Se encuentra un enlace nuevo en un seguimiento','A watch finds a new link')],['hub.app.started',text('Se inicia una aplicación','An application starts')],['hub.app.stopped',text('Se para una aplicación','An application stops')],['agent.write',text('Un agente guarda un cambio','An agent saves a change')],['agent.undo',text('Un agente deshace un cambio','An agent undoes a change')]];
       if (kind === 'rules') {
         const grid = node('div','hub-form-grid'); whenBox.append(grid);
-        const trigger = select(grid, text('Cuando…','When…'), [...triggers,['custom',text('Otro evento · configuración avanzada','Other event · advanced configuration')]], triggers.some(x=>x[0]===base.when?.type) ? base.when.type : 'custom');
+        const trigger = eventPreset = select(grid, text('Cuando…','When…'), [...triggers,['custom',text('Otro evento · configuración avanzada','Other event · advanced configuration')]], triggers.some(x=>x[0]===base.when?.type) ? base.when.type : 'custom');
+        const target=base.when?.where?.['data.app'] ?? base.when?.where?.app;
+        affectedApp=select(grid,text('Aplicación afectada','Affected application'),[['',text('Cualquier aplicación','Any application')],...apps.map(a=>[a.id,a.name])],typeof target==='string'?target:'');affectedApp.name='affected_app';
+        if(target && !apps.some(a=>a.id===target)){const o=node('option','',typeof target==='string'?target:text('Filtro avanzado conservado','Advanced filter preserved'));o.value=typeof target==='string'?target:'__advanced__';affectedApp.append(o);affectedApp.value=o.value;}
+        affectedApp.addEventListener('change',()=>{affectedChanged=true;});
         source = select(grid, text('Origen','Source'), [['',text('Cualquier aplicación','Any application')],['hub',text('El Hub','The Hub')],...apps.map(a=>[a.id,a.name])],base.when?.source || '');
         if(base.when?.source && !['hub',...apps.map(a=>a.id)].includes(base.when.source)) {const option=node('option','',base.when.source);option.value=base.when.source;source.append(option);source.value=base.when.source;}
         const expert=node('details','hub-event-expert');expert.append(node('summary','',text('Ajustes del evento','Event settings')));whenBox.append(expert);
         expert.append(source.parentElement);
         eventType = field(expert, text('Identificador del evento','Event identifier'), 'event_type', base.when?.type || '');
         cooldown = field(expert, text('Espera entre ejecuciones (segundos)','Time between runs (seconds)'), 'cooldown_s', base.cooldown_s ?? 0, 'number'); cooldown.min = '0';
-        const updateTrigger=()=>{eventType.parentElement.hidden=trigger.value!=='custom';if(trigger.value!=='custom')eventType.value=trigger.value;else expert.open=true;};
+        const updateTrigger=()=>{eventType.parentElement.hidden=trigger.value!=='custom';affectedApp.parentElement.hidden=!lifecycle(trigger.value);source.parentElement.hidden=lifecycle(trigger.value);if(trigger.value==='custom')expert.open=true;};
         trigger.addEventListener('change',updateTrigger);updateTrigger();
         whenBox.append(node('p','hint',text('Solo se ejecutará cuando llegue esa novedad. Las aplicaciones deben publicar sus eventos para que una regla pueda responder.','Runs only when that event arrives. Applications must publish events for a rule to respond.')));
       } else {
@@ -63,7 +68,12 @@
           tool.parentElement.hidden = !['tool','hub'].includes(type.value); profile.parentElement.hidden = !type.value.startsWith('profile_');
           event.parentElement.hidden = type.value !== 'event'; paramsLabel.hidden = !['tool','hub','event'].includes(type.value);expert.hidden=!['tool','hub','event'].includes(type.value);
         };
-        type.addEventListener('change',()=>{tool.value='';event.value='';params.value='{}';update();}); update();
+        const drafts=new Map();let previousType=type.value;
+        type.addEventListener('change',()=>{
+          drafts.set(previousType,{app:app.value,tool:tool.value,profile:profile.value,event:event.value,params:params.value});
+          const draft=drafts.get(type.value) || {app:app.value,tool:'',profile:profile.value,event:'',params:'{}'};
+          app.value=draft.app;tool.value=draft.tool;profile.value=draft.profile;event.value=draft.event;params.value=draft.params;previousType=type.value;update();
+        }); update();
         const remove = node('button','ghost danger',text('Quitar acción','Remove action')); remove.type = 'button'; box.append(remove);
         const editor = {read() {
           const same = type.value === initialType;
@@ -85,8 +95,15 @@
       return {read() {
         const result = clone(base); result.name = name.value; result.enabled = enabled.checked;
         if (kind === 'rules') {
-          result.when = {...base.when,type:eventType.value.trim()};
-          if (source.value || base.when?.source !== undefined) result.when.source = source.value.trim();
+          result.when = {...base.when,type:eventPreset.value==='custom'?eventType.value.trim():eventPreset.value};
+          if(lifecycle(result.when.type)) {
+            result.when.source='hub';
+            if(affectedChanged && affectedApp.value!=='__advanced__'){
+              const where={...base.when?.where};delete where.app;delete where['data.app'];
+              if(affectedApp.value)where['data.app']=affectedApp.value;
+              if(Object.keys(where).length)result.when.where=where;else delete result.when.where;
+            }
+          } else if (source.value || base.when?.source !== undefined) result.when.source = source.value.trim();
           result.cooldown_s = Number(cooldown.value);
         } else if (schedule.value === 'at') { result.at = at.value; result.every = null; }
         else { result.every = String(base.every ?? '') === every.value ? base.every : every.value; result.at = null; }

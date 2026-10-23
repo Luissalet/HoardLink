@@ -143,6 +143,7 @@ def test_task_discovery_project_resume_and_plain_automation(tmp_path, width):
                 page.goto(base + '/#hub/rules')
                 page.locator('#rule-new').click()
                 page.get_by_label('Cuando…', exact=True).select_option('hub.app.started')
+                page.get_by_label('Aplicación afectada', exact=True).select_option('writer')
                 page.get_by_label('Acción', exact=True).select_option('start_app')
                 page.get_by_label('Aplicación', exact=True).select_option('writer')
                 page.get_by_label('Nombre', exact=True).fill('Abrir Writer al iniciar una app')
@@ -152,6 +153,10 @@ def test_task_discovery_project_resume_and_plain_automation(tmp_path, width):
                 page.locator('#edit-dialog').wait_for(state='hidden')
                 rule = next(r for r in hub.rules.list() if r['name'] == 'Abrir Writer al iniciar una app')
                 assert rule['when']['type'] == 'hub.app.started'
+                from hoard_link.hub.rules import rule_matches
+                assert rule['when']['source'] == 'hub'
+                assert rule_matches(rule, {'type': 'hub.app.started', 'source': 'hub', 'data': {'app': 'writer'}})
+                assert not rule_matches(rule, {'type': 'hub.app.started', 'source': 'hub', 'data': {'app': 'cookhoard'}})
                 assert rule['then'] == [{'kind': 'start_app', 'app': 'writer'}]
                 assert rule['enabled'] is False
                 page.goto(base + '/#hub/notify')
