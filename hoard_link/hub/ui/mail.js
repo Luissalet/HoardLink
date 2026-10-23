@@ -1,6 +1,4 @@
-// Hoard Hub — Mail tab (facet "mailgate"): the family's single inbox pass.
-// Status line (accounts → sphere, last and next pass, "Leer ahora"), then three lists: what needs you, mail nobody claimed
-// ("sin dueño", with category chips) and recent mail (who claimed each one). Filtered by sphere (defaults to the active one).
+// One mailbox at a time, with a dedicated reader. All content stays in document flow.
 (() => {
   "use strict";
   if (!window.HubFacets) return;
@@ -29,38 +27,23 @@
     c_security: { es: "seguridad", en: "security" }, c_dev: { es: "dev", en: "dev" }, c_other: { es: "otros", en: "other" },
     interests: { es: "Apps con interés registrado", en: "Apps with a registered interest" },
     sent_to: { es: "para", en: "for" }, why: { es: "por qué", en: "why" },
+    back: { es: "Volver a la bandeja", en: "Back to inbox" },
+    search: { es: "Buscar en esta lista", en: "Search this list" },
+    loading: { es: "Cargando correo…", en: "Loading mail…" },
+    retry: { es: "Reintentar", en: "Try again" },
+    failed: { es: "No se pudo cargar el correo.", en: "Mail could not be loaded." },
+    no_subject: { es: "Sin asunto", en: "No subject" },
+    previous: { es: "Anterior", en: "Previous" }, next_page: { es: "Siguiente", en: "Next" },
+    range: (start, end, total) => ({ es: `${start}–${end} de ${total}`, en: `${start}–${end} of ${total}` }),
+    cached: { es: "Hasta 100 sin dueño de los últimos 7 días y 40 recientes", en: "Up to 100 unclaimed from the last 7 days and 40 recent" },
   };
   const t = (k, ...a) => { const v = T[k]; return L(typeof v === "function" ? v(...a) : v || { es: k, en: k }); };
 
-  if (!document.getElementById("css-mailgate")) {
-    const st = document.createElement("style"); st.id = "css-mailgate";
-    st.textContent = `
-      .mg-status { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 12.5px; }
-      .mg-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 12px; align-items: start; }
-      .mg-col h4 { margin: 0 0 6px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
-      .mg-row { padding: 7px 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--card-2); display: grid; gap: 3px; }
-      .mg-row + .mg-row { margin-top: 6px; }
-      .mg-row.attention { border-left: 3px solid var(--amber); }
-      .mg-top { display: flex; gap: 8px; justify-content: space-between; align-items: baseline; }
-      .mg-subject { font-weight: 600; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .mg-meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .mg-snippet { color: var(--muted); font-size: 12px; max-height: 2.6em; overflow: hidden; }
-      .mg-chips { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
-      .mg-chips .chip { padding: 1px 8px; font-size: 11.5px; }
-      .mg-detail { margin-top: 4px; padding: 6px 8px; border-radius: 8px; background: var(--bg-2); font-size: 12.5px; }
-      .mg-detail pre { white-space: pre-wrap; word-break: break-word; margin: 0 0 6px; font-family: inherit; max-height: 280px; overflow: auto; }
-      .mg-detail a { color: var(--blue); }
-      .mg-act { display: flex; gap: 6px; flex-wrap: wrap; }
-      .mg-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin: 6px 0 10px; }
-      .mg-form label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
-      .mg-form input { width: 130px; }
-    `;
-    document.head.appendChild(st);
-  }
-
   let box, statusEl, formEl, colsEl, sphereSel, cat = "all", lastSig = "", lastStatus = null, lastActive = "";
-  const open = new Set();
-  let mailForm = null;
+  let mailForm = null, queue = "", query = "", page = 0, selected = null;
+  let snapshot = null, listScope = null, listRequest = 0, readerRequest = 0, listError = "";
+  let queueEl, filtersEl, listEl, readerEl, searchEl;
+  const PAGE_SIZE = 20;
 
   const ago = (ts) => {
     if (!ts) return t("never");
@@ -85,18 +68,24 @@
     const sphereLabel = el("span", "hint", t("sphere") + ":");
     tools.appendChild(sphereLabel);
     sphereSel = el("select", "small");
+    sphereSel.setAttribute("aria-label", t("sphere"));
     sphereSel.onchange = () => { lastSig = ""; loadLists(); };
     tools.appendChild(sphereSel);
     const settingsBtn = el("button", "ghost small", t("settings"));
-    settingsBtn.onclick = () => { formEl.hidden = !formEl.hidden; };
+    settingsBtn.setAttribute("aria-expanded", "false");
+    settingsBtn.onclick = () => { formEl.hidden = !formEl.hidden; settingsBtn.setAttribute("aria-expanded", String(!formEl.hidden)); };
     tools.appendChild(settingsBtn);
     box.appendChild(tools);
     statusEl = el("div", "mg-status"); box.appendChild(statusEl);
     formEl = el("div", "mg-form"); formEl.hidden = true; box.appendChild(formEl);
-    colsEl = el("div", "mg-cols"); box.appendChild(colsEl);
+    colsEl = el("section", "mg-mailbox"); box.appendChild(colsEl);
+    queueEl = el("nav", "mg-queues"); queueEl.setAttribute("aria-label", t("title")); colsEl.appendChild(queueEl);
+    filtersEl = el("div", "mg-filters"); colsEl.appendChild(filtersEl);
+    listEl = el("div", "mg-list"); colsEl.appendChild(listEl);
+    readerEl = el("article", "mg-reader"); readerEl.hidden = true; colsEl.appendChild(readerEl);
     bus.addEventListener("sphere", () => { followActive(); });
     bus.addEventListener("lang", () => {
-      sphereLabel.textContent = t("sphere") + ":"; settingsBtn.textContent = t("settings");
+      sphereLabel.textContent = t("sphere") + ":"; sphereSel.setAttribute("aria-label", t("sphere")); queueEl.setAttribute("aria-label", t("title")); settingsBtn.textContent = t("settings");
       loadSpheres().then(() => { lastSig = ""; renderStatus(); buildForm(); loadLists(); });
     });
   }
@@ -121,37 +110,39 @@
   function renderStatus() {
     const s = lastStatus; statusEl.innerHTML = "";
     if (!s) return;
+    const actions = el("div", "mg-status-actions"), info = el("div", "mg-status-info");
+    statusEl.appendChild(actions); statusEl.appendChild(info);
     const toggle = el("button", s.enabled ? "ghost small" : "primary small", s.enabled ? t("off") : t("on"));
     toggle.onclick = async () => {
       const r = await api("/api/mail/config", { enabled: !s.enabled });
       toast(r.ok ? (r.config.enabled ? t("on") + " ✓" : t("off") + " ✓") : r.error, r.ok ? "ok" : "err");
       await loadStatus(true);
     };
-    statusEl.appendChild(toggle);
+    actions.appendChild(toggle);
     if (s.enabled) {
-      const now = el("button", "small", s.running ? t("running") : t("now")); now.disabled = !!s.running;
+      const now = el("button", "primary", s.running ? t("running") : t("now")); now.disabled = !!s.running;
       now.onclick = async () => {
         now.disabled = true; now.textContent = t("running");
         const r = await api("/api/mail/fetch", {});
         toast(r.ok ? t("pass_ok", r) : (r.error || "error"), r.ok ? "ok" : "err");
         lastSig = ""; await loadStatus(true); loadLists();
       };
-      statusEl.appendChild(now);
+      actions.appendChild(now);
     }
     const chk = el("button", "ghost small", t("check"));
     chk.onclick = async () => { chk.disabled = true; await loadStatus(true, true); chk.disabled = false; };
-    statusEl.appendChild(chk);
-    if (!s.enabled) statusEl.appendChild(el("span", "hint", t("disabled")));
-    else if (!s.configured) statusEl.appendChild(el("span", "chip bad", t("not_configured")));
-    statusEl.appendChild(el("span", "hint", t("accounts") + ":"));
-    if (!(s.accounts || []).length) statusEl.appendChild(el("span", "hint", t("no_accounts")));
-    for (const a of s.accounts || []) statusEl.appendChild(chip(`${a.account} → ${a.sphere}`, "info"));
+    actions.appendChild(chk);
+    if (!s.enabled) info.appendChild(el("span", "hint", t("disabled")));
+    else if (!s.configured) info.appendChild(el("span", "chip bad", t("not_configured")));
+    info.appendChild(el("span", "hint", t("accounts") + ":"));
+    if (!(s.accounts || []).length) info.appendChild(el("span", "hint", t("no_accounts")));
+    for (const a of s.accounts || []) info.appendChild(chip(`${a.account} → ${a.sphere}`, "info"));
     const lp = s.last_pass;
     const last = el("span", "hint");
     last.textContent = `${t("last")}: ${lp ? ago(lp.ts) + (lp.ok ? ` · ${L(T.pass_ok(lp))}` : "") : t("never")}`;
-    statusEl.appendChild(last);
-    if (lp && !lp.ok && lp.error) statusEl.appendChild(chip(lp.error, "bad"));
-    if (s.enabled) statusEl.appendChild(el("span", "hint", `${t("next")}: ${s.next_pass_ts ? inFuture(s.next_pass_ts) : t("manual")}`));
+    info.appendChild(last);
+    if (lp && !lp.ok && lp.error) info.appendChild(chip(lp.error, "bad"));
+    if (s.enabled) info.appendChild(el("span", "hint", `${t("next")}: ${s.next_pass_ts ? inFuture(s.next_pass_ts) : t("manual")}`));
     const badge = document.getElementById("mailgate-badge");
     if (badge) { const n = (s.counts || {}).attention || 0; badge.textContent = n ? String(n) : ""; badge.className = "badge" + (n ? " warn" : ""); }
   }
@@ -183,8 +174,14 @@
   }
 
   async function loadStatus(force, refresh) {
-    const r = await api("/api/mail/status" + (refresh ? "?refresh=1" : ""));
-    if (!r || !r.ok) { statusEl.textContent = (r && r.error) || "error"; return; }
+    let r;
+    try { r = await api("/api/mail/status" + (refresh ? "?refresh=1" : "")); }
+    catch (e) { r = {ok: false, error: e.message}; }
+    if (!r || !r.ok) {
+      statusEl.textContent = `${t("failed")} ${(r && r.error) || ""}`;
+      const retry = el("button", "ghost", t("retry")); retry.onclick = () => loadStatus(true);
+      statusEl.appendChild(retry); return false;
+    }
     const changed = !lastStatus || r.enabled !== lastStatus.enabled || (r.counts || {}).total !== (lastStatus.counts || {}).total ||
       JSON.stringify(r.last_pass) !== JSON.stringify(lastStatus.last_pass);
     lastStatus = r; renderStatus();
@@ -192,108 +189,199 @@
     return changed;
   }
 
-  function detailBox(msg) {
-    const d = el("div", "mg-detail");
-    d.appendChild(el("pre", "", msg.text || msg.snippet || "(…)"));
-    if ((msg.links || []).length) {
-      d.appendChild(el("div", "hint", t("links")));
-      for (const l of msg.links.slice(0, 8)) { const a = el("a", "", l.label || l.url); a.href = l.url; a.target = "_blank"; a.rel = "noopener noreferrer"; d.appendChild(a); d.appendChild(document.createElement("br")); }
+  const safeUrl = (value) => {
+    try { if (!value) return null; const u = new URL(value, location.href); return ["http:", "https:"].includes(u.protocol) ? u.href : null; } catch { return null; }
+  };
+  function link(value, label) {
+    const url = safeUrl(value);
+    if (!url) return el("span", "", label || value || "");
+    const a = el("a", "", label || new URL(url).hostname);
+    a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.title = url;
+    return a;
+  }
+  // Render text without accepting HTML from messages, and keep tracking URLs readable.
+  function appendText(node, text) {
+    const re = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>]+/g;
+    let start = 0;
+    for (const m of text.matchAll(re)) {
+      node.appendChild(document.createTextNode(text.slice(start, m.index)));
+      node.appendChild(link(m[2] || m[0], m[1])); start = m.index + m[0].length;
     }
-    if ((msg.attachments || []).length) {
-      d.appendChild(el("div", "hint", t("attachments")));
-      for (const a of msg.attachments) {
-        if (a.url) { const l = el("a", "", `${a.name} (${Math.round((a.size || 0) / 1024)} KB)`); l.href = a.url; l.target = "_blank"; d.appendChild(l); }
-        else d.appendChild(el("span", "", a.name));
-        d.appendChild(document.createElement("br"));
+    node.appendChild(document.createTextNode(text.slice(start)));
+  }
+  function messageBody(msg) {
+    const body = el("div", "mg-body");
+    for (const block of String(msg.text || msg.snippet || "(…)").split(/\n\s*\n/)) {
+      const heading = block.match(/^#{1,6}\s+([^\n]+)$/);
+      const p = el(heading ? "h3" : "p"); appendText(p, heading ? heading[1] : block); body.appendChild(p);
+    }
+    for (const [key, items] of [["attachments", msg.attachments || []], ["links", msg.links || []]]) {
+      if (!items.length) continue;
+      const section = el("section", "mg-related"); section.appendChild(el("h3", "", t(key)));
+      const ul = el("ul");
+      for (const item of items) {
+        const li = el("li"); li.appendChild(link(item.url, item.name || item.label || undefined));
+        if (item.size) li.appendChild(el("span", "hint", ` · ${Math.round(item.size / 1024)} KB`));
+        ul.appendChild(li);
+      }
+      section.appendChild(ul); body.appendChild(section);
+    }
+    return body;
+  }
+  function backToList(focus = true) {
+    const previous = selected && String(selected.id);
+    ++readerRequest; selected = null; readerEl.hidden = true;
+    queueEl.hidden = filtersEl.hidden = listEl.hidden = false;
+    renderList();
+    if (focus) { const target = [...listEl.querySelectorAll("button.mg-message")].find((b) => b.dataset.messageId === previous) || listEl.querySelector("button.mg-message"); if (target) target.focus(); }
+  }
+  function renderReader(msg) {
+    readerEl.innerHTML = "";
+    const actions = el("div", "mg-reader-actions");
+    const back = el("button", "ghost", t("back")); back.onclick = () => backToList(); actions.appendChild(back);
+    if (queue !== "recent") {
+      const dismiss = el("button", "ghost", t("dismiss"));
+      dismiss.onclick = async () => {
+        dismiss.disabled = true;
+        try {
+          const r = await api("/api/mail/dismiss", { ids: [msg.id] });
+          if (!r.ok) throw new Error(r.error || t("failed"));
+          backToList(); lastSig = ""; await Promise.all([loadStatus(true), loadLists()]);
+        } catch (e) { toast(e.message, "err"); dismiss.disabled = false; }
+      };
+      actions.appendChild(dismiss);
+    }
+    readerEl.appendChild(actions);
+    const h = el("h2", "mg-reader-title", msg.subject || t("no_subject")); h.tabIndex = -1; readerEl.appendChild(h);
+    readerEl.appendChild(el("div", "mg-reader-from", [msg.from_name, msg.from_addr].filter(Boolean).join(" · ")));
+    readerEl.appendChild(el("div", "mg-reader-meta", [fmtWhen(msg.date_ts), msg.sphere].filter(Boolean).join(" · ")));
+    const claims = el("div", "mg-chips");
+    for (const c of msg.claims || []) claims.appendChild(chip(`${t("claimed_by")} ${c.app}`));
+    for (const reason of msg.reasons || []) claims.appendChild(chip(reason));
+    readerEl.appendChild(claims); readerEl.appendChild(messageBody(msg)); h.focus();
+  }
+  async function openMessage(m) {
+    const token = ++readerRequest, scope = sphereId(); selected = m;
+    queueEl.hidden = filtersEl.hidden = listEl.hidden = true; readerEl.hidden = false;
+    readerEl.innerHTML = "";
+    const back = el("button", "ghost", t("back")); back.onclick = () => backToList(); readerEl.appendChild(back);
+    readerEl.appendChild(el("p", "hint", t("loading")));
+    try {
+      const r = await api(`/api/mail/messages/${encodeURIComponent(m.id)}`);
+      if (token !== readerRequest || scope !== sphereId()) return;
+      if (!r.ok) throw new Error(r.error || t("failed"));
+      selected = r.message; renderReader(r.message);
+    } catch (e) {
+      if (token !== readerRequest || scope !== sphereId()) return;
+      readerEl.lastChild.remove(); readerEl.appendChild(el("p", "mg-error", `${t("failed")} ${e.message}`));
+      const retry = el("button", "", t("retry")); retry.onclick = () => openMessage(m); readerEl.appendChild(retry);
+    }
+  }
+  function row(m) {
+    const r = el("button", "mg-message"); r.type = "button"; r.dataset.messageId = m.id;
+    r.appendChild(el("span", "mg-sender", m.from_name || m.from_addr || "—"));
+    const text = el("span", "mg-summary");
+    text.appendChild(el("strong", "mg-subject", m.subject || t("no_subject")));
+    if (m.snippet) text.appendChild(el("span", "mg-snippet", m.snippet));
+    const tags = [...(m.claims || []).map((c) => `${t("claimed_by")} ${c.app}`), ...(m.priority === "attention" ? m.reasons || [] : [])];
+    if (m.n_attachments) tags.push(`${t("attachments")}: ${m.n_attachments}`);
+    if (tags.length) text.appendChild(el("span", "mg-tags", tags.join(" · ")));
+    r.appendChild(text);
+    r.appendChild(el("span", "mg-date", ago(m.date_ts)));
+    r.onclick = () => openMessage(m); return r;
+  }
+  function filteredMessages() {
+    const rows = snapshot ? snapshot[queue] || [] : [];
+    return rows.filter((m) => (queue !== "unclaimed" || cat === "all" || m.category === cat) &&
+      (!query || [m.subject, m.from_name, m.from_addr, m.snippet].join(" ").toLocaleLowerCase().includes(query.toLocaleLowerCase())));
+  }
+  function renderList() {
+    if (selected) return;
+    queueEl.innerHTML = ""; filtersEl.innerHTML = ""; listEl.innerHTML = "";
+    for (const key of ["attention", "unclaimed", "recent"]) {
+      const b = el("button", "mg-queue", t(key)); b.type = "button";
+      b.setAttribute("aria-pressed", String(queue === key));
+      b.appendChild(el("span", "mg-count", String(snapshot ? snapshot[key].length : "—")));
+      b.onclick = () => { queue = key; page = 0; renderList(); }; queueEl.appendChild(b);
+    }
+    if (queue === "unclaimed" && snapshot) {
+      const label = el("label", "mg-category", L({es:"Categoría",en:"Category"}));
+      const sel = el("select");
+      for (const key of ["all", "promo", "social", "security", "dev", "other"]) {
+        const n = snapshot.unclaimed.filter((m) => key === "all" || m.category === key).length;
+        if (!n && key !== "all" && key !== cat) continue;
+        const o = el("option", "", `${t("c_" + key)} (${n})`); o.value = key; sel.appendChild(o);
+      }
+      sel.value = cat; sel.onchange = () => { cat = sel.value; page = 0; renderList(); }; label.appendChild(sel); filtersEl.appendChild(label);
+    }
+    searchEl = el("input", "mg-search"); searchEl.type = "search"; searchEl.placeholder = t("search");
+    searchEl.setAttribute("aria-label", t("search")); searchEl.value = query;
+    searchEl.oninput = () => { query = searchEl.value; page = 0; renderRows(); };
+    filtersEl.appendChild(searchEl);
+    if (listError) {
+      const error = el("div", "mg-error", listError);
+      const retry = el("button", "ghost", t("retry")); retry.onclick = loadLists; error.appendChild(retry); listEl.appendChild(error);
+    }
+    renderRows();
+  }
+  function renderRows() {
+    const old = listEl.querySelector(".mg-results"); if (old) old.remove();
+    const results = el("div", "mg-results"); listEl.appendChild(results);
+    if (!snapshot) { results.appendChild(el("p", "mg-empty", listError ? "" : t("loading"))); return; }
+    const messages = filteredMessages();
+    page = Math.min(page, Math.max(0, Math.ceil(messages.length / PAGE_SIZE) - 1));
+    const top = el("div", "mg-list-heading");
+    top.appendChild(el("h2", "", t(queue)));
+    top.appendChild(el("span", "hint", messages.length ? t("range", page * PAGE_SIZE + 1, Math.min((page + 1) * PAGE_SIZE, messages.length), messages.length) : "0"));
+    results.appendChild(top);
+    if (queue === "unclaimed" && cat !== "all" && messages.length) {
+      const dismiss = el("button", "ghost mg-bulk", t("dismiss_all"));
+      dismiss.onclick = async () => {
+        if (!confirm(t("confirm_all"))) return;
+        // Category operation deliberately includes every loaded message of that category, irrespective of search.
+        const ids = snapshot.unclaimed.filter((m) => m.category === cat).map((m) => m.id);
+        try { const r = await api("/api/mail/dismiss", {ids}); if (!r.ok) throw new Error(r.error); lastSig = ""; await Promise.all([loadStatus(true), loadLists()]); }
+        catch (e) { toast(e.message, "err"); }
+      }; results.appendChild(dismiss);
+    }
+    if (!messages.length) results.appendChild(el("p", "mg-empty", t("nothing")));
+    for (const m of messages.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)) results.appendChild(row(m));
+    const foot = el("div", "mg-list-footer"); foot.appendChild(el("span", "hint", t("cached")));
+    if (messages.length > PAGE_SIZE) {
+      for (const [label, delta, disabled] of [["previous", -1, page === 0], ["next_page", 1, (page + 1) * PAGE_SIZE >= messages.length]]) {
+        const b = el("button", "ghost", t(label)); b.disabled = disabled;
+        b.onclick = () => { page += delta; renderRows(); listEl.querySelector("h2").scrollIntoView({block:"start"}); }; foot.appendChild(b);
       }
     }
-    if ((msg.reasons || []).length) d.appendChild(el("div", "hint", `${t("why")}: ${msg.reasons.join(", ")}`));
-    return d;
+    results.appendChild(foot);
+    if (queue === "recent" && (snapshot.interests || []).length) results.appendChild(el("p", "hint", `${t("interests")}: ${snapshot.interests.map((i) => i.app).join(", ")}`));
   }
-
-  function row(m, opts) {
-    const r = el("div", "mg-row" + (m.priority === "attention" ? " attention" : ""));
-    const top = el("div", "mg-top");
-    const subj = el("div", "mg-subject", m.subject || "(sin asunto)"); subj.title = m.subject;
-    top.appendChild(subj);
-    top.appendChild(el("span", "hint", ago(m.date_ts)));
-    r.appendChild(top);
-    r.appendChild(el("div", "mg-meta", `${m.from_name ? m.from_name + " · " : ""}${m.from_addr} · ${m.sphere}`));
-    if (m.snippet) r.appendChild(el("div", "mg-snippet", m.snippet));
-    const chips = el("div", "mg-chips");
-    if (opts.category && m.category) chips.appendChild(chip(t("c_" + m.category), "info"));
-    for (const why of m.reasons || []) if (m.priority === "attention") chips.appendChild(chip(why, "warn"));
-    for (const c of m.claims || []) chips.appendChild(chip(`${c.app}${c.kind ? " · " + c.kind : ""}`, "on"));
-    if (m.n_attachments) chips.appendChild(chip(`📎 ${m.n_attachments}`));
-    if (chips.children.length) r.appendChild(chips);
-    const acts = el("div", "mg-act");
-    const detail = el("div"); detail.hidden = true;
-    const openBtn = el("button", "ghost small", t("open"));
-    const toggle = async () => {
-      if (!detail.hidden) { detail.hidden = true; openBtn.textContent = t("open"); open.delete(m.id); return; }
-      const full = await api(`/api/mail/messages/${m.id}`);
-      detail.innerHTML = ""; if (full.ok) detail.appendChild(detailBox(full.message)); else detail.textContent = full.error;
-      detail.hidden = false; openBtn.textContent = t("close"); open.add(m.id);
-    };
-    openBtn.onclick = toggle; subj.onclick = toggle;
-    acts.appendChild(openBtn);
-    if (opts.dismiss) {
-      const dis = el("button", "ghost small", t("dismiss"));
-      dis.onclick = async () => { const res = await api("/api/mail/dismiss", { ids: [m.id] }); if (res.ok) { lastSig = ""; loadStatus(true); loadLists(); } else toast(res.error, "err"); };
-      acts.appendChild(dis);
-    }
-    r.appendChild(acts); r.appendChild(detail);
-    if (open.has(m.id)) toggle();
-    return r;
-  }
-
-  function column(title, count, rows, extra) {
-    const col = el("div", "mg-col");
-    const h = el("h4", "", title); h.appendChild(el("span", "badge", String(count))); col.appendChild(h);
-    if (extra) col.appendChild(extra);
-    if (!rows.length) col.appendChild(el("div", "hint", t("nothing")));
-    for (const r of rows) col.appendChild(r);
-    return col;
-  }
-
   async function loadLists() {
-    const sp = sphereId();
-    const [att, un, rec, ints] = await Promise.all([
-      api("/api/mail/attention?" + qs({ sphere: sp, days: 7, limit: 40 })),
-      api("/api/mail/unclaimed?" + qs({ sphere: sp, days: 7, limit: 100 })),
-      api("/api/mail/messages?" + qs({ sphere: sp, kind: "mail", limit: 40 })),
-      api("/api/mail/interests"),
-    ]);
-    const sig = JSON.stringify([att.messages, un.messages, rec.messages, cat, (ints.interests || []).map((i) => i.app)]);
-    if (sig === lastSig) return;
-    lastSig = sig;
-    colsEl.innerHTML = "";
-    colsEl.appendChild(column(t("attention"), (att.messages || []).length, (att.messages || []).map((m) => row(m, { dismiss: true }))));
-    // unclaimed with category chips
-    const all = un.messages || [];
-    const counts = { all: all.length };
-    for (const m of all) counts[m.category] = (counts[m.category] || 0) + 1;
-    const bar = el("div", "mg-chips");
-    for (const c of ["all", "promo", "social", "security", "dev", "other"]) {
-      if (c !== "all" && !counts[c]) continue;
-      const b = el("button", "chip btn" + (cat === c ? " on" : ""), `${t("c_" + c)} ${counts[c] || 0}`);
-      b.onclick = () => { cat = c; lastSig = ""; loadLists(); };
-      bar.appendChild(b);
+    const sp = sphereId(), token = ++listRequest;
+    if (listScope !== sp) {
+      listScope = sp; snapshot = null; lastSig = ""; query = ""; cat = "all"; queue = ""; page = 0;
+      backToList(false);
     }
-    const shown = all.filter((m) => cat === "all" || m.category === cat);
-    if (cat !== "all" && shown.length) {
-      const dis = el("button", "ghost small", t("dismiss_all"));
-      dis.onclick = async () => {
-        if (!confirm(t("confirm_all"))) return;
-        const res = await api("/api/mail/dismiss", { ids: shown.map((m) => m.id) });
-        if (res.ok) { lastSig = ""; loadStatus(true); loadLists(); } else toast(res.error, "err");
-      };
-      bar.appendChild(dis);
+    try {
+      const responses = await Promise.all([
+        api("/api/mail/attention?" + qs({ sphere: sp, days: 7, limit: 40 })),
+        api("/api/mail/unclaimed?" + qs({ sphere: sp, days: 7, limit: 100 })),
+        api("/api/mail/messages?" + qs({ sphere: sp, kind: "mail", limit: 40 })),
+        api("/api/mail/interests"),
+      ]);
+      if (token !== listRequest || sp !== sphereId()) return;
+      for (const r of responses.slice(0, 3)) if (!r || !r.ok) throw new Error((r && r.error) || t("failed"));
+      const sig = JSON.stringify(responses.map((r) => r.messages || r.interests));
+      const hadError = !!listError; listError = "";
+      if (sig === lastSig && !hadError) return;
+      lastSig = sig; snapshot = Object.fromEntries(["attention", "unclaimed", "recent"].map((k, i) => [k, responses[i].messages || []]));
+      snapshot.interests = (responses[3] && responses[3].interests) || [];
+      if (!queue) queue = snapshot.attention.length ? "attention" : snapshot.unclaimed.length ? "unclaimed" : "recent";
+      renderList();
+    } catch (e) {
+      if (token !== listRequest || sp !== sphereId()) return;
+      listError = `${t("failed")} ${e.message}`; renderList();
     }
-    colsEl.appendChild(column(t("unclaimed"), all.length, shown.map((m) => row(m, { dismiss: true, category: true })), bar));
-    const recent = column(t("recent"), (rec.messages || []).length, (rec.messages || []).map((m) => row(m, {})));
-    if ((ints.interests || []).length) recent.appendChild(el("div", "hint", `${t("interests")}: ${ints.interests.map((i) => i.app).join(", ")}`));
-    colsEl.appendChild(recent);
   }
 
   async function load() {
@@ -303,7 +391,7 @@
   }
 
   window.HubFacets.register("mailgate", {
-    copilot:{context:() => ({active_objects:[],view:{section:'mailgate'},pending_forms:mailForm && !formEl.hidden
+    copilot:{context:() => ({active_objects:selected ? [{kind:'mail',object_id:String(selected.id),title:selected.subject,sphere:selected.sphere}] : [],view:{section:'mailgate',sphere:sphereId(),queue,category:cat},pending_forms:mailForm && !formEl.hidden && !selected
       ? [{kind:'mail_config',is_new:false,fields:mailForm.collect(),changes:window.HubFacets.ctx.changedFields(mailForm.before,mailForm.collect())}] : []}),refresh:load},
     placement: "tab", label: T.title, order: 40, mount,
     load: () => load().catch((e) => console.error("mail tab", e)),

@@ -373,6 +373,8 @@ cuenta como no definida.
 
 El Hub abre un directorio de proyectos. Cada proyecto enlaza a su propia ágora nativa de Faustus con un `space_id` explícito; la vista de tareas y debates del Hub conserva ese mismo espacio. Seis grupos sustituyen la fila de pestañas con scroll: Inicio, Proyectos, Aplicaciones, Comunicación, Automatización y Sistema. Las herramientas compartidas y los recursos GPU tienen páginas completas con el desplazamiento del documento. Consulta la [guía de navegación](docs/hub-navigation.md).
 
+Los interiores de las herramientas compartidas usan filas legibles y controles que se ajustan en móvil. Correo muestra una bandeja activa (Atención, Sin dueño o Recientes), con páginas de 20 mensajes sobre los resultados cargados y una búsqueda explícitamente local. Abrir un mensaje muestra un lector completo; Volver conserva la bandeja, los filtros y la página. Las conexiones de Chats están en Fuentes y conexiones; repositorios y auditoría muestran registros etiquetados al reducir el ancho. La guía detalla los límites de carga, los cambios de esfera y el comportamiento del lector.
+
 ![Hoard Hub](docs/hub.png)
 
 El repositorio incluye también **Hoard Hub** (`hoard_link.hub`), la otra

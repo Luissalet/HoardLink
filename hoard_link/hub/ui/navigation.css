@@ -100,7 +100,7 @@ button.primary { color: var(--hub-ink); }
 .hub-skip:focus { top: 12px; }
 /* Facets may inject their CSS after this file. Scoped rules retain document scrolling. */
 #hub-content .ag-msgs, #hub-content .ag-split > .ag-wrap, #hub-content .ag-split > .ag-detail { max-height: none; min-height: 0; overflow: visible; position: static; }
-#hub-content .today-col, #hub-content .mg-detail pre, #hub-content .wb-text { max-height: none; overflow: visible; }
+#hub-content .today-col, #hub-content .wb-text { max-height: none; overflow: visible; }
 #hub-content .ag-split { grid-template-columns: minmax(0, 1fr); }
 #hub-content .ag-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 #hub-content .ag-col { border-radius: 8px; }
