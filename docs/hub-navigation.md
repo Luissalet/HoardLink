@@ -6,14 +6,14 @@ El Hub es el punto de acceso a los proyectos, las aplicaciones y los recursos co
 
 | Entrada | Contenido |
 | --- | --- |
-| Inicio | Proyectos con su acceso al ágora, aplicaciones en marcha, herramientas compartidas y resumen de Hoy. |
+| Inicio | Apertura de aplicaciones, proyectos para continuar, accesos compartidos y resumen de Hoy. |
 | Proyectos | Directorio de los espacios persistentes del Ágora, con búsqueda por nombre y ruta. |
-| Aplicaciones | Catálogo, filtro, grupos de arranque, ventanas, logs y controles de cada aplicación. |
-| Comunicación | Buscar, avisos, enlaces, correo y chats. |
-| Automatización | Reglas, tareas programadas, trabajos y compras. |
-| Sistema | Recursos, eventos, copias, auditoría, repositorios, sesiones de agente, capacidades, web y servicios. |
+| Aplicaciones | Catálogo con búsqueda y estado, una apertura principal por app y Gestionar para sus controles; grupos de arranque desplegables. |
+| Bandeja | Abre Avisos; su selector local permite pasar a Correo, Chats, Enlaces o Buscar. |
+| Automatización | Abre Trabajos; su selector local permite pasar a Reglas, Tareas programadas o Compras. |
+| Sistema | Abre Recursos (GPU, conexiones, motores y carriles); el selector conserva servicios, capacidades, sesiones, repos, eventos, copias, auditoría y web. |
 
-En móvil, el botón Menú despliega la navegación en el documento. Las herramientas de una categoría también aparecen en su directorio. Una nueva herramienta que no tenga grupo asignado aparece en Sistema.
+Las categorías abren directamente una página de trabajo. El selector etiquetado de cada sección cambia de herramienta sin una tira horizontal de pestañas. Una herramienta nueva sin grupo asignado aparece en Sistema. En móvil, Menú despliega las seis entradas y Buscar en el documento. El buscador global lleva a aplicaciones y herramientas del Hub y conserva la búsqueda de contenido existente.
 
 ## Trabajar en un proyecto
 
@@ -31,7 +31,7 @@ GPU, reservas, servidores y carriles se consultan en **Sistema → Recursos**. L
 
 ## Interiores y lectura
 
-Las herramientas comparten la escala del Hub: controles y campos de 14px, títulos de fila de 15px y lectura larga de 16px. Botones y selectores tienen una altura mínima de 38px en escritorio y de 44px dentro del contenido en móvil (hasta 760px). Los textos secundarios de 12–13px conservan su función de metadatos. Los campos usan la superficie graphite, bordes finos y foco sage; no se cambia el mundo visual ni la consola separada de `apps/agora`.
+Todo el Hub utiliza navegación azul marino, lienzo claro frío, superficies blancas y acciones cobalto. La tipografía base es de 15px; los botones globales usan 14px y los controles del contenido y diálogos 15px. La lectura larga usa 16px y los metadatos 12–13px. El rail mide 216px y pasa a Menú hasta 900px; los controles del contenido en móvil mantienen 44px de altura mínima hasta 760px. La consola separada de `apps/agora` conserva su diseño propio.
 
 Trabajos y avisos redistribuyen acciones, fecha y metadatos bajo el contenido cuando falta anchura. Chats coloca el mensaje bajo autor y fecha en móvil, y mantiene las conexiones dentro del desplegable **Fuentes y conexiones** para dejar el historial como zona de lectura. Las referencias usan botones accesibles para los resultados y extremos de una relación; búsqueda y URI largas se ajustan al ancho disponible. Sesiones de agente y reservas distribuyen sus datos sin imponer una fila rígida. A 1400px o menos, repositorios y auditoría pasan de tabla a registros con etiquetas procedentes de sus cabeceras; los registros usan tres columnas y, hasta 760px, dos. El detalle de repositorio conserva el desplazamiento del diálogo, con texto que puede envolver; en móvil apila título y acciones, con controles de al menos 44px. Las fuentes desactivadas de Chats conservan sus controles legibles y explican el estado con texto; los resúmenes y motivos de sesiones usan 14px.
 
@@ -48,6 +48,10 @@ El lector construye el contenido mediante nodos DOM de texto: separa párrafos, 
 Cambiar de esfera cierra el lector, borra el conjunto anterior y reinicia bandeja y filtros. Las respuestas tardías de listas o mensajes se descartan si pertenecen a una petición superada o a otra esfera, para no mezclar datos entre ámbitos. El sondeo del estado no reemplaza un formulario con cambios sin guardar.
 
 En los ajustes de Avisos, las rutas por esfera pasan en móvil a un bloque por esfera con una fila por prioridad y sus canales. **Editar en Esferas** conserva el acceso a su configuración.
+
+## Editar reglas y programaciones
+
+**Nueva regla** y **Nueva tarea** abren formularios de nombre, activación, condición u horario y acciones. Las acciones permiten iniciar/parar aplicaciones o grupos, publicar eventos, usar herramientas o crear una copia. Los parámetros de herramientas/eventos siguen siendo JSON. **Configuración avanzada · JSON** cambia al documento completo y oculta el formulario visual; al cerrar, reconstruye el formulario conservando los campos avanzados. Un JSON inválido mantiene el editor abierto con el texto y el error. Guardar utiliza la API existente y conserva la programación desactivada cuando así se elige. Navegar por estas páginas no ejecuta las acciones.
 
 ## Rutas e interfaces
 
@@ -66,3 +70,7 @@ Pruebas de espacios, edición, consola, coordinación y copilot; comprobación r
 ### Corrección de interiores
 
 `tests/hub/test_hub_mail_client.mjs` cubre el cliente real con una frontera DOM/API controlada: bandeja única, búsqueda y páginas, lector/Volver, texto y enlaces seguros, adjuntos, conservación del borrador, recuperación de errores y respuestas cruzadas al cambiar de esfera. La segunda ronda de QA utiliza fixtures nativas aisladas y pobladas: 100 correos, mensajes de Chats, avisos, referencias, trabajos, compras, un repositorio Git de prueba con ruta/rama larga, auditoría y una sesión con escrituras y detalle. Incluye una fuente de Chats desactivada y ajustes de Avisos abiertos. Las capturas `r2-*.png` a 390, 1280 y 1920px y `round2-metrics.json` están en los entregables de `hub-interiors1261`; las métricas registradas no presentan desbordamiento horizontal ni regiones de lectura con scroll vertical anidado en esas vistas. Estas comprobaciones no acreditan todas las aplicaciones reales ni todos los estados. Una vista vacía acredita únicamente su estado vacío; no sustituye una comprobación con contenido. La aprobación independiente final se registra aparte de esta guía.
+
+## Rediseño completo1269
+
+La entrega sustituye la estructura y el sistema visual de todo el Hub. Las pruebas finales del área dan 128 correctas y las tres suites Node cubren correo, contexto y formularios. MCP stdio verifica cinco operaciones de correo y cuatro tableros por proyecto. La QA aislada utiliza contenido sintético en 21 rutas a 1440/390px e Inicio a 1280px; incluye guardar y reabrir una programación desactivada y cambiar hora fija por intervalo. La revisión independiente requirió corregir la exclusión formulario/JSON y el tablero móvil; el veredicto posterior valora ambos hallazgos como resueltos. Las capturas y límites están en `C:/Users/luism/Documents/Codex/2026-10-23/es/outputs/hub-whole1269`. El detector degradado no acredita contraste completo. Los resultados corresponden a esas pruebas y vistas, no a todos los estados posibles de cada aplicación real.

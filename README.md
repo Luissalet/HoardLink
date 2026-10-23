@@ -355,11 +355,10 @@ Environment overrides (highest priority, layered on top of the file):
 
 ## Hoard Hub: the desktop launcher
 
-The Hub opens on a project directory. Each project links to its own native Faustus Agora with an explicit `space_id`; the Hub's task and discussion view stays in that same space. Six navigation groups replace the scrolling tab strip: Home, Projects, Applications, Communication, Automation and System. Shared tools and GPU resources have full pages with document scrolling. See the [navigation guide](docs/hub-navigation.md).
+The Hub has six destinations: Home, Projects, Applications, Inbox, Automation and System. Home opens apps and resumes projects; each project keeps its native Faustus Agora and `space_id`. The catalog offers one opening action and a **Manage** disclosure with all controls, plus filters and startup groups. Inbox, Automation and System open directly at their working view, with a local tool selector. Pages use document scrolling. Navy navigation, light surfaces and cobalt actions apply throughout the Hub; on mobile, Menu expands in document flow. See the [navigation guide](docs/hub-navigation.md).
 
-Shared-tool interiors use readable rows and controls that wrap on small screens. Mail displays one active queue (Attention, Unclaimed or Recent), with 20-message pages over the loaded results and an explicitly local search. Opening a message shows a full reader; Back preserves the queue, filters and page. Chat connections sit under Sources and connections; repositories and audit show labeled records at narrower widths. The navigation guide details loaded-result limits, sphere changes and reader behavior.
+Mail shows one active inbox and a full reader; Back preserves filters and page. System brings together GPUs, connections, engines and browser lanes. Rules and scheduled jobs use visual forms and advanced JSON in a separate mode; advanced fields survive returning to the form. Search finds Hub destinations and application content. Existing tools, APIs and data remain available.
 
-![Hoard Hub](docs/hub.png)
 
 The repository also ships **Hoard Hub** (`hoard_link.hub`), the other
 half of the same idea: the library answers *which model server do I use*,
