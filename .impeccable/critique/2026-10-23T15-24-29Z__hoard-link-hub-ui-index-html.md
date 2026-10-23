@@ -96,3 +96,22 @@ Preguntas de diseño para la siguiente implementación: ¿qué necesita ver Luis
 ## Evidencia técnica complementaria
 
 Dos evaluaciones independientes en pestañas nuevas; A terminó antes de que sus conclusiones se sintetizaran con B. B ejecutó el detector una sola vez sobre el HTML: 0 hallazgos, pero en modo DEGRADED por falta de htmlparser2/css-select/css-tree/domutils. El fallback regex no verifica selectores, propiedades CSS ni contraste calculado; por tanto, no certifica la interfaz. Browser sólo lectura para evaluación: sin overlay inyectado ni servidor adicional. Cinco capturas y el informe B quedan en el directorio de outputs del recorrido; no contienen cuerpos de correo privado.
+
+## Seguimiento verificado: entrega 1301r2
+
+El diagnóstico y la puntuación 18/40 anteriores se conservan como la inspección histórica 1296. La entrega1301 cambia la estructura y el mundo visual, pero este seguimiento no recalcula heurísticas ni afirma un nuevo estudio con usuarios. El veredicto independiente es **SHIP acotado al lote F1–F5/R1**, con **APPROVE submission_revision2** sobre `785c61e2e307ab47749a93e928fdfc9516583f89` (fuente dca9cbe, corrección b1b2225 y documentación 785c61e). No queda un hallazgo material abierto dentro de ese lote revisado.
+
+Cierres efectivamente verificados:
+
+- **F1, resuelto:** los borradores de acciones vuelven por tipo dentro del editor abierto, incluidos argumentos, on_error y texto JSON todavía inválido; no se mezclan campos al serializar otra acción.
+- **F2, resuelto:** inicio/parada usa Aplicación afectada como condición data.app de un evento con origen Hub. Las pruebas sintéticas verifican coincidencia de Writer y exclusión de Cook, conservando otros filtros avanzados.
+- **F3, resuelto:** descripciones, categorías y sinónimos contrastados para Dorian, Pygmalion, Atlas, Vitruvius y Galton; las consultas/exclusiones verifican esas entradas, sin certificar el catálogo externo completo.
+- **F4, resuelto:** motivo de arranque comprensible y salida a Gestionar → Detalles; el motivo bruto se conserva y las capturas nuevas permiten leerlo.
+- **F5, corrección del informe:** se retira el ejemplo y la severidad material atribuidos a spheres como pestaña. Esferas registra placement=header; no se demostró una pérdida actual de esa ruta. El fallback de futuras facetas con pestaña sin grupo se confirma por inspección de navigation.js.
+- **R1, resuelto:** las capturas sustitutas de viewport y documento completo son legibles. 380×822 y 380×1327 son tamaños de imagen; no se equiparan al viewport CSS 390×844 ni se deduce overflow del PNG inválido anterior.
+
+El revisor ejecutó cuatro casos de navegador headless correctos en 15.60 s y tres suites Node sobre el freeze exacto. Los recibos CUA, DOM y fix1-workflows-final 4 PASS 17.15 s pertenecen al autor/raíz y siguen separados. El revisor inspeccionó seis capturas sustitutas, sin navegador interactivo nuevo; su método se declara single-context DEGRADED. Hubo ConnectionAbortedError 10053 de clientes sintéticos en /api/services sin fallo de aserción. No se repitieron MCP, suite amplia ni detector, ni se arrancaron aplicaciones/modelos reales.
+
+Los cambios implementados de Inicio, proyectos, extractos de avisos, recuperación de búsqueda y ayuda permanecen descritos en la guía 1301. Este cierre concreto no acredita todas las anchuras, todo el catálogo nativo de Faustus, las herramientas personalizadas, contraste exhaustivo o todas las preguntas de la inspección original. No se elimina el historial ni se convierte una cobertura limitada en cierre global.
+
+Evidencia: `C:/Users/luism/Documents/Codex/2026-10-23/es/outputs/hub-user-workspace1301/review1301-r2.md`, `fix1-workflows-final.txt`, `fix1-mobile-app-intent.png`, `fix1-mobile-app-intent-full.png`, `fix1-mobile-rule-form.png` y las tres capturas sustitutas de escritorio citadas en el informe. Integración pendiente de recibo separado.
