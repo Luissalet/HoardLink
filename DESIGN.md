@@ -2,29 +2,38 @@
 name: HoardLink Hub and Ágora
 description: Scoped design systems for the Hub navigation shell and the separate Ágora team console.
 colors:
-  hub-accent: "#096d59"
-  hub-accent-hover: "#075444"
-  hub-canvas: "#f6f8f8"
-  hub-sunken: "#f0f4f3"
-  hub-surface: "#ffffff"
-  hub-raised: "#f3f6f5"
-  hub-elevated: "#edf3f0"
-  hub-text: "#20362f"
-  hub-muted: "#566b63"
-  hub-divider: "#dce4e1"
-  hub-border-hover: "#96b5a9"
-  hub-scrollbar: "#aabbb3"
-  hub-selection: "#c6e8dc"
-  hub-selection-text: "#163b2c"
-  hub-focus: "#168069"
-  hub-nav-text: "#52665d"
-  hub-nav-hover-text: "#164c3b"
-  hub-nav-hover: "#edf4f0"
-  hub-selected: "#e2f0e9"
-  hub-folder: "#668274"
-  hub-project-hover: "#e7f2ec"
-  hub-profile: "#edf3ef"
-  hub-project-agora: "#edf5f0"
+  hub-accent: "#e2b24c"
+  hub-accent-hover: "#e8c16f"
+  hub-canvas: "#1c1a14"
+  hub-sunken: "#161410"
+  hub-surface: "#24221b"
+  hub-raised: "#2f2c25"
+  hub-elevated: "#38342b"
+  hub-text: "#ece9e1"
+  hub-muted: "#bebbb4"
+  hub-divider: "#433e35"
+  hub-border-hover: "#6a6458"
+  hub-scrollbar: "#6a6458"
+  hub-selection: "#e2b24c"
+  hub-selection-text: "#1b1813"
+  hub-focus: "#e2b24c"
+  hub-nav-text: "#bebbb4"
+  hub-nav-hover-text: "#e2b24c"
+  hub-nav-hover: "#2f2c25"
+  hub-selected: "rgba(226, 178, 76, 0.14)"
+  hub-folder: "#bebbb4"
+  hub-project-hover: "rgba(226, 178, 76, 0.14)"
+  hub-profile: "#2f2c25"
+  hub-project-agora: "rgba(226, 178, 76, 0.14)"
+  hub-ink: "#1b1813"
+  hub-success-bg: "#20372a"
+  hub-success-line: "#528565"
+  hub-info-line: "#607fa5"
+  hub-warning-bg: "#3a301c"
+  hub-warning-line: "#94773b"
+  hub-danger-bg: "#3a2521"
+  hub-danger-line: "#a16b60"
+  hub-error: "#e07a6e"
   amber: "#e2b24c"
   canvas: "#1c1a14"
   surface: "#201e17"
@@ -39,6 +48,9 @@ colors:
   cursor-mark: "#c6ccd2"
   faustus-mark: "#e4c889"
 typography:
+  hub-brand:
+    fontFamily: "'Cinzel', 'Iowan Old Style', Charter, Georgia, 'Liberation Serif', 'Noto Serif', 'Times New Roman', serif"
+    fontSize: "19px"
   hub-heading:
     fontFamily: "'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', 'Liberation Sans', Arial, sans-serif"
     fontSize: "34px"
@@ -102,7 +114,7 @@ spacing:
 components:
   hub-primary-link:
     backgroundColor: "{colors.hub-accent}"
-    textColor: "{colors.hub-surface}"
+    textColor: "{colors.hub-ink}"
     rounded: "{rounded.hub-link}"
     padding: "10px 15px"
   hub-nav-link:
@@ -148,19 +160,19 @@ components:
 
 ## Overview
 
-This file describes two separate implemented surfaces. The **Hub shell** is `hoard_link/hub/ui/index.html`, with `navigation.js`, `discovery.js`, `navigation.css`, `interiors.css` and final `workspace.css` overrides; its tokens use the `hub-` prefix. The **Ágora console** is the separate `apps/agora` surface; its existing unprefixed tokens and guidance below remain valid only there. Do not apply the Ágora amber/Cinzel shell to Hub navigation or treat the Hub rail as a replacement for Ágora's leader roster.
+This file describes two separate implemented surfaces. The **Hub shell** is `hoard_link/hub/ui/index.html`, with `navigation.js`, `discovery.js`, `navigation.css`, `interiors.css` and final `workspace.css` overrides; its tokens use the `hub-` prefix. The **Ágora console** is the separate `apps/agora` surface; its existing unprefixed tokens and guidance below remain valid only there. Both use family charcoal, gold and serif branding, but their layouts, token scopes and component contracts remain distinct. Do not treat the Hub rail as a replacement for Ágora's leader roster.
 
 ### Hub shell
 
 **Creative North Star: “The Personal Workspace”**
 
-The Hub begins with attention and continuity: pending work, a project to continue and tools described by purpose. White navigation and a green-neutral canvas support divided lists and readable documents. Green marks an action, the current destination and keyboard focus; application identities remain their actual icons.
+The Hub begins with attention and continuity: pending work, a project to continue and tools described by purpose. The official Hoard dark theme supplies warm charcoal, ivory text and gold actions, current context and keyboard focus. Luis explicitly rejected the light 1301 identity; task 1363 restores the family identity while retaining those workflows. The serif brand and original Hub icon anchor the rail.
 
 **Key Characteristics:**
-- White rail, neutral green surfaces and restrained green actions.
+- Official warm charcoal family surfaces, ivory text and gold actions.
 - Six primary destinations, visible contextual links and a Help/settings route.
 - Attention and project continuity before application launch entries.
-- Authored navigation SVG and existing app icons; no new shipping raster imagery.
+- Original Hub icon reused byte-for-byte for header/favicon; existing app icons and navigation SVG remain.
 
 ### Separate Ágora console (apps/agora)
 
@@ -180,11 +192,11 @@ The surface favors named states, authorship and source details over decoration. 
 
 ### Hub shell
 
-`workspace.css` is loaded after `navigation.css` and `interiors.css` and owns the final Hub palette and shared-theme remapping. The Hub-prefixed frontmatter records every distinct color in that override, including selection, scrollbar, navigation and project states. Earlier source files retain local status/legacy styles; their existence does not restore the earlier navy/cobalt world. Green, amber and red status treatments still accompany written states in retained components.
+`html[data-hoard-app="hub"]` selects the existing official tokens in `hoard_link/ui/hoard-theme.css`. `style.css` maps the Hub variables to them. `workspace.css`, loaded after `navigation.css` and `interiors.css`, owns final layout and component treatments without a light-palette remap. The shared theme itself was not edited.
 
-Primary green is for actions and current context. White, canvas, sunken, raised and elevated neutrals separate working areas. The remaining named green-neutral fills distinguish hover, selected category, startup group and project Agora entry; muted/text roles preserve reading hierarchy. The sidecar contains eight-step preview ramps for these values, with their provenance distinguished from shipping CSS.
+Gold is the primary action, current context, focus and text-selection signal, with dark accent ink on filled buttons. Canvas, sunken, surface, raised and hover roles form the warm charcoal hierarchy; ivory/muted roles preserve reading hierarchy. Selected navigation and project entries use the family's translucent accent-soft. Green, amber, blue and clay/red state treatments accompany written states. Frontmatter records the reused family values and the scoped semantic state colors from workspace.css/style.css. Sidecar ramps are preview metadata, never contrast certification.
 
-**The Hub Scope Rule.** Use the Hub workspace palette in hoard_link/hub/ui; keep the separate apps/agora amber console and its tokens scoped to that application.
+**The Family Source Rule.** Keep Hub colors bound to the official `data-hoard-app="hub"` family tokens. The shared palette does not merge Hub navigation with the separate apps/agora console.
 
 ### Separate Ágora console (apps/agora)
 
@@ -214,7 +226,7 @@ A warm near-black foundation holds soft ivory text; amber marks the primary acti
 
 ### Hub shell
 
-The Hub retains the shared Source Sans 3/system sans stack and adds no font download. The final body is 16px/1.55. Page headings use the frontmatter Hub heading role, becoming 30px at 600px; section headings are 21px, or 20px on mobile. Project names and rule names are 17px; launch and attention titles are 16px. Descriptions generally use 14–15px, metadata 12–13px and form section headings 19px.
+The Hub retains the shared Source Sans 3/system sans stack and adds no font download. The Hoard Hub brand uses the family Cinzel/serif stack at 19px. Font fallback remains supported; this does not certify availability of one concrete face on every machine. The final body is 16px/1.55. Page headings use the frontmatter Hub heading role, becoming 30px at 600px; section headings are 21px, or 20px on mobile. Project names and rule names are 17px; launch and attention titles are 16px. Descriptions generally use 14–15px, metadata 12–13px and form section headings 19px.
 
 Rail links use 15px; primary and local navigation links use 14px. Inherited content controls remain 15px with a 38px minimum, becoming 44px at 760px. Mail reading remains 16px/1.8 with a 72ch measure. Notice detail uses 15px/1.75 and a 75ch measure; source/advanced text uses 13px. Local component sizes remain intentional, not an instruction to shrink the whole workspace.
 
@@ -239,7 +251,7 @@ Rail links use 15px; primary and local navigation links use 14px. Inherited cont
 
 ### Hub shell
 
-Desktop uses a 224px white rail and a flexible workspace. The transparent header has an 84px minimum with 20px 40px padding. Content caps at 1480px with 18px 40px 64px padding; the page-heading following gap is 32px. Above 900px the final workspace override keeps the rail sticky, replacing the earlier interior low-height exception.
+Desktop uses a 224px family-surface rail and a flexible workspace. The transparent header has an 84px minimum with 20px 40px padding. Content caps at 1480px with 18px 40px 64px padding; the page-heading following gap is 32px. Above 900px the final workspace override keeps the rail sticky, replacing the earlier interior low-height exception.
 
 Home places attention and project continuity in a 1.15:1 grid with a 40px gap, stacking at 1150px. Application launches use two divided columns. The project directory is one list of divided rows; the application catalog uses two columns with a 20px gap. Project overview, automation landing and Help cap their reading surface at 950px.
 
@@ -257,7 +269,7 @@ Below 900px, the operations pane becomes a right-side drawer up to 320px wide. A
 
 ### Hub shell
 
-White surfaces use quiet borders on the green-neutral canvas. Project rows, application launch rows, notifications and rules use dividers rather than separate elevated cards. Catalog/overview/attention containers retain bordered white surfaces without decorative shadow. Dialogs retain their earlier soft navy shadow (0 24px 70px #14243c33) and translucent backdrop (#14243c80); these local overlays do not define the workspace palette.
+Family charcoal surfaces use warm borders on the deep canvas. Project rows, application launch rows, notifications and rules use dividers rather than separate elevated cards. Catalog/overview/attention containers retain bordered surfaces without decorative shadow. Dialogs use the family shadow (0 8px 28px rgba(0,0,0,0.38)) and a black 70% backdrop. Fields and semantic error/success/warning states follow the dark surface hierarchy.
 
 ### Separate Ágora console (apps/agora)
 
@@ -277,8 +289,9 @@ Controls and containers use gently rounded corners: 6px for buttons, selectors a
 
 ### Hub shell: navigation and controls
 
-- **Navigation:** Inicio, Proyectos, Aplicaciones, Bandeja, Automatización and Sistema remain primary destinations, with Buscar and Ayuda y ajustes. Contextual links are visible, wrap and show the current page with a green rule. Projects have Resumen and Ágora links. Inbox opens Avisos; System opens Estado y conexiones; Automation opens an intention landing.
-- **Home:** attention uses a bordered white surface, project continuity divided rows and applications two launch columns. The first five attention entries are bounded summaries, not a promise of complete global prioritisation.
+- **Navigation:** Inicio, Proyectos, Aplicaciones, Bandeja, Automatización and Sistema remain primary destinations, with Buscar and Ayuda y ajustes. Contextual links are visible, wrap and show the current page with a gold rule. Projects have Resumen and Ágora links. Inbox opens Avisos; System opens Estado y conexiones; Automation opens an intention landing.
+- **Home:** attention uses a bordered family surface, project continuity divided rows and applications two launch columns. The first five attention entries are bounded summaries, not a promise of complete global prioritisation.
+- **Quick reply:** Te esperan presents the complete question, Reply here, inline answer and full-thread entry. Send posts through the native API; Reply and close resolves only non-task threads. Task replies reopen their escalation without completing the task. Keep duplicate-send disabling, visible errors and retained drafts through refresh/language/project changes; Cancel preserves text. The textarea is at least 110px with 14px padding, 8px corners, sunken background and inherited text; question measure is 75ch at 15px/1.65.
 - **Project:** the overview makes pending tasks and conversations from the selected board actionable. Full-conversation links use configured workspace_url and preserve space_id. Recent visit ordering is local to this browser.
 - **Applications:** purpose categories and brief descriptions aid known catalog entries; unknown manifests keep their actual fallback. One opening action, Manage and startup controls remain. Unavailable startup gets a plain explanation with the original reason retained in Details.
 - **Notifications and search:** notice summaries are plain excerpts with the full original body in a native disclosure. Content search retains retry and separates technical source details; local destinations use divided text rows.
@@ -333,8 +346,10 @@ Controls and containers use gently rounded corners: 6px for buttons, selectors a
 - **Do** treat projects as persistent Ágora spaces and preserve coordination workspace_url and space_id.
 - **Do** preserve unknown fields and invalid JSON while editing automation.
 - **Don't** infer running apps, complete catalogs or successful work from placeholders.
-- **Don't** add raster decoration or import the separate Ágora amber display typography.
-- **Don't** describe this frontend change as new backend, data or MCP capabilities.
+- **Do** reuse the original Hub icon for header/favicon without changing its bytes; reserve the family serif stack for the brand.
+- **Don't** restore the rejected light remap or replace the original identity asset.
+- **Don't** use the separate Ágora console layout as the Hub navigation contract.
+- **Don't** describe this correction as new API/MCP capabilities or migrated data.
 
 ### Separate Ágora console (apps/agora)
 
