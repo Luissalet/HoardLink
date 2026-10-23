@@ -155,7 +155,7 @@
   function appLaunch(app) {
     const button = node('button', 'hub-app-launch'); button.type = 'button'; button.disabled = app.state !== 'running' && !app.launchable; if (button.disabled) button.title = app.launch_reason || tr('No disponible','Unavailable');
     const image = node('img'); image.src = window.hubAppIcon ? window.hubAppIcon(app.id) : '/api/apps/' + encodeURIComponent(app.id) + '/icon'; image.alt = ''; image.width = image.height = 52;
-    const text = node('span'); text.append(node('strong', '', app.name), node('small', '', app.purpose || app.id));
+    const text = node('span'); const purpose = node('small', '', app.purpose || app.id); purpose.title = app.purpose || app.id; text.append(node('strong', '', app.name), purpose);
     const state = node('span', 'hub-launch-state', app.state === 'running' ? tr('Abrir', 'Open') : app.launchable ? tr('Iniciar y abrir', 'Start and open') : tr('No disponible','Unavailable'));
     button.append(image, text, state, icon('arrow')); button.onclick = () => window.hubOpenApplication?.(app.id); return button;
   }
