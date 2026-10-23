@@ -740,7 +740,11 @@
       },
       "automation": {
         "source": "hoard_link/hub/ui/automation_form.js;hoard_link/hub/ui/family.js",
-        "description": "Intention landing;five labelled known events;backup and app/group actions without IDs/JSON. Custom tools/events retain advanced technical fields;exclusive full JSON;invalid text/error and same-kind unknown fields preserved."
+        "description": "Intention landing;five labelled known events;backup and app/group actions without IDs/JSON. Custom tools/events retain advanced technical fields;exclusive full JSON;invalid text/error and same-kind unknown fields preserved. Open action editors preserve a draft per type when switching away/back. Lifecycle Affected application writes Hub source and data.app filter when chosen;other advanced filters stay intact."
+      },
+      "discovery": {
+        "source": "hoard_link/hub/ui/discovery.js;hoard_link/hub/ui/navigation.js",
+        "description": "Known purposes follow actual product catalog;plain startup explanations link to Manage/Details with raw reason retained. New ungrouped tab facets fall back to System;header spheres is not a tab route."
       }
     }
   },
