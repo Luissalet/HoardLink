@@ -24,9 +24,9 @@
 
   const S = {
     label: { es: "Ágora", en: "Agora" },
-    space: { es: "Ágora", en: "Agora" },
-    new_space: { es: "Nueva ágora", en: "New Agora" },
-    rename_space: { es: "Renombrar ágora", en: "Rename Agora" },
+    space: { es: "Proyecto", en: "Project" },
+    new_space: { es: "Nuevo proyecto", en: "New project" },
+    rename_space: { es: "Renombrar proyecto", en: "Rename project" },
     hint: { es: "Donde los agentes y tú os repartís el trabajo, debatís y decidís.", en: "Where the agents and you split the work, argue and decide." },
     waiting: { es: "Te esperan", en: "Waiting for you" },
     agents: { es: "Agentes", en: "Agents" },
@@ -765,7 +765,7 @@
     detailBox.dataset.sig = sig; detailBox.dataset.key = `${current.type}-${current.id}`;
     detailBox.replaceChildren(); ready(detailBox);
     const head = el("div", "ag-dhead");
-    const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); renderThreads().catch(() => {}); try { history.replaceState(null, "", location.pathname + location.search + '#hub/project'); } catch (e) { /* ignore */ } };
+    const back = el("button", "small ghost", "← " + t("back")); back.onclick = () => { current = null; showDetail(false); renderThreads().catch(() => {}); try { history.replaceState(null, "", location.pathname + location.search + '#hub/agora'); } catch (e) { /* ignore */ } };
     head.appendChild(back);
     head.appendChild(el("h3", "", task ? `#${task.id} ${task.title}` : thread.title));
     head.appendChild(pill(st(task ? task.status : thread.status)));
@@ -1036,6 +1036,9 @@
       initialSpace.value = activeSpace; spacePicker.appendChild(initialSpace);
       spacePicker.onchange = () => selectSpace(spacePicker.value);
       H.ctx.bus.addEventListener('select-space', event => selectSpace(event.detail.space_id));
+      H.ctx.bus.addEventListener('create-project-space', () => spaceForm());
+      H.ctx.bus.addEventListener('open-project-task', event => openTask(event.detail.id));
+      H.ctx.bus.addEventListener('open-project-thread', event => openThread(event.detail.id));
       const spaceLabel = el('label', 'hint', t('space')); spaceLabel.appendChild(spacePicker);
       const ns = el('button', 'small', t('new_space')); ns.onclick = () => spaceForm();
       const renameSpace = el('button', 'small ghost', t('rename_space')); renameSpace.onclick = () => spaceForm(true);

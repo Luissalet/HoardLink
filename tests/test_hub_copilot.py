@@ -19,6 +19,24 @@ from hoard_link.hub.core import Hub
 from hoard_link.hub.copilot import CopilotProxy
 from hoard_link.hub.server import make_server
 
+def navigate_hub(page, route):
+    """Use the visible navigation while retaining mounted editors and drafts."""
+    if route == 'agora':
+        page.locator('#hub-navigation a[href="#hub/projects"]').click()
+        page.locator('.hub-project-open').first.click()
+        page.locator('.hub-project-agora').click()
+        return
+    if route == 'today':
+        page.locator('#hub-sidebar-note a').click()
+        page.locator('.hub-help a[href="#hub/today"]').click()
+        return
+    group = {'rules':'automation','jobs':'automation','mailgate':'communication','chats':'communication','notify':'communication'}.get(route, route)
+    page.locator('#hub-navigation a[href="#hub/' + group + '"]').click()
+    if group != route:
+        page.locator('.hub-local-nav a[href="#hub/' + route + '"]').click()
+
+
+
 
 @pytest.fixture
 def private_host(tmp_path, monkeypatch):
@@ -204,7 +222,7 @@ def test_context_and_dirty_forms_in_real_browser(private_host):
         try:
             page=context.new_page()
             page.goto(base,wait_until='networkidle')
-            page.locator('[data-tab="agora"]').click()
+            navigate_hub(page, 'agora')
             page.locator('.ag-card').filter(has_text='Domain context fixture').first.click()
             textarea=page.locator('.ag-compose textarea');textarea.fill('Unsent reply')
             page.locator('.ag-compose select').select_option('proposal')
@@ -235,8 +253,9 @@ def test_context_and_dirty_forms_in_real_browser(private_host):
                 assert json.load(response)['ok']
             with request(base,'/api/rules') as response:
                 rule=next(row for row in json.load(response)['rules'] if row['name']==rule_body['name'])
-            page.locator('[data-tab="rules"]').click()
+            navigate_hub(page, 'rules')
             page.locator('#rules-list .rule').filter(has_text=rule_body['name']).get_by_role('button',name='Edit',exact=True).click()
+            page.locator('#edit-advanced summary').click()
             edited=json.loads(page.locator('#edit-body').input_value());edited['name']='Manually changed rule'
             page.locator('#edit-body').fill(json.dumps(edited))
             current=page.evaluate('async()=>await window.hoardCopilot.context()')
@@ -271,7 +290,7 @@ def test_native_facet_forms_keep_pending_fields_and_save_only_changes(private_ho
         context,_=browser.launch_context(p,profile,headless=True,viewport={'width':1440,'height':1000})
         try:
             page=context.new_page();page.goto(base,wait_until='networkidle')
-            page.locator('[data-tab="mailgate"]').click()
+            navigate_hub(page, 'mailgate')
             page.locator('#tab-mailgate').get_by_role('button',name='Settings',exact=True).click()
             owner=page.locator('.mg-form input[name="owner"]');owner.fill('Pending owner')
             page.evaluate('()=>window.mailInput=document.querySelector(".mg-form input[name=owner]")')
@@ -287,7 +306,8 @@ def test_native_facet_forms_keep_pending_fields_and_save_only_changes(private_ho
             with request(base,'/api/mail/config') as response:
                 cfg=json.load(response)['config'];assert cfg['owner']=='Pending owner' and cfg['retention_days']==45
             page.locator('#tab-mailgate').get_by_role('button',name='Settings',exact=True).click()
-            page.locator('[data-tab="chats"]').click()
+            navigate_hub(page, 'chats')
+            page.locator('.ch-source-settings summary').click()
             page.locator('#tab-chats .rule').filter(has_text='Offline source').get_by_role('button',name='Edit',exact=True).click()
             name=page.locator('.ch-form input[name="name"]');name.fill('Pending source')
             with request(base,'/api/chats/sources',{'id':source['id'],'interval_min':31}) as response:assert json.load(response)['ok']
@@ -302,7 +322,7 @@ def test_native_facet_forms_keep_pending_fields_and_save_only_changes(private_ho
             with request(base,'/api/chats/sources') as response:
                 row=next(s for s in json.load(response)['sources'] if s['id']==source['id'])
                 assert row['name']=='Pending source' and row['interval_min']==31 and row['enabled'] is False
-            page.locator('[data-tab="notify"]').click();page.locator('.nt-settings').click()
+            navigate_hub(page, 'notify');page.locator('.nt-settings').click()
             topic=page.locator('.nt-set input[name="topic"]');topic.fill('pending-topic')
             page.locator('.nt-set input[name="token"]').fill('private-form-token')
             with request(base,'/api/notify/config',{'rate_per_app':33}) as response:assert json.load(response)['ok']
@@ -317,6 +337,7 @@ def test_native_facet_forms_keep_pending_fields_and_save_only_changes(private_ho
             with request(base,'/api/notify/config') as response:
                 cfg=json.load(response);assert cfg['rate_per_app']==33 and cfg['channels']['ntfy']['topic']=='pending-topic'
             page.locator('.nt-settings').click()
+            navigate_hub(page, 'today')
             page.locator('.today-head').get_by_role('button',name='Calendar',exact=True).click()
             folder=page.locator('.today-ics input[name="export_path"]');folder.fill(str(tmp_path/'pending-export'))
             page.evaluate('()=>window.calendarInput=document.querySelector(".today-ics input[name=export_path]")')
@@ -380,6 +401,8 @@ def test_active_modal_and_top_editors_win_without_losing_background_forms(privat
         context,_=browser.launch_context(p,profile,headless=True,viewport={'width':1440,'height':1000})
         try:
             page=context.new_page();page.goto(base,wait_until='networkidle')
+            navigate_hub(page, 'apps')
+            page.locator('.hub-startup-groups summary').click()
             page.locator('.profile').filter(has=page.get_by_text('Group',exact=True)).get_by_role('button',name='Edit group',exact=True).click()
             alpha=page.locator('#group-members .group-member').filter(has=page.locator('input[value="alpha"]')).locator('.group-window')
             alpha.check()
@@ -400,30 +423,31 @@ def test_active_modal_and_top_editors_win_without_losing_background_forms(privat
             restored=page.evaluate('async()=>await window.hoardCopilot.context()')
             assert restored['active_objects'][0]['object_id']=='Group' and restored['view']['section']=='profiles'
             assert alpha.is_checked()
-            # Today is outside the family panel, and multiple pending editors remain available.
-            page.locator('#family-toggle').click();assert page.locator('#family-body').evaluate('(body)=>body.hidden')
+            # Only the current surface enters context; hidden drafts survive navigation.
+            navigate_hub(page, 'today')
+            assert page.locator('#family-panel').evaluate('(panel)=>panel.hidden')
             page.locator('.today-head').get_by_role('button',name='Calendar',exact=True).click()
             folder=page.locator('.today-ics input[name="export_path"]');folder.fill(str(tmp_path/'pending-calendar'))
             calendar=page.evaluate('async()=>await window.hoardCopilot.context()')
             assert calendar['view']['section']=='today' and calendar['active_objects']==[]
-            assert {form['kind'] for form in calendar['editor']['forms']}=={'profile','calendar_config'}
-            page.locator('[data-tab="mailgate"]').click()
+            assert {form['kind'] for form in calendar['editor']['forms']}=={'calendar_config'}
+            navigate_hub(page, 'mailgate')
             page.locator('#tab-mailgate').get_by_role('button',name='Settings',exact=True).click()
             page.locator('.mg-form input[name="owner"]').fill('Other pending editor')
             mail=page.evaluate('async()=>await window.hoardCopilot.context()')
             assert mail['view']['section']=='mailgate'
-            assert {form['kind'] for form in mail['editor']['forms']}=={'profile','calendar_config','mail_config'}
+            assert {form['kind'] for form in mail['editor']['forms']}=={'mail_config'}
             # Base-family modals retain priority even with a top editor open.
-            page.locator('[data-tab="rules"]').click()
+            navigate_hub(page, 'rules')
             page.locator('#rules-list .rule').filter(has_text='Other modal fixture').get_by_role('button',name='Edit',exact=True).click()
             rule=page.evaluate('async()=>await window.hoardCopilot.context()')
             assert rule['view']['section']=='rules' and rule['active_objects'][0]['kind']=='rule'
-            assert {form['kind'] for form in rule['editor']['forms']}=={'profile','calendar_config','rules'}
+            assert {form['kind'] for form in rule['editor']['forms']}=={'rules'}
             page.locator('#edit-close').click()
             page.locator('#sphere-chip').click();page.locator('.sphere-menu [data-action="configure"]').click()
             mixed=page.evaluate('async()=>await window.hoardCopilot.context()')
             assert mixed['view']['section']=='spheres' and mixed['active_objects'][0]['object_id']=='personal'
-            assert {form['kind'] for form in mixed['editor']['forms']}=={'profile','calendar_config','spheres'}
+            assert {form['kind'] for form in mixed['editor']['forms']}=={'spheres'}
             page.locator('#spheres-dialog .sp-close').click()
             assert alpha.is_checked() and folder.input_value()==str(tmp_path/'pending-calendar')
         finally:context.close()

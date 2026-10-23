@@ -6,7 +6,7 @@
   const I18N = {
     en: {
       f_events: "Events", f_rules: "Rules", f_jobs: "Jobs", f_backups: "Backups", f_audit: "Audit",
-      f_emit_test: "Emit test event", f_new_rule: "New rule", f_new_job: "New job", f_templates: "Templates",
+      f_emit_test: "Emit test event", f_new_rule: "New rule", f_new_job: "Schedule an action", f_templates: "Templates",
       f_rules_hint: "When an event matches, run actions. Templates below.",
       f_jobs_hint: "Actions on a clock: every 6h, or daily at 04:00.",
       f_backup_now: "Back up now", f_verify: "Verify latest", f_prune: "Prune (keep 14)", f_audit_run: "Run audit",
@@ -41,8 +41,8 @@
       r_unpushed_unknown: "(commits not in the last 10 are not listed)", r_stray: "stray", r_current: "current",
     },
     es: {
-      f_events: "Eventos", f_rules: "Reglas", f_jobs: "Tareas", f_backups: "Copias", f_audit: "Auditoría",
-      f_emit_test: "Emitir evento de prueba", f_new_rule: "Nueva regla", f_new_job: "Nueva tarea", f_templates: "Plantillas",
+      f_events: "Eventos", f_rules: "Reglas", f_jobs: "Programaciones", f_backups: "Copias", f_audit: "Auditoría",
+      f_emit_test: "Emitir evento de prueba", f_new_rule: "Nueva regla", f_new_job: "Programar una acción", f_templates: "Plantillas",
       f_rules_hint: "Cuando llega un evento que encaja, se ejecutan acciones. Plantillas abajo.",
       f_jobs_hint: "Acciones con reloj: cada 6h, o a diario a las 04:00.",
       f_backup_now: "Copiar ahora", f_verify: "Verificar la última", f_prune: "Limpiar (conservar 14)", f_audit_run: "Auditar",
@@ -239,6 +239,13 @@
     dlg.showModal();
   }
   function describeAction(a) {
+    const es=langOf()==='es'; const app=(window.hubApplications?.() || []).find(x=>x.id===a.app)?.name || a.app;
+    if(a.kind==='hub' && a.tool==='hub_backup_run')return es?'Crear una copia de seguridad':'Create a backup';
+    if(a.kind==='start_app')return (es?'Iniciar ':'Start ')+app;
+    if(a.kind==='stop_app')return (es?'Parar ':'Stop ')+app;
+    if(a.kind==='restart_app')return (es?'Reiniciar ':'Restart ')+app;
+    if(a.kind==='profile_start')return (es?'Iniciar grupo ':'Start group ')+a.name;
+    if(a.kind==='profile_stop')return (es?'Parar grupo ':'Stop group ')+a.name;
     if (a.kind === "tool") return `${a.app}.${a.tool}${a.args && Object.keys(a.args).length ? "(" + Object.keys(a.args).join(", ") + ")" : ""}`;
     if (a.kind === "hub") return `hub.${a.tool}`;
     if (a.kind === "event") return `emit ${a.type}`;
@@ -255,13 +262,17 @@
     for (const r of items) {
       const card = el("div", "rule" + (r.enabled === false ? " off" : ""));
       const left = el("div");
-      left.appendChild(el("div", "r-name", `${r.name || r.id}  `)).appendChild(el("span", "hint", r.id));
-      if (kind === "rules") left.appendChild(el("div", "r-when", `when ${JSON.stringify(r.when)}`));
+      left.appendChild(el("div", "r-name", r.name || r.id));
+      if (kind === "rules") {
+        const names={'links.watch.new':['Cuando se encuentra un enlace nuevo','When a watch finds a new link'],'hub.app.started':['Cuando se inicia una aplicación','When an application starts'],'hub.app.stopped':['Cuando se para una aplicación','When an application stops'],'agent.write':['Cuando un agente guarda un cambio','When an agent saves a change'],'agent.undo':['Cuando un agente deshace un cambio','When an agent undoes a change']};
+        left.appendChild(el('div','r-when',names[r.when?.type]?.[langOf()==='es'?0:1] || (langOf()==='es'?'Evento personalizado · consulta los detalles':'Custom event · see details')));
+      }
       else left.appendChild(el("div", "r-when", (r.every ? `${t("every")} ${r.every}` : `${t("at")} ${r.at}${r.days ? " " + JSON.stringify(r.days) : ""}`) + (r.next_run_ts ? ` · ${t("next")} ${fmtTs(r.next_run_ts)}` : "")));
       left.appendChild(el("div", "r-then", "→ " + (r.then || []).map(describeAction).join(" ; ")));
       const last = r.last;
       left.appendChild(el("div", "r-last " + (last ? (last.ok ? "ok" : "bad") : ""), last ? `${t("last")} ${fmtTs(last.ts)} · ${last.ok ? "ok" : (last.error || "failed")} · ${last.ms} ms · ${t("ran")} ${r.runs}${r.skipped ? ` · ${t("skipped")} ${r.skipped}` : ""}` : `${t("last")}: ${t("never")}`));
       if (r.note) left.appendChild(el("div", "hint", r.note));
+      const technical=el('details','hub-rule-tech');technical.appendChild(el('summary','',langOf()==='es'?'Detalles técnicos':'Technical details'));technical.appendChild(el('pre','',JSON.stringify(stripRuntime(r),null,2)));left.appendChild(technical);
       card.appendChild(left);
       const acts = el("div", "r-actions");
       const b = (label, cls, fn) => { const x = el("button", cls, label); x.onclick = fn; acts.appendChild(x); };
@@ -299,7 +310,7 @@
   }
   async function loadRules() { const r = await api("/api/rules"); if (r.ok) renderList("rules", r.rules || [], r.examples, r.history); }
   async function loadJobs() { const r = await api("/api/jobs"); if (r.ok) renderList("jobs", r.jobs || [], r.examples, r.history); }
-  $("#rule-new").onclick = () => editJson(t("f_new_rule"), t("edit_rule_hint"), { name: "", when: { type: "links.watch.new" }, then: [{ kind: "event", type: "example.reaction", data: { from: "${event.type}" } }], cooldown_s: 5, enabled: true }, async (v) => { const res = await api("/api/rules", v); if (res.ok) loadRules(); return res; });
+  $("#rule-new").onclick = () => editJson(t("f_new_rule"), t("edit_rule_hint"), { name: "", when: { type: "links.watch.new" }, then: [{ kind: "hub", tool: "hub_backup_run", args: {} }], cooldown_s: 5, enabled: true }, async (v) => { const res = await api("/api/rules", v); if (res.ok) loadRules(); return res; });
   $("#job-new").onclick = () => editJson(t("f_new_job"), t("edit_job_hint"), { name: "", at: "04:00", then: [{ kind: "hub", tool: "hub_backup_run", args: {} }], enabled: true }, async (v) => { const res = await api("/api/jobs", v); if (res.ok) loadJobs(); return res; });
 
   // ---- backups -----------------------------------------------------------------------------------------

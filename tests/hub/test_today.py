@@ -1141,8 +1141,8 @@ def test_real_spheres_and_notify_facets_work_together(tmp_path):
 UI_SCRIPT = r"""
 import fs from "node:fs";
 class El { constructor(tag){this.tag=tag;this.children=[];this.className="";this._text="";this.dataset={};this.style={};this.attrs={};this.hidden=false;}
-  appendChild(c){this.children.push(c);return c;} set textContent(v){this._text=String(v);this.children=[];} get textContent(){return this._text+this.children.map(c=>c.textContent).join("");}
-  setAttribute(k,v){this.attrs[k]=v;} querySelector(sel){ const cls=sel.startsWith(".")?sel.slice(1):null; const walk=(n)=>{for(const c of n.children){ if(cls && (c.className||"").split(" ").includes(cls)) return c; const r=walk(c); if(r) return r;} return null;}; return walk(this);} remove(){} addEventListener(){} select(){} }
+  appendChild(c){c.parentElement=this;this.children.push(c);return c;} get childNodes(){return this.children;} insertBefore(c,b){c.parentElement=this;const i=this.children.indexOf(b);if(i<0)this.children.push(c);else this.children.splice(i,0,c);return c;} set textContent(v){this._text=String(v);this.children=[];} get textContent(){return this._text+this.children.map(c=>c.textContent).join("");}
+  setAttribute(k,v){this.attrs[k]=v;} querySelector(sel){ const cls=sel.startsWith(".")?sel.slice(1):null; const walk=(n)=>{for(const c of n.children){ if(cls && (c.className||"").split(" ").includes(cls)) return c; const r=walk(c); if(r) return r;} return null;}; return walk(this);} remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(c=>c!==this);} addEventListener(){} select(){} }
 const head = new El("head");
 globalThis.document = { createElement:(t)=>new El(t), head, body:new El("body"), documentElement:{dataset:{sphere:"work"}}, hidden:false, addEventListener(){}, querySelector:(s)=>null, execCommand(){return true}, readyState:"complete" };
 globalThis.location = {origin:"http://x"};

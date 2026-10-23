@@ -92,7 +92,8 @@
   const $ = (s, r = document) => r.querySelector(s);
   const grid = $("#grid"), empty = $("#empty"), counts = $("#counts"), foot = $("#foot");
   const tpl = $("#card-tpl");
-  let snapshot = null, busy = new Set(), filter = "", timer = null, backendsTimer = null, stateFilter = "all";
+  let snapshot = null, busy = new Set(), filter = "", timer = null, backendsTimer = null, stateFilter = "all", categoryFilter = "todas";
+  window.hubFilterCategory = category => { categoryFilter = category; render(); };
   $("#app-state-filter").onchange = () => { stateFilter = $("#app-state-filter").value; render(); };
 
   // ---- API ----------------------------------------------------------------
@@ -145,9 +146,8 @@
       if (stateFilter === "running" && a.state !== "running") return false;
       if (stateFilter === "stopped" && a.state !== "down") return false;
       if (stateFilter === "attention" && !["foreign", "starting"].includes(a.state) && a.launchable) return false;
-      if (!filter) return true;
-      const hay = `${a.name} ${a.id} ${a.purpose} ${(a.capabilities || []).join(" ")}`.toLowerCase();
-      return hay.includes(filter);
+      if (categoryFilter !== "todas" && window.HubDiscovery.category(a) !== categoryFilter) return false;
+      return window.HubDiscovery.matches(a, filter);
     });
     counts.textContent = t("counts", {
       total: availableApps.length,
@@ -448,6 +448,7 @@
     const busyNow = busy.has(a.id);
     el.className = `card ${a.state}${busyNow ? " busy" : ""}`;
     const img = $(".icon", el);
+    img.onerror=()=>{if(!img.src.endsWith('/ui/fallback-icon.svg'))img.src='/ui/fallback-icon.svg';};
     // Keep a cached fallback separate from an icon found by a later rescan.
     const revision = a.icon_revision || "missing";
     const src = `/api/apps/${encodeURIComponent(a.id)}/icon?available=${a.has_icon ? 1 : 0}&revision=${encodeURIComponent(revision)}`;
@@ -460,7 +461,7 @@
     $(".port", el).textContent = a.port ? `:${a.port}` : "";
     const p = a.process;
     $(".pid", el).textContent = p ? `pid ${p.pid}` : "";
-    $(".purpose", el).textContent = a.purpose;
+    $(".purpose", el).textContent = window.HubDiscovery.description(a, lang === "es");
     $(".purpose", el).title = a.purpose;
     const reason = $(".reason", el);
     if (!a.launchable) { reason.hidden = false; reason.textContent = `${t("cannot_start")}: ${a.launch_reason}`; } else { reason.hidden = true; }
@@ -496,7 +497,8 @@
 
   window.hubApplications = () => catalogApps();
   window.hubFocusApplication = (id) => {
-    stateFilter = 'all'; filter = id; $('#search').value = id; $('#app-state-filter').value = 'all'; render();
+    stateFilter = 'all'; categoryFilter = 'todas'; filter = id; $('#search').value = id; $('#app-state-filter').value = 'all'; render();
+    document.querySelectorAll('.hub-app-categories button').forEach((b,i)=>b.setAttribute('aria-pressed',String(i===0)));
   };
   window.hubOpenApplication = async (id) => {
     if (busy.has(id)) return;
@@ -569,7 +571,7 @@
         const on = r.state === "resolved";
         chip.className = `chip ${on ? "on" : "off"}`;
         chip.title = r.reason || "";
-        const where = on ? `${r.provider || ""}${r.model ? " · " + r.model : ""}` : t("unavailable");
+        const where = on ? `${r.provider || ""}${r.model ? " · " + r.model : ""}` : (lang === "es" ? "Sin servicio disponible · revisa la configuración en Faustus" : "No available service · check configuration in Faustus");
         chip.innerHTML = `<span class="dot"></span><b></b><span></span>`;
         const capLabels = {llm:["Texto","Text"],vision:["Visión","Vision"],embeddings:["Embeddings","Embeddings"],tts:["Voz","Voice"],stt:["Transcripción","Transcription"],image:["Imágenes","Images"],video:["Vídeo","Video"],music:["Música","Music"]};
         chip.querySelector("b").textContent = capLabels[cap]?.[lang === "es" ? 0 : 1] || cap;
