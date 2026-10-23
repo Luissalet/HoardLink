@@ -2,18 +2,18 @@
 name: HoardLink Hub and Ágora
 description: Scoped design systems for the Hub navigation shell and the separate Ágora team console.
 colors:
-  hub-sage: "#c4d9b5"
-  hub-sage-hover: "#d7e7cd"
-  hub-canvas: "#191b1b"
-  hub-surface: "#202323"
-  hub-raised: "#272b2a"
-  hub-text: "#f0f1ed"
-  hub-muted: "#b3bdb8"
-  hub-divider: "#3b4240"
-  hub-ink: "#192319"
-  hub-selected: "#354332"
-  hub-selected-text: "#e1efda"
-  hub-nav-hover: "#2d3430"
+  hub-cobalt: "#315ed6"
+  hub-cobalt-hover: "#244ab4"
+  hub-canvas: "#f2f5fa"
+  hub-surface: "#ffffff"
+  hub-raised: "#f5f7fb"
+  hub-text: "#172842"
+  hub-muted: "#586a83"
+  hub-divider: "#dce3ee"
+  hub-ink: "#ffffff"
+  hub-selected: "#315ed6"
+  hub-selected-text: "#ffffff"
+  hub-nav-hover: "#203552"
   amber: "#e2b24c"
   canvas: "#1c1a14"
   surface: "#201e17"
@@ -30,17 +30,17 @@ colors:
 typography:
   hub-heading:
     fontFamily: "'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', 'Liberation Sans', Arial, sans-serif"
-    fontSize: "32px"
-    fontWeight: 600
-    lineHeight: 1.2
-    letterSpacing: "-0.025em"
+    fontSize: "36px"
+    fontWeight: 650
+    lineHeight: 1.18
+    letterSpacing: "-0.035em"
   hub-title:
     fontFamily: "'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', 'Liberation Sans', Arial, sans-serif"
-    fontSize: "17px"
-    fontWeight: 600
+    fontSize: "19px"
+    fontWeight: 650
   hub-body:
     fontFamily: "'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', 'Liberation Sans', Arial, sans-serif"
-    fontSize: "14px"
+    fontSize: "15px"
     fontWeight: 400
   hub-label:
     fontFamily: "'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', 'Liberation Sans', Arial, sans-serif"
@@ -73,9 +73,9 @@ typography:
     fontWeight: 400
     lineHeight: 1.4
 rounded:
-  hub-link: "6px"
-  hub-nav: "7px"
-  hub-card: "10px"
+  hub-link: "8px"
+  hub-nav: "9px"
+  hub-card: "12px"
   sm: "6px"
   md: "8px"
   lg: "10px"
@@ -89,27 +89,27 @@ spacing:
   3xl: "32px"
 components:
   hub-primary-link:
-    backgroundColor: "{colors.hub-sage}"
+    backgroundColor: "{colors.hub-cobalt}"
     textColor: "{colors.hub-ink}"
     rounded: "{rounded.hub-link}"
-    padding: "10px 15px"
+    padding: "11px 14px"
   hub-nav-link:
-    textColor: "{colors.hub-muted}"
+    textColor: "#b9cbe3"
     rounded: "{rounded.hub-nav}"
-    padding: "12px"
+    padding: "13px 14px"
   hub-nav-link-selected:
     backgroundColor: "{colors.hub-selected}"
     textColor: "{colors.hub-selected-text}"
     rounded: "{rounded.hub-nav}"
-    padding: "12px"
-  hub-project-row:
+    padding: "13px 14px"
+  hub-project-card:
     textColor: "{colors.hub-text}"
-    padding: "23px 0"
+    padding: "28px"
   hub-app-card:
     backgroundColor: "{colors.hub-surface}"
     textColor: "{colors.hub-text}"
     rounded: "{rounded.hub-card}"
-    padding: "22px"
+    padding: "26px"
   button-primary:
     backgroundColor: "{colors.amber}"
     textColor: "{colors.canvas}"
@@ -140,15 +140,15 @@ This file describes two separate implemented surfaces. The **Hub shell** is `hoa
 
 ### Hub shell
 
-**Creative North Star: “The Project Library”**
+**Creative North Star: “The Personal Workbench”**
 
-The Hub is a graphite directory of project spaces and shared tools. Sage marks selection and the explicit action to enter a project's native workspace. Familiar shared sans typography, outline icons and generous divided rows make destinations readable without turning the directory into a dashboard of metrics.
+The Hub separates opening an application, entering a project and managing shared work. A deep navy rail sits beside cool white working surfaces; cobalt marks selection and primary action. Existing application identities, dark ink and quiet status labels keep the local environment readable.
 
 **Key Characteristics:**
-- Graphite canvas, sage selection and warm white text.
-- Six navigation groups with contextual subnavigation.
-- Broad project rows, restrained running-app summaries and full document scrolling.
-- Code-led interface with authored SVG outline icons; no new shipping raster imagery.
+- Navy navigation, cool white surfaces and cobalt actions.
+- Six primary destinations with a labelled local tool selector.
+- Home pairs application launch rows with a project stack.
+- Authored navigation SVG and existing app icons; no new shipping raster imagery.
 
 ### Separate Ágora console (apps/agora)
 
@@ -168,11 +168,11 @@ The surface favors named states, authorship and source details over decoration. 
 
 ### Hub shell
 
-The `hub-` palette is defined by the final overrides in `navigation.css`, loaded after `style.css` and the shared Hoard theme. Sage is the primary accent; graphite canvas/surface/raised values separate the frame, and warm white/muted text separates content from metadata. Selected navigation uses `hub-selected` and `hub-selected-text`; ordinary hover uses `hub-nav-hover`. Fine rules use `hub-divider`.
+The final navigation.css overrides define the Hub light palette and remap the existing shared-theme aliases. Cobalt marks actions and selected navigation; the navy rail uses pale blue text, white selected text and a quieter navy hover fill. Cool canvas, white surfaces, dark ink, muted text and fine dividers organise the workspace. The existing gold SVG Hub identity and actual application icons remain.
 
-The later `interiors.css` rules bring fields in main content and dialogs onto the Hub graphite surface, text and divider tokens. Other preserved facet-specific controls can still consume `--hoard-*` values directly; keep those exceptions local. The existing Hub SVG brand mark retains its original gold identity.
+The later interiors.css rules apply these surfaces to retained facets and dialogs. Green, amber and red accompany written states.
 
-**The Hub Scope Rule.** Use the `hub-` palette for the navigation shell; keep legacy facet-specific and separate Ágora tokens scoped to their own controls and surface.
+**The Hub Scope Rule.** Use the Hub workbench palette in hoard_link/hub/ui; keep the separate apps/agora amber console and its tokens scoped to that application.
 
 ### Separate Ágora console (apps/agora)
 
@@ -202,7 +202,9 @@ A warm near-black foundation holds soft ivory text; amber marks the primary acti
 
 ### Hub shell
 
-Hub headings, navigation, body and controls inherit the shared sans stack in `hoard_link/ui/hoard-theme.css`; no font download or display face is introduced. Source Sans 3 is first in the stack when available, followed by the system fallbacks recorded in frontmatter. The page heading uses `hub-heading` and steps down to 27px at the mobile breakpoint. Section/project titles use `hub-title`; page descriptions use the 14px body with a 1.65 line-height and 70ch maximum. Rail links are 14px, contextual links 13px, and project metadata 12px with a 1.5 line-height. The Hub brand label is sans (18px, weight 650; 17px mobile). Shared-tool controls use 14px type, row subjects/titles 15px and long-form mail reading 16px at a 1.8 line-height with a 72ch maximum measure. Supporting metadata remains 12–13px; the Mail reader title scales from 24px to 32px.
+The Hub retains the shared Source Sans 3/system sans stack and adds no font download. Body type is 15px. The page heading is 36px/1.18 at weight 650, falling to 32px at 900px and 30px at 600px. Section headings use 22px, project/catalog names 19px, Home launch names 17px and Home project names 16px. Supporting text is generally 13–14px, metadata 11–13px.
+
+Global buttons and rail links use 14px. The later interior override sets main-content controls and dialog buttons/inputs/selectors to 15px; individual components retain their local label sizes. Form labels use 14px and JSON fields 13px. Mail reading remains 16px/1.8 with a 72ch measure. The Hub label is 19px at weight 650.
 
 ### Separate Ágora console (apps/agora)
 
@@ -225,13 +227,13 @@ Hub headings, navigation, body and controls inherit the shared sans stack in `ho
 
 ### Hub shell
 
-Desktop uses a 224px rail and flexible workspace. The rail is sticky at the document top with a minimum viewport height, except on desktop viewports at most 850px high where it returns to document flow; the compact environment header remains in document flow (76px minimum). Content is centered up to 1640px with 32px top, 42px side and 60px bottom padding. The page heading separates title/description from wrapping actions, followed by a 28px gap.
+Desktop uses a 216px navy rail and flexible workspace. The white header remains in document flow with an 82px minimum. Content caps at 1576px with 38px top/side and 56px bottom padding; headings have a 28px following gap. The rail is sticky except where the later interior low-height override returns it to flow at heights of 850px or less above the menu layout.
 
-Home places the project list beside a 250px running-app area with a 44px gap and a thin divider. It shows at most four title-sorted persistent spaces and a View all link; the Projects route contains the full filterable list. Below 1180px, the running-app area moves beneath the project list and row actions can wrap. Shared tool rows follow, with the existing Today facet below them.
+Home pairs application launches with a project stack in a 1.6:1 grid, gap 32px. It shows up to five running apps or the first five catalog entries, and up to four other apps when running entries exist. The companion stack has up to three title-sorted project spaces. Projects has a two-column card directory and a 520px maximum filter. Home stacks at 1180px.
 
-At 760px and below, the rail becomes a normal-flow top bar. Menu expands the navigation in the document, pushing content down; it is not an overlay or drawer. The header becomes 60px minimum with wrapping utilities. Main padding becomes 26px 20px 40px; row actions indent under the project name; primary links and the menu retain a 42px minimum height while content buttons/selectors use a 44px minimum. Navigation links have a 44px minimum height. The page heading wraps with a 28px following gap.
+At 900px, Menu expands a two-column navigation in normal document flow; header utilities wrap and content padding becomes 30px 24px 44px. At 600px, content padding is 28px 18px 40px; project cards, resources and automation fields become single-column. Content controls have a 38px minimum height, rising to 44px at 760px. The menu is 44px.
 
-Pages use full document scrolling. The Hub's embedded project board/list and selected task or conversation detail alternate within the same route instead of creating nested reading panes. Scoped overrides remove legacy max heights and inner scrolling from the embedded conversation, detail and other reading regions. The task board is two columns on desktop and one on mobile. Events wrap their data and become stacked records on mobile. Shared-tool buttons/selectors are at least 38px high on desktop. Work, notification, chat, reference and agent-session rows reflow their content and actions at the 760px breakpoint rather than preserving desktop columns. Repo/audit tables become labeled records at 1400px (three fields per row, two at 760px), using labels from their actual table headers. The repository detail dialog owns its vertical scrolling; its body text wraps and its mobile header stacks title/actions with 44px controls.
+Pages use full document scrolling. Embedded boards and task/conversation details alternate; board columns/cards constrain wrapping and become one column at 600px. Mail uses a 170px queue rail beside filters/list, stacked above the list at 760px. Other retained records reflow at 760px; repo/audit tables become labelled records at 1400px, with three columns reducing to two at 760px. Dialogs own their scrolling; the automation editor is at most 860px/94vw wide and 90dvh high with a sticky header.
 
 ### Separate Ágora console (apps/agora)
 
@@ -243,7 +245,7 @@ Below 900px, the operations pane becomes a right-side drawer up to 320px wide. A
 
 ### Hub shell
 
-The directory is flat: tonal surfaces, fine borders and row dividers carry hierarchy. The application catalog explicitly removes card and icon shadows. Existing resource status dots, dialogs and facet-specific state treatments retain their local behavior; they are not a new shell elevation scale. The rail and main content have no decorative shadow.
+White working surfaces use pale borders on a cool canvas. Application cards and icons have no decorative shadow; retained record lists use dividers. The rail has no shadow. Dialogs use a soft navy shadow (0 24px 70px #14243c33) and translucent backdrop (#14243c80); these do not define general card elevation.
 
 ### Separate Ágora console (apps/agora)
 
@@ -253,7 +255,7 @@ The system is mostly flat. Tonal changes between canvas, roster and raised contr
 
 ### Hub shell
 
-Rows use open surfaces and bottom dividers. Primary links have 6px corners; rail links 7px; contextual links 5px; application cards 10px. Shared buttons retain the theme's 8px corners; the later content/dialog field overrides use 6px corners and 9px by 11px padding. Authored navigation icons are inline SVG outlines, normally 20px with 1.6px rounded strokes; project folder icons are 26px desktop and 22px wide mobile. The existing Hub identity remains an SVG asset.
+Application/project cards, launch rows and resource surfaces use 12px corners; primary links use 8px and rail links 9px. Shared fields use 6px, automation fields 8px, grouped form panels 10px and dialogs 14px. Authored navigation SVG is normally 20px with 1.7px rounded strokes. Project folders sit on pale cobalt tiles. Catalog icons are 56px and Home launch identities 52px (44px at 600px); compact app docks use 36px.
 
 ### Separate Ágora console (apps/agora)
 
@@ -263,16 +265,14 @@ Controls and containers use gently rounded corners: 6px for buttons, selectors a
 
 ### Hub shell: navigation and controls
 
-- **Navigation:** Home, Projects, Applications, Communication, Automation and System form the six groups. The active group exposes contextual subnavigation. A separate Hub search link follows a divider. Selection is expressed with `aria-current`, sage tonal fill and text; hover uses a quieter graphite-green fill. Existing facets absent from explicit groups remain reachable under System.
-- **Primary workspace link:** Sage fill with dark ink, 6px corners, 10px by 15px padding, 13px semibold text and a 16px arrow. Hover uses the lighter sage token. It opens the coordination-configured native workspace in a new tab with the selected `space_id`; if the URL is unavailable the link is omitted.
-- **Project row:** Open divided row with folder icon, name, workspace description, Open Agora link and Tasks and discussions button. The project name and task button enter the embedded scoped board; opening the native workspace is a separate explicit action.
-- **Tool row:** Descriptive title, optional supporting line and trailing arrow. Rows are divided, with a quiet filled hover state; group pages and Home shortcuts share the pattern.
-- **Search field:** Graphite `hub-surface` fill, shell text/divider, 6px corners, 9px by 11px padding and sage focus border in main content. Project search retains its 440px maximum width; Mail search uses up to 380px and becomes full-width on mobile. Scope the later interior overrides to main content and dialogs.
-- **Mailbox:** One active Attention, Unclaimed or Recent queue with counts and a sage selected underline. Divided full-width message buttons separate sender, subject/excerpt and date on desktop; at 1400px the summary spans below sender/date. Filters and local pagination remain above/below the list. Search applies to loaded subject/sender/excerpt fields; page size is 20, over up to 40 attention, 100 unclaimed (both seven days) and 40 recent messages, rather than an archive-wide search.
-- **Mail reader:** Selecting a row replaces queues/filters/list with a full document reader. Back preserves queue, category, query and page within the sphere, returning focus to a row. The title, sender, date/sphere, claims/reasons, body and related links/attachments form a reading hierarchy. Paragraphs and simple headings are built as text DOM; only resolved HTTP/HTTPS links become active, with no message HTML execution. Settings/status are hidden while reading; their unsaved draft is retained but excluded from the copilot's pending forms until visible again. A sphere change resets list/filter/reader state; superseded list/detail responses are discarded. Loading and error/retry states remain explicit without substituting successful or populated content.
-- **Chat sources:** Connection administration sits in a native Sources and connections disclosure; the history remains the primary reading region. Chat author/date, message and source controls wrap on mobile. Disabled connection rows retain full opacity and an explicit written state. Reference result and relation endpoints use native buttons, preserving visible keyboard access. Agent-session summaries and reasons use 14px text.
-- **Application card:** Shell surface, 1px divider, 10px corners and 22px padding; no card shadow. Application controls, startup groups and status logic stay available on the Applications page.
-- **States and access:** Loading and failure are written out, failures expose Retry, and empty project/search results use text. `:focus-visible` is a 2px sage outline offset 4px, subject to more specific inherited field rules. The skip link becomes visible on focus; route transitions focus main content and return to the document top. Reduced-motion preference disables transitions, animation and smooth scrolling.
+- **Navigation:** Inicio, Proyectos, Aplicaciones, Bandeja, Automatización and Sistema are the six primary destinations, with a separate Search entry. Bandeja opens Notifications, Automation opens Work and System opens Resources. A labelled native selector switches tools locally; unmatched retained facets remain under System. Selection uses aria-current, white text and cobalt fill on navy.
+- **Applications:** Home launch rows use real app state/icons and the existing opening path. Catalog cards show one opening action and a native Manage disclosure retaining start/stop/restart, browser, windows, logs and other controls. Catalog management and Startup groups are native disclosures.
+- **Project card:** White surface, pale border,12px corners and 28px padding (20px in the Home stack). The name/Tasks and discussions enter the embedded scoped board; Open Agora is a separate coordination-configured link preserving space_id. No URL is fabricated. Space management remains discoverable.
+- **Primary link:** Cobalt with white text,8px corners,11px by 14px padding and 13px semibold type. Home project links use a quieter pale-cobalt variant.
+- **Resources and Search:** Resources groups connections/engines, GPU/leases and browser lanes. Header Search/Ctrl+K opens local application/tool destinations alongside existing federated content search. Project and mail-list filters keep their own scope.
+- **Automation forms:** Rules/jobs use labelled native fields for name, enabled state, event/cooldown or local time/interval, and repeatable actions. Parameter JSON remains where the existing model needs it. Advanced configuration exclusively replaces visual fields with full JSON. Switching back parses/rebuilds the form; invalid JSON stays open with text/error intact. Unknown fields survive unchanged document/action kinds; changing an action kind replaces that action structure. Existing APIs and copilot pending forms remain authoritative.
+- **Mail and retained interiors:** One Attention/Unclaimed/Recent queue,20-message client pages and local loaded-result search remain. The full reader replaces queues/list; Back preserves queue/category/query/page within the sphere. Text DOM builds readable paragraphs/headings/HTTP links without interpreting message HTML. Hidden drafts survive polling and stay excluded from pending forms; sphere changes invalidate old responses. Chat sources remain a native disclosure; reference actions are buttons. Work, notifications and sessions use divided responsive records; repo/audit records retain actual header labels.
+- **States and access:** Loading, empty, no-match and failure are written out, with Retry for project-load failure. The shell focus ring is 3px cobalt with 3px offset, subject to component-specific field rules. Skip-to-content and main focus remain available; navigation returns to document top. Reduced motion removes transitions, animation and smooth scrolling.
 
 ### Separate Ágora console (apps/agora)
 
@@ -317,12 +317,13 @@ Controls and containers use gently rounded corners: 6px for buttons, selectors a
 
 ### Hub shell
 
-- **Do** keep project spaces separate from shared resources and tools, with the six destinations and all original facets reachable.
-- **Do** preserve full document scrolling, contextual selection, readable wrapping and keyboard access at desktop and mobile sizes.
-- **Do** treat the project directory as persistent Ágora spaces, not a complete registry of every Faustus project.
-- **Do** derive the native workspace URL from coordination configuration and preserve the selected `space_id`.
-- **Don't** infer running apps, activity or successful native-workspace availability from placeholders.
-- **Don't** add raster decoration or import the separate Ágora console's amber display typography into the shell.
+- **Do** keep opening apps, entering projects and managing shared tools distinct, with every original tool reachable.
+- **Do** preserve full document scrolling, labelled local tool selection, wrapping and keyboard access.
+- **Do** treat projects as persistent Ágora spaces and preserve coordination workspace_url and space_id.
+- **Do** preserve unknown fields and invalid JSON while editing automation.
+- **Don't** infer running apps or successful workspace availability from placeholders.
+- **Don't** add raster decoration or import the separate Ágora amber display typography.
+- **Don't** describe the navigation redesign as new backend, data or MCP capabilities.
 
 ### Separate Ágora console (apps/agora)
 
