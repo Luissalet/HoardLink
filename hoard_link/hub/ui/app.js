@@ -142,6 +142,7 @@
     if (!snapshot) return;
     const availableApps = catalogApps();
     window.dispatchEvent(new CustomEvent('hub:apps', {detail: {apps: availableApps}}));
+    window.dispatchEvent(new CustomEvent('hub:snapshot', {detail: {snapshot, apps: availableApps, busy: [...busy], faustusPending: [...faustusPending], batchBusy}}));
     const apps = availableApps.filter((a) => {
       if (stateFilter === "running" && a.state !== "running") return false;
       if (stateFilter === "stopped" && a.state !== "down") return false;
@@ -159,6 +160,9 @@
 
     const existing = new Map([...grid.children].map((el) => [el.dataset.id, el]));
     const order = [];
+    // Live apps first, then the rest by name: what is running is what you reach for.
+    const rank = { running: 0, starting: 1, foreign: 2 };
+    apps.sort((x, y) => ((rank[x.state] ?? 3) - (rank[y.state] ?? 3)) || x.name.localeCompare(y.name));
     for (const a of apps) {
       let el = existing.get(a.id);
       if (!el) { el = tpl.content.firstElementChild.cloneNode(true); el.dataset.id = a.id; localize(el); bindCard(el); }
@@ -459,6 +463,8 @@
     pill.className = `pill state ${a.state}`;
     pill.textContent = t("state")[a.state] || a.state;
     $(".port", el).textContent = a.port ? `:${a.port}` : "";
+    const live = $(".live-meta", el);
+    if (live) live.textContent = a.process ? [a.process.uptime_s != null ? fmtUptime(a.process.uptime_s) : "", a.process.rss_mb != null ? `${Math.round(a.process.rss_mb)} MB` : ""].filter(Boolean).join(" · ") : (a.port ? `:${a.port}` : "");
     const p = a.process;
     $(".pid", el).textContent = p ? `pid ${p.pid}` : "";
     $(".purpose", el).textContent = window.HubDiscovery.description(a, lang === "es");
@@ -484,6 +490,7 @@
 
     const running = a.state === "running";
     $(".act-window", el).textContent = t(running ? "open_window" : "start_open");
+    $(".act-window", el).classList.toggle("primary", running);  // one highlighted button per running app, not a wall of them
     $(".act-window", el).disabled = !(running || a.launchable);
     $(".act-browser", el).disabled = !(running || a.launchable);
     $(".act-start", el).hidden = running || a.state === "starting";
@@ -510,24 +517,39 @@
     finally { busy.delete(id); await refresh(); }
   };
 
+  // One path for every app action, shared by the cards, the status table and the home launcher.
+  async function appAction(appId, action, body, okMsg) {
+    if (busy.has(appId)) return;
+    const messages = { start: t("started"), stop: t("stopped"), restart: t("started"), "close-windows": t("closed"), open: t("opened") };
+    okMsg = okMsg || messages[action] || "ok";
+    busy.add(appId); render();
+    try {
+      const res = await api(`/api/apps/${encodeURIComponent(appId)}/${action}`, body || {});
+      const name = snapshot?.apps.find((a) => a.id === appId)?.name || appId;
+      if (res.ok) {
+        const extra = res.already ? t("already") : (res.ready === false ? t("not_ready") : (res.mode === "browser-tab" && action === "open" && body?.mode !== "browser" ? "tab" : ""));
+        toast(`${name}: ${okMsg}${extra ? " (" + extra + ")" : ""}`, "ok", res.error || "");
+      } else {
+        toast(`${name}: ${res.error || "error"}`, "err", (res.log_tail || []).slice(-6).join("\n"));
+      }
+    } catch (e) { toast(String(e), "err"); }
+    busy.delete(appId);
+    await refresh();
+  }
+  window.hubAppAction = appAction;
+  window.hubOpenLog = (appId) => openLog(appId);
+  window.hubAppFolder = (appId) => api(`/api/apps/${encodeURIComponent(appId)}/folder`, {}).then((r) => { if (!r.ok) toast(r.error, "err"); });
+  window.hubFaustus = (action) => runFaustus(action);
+  window.hubBatch = (action) => runBatch(action);
+  window.hubSnapshot = () => snapshot;
+  window.hubRefresh = () => refresh();
+  window.hubLang = () => lang;
+  window.hubFmtUptime = fmtUptime;
+
   function bindCard(el) {
     const id = () => el.dataset.id;
     const app = () => snapshot.apps.find((a) => a.id === id());
-    const run = async (action, body, okMsg) => {
-      busy.add(id()); render();
-      try {
-        const res = await api(`/api/apps/${encodeURIComponent(id())}/${action}`, body || {});
-        const name = app()?.name || id();
-        if (res.ok) {
-          const extra = res.already ? t("already") : (res.ready === false ? t("not_ready") : (res.mode === "browser-tab" && action === "open" && body?.mode !== "browser" ? "tab" : ""));
-          toast(`${name}: ${okMsg}${extra ? " (" + extra + ")" : ""}`, "ok", res.error || "");
-        } else {
-          toast(`${name}: ${res.error || "error"}`, "err", (res.log_tail || []).slice(-6).join("\n"));
-        }
-      } catch (e) { toast(String(e), "err"); }
-      busy.delete(id());
-      await refresh();
-    };
+    const run = (action, body, okMsg) => appAction(id(), action, body, okMsg);
     $(".act-window", el).onclick = () => window.hubOpenApplication(id());
     $(".act-browser", el).onclick = () => run("open", { mode: "browser" }, t("opened"));
     $(".act-start", el).onclick = () => run("start", {}, t("started"));
@@ -636,6 +658,7 @@
     if (!d) return;
     const leases = d.leases || [], queue = d.queue || [];
     const probeFailed = d.inventory_status === "error";
+    window.dispatchEvent(new CustomEvent('hub:leases', {detail: d}));
     $("#gpu-summary").textContent = t("gpu_summary", probeFailed ? "?" : (d.gpus || []).length, leases.length, queue.length);
     const cards = $("#gpu-cards");
     cards.innerHTML = "";

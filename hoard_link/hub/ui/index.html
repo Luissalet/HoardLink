@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/ui/navigation.css">
   <link rel="stylesheet" href="/ui/interiors.css">
 <link rel="stylesheet" href="/ui/workspace.css">
+<link rel="stylesheet" href="/ui/compact.css">
 </head>
 <body>
 <a class="hub-skip" href="#hub-content">Saltar al contenido / Skip to content</a>
@@ -23,6 +24,7 @@
 <div class="hub-workspace">
 <header class="top">
   <button id="hub-global-search" class="hub-global-search"><span>Buscar en tu espacio</span><kbd>Ctrl K</kbd></button>
+  <div id="hub-statusbar" class="hub-statusbar" aria-live="polite"></div>
   <div class="brand">
     <img src="/ui/hub-icon.png" alt="" width="36" height="36">
     <div>
@@ -195,17 +197,19 @@
 <template id="card-tpl">
   <article class="card">
     <div class="card-head">
-      <img class="icon" src="/ui/fallback-icon.svg" alt="" width="64" height="64">
+      <img class="icon" src="/ui/fallback-icon.svg" alt="" width="40" height="40">
       <div class="title">
         <h2></h2>
-        <div class="meta"><span class="pill state"></span></div>
+        <p class="purpose"></p>
       </div>
+      <span class="pill state"></span>
     </div>
-    <p class="purpose"></p>
     <div class="reason" hidden></div>
     <div class="actions">
+      <span class="live-meta"></span>
       <button class="primary act-window" data-i18n="open_window">Open</button>
       <details class="app-management"><summary data-i18n="manage_app">Manage</summary>
+        <div class="app-menu">
         <div class="app-management-actions">
           <button class="act-browser" data-i18n="open_browser">Browser</button>
           <button class="act-start" data-i18n="start">Start</button>
@@ -218,6 +222,7 @@
         </div>
         <p class="app-technical"><span class="port"></span> <span class="pid"></span></p>
         <div class="proc" hidden></div>
+        </div>
       </details>
     </div>
   </article>
@@ -255,6 +260,7 @@
 <script src="/ui/automation_form.js"></script>
 <script src="/ui/family.js"></script>
 <script src="/ui/facets.js"></script>
+<script src="/ui/status.js"></script>
 <script src="/ui/navigation.js"></script>
 <script src="/ui/copilot.js"></script>
 <script src="/api/copilot/launcher.js"></script>

@@ -113,7 +113,7 @@ def test_browser_preserves_draft_revision_and_rejects_racing_submit(tmp_path, la
                 page.set_content('<html><head><style>[hidden]{display:none!important}body{font:14px Arial;padding:20px;--muted:#555;--line:#aaa;--card-2:#eee;--mono:monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><div id="root"></div></body></html>')
                 page.evaluate("""language => {
                   window.executed = false; window.toasts = [];
-                  window.HubFacets = {ctx: {
+                  window.HubFacets = {ctx: {bus: new EventTarget(),
                     el: (tag,cls='',text='') => { const n=document.createElement(tag); n.className=cls; n.textContent=text; return n; },
                     L: labels => labels[language], fmtWhen: () => '08-10 12:00', toast: text => window.toasts.push(text),
                     api: async (path,body) => (await fetch(path, body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {})).json()
