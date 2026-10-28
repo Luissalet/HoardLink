@@ -495,7 +495,7 @@
     if (document.hidden) return;
     reposTick += 1;
     const busy = !reposSnap || reposSnap.refreshing || reposSnap.ci_pending;
-    if ((tab === "repos" && busy) || reposTick % 10 === 0) await loadRepos();
+    if (tab === "repos" && $("#family-panel") && !$("#family-panel").hidden && (busy || reposTick % 10 === 0)) await loadRepos();
     else if (tab === "repos") renderRepoSummary();
   }, 3000);
 
@@ -578,6 +578,7 @@
   localize();
   $("#btn-lang").addEventListener("click", () => setTimeout(() => { localize(); (loaders[tab] || (() => {}))(); }, 0));
   showTab(tab, { openPanel: false });
-  loadRules(); loadJobs(); loadBackups(); loadRepos();
+  // Backups and repositories are expensive to read: they load when their tab opens, not on every page load.
+  loadRules(); loadJobs();
   connectSse();
 })();

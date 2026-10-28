@@ -104,9 +104,11 @@
     if (!info || !info.ok) { window.dispatchEvent(new Event('hub:facets-ready')); return; }
     const scripts = [];
     for (const f of info.facets || []) for (const s of f.ui_scripts || []) if (!scripts.includes(s)) scripts.push(s);
-    for (const s of scripts) {
-      await new Promise((resolve) => { const tag = document.createElement("script"); tag.src = `/ui/${s}`; tag.onload = resolve; tag.onerror = resolve; document.body.appendChild(tag); });
-    }
+    // Download every facet script at once; async=false keeps their execution in list order.
+    await Promise.all(scripts.map((s) => new Promise((resolve) => {
+      const tag = document.createElement("script"); tag.src = `/ui/${s}`; tag.async = false;
+      tag.onload = resolve; tag.onerror = resolve; document.body.appendChild(tag);
+    })));
     registry.sort((a, b) => (a.order || 50) - (b.order || 50));
     for (const f of registry) {
       try {

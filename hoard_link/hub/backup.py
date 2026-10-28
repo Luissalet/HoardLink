@@ -117,6 +117,12 @@ class BackupStore:
         self._now = now
         self._lock = threading.Lock()
         self.busy: Optional[str] = None
+        # Manifests can weigh 100+ MB each; summaries are parsed once per file
+        # version (name, mtime, size) and kept on disk across restarts.
+        self._index_path = os.path.join(self.root, "snapshot-index.json")
+        self._index_lock = threading.Lock()
+        self._index: Optional[dict[str, Any]] = None
+        self._store_cache: Optional[tuple[float, int, int]] = None
 
     # -- objects ----------------------------------------------------------------
     def _object_path(self, sha: str) -> str:
@@ -139,22 +145,67 @@ class BackupStore:
         return sha, size, True
 
     # -- snapshots ------------------------------------------------------------
+    @staticmethod
+    def _summary(name: str, m: dict[str, Any]) -> dict[str, Any]:
+        totals = m.get("totals", {}) or {}
+        return {"id": m.get("id", name[:-5]), "ts": m.get("ts"), "apps": sorted((m.get("apps") or {}).keys()),
+                "files": totals.get("files", 0), "bytes": totals.get("bytes", 0),
+                "new_bytes": totals.get("new_bytes", 0), "skipped": totals.get("skipped", 0),
+                "label": m.get("label", ""), "ok": m.get("ok", True)}
+
+    def _load_index(self) -> dict[str, Any]:
+        if self._index is None:
+            try:
+                with open(self._index_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                self._index = data if isinstance(data, dict) and data.get("version") == 1 else {}
+            except (OSError, ValueError):
+                self._index = {}
+            self._index.setdefault("version", 1)
+            self._index.setdefault("entries", {})
+        return self._index
+
     def list_snapshots(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         if not os.path.isdir(self.snapshots_dir):
             return out
-        for name in sorted(os.listdir(self.snapshots_dir)):
-            if not name.endswith(".json"):
-                continue
-            try:
-                with open(os.path.join(self.snapshots_dir, name), "r", encoding="utf-8") as fh:
-                    m = json.load(fh)
-            except (OSError, ValueError):
-                continue
-            out.append({"id": m.get("id", name[:-5]), "ts": m.get("ts"), "apps": sorted((m.get("apps") or {}).keys()),
-                        "files": m.get("totals", {}).get("files", 0), "bytes": m.get("totals", {}).get("bytes", 0),
-                        "new_bytes": m.get("totals", {}).get("new_bytes", 0), "skipped": m.get("totals", {}).get("skipped", 0),
-                        "label": m.get("label", ""), "ok": m.get("ok", True)})
+        with self._index_lock:
+            index = self._load_index()
+            entries: dict[str, Any] = index["entries"]
+            changed = False
+            names = sorted(n for n in os.listdir(self.snapshots_dir) if n.endswith(".json"))
+            for name in names:
+                path = os.path.join(self.snapshots_dir, name)
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    continue
+                key = [st.st_mtime_ns, st.st_size]
+                cached = entries.get(name)
+                if cached and cached.get("key") == key:
+                    out.append(dict(cached["summary"]))
+                    continue
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        m = json.load(fh)
+                except (OSError, ValueError):
+                    continue
+                summary = self._summary(name, m)
+                entries[name] = {"key": key, "summary": summary}
+                changed = True
+                out.append(dict(summary))
+            for gone in set(entries) - set(names):
+                entries.pop(gone, None)
+                changed = True
+            if changed:
+                try:
+                    os.makedirs(self.root, exist_ok=True)
+                    tmp = self._index_path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as fh:
+                        json.dump(index, fh)
+                    os.replace(tmp, self._index_path)
+                except OSError:
+                    pass
         return out
 
     def load_snapshot(self, snapshot_id: str) -> Optional[dict[str, Any]]:
@@ -182,6 +233,7 @@ class BackupStore:
         finally:
             with self._lock:
                 self.busy = None
+                self._store_cache = None
 
     def _snapshot(self, sources: dict[str, str], *, label: str, progress: Optional[Callable[[str], None]]) -> dict[str, Any]:
         ts = self._now()
@@ -400,9 +452,16 @@ class BackupStore:
         finally:
             with self._lock:
                 self.busy = None
+                self._store_cache = None
 
-    def status(self) -> dict[str, Any]:
-        snaps = self.list_snapshots()
+    STORE_TOTALS_TTL_S = 300.0
+
+    def _store_totals(self) -> tuple[int, int]:
+        """Size and count of the object store; walking it is slow, so the
+        answer is reused for a few minutes or until a run or prune changes it."""
+        cached = self._store_cache
+        if cached is not None and self._now() - cached[0] < self.STORE_TOTALS_TTL_S:
+            return cached[1], cached[2]
         size, count = 0, 0
         if os.path.isdir(self.objects_dir):
             for root, _dirs, names in os.walk(self.objects_dir):
@@ -411,6 +470,12 @@ class BackupStore:
                         size += os.path.getsize(os.path.join(root, n)); count += 1
                     except OSError:
                         pass
+        self._store_cache = (self._now(), size, count)
+        return size, count
+
+    def status(self) -> dict[str, Any]:
+        snaps = self.list_snapshots()
+        size, count = self._store_totals()
         last = snaps[-1] if snaps else None
         return {"root": self.root, "snapshots": len(snaps), "objects": count, "store_bytes": size,
                 "last": last, "busy": self.busy, "exclude": self.exclude, "max_file_mb": self.max_file_bytes // (1024 * 1024)}
