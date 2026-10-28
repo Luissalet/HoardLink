@@ -26,7 +26,10 @@
     talos:['sistema','Consulta y organiza la actividad de tu equipo.','Review and organize your computer activity.','equipo ordenador disco archivo actividad sistema'],
     prometheus:['sistema','Gestiona los modelos y servicios de inteligencia artificial.','Manage AI models and services.','modelo modelos motor motores ia inteligencia artificial spark gpu'],
     hermes:['organizar','Organiza comunicaciones y automatizaciones.','Organize communications and automations.','correo mensaje comunicación automatizar calendario'],
-    cicero:['crear','Trabaja con documentos y presentaciones.','Work with documents and presentations.','presentación presentaciones documento diapositiva discurso'],
+    kafka:['organizar','Guarda facturas, contratos y pólizas y avisa de sus plazos.','Keep invoices, contracts and policies and track their deadlines.','papeles facturas contratos seguros polizas plazos vencimientos pdf documentos tramites'],
+    links:['organizar','Guarda enlaces, lecturas y descargas de vídeo.','Save links, reading and video downloads.','enlaces links lecturas descargas videos marcadores'],
+    'kinect-hoard':['crear','Captura cámara, profundidad y cuerpo con un Kinect.','Capture camera, depth and body tracking with a Kinect.','kinect camara profundidad cuerpo esqueleto audio'],
+        cicero:['crear','Trabaja con documentos y presentaciones.','Work with documents and presentations.','presentación presentaciones documento diapositiva discurso'],
   };
   const normalize = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
   const words = value => normalize(value).split(/[^a-z0-9]+/).filter(w => w.length > 2 && !['una','uno','los','las','del','con','para','quiero','necesito','como','hacer','mis','puedo','the','and','with','want'].includes(w)).map(w=>w.length>5 && /(?:ar|er|ir)$/.test(w)?w.slice(0,-2):w);
