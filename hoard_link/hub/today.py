@@ -288,7 +288,8 @@ class TodayFacet(Facet):
         self.tz = tz
         self._llm = llm
         self._lan_ip = lan_ip
-        self._alive = alive or (lambda app: procs.health(app).state == "healthy")
+        self._alive = alive or self._default_alive
+        self._listeners: Optional[tuple[float, dict[int, int]]] = None
         self._background = background
         self._lock = threading.RLock()
         self._cache: dict[tuple, tuple[float, list[dict[str, Any]]]] = {}
@@ -432,6 +433,18 @@ class TodayFacet(Facet):
                 continue
             out.append(app)
         return out
+
+    def _default_alive(self, app: App) -> bool:
+        """Healthy check that skips apps nobody listens for: on Windows a probe of a closed loopback
+        port can take its whole timeout, and the agenda asks every app at once."""
+        now = time.monotonic()
+        with self._lock:
+            cached = self._listeners
+        if cached is None or now - cached[0] > 2.0:
+            cached = (now, procs.listening_pids())
+            with self._lock:
+                self._listeners = cached
+        return procs.health(app, cached[1]).state == "healthy"
 
     def _fetch_app(self, app: App, d0: date, d1: date, sphere: Optional[str], refresh: bool) -> dict[str, Any]:
         key = (app.id, d0.isoformat(), d1.isoformat(), sphere or "")

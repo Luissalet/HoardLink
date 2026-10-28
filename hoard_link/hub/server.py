@@ -67,6 +67,7 @@ POST /api/repos/<name>/folder  open its folder in the file manager
 
 from __future__ import annotations
 
+import email.utils
 import json
 import logging
 import mimetypes
@@ -138,12 +139,26 @@ class _HubHandler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": "not found"}, 404)
             return
         ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        # Page files are revalidated on every load (an edit shows at once) but
+        # an unchanged file costs a 304 instead of its bytes.
+        mtime = int(os.stat(path).st_mtime)
+        since = self.headers.get("If-Modified-Since")
+        if since:
+            try:
+                if int(email.utils.parsedate_to_datetime(since).timestamp()) >= mtime:
+                    self.send_response(304)
+                    self.send_header("Cache-Control", "max-age=3600" if cache else "no-cache")
+                    self.end_headers()
+                    return
+            except (TypeError, ValueError, IndexError, OverflowError):
+                pass
         with open(path, "rb") as fh:
             body = fh.read()
         self.send_response(200)
         self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text/") or ctype.endswith("javascript") else ""))
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "max-age=3600" if cache else "no-store")
+        self.send_header("Last-Modified", email.utils.formatdate(mtime, usegmt=True))
+        self.send_header("Cache-Control", "max-age=3600" if cache else "no-cache")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
