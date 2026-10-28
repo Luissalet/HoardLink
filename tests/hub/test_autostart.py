@@ -65,7 +65,7 @@ def test_foreign_startup_file_is_left_alone(windows):
 
 def test_percent_paths_are_literal_batch_arguments():
     text = autostart.render('C:/literal %TEMP% folder', 'C:/python.exe', ['--data-dir','C:/literal %TEMP% data'])
-    assert '%%TEMP%%' in text and 'DisableDelayedExpansion' in text and 'chcp 65001' in text
+    assert '%%TEMP%%' in text and 'DisableDelayedExpansion' in text and 'chcp.com" 65001' in text
     with pytest.raises(ValueError):
         autostart.render('C:/bad\npath','python',[])
 

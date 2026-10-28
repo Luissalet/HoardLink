@@ -23,8 +23,12 @@ _SPECS = (
      {"name": _field(maxLength=200), "owner": _field(), "members": _field("array", items=_field()), "sphere": _field(), "goal": _field(maxLength=2000), **_RECEIPT}, ["name"], False),
     ("project_update", "Change project title, goal, membership or archive status. Its path stays stable; no original file is moved or deleted.",
      {**_PROJECT, "name": _field(), "goal": _field(), "members": _field("array", items=_field()), "state": _field(enum=["active", "archived"]), **_RECEIPT}, ["project_id"], False),
-    ("projects", "List projects this caller may access; optionally filter personal/work sphere.", {"sphere": _field()}, [], True),
+    ("projects", "List all projects this caller may access. Optional sphere, active/archived state, and all query words across name and goal (case/accent insensitive). Reads project metadata, never file contents.",
+     {"sphere": _field(), "state": _field(enum=["active", "archived"]), "query": _field(maxLength=200)}, [], True),
     ("project", "Read one shared project and registered live files. File paths point to the same originals all members open.", _PROJECT, ["project_id"], True),
+    ("files_search", "Find registered files in one project by title/path words, ignoring case and accents. Filter folder and current file presence. Reads metadata, never file contents or unregistered folders; does not refresh hashes.",
+     {**_PROJECT, "query": _field(maxLength=200), "area": _field(description="all (default), shared, or a project member's application ID for its native folder"),
+      "availability": _field(enum=["all", "present", "missing"]), "limit": _field("integer", minimum=1, maximum=200), "offset": _field("integer", minimum=0)}, ["project_id"], True),
     ("location", "Resolve a real shared or native Hoard folder. Save native files directly there; no file copy or proprietary container.",
      {**_PROJECT, "area": _field(enum=["shared", "hoard"]), "app": _field()}, ["project_id"], True),
     ("file_register", "Register a file already saved inside the project. Hashes it; never modifies or copies its contents.",
@@ -33,6 +37,8 @@ _SPECS = (
      {"file_id": _field()}, ["file_id"], False),
     ("file_link_source", "Operator-only: register an explicit external file as a read-only live input; records its path and hash without copying it. Changed sources refresh to a new revision.",
      {**_PROJECT, "source_path": _field(description="Absolute path to an existing source file outside the project."), "app": _field(), "title": _field(), **_RECEIPT}, ["project_id", "source_path"], False),
+    ("derived_results", "List saved result files, recipes and original source/output revisions for a project. Read-only metadata; freshness is unchecked until derived_lookup verifies current hashes.",
+     _PROJECT, ["project_id"], True),
     ("derived_publish", "Register a reusable result file with exact source revisions and processing recipe. Does not perform OCR, transcription or model inference.",
      {**_PROJECT, **_RECIPE, "source_revisions": _field("object"), "output_id": _field(), **_RECEIPT}, ["project_id", "source_ids", "recipe", "source_revisions", "output_id"], False),
     ("derived_lookup", "Check a reusable result against current source and output hashes, recipe and project access. Changes or missing files produce a cache miss.",
@@ -97,7 +103,11 @@ class WorkspaceFacet(Facet):
     def get(self, req: Request) -> Any:
         if req.path != "/api/workspace/projects":
             return None
-        return self._call(req.caller(), "projects", {"sphere": req.q("sphere", "")})
+        arguments = {"sphere": req.q("sphere", "")}
+        for key in ("state", "query"):
+            if req.q(key, ""):
+                arguments[key] = req.q(key, "")
+        return self._call(req.caller(), "projects", arguments)
 
     def post(self, req: Request) -> Any:
         if req.path != "/api/workspace/call":
