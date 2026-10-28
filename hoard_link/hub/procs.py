@@ -241,6 +241,14 @@ def _listening_pids_cli() -> dict[int, int]:
     return out
 
 
+# Static facts of a process (name, exe, command line, cwd) never change for one (pid, start time), and the
+# child count moves slowly; reading them is the expensive part on Windows, where children() walks every
+# process. The hub page polls every few seconds, so they are reused for a short while.
+_STATIC_TTL_S = 15.0
+_static_cache: dict[tuple[int, float], tuple[float, dict[str, Any]]] = {}
+_static_lock = threading.Lock()
+
+
 def proc_info(pid: int, ports: Optional[list[int]] = None) -> ProcInfo:
     info = ProcInfo(pid=pid, ports=list(ports or []), protected=pid in _protected_pids())
     ps = _psutil()
@@ -249,23 +257,28 @@ def proc_info(pid: int, ports: Optional[list[int]] = None) -> ProcInfo:
     try:
         p = ps.Process(pid)
         with p.oneshot():
-            info.name = p.name()
-            try:
-                info.exe = p.exe()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                info.cmdline = " ".join(p.cmdline())
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                info.cwd = p.cwd()
-            except Exception:  # noqa: BLE001
-                pass
-            info.rss_mb = round(p.memory_info().rss / (1024 * 1024), 1)
             info.created_at = p.create_time()
             info.uptime_s = int(time.time() - info.created_at)
-            info.children = len(p.children(recursive=True))
+            info.rss_mb = round(p.memory_info().rss / (1024 * 1024), 1)
+            key, now = (pid, info.created_at), time.monotonic()
+            with _static_lock:
+                hit = _static_cache.get(key)
+            if hit is None or now - hit[0] > _STATIC_TTL_S:
+                facts: dict[str, Any] = {"name": p.name(), "exe": "", "cmdline": "", "cwd": "", "children": 0}
+                for attr, read in (("exe", p.exe), ("cmdline", lambda: " ".join(p.cmdline())), ("cwd", p.cwd),
+                                   ("children", lambda: len(p.children(recursive=True)))):
+                    try:
+                        facts[attr] = read()
+                    except Exception:  # noqa: BLE001
+                        pass
+                with _static_lock:
+                    if len(_static_cache) > 512:
+                        _static_cache.clear()
+                    _static_cache[key] = (now, facts)
+            else:
+                facts = hit[1]
+            info.name, info.exe, info.cmdline, info.cwd, info.children = (
+                facts["name"], facts["exe"], facts["cmdline"], facts["cwd"], facts["children"])
     except Exception:  # noqa: BLE001
         pass
     return info

@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import stat
+import time
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -267,7 +268,35 @@ def apply_launch_override(app: "App", override: Any) -> "App":
 # reading one manifest
 # ---------------------------------------------------------------------------
 
+_icon_cache: dict[tuple, tuple[tuple, Optional[str]]] = {}
+
+
+def _dir_signature(paths: Iterable[str]) -> tuple:
+    sig = []
+    for d in paths:
+        try:
+            sig.append(os.stat(d).st_mtime_ns)
+        except OSError:
+            sig.append(None)
+    return tuple(sig)
+
+
 def _find_icon(folder: str, app_id: str, name: str, icon_dirs: Iterable[str]) -> Optional[str]:
+    """Reused while the app folder and the shared icon folders are unchanged: adding, renaming or deleting
+    an icon changes its folder's modification time, and a file replaced in place is caught by the
+    revision's own stat. Listing the shared folders on every poll was most of the page's cost."""
+    dirs = tuple(icon_dirs)
+    key = (folder, app_id, name, dirs)
+    sig = _dir_signature((folder, *dirs))
+    hit = _icon_cache.get(key)
+    if hit is not None and hit[0] == sig and (hit[1] is None or os.path.isfile(hit[1])):
+        return hit[1]
+    found = _find_icon_now(folder, app_id, name, dirs)
+    _icon_cache[key] = (sig, found)
+    return found
+
+
+def _find_icon_now(folder: str, app_id: str, name: str, icon_dirs: Iterable[str]) -> Optional[str]:
     for candidate in ICON_NAMES:
         p = os.path.join(folder, candidate)
         try:
