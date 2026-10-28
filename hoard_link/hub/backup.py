@@ -108,7 +108,7 @@ def _sqlite_consistent_copy(path: str, dest: str) -> None:
 
 class BackupStore:
     def __init__(self, root: str, *, exclude: Optional[list[str]] = None, max_file_mb: float = DEFAULT_MAX_FILE_MB,
-                 now: Callable[[], float] = time.time):
+                 now: Callable[[], float] = time.time, background: bool = True):
         self.root = os.path.abspath(root)
         self.objects_dir = os.path.join(self.root, "objects")
         self.snapshots_dir = os.path.join(self.root, "snapshots")
@@ -123,6 +123,8 @@ class BackupStore:
         self._index_lock = threading.Lock()
         self._index: Optional[dict[str, Any]] = None
         self._store_cache: Optional[tuple[float, int, int]] = None
+        self._store_counting = threading.Event()
+        self._background = background
 
     # -- objects ----------------------------------------------------------------
     def _object_path(self, sha: str) -> str:
@@ -233,7 +235,8 @@ class BackupStore:
         finally:
             with self._lock:
                 self.busy = None
-                self._store_cache = None
+                # Keep the last figures on screen but mark them stale: the next read recounts.
+                self._store_cache = (0.0, *self._store_cache[1:]) if self._store_cache else None
 
     def _snapshot(self, sources: dict[str, str], *, label: str, progress: Optional[Callable[[str], None]]) -> dict[str, Any]:
         ts = self._now()
@@ -452,26 +455,67 @@ class BackupStore:
         finally:
             with self._lock:
                 self.busy = None
-                self._store_cache = None
+                # Keep the last figures on screen but mark them stale: the next read recounts.
+                self._store_cache = (0.0, *self._store_cache[1:]) if self._store_cache else None
 
     STORE_TOTALS_TTL_S = 300.0
 
-    def _store_totals(self) -> tuple[int, int]:
-        """Size and count of the object store; walking it is slow, so the
-        answer is reused for a few minutes or until a run or prune changes it."""
-        cached = self._store_cache
-        if cached is not None and self._now() - cached[0] < self.STORE_TOTALS_TTL_S:
-            return cached[1], cached[2]
+    def _walk_store(self) -> tuple[int, int]:
         size, count = 0, 0
-        if os.path.isdir(self.objects_dir):
-            for root, _dirs, names in os.walk(self.objects_dir):
-                for n in names:
-                    try:
-                        size += os.path.getsize(os.path.join(root, n)); count += 1
-                    except OSError:
-                        pass
-        self._store_cache = (self._now(), size, count)
+        stack = [self.objects_dir]
+        while stack:
+            try:
+                with os.scandir(stack.pop()) as it:
+                    for entry in it:
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                stack.append(entry.path)
+                            else:
+                                size += entry.stat(follow_symlinks=False).st_size  # cached by the directory read on Windows
+                                count += 1
+                        except OSError:
+                            pass
+            except OSError:
+                pass
         return size, count
+
+    def _recount_store(self) -> None:
+        try:
+            size, count = self._walk_store()
+            self._store_cache = (self._now(), size, count)
+            with self._index_lock:
+                index = self._load_index()
+                index["store"] = {"ts": self._store_cache[0], "bytes": size, "objects": count}
+                try:
+                    tmp = self._index_path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as fh:
+                        json.dump(index, fh)
+                    os.replace(tmp, self._index_path)
+                except OSError:
+                    pass
+        finally:
+            self._store_counting.clear()
+
+    def _store_totals(self) -> tuple[int, int]:
+        """Size and count of the object store. Walking it takes seconds, so callers get the last known
+        figures (kept in the index across restarts) and a stale or missing answer is refreshed in the
+        background; a run or prune drops the in-memory copy so the next read recounts."""
+        cached = self._store_cache
+        if cached is None:
+            with self._index_lock:
+                stored = self._load_index().get("store")
+            if isinstance(stored, dict):
+                cached = (float(stored.get("ts") or 0), int(stored.get("bytes") or 0), int(stored.get("objects") or 0))
+                self._store_cache = cached
+        stale = cached is None or self._now() - cached[0] >= self.STORE_TOTALS_TTL_S
+        if stale and os.path.isdir(self.objects_dir) and not self._store_counting.is_set():
+            self._store_counting.set()
+            if self._background:
+                threading.Thread(target=self._recount_store, name="hoard-hub-backup-count", daemon=True).start()
+            else:
+                self._recount_store()
+                cached = self._store_cache
+        return (cached[1], cached[2]) if cached else (0, 0)
 
     def status(self) -> dict[str, Any]:
         snaps = self.list_snapshots()

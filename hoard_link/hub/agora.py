@@ -773,7 +773,26 @@ class Agora:
         self._space_sweeps[self.space_id] = value
 
     def spaces(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-        return {"ok": True, "spaces": self.space_store.list(), "default_space_id": DEFAULT_SPACE_ID}
+        spaces = self.space_store.list()
+        # One grouped read gives every project its workload, so a directory can show where work waits.
+        try:
+            tasks = {r["space_id"]: dict(r) for r in self.db.query(
+                "SELECT space_id, SUM(status NOT IN ('done','dropped')) AS open, "
+                "SUM(status IN ('claimed','in_progress')) AS active, SUM(status IN ('review','approved')) AS review, "
+                "SUM(status IN ('blocked','changes')) AS blocked, MAX(updated) AS last FROM tasks GROUP BY space_id")}
+            waiting = {r["space_id"]: r["n"] for r in self.db.query(
+                "SELECT space_id, COUNT(*) AS n FROM threads WHERE status='escalated' GROUP BY space_id")}
+            last_thread = {r["space_id"]: r["last"] for r in self.db.query(
+                "SELECT space_id, MAX(updated) AS last FROM threads GROUP BY space_id")}
+        except Exception:  # noqa: BLE001 — counts are a convenience; the directory must still load
+            tasks, waiting, last_thread = {}, {}, {}
+        for sp in spaces:
+            t = tasks.get(sp["id"], {})
+            sp["counts"] = {"open": int(t.get("open") or 0), "active": int(t.get("active") or 0),
+                            "review": int(t.get("review") or 0), "blocked": int(t.get("blocked") or 0),
+                            "waiting": int(waiting.get(sp["id"]) or 0)}
+            sp["last_activity"] = max(t.get("last") or 0, last_thread.get(sp["id"]) or 0) or None
+        return {"ok": True, "spaces": spaces, "default_space_id": DEFAULT_SPACE_ID}
 
     def space(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         try:

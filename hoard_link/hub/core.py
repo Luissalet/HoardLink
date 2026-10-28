@@ -11,6 +11,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 import secrets
 import threading
+from urllib.parse import urlsplit
 import time
 from typing import Any, Callable, Optional
 
@@ -194,6 +195,8 @@ class Hub:
         return value if isinstance(value, dict) and value else None
 
     def rescan(self) -> list[App]:
+        from . import registry as _registry
+        _registry._icon_cache.clear()  # a rescan must see icons added a moment ago
         apps = scan(
             self.config.roots,
             faustus_dir=self.config.faustus_dir,
@@ -240,7 +243,25 @@ class Hub:
         })
         return d
 
+    SNAPSHOT_REUSE_S = 1.5
+
     def snapshot(self) -> dict[str, Any]:
+        """Several Hub pages, the MCP tools and the copilot all poll this; one probe serves every caller
+        that asks within a moment, and concurrent callers wait for the probe already running."""
+        lock = self.__dict__.setdefault("_snapshot_lock", threading.Lock())
+        with lock:
+            cached = self.__dict__.get("_snapshot_cache")
+            if cached and time.monotonic() - cached[0] < self.SNAPSHOT_REUSE_S and cached[1] == self.__dict__.get("_snapshot_epoch", 0):
+                return cached[2]
+            data = self._snapshot_now()
+            self._snapshot_cache = (time.monotonic(), self.__dict__.get("_snapshot_epoch", 0), data)
+            return data
+
+    def invalidate_snapshot(self) -> None:
+        """After an action the next read must probe again, not reuse the moment-old answer."""
+        self._snapshot_epoch = self.__dict__.get("_snapshot_epoch", 0) + 1
+
+    def _snapshot_now(self) -> dict[str, Any]:
         apps_now = self.apps
         # Every probe in parallel: a closed loopback port costs ~1s on
         # Windows, and a dozen of them in a row would make the page crawl.
@@ -754,9 +775,19 @@ class Hub:
                               "body": body if isinstance(body, dict) else None}
                     break
         finally:
+            if not result["reachable"]:
+                # A Faustus whose health check times out while its port is still held is busy, not off:
+                # offering Start there would launch a second server against the same port.
+                try:
+                    port = urlsplit(result["url"] or "").port
+                    pid = procs.listening_pids().get(port) if port else None
+                except Exception:  # noqa: BLE001
+                    pid = None
+                if pid:
+                    result.update(listening=True, pid=pid)
             result.update(available=self.faustus_runtime.available(),
                           manually_stopped=self.automation_blocked("faustus"))
-            result["startable"] = result["available"] and not result["reachable"]
+            result["startable"] = result["available"] and not result["reachable"] and not result.get("listening")
             result["stoppable"] = result["available"]
             self._faustus_cache = (time.time(), result)
             self._faustus_refreshing.clear()
@@ -867,3 +898,22 @@ def _backends_now(config: HubConfig) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         gpus = []
     return {"ok": ok, "error": error, "capabilities": caps, "gpus": gpus, "checked_at": time.time()}
+
+
+def _invalidating(method):
+    import functools
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self.invalidate_snapshot()
+    return wrapper
+
+
+# Every state-changing action makes the next snapshot probe again instead of reusing the shared one.
+for _name in ("start", "stop", "restart", "open", "close_windows", "start_all", "stop_all", "faustus_start",
+              "faustus_stop", "rescan"):
+    setattr(Hub, _name, _invalidating(getattr(Hub, _name)))
+del _name

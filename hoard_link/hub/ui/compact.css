@@ -232,3 +232,19 @@ dialog button, dialog input, dialog select { font-size:13.5px; }
 #hub-content .hub-attention-row small { font-size:12.5px; }
 body #hub-content { padding-bottom:76px; } /* room for the floating copilot button */
 #hub-apps .card .act-window:not(.primary) { background:transparent; color:var(--text); border:1px solid var(--line); }
+.hub-sb-faustus.is-busy > .hub-dot, .hub-tile-faustus.is-busy .hub-dot { background:var(--amber); box-shadow:0 0 6px var(--amber); }
+.hub-sb-faustus.is-busy, .hub-tile-faustus.is-busy { border-color:#5a4a1c; }
+
+/* ---- projects ------------------------------------------------------------------------------------------ */
+.hub-project-meta { display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin-top:5px; }
+.hub-project-meta .hub-count { padding:1px 8px; font-size:11.5px; }
+.hub-project-quiet, .hub-project-when { font-size:11.5px; color:var(--muted); }
+.hub-project-when { margin-left:auto; }
+#hub-content .hub-project-directory .hub-project-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:8px; }
+#hub-content .hub-project-directory .hub-project-row { display:block; padding:0; border:1px solid var(--line); border-radius:10px; background:var(--card); }
+#hub-content .hub-project-directory .hub-project-row:hover { border-color:var(--hoard-border-hover); background:var(--card-2); }
+#hub-content .hub-project-directory .hub-project-open { width:100%; padding:10px 12px; display:grid; grid-template-columns:auto minmax(0,1fr); gap:10px; align-items:start; text-align:left; background:transparent; border:0; min-height:0; }
+#hub-content .hub-project-directory .hub-project-name { display:grid; gap:2px; min-width:0; }
+#hub-content .hub-project-directory .hub-project-name small { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#hub-content .hub-project-directory .hub-row-actions { display:none; }
+#hub-content .hub-project-filter { max-width:360px; height:34px; margin-bottom:10px; }

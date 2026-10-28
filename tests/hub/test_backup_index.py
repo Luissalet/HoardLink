@@ -41,3 +41,18 @@ def test_changed_manifest_is_reread(tmp_path):
     st = os.stat(path)
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
     assert store.list_snapshots()[0]["files"] == 22
+
+
+def test_store_totals_survive_restart_and_recount_after_change(tmp_path):
+    store = BackupStore(str(tmp_path), background=False)
+    os.makedirs(os.path.join(store.objects_dir, "ab"))
+    with open(os.path.join(store.objects_dir, "ab", "abc"), "wb") as fh:
+        fh.write(b"12345")
+    assert store._store_totals() == (5, 1)
+    with open(os.path.join(store.objects_dir, "ab", "abd"), "wb") as fh:
+        fh.write(b"123")
+    assert store._store_totals() == (5, 1)  # fresh figures are reused, not recounted on every read
+    again = BackupStore(str(tmp_path), background=False)
+    assert again._store_totals() == (5, 1)  # read back from the index after a restart
+    again._store_cache = (0.0, *again._store_cache[1:])  # what a run or prune leaves behind
+    assert again._store_totals() == (8, 2)

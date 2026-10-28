@@ -34,8 +34,8 @@
   }
   function faustus() {
     const f = snap?.faustus || {};
-    const state = fPending.has('stop') ? 'stopping' : fPending.has('start') ? 'starting' : f.reachable ? 'running' : 'down';
-    const label = {running: tr('En marcha', 'Running'), starting: tr('Arrancando…', 'Starting…'), stopping: tr('Parando…', 'Stopping…'), down: f.available === false ? tr('No instalado', 'Not installed') : tr('Apagado', 'Off')}[state];
+    const state = fPending.has('stop') ? 'stopping' : fPending.has('start') ? 'starting' : f.reachable ? 'running' : f.listening ? 'busy' : 'down';
+    const label = {running: tr('En marcha', 'Running'), busy: tr('Ocupado, no responde', 'Busy, not answering'), starting: tr('Arrancando…', 'Starting…'), stopping: tr('Parando…', 'Stopping…'), down: f.available === false ? tr('No instalado', 'Not installed') : tr('Apagado', 'Off')}[state];
     let port = '';
     try { port = f.url ? ':' + new URL(f.url).port : ''; } catch (_) { /* keep empty */ }
     return {f, state, label, port};
@@ -46,13 +46,13 @@
   function faustusButtons(compact) {
     const {f, state} = faustus();
     const out = [];
-    if (f.reachable && f.url) {
+    if ((f.reachable || f.listening) && f.url) {
       const open = node('a', 'hub-btn hub-btn-primary', tr('Abrir', 'Open')); open.href = f.url; open.target = '_blank'; open.rel = 'noopener';
       open.title = tr('Abrir Faustus en ', 'Open Faustus at ') + f.url; out.push(open);
     }
     const busyNow = fPending.size > 0 || batchBusy;
     if (state === 'down' || state === 'starting') out.push(button(tr('Arrancar', 'Start'), 'hub-btn' + (f.reachable ? '' : ' hub-btn-primary'), () => window.hubFaustus?.('start'), {disabled: busyNow || !f.startable, title: tr('Arrancar Faustus', 'Start Faustus')}));
-    if (state === 'running' || state === 'stopping') out.push(button(compact ? tr('Parar', 'Stop') : tr('Parar Faustus', 'Stop Faustus'), 'hub-btn hub-btn-danger', () => window.hubFaustus?.('stop'), {disabled: busyNow || !f.stoppable}));
+    if (state === 'running' || state === 'stopping' || state === 'busy') out.push(button(compact ? tr('Parar', 'Stop') : tr('Parar Faustus', 'Stop Faustus'), 'hub-btn hub-btn-danger', () => window.hubFaustus?.('stop'), {disabled: busyNow || !f.stoppable}));
     return out;
   }
 
@@ -63,7 +63,7 @@
     if (!snap) { bar.append(node('span', 'hub-sb-item hub-sb-loading', tr('Consultando estado…', 'Checking status…'))); return; }
     const {state, label, port} = faustus();
     const fz = node('div', 'hub-sb-item hub-sb-faustus is-' + state);
-    fz.append(node('span', 'hub-dot'), node('strong', '', 'Faustus'), node('span', 'hub-sb-text', label + (state === 'running' && port ? ' · ' + port : '')));
+    fz.append(node('span', 'hub-dot'), node('strong', '', 'Faustus'), node('span', 'hub-sb-text', label + ((state === 'running' || state === 'busy') && port ? ' · ' + port : '')));
     fz.append(...faustusButtons(true));
     const c = tally();
     const hoards = node('a', 'hub-sb-item hub-sb-link' + (c.attention ? ' has-attention' : ''));
@@ -90,7 +90,10 @@
     const {f, state, label} = faustus();
     const fz = node('section', 'hub-tile hub-tile-faustus is-' + state);
     const head = node('div', 'hub-tile-head'); head.append(node('span', 'hub-dot'), node('h2', '', 'Faustus'), node('span', 'hub-tile-state', label));
-    fz.append(head, node('p', 'hub-tile-sub', f.reachable ? (f.url || '').replace(/^https?:\/\//, '') : tr('Tu espacio de trabajo con modelos. Arráncalo desde aquí.', 'Your model workspace. Start it from here.')));
+    const sub = f.reachable ? (f.url || '').replace(/^https?:\/\//, '')
+      : f.listening ? tr(`Su puerto sigue abierto (PID ${f.pid}) pero no contesta en 3 s: suele ser un turno largo bloqueándolo. Espera o páralo.`, `Its port is still open (PID ${f.pid}) but it does not answer within 3 s, usually a long turn blocking it. Wait or stop it.`)
+      : tr('Tu espacio de trabajo con modelos. Arráncalo desde aquí.', 'Your model workspace. Start it from here.');
+    fz.append(head, node('p', 'hub-tile-sub', sub));
     const fa = node('div', 'hub-tile-actions'); fa.append(...faustusButtons(false)); fz.append(fa);
 
     const c = tally();

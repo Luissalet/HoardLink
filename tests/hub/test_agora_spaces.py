@@ -312,3 +312,17 @@ def test_escalation_link_keeps_nondefault_space(tmp_path):
         assert sent and f'?space_id={sid}#agora-' in sent[-1]['url']
     finally:
         hub.close()
+
+
+def test_space_directory_reports_workload_per_project(agora):
+    sid = create(agora, "Busy project")
+    task(agora, sid, "one"); task(agora, sid, "two")
+    th = agora.thread_open({"agent": "builder", "title": "Need a decision", "body": "Which way?", "space_id": sid})["thread"]
+    agora.escalate({"agent": "builder", "thread_id": th["id"], "question": "Which way?", "space_id": sid})
+    spaces = {s["id"]: s for s in agora.spaces()["spaces"]}
+    assert spaces[sid]["counts"]["open"] == 2
+    assert spaces[sid]["counts"]["waiting"] == 1
+    assert spaces[sid]["last_activity"]
+    quiet = create(agora, "Quiet project")
+    assert {s["id"]: s for s in agora.spaces()["spaces"]}[quiet]["counts"] == {
+        "open": 0, "active": 0, "review": 0, "blocked": 0, "waiting": 0}

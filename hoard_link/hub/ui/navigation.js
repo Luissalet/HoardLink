@@ -151,6 +151,19 @@
       const open = node('button', 'hub-project-open'); open.append(icon('projects'));
       const name = node('span', 'hub-project-name'); name.append(node('strong', '', space.title));
       name.append(node('small', '', space.description || (recentIds().includes(space.id)?tr('Visitado recientemente','Recently visited'):tr('Ágora del proyecto','Project Agora')))); open.append(name);
+      const c = space.counts || null;
+      if (c) {
+        const meta = node('span', 'hub-project-meta');
+        const add = (n, text, cls) => { if (n) { const b = node('span', 'hub-count ' + cls); b.append(node('b', '', String(n)), document.createTextNode(' ' + text)); meta.append(b); } };
+        add(c.waiting, tr('te esperan', 'waiting for you'), 'is-attention');
+        add(c.open, tr('pendientes', 'open'), '');
+        add(c.active, tr('en curso', 'in progress'), 'is-running');
+        add(c.review, tr('en revisión', 'in review'), '');
+        add(c.blocked, tr('bloqueadas', 'blocked'), 'is-attention');
+        if (!c.open && !c.waiting) meta.append(node('span', 'hub-project-quiet', tr('Sin tareas pendientes', 'No open tasks')));
+        if (space.last_activity) meta.append(node('span', 'hub-project-when', ago(space.last_activity)));
+        name.append(meta);
+      }
       open.onclick = () => selectProject(space); row.append(open);
       const actions = node('div', 'hub-row-actions');
       const board = node('button', 'hub-primary-link', tr('Continuar proyecto', 'Continue project')); board.onclick = () => selectProject(space); actions.append(board);
@@ -158,6 +171,14 @@
     }
     container.append(list);
   }
+  function ago(ts) {
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    if (s < 3600) return tr(`hace ${Math.max(1, Math.round(s / 60))} min`, `${Math.max(1, Math.round(s / 60))} min ago`);
+    if (s < 86400) return tr(`hace ${Math.round(s / 3600)} h`, `${Math.round(s / 3600)} h ago`);
+    return tr(`hace ${Math.round(s / 86400)} d`, `${Math.round(s / 86400)} d ago`);
+  }
+  // Projects where someone waits for you come first, then the most recently active.
+  const byUrgency = (a, b) => ((b.counts?.waiting || 0) > 0) - ((a.counts?.waiting || 0) > 0) || (b.last_activity || 0) - (a.last_activity || 0) || a.title.localeCompare(b.title);
   function appLaunch(app) {
     const button = node('button', 'hub-app-launch'); button.type = 'button'; const unavailable=app.state !== 'running' && !app.launchable;
     const image = node('img'); image.src = window.hubAppIcon ? window.hubAppIcon(app.id) : '/api/apps/' + encodeURIComponent(app.id) + '/icon'; image.alt = ''; image.width = image.height = 52;
@@ -277,7 +298,7 @@
     else if (route === 'projects') {
       landing.hidden = false;
       const filter = node('input', 'hub-project-filter'); filter.type = 'search'; filter.placeholder = tr('Buscar proyecto…', 'Find a project…'); filter.setAttribute('aria-label', filter.placeholder);
-      landing.append(filter); const results = node('div'); projectRows(results); landing.append(results);
+      landing.append(filter); const results = node('div', 'hub-project-directory'); const saved = spaces; spaces = [...spaces].sort(byUrgency); projectRows(results); spaces = saved; landing.append(results);
       filter.oninput = () => {
         const query = filter.value.trim().toLocaleLowerCase(); let found = false;
         for (const row of results.querySelectorAll('.hub-project-row')) { row.hidden = !row.textContent.toLocaleLowerCase().includes(query); found ||= !row.hidden; }
