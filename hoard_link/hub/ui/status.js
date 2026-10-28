@@ -131,29 +131,152 @@
   }
 
   // ---- compact launcher -------------------------------------------------------------------------------------
+  // ---- app actions: what a person does with an app ---------------------------------------------------------
+  const ICONS = {
+    window: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+    tab: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+    play: '<path d="M7 4.5v15l12-7.5Z"/>',
+    stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
+    restart: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+    more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+    log: '<path d="M6 3h9l4 4v14H6Z"/><path d="M9 11h7M9 15h7M9 7h4"/>',
+    folder: '<path d="M3 6h7l2 3h9v10H3Z"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+    close: '<path d="M6 6l12 12M18 6 6 18"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+  };
+  function svg(name) {
+    const n = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    n.setAttribute('viewBox', '0 0 24 24'); n.setAttribute('aria-hidden', 'true'); n.innerHTML = ICONS[name] || ''; return n;
+  }
+  function iconButton(name, label, onclick, cls = '') {
+    const b = node('button', 'hub-ibtn ' + cls); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label);
+    b.append(svg(name)); b.onclick = event => { event.stopPropagation(); onclick(event); }; return b;
+  }
+  const appById = id => apps.find(a => a.id === id);
+  const canOpen = a => stateOf(a) === 'running' || (a.launchable && stateOf(a) !== 'unavailable');
+  const act = {
+    window: a => window.hubOpenApplication?.(a.id),
+    // A running app opens in a tab right away (synchronous, so the browser allows it); a stopped one is
+    // started by the Hub, which then opens it in the default browser.
+    tab: a => {
+      if (stateOf(a) === 'running' && a.url) { const w = window.open(a.url, '_blank'); if (w) { try { w.opener = null; } catch (_) { /* cross-origin */ } return; } }
+      window.hubAppAction?.(a.id, 'open', {mode: 'browser'}, tr('abierta en el navegador', 'opened in the browser'));
+    },
+    start: a => window.hubAppAction?.(a.id, 'start'),
+    stop: a => window.hubAppAction?.(a.id, 'stop'),
+    restart: a => window.hubAppAction?.(a.id, 'restart'),
+    closeWindows: a => window.hubAppAction?.(a.id, 'close-windows'),
+    log: a => window.hubOpenLog?.(a.id),
+    folder: a => window.hubAppFolder?.(a.id),
+    copy: a => { try { navigator.clipboard.writeText(a.url); } catch (_) { window.prompt(tr('Dirección', 'Address'), a.url); } },
+    details: a => { location.hash = 'hub/apps'; setTimeout(() => window.hubFocusApplication?.(a.id), 0); },
+  };
+  // The one power control: start what is stopped, stop what runs.
+  function powerButton(a) {
+    const s = stateOf(a), working = busy.has(a.id) || batchBusy;
+    if (s === 'running' || s === 'starting') return iconButton('stop', tr('Parar', 'Stop') + ' ' + a.name, () => act.stop(a), 'is-stop' + (working || (!a.stoppable && s !== 'starting') ? ' is-disabled' : ''));
+    if (s === 'down' || (s === 'foreign' && a.port_adaptable)) return iconButton('play', tr('Arrancar sin abrir', 'Start without opening') + ' · ' + a.name, () => act.start(a), 'is-play' + (working || !a.launchable ? ' is-disabled' : ''));
+    return null;
+  }
+
+  // ---- actions menu (⋯ and right click) ----------------------------------------------------------------------
+  let menuEl = null, menuFor = null;
+  function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; const back = menuFor; menuFor = null; back?.focus?.(); } }
+  function openMenu(a, anchor, point) {
+    closeMenu();
+    const s = stateOf(a), p = a.process, working = busy.has(a.id) || batchBusy;
+    const m = node('div', 'hub-menu'); m.setAttribute('role', 'menu'); m.setAttribute('aria-label', a.name);
+    const head = node('div', 'hub-menu-head');
+    head.append(img(a, 24));
+    const t = node('span'); t.append(node('strong', '', a.name));
+    t.append(node('small', '', [stateText(s) + (s === 'down' && a.launchable ? tr(' · arranca al abrir', ' · starts on open') : ''), a.port ? ':' + a.port : '', p?.uptime_s != null && window.hubFmtUptime ? window.hubFmtUptime(p.uptime_s) : '', p?.rss_mb != null ? Math.round(p.rss_mb) + ' MB' : ''].filter(Boolean).join(' · ')));
+    head.append(t); m.append(head);
+    if (s === 'unavailable') m.append(node('p', 'hub-menu-note', window.HubDiscovery?.launchMessage(a, es()) || a.launch_reason || tr('No se puede arrancar desde aquí.', 'Cannot be started from here.')));
+    const item = (icon, label, fn, {disabled = false, danger = false, hint = ''} = {}) => {
+      const b = node('button', 'hub-menu-item' + (danger ? ' is-danger' : '')); b.type = 'button'; b.setAttribute('role', 'menuitem');
+      b.disabled = disabled; b.append(svg(icon), node('span', '', label)); if (hint) b.append(node('kbd', '', hint));
+      b.onclick = () => { closeMenu(); fn(a); }; m.append(b); return b;
+    };
+    const sep = () => m.append(node('hr'));
+    const opening = '';
+    item('window', tr('Abrir en ventana', 'Open in a window') + opening, act.window, {disabled: working || !canOpen(a), hint: tr('Clic', 'Click')});
+    item('tab', tr('Abrir en pestaña del navegador', 'Open in a browser tab') + opening, act.tab, {disabled: working || !canOpen(a), hint: tr('Clic central', 'Middle click')});
+    if (a.url) item('copy', tr('Copiar dirección', 'Copy address'), act.copy);
+    sep();
+    if (s === 'down' || (s === 'foreign' && a.port_adaptable)) item('play', s === 'foreign' ? tr('Arrancar en otro puerto', 'Start on another port') : tr('Arrancar sin abrir', 'Start without opening'), act.start, {disabled: working || !a.launchable});
+    if (s === 'running') item('restart', tr('Reiniciar', 'Restart'), act.restart, {disabled: working || !a.launchable});
+    if (s === 'running' || s === 'starting') item('stop', tr('Parar', 'Stop'), act.stop, {disabled: working || (!a.stoppable && s !== 'starting'), danger: true});
+    const wins = (a.windows || []).length;
+    if (wins) item('close', tr(`Cerrar sus ventanas (${wins})`, `Close its windows (${wins})`), act.closeWindows, {disabled: working});
+    sep();
+    item('log', tr('Ver registro', 'View log'), act.log);
+    item('folder', tr('Abrir carpeta', 'Open folder'), act.folder);
+    item('info', tr('Detalles en Aplicaciones', 'Details in Applications'), act.details);
+    document.body.append(m); menuEl = m; menuFor = anchor;
+    const r = point ? {left: point.x, bottom: point.y, right: point.x, top: point.y} : anchor.getBoundingClientRect();
+    const w = m.offsetWidth, h = m.offsetHeight;
+    let x = point ? r.left : r.right - w, y = r.bottom + 4;
+    if (y + h > innerHeight - 8) y = Math.max(8, r.top - h - 4);
+    x = Math.max(8, Math.min(x, innerWidth - w - 8));
+    m.style.left = x + 'px'; m.style.top = y + 'px';
+    m.querySelector('.hub-menu-item:not(:disabled)')?.focus();
+    m.addEventListener('keydown', event => {
+      const items = [...m.querySelectorAll('.hub-menu-item:not(:disabled)')]; const i = items.indexOf(document.activeElement);
+      if (event.key === 'ArrowDown') { event.preventDefault(); items[(i + 1) % items.length]?.focus(); }
+      if (event.key === 'ArrowUp') { event.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+      if (event.key === 'Tab') closeMenu();
+    });
+  }
+  document.addEventListener('pointerdown', event => { if (menuEl && !menuEl.contains(event.target) && !event.target.closest?.('.hub-ibtn-more')) closeMenu(); }, true);
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && menuEl) closeMenu(); });
+  window.addEventListener('scroll', () => { if (menuEl) closeMenu(); }, true);
+  window.addEventListener('resize', closeMenu);
+  window.addEventListener('hashchange', closeMenu);
+  function bindAppGestures(target, id, anchorFor) {
+    target.addEventListener('contextmenu', event => { const a = appById(id); if (!a) return; event.preventDefault(); openMenu(a, anchorFor(), {x: event.clientX, y: event.clientY}); });
+    target.addEventListener('auxclick', event => { if (event.button !== 1) return; const a = appById(id); if (a && canOpen(a)) { event.preventDefault(); act.tab(a); } });
+    target.addEventListener('mousedown', event => { if (event.button === 1) event.preventDefault(); });  // no autoscroll on middle click
+    target.addEventListener('keydown', event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { const a = appById(id); if (a) { event.preventDefault(); openMenu(a, anchorFor()); } } });
+  }
+
+  // ---- compact launcher -------------------------------------------------------------------------------------
   function launcher(box) {
     const list = sorted(apps);
     const known = new Map([...box.children].map(n => [n.dataset.id, n]));
     const order = [];
     for (const app of list) {
-      let b = known.get(app.id);
-      if (!b) {
-        b = node('button', 'hub-launch'); b.type = 'button'; b.dataset.id = app.id;
-        b.append(img(app, 28), node('span', 'hub-launch-name'), node('span', 'hub-dot'));
-        b.onclick = () => {
-          const a = apps.find(x => x.id === b.dataset.id); if (!a) return;
-          if (stateOf(a) === 'unavailable') { location.hash = 'hub/apps'; window.hubFocusApplication?.(a.id); }
-          else window.hubOpenApplication?.(a.id);
-        };
+      let tile = known.get(app.id);
+      if (!tile) {
+        tile = node('div', 'hub-launch'); tile.dataset.id = app.id;
+        const main = node('button', 'hub-launch-main'); main.type = 'button';
+        const pic = node('span', 'hub-launch-pic'); pic.append(img(app, 28), node('span', 'hub-dot'));
+        main.append(pic, node('span', 'hub-launch-name'));
+        main.onclick = () => { const a = appById(tile.dataset.id); if (!a) return; if (stateOf(a) === 'unavailable') act.details(a); else act.window(a); };
+        const tools = node('span', 'hub-launch-tools');
+        tile.append(main, tools);
+        bindAppGestures(tile, app.id, () => tile.querySelector('.hub-ibtn-more') || main);
       }
-      const s = stateOf(app);
-      b.className = 'hub-launch is-' + s + (busy.has(app.id) ? ' is-busy' : '');
-      b.querySelector('.hub-launch-name').textContent = app.name;
-      b.querySelector('.hub-dot').className = 'hub-dot is-' + s;
+      const s = stateOf(app), working = busy.has(app.id);
+      tile.className = 'hub-launch is-' + s + (working ? ' is-busy' : '');
+      tile.querySelector('.hub-launch-name').textContent = app.name;
+      tile.querySelector('.hub-launch-pic .hub-dot').className = 'hub-dot is-' + s;
       const desc = window.HubDiscovery ? window.HubDiscovery.description(app, es()) : (app.purpose || '');
-      b.title = `${app.name} · ${stateText(s)}${app.port ? ' · :' + app.port : ''}\n${desc}\n${s === 'running' ? tr('Clic: abrir', 'Click: open') : s === 'unavailable' ? tr('Clic: ver por qué', 'Click: see why') : tr('Clic: arrancar y abrir', 'Click: start and open')}`;
-      b.setAttribute('aria-label', `${app.name}, ${stateText(s)}`);
-      order.push(b); known.delete(app.id);
+      const main = tile.querySelector('.hub-launch-main');
+      main.title = `${app.name} · ${stateText(s)}${app.port ? ' · :' + app.port : ''}\n${desc}\n` + (s === 'unavailable' ? tr('Clic: ver por qué no arranca', 'Click: see why it cannot start')
+        : tr('Clic: abrir en ventana · Clic central: abrir en pestaña · Clic derecho: más opciones', 'Click: open in a window · Middle click: open in a tab · Right click: more'));
+      main.setAttribute('aria-label', `${app.name}, ${stateText(s)}. ${s === 'unavailable' ? tr('Ver por qué', 'See why') : tr('Abrir en ventana', 'Open in a window')}`);
+      const tools = tile.querySelector('.hub-launch-tools');
+      const sig = [s, working, batchBusy, app.launchable, app.stoppable, es()].join('|');
+      if (tools.dataset.sig !== sig) {
+        tools.dataset.sig = sig; tools.replaceChildren();
+        if (canOpen(app)) tools.append(iconButton('tab', tr('Abrir en pestaña', 'Open in a tab') + ' · ' + app.name, () => act.tab(appById(app.id) || app), 'is-hover'));
+        const power = powerButton(app); if (power) tools.append(power);
+        tools.append(iconButton('more', tr('Más opciones', 'More options') + ' · ' + app.name, event => {
+          const a = appById(app.id); if (!a) return; if (menuEl && menuFor === event.currentTarget) closeMenu(); else openMenu(a, event.currentTarget);
+        }, 'hub-ibtn-more'));
+      }
+      order.push(tile); known.delete(app.id);
     }
     known.forEach(n => n.remove());
     order.forEach(n => box.append(n));
@@ -208,6 +331,7 @@
         const st = node('td', 'st'); st.append(node('span', 'hub-dot'), node('span', 'st-label'));
         const nm = node('td', 'nm'); const name = node('span', 'nm-wrap'); name.append(img(a, 22), node('strong'), node('small')); nm.append(name);
         row.append(st, nm, node('td', 'num port'), node('td', 'num pid'), node('td', 'num up'), node('td', 'num mem'), node('td', 'num win'), node('td', 'acts'));
+        bindAppGestures(row, a.id, () => row.querySelector('.hub-ibtn-more'));
       }
       const s = stateOf(a), p = a.process || null;
       row.className = 'is-' + s + (busy.has(a.id) ? ' is-busy' : '');
@@ -226,13 +350,15 @@
       if (acts.dataset.sig !== sig) {
         acts.dataset.sig = sig; acts.replaceChildren();
         const dis = busy.has(a.id) || batchBusy;
-        if (s === 'running' || (a.launchable && s !== 'unavailable')) acts.append(button(s === 'running' ? tr('Abrir', 'Open') : tr('Arrancar y abrir', 'Start & open'), 'hub-btn hub-btn-sm' + (s === 'running' ? ' hub-btn-primary' : ''), () => window.hubOpenApplication?.(a.id), {disabled: dis}));
-        if (s === 'down' && a.launchable) acts.append(button(tr('Arrancar', 'Start'), 'hub-btn hub-btn-sm', () => window.hubAppAction?.(a.id, 'start'), {disabled: dis}));
-        if (s === 'running') acts.append(button(tr('Reiniciar', 'Restart'), 'hub-btn hub-btn-sm', () => window.hubAppAction?.(a.id, 'restart'), {disabled: dis || !a.launchable}));
-        if (s === 'running' || s === 'starting') acts.append(button(tr('Parar', 'Stop'), 'hub-btn hub-btn-sm hub-btn-danger', () => window.hubAppAction?.(a.id, 'stop'), {disabled: dis || (!a.stoppable && s !== 'starting')}));
-        if (s === 'foreign' && a.port_adaptable) acts.append(button(tr('Arrancar en otro puerto', 'Start on another port'), 'hub-btn hub-btn-sm', () => window.hubAppAction?.(a.id, 'start'), {disabled: dis}));
-        acts.append(button(tr('Log', 'Log'), 'hub-btn hub-btn-sm hub-btn-ghost', () => window.hubOpenLog?.(a.id)));
-        if (s === 'unavailable') acts.append(button(tr('Por qué', 'Why'), 'hub-btn hub-btn-sm hub-btn-ghost', () => { location.hash = 'hub/apps'; window.hubFocusApplication?.(a.id); }));
+        if (canOpen(a)) {
+          acts.append(button(s === 'running' ? tr('Abrir', 'Open') : tr('Arrancar y abrir', 'Start & open'), 'hub-btn hub-btn-sm' + (s === 'running' ? ' hub-btn-primary' : ''), () => act.window(a), {disabled: dis, title: tr('Abrir en ventana', 'Open in a window')}));
+          acts.append(iconButton('tab', tr('Abrir en pestaña', 'Open in a tab') + ' · ' + a.name, () => act.tab(appById(a.id) || a)));
+        }
+        const power = powerButton(a); if (power) acts.append(power);
+        if (s === 'unavailable') acts.append(button(tr('Por qué', 'Why'), 'hub-btn hub-btn-sm hub-btn-ghost', () => act.details(a)));
+        acts.append(iconButton('more', tr('Más opciones', 'More options') + ' · ' + a.name, event => {
+          const cur = appById(a.id); if (!cur) return; if (menuEl && menuFor === event.currentTarget) closeMenu(); else openMenu(cur, event.currentTarget);
+        }, 'hub-ibtn-more'));
       }
       order.push(row); known.delete(a.id);
     }
@@ -247,6 +373,10 @@
   function mount(box, kind) { box.dataset.hubStatus = kind; mounts.add(box); kinds[kind](box); return box; }
   function renderAll() {
     statusbar();
+    // The Applications tiles get the same gestures: right click for the menu, middle click for a tab.
+    for (const card of document.querySelectorAll('#grid .card[data-id]:not([data-gestures])')) {
+      card.dataset.gestures = '1'; bindAppGestures(card, card.dataset.id, () => card.querySelector('summary') || card);
+    }
     for (const box of [...mounts]) { if (!box.isConnected && box.dataset.keep !== '1') { mounts.delete(box); continue; } kinds[box.dataset.hubStatus](box); }
   }
   window.addEventListener('hub:snapshot', event => {
