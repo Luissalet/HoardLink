@@ -85,12 +85,14 @@ def _q(arg: str) -> str:
 
 def render(repo_dir: str, python: str, args: list[str]) -> str:
     """The Startup-folder script. ``start ""`` detaches, so the console that
-    runs the script closes at once."""
+    runs the script closes at once. ``chcp`` is called by its full path: a
+    session whose PATH lacks System32 would otherwise keep the OEM code page
+    and read a non-ASCII folder name wrongly."""
     line = " ".join(_q(a) for a in [python, *args])
     return (
         "@echo off\r\n"
         "setlocal DisableDelayedExpansion\r\n"
-        "chcp 65001 >nul\r\n"
+        '"%SystemRoot%\\System32\\chcp.com" 65001 >nul\r\n'
         f"{MARKER_LINE}\r\n"
         f"cd /d {_q(repo_dir)}\r\n"
         f'start "" {line}\r\n'
