@@ -794,7 +794,7 @@ inactivity timeouts are independent; `finish_reason: length` has
 
 ### Spheres, notifications, mail, Today and more (0.7)
 
-Ten *facets* sit on the hub, each with its own routes, tools and tab (`hoard_link/hub/facets.py`):
+Twelve *facets* sit on the hub, each with its own routes, tools and tab (`hoard_link/hub/facets.py`):
 
 | Facet | What it does | Reference |
 |---|---|---|
@@ -810,6 +810,8 @@ Ten *facets* sit on the hub, each with its own routes, tools and tab (`hoard_lin
 | Web (0.8) | One polite fetcher for every app: per-host throttle and block cooldown shared by the family, robots.txt, response cache, one optional browser profile, search, link previews (`hoard_link.fam_web`, JS `fam-web.js`) | [docs/commons/web.md](docs/commons/web.md#family-service-hub-facet-web) |
 | Services (0.8.1) | Owner catalogue status; opt-in audio download → transcription → transcript indexing, with separate job and indexing states | [docs/commons/services.md](docs/commons/services.md#11-hub-service-discovery-and-media-imports) |
 | Agent sessions (0.8.2) | What agents wrote in the apps that keep a write journal, grouped by agent and session; undo a whole session (dry run first); per-agent tokens with `read_only` / `drafts` / `all` profiles | [docs/facets/agent-sessions.md](docs/facets/agent-sessions.md), [docs/commons/accountable-agents.md](docs/commons/accountable-agents.md) |
+| Names es/en (0.8.3) | One Spanish/English map of Pokémon (and forms), moves, abilities, items, natures, types, badges, places and ingredients; accent-free fuzzy lookup, translation and `expand` to retry an empty search in the other language (`/api/aliases/*`, `hub_alias_lookup`, `hub_alias_expand`) | [docs/facets/aliases.md](docs/facets/aliases.md) |
+| Parity (0.8.3) | Differential test kit (`hoard_link.parity`): seeded corpus, oracle and probe as processes, traces of state and random-number calls compared block by block with the first divergence, version locks, selective runs, oracle cache; `hub_parity_compare`, `hub_parity_status`, `hub_parity_run` | [docs/parity.md](docs/parity.md) |
 
 App side (vendored with the library): `hoard_link.fam_notify`, `fam_mail`, `fam_agenda`, `fam_refs`, `fam_web`
 (standard library); Node apps get the same functions in `hoard-link.js` (`notify`, `mail*`, `installAgenda`,

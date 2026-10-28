@@ -56,6 +56,8 @@ FACET_MODULES = (
     "agora",
     "coordination",
     "agent_sessions",
+    "aliases",
+    "parity",
 )
 
 
