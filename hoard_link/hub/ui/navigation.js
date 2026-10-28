@@ -183,6 +183,7 @@
     }catch(_){if(epoch===homeEpoch)homeError=true;}finally{if(epoch===homeEpoch){homeLoading=false;if(route==='home')show('home');}}
   }
   function home(container) {
+    const overview=node('div','hub-home-status');container.append(overview);window.HubStatus?.overview(overview);
     const layout=node('div','hub-home-layout'); const attention=node('section','hub-attention');
     heading(attention,tr('Necesita tu atención','Needs your attention'),tr('Abrir bandeja','Open inbox'),'#hub/communication');
     if(!homeData) {
@@ -205,10 +206,9 @@
     heading(projects,tr('Continúa un proyecto','Continue a project'),tr('Ver todos','View all'),'#hub/projects');
     const ordered=[...spaces].sort((a,b)=>{const ids=recentIds();return (ids.includes(a.id)?ids.indexOf(a.id):999)-(ids.includes(b.id)?ids.indexOf(b.id):999);});
     const saved=spaces;spaces=ordered;projectRows(projects,3);spaces=saved;layout.append(projects);container.append(layout);
-    const appArea=node('section','hub-home-apps');heading(appArea,tr('Tus herramientas','Your tools'),tr('Explorar aplicaciones','Explore applications'),'#hub/apps');
-    const live=apps.filter(a=>a.state==='running');const launches=node('div','hub-home-launches');
-    for(const app of (live.length?live:apps).slice(0,4))launches.append(appLaunch(app));
-    if(!apps.length)launches.append(node('p','hub-loading',tr('Cargando aplicaciones…','Loading applications…')));
+    const appArea=node('section','hub-home-apps');heading(appArea,'Hoards',tr('Gestionar aplicaciones','Manage applications'),'#hub/apps');
+    const launches=node('div','hub-launch-grid');
+    if(window.HubStatus)window.HubStatus.launcher(launches);else for(const app of apps)launches.append(appLaunch(app));
     appArea.append(launches);container.append(appArea);
     const footer=node('div','hub-home-footer');footer.append(link(tr('Programar una acción','Schedule an action'),'#hub/jobs'),link(tr('Estado del entorno','Environment status'),'#hub/system'),link(tr('Ayuda y ajustes','Help and settings'),'#hub/help'));container.append(footer);
     if(!homeData && !homeLoading && !homeError)loadHome();
@@ -331,11 +331,19 @@
     $('.hub-skip').onclick = event => { event.preventDefault(); $('#hub-content').focus(); $('#hub-content').scrollIntoView(); };
     const resourcePage = $('#hub-resources');
     for (const selector of ['#strip', '#gpu-panel', '#lane-panel']) resourcePage.append($(selector));
-    const systemIntro=node('div','hub-system-intro');systemIntro.append(node('h2','',tr('Comprueba tu entorno','Check your environment')),node('p','',tr('Una aplicación parada está disponible bajo demanda. Un servicio sin estado confirmado necesita comprobarse; no significa que haya fallado.','A stopped app is available on demand. An unconfirmed service status needs checking; it does not mean failure.')));resourcePage.prepend(systemIntro);
+    const systemIntro=node('div','hub-system-intro');systemIntro.append(node('h2','',tr('Faustus y Hoards','Faustus and Hoards')),node('p','',tr('Una aplicación parada está disponible bajo demanda. Un servicio sin estado confirmado necesita comprobarse; no significa que haya fallado.','A stopped app is available on demand. An unconfirmed service status needs checking; it does not mean failure.')));
+    const statusOverview=node('div','hub-home-status hub-system-overview');const statusTable=node('section','hub-hoards-status');statusTable.id='hub-hoards-status';
+    resourcePage.prepend(systemIntro,statusOverview,statusTable);window.HubStatus?.overview(statusOverview);window.HubStatus?.table(statusTable);
     const categories=node('nav','hub-app-categories');categories.setAttribute('aria-label',tr('Aplicaciones por uso','Applications by purpose'));
     for(const [id,name] of window.HubDiscovery.categories(es())){const b=node('button','ghost',name);b.setAttribute('aria-pressed',String(id==='todas'));b.onclick=()=>{for(const x of categories.children)x.setAttribute('aria-pressed',String(x===b));window.hubFilterCategory(id);};categories.append(b);}$('#hub-apps').prepend(categories);
     const toolbar = $('#hub-app-toolbar');
     toolbar.prepend($('#search'));
+    const appTable=node('section','hub-apps-table');appTable.hidden=true;$('#grid').after(appTable);
+    const viewSeg=node('div','hub-seg hub-view-toggle');viewSeg.setAttribute('role','group');
+    const savedView=()=>{try{return localStorage.getItem('hub.apps.view')||'tiles';}catch(_){return 'tiles';}};
+    const applyView=()=>{const v=savedView();$('#grid').hidden=v==='table';appTable.hidden=v!=='table';for(const b of viewSeg.children){b.setAttribute('aria-pressed',String(b.dataset.view===v));b.textContent=b.dataset.view==='table'?tr('Tabla','Table'):tr('Mosaico','Tiles');}if(v==='table'&&!appTable.dataset.hubStatus)window.HubStatus?.table(appTable);};
+    for(const v of ['tiles','table']){const b=node('button','');b.type='button';b.dataset.view=v;b.onclick=()=>{try{localStorage.setItem('hub.apps.view',v);}catch(_){}applyView();};viewSeg.append(b);}
+    toolbar.append(viewSeg);applyView();$('#btn-lang').addEventListener('click',()=>setTimeout(applyView,0));
     for (const selector of ['#btn-rescan', '#btn-start-all', '#btn-stop-all']) $('#hub-catalog-actions').append($(selector));
     $('#hub-global-search').onclick = () => { go('search'); if (route === 'search') document.querySelector('.sr-q')?.focus(); };
     const addResourceHeading = (root, title, description) => { const h = node('div', 'hub-section-heading'); const heading = node('h2', '', title); heading.id = 'hub-connections-heading'; h.append(heading); const p = node('p', 'hub-section-description', description); p.id = 'hub-connections-description'; root.prepend(h, p); };
@@ -360,17 +368,13 @@
     window.HubFacets.ctx.bus.addEventListener('sphere',()=>{homeEpoch++;homeData=null;homeLoading=false;homeError=false;if(route==='home')show('home');});
     window.addEventListener('hub:apps', event => {
       apps = event.detail.apps || [];
-      const signature = JSON.stringify(apps.map(app => [app.id, app.name, app.state]));
+      const signature = JSON.stringify(apps.map(app => [app.id, app.name]));
       if (signature !== appsSignature) { appsSignature = signature; if (route === 'home') show('home'); }
     });
     window.addEventListener('hashchange', fromLocation); window.addEventListener('popstate', fromLocation);
     $('#btn-lang').addEventListener('click', () => setTimeout(() => show(route), 0));
     window.HubFacets.ctx.api('/api/coordination/config').then(config => {
       workspaceUrl = config.workspace_url || '';
-      if (workspaceUrl) {
-        const faustus = link('Faustus', new URL('/', workspaceUrl).href, 'hub-faustus-link'); faustus.target = '_blank'; faustus.rel = 'noopener';
-        $('.top-actions').prepend(faustus);
-      }
       if (['home', 'projects', 'project'].includes(route)) show(route);
     }).catch(() => {});
     fromLocation(); loadProjects();

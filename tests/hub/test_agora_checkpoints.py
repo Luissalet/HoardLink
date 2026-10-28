@@ -440,7 +440,7 @@ def test_headless_browser_task_drawer_and_live_warning_refresh(tmp_path, languag
                 page.set_content('<html><head><style>[hidden]{display:none!important}body{font:14px Arial;padding:20px;--muted:#555;--line:#aaa;--card-2:#eee;--mono:monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><div id="root"></div></body></html>')
                 page.evaluate("""language => {
                   window.executed = false;
-                  window.HubFacets = {ctx: {
+                  window.HubFacets = {ctx: {bus: new EventTarget(),
                     el: (tag,cls='',text='') => { const n=document.createElement(tag); n.className=cls; n.textContent=text; return n; },
                     L: labels => labels[language], fmtWhen: () => '08-10 12:00', toast: () => {},
                     api: async path => (await fetch(path)).json()}, register: (name,facet) => window.fixtureFacet=facet};

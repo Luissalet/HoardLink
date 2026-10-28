@@ -269,7 +269,7 @@ def test_real_browser_progress_paging_recovery_and_review_draft(tmp_path, width,
                 page.goto(base + f"/api/agora/tasks/{task['id']}")
                 page.set_content('<html><head><style>[hidden]{display:none!important}*{box-sizing:border-box}body{font:14px Arial;margin:0;padding:16px;--muted:#555;--line:#aaa;--card-2:#f4f4f4;--hoard-sunken:#eee;--text:#222;--amber:#775000;--font:Arial;--mono:monospace}button,textarea{font:inherit}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><div id="root"></div></body></html>')
                 page.evaluate("""language => {
-                  window.HubFacets = {ctx: {
+                  window.HubFacets = {ctx: {bus: new EventTarget(),
                     el: (tag,cls='',text='') => {const n=document.createElement(tag);n.className=cls;n.textContent=text;return n},
                     L: labels => labels[language], fmtWhen: n => new Date(n*1000).toISOString(), toast: () => {},
                     api: async (path,body) => (await fetch(path,body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)} : {})).json()},
