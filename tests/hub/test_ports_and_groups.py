@@ -227,3 +227,19 @@ def test_readiness_cleanup_uses_spawn_identity_not_current_pid(tmp_path, monkeyp
     monkeypatch.setattr(procs,'terminate_tree',terminate)
     result=procs.start_app(a,str(tmp_path/'logs'))
     assert not result['cleanup']['ok'] and 'recycled' in result['cleanup']['error']
+
+
+@pytest.mark.parametrize('family', [
+    {'absorbed_by': {'id': 'writer'}},
+    {'standalone': False, 'absorbed_by': {'id': 'writer'}},
+])
+def test_absorbed_entry_without_standalone_flag_does_not_block_its_owner(tmp_path, monkeypatch, family):
+    app, alias = _app('writer', 8766, tmp_path), _app('scheherazade', 8766, tmp_path)
+    app.launch.port_argument = ''
+    alias.launch, alias.launchable = None, False
+    alias.family = family
+    book = PortAssignments(tmp_path / 'ports.json')
+    monkeypatch.setattr(procs, 'health', lambda app: procs.Health('down'))
+    monkeypatch.setattr(procs, 'listening_pids', lambda: {})
+    assert book.prepare(app, [app, alias], 8810)['ok']
+    assert app.port == 8766

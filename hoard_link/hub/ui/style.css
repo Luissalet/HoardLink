@@ -150,8 +150,8 @@ main { flex: 1; padding: 18px 22px 30px; }
 .empty { color: var(--muted); padding: 40px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
 .foot { color: var(--muted); font-size: 12px; padding: 10px 22px 16px; border-top: 1px solid var(--line); display: flex; gap: 14px; flex-wrap: wrap; font-family: var(--mono); }
 
-.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 20; max-width: min(460px, 90vw); }
-.toast { background: var(--hoard-elevated); border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 10px; padding: 10px 12px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.4); animation: in .15s ease-out; }
+.toasts { position: fixed; right: 16px; bottom: calc(var(--hoard-copilot-bottom, 18px) + 60px); display: flex; flex-direction: column; gap: 8px; z-index: 20; max-width: min(460px, 90vw); }
+.toast { background: var(--hoard-elevated); border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 10px; padding: 10px 12px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.4); animation: in .15s ease-out; overflow-wrap: anywhere; }
 .toast.ok { border-left-color: var(--green); }
 .toast.err { border-left-color: var(--red); }
 .toast small { display: block; color: var(--muted); margin-top: 3px; font-family: var(--mono); white-space: pre-wrap; }
