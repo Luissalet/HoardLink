@@ -31,3 +31,6 @@ What the window does:
   the default browser.
 - Pages can tell they run inside it: `window.hoardWindow` exists and
   `<html data-hoard-window="1">` is set.
+- **Drag files out** — `window.hoardWindow.startDrag(path)`, called from a
+  `dragstart` handler after `preventDefault()`, drags a local file as a real
+  file, so chats, mail and Explorer accept the drop.

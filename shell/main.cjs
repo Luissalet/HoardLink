@@ -280,6 +280,21 @@ ipcMain.on('hoard:menu', (_e, pos) => {
   if (!win) return;
   Menu.buildFromTemplate(menuTemplate()).popup({ window: win, x: Math.round(pos?.x ?? 8), y: Math.round(pos?.y ?? BAR_H) });
 });
+// File drag out of the app (hoardWindow.startDrag): only from the app view,
+// only an existing local file; the thumbnail is the image itself or the app icon.
+ipcMain.on('hoard:start-drag', (e, file) => {
+  if (!view || e.sender !== view.webContents) return;
+  try {
+    if (typeof file !== 'string' || !path.isAbsolute(file) || !fs.statSync(file).isFile()) return;
+  } catch { return; }
+  let thumb = /\.(png|jpe?g|gif|webp|bmp)$/i.test(file) ? nativeImage.createFromPath(file) : null;
+  if (!thumb || thumb.isEmpty()) thumb = iconPath ? nativeImage.createFromPath(iconPath) : null;
+  if (!thumb || thumb.isEmpty()) thumb = nativeImage.createFromDataURL('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+  const size = thumb.getSize();
+  if (size.width > 96) thumb = thumb.resize({ width: 96 });
+  e.sender.startDrag({ file, icon: thumb });
+  log('drag', file);
+});
 ipcMain.on('hoard:home', () => { if (view) view.webContents.loadURL(appUrl); });
 ipcMain.on('hoard:reload', () => { if (view) view.webContents.reload(); });
 
