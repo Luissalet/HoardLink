@@ -92,10 +92,13 @@ class PortAssignments:
             if observed.state == 'healthy':
                 return {'ok': True}
             listeners = procs.listening_pids()
+            # A manifest absorbed into this app that cannot be launched on its own is
+            # served by this app's own port: it never competes for it, whether or not
+            # its manifest spells out ``standalone: false``.
             peers = [a for a in apps if not (
                 isinstance(a.family.get('absorbed_by'), dict)
                 and a.family['absorbed_by'].get('id') == app.id
-                and a.family['absorbed_by'].get('standalone') is False
+                and a.family['absorbed_by'].get('standalone', a.family.get('standalone')) is not True
                 and not a.launchable)]
             conflicts = {hub_port, *(a.port for a in peers if a.id != app.id)}
             conflicts.update(urlsplit(getattr(a, '_manifest_url', a.url)).port for a in peers if a.id != app.id and _loopback(a.url))
