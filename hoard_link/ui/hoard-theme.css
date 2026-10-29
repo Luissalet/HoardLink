@@ -126,6 +126,26 @@ html[data-hoard-app="babel"] {
   --hoard-accent-line: rgba(189, 120, 230, 0.38);
 }
 
+html[data-hoard-app="baird"] {
+  --hoard-deep: #141a1c;
+  --hoard-sunken: #101416;
+  --hoard-surface: #1b2225;
+  --hoard-elevated: #242c30;
+  --hoard-hover: #2b3439;
+  --hoard-border: #353e43;
+  --hoard-border-hover: #57646b;
+  --hoard-text: #e1e9ec;
+  --hoard-text-muted: #b4babe;
+  --hoard-text-dim: #9ba3a6;
+  --hoard-accent: #4cc3ff;
+  --hoard-accent-strong: #75d1ff;
+  --hoard-accent-dim: #27a7e7;
+  --hoard-accent-ink: #13181b;
+  --hoard-accent-rgb: 76, 195, 255;
+  --hoard-accent-soft: rgba(76, 195, 255, 0.14);
+  --hoard-accent-line: rgba(76, 195, 255, 0.38);
+}
+
 html[data-hoard-app="borges"] {
   --hoard-deep: #1c1514;
   --hoard-sunken: #161110;
