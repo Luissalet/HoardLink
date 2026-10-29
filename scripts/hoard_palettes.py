@@ -16,6 +16,7 @@ PALETTES: dict[str, tuple[str, float | None, float]] = {
     "hub":          ("#e2b24c", None, 0.16),
     "argus":        ("#8f84f4", None, 0.192),
     "babel":        ("#bd78e6", None, 0.192),
+    "baird":        ("#4cc3ff", None, 0.176),
     "borges":       ("#d9665d", None, 0.16),
     "cassandra":    ("#e466a0", None, 0.176),
     "cicero":       ("#d98f86", None, 0.144),
