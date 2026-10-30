@@ -1,4 +1,8 @@
-# Hoard Link
+# Hoard Hub
+
+Hoard Hub es el centro de escritorio de la familia y la casa de Hoard Link, la
+librería pequeña (`hoard_link`) que cada aplicación lleva copiada; las dos viven
+en este repositorio.
 
 La inferencia de texto de la familia utiliza el servicio Sparks configurado.
 Los niveles nativos de razonamiento, presupuestos explícitos y solicitudes de
