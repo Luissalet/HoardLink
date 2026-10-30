@@ -1,4 +1,7 @@
-# Hoard Link
+# Hoard Hub
+
+Hoard Hub is the family's desktop hub and the home of Hoard Link, the small
+library (`hoard_link`) every app vendors; both live in this repository.
 
 The family's text inference uses the configured Sparks service. Native reasoning
 levels, explicit thinking budgets and supported structured-output requests survive
