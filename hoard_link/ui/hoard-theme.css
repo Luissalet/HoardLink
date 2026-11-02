@@ -246,6 +246,26 @@ html[data-hoard-app="daguerre"] {
   --hoard-accent-line: rgba(69, 188, 203, 0.38);
 }
 
+html[data-hoard-app="darwin"] {
+  --hoard-deep: #181c14;
+  --hoard-sunken: #131610;
+  --hoard-surface: #20241b;
+  --hoard-elevated: #2a2f25;
+  --hoard-hover: #32382b;
+  --hoard-border: #3c4335;
+  --hoard-border-hover: #616a58;
+  --hoard-text: #e7ece1;
+  --hoard-text-muted: #b9beb4;
+  --hoard-text-dim: #a1a69b;
+  --hoard-accent: #9cc46f;
+  --hoard-accent-strong: #b0d08c;
+  --hoard-accent-dim: #7da452;
+  --hoard-accent-ink: #171b13;
+  --hoard-accent-rgb: 156, 196, 111;
+  --hoard-accent-soft: rgba(156, 196, 111, 0.14);
+  --hoard-accent-line: rgba(156, 196, 111, 0.38);
+}
+
 html[data-hoard-app="cookhoard"] {
   --hoard-deep: #1c1614;
   --hoard-sunken: #161110;
