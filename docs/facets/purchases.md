@@ -39,9 +39,12 @@ Every new record of a purchase is linked in the `refs` facet (rel `purchase`) to
 * First time a payment (ledger) joins a purchase: `tantalus.watchers_match_purchase {title, merchant, url?}`; every match
   with `score >= 0.8` gets `tantalus.watcher_mark_bought {watcher_id, purchase_ref: "hoard://hub/purchase/<id>"}` and a
   normal notification "Dejo de vigilar X: ya lo has comprado". A missing app or tool is recorded and ignored.
-* Delivery (and not already stored): notification "Ha llegado X. ¿Dónde lo guardas?" whose URL is HomeHoard's quick-add,
-  `<homehoard url>/#/add?name=<item>&source_ref=hoard://hub/purchase/<id>&price=<amount>&merchant=<merchant>&date=<date>`
-  (default `http://127.0.0.1:5196`).
+* Delivery (and not already stored): notification "Ha llegado X. ¿Dónde lo guardas?" opens
+  `<hub url>/purchases/<id>/home`. That page posts to `POST /api/purchases/<id>/open-home`, starts
+  HomeHoard on demand and waits for readiness before opening its prefilled quick-add form. Merely emitting
+  or fetching the notification does not start HomeHoard. A failed start stays on the Hub page with Retry.
+  `hub_purchase_open_home {id}` exposes the same action to agents and returns the form URL without opening
+  a window or saving an item. Existing notifications retain their original URLs.
 
 Texts follow the hub language (`es`, `en`, or `auto`: Spanish unless the machine says English).
 
