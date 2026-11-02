@@ -246,6 +246,26 @@ html[data-hoard-app="daguerre"] {
   --hoard-accent-line: rgba(69, 188, 203, 0.38);
 }
 
+html[data-hoard-app="dantzig"] {
+  --hoard-deep: #141c1a;
+  --hoard-sunken: #101615;
+  --hoard-surface: #1b2422;
+  --hoard-elevated: #252f2d;
+  --hoard-hover: #2b3835;
+  --hoard-border: #354340;
+  --hoard-border-hover: #586a66;
+  --hoard-text: #e1ecea;
+  --hoard-text-muted: #b4bebc;
+  --hoard-text-dim: #9ba6a4;
+  --hoard-accent: #60c6b0;
+  --hoard-accent-strong: #7ed1bf;
+  --hoard-accent-dim: #48a08d;
+  --hoard-accent-ink: #131b19;
+  --hoard-accent-rgb: 96, 198, 176;
+  --hoard-accent-soft: rgba(96, 198, 176, 0.14);
+  --hoard-accent-line: rgba(96, 198, 176, 0.38);
+}
+
 html[data-hoard-app="darwin"] {
   --hoard-deep: #181c14;
   --hoard-sunken: #131610;
