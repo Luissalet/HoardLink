@@ -97,7 +97,7 @@ def test_a_purchase_from_payment_to_shelf(world):
     arrived = notify.sent[-1]
     home = hub.get("homehoard").url
     assert arrived["title"] == "Ha llegado Kettle. ¿Dónde lo guardas?"
-    assert arrived["url"] == f"{home}/#/add?name=Kettle&source_ref=hoard://hub/purchase/1&price=23.9&merchant=Amazon&date={_D(0)}"
+    assert arrived["url"] == f"{hub.config.url}/purchases/1/home"
     n_before = len(notify.sent)
     e("phileas.update", {"shipment_id": "s1", "status": "delivered", "title": "Delivered"}, source="phileas")    # the same news again
     e("phileas.shipment.delivered", {"shipment_id": "s1"}, source="phileas")
@@ -238,7 +238,7 @@ def test_no_tantalus_no_notify_is_not_an_error(tmp_path):
         one = p.list()["purchases"][0]
         assert one["stage"] == "delivered"
         assert one["notified"]["tantalus"]["error"] and one["notified"]["delivered"]["sent"] is False
-        assert one["notified"]["delivered"]["url"].startswith("http://127.0.0.1:5196/#/add?")        # HomeHoard's default address
+        assert one["notified"]["delivered"]["url"] == f"{hub.config.url}/purchases/1/home"
     finally:
         hub.close()
 
@@ -319,7 +319,57 @@ def test_http_and_tools(world):
     assert res["purchase"]["merchant"] == "Zalando" and "phileas" in res["purchase"]["refs"]
     assert tools.call(hub, "hub_purchase", {"id": 99})["ok"] is False and tools.call(hub, "hub_purchase", {"id": "x"})["ok"] is False
     for t in PurchasesFacet.tools():
-        assert t["annotations"]["readOnlyHint"] is True and len(t["description"].splitlines()[0]) <= 110
+        assert t["annotations"]["readOnlyHint"] is (t["name"] != "hub_purchase_open_home")
+        assert len(t["description"].splitlines()[0]) <= 110
+
+
+def test_delivery_only_starts_home_on_explicit_open(world, monkeypatch):
+    import urllib.request
+
+    hub, p = world.hub, world.p
+    calls = []
+    monkeypatch.setattr(hub, "start", lambda app, wait: calls.append((app, wait)) or {"ok": True, "ready": True})
+    p.ingest(ev("phileas.shipment.delivered", {"shipment_id": "offline", "merchant": "InPost"}, source="phileas"))
+    assert p.wait_idle()
+    before = p.get_purchase(1)
+    assert calls == []
+    server = serve(hub)
+    try:
+        url = hub.config.url
+        with urllib.request.urlopen(url + "/purchases/1/home") as response:
+            assert response.status == 200
+            assert b'/ui/purchase-open.js' in response.read()
+        assert calls == []  # Reading/prefetching the notification never starts HomeHoard.
+        status, result = http(url + "/api/purchases/1/open-home", {}, {"Sec-Fetch-Site": "same-origin", "Origin": url})
+        assert status == 200 and result["ok"]
+        assert result["url"] == quick_add_url(hub.get("homehoard").url, before)
+        assert calls == [("homehoard", True)]
+        assert p.get_purchase(1) == before
+        assert http(url + "/api/purchases/999/open-home", {}, {"Authorization": "Bearer " + hub.token})[0] == 404
+        assert len(calls) == 1
+        assert tools.call(hub, "hub_purchase_open_home", {"id": 1}) == result
+        assert tools.call(hub, "hub_purchase_open_home", {"id": "invalid"})["ok"] is False
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize("startup", [{"ok": False, "error": "cannot start"}, {"ok": True, "ready": False}])
+def test_open_home_does_not_redirect_before_ready(world, monkeypatch, startup):
+    world.p.ingest(ledger_ev())
+    monkeypatch.setattr(world.hub, "start", lambda *a, **kw: startup)
+    result = world.p.prepare_home(1)
+    assert result["ok"] is False and "url" not in result
+
+
+def test_open_home_reports_missing_app_without_fallback(tmp_path):
+    hub = make_hub(tmp_path)
+    try:
+        p = hub.facet("purchases")
+        p.ingest(ev("phileas.shipment.delivered", {"shipment_id": "missing"}, source="phileas"))
+        result = p.prepare_home(1)
+        assert result["ok"] is False and "url" not in result
+    finally:
+        hub.close()
 
 
 def test_enrich_finds_the_shipment_and_the_payment_that_went_by_before(tmp_path):

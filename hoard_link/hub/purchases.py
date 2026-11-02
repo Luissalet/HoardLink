@@ -42,7 +42,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable, Optional
 from urllib.parse import quote
 
-from .facets import Facet, Request
+from .facets import Facet, Reply, Request
 
 STAGES = ("paid", "shipped", "delivered", "filed", "stored", "closed")
 RANK = {s: i for i, s in enumerate(STAGES, 1)}
@@ -663,14 +663,27 @@ class PurchasesFacet(Facet):
         return {"matches": len(matches or []), "marked": marked}
 
     def _delivered(self, p: dict[str, Any]) -> dict[str, Any]:
-        home = self.hub.get("homehoard")
-        base = (home.url if home is not None else HOME_URL) or HOME_URL
-        url = quick_add_url(base, p)
+        url = f"{self.hub.config.url}/purchases/{p['id']}/home"
         es = _lang(self.hub) == "es"
         what = self._title(p)
         sent = self._notify(f"Ha llegado {what}. ¿Dónde lo guardas?" if es else f"{what} has arrived. Where do you keep it?",
                             p["merchant"], url=url, dedupe=f"purchase:{p['id']}:delivered")
         return {"sent": sent, "url": url}
+
+    def prepare_home(self, pid: int) -> dict[str, Any]:
+        """Start HomeHoard on explicit request, then return its prefilled form without saving an item."""
+        p = self._fetch(pid)
+        if p is None:
+            return {"ok": False, "status": 404, "error": "unknown purchase"}
+        home = self.hub.get("homehoard")
+        if home is None:
+            return {"ok": False, "status": 404, "error": "HomeHoard is not registered"}
+        result = self.hub.start("homehoard", wait=True)
+        if not result.get("ok"):
+            return result
+        if result.get("ready") is False:
+            return {"ok": False, "status": 503, "error": "HomeHoard is still starting. Please retry."}
+        return {"ok": True, "url": quick_add_url(home.url or HOME_URL, p)}
 
     # -- reading / closing ---------------------------------------------------------------------------
     def view(self, p: dict[str, Any]) -> dict[str, Any]:
@@ -757,6 +770,21 @@ class PurchasesFacet(Facet):
 
     # -- HTTP -------------------------------------------------------------------------------------------
     def get(self, req: Request) -> Optional[Any]:
+        m = re.fullmatch(r"/purchases/(\d+)/home", req.path)
+        if m:
+            if self._fetch(int(m.group(1))) is None:
+                return {"ok": False, "status": 404, "error": "unknown purchase"}
+            # Merely reading/prefetching the link must not start an app. The page posts
+            # the explicit navigation request and only redirects once HomeHoard is ready.
+            page = '''<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HomeHoard · Hoard Hub</title><link rel="stylesheet" href="/ui/hoard-theme.css">
+<script src="/ui/purchase-open.js" defer></script></head>
+<body><main style="max-width:42rem;margin:12vh auto;padding:24px;font-family:system-ui">
+<h1>HomeHoard</h1><p id="status" role="status">HomeHoard…</p>
+<button id="retry" type="button" hidden></button>
+<p><a href="/#hub/purchases">Hoard Hub</a></p></main></body></html>'''
+            return Reply(body=page.encode("utf-8"), content_type="text/html; charset=utf-8")
         if req.path == "/api/purchases":
             return self.list(req.q("stage") or "", req.q("q") or "", req.q_int("limit", 100))
         m = re.fullmatch(r"/api/purchases/(\d+)", req.path)
@@ -766,18 +794,27 @@ class PurchasesFacet(Facet):
         return None
 
     def post(self, req: Request) -> Optional[Any]:
-        m = re.fullmatch(r"/api/purchases/(\d+)/(close|reopen)", req.path)
+        m = re.fullmatch(r"/api/purchases/(\d+)/(close|reopen|open-home)", req.path)
         if not m:
             return None
         if not req.caller():
             return {"ok": False, "status": 401, "error": "a family bearer token is required"}
         pid = int(m.group(1))
+        if m.group(2) == "open-home":
+            return self.prepare_home(pid)
         return self.close_purchase(pid) if m.group(2) == "close" else self.reopen_purchase(pid)
 
     # -- agent tools --------------------------------------------------------------------------------------
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
         return [
+            {
+                "name": "hub_purchase_open_home",
+                "description": "Start HomeHoard and return the purchase's prefilled add-item URL.\nDoes not save an item or open a window; use only on explicit request.",
+                "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"],
+                                "additionalProperties": False},
+                "annotations": {"readOnlyHint": False},
+            },
             {
                 "name": "hub_purchases",
                 "description": "List purchases and the stage each reached. Keywords: compras, pedidos, purchases, orders, qué he comprado.\n"
@@ -810,7 +847,14 @@ class PurchasesFacet(Facet):
                 return {"ok": False, "error": "id must be a number"}
             return {"ok": True, "purchase": v} if v else {"ok": False, "error": f"unknown purchase: {a.get('id')}"}
 
-        return {"hub_purchases": purchases, "hub_purchase": purchase}
+        def open_home(a: dict[str, Any]) -> dict[str, Any]:
+            try:
+                pid = int(a.get("id"))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "id must be a number"}
+            return self.prepare_home(pid)
+
+        return {"hub_purchases": purchases, "hub_purchase": purchase, "hub_purchase_open_home": open_home}
 
 
 __all__ = ["PurchasesFacet", "quick_add_url", "order_key", "merchant_similar", "STAGES"]
