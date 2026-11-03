@@ -38,7 +38,9 @@
     tasks: { es: "Tareas", en: "Tasks" }, none: { es: "Sin hallazgos todavía.", en: "No findings yet." },
     d_adopt: { es: "adoptar", en: "adopt" }, d_adapt: { es: "adaptar", en: "adapt" }, d_drop: { es: "descartar", en: "drop" },
     d_needs_luis: { es: "decide Luis", en: "needs Luis" }, round: { es: "ronda", en: "round" },
-    filed: { es: "archiva", en: "files" }, done: { es: "Hecho", en: "Done" },
+    filed: { es: "archivados", en: "filed" }, done: { es: "Hecho", en: "Done" },
+    files_n: { es: "fichero(s)", en: "file(s)" }, commits_n: { es: "commit(s)", en: "commit(s)" },
+    notes_n: { es: "nota(s)", en: "note(s)" },
   };
   const t = (k) => L(S[k] || { es: k, en: k });
   const STATUSES = ["proposed", "challenged", "verified", "rejected"];
@@ -184,7 +186,7 @@
     const notes = (f.events || []).filter((e) => ["verify", "challenge", "reject"].includes(e.kind) && e.note);
     if (notes.length) {
       const d = el("details");
-      d.appendChild(el("summary", "", `${notes.length} nota(s)`));
+      d.appendChild(el("summary", "", `${notes.length} ${t("notes_n")}`));
       for (const e of notes) d.appendChild(el("div", "ag-fnd-who", `#${e.seq} ${e.author} · ${t(e.kind)} · ${e.note}`));
       card.appendChild(d);
     }
@@ -195,7 +197,7 @@
   function snapshotView(snap) {
     const d = el("details");
     const files = snap.files || [];
-    d.appendChild(el("summary", "", `${t("snapshot")} · ${files.length} fichero(s) · ${(snap.commits || []).length} commit(s)`
+    d.appendChild(el("summary", "", `${t("snapshot")} · ${files.length} ${t("files_n")} · ${(snap.commits || []).length} ${t("commits_n")}`
       + (snap.head ? ` · ${String(snap.head).slice(0, 10)}` : "") + (snap.digest ? ` · sha256 ${snap.digest.slice(0, 12)}` : "")));
     d.appendChild(el("pre", "", snap.question || ""));
     for (const f of files) {
