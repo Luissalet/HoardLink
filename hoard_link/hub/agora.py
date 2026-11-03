@@ -17,6 +17,9 @@ is the long-lived local process every agent can reach (HTTP, the MCP bridge, or 
   ``review`` or ``handoff`` threads. Messages can ``agree`` / ``disagree``; a thread is resolved with a written
   resolution (resolved threads are the **decision log**) or **escalated** to the person, who is notified and
   answers from the hub's page;
+* **debates** (``agora_debate.py``) structure an argument inside a thread: a frozen snapshot of the question,
+  findings with evidence that the others verify, challenge or reject, a consensus view, and a close that writes
+  the outcome into the decision log and can open tasks from the adopted findings;
 * every agent has an **inbox**: messages from others since its last read, reviews waiting for it, changes asked of
   it and answers to escalations. ``wait_s`` turns the inbox into a long poll so an agent can wait for a reply.
 
@@ -50,6 +53,7 @@ from typing import Any, Callable, Optional
 from ..sqlkit import Database
 from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError, SpaceStore, space_id
 from . import agent_watch
+from . import agora_debate
 from .facets import Facet, Request
 
 # code_peek refs: path/to/file.py#L10-L24@abc1234 (commit optional when the submission lists commits)
@@ -170,6 +174,8 @@ MIGRATIONS.append("""
     ALTER TABLE tasks ADD COLUMN labels TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE tasks ADD COLUMN context TEXT NOT NULL DEFAULT '{}';
 """)
+# structured debates with findings inside a thread (agora_debate.py)
+MIGRATIONS.append(agora_debate.DEBATE_MIGRATION)
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -3052,6 +3058,11 @@ class Agora:
                 "decisions": decisions, "waiting": waiting}
 
 
+# debate_open, debate_finding, debate_verify, debate_challenge, debate_reject, debate_close, debate_show, debate_list
+for _name, _fn in agora_debate.OPERATIONS.items():
+    setattr(Agora, _name, _space_operation(_fn))
+
+
 # ---- facet ---------------------------------------------------------------------------------------------------
 
 _A = {"type": "string", "description": "Your agent id, the same in every call: builder, reviewer, agent-2… (never the person's)"}
@@ -3309,6 +3320,7 @@ TOOLS: list[dict[str, Any]] = [
                              "include_tasks": {"type": "boolean"},
                              "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
 ]
+TOOLS.extend(agora_debate.tools(_schema, _A))
 
 for _tool in TOOLS:
     _tool["inputSchema"]["properties"]["space_id"] = _SPACE
@@ -3330,7 +3342,7 @@ TOOLS.extend([
 
 _WRITE_OPS = ("space_create", "space_update", "checkpoint", "heartbeat", "sync", "task_add", "task_edit", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
-              "usage_report", "orphan_sweep", "task_deps")
+              "usage_report", "orphan_sweep", "task_deps", *agora_debate.WRITE_OPS)
 
 
 def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -3344,7 +3356,8 @@ def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
 class AgoraFacet(Facet):
     id = "agora"
     # agora_blocks.js paints submission_blocks / per-block comments without editing agora.js (#116 lock).
-    ui_scripts = ("agora.js", "agora_blocks.js")
+    # agora_debate.js paints the findings board of a thread's debates the same way.
+    ui_scripts = ("agora.js", "agora_blocks.js", "agora_debate.js")
 
     def __init__(self, hub: Any):
         super().__init__(hub)
@@ -3606,6 +3619,10 @@ class AgoraFacet(Facet):
             return self._run(ag.locks, q)
         if p == "/api/agora/decisions":
             return self._run(ag.decisions, q)
+        if p == "/api/agora/debates":
+            return self._run(ag.debate_list, q)
+        if re.fullmatch(r"/api/agora/debates/[0-9]+", p):
+            return self._run(ag.debate_show, {"debate_id": p.rsplit("/", 1)[1], "space_id": q.get("space_id")})
         if p == "/api/agora/digest":
             return self._run(self._digest, q)
         if p == "/api/agora/agents":
@@ -3696,4 +3713,5 @@ class AgoraFacet(Facet):
             "hub_agora_decisions": wrap(ag.decisions), "hub_agora_threads": wrap(ag.threads),
             "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(self._digest),
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
+            **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_debate.OPERATIONS},
         }

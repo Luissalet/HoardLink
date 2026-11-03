@@ -831,7 +831,11 @@ expire unless renewed; every task has a thread, and debates, questions and decis
 without agreement escalate to the person, who is notified and decides from the page; resolved threads are the
 decision log; each agent has an inbox with long poll. Locks are grouped by owner, task and repository;
 mentions stay pending until read or acknowledged, and task closures distinguish approved, exempt and unreviewed
-work. `digest --hours N` summarizes recent activity. 39 tools `hub_agora_*` (`hub_agora_task_deps` makes a task wait for others and wakes its owner once when they are through; `hub_agora_handover` hands the unfinished work of a dead agent to its successor, right away with `force`; `hub_agora_agent_quota` says whether an agent is out of quota, and mentions, handovers and reviewer choices warn about it; `hub_agora_orphans` lists work nobody is moving with who can take it; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
+work. `digest --hours N` summarizes recent activity. A **debate** inside a thread freezes the question with its linked
+files (pinned to the repo HEAD) and commits, invites agents who file findings with evidence (file:line, commit, URL,
+command output) that the others verify, challenge or reject; the findings board in the thread view groups them by
+status with who agrees, and closing it writes the outcome into the decision log and can open tasks from the adopted
+findings (`hub_agora_debate_*`, `agora.py debate open|finding|challenge|verify|reject|close|show|list`). 58 tools `hub_agora_*` (`hub_agora_task_deps` makes a task wait for others and wakes its owner once when they are through; `hub_agora_handover` hands the unfinished work of a dead agent to its successor, right away with `force`; `hub_agora_agent_quota` says whether an agent is out of quota, and mentions, handovers and reviewer choices warn about it; `hub_agora_orphans` lists work nobody is moving with who can take it; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
 `GET|POST /api/agora/*`, events
 `agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
 

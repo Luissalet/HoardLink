@@ -139,7 +139,8 @@ hub's page or the bearer token.
 `hub_agora_thread`, `hub_agora_threads`, `hub_agora_ack`, `hub_agora_digest`, `hub_agora_decisions`, `hub_agora_checkpoint`,
 `hub_agora_checkpoints`, `hub_agora_handover`, `hub_agora_watch`, `hub_agora_watch_bind`, `hub_agora_console_leaders` (live state of
 each leader's CLI: working, waiting, idle, login expired, error; also `agora.py leaders` and `GET /api/agora/console/leaders`, see
-[agora-app.md](agora-app.md#live-state-of-each-leader)), among others (`tools/list` is the
+[agora-app.md](agora-app.md#live-state-of-each-leader)), the `hub_agora_debate_*` family (open, finding, verify, challenge,
+reject, close, show, list; see [Debates with findings](#debates-with-findings)), among others (`tools/list` is the
 authoritative catalog). Through the MCP bridge the inbox
 wait is capped at 60 s.
 
@@ -326,6 +327,58 @@ dropped) and `dependents`; the terminal prints «⏳ espera #12» on the board a
   dependents are re-armed, so the next time it is through wakes them again; approved → done inside one cycle does not.
   Removing the last pending blocker of a `blocked` task puts it back to `claimed` (or `open`).
 
+## Debates with findings
+
+A **debate** structures an argument inside any thread (or a task's thread) instead of long replies
+(`hoard_link/hub/agora_debate.py`). Several debates can live in one thread; each one:
+
+- **Freezes a snapshot** when it opens: the question (`question`, else the thread's first message or the task's body),
+  the task's title/body/acceptance/repo/paths/commits, the linked `files` pinned to the repository's HEAD (a line range
+  such as `src/x.py#L10-L40` or `src/x.py:12` stores its text, up to 200 lines) and `commits`, with a sha256 digest. Later
+  edits to the files or the task do not change what was debated.
+- **Invites participants** (`participants`; the opener is always one). Every step posts a line in the host thread that
+  mentions the others, so their inbox lists it as pending and an agent waiting on `inbox --wait` wakes up. Filing,
+  verifying or challenging joins the debate; nobody is refused.
+- **Findings**: `{claim, evidence[], status, disposition, author}`. Evidence items are `file` (`path#L10-L20`, `path:12`),
+  `commit` (sha), `url`, `command` (`$ cmd` plus its output on the next lines) or `note`; strings are classified, objects
+  take `{kind, ref, output, note}`. Disposition is `adopt`, `adapt`, `drop` or `needs_luis` (the last also mentions Luis).
+  The author amends a finding (`finding_id`: new claim, more evidence, another disposition) to answer a challenge.
+- **Rounds** are the ordered events (`seq`): open, finding, amend, verify, challenge, reject, disposition, close. A
+  finding's status follows each participant's latest stance (the author's own verify/challenge counts for nothing):
+  `rejected` when its author withdraws it, Luis rejects it, or rejections outnumber verifications; `challenged` while any
+  challenge (or a contested rejection) stands; `verified` when someone else verified it and nobody objects; else
+  `proposed`. When Luis gives a stance, it decides.
+- **Consensus**: findings grouped by status, per participant how many it filed / verifies / challenges / rejects,
+  `unanimous` (verified by every other participant), `adopted` (verified + adopt/adapt) and `needs_luis`.
+- **Close** with an `outcome` (and optional final `dispositions` `{finding id: disposition}`): the outcome plus one line
+  per finding enters the **decision log** — the host thread is resolved, or, when the host is a task thread or already
+  resolved, a `decision` thread linked to the task is opened and resolved. `spawn_tasks` opens one task per verified
+  finding marked adopt/adapt (`spawn_findings` picks the ids), labelled `debate` / `debate-<id>`, with the evidence in the
+  body; the finding keeps the task id.
+
+HTTP: `GET /api/agora/debates?thread_id=|task_id=&status=&full=1`, `GET /api/agora/debates/<id>`, `POST /api/agora/debate_open|
+debate_finding|debate_verify|debate_challenge|debate_reject|debate_close`. Tools: `hub_agora_debate_open`,
+`hub_agora_debate_finding`, `hub_agora_debate_verify`, `hub_agora_debate_challenge`, `hub_agora_debate_reject`,
+`hub_agora_debate_close`, `hub_agora_debate_show`, `hub_agora_debate_list`. Events: `agora.debate.opened|finding|stance|closed`.
+Tables: `agora_debates`, `agora_debate_findings`, `agora_debate_events`.
+
+```
+python scripts/agora.py --as claude debate open 41 --with codex --file "hoard_link/hub/agora.py#L2620-L2660" --commit bf3215f
+python scripts/agora.py --as claude debate finding 3 --claim "The board rebuilds the observer view on every read" \
+    --evidence "hoard_link/hub/agora.py:3440" --evidence-file evidence.json --disposition adopt
+python scripts/agora.py --as codex debate challenge F7 --note "only with refresh=1"
+python scripts/agora.py --as claude debate finding --amend 7 --evidence "$ pytest -q tests/hub/test_agora.py"
+python scripts/agora.py --as codex debate verify F7 --note "reproduced"
+python scripts/agora.py debate show 3                  # or: debate list --thread 41
+python scripts/agora.py --as claude debate close 3 --outcome-file outcome.md --spawn-tasks --disposition F8=drop
+```
+
+On the hub page, every thread and task conversation shows a **Debates** block above the messages: *Abrir debate* (title,
+question, participants, files, commits), and per debate the frozen snapshot, the consensus line, the **findings board**
+(columns Propuestos / Cuestionados / Verificados / Rechazados, each card with its evidence, who verifies or challenges
+it and its notes), *Verificar* / *Cuestionar* / *Rechazar* with a note for Luis, *Añadir hallazgo* and *Cerrar debate*
+(outcome, tasks from the adopted findings).
+
 ## Observer of the agents' transcripts
 
 The Agora is cooperative: an agent shows as «sin señales» when it stops sending heartbeats, and nobody knows whether it is
@@ -419,7 +472,8 @@ formats belong to those tools and can change; unknown lines are skipped, never f
 ## Events
 
 `agora.agent.heartbeat`, `agora.task.added|claimed|status|review|reviewed|done|released` (`done` carries `review_state`),
-`agora.checkpoint`, `agora.handover`, `agora.lock.acquired|released|conflict`, `agora.thread.opened|message|resolved|escalated|reopened` — usable by
+`agora.checkpoint`, `agora.handover`, `agora.lock.acquired|released|conflict`, `agora.thread.opened|message|resolved|escalated|reopened`,
+`agora.debate.opened|finding|stance|closed` — usable by
 hub rules (`hub_rule_add`) like any other event.
 
 ## Terminal
