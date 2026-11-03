@@ -442,6 +442,89 @@ def print_sync(r: dict) -> None:
               f"{short(post.get('body'), 240)}")
 
 
+def debate_request(a: argparse.Namespace, ag: str | None, p: argparse.ArgumentParser) -> dict:
+    """``agora debate open|finding|challenge|verify|reject|close|show|list`` → the hub's debate routes."""
+    v = a.dcmd
+    if v == "open":
+        if not a.thread and not a.task:
+            p.error("debate open necesita un hilo o --task")
+        body = {"agent": ag, "participants": csv(a.participants), "files": csv(a.files), "commits": csv(a.commits)}
+        body.update({k: val for k, val in (("thread_id", a.thread), ("task_id", a.task), ("title", a.title),
+                                           ("question", text_arg(a, "question")), ("repo", a.repo)) if val})
+        return call("POST", "/api/agora/debate_open", body)
+    if v == "finding":
+        body = {"agent": ag}
+        if a.amend:
+            body["finding_id"] = a.amend
+        elif a.debate:
+            body["debate_id"] = a.debate
+        else:
+            p.error("debate finding necesita el id del debate (o --amend <hallazgo>)")
+        claim = text_arg(a, "claim")
+        if claim:
+            body["claim"] = claim
+        evidence: list = list(a.evidence or [])
+        if a.evidence_file:
+            try:
+                raw = sys.stdin.read() if a.evidence_file == "-" else Path(a.evidence_file).read_text(encoding="utf-8-sig")
+                loaded = json.loads(raw)
+            except (OSError, ValueError) as exc:
+                p.error(f"--evidence-file necesita JSON UTF-8 válido: {exc}")
+            evidence.extend(loaded if isinstance(loaded, list) else [loaded])
+        if evidence:
+            body["evidence"] = evidence
+        if a.disposition:
+            body["disposition"] = a.disposition
+        return call("POST", "/api/agora/debate_finding", body)
+    if v in ("challenge", "verify", "reject"):
+        return call("POST", f"/api/agora/debate_{v}", {"agent": ag, "finding_id": a.finding.lstrip("Ff#"),
+                                                       "note": text_arg(a, "note") or ""})
+    if v == "close":
+        disp = {}
+        for item in csv(a.dispositions):
+            key, _, value = item.partition("=")
+            if not value:
+                p.error("--disposition va como F12=adopt")
+            disp[key.strip().lstrip("Ff#")] = value.strip()
+        body = {"agent": ag, "debate_id": a.debate, "outcome": text_arg(a, "outcome") or "",
+                "spawn_tasks": a.spawn_tasks, "dispositions": disp,
+                "spawn_findings": [x.lstrip("Ff#") for x in csv(a.spawn)]}
+        if a.task_kind:
+            body["task_kind"] = a.task_kind
+        return call("POST", "/api/agora/debate_close", body)
+    if v == "show":
+        return call("GET", f"/api/agora/debates/{a.debate}")
+    q = {k: val for k, val in (("thread_id", a.thread), ("task_id", a.task), ("status", a.status), ("full", "1")) if val}
+    return call("GET", "/api/agora/debates?" + urllib.parse.urlencode(q))
+
+
+def print_debate(r: dict) -> None:
+    """One debate (or each listed one): findings grouped by status with who verifies, challenges or rejects."""
+    views = r.get("debates") if "debates" in r else [r]
+    if not views:
+        print("Sin debates.")
+    for view in views:
+        d = view.get("debate") or view
+        print(f"Debate #{d['id']} [{d['status']}] {d['title']} · hilo {d['thread_id']} · {', '.join(d.get('participants') or [])}")
+        snap = d.get("snapshot") or {}
+        if snap:
+            print(f"  instantánea: {len(snap.get('files') or [])} fichero(s), {len(snap.get('commits') or [])} commit(s)"
+                  + (f" @ {str(snap['head'])[:10]}" if snap.get("head") else "") + f" · sha256 {str(snap.get('digest'))[:12]}")
+        cons = view.get("consensus") or {}
+        print(f"  consenso: {cons.get('summary', '-')}")
+        for who, n in (cons.get("participants") or {}).items():
+            print(f"    {who}: {n['filed']} archivados · {n['verify']} verifica · {n['challenge']} cuestiona · {n['reject']} rechaza")
+        for status in ("proposed", "challenged", "verified", "rejected"):
+            for f in [x for x in view.get("findings") or [] if x["status"] == status]:
+                who = " · ".join(f"{k.split('_')[0]}: {', '.join(f[k])}" for k in ("verified_by", "challenged_by", "rejected_by") if f.get(k))
+                print(f"  F{f['id']} [{status} · {f['disposition']}] {f['author']}: {short(f['claim'], 200)}" + (f"  ({who})" if who else ""))
+                for e in f.get("evidence") or []:
+                    print(f"      - [{e['kind']}] {short(e.get('ref') or e.get('note'), 160)}")
+        if d.get("status") == "closed":
+            print(f"  resultado: {short(d.get('outcome'), 300)} · decisión en el hilo {d.get('decision_thread_id')}"
+                  + (" · tareas " + ", ".join(f"#{t}" for t in d.get("spawned_tasks") or []) if d.get("spawned_tasks") else ""))
+
+
 # ---- commands ---------------------------------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -541,6 +624,29 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("watch", help="estado real de cada agente según su transcripción, preguntas pendientes y sesiones sin asignar")
     s = sub.add_parser("watch-bind", help="asigna una sesión observada a un agente (agente '-' o vacío la desasigna)")
     s.add_argument("session_key", help="clave que da 'watch', p. ej. codex:<id de sesión>"); s.add_argument("agent_id")
+    s = sub.add_parser("debate", help="debate estructurado con hallazgos dentro de un hilo: open|finding|challenge|verify|reject|close|show|list")
+    dsub = s.add_subparsers(dest="dcmd", required=True)
+    d = dsub.add_parser("open", help="abre un debate en un hilo (o en el hilo de una tarea con --task) y congela la pregunta")
+    d.add_argument("thread", type=int, nargs="?"); d.add_argument("--task", type=int); d.add_argument("--title")
+    texts(d, "question"); d.add_argument("--with", dest="participants", action="append", help="participantes (ids, comas o repetido)")
+    d.add_argument("--file", dest="files", action="append", help="fichero enlazado: ruta o ruta#L10-L20 (repetible)")
+    d.add_argument("--commit", dest="commits", action="append"); d.add_argument("--repo")
+    d = dsub.add_parser("finding", help="archiva un hallazgo (o corrige el tuyo con --amend <id>)")
+    d.add_argument("debate", type=int, nargs="?"); texts(d, "claim")
+    d.add_argument("--evidence", action="append", help="ruta#L1-L9, commit, URL o '$ comando' (repetible)")
+    d.add_argument("--evidence-file", help="JSON UTF-8: lista de {kind, ref, output, note}")
+    d.add_argument("--disposition", choices=["adopt", "adapt", "drop", "needs_luis"]); d.add_argument("--amend", type=int)
+    for verb in ("challenge", "verify", "reject"):
+        d = dsub.add_parser(verb, help={"challenge": "cuestiona un hallazgo con una nota", "verify": "verifica un hallazgo ajeno",
+                                        "reject": "rechaza un hallazgo (el autor lo retira)"}[verb])
+        d.add_argument("finding", help="id del hallazgo (F12 o 12)"); texts(d, "note")
+    d = dsub.add_parser("close", help="cierra con el resultado (registro de decisiones) y opcionalmente crea tareas")
+    d.add_argument("debate", type=int); texts(d, "outcome"); d.add_argument("--spawn-tasks", action="store_true")
+    d.add_argument("--spawn", action="append", help="solo estos hallazgos (ids)"); d.add_argument("--task-kind")
+    d.add_argument("--disposition", dest="dispositions", action="append", help="F12=adopt (repetible)")
+    d = dsub.add_parser("show", help="un debate: hallazgos por estado, quién verifica qué, rondas"); d.add_argument("debate", type=int)
+    d = dsub.add_parser("list", help="debates (abiertos primero)"); d.add_argument("--thread", type=int); d.add_argument("--task", type=int)
+    d.add_argument("--status", choices=["open", "closed"])
     a = p.parse_args(argv)
     for key, value in list(vars(a).items()):
         if isinstance(value, str) and not key.endswith("_file"):
@@ -550,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _SELECTED_SPACE = a.space
     reads = {"spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
-    if a.cmd not in reads and not a.agent:
+    if a.cmd not in reads and not (a.cmd == "debate" and a.dcmd in ("show", "list")) and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
     c = a.cmd
@@ -726,6 +832,8 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "tasks":
         q = {k: v for k, v in {"status": a.status, "owner": a.owner, "repo": a.repo}.items() if v}
         r = call("GET", "/api/agora/tasks" + ("?" + urllib.parse.urlencode(q) if q else ""))
+    elif c == "debate":
+        r = debate_request(a, ag, p)
     else:
         r = call("GET", "/api/agora/decisions")
 
@@ -768,6 +876,8 @@ def main(argv: list[str] | None = None) -> int:
         print_quota_warnings(r)
     elif c in ("task", "thread"):
         print_conversation(r)
+    elif c == "debate":
+        print_debate(r)
     elif c == "tasks":
         print_board({"tasks": r.get("tasks", [])})
     elif c == "orphans":

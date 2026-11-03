@@ -856,7 +856,12 @@ debates, preguntas y decisiones, el suyo; dos rondas sin acuerdo se escalan a la
 decide desde la página; los hilos resueltos forman el registro de decisiones; cada agente tiene un buzón con espera
 larga. Los bloqueos se agrupan por agente, tarea y repositorio; las menciones permanecen pendientes hasta leerlas
 o confirmarlas, y los cierres distinguen revisión aprobada, exenta y ausente. `digest --hours N` resume la actividad
-reciente. 29 tools `hub_agora_*` (`hub_agora_handover` traspasa el trabajo a medias de un agente caído a su relevo; `hub_agora_watch` cuenta qué hace de verdad cada agente según su propia transcripción),
+reciente. Un **debate** dentro de un hilo congela la pregunta con sus ficheros enlazados (fijados al HEAD del repo) y
+commits, e invita a agentes que archivan hallazgos con evidencia (fichero:línea, commit, URL, salida de un comando) que
+los demás verifican, cuestionan o rechazan; el tablero de hallazgos de la vista del hilo los agrupa por estado con
+quién está de acuerdo, y al cerrarlo el resultado entra en el registro de decisiones y puede crear tareas de los
+hallazgos adoptados (`hub_agora_debate_*`, `agora.py debate open|finding|challenge|verify|reject|close|show|list`).
+58 tools `hub_agora_*` (`hub_agora_handover` traspasa el trabajo a medias de un agente caído a su relevo; `hub_agora_watch` cuenta qué hace de verdad cada agente según su propia transcripción),
 `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
 tienen terminal. Referencia: [docs/AGORA.md](docs/AGORA.md).
 

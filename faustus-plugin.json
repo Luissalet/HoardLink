@@ -33,7 +33,8 @@
     "family-audit",
     "family-capability-discovery",
     "live-tool-schema-discovery",
-    "cross-hoard-recipes"
+    "cross-hoard-recipes",
+    "agora-debates-with-findings"
   ],
   "placeholders": [
     "HOARDLINK_DIR",
