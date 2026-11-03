@@ -211,7 +211,10 @@
   function consensusView(view) {
     const c = view.consensus || {};
     const row = el("div", "ag-deb-cons");
-    const head = el("span"); head.appendChild(el("b", "", t("consensus") + ": ")); head.appendChild(document.createTextNode(c.summary || ""));
+    // the server's summary is English; the page writes the counts in its own language
+    const counts = c.counts || {};
+    const summary = STATUSES.filter((s) => counts[s]).map((s) => `${counts[s]} ${t("col_" + s).toLowerCase()}`).join(", ") || t("none");
+    const head = el("span"); head.appendChild(el("b", "", t("consensus") + ": ")); head.appendChild(document.createTextNode(summary));
     row.appendChild(head);
     for (const [who, n] of Object.entries(c.participants || {})) {
       row.appendChild(el("span", "", `${who}: ${n.filed} ${t("filed")} · ${n.verify}✓ ${n.challenge}? ${n.reject}✗`));
