@@ -368,9 +368,9 @@
     }
   }
 
-  const again = new Set();
+  const again = new Map();   // key -> force: a refresh asked while one is in flight runs right after it
   async function refresh(detail, k, force) {
-    if (inflight.has(k.key)) { if (force) again.add(k.key); return; }
+    if (inflight.has(k.key)) { again.set(k.key, Boolean(again.get(k.key) || force)); return; }
     inflight.add(k.key);
     try {
       const r = await get(detail, query(k));
@@ -387,7 +387,7 @@
       /* the board must never break the conversation */
     } finally {
       inflight.delete(k.key);
-      if (again.delete(k.key)) refresh(detailNow(), k, true);
+      if (again.has(k.key)) { const f = again.get(k.key); again.delete(k.key); refresh(detailNow(), k, f); }
     }
   }
 
@@ -396,6 +396,7 @@
     if (!detail || detail.hidden) return;
     const k = keyOf(detail);
     if (!k) return;
+    connect();
     const shown = detail.querySelector(".ag-debates");
     if (shown && shown.dataset.key === k.key) return;
     const c = cache.get(k.key);
@@ -407,10 +408,57 @@
   const start = () => obs.observe(document.body, { childList: true, subtree: true });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
   else start();
-  // agents file findings from elsewhere: refresh the open board now and then (cheap: one GET, repaint on change)
-  setInterval(() => {
+
+  // Live: the hub's event stream (/api/events/stream, Server-Sent Events named by type) announces every debate write
+  // (agora.debate.opened|finding|stance|closed with debate_id and thread_id), so a write made from the terminal, a
+  // tool or another page shows on the open board at once. Polling stays as the fallback: every 8 s while the stream
+  // is down, every 60 s while it is healthy.
+  const DEBATE_EVENTS = ["agora.debate.opened", "agora.debate.finding", "agora.debate.stance", "agora.debate.closed"];
+  const POLL_DOWN_MS = 8000, POLL_LIVE_MS = 60000;
+  const live = { source: null, healthy: false, events: 0 };
+  window.__agoraDebateLive = live;   // read by tests and handy when debugging the page
+
+  function openBoard() {
     const detail = detailNow();
     const k = keyOf(detail);
-    if (detail && !detail.hidden && k && !document.hidden) refresh(detail, k, false);
-  }, 8000);
+    return detail && !detail.hidden && k ? { detail, k } : null;
+  }
+
+  function onDebateEvent(msg) {
+    let ev = null;
+    try { ev = JSON.parse(msg.data); } catch (e) { return; }
+    live.events += 1;
+    const d = (ev && ev.data) || {};
+    const open = openBoard();
+    if (!open || (d.space_id || "ecosystem") !== spaceOf(open.detail)) return;
+    const c = cache.get(open.k.key);
+    const threadId = c && c.data && c.data.thread_id;
+    if (d.thread_id != null && threadId != null && Number(d.thread_id) !== Number(threadId)) return;
+    refresh(open.detail, open.k, false);
+  }
+
+  function connect() {
+    if (live.source || typeof EventSource === "undefined") return;
+    const src = new EventSource("/api/events/stream");
+    live.source = src;
+    src.onopen = () => {
+      const recovered = !live.healthy;
+      live.healthy = true;
+      const open = openBoard();
+      if (recovered && open) refresh(open.detail, open.k, false);   // catch up on what happened while it was down
+    };
+    src.onerror = () => { live.healthy = false; };                   // EventSource reconnects by itself
+    for (const type of DEBATE_EVENTS) src.addEventListener(type, onDebateEvent);
+  }
+
+  let lastPoll = 0;
+  setInterval(() => {
+    const open = openBoard();
+    if (!open || document.hidden) return;
+    connect();
+    const every = live.healthy ? POLL_LIVE_MS : POLL_DOWN_MS;
+    if (Date.now() - lastPoll < every) return;
+    lastPoll = Date.now();
+    refresh(open.detail, open.k, false);
+  }, 2000);
 })();

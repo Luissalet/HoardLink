@@ -377,7 +377,10 @@ On the hub page, every thread and task conversation shows a **Debates** block ab
 question, participants, files, commits), and per debate the frozen snapshot, the consensus line, the **findings board**
 (columns Propuestos / Cuestionados / Verificados / Rechazados, each card with its evidence, who verifies or challenges
 it and its notes), *Verificar* / *Cuestionar* / *Rechazar* with a note for Luis, *Añadir hallazgo* and *Cerrar debate*
-(outcome, tasks from the adopted findings).
+(outcome, tasks from the adopted findings). The board is live: it listens to the hub's event stream
+(`/api/events/stream`) for `agora.debate.*` (every debate write emits one with `debate_id` and `thread_id`), so a finding
+filed from the terminal or a tool appears at once; polling is only the fallback, every 8 s while the stream is down and
+every 60 s while it is healthy. Its labels follow the page language like the rest of the Ágora tab.
 
 ## Observer of the agents' transcripts
 
