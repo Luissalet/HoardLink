@@ -232,3 +232,66 @@ def test_cli_debate_subcommands(ag, monkeypatch, capsys):
     shown = ag.debate_show({"debate_id": did})
     assert shown["debate"]["status"] == "closed" and len(shown["debate"]["spawned_tasks"]) == 1
     assert cli.main(["debate", "list"]) == 0 and "resultado: Adopt X" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_findings_board_in_the_browser(tmp_path, width):
+    browser_api = pytest.importorskip("playwright.sync_api")
+    hub = make_hub(tmp_path, [])
+    hub.config.agent_watch = {"enabled": False}
+    server = serve(hub)
+    ag = hub.facet("agora").agora
+    tid = ag.thread_open({"agent": "claude", "title": "Cache?", "body": "cache or not"})["thread"]["id"]
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["luis"]})["debate"]["id"]
+    f1 = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "Rebuilt on every read",
+                            "evidence": ["src/a.py:3"], "disposition": "adopt"})["finding"]["id"]
+    base = hub.config.url.rstrip("/")
+    try:
+        with browser_api.sync_playwright() as p:
+            if not Path(p.chromium.executable_path).exists():
+                pytest.skip("Headless Chromium is not installed")
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": width, "height": 900})
+                errors = []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                page.goto(base + "/")
+                page.evaluate("() => localStorage.setItem('hub.lang', 'en')")
+                page.goto(base + f"/#agora-{tid}")
+                card = page.locator(f'.ag-fnd[data-finding="{f1}"]')
+                card.wait_for()
+                assert page.locator(".ag-deb-col.proposed .ag-fnd").count() == 1
+                card.locator('button[data-op="verify"]').click()
+                page.locator(f'.ag-deb-col.verified .ag-fnd[data-finding="{f1}"]').wait_for()
+                # Luis files a finding of his own from the board
+                page.locator(f'button[data-toggle="deb-{did}-add"]').click()
+                form = page.locator(".ag-deb-form").first
+                form.locator("textarea").nth(0).fill("Measure it first")
+                form.locator("textarea").nth(1).fill("https://example.com/profile")
+                form.locator("button.primary").click()
+                page.locator(".ag-deb-col.proposed .ag-fnd", has_text="Measure it first").wait_for()
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                # a second debate opened from the page
+                page.get_by_role("button", name="Open debate").click()
+                opening = page.locator(".ag-deb-form", has=page.get_by_role("button", name="Start debate"))
+                opening.locator("input").first.fill("Second question")
+                opening.get_by_role("button", name="Start debate").click()
+                page.locator(".ag-deb-title", has_text="Second question").wait_for()
+                assert page.locator(".ag-deb").count() == 2
+                # close: outcome into the decision log, one task from the verified adopt finding
+                page.locator(f'button[data-toggle="deb-{did}-close"]').click()
+                closing = page.locator(".ag-deb-form", has=page.get_by_role("button", name="Close and record decision"))
+                closing.locator("textarea").fill("Cache it")
+                closing.get_by_role("button", name="Close and record decision").click()
+                page.locator(".ag-deb .ag-dec", has_text="Cache it").wait_for()
+                assert errors == []
+            finally:
+                browser.close()
+        shown = ag.debate_show({"debate_id": did})
+        assert shown["debate"]["status"] == "closed" and shown["debate"]["closed_by"] == "luis"
+        assert len(shown["debate"]["spawned_tasks"]) == 1
+        assert [f["author"] for f in shown["findings"]] == ["claude", "luis"]
+        assert ag.decisions()["decisions"][0]["id"] == tid
+    finally:
+        server.shutdown()
+        hub.close()

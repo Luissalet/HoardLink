@@ -500,6 +500,13 @@ def debate_request(a: argparse.Namespace, ag: str | None, p: argparse.ArgumentPa
 
 def print_debate(r: dict) -> None:
     """One debate (or each listed one): findings grouped by status with who verifies, challenges or rejects."""
+    if isinstance(r.get("finding"), dict):        # filed, amended, verified, challenged or rejected: one line
+        f = r["finding"]
+        who = " · ".join(f"{k.split('_')[0]}: {', '.join(f[k])}" for k in ("verified_by", "challenged_by", "rejected_by") if f.get(k))
+        print(f"ok · F{f['id']} [{f['status']} · {f['disposition']}] debate #{f['debate_id']}: {short(f['claim'], 160)}"
+              + (f"  ({who})" if who else ""))
+        print(f"  consenso: {(r.get('consensus') or {}).get('summary', '-')}")
+        return
     views = r.get("debates") if "debates" in r else [r]
     if not views:
         print("Sin debates.")
