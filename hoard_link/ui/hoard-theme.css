@@ -346,6 +346,26 @@ html[data-hoard-app="dorian"] {
   --hoard-accent-line: rgba(223, 91, 116, 0.38);
 }
 
+html[data-hoard-app="drucker"] {
+  --hoard-deep: #1c141b;
+  --hoard-sunken: #161015;
+  --hoard-surface: #241b23;
+  --hoard-elevated: #2f252d;
+  --hoard-hover: #382b36;
+  --hoard-border: #433540;
+  --hoard-border-hover: #6a5867;
+  --hoard-text: #ece1ea;
+  --hoard-text-muted: #beb4bc;
+  --hoard-text-dim: #a69ba4;
+  --hoard-accent: #b48ead;
+  --hoard-accent-strong: #c4a7bf;
+  --hoard-accent-dim: #976e8f;
+  --hoard-accent-ink: #1b1319;
+  --hoard-accent-rgb: 180, 142, 173;
+  --hoard-accent-soft: rgba(180, 142, 173, 0.14);
+  --hoard-accent-line: rgba(180, 142, 173, 0.38);
+}
+
 html[data-hoard-app="echo"] {
   --hoard-deep: #17141d;
   --hoard-sunken: #120f17;

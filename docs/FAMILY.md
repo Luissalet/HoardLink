@@ -484,7 +484,10 @@ port, check this list and the manifests under the roots the hub scans
 | 5204 | Heron's | 5205 | Prometheus's |
 | 5206 | Gulliver's | 5207 | GamerHoard |
 | 5218 | Gutenberg's | 5219 | Coase's |
-| 5222 | Dürer's | | |
+| 5222 | Dürer's | 5230 | Silver's |
+| 5232 | Baird's | 5233 | Darwin's |
+| 5241 | Dantzig's | 5243 | Maxwell's |
+| 5245 | Shannon's | 5246 | Drucker's |
 | 8766 | Writer's (desktop) | 8767 | Gepetto's |
 | 8810 | Hoard Hub | 8811–8817 | Babel, Laplace, Funes, Daguerre, Prospero, Scheherazade, DiskHoard |
 
