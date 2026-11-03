@@ -27,6 +27,7 @@ PALETTES: dict[str, tuple[str, float | None, float]] = {
     "cookhoard":    ("#d35f44", None, 0.16),
     "diskhoard":    ("#45c58f", None, 0.16),
     "dorian":       ("#df5b74", None, 0.176),
+    "drucker":      ("#b48ead", None, 0.16),
     "echo":         ("#a77de4", None, 0.192),
     "funes":        ("#b9c1cd", 215, 0.10),
     "galton":       ("#c9a227", None, 0.16),
