@@ -606,6 +606,26 @@ html[data-hoard-app="lumiere"] {
   --hoard-accent-line: rgba(222, 111, 232, 0.38);
 }
 
+html[data-hoard-app="maxwell"] {
+  --hoard-deep: #1c1c14;
+  --hoard-sunken: #161610;
+  --hoard-surface: #24241b;
+  --hoard-elevated: #2f2f25;
+  --hoard-hover: #38382b;
+  --hoard-border: #424335;
+  --hoard-border-hover: #6a6a58;
+  --hoard-text: #ecece1;
+  --hoard-text-muted: #bebeb4;
+  --hoard-text-dim: #a6a69b;
+  --hoard-accent: #d9dc52;
+  --hoard-accent-strong: #e0e374;
+  --hoard-accent-dim: #b6b838;
+  --hoard-accent-ink: #1a1b13;
+  --hoard-accent-rgb: 217, 220, 82;
+  --hoard-accent-soft: rgba(217, 220, 82, 0.14);
+  --hoard-accent-line: rgba(217, 220, 82, 0.38);
+}
+
 html[data-hoard-app="mercator"] {
   --hoard-deep: #141b1d;
   --hoard-sunken: #0f1517;
@@ -804,6 +824,26 @@ html[data-hoard-app="scheherazade"] {
   --hoard-accent-rgb: 108, 130, 236;
   --hoard-accent-soft: rgba(108, 130, 236, 0.14);
   --hoard-accent-line: rgba(108, 130, 236, 0.38);
+}
+
+html[data-hoard-app="shannon"] {
+  --hoard-deep: #141b1c;
+  --hoard-sunken: #101616;
+  --hoard-surface: #1b2324;
+  --hoard-elevated: #252e2f;
+  --hoard-hover: #2b3738;
+  --hoard-border: #354143;
+  --hoard-border-hover: #58686a;
+  --hoard-text: #e1ebec;
+  --hoard-text-muted: #b4bdbe;
+  --hoard-text-dim: #9ba5a6;
+  --hoard-accent: #5ee0f0;
+  --hoard-accent-strong: #83e7f3;
+  --hoard-accent-dim: #3ac6d7;
+  --hoard-accent-ink: #131a1b;
+  --hoard-accent-rgb: 94, 224, 240;
+  --hoard-accent-soft: rgba(94, 224, 240, 0.14);
+  --hoard-accent-line: rgba(94, 224, 240, 0.38);
 }
 
 html[data-hoard-app="silver"] {
