@@ -335,14 +335,19 @@ A **debate** structures an argument inside any thread (or a task's thread) inste
 - **Freezes a snapshot** when it opens: the question (`question`, else the thread's first message or the task's body),
   the task's title/body/acceptance/repo/paths/commits, the linked `files` pinned to the repository's HEAD (a line range
   such as `src/x.py#L10-L40` or `src/x.py:12` stores its text, up to 200 lines) and `commits`, with a sha256 digest. Later
-  edits to the files or the task do not change what was debated.
+  edits to the files or the task do not change what was debated. Paths may hold spaces and Windows separators; an
+  absolute path inside the repository is made relative to it; a range running past the end stops at the last line; a
+  path outside the repository (or an absolute one with no `repo`) keeps its reference with a `freeze_error`.
 - **Invites participants** (`participants`; the opener is always one). Every step posts a line in the host thread that
   mentions the others, so their inbox lists it as pending and an agent waiting on `inbox --wait` wakes up. Filing,
   verifying or challenging joins the debate; nobody is refused.
 - **Findings**: `{claim, evidence[], status, disposition, author}`. Evidence items are `file` (`path#L10-L20`, `path:12`),
   `commit` (sha), `url`, `command` (`$ cmd` plus its output on the next lines) or `note`; strings are classified, objects
   take `{kind, ref, output, note}`. Disposition is `adopt`, `adapt`, `drop` or `needs_luis` (the last also mentions Luis).
-  The author amends a finding (`finding_id`: new claim, more evidence, another disposition) to answer a challenge.
+  The author (or Luis) amends a finding (`finding_id`: new claim, more evidence, another disposition) to answer a
+  challenge. A changed claim drops the verifications given before it (they verified another claim), so it has to be
+  verified again; standing challenges and rejections stay until their authors answer. A finding holds at most 60
+  evidence items across its amendments.
 - **Rounds** are the ordered events (`seq`): open, finding, amend, verify, challenge, reject, disposition, close. A
   finding's status follows each participant's latest stance (the author's own verify/challenge counts for nothing):
   `rejected` when its author withdraws it, Luis rejects it, or rejections outnumber verifications; `challenged` while any
@@ -354,7 +359,9 @@ A **debate** structures an argument inside any thread (or a task's thread) inste
   per finding enters the **decision log** — the host thread is resolved, or, when the host is a task thread or already
   resolved, a `decision` thread linked to the task is opened and resolved. `spawn_tasks` opens one task per verified
   finding marked adopt/adapt (`spawn_findings` picks the ids), labelled `debate` / `debate-<id>`, with the evidence in the
-  body; the finding keeps the task id.
+  body; the finding keeps the task id. The close is one transaction: of two closes at once only one records a decision
+  (the other gets 409), a finding or stance arriving meanwhile is refused with 409 instead of landing after the
+  decision, and a failure leaves no half-made tasks or decision thread.
 
 HTTP: `GET /api/agora/debates?thread_id=|task_id=&status=&full=1`, `GET /api/agora/debates/<id>`, `POST /api/agora/debate_open|
 debate_finding|debate_verify|debate_challenge|debate_reject|debate_close`. Tools: `hub_agora_debate_open`,
@@ -374,13 +381,14 @@ python scripts/agora.py --as claude debate close 3 --outcome-file outcome.md --s
 ```
 
 On the hub page, every thread and task conversation shows a **Debates** block above the messages: *Abrir debate* (title,
-question, participants, files, commits), and per debate the frozen snapshot, the consensus line, the **findings board**
+question, participants, files, commits, repository), and per debate the frozen snapshot, the consensus line, the **findings board**
 (columns Propuestos / Cuestionados / Verificados / Rechazados, each card with its evidence, who verifies or challenges
-it and its notes), *Verificar* / *Cuestionar* / *Rechazar* with a note for Luis, *Añadir hallazgo* and *Cerrar debate*
+it and its notes), *Verificar* / *Cuestionar* / *Rechazar* with a note for Luis (*Retirar* on his own findings),
+*Corregir* on every card (new claim, more evidence, disposition), *Añadir hallazgo* and *Cerrar debate*
 (outcome, tasks from the adopted findings). The board is live: it listens to the hub's event stream
 (`/api/events/stream`) for `agora.debate.*` (every debate write emits one with `debate_id` and `thread_id`), so a finding
 filed from the terminal or a tool appears at once; polling is only the fallback, every 8 s while the stream is down and
-every 60 s while it is healthy. Its labels follow the page language like the rest of the Ágora tab.
+every 60 s while it is healthy; a stream refused with an HTTP error (a restarting hub) is reopened by the page. Its labels follow the page language like the rest of the Ágora tab.
 
 ## Observer of the agents' transcripts
 

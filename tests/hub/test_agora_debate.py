@@ -357,3 +357,211 @@ def test_board_updates_live_from_the_event_stream(tmp_path):
     finally:
         server.shutdown()
         hub.close()
+
+
+# ---- review regressions: amendments, snapshot paths, concurrency, bad input ------------------------------------
+
+def test_amending_the_claim_drops_earlier_verifications(ag):
+    tid = _thread(ag)
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex"]})["debate"]["id"]
+    fid = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "A is slow", "disposition": "adopt"})["finding"]["id"]
+    assert ag.debate_verify({"agent": "codex", "finding_id": fid, "note": "ok"})["finding"]["status"] == "verified"
+    # more evidence keeps the verification; the same claim re-sent keeps it too
+    r = ag.debate_finding({"agent": "claude", "finding_id": fid, "claim": "A is slow", "evidence": ["src/app.py:2"]})
+    assert r["finding"]["status"] == "verified" and r["finding"]["verified_by"] == ["codex"]
+    # a different claim was not what codex verified: back to proposed, and close spawns nothing from it
+    r = ag.debate_finding({"agent": "claude", "finding_id": fid, "claim": "Rewrite everything"})
+    assert r["finding"]["status"] == "proposed" and r["finding"]["verified_by"] == []
+    assert ag.debate_show({"debate_id": did})["consensus"]["adopted"] == []
+    # a standing challenge survives the amendment until the challenger answers
+    ag.debate_challenge({"agent": "codex", "finding_id": fid, "note": "why?"})
+    r = ag.debate_finding({"agent": "claude", "finding_id": fid, "claim": "Rewrite the hot loop"})
+    assert r["finding"]["status"] == "challenged" and r["finding"]["challenged_by"] == ["codex"]
+    assert ag.debate_verify({"agent": "codex", "finding_id": fid})["finding"]["status"] == "verified"
+    assert ag.debate_close({"agent": "claude", "debate_id": did, "outcome": "ok", "spawn_tasks": True})["tasks"]
+
+
+def test_snapshot_paths_with_spaces_absolute_outside_and_past_the_end(ag, tmp_path):
+    repo = tmp_path / "Demo"
+    (repo / "my dir").mkdir()
+    (repo / "my dir" / "b c.py").write_text("a\nb\nc\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "more"], cwd=repo, check=True, capture_output=True)
+    tid = _thread(ag)
+    files = ["my dir/b c.py#L1-L2", "src\\app.py:4", str(repo / "src" / "app.py") + "#L1-L2",
+             "../outside.py#L1-L2", str(tmp_path / "elsewhere.py") + "#L1-L2", "src/app.py#L18-L40"]
+    snap = ag.debate_open({"agent": "claude", "thread_id": tid, "files": files, "repo": "Demo"})["debate"]["snapshot"]
+    got = {f["ref"]: f for f in snap["files"]}
+    assert got[files[0]]["path"] == "my dir/b c.py" and got[files[0]]["text"] == "a\nb"
+    assert got[files[1]]["path"] == "src/app.py" and got[files[1]]["text"] == "line 4"
+    assert got[files[2]]["path"] == "src/app.py" and got[files[2]]["text"] == "line 1\nline 2"
+    assert "outside" in got[files[3]]["freeze_error"] and "text" not in got[files[3]]
+    assert "outside" in got[files[4]]["freeze_error"] and "text" not in got[files[4]]
+    assert got[files[5]]["lines"] == [18, 20] and got[files[5]]["text"] == "line 18\nline 19\nline 20"
+
+
+def _slow_resolve(monkeypatch, delay=0.4):
+    original = Agora.resolve
+
+    def slow(self, a=None):
+        time.sleep(delay)
+        return original(self, a)
+    monkeypatch.setattr(Agora, "resolve", slow)
+
+
+def test_two_closes_at_once_record_one_decision(ag, monkeypatch):
+    tid = _thread(ag)
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex"]})["debate"]["id"]
+    _slow_resolve(monkeypatch)
+    results = []
+
+    def close(who):
+        try:
+            results.append(ag.debate_close({"agent": who, "debate_id": did, "outcome": f"by {who}"})["ok"])
+        except AgoraError as exc:
+            results.append(exc.status)
+    threads = [threading.Thread(target=close, args=(w,)) for w in ("claude", "codex")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert sorted(results, key=str) == [409, True]
+    view = ag.debate_show({"debate_id": did})
+    assert [e["kind"] for e in view["events"]].count("close") == 1
+    assert sum(1 for m in ag.thread({"thread_id": tid})["messages"] if m["kind"] == "resolution") == 1
+
+
+def test_a_stance_racing_a_close_is_refused(ag, monkeypatch):
+    tid = _thread(ag)
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex"]})["debate"]["id"]
+    fid = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "C", "disposition": "adopt"})["finding"]["id"]
+    _slow_resolve(monkeypatch)
+    closer = threading.Thread(target=lambda: ag.debate_close({"agent": "claude", "debate_id": did, "outcome": "x"}))
+    closer.start()
+    time.sleep(0.15)
+    with pytest.raises(AgoraError) as e:
+        ag.debate_verify({"agent": "codex", "finding_id": fid})
+    closer.join(10)
+    assert e.value.status == 409
+    assert [ev["kind"] for ev in ag.debate_show({"debate_id": did})["events"]] == ["open", "finding", "close"]
+
+
+def test_agents_joining_at_once_are_all_kept(ag, monkeypatch):
+    from hoard_link.hub import agora_debate
+    tid = _thread(ag)
+    did = ag.debate_open({"agent": "claude", "thread_id": tid})["debate"]["id"]
+    original = agora_debate._open_debate
+
+    def slow(a, debate_id):
+        row = original(a, debate_id)
+        time.sleep(0.3)
+        return row
+    monkeypatch.setattr(agora_debate, "_open_debate", slow)
+    threads = [threading.Thread(target=lambda w=w: ag.debate_finding({"agent": w, "debate_id": did, "claim": w}))
+               for w in ("aa", "bb")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert sorted(ag.debate_show({"debate_id": did})["debate"]["participants"]) == ["aa", "bb", "claude"]
+
+
+def test_bad_numbers_are_clean_errors_and_evidence_is_capped(ag):
+    tid = _thread(ag)
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex"]})["debate"]["id"]
+    fid = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "B"})["finding"]["id"]
+    for op, args in (("debate_list", {"thread_id": "abc"}), ("debate_list", {"task_id": "x"}),
+                     ("debate_verify", {"agent": "codex", "finding_id": fid, "debate_id": "x"}),
+                     ("debate_close", {"agent": "claude", "debate_id": did, "outcome": "o", "spawn_findings": ["zz"]})):
+        with pytest.raises(AgoraError) as e:
+            getattr(ag, op)(args)
+        assert e.value.status == 400
+    for i in range(2):
+        ag.debate_finding({"agent": "claude", "finding_id": fid, "evidence": [f"note {i}-{j} x" for j in range(30)]})
+    with pytest.raises(AgoraError) as e:
+        ag.debate_finding({"agent": "claude", "finding_id": fid, "evidence": ["one more note"]})
+    assert e.value.status == 400
+    assert len(ag.debate_show({"debate_id": did})["findings"][0]["evidence"]) == 60
+    huge = "$ pytest\n" + "x" * 500_000
+    f2 = ag.debate_finding({"agent": "codex", "debate_id": did, "claim": "big", "evidence": [huge]})["finding"]
+    assert len(f2["evidence"][0]["output"]) == 8000
+
+
+def test_board_amends_withdraws_takes_a_repo_escapes_text_and_recovers_the_stream(tmp_path):
+    browser_api = pytest.importorskip("playwright.sync_api")
+    hub = make_hub(tmp_path, [])
+    hub.config.agent_watch = {"enabled": False}
+    server = serve(hub)
+    ag = hub.facet("agora").agora
+    tid = ag.thread_open({"agent": "claude", "title": "Amend", "body": "amend?"})["thread"]["id"]
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["luis"]})["debate"]["id"]
+    evil = '<img src=x onerror="window.__xss=1">'
+    f1 = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "Old claim " + evil,
+                            "evidence": ["javascript:window.__xss=2", {"kind": "url", "ref": "javascript:window.__xss=3"}],
+                            "disposition": "adopt"})["finding"]["id"]
+    ag.debate_verify({"agent": "luis", "_person": True, "finding_id": f1})
+    f2 = ag.debate_finding({"agent": "luis", "_person": True, "debate_id": did, "claim": "Mine"})["finding"]["id"]
+    base = hub.config.url.rstrip("/")
+    try:
+        with browser_api.sync_playwright() as p:
+            if not Path(p.chromium.executable_path).exists():
+                pytest.skip("Headless Chromium is not installed")
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                errors = []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                refused = {"n": 0}
+
+                def refuse(route):
+                    refused["n"] += 1
+                    route.fulfill(status=503, body="restarting")
+                page.route("**/api/events/stream*", refuse)
+                page.goto(base + "/")
+                page.evaluate("() => localStorage.setItem('hub.lang', 'en')")
+                page.goto(base + f"/#agora-{tid}")
+                card = page.locator(f'.ag-deb-col.verified .ag-fnd[data-finding="{f1}"]')
+                card.wait_for()
+                assert page.evaluate("window.__xss") is None and card.locator("img").count() == 0
+                assert page.locator('.ag-fnd a[href^="javascript"]').count() == 0
+                # the stream was refused (a restarting hub): once it answers again the board goes live by itself
+                page.wait_for_function("() => window.__agoraDebateLive && !window.__agoraDebateLive.healthy")
+                deadline = time.monotonic() + 8
+                while refused["n"] < 2 and time.monotonic() < deadline:
+                    page.wait_for_timeout(250)
+                state = page.evaluate("window.__agoraDebateLive.source && window.__agoraDebateLive.source.readyState")
+                assert refused["n"] >= 2, (refused, state)
+                page.unroute("**/api/events/stream*")
+                page.wait_for_function("() => window.__agoraDebateLive.healthy", timeout=8000)
+                # amend from the board: a new claim goes back to proposed
+                card.locator(f'button[data-toggle="deb-{did}-f{f1}-amend"]').click()
+                form = page.locator(".ag-deb-form", has=page.get_by_role("button", name="Save amendment"))
+                form.locator("textarea").nth(0).fill("New claim")
+                form.locator("textarea").nth(1).fill("src/a.py:9")
+                form.get_by_role("button", name="Save amendment").click()
+                page.locator(f'.ag-deb-col.proposed .ag-fnd[data-finding="{f1}"]', has_text="New claim").wait_for()
+                # the person's own finding offers withdraw only
+                mine = page.locator(f'.ag-fnd[data-finding="{f2}"]')
+                assert mine.locator('button[data-op="verify"]').count() == 0
+                mine.locator("textarea").first.fill("not needed")
+                mine.get_by_role("button", name="Withdraw").click()
+                page.locator(f'.ag-deb-col.rejected .ag-fnd[data-finding="{f2}"]').wait_for()
+                # a debate opened from the page carries the repository
+                page.get_by_role("button", name="Open debate").click()
+                opening = page.locator(".ag-deb-form", has=page.get_by_role("button", name="Start debate"))
+                opening.locator("input").first.fill("With repo")
+                opening.locator("input").last.fill("Demo")
+                opening.get_by_role("button", name="Start debate").click()
+                page.locator(".ag-deb-title", has_text="With repo").wait_for()
+                assert errors == []
+            finally:
+                browser.close()
+        shown = ag.debate_show({"debate_id": did})
+        f = {x["id"]: x for x in shown["findings"]}
+        assert f[f1]["claim"] == "New claim" and f[f1]["verified_by"] == [] and len(f[f1]["evidence"]) == 3
+        assert f[f2]["status"] == "rejected"
+        newest = ag.debate_list({"thread_id": tid, "full": "1"})["debates"]
+        assert any(v["debate"]["title"] == "With repo" and v["debate"]["snapshot"]["repo"] == "Demo" for v in newest)
+    finally:
+        server.shutdown()
+        hub.close()

@@ -41,6 +41,10 @@
     filed: { es: "archivados", en: "filed" }, done: { es: "Hecho", en: "Done" },
     files_n: { es: "fichero(s)", en: "file(s)" }, commits_n: { es: "commit(s)", en: "commit(s)" },
     notes_n: { es: "nota(s)", en: "note(s)" },
+    amend: { es: "Corregir", en: "Amend" }, save_amend: { es: "Guardar corrección", en: "Save amendment" },
+    more_evidence: { es: "Más evidencia, una por línea", en: "More evidence, one per line" },
+    withdraw: { es: "Retirar", en: "Withdraw" },
+    repo: { es: "Repositorio (fija los ficheros a su HEAD; en una tarea, el suyo)", en: "Repository (pins the files to its HEAD; a task's by default)" },
   };
   const t = (k) => L(S[k] || { es: k, en: k });
   const STATUSES = ["proposed", "challenged", "verified", "rejected"];
@@ -148,8 +152,9 @@
     const id = `deb-${debate.id}-f${f.id}`;
     const ta = draft(id, "textarea", t("note"));
     const row = el("div", "ag-fnd-btns");
-    for (const op of ["verify", "challenge", "reject"]) {
-      const b = el("button", op === "verify" ? "small primary" : "small", t(op));
+    const own = f.author === "luis";   // the person's own finding: only withdrawing it makes sense
+    for (const op of own ? ["reject"] : ["verify", "challenge", "reject"]) {
+      const b = el("button", op === "verify" ? "small primary" : "small", own ? t("withdraw") : t(op));
       b.dataset.op = op; b.dataset.finding = String(f.id);
       b.onclick = async () => {
         const note = ta.value.trim();
@@ -190,8 +195,39 @@
       for (const e of notes) d.appendChild(el("div", "ag-fnd-who", `#${e.seq} ${e.author} · ${t(e.kind)} · ${e.note}`));
       card.appendChild(d);
     }
-    if (debate.status === "open" && f.author !== "luis") card.appendChild(stanceBox(detail, debate, f, rerender));
+    if (debate.status === "open") {
+      // stances on others' findings; on the person's own, withdrawing it (once withdrawn there is nothing left to do)
+      if (f.author !== "luis" || f.status !== "rejected") card.appendChild(stanceBox(detail, debate, f, rerender));
+      card.appendChild(toggle(t("amend"), `deb-${debate.id}-f${f.id}-amend`, () => amendForm(detail, debate, f, rerender)));
+    }
     return card;
+  }
+
+  // Amend a finding (the person may amend any): a new claim, more evidence, another disposition. A changed claim
+  // sends it back to be verified again; standing challenges stay until their authors answer.
+  function amendForm(detail, debate, f, rerender) {
+    const form = el("div", "ag-deb-form");
+    const base = `deb-${debate.id}-f${f.id}-amend`;
+    const claim = draft(base + "-claim", "textarea", t("claim"));
+    if (!drafts.has(base + "-claim")) claim.value = f.claim || "";
+    const ev = draft(base + "-ev", "textarea", t("more_evidence"));
+    const disp = el("select");
+    for (const d of DISPOSITIONS) { const o = el("option", "", t("d_" + d)); o.value = d; disp.appendChild(o); }
+    disp.value = drafts.get(base + "-disp") || f.disposition;
+    disp.onchange = () => drafts.set(base + "-disp", disp.value);
+    const go = el("button", "small primary", t("save_amend"));
+    go.onclick = async () => {
+      const body = { finding_id: f.id, debate_id: debate.id, disposition: disp.value, evidence: lines(ev.value) };
+      const text = claim.value.trim();
+      if (text && text !== f.claim) body.claim = text;
+      go.disabled = true;
+      const r = await post(detail, "debate_finding", body);
+      go.disabled = false;
+      if (r) { clear(base + "-claim", base + "-ev", base + "-disp"); formsOpen.delete(base); rerender(r); }
+    };
+    const row = el("div", "row"); row.appendChild(disp); row.appendChild(go);
+    form.appendChild(claim); form.appendChild(ev); form.appendChild(row);
+    return form;
   }
 
   function snapshotView(snap) {
@@ -201,7 +237,8 @@
       + (snap.head ? ` · ${String(snap.head).slice(0, 10)}` : "") + (snap.digest ? ` · sha256 ${snap.digest.slice(0, 12)}` : "")));
     d.appendChild(el("pre", "", snap.question || ""));
     for (const f of files) {
-      d.appendChild(el("div", "ag-fnd-who", f.ref + (f.lines ? ` (L${f.lines[0]}-L${f.lines[1]})` : "")));
+      d.appendChild(el("div", "ag-fnd-who", f.ref + (f.lines ? ` (L${f.lines[0]}-L${f.lines[1]})` : "")
+        + (f.freeze_error ? ` · ${f.freeze_error}` : "")));
       if (f.text) d.appendChild(el("pre", "", f.text));
     }
     if ((snap.commits || []).length) d.appendChild(el("div", "ag-fnd-who", snap.commits.join(" ")));
@@ -324,6 +361,7 @@
     if (!people.value) people.value = "claude, codex";
     const files = draft(base + "-files", "textarea", t("files"));
     const commits = draft(base + "-commits", "input", t("commits"));
+    const repo = draft(base + "-repo", "input", t("repo"));
     const go = el("button", "small primary", t("start"));
     go.onclick = async () => {
       go.disabled = true;
@@ -331,11 +369,12 @@
       body[k.type === "task" ? "task_id" : "thread_id"] = k.id;
       if (title.value.trim()) body.title = title.value.trim();
       if (question.value.trim()) body.question = question.value.trim();
+      if (repo.value.trim()) body.repo = repo.value.trim();
       const r = await post(detail, "debate_open", body);
       go.disabled = false;
-      if (r) { clear(base + "-title", base + "-q", base + "-p", base + "-files", base + "-commits"); formsOpen.delete(base); rerender(r); }
+      if (r) { clear(base + "-title", base + "-q", base + "-p", base + "-files", base + "-commits", base + "-repo"); formsOpen.delete(base); rerender(r); }
     };
-    for (const n of [title, question, people, files, commits]) form.appendChild(n);
+    for (const n of [title, question, people, files, commits, repo]) form.appendChild(n);
     const row = el("div", "row"); row.appendChild(go); form.appendChild(row);
     return form;
   }
@@ -450,7 +489,12 @@
       const open = openBoard();
       if (recovered && open) refresh(open.detail, open.k, false);   // catch up on what happened while it was down
     };
-    src.onerror = () => { live.healthy = false; };                   // EventSource reconnects by itself
+    src.onerror = () => {
+      live.healthy = false;
+      // a dropped connection reconnects by itself; one refused with an HTTP error (a restarting hub) is CLOSED for
+      // good, so forget it and the 2 s tick opens a new stream
+      if (src.readyState === 2) { src.close(); if (live.source === src) live.source = null; }
+    };
     for (const type of DEBATE_EVENTS) src.addEventListener(type, onDebateEvent);
   }
 
