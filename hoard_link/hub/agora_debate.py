@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import Any, Optional
 
@@ -55,6 +56,8 @@ DEBATE_MIGRATION = """
 
 _HEX = re.compile(r"^[0-9a-fA-F]{7,40}$")
 _FILE_REF = re.compile(r"^(?P<path>[^\s#:]+?)(?:#L(?P<a>\d+)(?:-L?(?P<b>\d+))?|:(?P<c>\d+)(?:-(?P<d>\d+))?)?$")
+_FREEZE_REF = re.compile(r"^(?P<path>.+?)(?:#L(?P<a>\d+)(?:-L?(?P<b>\d+))?|:(?P<c>\d+)(?:-(?P<d>\d+))?)?$")
+_MAX_EVIDENCE = 60
 _MAX_FREEZE_LINES = 200
 _MAX_FREEZE_CHARS = 8000
 
@@ -67,6 +70,14 @@ def _ag():
 
 def _err(message: str, status: int = 400):
     return _ag().AgoraError(message, status)
+
+
+def _int(value: Any, name: str) -> int:
+    """A numeric id from a request (``F12`` / ``#12`` accepted); anything else is a 400, never a crash."""
+    try:
+        return int(str(value).strip().lstrip("Ff#"))
+    except (TypeError, ValueError):
+        raise _err(f"{name} must be a number") from None
 
 
 def guess_evidence_kind(ref: str) -> str:
@@ -133,9 +144,21 @@ def normalize_disposition(value: Any, default: str = "needs_luis") -> str:
 
 def finding_stances(author: str, events: list[dict[str, Any]]) -> dict[str, str]:
     """Latest stance of each participant on one finding (events oldest first). The author's own ``reject`` is a
-    withdrawal and is kept under its name; its verify/challenge on its own finding count for nothing."""
+    withdrawal and is kept under its name; its verify/challenge on its own finding count for nothing. An amendment
+    that changes the claim drops the verifications given before it (they verified another claim); challenges and
+    rejections stand until their authors answer."""
     stances: dict[str, str] = {}
+    claim: Optional[str] = None
     for ev in events:
+        if ev["kind"] == "finding":
+            claim = ev.get("note") or ""
+            continue
+        if ev["kind"] == "amend":
+            note = ev.get("note") or ""
+            if note and note != claim:
+                claim = note
+                stances = {k: v for k, v in stances.items() if v != "verify"}
+            continue
         if ev["kind"] not in STANCES:
             continue
         if ev["author"] == author and ev["kind"] != "reject":
@@ -164,12 +187,22 @@ def _freeze_file(repo_path: Any, head: Optional[str], ref: str) -> dict[str, Any
     """A file reference pinned to the repository's HEAD; with a line range its text is frozen too."""
     A = _ag()
     entry: dict[str, Any] = {"ref": ref}
-    m = _FILE_REF.match(ref.strip())
+    # one reference per line, so spaces belong to the path; a drive letter's colon is not a line number
+    m = _FREEZE_REF.match(ref.strip())
     if not m:
         return entry
+    raw = m["path"].strip()
+    if re.match(r"^(?:[A-Za-z]:[\\/]|[\\/])", raw):
+        rel = _inside_repo(repo_path, raw)
+        if rel is None:
+            entry["freeze_error"] = ("path outside the repository" if repo_path is not None
+                                     else "absolute path: give the repo to pin it")
+            return entry
+        raw = rel
     try:
-        rel = A._normalize_repo_relpath(m["path"])
+        rel = A._normalize_repo_relpath(raw)
     except A.AgoraError:
+        entry["freeze_error"] = "path outside the repository"
         return entry
     entry["path"] = rel
     if head:
@@ -180,12 +213,28 @@ def _freeze_file(repo_path: Any, head: Optional[str], ref: str) -> dict[str, Any
         return entry
     end = min(end, start + _MAX_FREEZE_LINES - 1)
     try:
-        text = A._slice_lines(A._git_show(repo_path, head, rel), start, end)
+        lines = A._git_show(repo_path, head, rel).splitlines()
+        end = min(end, len(lines))          # a range running past the end freezes up to the last line
+        text = A._slice_lines("\n".join(lines), start, end)
     except A.AgoraError as exc:
         entry["freeze_error"] = str(exc)[:300]
         return entry
     entry.update(lines=[start, end], text=text[:_MAX_FREEZE_CHARS])
     return entry
+
+
+def _inside_repo(repo_path: Any, raw: str) -> Optional[str]:
+    """An absolute path inside the repository as a repo-relative one (case-insensitive on Windows), else None."""
+    if repo_path is None:
+        return None
+    try:
+        root = os.path.realpath(str(repo_path)).rstrip("\\/")
+        target = os.path.realpath(raw)       # on Windows this also gives the on-disk spelling of an existing file
+    except (OSError, ValueError):
+        return None
+    if not os.path.normcase(target).startswith(os.path.normcase(root) + os.sep):
+        return None
+    return target[len(root) + 1:].replace("\\", "/") or None
 
 
 def _repo_head(ag: Any, repo: str) -> tuple[Any, Optional[str]]:
@@ -412,7 +461,12 @@ def debate_finding(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     evidence = normalize_evidence(a.get("evidence"))
     disposition = normalize_disposition(a.get("disposition"), default=finding["disposition"] if finding else "needs_luis")
     now = self.clock()
+    status = "proposed"
     with self.db.tx():
+        # re-read under the write lock: a close or another writer may have landed since the checks above
+        if finding is not None:
+            finding = _finding_row(self, finding["id"])
+        debate = _open_debate(self, debate["id"])
         self._touch(agent)
         people = _join(self, debate, agent)
         mentions = [p for p in people if p != agent]
@@ -423,23 +477,35 @@ def debate_finding(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 "debate_id": debate["id"], "author": agent, "claim": claim, "evidence": json.dumps(evidence, ensure_ascii=False),
                 "status": "proposed", "disposition": disposition, "created": now, "updated": now})
             head = f"Hallazgo F{fid} (debate #{debate['id']}) · {disposition}"
-            text, kind = claim, "finding"
+            text, kind, note = claim, "finding", claim
         else:
             fid = finding["id"]
             merged = finding["evidence"] + [e for e in evidence if e not in finding["evidence"]]
+            if len(merged) > _MAX_EVIDENCE:
+                raise _err(f"finding F{fid} would hold {len(merged)} evidence items (at most {_MAX_EVIDENCE}); "
+                           "file a new finding instead")
+            changed = bool(claim) and claim != finding["claim"]
             self.db.execute("UPDATE agora_debate_findings SET claim=?, evidence=?, disposition=?, updated=? WHERE id=?",
                             (claim or finding["claim"], json.dumps(merged, ensure_ascii=False), disposition, now, fid))
             head = f"Hallazgo F{fid} corregido (debate #{debate['id']}) · {disposition}"
-            text, kind = claim or finding["claim"], "amend"
+            if changed and finding.get("status") == "verified":
+                head += " · la afirmación cambió: hay que volver a verificarla"
+            # the event's note carries the new claim only when it changed (that drops earlier verifications)
+            text, kind, note = claim or finding["claim"], "amend", (claim if changed else "")
         lines = [head, text] + (["Evidencia:"] + _evidence_lines(evidence) if evidence else [])
         mid = self._msg(debate["thread_id"], agent, "comment", "\n".join(lines), mentions)
         self._ack(agent, debate["thread_id"], mid)
         if finding is None:
             self.db.execute("UPDATE agora_debate_findings SET message_id=? WHERE id=?", (mid, fid))
-        _event(self, debate["id"], fid, agent, kind, (claim or "")[:2000], mid)
+        _event(self, debate["id"], fid, agent, kind, note[:4000], mid)
+        if finding is not None:
+            own = [dict(r) for r in self.db.query("SELECT * FROM agora_debate_events WHERE finding_id=? ORDER BY id",
+                                                  (fid,))]
+            status = finding_status(finding["author"], finding_stances(finding["author"], own), A.PERSON)
+            self.db.execute("UPDATE agora_debate_findings SET status=? WHERE id=?", (status, fid))
         self.db.execute("UPDATE agora_debates SET updated=? WHERE id=?", (now, debate["id"]))
     self._bump("agora.debate.finding", {"debate_id": debate["id"], "thread_id": debate["thread_id"], "finding_id": fid,
-                                        "by": agent, "kind": kind})
+                                        "by": agent, "kind": kind, "status": status})
     view = debate_view(self, debate["id"])
     return {"ok": True, "finding": next(f for f in view["findings"] if f["id"] == fid), **view}
 
@@ -452,7 +518,7 @@ def _stance(self: Any, a: dict[str, Any], kind: str) -> dict[str, Any]:
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     finding = _finding_row(self, a.get("finding_id"))
     debate = _open_debate(self, finding["debate_id"])
-    if a.get("debate_id") not in (None, "") and int(a["debate_id"]) != debate["id"]:
+    if a.get("debate_id") not in (None, "") and _int(a["debate_id"], "debate_id") != debate["id"]:
         raise _err(f"finding F{finding['id']} belongs to debate {debate['id']}")
     note = A._txt(a.get("note"), 4000, "note", required=kind != "verify")
     if agent == finding["author"] and kind != "reject":
@@ -460,6 +526,7 @@ def _stance(self: Any, a: dict[str, Any], kind: str) -> dict[str, Any]:
                    "it can withdraw it with reject", 409)
     now = self.clock()
     with self.db.tx():
+        debate = _open_debate(self, debate["id"])    # under the write lock: a close may have landed meanwhile
         self._touch(agent)
         _join(self, debate, agent)
         verb = "Retira" if agent == finding["author"] else _STANCE_TEXT[kind]
@@ -508,8 +575,9 @@ def debate_list(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]
     if thread_id in (None, "") and a.get("task_id") not in (None, ""):
         thread_id = self._task_row(a.get("task_id"))["thread_id"]
     if thread_id not in (None, ""):
+        thread_id = _int(thread_id, "thread_id")
         where.append("thread_id=?")
-        params.append(int(thread_id))
+        params.append(thread_id)
     if a.get("status"):
         if a["status"] not in DEBATE_STATUSES:
             raise _err("status must be open or closed")
@@ -550,6 +618,20 @@ def debate_close(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     disp = a.get("dispositions") or {}
     if not isinstance(disp, dict):
         raise _err("dispositions must be an object {finding id: adopt|adapt|drop|needs_luis}")
+    picked = {_int(x, "spawn_findings") for x in A._list(a.get("spawn_findings"), "spawn_findings", 50)}
+    # One write transaction from the open-check to the closed status: two closes at once record one decision, and
+    # no finding or stance lands between the view the decision is written from and the close (they get a 409).
+    # Tasks, the decision thread and its resolution join it as savepoints, so a failure leaves nothing half-done.
+    with self.db.tx():
+        debate = _open_debate(self, debate["id"])
+        host, decision_tid, spawned = _close_locked(self, a, agent, person, debate, outcome, disp, picked)
+    self._bump("agora.debate.closed", {"debate_id": debate["id"], "thread_id": host["id"], "by": agent,
+                                       "decision_thread_id": decision_tid, "tasks": spawned})
+    return {"ok": True, "decision_thread_id": decision_tid, "tasks": spawned, **debate_view(self, debate["id"])}
+
+
+def _close_locked(self: Any, a: dict[str, Any], agent: str, person: bool, debate: dict[str, Any], outcome: str,
+                  disp: dict[str, Any], picked: set[int]) -> tuple[dict[str, Any], int, list[int]]:
     now = self.clock()
     with self.db.tx():
         self._touch(agent)
@@ -563,7 +645,6 @@ def debate_close(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 self.db.execute("UPDATE agora_debate_findings SET disposition=?, updated=? WHERE id=?", (d, now, f["id"]))
                 _event(self, debate["id"], f["id"], agent, "disposition", d, None)
     view = debate_view(self, debate["id"])
-    picked = {int(str(x).lstrip("Ff#")) for x in A._list(a.get("spawn_findings"), "spawn_findings", 50)}
     spawn = bool(a.get("spawn_tasks")) or bool(picked)
     kind = str(a.get("task_kind") or "feature").lower()
     repo = str(view["debate"]["snapshot"].get("repo") or "")
@@ -614,9 +695,7 @@ def debate_close(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         mid = self._msg(host["id"], agent, "comment", note, others)
         self._ack(agent, host["id"], mid)
         _event(self, debate["id"], None, agent, "close", outcome[:2000], mid)
-    self._bump("agora.debate.closed", {"debate_id": debate["id"], "thread_id": host["id"], "by": agent,
-                                       "decision_thread_id": decision_tid, "tasks": spawned})
-    return {"ok": True, "decision_thread_id": decision_tid, "tasks": spawned, **debate_view(self, debate["id"])}
+    return host, decision_tid, spawned
 
 
 #: Operation name → function; agora.py binds each as ``Agora.<name>`` under the space decorator.
@@ -648,7 +727,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_debate_finding",
          "description": "File a finding in a debate: claim, evidence[] and disposition adopt|adapt|drop|needs_luis "
                         "(needs_luis also mentions Luis). With finding_id the author amends it (new claim, more "
-                        "evidence, another disposition): that is how a challenge is answered.",
+                        "evidence, another disposition): that is how a challenge is answered. A changed claim drops "
+                        "the earlier verifications, so it must be verified again.",
          "inputSchema": schema({"agent": agent_prop, "debate_id": {"type": "integer"},
                                 "finding_id": {"type": ["integer", "string"]}, "claim": {"type": "string"},
                                 "evidence": ev, "disposition": disp}, ["agent"])},
