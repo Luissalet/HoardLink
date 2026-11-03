@@ -295,3 +295,65 @@ def test_findings_board_in_the_browser(tmp_path, width):
     finally:
         server.shutdown()
         hub.close()
+
+
+def test_every_debate_write_emits_an_event_with_its_thread(ag):
+    tid = _thread(ag)
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex"]})["debate"]["id"]
+    fid = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "x"})["finding"]["id"]
+    ag.debate_finding({"agent": "claude", "finding_id": fid, "evidence": ["src/app.py:1"]})
+    ag.debate_challenge({"agent": "codex", "finding_id": fid, "note": "why"})
+    ag.debate_verify({"agent": "codex", "finding_id": fid})
+    ag.debate_reject({"agent": "codex", "finding_id": fid, "note": "no"})
+    ag.debate_close({"agent": "claude", "debate_id": did, "outcome": "done"})
+    debate_events = [(t, d) for t, d in ag.events if t.startswith("agora.debate.")]
+    assert [t for t, _ in debate_events] == ["agora.debate.opened", "agora.debate.finding", "agora.debate.finding",
+                                             "agora.debate.stance", "agora.debate.stance", "agora.debate.stance",
+                                             "agora.debate.closed"]
+    assert all(d["thread_id"] == tid and d["debate_id"] == did for _, d in debate_events)
+    assert ag.debate_list({"thread_id": tid})["thread_id"] == tid
+
+
+def test_board_updates_live_from_the_event_stream(tmp_path):
+    import json as _json
+    import os
+    import sys
+    browser_api = pytest.importorskip("playwright.sync_api")
+    hub = make_hub(tmp_path, [])
+    hub.config.agent_watch = {"enabled": False}
+    server = serve(hub)
+    ag = hub.facet("agora").agora
+    tid = ag.thread_open({"agent": "claude", "title": "Live", "body": "live?"})["thread"]["id"]
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex"]})["debate"]["id"]
+    base = hub.config.url.rstrip("/")
+    root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "HOARD_HUB_URL": base, "HOARD_HUB_TOKEN_FILE": str(hub.config.token_file),
+           "HOARD_HUB_DATA_DIR": str(hub.config.data_dir), "PYTHONIOENCODING": "utf-8"}
+    try:
+        with browser_api.sync_playwright() as p:
+            if not Path(p.chromium.executable_path).exists():
+                pytest.skip("Headless Chromium is not installed")
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 900})
+                page.goto(base + "/")
+                page.evaluate("() => localStorage.setItem('hub.lang', 'en')")
+                page.goto(base + f"/#agora-{tid}")
+                page.locator(".ag-debates .ag-deb").wait_for()
+                page.wait_for_function("() => window.__agoraDebateLive && window.__agoraDebateLive.healthy", timeout=10000)
+                time.sleep(0.5)
+                cli = subprocess.run([sys.executable, str(root / "scripts" / "agora.py"), "--as", "codex", "--json", "debate",
+                                      "finding", str(did), "--claim", "Written from the terminal",
+                                      "--evidence", "src/live.py:4"],
+                                     cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", timeout=20)
+                assert cli.returncode == 0, cli.stderr
+                assert _json.loads(cli.stdout)["finding"]["author"] == "codex"
+                started = time.monotonic()
+                page.locator(".ag-fnd", has_text="Written from the terminal").wait_for(timeout=2500)
+                assert time.monotonic() - started < 2.5
+                assert page.evaluate("window.__agoraDebateLive.events") >= 1
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+        hub.close()

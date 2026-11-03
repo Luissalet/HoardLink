@@ -438,7 +438,8 @@ def debate_finding(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             self.db.execute("UPDATE agora_debate_findings SET message_id=? WHERE id=?", (mid, fid))
         _event(self, debate["id"], fid, agent, kind, (claim or "")[:2000], mid)
         self.db.execute("UPDATE agora_debates SET updated=? WHERE id=?", (now, debate["id"]))
-    self._bump("agora.debate.finding", {"debate_id": debate["id"], "finding_id": fid, "by": agent, "kind": kind})
+    self._bump("agora.debate.finding", {"debate_id": debate["id"], "thread_id": debate["thread_id"], "finding_id": fid,
+                                        "by": agent, "kind": kind})
     view = debate_view(self, debate["id"])
     return {"ok": True, "finding": next(f for f in view["findings"] if f["id"] == fid), **view}
 
@@ -472,7 +473,8 @@ def _stance(self: Any, a: dict[str, Any], kind: str) -> dict[str, Any]:
         status = finding_status(finding["author"], finding_stances(finding["author"], own), A.PERSON)
         self.db.execute("UPDATE agora_debate_findings SET status=?, updated=? WHERE id=?", (status, now, finding["id"]))
         self.db.execute("UPDATE agora_debates SET updated=? WHERE id=?", (now, debate["id"]))
-    self._bump("agora.debate.stance", {"debate_id": debate["id"], "finding_id": finding["id"], "by": agent,
+    self._bump("agora.debate.stance", {"debate_id": debate["id"], "thread_id": debate["thread_id"],
+                                       "finding_id": finding["id"], "by": agent,
                                        "stance": kind, "status": status})
     view = debate_view(self, debate["id"])
     return {"ok": True, "finding": next(f for f in view["findings"] if f["id"] == finding["id"]), **view}
@@ -529,7 +531,10 @@ def debate_list(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]
             d = {k: v for k, v in view["debate"].items() if k != "snapshot"}
             d["consensus"] = view["consensus"]
             out.append(d)
-    return {"ok": True, "debates": out}
+    res: dict[str, Any] = {"ok": True, "debates": out}
+    if thread_id not in (None, ""):
+        res["thread_id"] = int(thread_id)   # lets a page match live agora.debate.* events to the open conversation
+    return res
 
 
 def debate_close(self: Any, a: dict[str, Any]) -> dict[str, Any]:
