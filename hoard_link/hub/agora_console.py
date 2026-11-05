@@ -343,7 +343,7 @@ class AgoraConsoleFacet(Facet):
                 "detail": detail, "catalog": []}
 
     def _cursor_status(self) -> dict[str, Any]:
-        runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
+        runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
         node, entry = runtime / "node.exe", runtime / "index.js"
         if not node.is_file() or not entry.is_file():
             return {"state": "unavailable", "detail": "The managed Cursor CLI runtime is not installed at its configured path; the existing managed session is left untouched.", "catalog": []}
@@ -549,7 +549,7 @@ class AgoraConsoleFacet(Facet):
         selected = next((row for row in provider.get("catalog", []) if row.get("id") == model), None)
         effort = effort or str((selected or {}).get("default_effort") or "").strip().lower()
         executable = self._codex_executable() if leader_id == "codex" else None
-        cursor_runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
+        cursor_runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
         available = bool(executable) if leader_id == "codex" else (cursor_runtime / "node.exe").is_file() and (cursor_runtime / "index.js").is_file()
         if not available or not selected or effort not in (selected.get("efforts") or []):
             return {"leader_id": leader_id, "status": "unavailable", "receipt_id": None,
@@ -566,8 +566,8 @@ class AgoraConsoleFacet(Facet):
                     context.append(f"{author}: {text}")
         identity = self._leader_identity(leader_id)
         prompt = ("You are the independent Agora console leader " + identity + ". Continue the shared work chat. "
-                  "At the start of each turn, use `D:\\LocalAI\\agora.cmd --space " + self.space_id + " --as " + identity + " hb \"...\"`, then read inbox and board. "
-                  "Before editing, read `D:\\LocalAI\\CRITERIOS.md` first and `D:\\LocalAI\\MEMORY.md` second; also read the repo AGENTS.md. "
+                  "At the start of each turn, use `E:\\Development\\IA\\agora.cmd --space " + self.space_id + " --as " + identity + " hb \"...\"`, then read inbox and board. "
+                  "Before editing, read `E:\\Development\\IA\\CRITERIOS.md` first and `E:\\Development\\IA\\MEMORY.md` second; also read the repo AGENTS.md. "
                   "Use this exact identity for all Agora operations; never impersonate Luis or another agent. "
                   "Do not claim that queued messages woke another agent. Answer the latest message with useful work or a concise status. "
                   "If you change files, follow the repo's skills and Agora protocol, work in an isolated worktree, create/claim the Agora task, "
@@ -656,7 +656,7 @@ class AgoraConsoleFacet(Facet):
                            "--cd", str(work_dir), "--output-last-message", str(result_path), turn["prompt"]]
                 use_saved_cwd = True
         else:
-            runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
+            runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
             node, entry = runtime / "node.exe", runtime / "index.js"
             if not node.is_file() or not entry.is_file():
                 self._finish_leader_turn(turn_id, leader_id, "failed", "Managed Cursor CLI is unavailable.", "", "")
@@ -1683,7 +1683,7 @@ class AgoraConsoleFacet(Facet):
         effort = effort or str(saved.get("effort") or provider.get("current_effort") or "").strip().lower()
         row = next((m for m in provider.get("catalog", []) if m.get("id") == model), None)
         executable = self._codex_executable() if leader_id == "codex" else None
-        cursor_runtime = Path(r"D:\LocalAI\cursor\runtime\dist-package")
+        cursor_runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
         cursor_runner = cursor_runtime / "node.exe"
         cursor_entry = cursor_runtime / "index.js"
         faustus_installation = (None, None)
@@ -1718,9 +1718,9 @@ class AgoraConsoleFacet(Facet):
         result_path = worker_dir / f"{worker_id}.result.txt"
         prompt = (f"You are independent Agora child worker {agent_id}, assigned by leader {leader_id} for task {worker_id}. "
                   f"Use `{agent_id}` as your own Agora identity and parent the work to `{leader_id}`; never speak or act "
-                  "as the console operator, the leader, or another agent. At the start, use `D:\\LocalAI\\agora.cmd "
-                  f"--space {self.space_id} --as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Read `D:\\LocalAI\\CRITERIOS.md` "
-                  "before `D:\\LocalAI\\MEMORY.md`, then read the repository's AGENTS.md. Before changing a repository, "
+                  "as the console operator, the leader, or another agent. At the start, use `E:\\Development\\IA\\agora.cmd "
+                  f"--space {self.space_id} --as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Read `E:\\Development\\IA\\CRITERIOS.md` "
+                  "before `E:\\Development\\IA\\MEMORY.md`, then read the repository's AGENTS.md. Before changing a repository, "
                   "create or claim an Agora task under your identity and take the required path locks. Work only in an "
                   "isolated worktree and follow repository skills. Do not claim results that are not supported by your work; "
                   "return a concise result and concrete evidence.\n\n"
