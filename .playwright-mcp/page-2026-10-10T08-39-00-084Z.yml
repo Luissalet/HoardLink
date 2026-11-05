@@ -1,0 +1,94 @@
+- generic [ref=f1e2]:
+  - link "Saltar al contenido" [ref=f1e3] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=f1e4]:
+    - complementary [ref=f1e5]:
+      - generic [ref=f1e7]:
+        - text: Galton's Hoard
+        - generic [ref=f1e8]: Banco de pruebas de modelos
+      - navigation "Secciones" [ref=f1e9]:
+        - link "Panel" [ref=f1e10] [cursor=pointer]:
+          - /url: "#/"
+        - link "Modelos 3 pendientes" [ref=f1e13] [cursor=pointer]:
+          - /url: "#/modelos"
+          - text: Modelos
+          - generic "3 pendientes" [ref=f1e16]: "3"
+        - link "Pruebas" [ref=f1e17] [cursor=pointer]:
+          - /url: "#/pruebas"
+        - link "Ejecutar" [ref=f1e20] [cursor=pointer]:
+          - /url: "#/ejecutar"
+        - link "Clasificación" [active] [ref=f1e23] [cursor=pointer]:
+          - /url: "#/clasificacion"
+        - link "Arena" [ref=f1e26] [cursor=pointer]:
+          - /url: "#/arena"
+        - link "Rutas" [ref=f1e29] [cursor=pointer]:
+          - /url: "#/rutas"
+        - link "Ajustes" [ref=f1e32] [cursor=pointer]:
+          - /url: "#/ajustes"
+      - generic [ref=f1e36]:
+        - generic [ref=f1e37]:
+          - generic [ref=f1e38]: Planificador activo
+          - generic [ref=f1e40]: 0 en cola · 0 hechas
+        - generic [ref=f1e41]: Modo demostración
+        - button "English" [ref=f1e43] [cursor=pointer]
+    - main [ref=f1e44]:
+      - generic [ref=f1e107]:
+        - heading "Clasificación" [level=1] [ref=f1e108]
+        - tablist [ref=f1e109]:
+          - tab "Clasificación" [selected] [ref=f1e110] [cursor=pointer]
+          - tab "Comparar" [ref=f1e111] [cursor=pointer]
+          - tab "Comprobaciones" [ref=f1e112] [cursor=pointer]
+        - generic [ref=f1e113]:
+          - generic [ref=f1e114]:
+            - generic [ref=f1e116]:
+              - generic [ref=f1e117]: Categoría
+              - combobox "Categoría" [ref=f1e118]:
+                - option "Todos" [selected]
+                - option "General"
+                - option "Escritura en castellano"
+                - option "Código"
+                - option "Extracción"
+                - option "Uso de herramientas"
+                - option "Contexto largo"
+                - option "Citas (RAG)"
+                - option "Visión"
+                - option "Resúmenes"
+                - option "Traducción"
+                - option "Matemáticas"
+                - option "Escritura en castellano"
+                - option "Razonamiento"
+                - option "Matemáticas"
+                - option "Código"
+                - option "Extracción"
+                - option "Uso de herramientas"
+                - option "Instrucciones"
+                - option "Contexto largo"
+                - option "Citas (RAG)"
+                - option "Visión"
+                - option "Traducción"
+                - option "Resúmenes"
+                - option "Personalizada"
+            - generic [ref=f1e120]:
+              - generic [ref=f1e121]: Prueba
+              - combobox "Prueba" [ref=f1e122]:
+                - option "Todos" [selected]
+                - option "Escritura en castellano"
+                - option "Razonamiento"
+                - option "Matemáticas"
+                - option "Código Python"
+                - option "Extracción de datos"
+                - option "Uso de herramientas"
+                - option "Seguimiento de instrucciones"
+                - option "RAG con citas"
+                - option "Traducción"
+                - option "Resumen"
+                - option "Contexto largo"
+                - option "Visión"
+                - option "Prueba rápida"
+            - generic [ref=f1e123]:
+              - generic "Incluir resultados de versiones antiguas" [ref=f1e124]:
+                - switch "Incluir resultados de versiones antiguas" [ref=f1e125] [cursor=pointer]
+              - generic [ref=f1e127]: Incluir resultados de versiones antiguas
+          - paragraph [ref=f1e128]: Ordenado por el límite inferior del intervalo del 95 % de la puntuación, para que un modelo medido con pocos casos no gane por suerte. Los resultados de un modelo cuyo archivo cambió están desactualizados y no se ordenan.
+          - generic [ref=f1e129]: No hay resultados para este filtro.
+          - generic [ref=f1e130]: "Sin medir en este filtro: demo-grande-27b-q4, demo-medio-8b-q5, demo-pequeno-3b-q8"

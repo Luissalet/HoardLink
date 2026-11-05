@@ -1,0 +1,87 @@
+- generic [ref=f1e2]:
+  - link "Saltar al contenido" [ref=f1e3] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=f1e4]:
+    - complementary [ref=f1e5]:
+      - generic [ref=f1e7]:
+        - text: Galton's Hoard
+        - generic [ref=f1e8]: Banco de pruebas de modelos
+      - navigation "Secciones" [ref=f1e9]:
+        - link "Panel" [ref=f1e10] [cursor=pointer]:
+          - /url: "#/"
+        - link "Modelos 3 pendientes" [ref=f1e13] [cursor=pointer]:
+          - /url: "#/modelos"
+          - text: Modelos
+          - generic "3 pendientes" [ref=f1e16]: "3"
+        - link "Pruebas" [ref=f1e17] [cursor=pointer]:
+          - /url: "#/pruebas"
+        - link "Ejecutar" [ref=f1e20] [cursor=pointer]:
+          - /url: "#/ejecutar"
+        - link "Clasificación" [ref=f1e23] [cursor=pointer]:
+          - /url: "#/clasificacion"
+        - link "Arena" [ref=f1e26] [cursor=pointer]:
+          - /url: "#/arena"
+        - link "Rutas" [ref=f1e29] [cursor=pointer]:
+          - /url: "#/rutas"
+        - link "Ajustes" [ref=f1e32] [cursor=pointer]:
+          - /url: "#/ajustes"
+      - generic [ref=f1e36]:
+        - generic [ref=f1e37]:
+          - generic [ref=f1e38]: Planificador activo
+          - generic [ref=f1e40]: 0 en cola · 0 hechas
+        - generic [ref=f1e41]: Modo demostración
+        - button "English" [ref=f1e43] [cursor=pointer]
+    - main [ref=f1e44]:
+      - generic [ref=f1e45]:
+        - generic [ref=f1e46]:
+          - heading "Panel" [level=1] [ref=f1e47]
+          - button "Buscar modelos" [ref=f1e48] [cursor=pointer]
+          - button "Medir todo lo nuevo" [ref=f1e51] [cursor=pointer]
+          - button "Publicar rutas" [ref=f1e54] [cursor=pointer]
+        - generic [ref=f1e57]: "Modo demostración: los modelos, las GPU y las respuestas son simulados. Nada de esto se ha medido en este ordenador."
+        - generic [ref=f1e58]:
+          - heading "Requiere atención" [level=2] [ref=f1e60]
+          - generic [ref=f1e61]:
+            - 'link "demo-grande-27b-q4: sin medir" [ref=f1e62] [cursor=pointer]':
+              - /url: "#/modelos"
+            - 'link "demo-medio-8b-q5: sin medir" [ref=f1e63] [cursor=pointer]':
+              - /url: "#/modelos"
+            - 'link "demo-pequeno-3b-q8: sin medir" [ref=f1e64] [cursor=pointer]':
+              - /url: "#/modelos"
+        - generic [ref=f1e65]:
+          - generic [ref=f1e66]:
+            - heading "Tabla de rutas" [level=2] [ref=f1e67]
+            - link "Ver explicaciones" [ref=f1e69] [cursor=pointer]:
+              - /url: "#/rutas"
+          - generic [ref=f1e70]: Aún no hay ninguna categoría con casos comprobados suficientes. Mide algún modelo para ver qué elige Galton para cada tarea.
+        - generic [ref=f1e71]:
+          - heading "GPU" [level=2] [ref=f1e73]
+          - generic [ref=f1e74]:
+            - generic [ref=f1e75]:
+              - generic [ref=f1e76]:
+                - generic [ref=f1e77]: GPU 0
+                - generic [ref=f1e78]: reservada
+              - generic "NVIDIA GeForce RTX 4070 Ti" [ref=f1e79]
+              - progressbar "GPU 0" [ref=f1e80]
+              - generic [ref=f1e82]: 11,4 GB libres de 12,0 GB
+            - generic [ref=f1e83]:
+              - generic [ref=f1e84]:
+                - generic [ref=f1e85]: GPU 1
+                - generic [ref=f1e86]: reservada
+              - generic "NVIDIA GeForce RTX 5060 Ti" [ref=f1e87]
+              - progressbar "GPU 1" [ref=f1e88]
+              - generic [ref=f1e90]: 15,2 GB libres de 15,9 GB
+            - generic [ref=f1e91]:
+              - generic [ref=f1e92]:
+                - generic [ref=f1e93]: GPU 2
+                - generic [ref=f1e94]: permitida
+              - generic "NVIDIA GeForce RTX 5060 Ti" [ref=f1e95]
+              - progressbar "GPU 2" [ref=f1e96]
+              - generic [ref=f1e98]: 15,0 GB libres de 15,9 GB
+            - generic [ref=f1e99]:
+              - generic [ref=f1e100]:
+                - generic [ref=f1e101]: GPU 3
+                - generic [ref=f1e102]: permitida
+              - generic "NVIDIA GeForce RTX 5060 Ti" [ref=f1e103]
+              - progressbar "GPU 3" [ref=f1e104]
+              - generic [ref=f1e106]: 15,1 GB libres de 15,9 GB
