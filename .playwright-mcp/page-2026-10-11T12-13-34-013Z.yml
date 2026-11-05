@@ -1,0 +1,27 @@
+- generic [ref=e1]:
+  - heading "Barrido de fallos" [level=1] [ref=e23]
+  - paragraph [ref=e3]: Turnos del asistente en la ventana, escaneados en busca de firmas de fallo fijas (rompebucles, herramientas vacías, errores repetidos, negativas, topes). La cobertura es completa o parcial con Continuar. Solo ids enlazados — sin prompts ni respuestas.
+  - generic [ref=e4]:
+    - combobox [ref=e5]:
+      - option "Last day" [selected]
+      - option "Last 7 days"
+      - option "Last 30 days"
+    - button "Volver a comprobar" [ref=e24]
+    - button "Publicar en el bus del Hub" [ref=e25]
+    - button "EN" [active] [ref=e26]
+  - paragraph [ref=e9]: Los 2 turnos del asistente escaneados · 47 aciertos · 47 firmas
+  - paragraph
+  - paragraph
+  - list [ref=e10]:
+    - listitem [ref=e27]: 1× identical_tool_error · qa_app_00__read_file
+    - listitem [ref=e28]: 1× identical_tool_error · qa_app_01__read_file
+    - listitem [ref=e29]: 1× identical_tool_error · qa_app_02__read_file
+    - listitem [ref=e30]: 1× identical_tool_error · qa_app_03__read_file
+    - listitem [ref=e31]: 1× identical_tool_error · qa_app_04__read_file
+    - listitem [ref=e32]: 1× identical_tool_error · qa_app_05__read_file
+    - listitem [ref=e33]: 1× identical_tool_error · qa_app_06__read_file
+    - listitem [ref=e34]: 1× identical_tool_error · qa_app_07__read_file
+    - listitem [ref=e35]: 1× identical_tool_error · qa_app_08__read_file
+    - listitem [ref=e36]: 1× identical_tool_error · qa_app_09__read_file
+    - listitem [ref=e37]: 1× identical_tool_error · qa_app_10__read_file
+    - listitem [ref=e38]: 1× identical_tool_error · qa_app_11__read_file

@@ -1,0 +1,97 @@
+- generic [ref=f1e2]:
+  - link "Saltar al contenido" [ref=f1e3] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=f1e4]:
+    - complementary [ref=f1e5]:
+      - generic [ref=f1e7]:
+        - text: Galton's Hoard
+        - generic [ref=f1e8]: Banco de pruebas de modelos
+      - navigation "Secciones" [ref=f1e9]:
+        - link "Panel" [ref=f1e10] [cursor=pointer]:
+          - /url: "#/"
+        - link "Modelos 3 pendientes" [ref=f1e13] [cursor=pointer]:
+          - /url: "#/modelos"
+          - text: Modelos
+          - generic "3 pendientes" [ref=f1e16]: "3"
+        - link "Pruebas" [ref=f1e17] [cursor=pointer]:
+          - /url: "#/pruebas"
+        - link "Ejecutar" [ref=f1e20] [cursor=pointer]:
+          - /url: "#/ejecutar"
+        - link "Clasificación" [ref=f1e23] [cursor=pointer]:
+          - /url: "#/clasificacion"
+        - link "Arena" [ref=f1e26] [cursor=pointer]:
+          - /url: "#/arena"
+        - link "Rutas" [ref=f1e29] [cursor=pointer]:
+          - /url: "#/rutas"
+        - link "Ajustes" [ref=f1e32] [cursor=pointer]:
+          - /url: "#/ajustes"
+      - generic [ref=f1e36]:
+        - generic [ref=f1e37]:
+          - generic [ref=f1e38]: Planificador activo
+          - generic [ref=f1e40]: 0 en cola · 0 hechas
+        - generic [ref=f1e41]: Modo demostración
+        - button "English" [ref=f1e43] [cursor=pointer]
+    - main [ref=f1e44]:
+      - generic [ref=f1e107]:
+        - heading "Clasificación" [level=1] [ref=f1e108]
+        - tablist [ref=f1e109]:
+          - tab "Clasificación" [ref=f1e110] [cursor=pointer]
+          - tab "Comparar" [ref=f1e111] [cursor=pointer]
+          - tab "Comprobaciones" [active] [selected] [ref=f1e112] [cursor=pointer]
+        - generic [ref=f1e131]:
+          - paragraph [ref=f1e132]: "Un caso puede llevar varias comprobaciones (por ejemplo una expresión regular y un juez). Aquí se mide si fallan en las mismas respuestas: si dos fallan siempre a la vez, una de las dos sobra. Solo cuentan los casos que llevan dos o más comprobaciones."
+          - generic [ref=f1e133]:
+            - generic [ref=f1e134]:
+              - generic [ref=f1e136]:
+                - generic [ref=f1e137]: Categoría
+                - combobox "Categoría" [ref=f1e138]:
+                  - option "Todos" [selected]
+                  - option "General"
+                  - option "Escritura en castellano"
+                  - option "Código"
+                  - option "Extracción"
+                  - option "Uso de herramientas"
+                  - option "Contexto largo"
+                  - option "Citas (RAG)"
+                  - option "Visión"
+                  - option "Resúmenes"
+                  - option "Traducción"
+                  - option "Matemáticas"
+                  - option "Escritura en castellano"
+                  - option "Razonamiento"
+                  - option "Matemáticas"
+                  - option "Código"
+                  - option "Extracción"
+                  - option "Uso de herramientas"
+                  - option "Instrucciones"
+                  - option "Contexto largo"
+                  - option "Citas (RAG)"
+                  - option "Visión"
+                  - option "Traducción"
+                  - option "Resúmenes"
+                  - option "Personalizada"
+              - generic [ref=f1e140]:
+                - generic [ref=f1e141]: Prueba
+                - combobox "Prueba" [ref=f1e142]:
+                  - option "Todos" [selected]
+                  - option "Escritura en castellano"
+                  - option "Razonamiento"
+                  - option "Matemáticas"
+                  - option "Código Python"
+                  - option "Extracción de datos"
+                  - option "Uso de herramientas"
+                  - option "Seguimiento de instrucciones"
+                  - option "RAG con citas"
+                  - option "Traducción"
+                  - option "Resumen"
+                  - option "Contexto largo"
+                  - option "Visión"
+                  - option "Prueba rápida"
+              - generic [ref=f1e143]:
+                - generic "Incluir resultados de versiones antiguas" [ref=f1e144]:
+                  - switch "Incluir resultados de versiones antiguas" [ref=f1e145] [cursor=pointer]
+                - generic [ref=f1e147]: Incluir resultados de versiones antiguas
+            - generic [ref=f1e149]:
+              - generic [ref=f1e150]: Mínimo de respuestas por par
+              - spinbutton "Mínimo de respuestas por par" [ref=f1e151]: "20"
+          - generic [ref=f1e152]: No hay respuestas guardadas con comprobaciones en este ámbito. Lanza una medición primero.

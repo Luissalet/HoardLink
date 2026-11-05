@@ -1,0 +1,73 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]: Nightingale's Hoard
+    - navigation "Sections" [ref=e8]:
+      - link "Sources" [ref=e9] [cursor=pointer]:
+        - /url: "#/sources"
+      - link "Datasets" [ref=e12] [cursor=pointer]:
+        - /url: "#/datasets"
+      - link "Quality" [ref=e15] [cursor=pointer]:
+        - /url: "#/quality"
+      - link "Charts" [ref=e18] [cursor=pointer]:
+        - /url: "#/charts"
+      - link "Dashboards" [active] [ref=e21] [cursor=pointer]:
+        - /url: "#/dashboards"
+      - link "Models" [ref=e24] [cursor=pointer]:
+        - /url: "#/models"
+      - link "Lab" [ref=e27] [cursor=pointer]:
+        - /url: "#/lab"
+      - link "Log" [ref=e30] [cursor=pointer]:
+        - /url: "#/log"
+      - link "Settings" [ref=e33] [cursor=pointer]:
+        - /url: "#/settings"
+    - generic [ref=e36]:
+      - generic [ref=e37]: Datasets
+      - generic [ref=e38]: 3 · 1,805 rows
+  - main [ref=e39]:
+    - generic [ref=e247]:
+      - generic [ref=e248]:
+        - heading "Dashboards" [level=1] [ref=e249]
+        - link "Code" [ref=e250] [cursor=pointer]:
+          - /url: "#/dashboards-code"
+        - combobox [ref=e251]:
+          - option "ReviewBoard" [selected]
+      - generic [ref=e252]:
+        - generic [ref=e253]:
+          - generic [ref=e254]: Name
+          - textbox "Sales overview" [ref=e255]
+        - button "Create" [ref=e256] [cursor=pointer]
+      - generic [ref=e257]:
+        - generic [ref=e258]:
+          - generic [ref=e259]: ReviewBoard
+          - button "Rename" [ref=e260] [cursor=pointer]
+          - combobox [ref=e261]:
+            - option "1 ▦"
+            - option "2 ▦" [selected]
+            - option "3 ▦"
+            - option "4 ▦"
+          - button "Undo" [ref=e262] [cursor=pointer]
+          - button "Redo" [ref=e263] [cursor=pointer]
+        - generic [ref=e264]:
+          - generic [ref=e265]: Add item
+          - generic [ref=e266]:
+            - combobox [ref=e267]:
+              - option "Select a chart…" [selected]
+            - button "Add chart" [ref=e268] [cursor=pointer]
+          - generic [ref=e269]:
+            - combobox [ref=e270]:
+              - option "Dataset for KPI…" [selected]
+              - option "customers_demo"
+              - option "sales_demo"
+              - option "sensor_demo"
+            - textbox "SQL expr, e.g. SUM(amount)" [ref=e271]: COUNT(*)
+            - textbox "Label" [ref=e272]
+            - button "Add KPI" [ref=e273] [cursor=pointer]
+        - generic [ref=e274]: Add item
+        - generic [ref=e276]:
+          - generic [ref=e277]: Change history
+          - generic [ref=e278]:
+            - text: "#2 add KPI n at 0"
+            - generic [ref=e279]: (ui)
+          - generic [ref=e280]:
+            - text: "#1 layout 2 columns"
+            - generic [ref=e281]: (ui)

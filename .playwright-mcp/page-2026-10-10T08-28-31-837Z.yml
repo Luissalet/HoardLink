@@ -1,0 +1,34 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]: Nightingale's Hoard
+    - navigation "Sections" [ref=e8]:
+      - link "Sources" [ref=e9] [cursor=pointer]:
+        - /url: "#/sources"
+      - link "Datasets" [ref=e12] [cursor=pointer]:
+        - /url: "#/datasets"
+      - link "Quality" [ref=e15] [cursor=pointer]:
+        - /url: "#/quality"
+      - link "Charts" [ref=e18] [cursor=pointer]:
+        - /url: "#/charts"
+      - link "Dashboards" [ref=e21] [cursor=pointer]:
+        - /url: "#/dashboards"
+      - link "Models" [ref=e24] [cursor=pointer]:
+        - /url: "#/models"
+      - link "Lab" [ref=e27] [cursor=pointer]:
+        - /url: "#/lab"
+      - link "Log" [ref=e30] [cursor=pointer]:
+        - /url: "#/log"
+      - link "Settings" [ref=e33] [cursor=pointer]:
+        - /url: "#/settings"
+    - generic [ref=e36]:
+      - generic [ref=e37]: Datasets
+      - generic [ref=e38]: 3 · 1,805 rows
+  - main [ref=e39]:
+    - generic [ref=e41]:
+      - heading "Datasets" [level=1] [ref=e42]
+      - combobox [ref=e43]:
+        - option "customers_demo" [selected]
+        - option "sales_demo"
+        - option "sensor_demo"
+      - button "Refresh" [ref=e44] [cursor=pointer]
+      - button "Delete dataset" [ref=e45] [cursor=pointer]

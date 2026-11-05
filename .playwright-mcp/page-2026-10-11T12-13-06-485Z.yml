@@ -1,0 +1,27 @@
+- generic [active] [ref=e1]:
+  - heading "Failure sweep" [level=1] [ref=e2]
+  - paragraph [ref=e3]: Assistant turns in the window, scanned for fixed failure signatures (loop breaker, empty tools, repeated errors, refusals, caps). Coverage is complete or partial with Continue. Linked ids only — no prompts or replies.
+  - generic [ref=e4]:
+    - combobox [ref=e5]:
+      - option "Last day" [selected]
+      - option "Last 7 days"
+      - option "Last 30 days"
+    - button "Re-check" [ref=e6]
+    - button "Publish to Hub bus" [ref=e7]
+    - button "ES" [ref=e8]
+  - paragraph [ref=e9]: All 2 assistant turns scanned · 47 hits · 47 signatures
+  - paragraph
+  - paragraph
+  - list [ref=e10]:
+    - listitem [ref=e11]: 1× identical_tool_error · qa_app_00__read_file
+    - listitem [ref=e12]: 1× identical_tool_error · qa_app_01__read_file
+    - listitem [ref=e13]: 1× identical_tool_error · qa_app_02__read_file
+    - listitem [ref=e14]: 1× identical_tool_error · qa_app_03__read_file
+    - listitem [ref=e15]: 1× identical_tool_error · qa_app_04__read_file
+    - listitem [ref=e16]: 1× identical_tool_error · qa_app_05__read_file
+    - listitem [ref=e17]: 1× identical_tool_error · qa_app_06__read_file
+    - listitem [ref=e18]: 1× identical_tool_error · qa_app_07__read_file
+    - listitem [ref=e19]: 1× identical_tool_error · qa_app_08__read_file
+    - listitem [ref=e20]: 1× identical_tool_error · qa_app_09__read_file
+    - listitem [ref=e21]: 1× identical_tool_error · qa_app_10__read_file
+    - listitem [ref=e22]: 1× identical_tool_error · qa_app_11__read_file
