@@ -6,7 +6,7 @@ reading, READ-ONLY, the files each CLI already writes:
 
 * **Claude Code** — the newest ``~/.claude/projects/<slug>/<uuid>.jsonl`` plus ``~/.claude/.credentials.json``.
 * **Codex** — the newest ``~/.codex/sessions/**/rollout-*.jsonl``.
-* **Cursor** — the managed runner's ``launch-state.json`` and ``logs/*.jsonl`` (``D:\\LocalAI\\cursor`` by default).
+* **Cursor** — the managed runner's ``launch-state.json`` and ``logs/*.jsonl`` (``E:\\Development\\IA\\Agents\\cursor`` by default).
 * **Faustus** — has no session file of its own here; the console passes the native session state it already knows.
 
 Privacy: only event kinds and timestamps leave a file. Message bodies, tool inputs and outputs, reasoning and file
@@ -71,7 +71,7 @@ def default_paths(home: Optional[Any] = None) -> dict[str, Path]:
     paths = {"claude_projects": base / ".claude" / "projects",
              "claude_credentials": base / ".claude" / ".credentials.json",
              "codex_sessions": base / ".codex" / "sessions",
-             "cursor_dir": Path(r"D:\LocalAI\cursor")}
+             "cursor_dir": Path(r"E:\Development\IA\Agents\cursor")}
     for key, var in _ENV.items():
         value = os.environ.get(var)
         if value:

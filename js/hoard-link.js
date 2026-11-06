@@ -747,7 +747,7 @@ export async function mailCopyAttachment(att, destDir, { timeoutMs = 30000 } = {
 const FAUSTUS_ENV = ["FAUSTUS_DIR", "HOARD_FAUSTUS_DIR", "HOARD_HUB_FAUSTUS_DIR"];
 const FAUSTUS_PYTHON_ENV = ["FAUSTUS_PYTHON", "HOARD_FAUSTUS_PYTHON", "HOARD_HUB_FAUSTUS_PYTHON"];
 export const PYTHON_CANDIDATES = ["venv/Scripts/python.exe", ".venv/Scripts/python.exe", "venv/bin/python", ".venv/bin/python"];
-const COMMON_FAUSTUS_PATHS = ["D:\\LocalAI\\faustus", "C:\\LocalAI\\faustus", "~/LocalAI/faustus", "~/faustus"];
+const COMMON_FAUSTUS_PATHS = ["E:\\Development\\IA\\Faustus", "C:\\LocalAI\\faustus", "~/LocalAI/faustus", "~/faustus"];
 
 const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
 const nonEmpty = (v) => v !== undefined && v !== null && String(v).trim() !== "";
@@ -756,7 +756,7 @@ const callValue = (v) => { try { return typeof v === "function" ? v() : v; } cat
 
 /** The Faustus folder (the one with mcp_servers/email_server.py) or null. First hit wins: `setting` (a path or a function), the
  *  environment (FAUSTUS_DIR, HOARD_FAUSTUS_DIR, HOARD_HUB_FAUSTUS_DIR), a `faustus` folder next to this file, the app that vendors it or any
- *  folder above (five levels), the usual places (D:\LocalAI\faustus, ~/faustus ...), then `extra`. Sync; the hub's own hint is faustusHubHint(). */
+ *  folder above (five levels), the usual places (E:\Development\IA\Faustus, ~/faustus ...), then `extra`. Sync; the hub's own hint is faustusHubHint(). */
 export function faustusDir(setting = null, { env = process.env, extra = [], searchParents = true, commonPaths = COMMON_FAUSTUS_PATHS } = {}) {
   const candidates = [callValue(setting), ...FAUSTUS_ENV.map((k) => env[k])].filter(nonEmpty).map(expandHome);
   let dir = path.dirname(fileURLToPath(import.meta.url));

@@ -84,7 +84,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--probe", action="store_true")
     args = parser.parse_args()
-    apps = registry.scan(args.roots, faustus_dir="D:/LocalAI/Faustus", exclude_ids=["scribe"])
+    apps = registry.scan(args.roots, faustus_dir="E:/Development/IA/Faustus", exclude_ids=["scribe"])
     for root in args.roots:
         folder = Path(root)
         if (folder / "server_runtime.py").is_file() and (folder / "src/family_services.py").is_file():

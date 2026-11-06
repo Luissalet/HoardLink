@@ -19,7 +19,7 @@ Discovery: every direct child of a registry root (the parents of the apps
 the hub lists, plus the configured roots) that has a ``.git``, plus the
 configured extras and Faustus. ``hub.json`` ``repos`` tunes it::
 
-    "repos": {"roots": [], "extra": [], "exclude": [], "faustus_dir": "D:/LocalAI/faustus",
+    "repos": {"roots": [], "extra": [], "exclude": [], "faustus_dir": "E:/Development/IA/Faustus",
               "portfolio_dir": "…/portfolio-react", "stray_prefixes": ["claude/"],
               "default_branches": ["main", "master"], "ci": true,
               "expected_emails": ["luissalet@users.noreply.github.com"]}
