@@ -298,7 +298,7 @@ UNITS = {
                {"FAUSTUS_DIR": "{stack}/faustus", "HERMES_ALLOWED_HOSTS": TAILNET, "TANTALUS_ALLOWED_HOSTS": TAILNET,
                 "PHILEAS_ALLOWED_HOSTS": TAILNET}),
     "prometheus": ("Prometheus's Hoard", "prometheus", "-m prometheus_hoard --no-browser", "1G",
-                   {"PROMETHEUS_ALLOWED_HOSTS": TAILNET}),
+                   {"PROMETHEUS_ALLOWED_HOSTS": TAILNET, "PROMETHEUS_SSH_DIR": "{stack}/prometheus-ssh"}),
 }
 
 

@@ -100,6 +100,8 @@ def test_units_carry_the_faustus_folder_for_hermes(tmp_path, monkeypatch):
     hermes = (tmp_path / ".config" / "systemd" / "user" / "hermes.service").read_text(encoding="utf-8")
     assert f"Environment=FAUSTUS_DIR={tmp_path / 'stack'}/faustus" in hermes
     assert "Environment=HERMES_ALLOWED_HOSTS=*.ts.net" in hermes
+    prom = (tmp_path / ".config" / "systemd" / "user" / "prometheus.service").read_text(encoding="utf-8")
+    assert f"Environment=PROMETHEUS_SSH_DIR={tmp_path / 'stack'}/prometheus-ssh" in prom
     assert "ExecStart=" in hermes and "-m hermes_hoard --no-browser" in hermes and "MemoryMax=2G" in hermes
 
 
