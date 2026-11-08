@@ -43,7 +43,7 @@ PORTS = {"faustus": 7000, "hermes": 5221, "prometheus": 5205}
 HEALTH = {"faustus": "/", "hermes": "/api/health", "prometheus": "/api/health"}
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15"]
 PAUSED_ON_SPARK = [
-    "Hermes: la vigilancia de ventanas abiertas de tu navegador (la lista de Carrefour); necesita Windows y tu Brave",
+    "Hermes: la vigilancia de ventanas abiertas de tu navegador («Mi ventana abierta»); necesita Windows y tu navegador",
     "Faustus: el control de tu navegador real y del escritorio de Windows",
     "Faustus: los modelos de Ollama de este PC y los servidores MCP que solo existen en Windows",
 ]
