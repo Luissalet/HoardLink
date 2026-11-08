@@ -46,7 +46,7 @@ def test_stream_round_trip_keeps_mtimes_and_moves_deleted_files_to_trash(tmp_pat
     assert pr.pack_to(str(src), changed, buf) == 2
     buf.seek(0)
     res = pr.apply_from(str(dst), buf, deleted, str(trash))
-    assert res == {"extracted": 2, "removed": 1}
+    assert res == {"extracted": 2, "removed": 1, "skipped": 0, "skipped_files": []}
     assert (dst / "db" / "app.db").read_text(encoding="utf-8") == "new contents"
     assert int((dst / "db" / "app.db").stat().st_mtime) == 1_700_000_000
     assert not (dst / "stale.db-wal").exists() and (trash / "stale.db-wal").read_text(encoding="utf-8") == "old wal"

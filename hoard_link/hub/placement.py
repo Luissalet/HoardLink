@@ -610,7 +610,8 @@ class Placement:
             for name, local, remote, excludes in self._pairs(dirs):
                 self._log(f"trayendo los datos de {name}", step=f"datos de {name}")
                 res = self._pull_dir(name, local, remote, excludes, trash)
-                self._log(f"{name}: {res['copied']} ficheros ({res['bytes'] / 1e6:.0f} MB), {res['removed']} apartados")
+                self._log(f"{name}: {res['copied']} ficheros ({res['bytes'] / 1e6:.0f} MB), {res['removed']} apartados"
+                          + (f"; sin permiso para tocar {res['skipped']}: {', '.join(res['skipped_files'][:5])}" if res.get("skipped") else ""))
         except Exception:
             self._log("la Spark sigue siendo la buena: vuelvo a arrancarlos allí")
             self._remote(f"svc enable {' '.join(APPS)}")

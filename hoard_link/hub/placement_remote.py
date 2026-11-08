@@ -108,6 +108,7 @@ def apply_from(root: str, fileobj: Optional[IO[bytes]], deleted: list[str], tras
     base.mkdir(parents=True, exist_ok=True)
     resolved = base.resolve()
     extracted = 0
+    skipped: list[str] = []
     if fileobj is not None:
         with tarfile.open(fileobj=fileobj, mode="r|") as tar:
             for member in tar:
@@ -120,21 +121,30 @@ def apply_from(root: str, fileobj: Optional[IO[bytes]], deleted: list[str], tras
                 with open(tmp, "wb") as fh:
                     while chunk := src.read(1 << 20):
                         fh.write(chunk)
-                os.replace(tmp, target)
+                try:
+                    os.replace(tmp, target)
+                except PermissionError:           # a file this account may not replace (locked, or an ACL that shuts it out)
+                    tmp.unlink(missing_ok=True)
+                    skipped.append(member.name)
+                    continue
                 os.utime(target, ns=(int(member.mtime) * 1_000_000_000, int(member.mtime) * 1_000_000_000))
                 extracted += 1
     removed = 0
     for rel in deleted:
         path = (base / rel).resolve()
         if resolved in path.parents and path.is_file():
-            if trash:
-                dest = Path(trash) / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(path), str(dest))
-            else:
-                path.unlink()
+            try:
+                if trash:
+                    dest = Path(trash) / rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(path), str(dest))
+                else:
+                    path.unlink()
+            except PermissionError:
+                skipped.append(rel)
+                continue
             removed += 1
-    return {"extracted": extracted, "removed": removed}
+    return {"extracted": extracted, "removed": removed, "skipped": len(skipped), "skipped_files": skipped[:20]}
 
 
 # ====================================================================================== big files: only the blocks that changed
@@ -281,6 +291,7 @@ ExecStart={cwd}/venv/bin/python {args}
 Environment=PYTHONUNBUFFERED=1
 {env}Restart=on-failure
 RestartSec=10
+TimeoutStopSec=30
 MemoryMax={memory}
 OOMScoreAdjust=800
 
