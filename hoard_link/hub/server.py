@@ -19,6 +19,8 @@ GET  /api/apps/<id>/icon       its icon
 GET  /api/apps/<id>/log        last lines of its log
 POST /api/apps/<id>/start|stop|restart|open|close-windows|folder
 POST /api/apps/start-all | stop-all | rescan
+GET  /api/placement            where Faustus, Hermes and Prometheus run (pc | sparks), the switch in progress and its log
+POST /api/placement/switch     {"to": "pc" | "sparks"} -> moves the three (never running on both at once)
 GET  /api/backends             what Hoard Link resolves right now
 GET  /api/memory               what each GPU holds and which server holds it
 GET  /api/services             local backend servers (ComfyUI, Ollama, configured) and who started them
@@ -468,6 +470,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json(hub.snapshot())
             if path == "/api/faustus":
                 return self._json(hub.faustus_status())
+            if path == "/api/placement":
+                return self._json(hub.placement.status())
             if path == "/api/backends":
                 return self._json(hub.backends(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path == "/api/services":
@@ -684,6 +688,9 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "apps": [a.to_dict() for a in hub.rescan()]})
             if path in ("/api/faustus/start", "/api/faustus/stop"):
                 res = hub.faustus_start() if path.endswith("/start") else hub.faustus_stop()
+                return self._json(res, 200 if res.get("ok") else 409)
+            if path == "/api/placement/switch":
+                res = hub.placement.switch(str(body.get("to") or ""))
                 return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/apps/start-all":
                 return self._json(hub.start_all())

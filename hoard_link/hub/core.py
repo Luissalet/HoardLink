@@ -76,6 +76,9 @@ class Hub:
         except (OSError, ValueError, TypeError, AttributeError):
             pass
         self.faustus_runtime = FaustusRuntime(self.config)
+        # Where Faustus, Hermes and Prometheus run (this PC or a Spark, never both): while they are on the Spark no start here.
+        from .placement import Placement
+        self.placement = Placement(self)
         self.token = self._load_token()
         # The GPU/VRAM lease arbiter: one queue for every app on this machine.
         self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=gpu_fn,
@@ -283,6 +286,7 @@ class Hub:
                        "windows": sum(len(v) for k, v in windows.items() if not k.startswith("_"))},
             "roots": list(self.config.roots),
             "faustus": faustus,
+            "placement": self.placement.status(),
             "profiles": profiles["profiles"],
             "hub": {"url": self.config.url, "data_dir": self.config.data_dir, "uptime_s": int(time.time() - self.started_at),
                     "browser": desktop.find_browser(self.config.browser),
@@ -312,6 +316,9 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        elsewhere = self.placement.local_block(app_id)
+        if elsewhere:
+            return {"ok": False, "app": app_id, "error": elsewhere, "placement": True}
         with self._lock:
             lock = self._start_locks.setdefault(app_id, threading.RLock())
         with lock:  # one start per app at a time
@@ -533,8 +540,10 @@ class Hub:
         return {"ok": True, "app": app_id, "path": path, "lines": procs.tail(path, lines)}
 
     def start_all(self, *, automatic: bool = False) -> dict[str, Any]:
-        results = [self.start(a.id, wait=False, automatic=automatic) for a in self.apps if a.launchable]
-        faustus = self.faustus_start(automatic=automatic) if self.faustus_runtime.available() else {"ok": True, "skipped": True}
+        results = [self.start(a.id, wait=False, automatic=automatic) for a in self.apps
+                   if a.launchable and not self.placement.local_block(a.id)]   # the ones running on a Spark are not "down"
+        faustus = (self.faustus_start(automatic=automatic)
+                   if self.faustus_runtime.available() and not self.placement.local_block("faustus") else {"ok": True, "skipped": True})
         return {"ok": all(r.get("ok") for r in results) and faustus["ok"], "results": results, "faustus": faustus}
 
     def stop_all(self) -> dict[str, Any]:
@@ -787,7 +796,8 @@ class Hub:
                     result.update(listening=True, pid=pid)
             result.update(available=self.faustus_runtime.available(),
                           manually_stopped=self.automation_blocked("faustus"))
-            result["startable"] = result["available"] and not result["reachable"] and not result.get("listening")
+            result["startable"] = (result["available"] and not result["reachable"] and not result.get("listening")
+                                   and not self.placement.local_block("faustus"))
             result["stoppable"] = result["available"]
             self._faustus_cache = (time.time(), result)
             self._faustus_refreshing.clear()
@@ -796,6 +806,9 @@ class Hub:
     def faustus_start(self, *, automatic: bool = False) -> dict[str, Any]:
         with self._lock:
             lock = self._start_locks.setdefault("faustus", threading.RLock())
+        elsewhere = self.placement.local_block("faustus")
+        if elsewhere:
+            return {"ok": False, "error": elsewhere, "placement": True}
         with lock:
             if self._stopping_all.is_set() or (automatic and self.automation_blocked("faustus")):
                 return {"ok": False, "error": "stop all is still in progress"}

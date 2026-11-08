@@ -665,6 +665,38 @@ Tools: `hub_lane_status`, `hub_lane_acquire` (lease capped at 10 minutes: call `
 `hub_lane_renew`, `hub_lane_release`. Forcing a lane free is a button of the hub window, never a tool. Events: `hub.lane.acquired|released|expired`. The hub
 window has a **Browser lanes** panel (domain, holder, since, expires, Release). Details in [docs/HUB.md](docs/HUB.md).
 
+### Run on: this PC or a Spark (never both)
+
+Faustus, Hermes and Prometheus can move to a DGX Spark so the PC can be switched off, and come back. The **Run on**
+control (Home › Faustus tile, and System › Connections) explains the move, asks for confirmation, then shows each step
+and its log. The move:
+
+1. prepares the Spark while the PC keeps working: `git archive` of each repository's HEAD (plus Faustus's built UI),
+   one venv per app under `~/faustus-stack/<app>` (dependencies only when `requirements.txt` changed; Chromium for Hermes),
+   systemd **user** services (`faustus`, `hermes`, `prometheus`, with memory caps and linger so they survive logout), and
+   the SSH aliases Prometheus needs on the Spark;
+2. stops the three on the PC and checks their ports are free;
+3. copies their data incrementally over SSH as a tar stream (size + modification time decide what changed). Files of
+   16 MB or more that exist on both sides travel as changed 4 MB blocks only, so a multi-GB database costs seconds after
+   the first move. Caches, logs and per-machine browser profiles stay on each side;
+4. rewrites the settings that hold machine paths (Hermes's Faustus folder for its mail, Prometheus's recipes folder),
+   keeping the PC values to restore later;
+5. starts the services, waits for their health checks, publishes them on the Spark's Tailscale name (HTTPS, only your
+   devices) and mails you the links and what is paused. If anything fails before that point, the Spark side is stopped
+   and the PC side started again.
+
+While they are on the Spark the Hub refuses to start them here (by hand, automatically, from "start all" or a profile),
+and their own launchers on the PC refuse too (`<faustus>/data/runtime/placement.json`, `<app>/data/placement-elsewhere.json`).
+Coming back stops the Spark services, brings the data home the same way (files the PC would lose go to
+`data/placement-trash/<when>/`, last three kept; nothing is pulled if the Spark copy looks incomplete), restores the PC
+settings, removes the markers and starts the three here.
+
+Paused while on the Spark: Hermes's watch of open browser windows (it needs Windows; those targets wait quietly instead
+of asking for help), Faustus's control of your real browser and Windows desktop, Ollama models of this PC, and MCP servers
+that only exist on Windows. API: `GET /api/placement`, `POST /api/placement/switch {"to": "pc"|"sparks"}`. Tools:
+`hub_placement_status`, `hub_placement_switch`. State in `data/placement.json`; the Spark half is
+`hoard_link/hub/placement_remote.py` (standard library only).
+
 ### Instances: a second copy of an app speaks as the app
 
 A copy of an app started on another data folder (a QA instance, a demo, a branch) writes its own `mcp-token`
