@@ -540,6 +540,7 @@
   window.hubOpenLog = (appId) => openLog(appId);
   window.hubAppFolder = (appId) => api(`/api/apps/${encodeURIComponent(appId)}/folder`, {}).then((r) => { if (!r.ok) toast(r.error, "err"); });
   window.hubFaustus = (action) => runFaustus(action);
+  window.hubToast = (msg, kind, detail) => toast(msg, kind, detail);
   window.hubBatch = (action) => runBatch(action);
   window.hubSnapshot = () => snapshot;
   window.hubRefresh = () => refresh();

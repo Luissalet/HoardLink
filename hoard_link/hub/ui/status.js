@@ -34,8 +34,11 @@
   }
   function faustus() {
     const f = snap?.faustus || {};
-    const state = fPending.has('stop') ? 'stopping' : fPending.has('start') ? 'starting' : f.reachable ? 'running' : f.listening ? 'busy' : 'down';
-    const label = {running: tr('En marcha', 'Running'), busy: tr('Ocupado, no responde', 'Busy, not answering'), starting: tr('Arrancando…', 'Starting…'), stopping: tr('Parando…', 'Stopping…'), down: f.available === false ? tr('No instalado', 'Not installed') : tr('Apagado', 'Off')}[state];
+    const pl = snap?.placement || {};
+    // On a Spark (moved there so the PC can be off) it is not "off": it runs elsewhere and is reached there.
+    const elsewhere = pl.location === 'sparks' || pl.job?.running;
+    const state = elsewhere ? 'elsewhere' : fPending.has('stop') ? 'stopping' : fPending.has('start') ? 'starting' : f.reachable ? 'running' : f.listening ? 'busy' : 'down';
+    const label = {elsewhere: pl.job?.running ? tr('Trasladándose…', 'Moving…') : tr('En ', 'On ') + (pl.node || 'Spark'), running: tr('En marcha', 'Running'), busy: tr('Ocupado, no responde', 'Busy, not answering'), starting: tr('Arrancando…', 'Starting…'), stopping: tr('Parando…', 'Stopping…'), down: f.available === false ? tr('No instalado', 'Not installed') : tr('Apagado', 'Off')}[state];
     let port = '';
     try { port = f.url ? ':' + new URL(f.url).port : ''; } catch (_) { /* keep empty */ }
     return {f, state, label, port};
@@ -46,6 +49,11 @@
   function faustusButtons(compact) {
     const {f, state} = faustus();
     const out = [];
+    if (state === 'elsewhere') {
+      const url = snap?.placement?.urls?.faustus;
+      if (url) { const open = node('a', 'hub-btn hub-btn-primary', tr('Abrir', 'Open')); open.href = url; open.target = '_blank'; open.rel = 'noopener'; open.title = url; out.push(open); }
+      return out;
+    }
     if ((f.reachable || f.listening) && f.url) {
       const open = node('a', 'hub-btn hub-btn-primary', tr('Abrir', 'Open')); open.href = f.url; open.target = '_blank'; open.rel = 'noopener';
       open.title = tr('Abrir Faustus en ', 'Open Faustus at ') + f.url; out.push(open);
@@ -90,11 +98,15 @@
     const {f, state, label} = faustus();
     const fz = node('section', 'hub-tile hub-tile-faustus is-' + state);
     const head = node('div', 'hub-tile-head'); head.append(node('span', 'hub-dot'), node('h2', '', 'Faustus'), node('span', 'hub-tile-state', label));
-    const sub = f.reachable ? (f.url || '').replace(/^https?:\/\//, '')
+    const moving = snap?.placement?.job?.running;
+    const sub = state === 'elsewhere' ? (moving ? tr('Cambiando de ubicación junto a Hermes y Prometheus; abajo ves cada paso.', 'Changing place with Hermes and Prometheus; each step shows below.')
+      : tr('Corre en la Spark junto a Hermes y Prometheus.', 'Runs on the Spark with Hermes and Prometheus.'))
+      : f.reachable ? (f.url || '').replace(/^https?:\/\//, '')
       : f.listening ? tr(`Su puerto sigue abierto (PID ${f.pid}) pero no contesta en 3 s: suele ser un turno largo bloqueándolo. Espera o páralo.`, `Its port is still open (PID ${f.pid}) but it does not answer within 3 s, usually a long turn blocking it. Wait or stop it.`)
       : tr('Tu espacio de trabajo con modelos. Arráncalo desde aquí.', 'Your model workspace. Start it from here.');
     fz.append(head, node('p', 'hub-tile-sub', sub));
     const fa = node('div', 'hub-tile-actions'); fa.append(...faustusButtons(false)); fz.append(fa);
+    if (window.HubPlacement) { const slot = node('div', 'hub-tile-placement'); slot.dataset.placementSlot = '1'; slot.append(window.HubPlacement.controls()); fz.append(slot); }
 
     const c = tally();
     const hz = node('section', 'hub-tile hub-tile-hoards');

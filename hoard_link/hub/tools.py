@@ -63,6 +63,22 @@ def catalogue() -> list[dict[str, Any]]:
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
         {
+            "name": "hub_placement_status",
+            "description": "Where Faustus, Hermes and Prometheus run now: this PC or a Spark (never both).\n"
+                           "Also the move in progress with its log, the tailnet links while they are on the Spark and what is "
+                           "paused there. Keywords: dónde corre Faustus, Sparks, apagar el PC, ubicación.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "annotations": {"readOnlyHint": True},
+        },
+        {
+            "name": "hub_placement_switch",
+            "description": "Move Faustus, Hermes and Prometheus to the Spark (PC can be switched off) or back to this PC.\n"
+                           "Stops them on one side, copies code and data, starts them on the other; takes minutes, follow it "
+                           "with hub_placement_status. Keywords: ejecutar en las Sparks, volver al PC, mover Faustus.",
+            "inputSchema": {"type": "object", "properties": {"to": {"type": "string", "enum": ["pc", "sparks"]}},
+                            "required": ["to"], "additionalProperties": False},
+        },
+        {
             "name": "hub_list_apps",
             "description": "List the local apps and whether each runs. Keywords: apps, list, which are open, estado, qué hay abierto.\n"
                            "Returns id, name, purpose, url, port, state (running|starting|foreign|down), pid, memory, windows, launchable.",
@@ -719,6 +735,8 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_faustus_status": lambda _: hub.faustus_status(),
         "hub_faustus_start": lambda a: hub.faustus_start(automatic=bool(a.get("_automatic"))),
         "hub_faustus_stop": lambda _: hub.faustus_stop(),
+        "hub_placement_status": lambda _: hub.placement.status(),
+        "hub_placement_switch": lambda a: hub.placement.switch(str(a.get("to") or "")),
         "hub_start_app": lambda a: hub.start(str(a.get("app", "")), wait=bool(a.get("wait", True)), automatic=bool(a.get("_automatic"))),
         "hub_stop_app": lambda a: hub.stop(str(a.get("app", ""))),
         "hub_restart_app": lambda a: hub.restart(str(a.get("app", "")), automatic=bool(a.get("_automatic"))),

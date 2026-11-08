@@ -684,6 +684,39 @@ Herramientas: `hub_lane_status`, `hub_lane_acquire` (reserva limitada a 10 minut
 herramienta. Eventos: `hub.lane.acquired|released|expired`. La ventana del hub tiene un panel **Carriles de
 navegador** (dominio, titular, desde, caduca, Liberar). Más detalle en [docs/HUB.md](docs/HUB.md).
 
+### Ejecutar en: este PC o una Spark (nunca en los dos)
+
+Faustus, Hermes y Prometheus pueden pasar a una DGX Spark para que puedas apagar el PC, y volver. El control
+**Ejecutar en** (Inicio › tarjeta de Faustus, y Sistema › Conexiones) explica el traslado, pide confirmación y luego
+muestra cada paso con su registro. El traslado:
+
+1. prepara la Spark mientras el PC sigue funcionando: `git archive` del HEAD de cada repositorio (más la interfaz
+   compilada de Faustus), un venv por app en `~/faustus-stack/<app>` (dependencias solo cuando cambia `requirements.txt`;
+   Chromium para Hermes), servicios **de usuario** de systemd (`faustus`, `hermes`, `prometheus`, con límite de memoria y
+   linger para que sigan sin sesión abierta) y los alias SSH que Prometheus necesita en la Spark;
+2. para los tres en el PC y comprueba que sus puertos quedan libres;
+3. copia sus datos de forma incremental por SSH como un flujo tar (tamaño + fecha deciden qué cambió). Los ficheros de
+   16 MB o más que existen en los dos lados viajan solo por bloques de 4 MB cambiados, así que una base de datos de
+   varios GB cuesta segundos tras el primer traslado. Cachés, registros y perfiles de navegador de cada máquina se quedan
+   en su sitio;
+4. reescribe los ajustes con rutas de la máquina (la carpeta de Faustus que Hermes usa para el correo, la carpeta de
+   recetas de Prometheus) y guarda los valores del PC para restaurarlos;
+5. arranca los servicios, espera a que respondan, los publica con el nombre Tailscale de la Spark (HTTPS, solo tus
+   dispositivos) y te manda por correo los enlaces y lo que queda en pausa. Si algo falla antes de ese punto, para la
+   Spark y vuelve a arrancarlos en el PC.
+
+Mientras están en la Spark el Hub se niega a arrancarlos aquí (a mano, automáticamente, con «arrancar todo» o desde un
+perfil), y sus propios lanzadores del PC también (`<faustus>/data/runtime/placement.json`,
+`<app>/data/placement-elsewhere.json`). La vuelta para los servicios de la Spark, trae los datos del mismo modo (lo que el
+PC perdería va a `data/placement-trash/<cuándo>/`, se guardan los tres últimos; no se trae nada si la copia de la Spark
+parece incompleta), restaura los ajustes del PC, quita las marcas y los arranca aquí.
+
+En pausa mientras están en la Spark: la vigilancia de ventanas abiertas del navegador de Hermes (necesita Windows; esos
+objetivos esperan en silencio en vez de pedir ayuda), el control de tu navegador real y del escritorio de Windows desde
+Faustus, los modelos de Ollama de este PC y los servidores MCP que solo existen en Windows. API: `GET /api/placement`,
+`POST /api/placement/switch {"to": "pc"|"sparks"}`. Herramientas: `hub_placement_status`, `hub_placement_switch`. Estado
+en `data/placement.json`; la mitad de la Spark es `hoard_link/hub/placement_remote.py` (solo biblioteca estándar).
+
 ### Instancias: otra copia de una app habla como la app
 
 Una copia de una app arrancada con otra carpeta de datos (una instancia de QA, una demo, una rama) escribe allí su
