@@ -33,7 +33,9 @@ from . import placement_remote as pr
 APPS = ("faustus", "hermes", "prometheus")
 DEFAULT_NODE = {"ssh": "Spark3", "name": "Spark3", "host": "192.168.0.185"}
 STACK = "~/faustus-stack"
-SPARK_STACK = "/home/luissalet/faustus-stack"
+SPARK_HOME = "/home/luissalet"
+SPARK_STACK = f"{SPARK_HOME}/faustus-stack"
+SPARK_KEY = "~/.ssh/id_ed25519_dsv41_fabric"       # the key every Spark of the cluster accepts
 REMOTE_HELPER = f"{STACK}/placement_remote.py"
 THREAD_NAME = "placement-switch"
 MIN_FREE_GB = 4.0
@@ -235,16 +237,29 @@ class Placement:
         deployed[key] = digest
 
     def _ensure_node(self) -> list[str]:
-        """Services survive logout (linger), the SSH aliases Prometheus uses reach every Spark, units written.
-        Returns the services whose unit file changed."""
-        self._ssh("sudo -n loginctl enable-linger $USER >/dev/null 2>&1; mkdir -p ~/.ssh; touch ~/.ssh/config ~/.ssh/authorized_keys;"
-                  " if [ -f ~/.ssh/id_ed25519_dsv41_fabric.pub ]; then grep -qF \"$(cat ~/.ssh/id_ed25519_dsv41_fabric.pub)\""
-                  " ~/.ssh/authorized_keys || cat ~/.ssh/id_ed25519_dsv41_fabric.pub >> ~/.ssh/authorized_keys; fi;"
-                  " grep -q '^Host Spark3$' ~/.ssh/config || printf '\\nHost Spark3\\n  Hostname 127.0.0.1\\n  User luissalet\\n"
-                  "  IdentityFile ~/.ssh/id_ed25519_dsv41_fabric\\n  IdentitiesOnly yes\\n  StrictHostKeyChecking accept-new\\n' >> ~/.ssh/config;"
-                  " grep -q '^Host Spark4Asus$' ~/.ssh/config || printf '\\nHost Spark4Asus\\n  Hostname 10.100.40.4\\n  User luissalet\\n"
-                  "  IdentityFile ~/.ssh/id_ed25519_dsv41_fabric\\n  IdentitiesOnly yes\\n  StrictHostKeyChecking accept-new\\n' >> ~/.ssh/config")
+        """Services survive logout (linger), Prometheus reaches every Spark (itself included) with the key the Sparks share,
+        units written. Returns the services whose unit file changed."""
+        self._ssh(f"sudo -n loginctl enable-linger $USER >/dev/null 2>&1; mkdir -p ~/.ssh {STACK}/prometheus-ssh; touch ~/.ssh/authorized_keys;"
+                  f" if [ -f {SPARK_KEY}.pub ]; then grep -qF \"$(cat {SPARK_KEY}.pub)\" ~/.ssh/authorized_keys"
+                  f" || cat {SPARK_KEY}.pub >> ~/.ssh/authorized_keys; fi")
+        self._put_text(f"{STACK}/prometheus-ssh/config", self._prometheus_ssh_config())
         return list(self._remote(f"units {STACK}") or [])
+
+    def _prometheus_ssh_config(self) -> str:
+        """Prometheus's own SSH config on the Spark (``PROMETHEUS_SSH_DIR``): the same node aliases as on this PC, each with
+        its address from Prometheus's settings and the key every Spark accepts. The Spark's own ~/.ssh/config is not touched."""
+        try:
+            nodes = json.loads((self.local_dirs()["prometheus"] / "data" / "settings.json").read_text(encoding="utf-8")).get("nodes") or []
+        except (OSError, ValueError, PlacementError):
+            nodes = []
+        lines = ["# written by the Hoard Hub (placement): how Prometheus reaches the Sparks from here", ""]
+        for node in nodes:
+            alias, host = str(node.get("ssh") or "").strip(), str(node.get("host") or "").strip()
+            if alias and host and " " not in alias:
+                lines += [f"Host {alias}", f"  Hostname {host}", ""]
+        lines += ["Host *", f"  User {SPARK_HOME.rsplit('/', 1)[-1]}", f"  IdentityFile {SPARK_KEY.replace('~', SPARK_HOME)}",
+                  "  IdentitiesOnly yes", ""]
+        return "\n".join(lines)
 
     # ================================================================================= data
     def _excludes_file(self, excludes: list[str]) -> str:
