@@ -52,8 +52,9 @@ PAUSED_ON_SPARK = [
 COMMON_EXCLUDES = ["*.placement-tmp", "*/browser-profile", "browser-profile", "placement-elsewhere.json",
                    "*.tmp", "*.tmp.*", "*.lock"]           # atomic-write leftovers and locks are never state
 DATA = {
+    # WhatsApp's session travels with Faustus (it may run in one place only); its process record stays per machine.
     "faustus": ("data", ["fastembed_cache", "desktop-profile", "desktop-profile-apps", "reach-browser", "logs", "runtime",
-                         "whatsapp", "voice-comparison-test"]),
+                         "whatsapp/bridge.json", "voice-comparison-test"]),
     "hermes": ("data", ["legacy-material", "logs", "cache", "*/cache"]),
     "prometheus": ("data", ["cache", "logs"]),
 }
@@ -307,6 +308,47 @@ class Placement:
             self._ssh(f"cd {STACK}/hermes && venv/bin/python -m playwright install chromium >/dev/null 2>&1;"
                       f" sudo -n venv/bin/python -m playwright install-deps chromium >/dev/null 2>&1; true", timeout=2400)
         deployed[key] = digest
+
+    def _ensure_node_runtime(self) -> None:
+        """Node.js for Faustus's WhatsApp bridge (the Spark has no system Node): the current LTS unpacked under
+        ``~/faustus-stack/node``, where Faustus looks for it. Nothing to do when a Node is already there or on PATH."""
+        out = self._ssh(f"if command -v node >/dev/null 2>&1 || test -x {STACK}/node/bin/node; then echo ok; fi").strip()
+        if out == "ok":
+            return
+        self._log("instalando Node.js en la Spark para el puente de WhatsApp", step="Node.js")
+        self._ssh(f"set -e; arch=$(uname -m); case $arch in aarch64|arm64) a=arm64;; x86_64) a=x64;; *) a=$arch;; esac;"
+                  f" base=https://nodejs.org/dist/latest-v22.x;"
+                  f" name=$(curl -fsSL $base/SHASUMS256.txt | awk '{{print $2}}' | grep \"linux-$a.tar.xz$\" | head -1);"
+                  f" test -n \"$name\"; rm -rf {STACK}/node.tmp && mkdir -p {STACK}/node.tmp;"
+                  f" curl -fsSL $base/$name | tar -xJ -C {STACK}/node.tmp --strip-components=1;"
+                  f" rm -rf {STACK}/node && mv {STACK}/node.tmp {STACK}/node; {STACK}/node/bin/node -v", timeout=900)
+
+    @staticmethod
+    def _bridge_pid(faustus_dir: Path) -> Optional[int]:
+        try:
+            rec = json.loads((faustus_dir / "data" / "whatsapp" / "bridge.json").read_text(encoding="utf-8"))
+            return int(rec["pid"]) if rec.get("pid") else None
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def _stop_local_whatsapp(self, faustus_dir: Path) -> None:
+        """The WhatsApp bridge outlives Faustus (detached on purpose). Its session must run in one place only — two
+        copies break its encryption keys — so it stops here before its data travels."""
+        pid = self._bridge_pid(faustus_dir)
+        if not pid:
+            return
+        try:
+            if os.name == "nt":
+                seen = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True,
+                                      text=True, creationflags=_flags()).stdout.lower()
+                if "node" not in seen:
+                    return                      # the pid was reused by something else
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, creationflags=_flags())
+            else:
+                os.kill(pid, 9)
+            self._log("WhatsApp: puente parado en el PC (su sesión viaja con Faustus)")
+        except Exception:  # noqa: BLE001 - gone already, or not ours
+            return
 
     def _ensure_node(self) -> list[str]:
         """Services survive logout (linger), Prometheus reaches every Spark (itself included) with the key the Sparks share,
@@ -601,6 +643,7 @@ class Placement:
         deployed = dict(self.state().get("deployed") or {})
         self._log("preparando la Spark", step="preparando la Spark")
         self._ensure_node()
+        self._ensure_node_runtime()
         for app_id in APPS:                                      # code and venvs first: the PC keeps running meanwhile
             self._deploy_code(app_id, dirs[app_id], deployed)
             self._ensure_runtime(app_id, dirs[app_id], deployed)
@@ -608,6 +651,7 @@ class Placement:
         saved = self._read_local_paths(dirs)
         self._update(saved_paths=saved)
         self._stop_local()
+        self._stop_local_whatsapp(dirs["faustus"])
         try:
             for name, local, remote, excludes in self._pairs(dirs):
                 self._log(f"copiando datos de {name} a la Spark", step=f"datos de {name}")
@@ -648,6 +692,7 @@ class Placement:
         deployed = dict(self.state().get("deployed") or {})
         before = dict(deployed)
         units_changed = self._ensure_node()
+        self._ensure_node_runtime()
         changed = []
         for app_id in APPS:
             self._deploy_code(app_id, dirs[app_id], deployed)

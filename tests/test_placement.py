@@ -272,3 +272,21 @@ def test_opening_an_app_on_the_spark_opens_its_tailnet_address(tmp_path, monkeyp
         assert seen["url"] == url and res["where"] == "Spark3"
     finally:
         hub.close()
+
+
+def test_whatsapp_session_travels_with_faustus_but_not_its_process_record(tmp_path):
+    from hoard_link.hub import placement as pl
+    _write(tmp_path / "whatsapp" / "auth" / "creds.json", "{}")
+    _write(tmp_path / "whatsapp" / "messages.jsonl", "{}")
+    _write(tmp_path / "whatsapp" / "bridge.json", '{"pid": 1}')
+    _write(tmp_path / "logs" / "a.log", "x")
+    sub, excludes = pl.DATA["faustus"]
+    found = pr.manifest(str(tmp_path), pl.COMMON_EXCLUDES + excludes)
+    assert sorted(found) == ["whatsapp/auth/creds.json", "whatsapp/messages.jsonl"]
+
+
+def test_bridge_pid_comes_from_faustus_record(tmp_path):
+    from hoard_link.hub import placement as pl
+    assert pl.Placement._bridge_pid(tmp_path) is None
+    _write(tmp_path / "data" / "whatsapp" / "bridge.json", '{"pid": 4321, "port": 8790}')
+    assert pl.Placement._bridge_pid(tmp_path) == 4321

@@ -675,11 +675,15 @@ and its log. For a quick switch, the header carries a one-click arrow next to Fa
 1. prepares the Spark while the PC keeps working: `git archive` of each repository's HEAD (plus Faustus's built UI),
    one venv per app under `~/faustus-stack/<app>` (dependencies only when `requirements.txt` changed; Chromium for Hermes),
    systemd **user** services (`faustus`, `hermes`, `prometheus`, with memory caps and linger so they survive logout), and
-   the SSH aliases Prometheus needs on the Spark;
-2. stops the three on the PC and checks their ports are free;
+   the SSH aliases Prometheus needs on the Spark, and Node.js (current LTS, under `~/faustus-stack/node`) for Faustus's
+   WhatsApp bridge;
+2. stops the three on the PC — and Faustus's WhatsApp bridge, which outlives Faustus on purpose — and checks their ports
+   are free;
 3. copies their data incrementally over SSH as a tar stream (size + modification time decide what changed). Files of
    16 MB or more that exist on both sides travel as changed 4 MB blocks only, so a multi-GB database costs seconds after
-   the first move. Caches, logs and per-machine browser profiles stay on each side;
+   the first move. Caches, logs and per-machine browser profiles stay on each side. The WhatsApp session and its message
+   store travel with Faustus (a session may run in one place only: two copies break its encryption keys); Faustus's
+   keeper starts the bridge again wherever Faustus now runs;
 4. rewrites the settings that hold machine paths (Hermes's Faustus folder for its mail, Prometheus's recipes folder),
    keeping the PC values to restore later;
 5. starts the services, waits for their health checks, publishes them on the Spark's Tailscale name (HTTPS, only your
