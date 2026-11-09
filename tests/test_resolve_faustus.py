@@ -192,3 +192,42 @@ async def test_faustus_voice_service_switched_off_is_not_resolved(capability):
     res = await link.resolve(capability)
     assert res.state == "unavailable"
     assert any("switched off" in r for r in res.details["reasons"])
+
+
+# ---- Faustus moved to a Spark by the Hub ("Run on"): the Hub says where it answers -------------------------------------
+
+def _placement(location: str, running: bool = False) -> httpx.Response:
+    return httpx.Response(200, json={"location": location, "job": {"running": running},
+                                     "urls": {"faustus": "https://spark3.example.ts.net:7443"}})
+
+
+@pytest.mark.asyncio
+async def test_faustus_on_a_spark_is_found_through_the_hub():
+    router = Router()
+    router.get(8810, "/api/placement", _placement("sparks"))
+    router.get(7443, "/api/health", HEALTHY)
+    router.get(7443, "/api/models", LLM_REGISTRY)
+    llamacpp_ready(router)
+    link = make_link(router, config=LinkConfig(faustus_token="ody_test"))
+    res = await link.resolve("llm")
+    assert res.resolved and "from Faustus registry" in res.reason
+
+
+@pytest.mark.asyncio
+async def test_the_hub_is_not_asked_when_faustus_answers_here_and_its_answer_needs_sparks():
+    from hoard_link import _faustus
+
+    calls = []
+    router = Router()
+    router.get(8810, "/api/placement", lambda req: calls.append(req) or _placement("sparks"))
+    router.get(7000, "/api/health", HEALTHY)
+    router.get(7000, "/api/models", LLM_REGISTRY)
+    llamacpp_ready(router)
+    link = make_link(router, config=LinkConfig(faustus_token="ody_test"))
+    assert (await link.resolve("llm")).resolved and not calls
+    client = httpx.AsyncClient(transport=httpx.MockTransport(Router().get(8810, "/api/placement", _placement("pc"))))
+    assert await _faustus.placement_urls(client) == ()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(Router().get(8810, "/api/placement", _placement("sparks", running=True))))
+    assert await _faustus.placement_urls(client) == ()                       # mid-move: nowhere yet
+    client = httpx.AsyncClient(transport=httpx.MockTransport(Router()))
+    assert await _faustus.placement_urls(client) == ()                       # no Hub
