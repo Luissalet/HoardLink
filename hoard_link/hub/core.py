@@ -244,6 +244,14 @@ class Hub:
             "stoppable": bool(proc) and h.state == "healthy" and not proc.protected,
             "manually_stopped": self.automation_blocked(app.id),
         })
+        remote = self.placement.remote_app(app.id)
+        if remote is not None:
+            # It runs on the Spark (Ejecutar en): its state is the Spark's, not this PC's empty port. Opened there, managed
+            # from the placement control, never started or stopped here.
+            d.update({"state": remote["state"], "where": remote["where"], "url": remote["url"] or d.get("url"),
+                      "health": {**d["health"], "state": remote["state"], "detail": remote["detail"]},
+                      "process": None, "stoppable": False, "launchable": False,
+                      "launch_reason": f"Corre en {remote['where']}; se mueve desde «Ejecutar en»."})
         return d
 
     SNAPSHOT_REUSE_S = 1.5
@@ -276,6 +284,10 @@ class Hub:
             windows = fut_windows.result()
             faustus = fut_faustus.result()
             apps = list(pool.map(lambda ah: self.app_status(ah[0], listeners, windows, ah[1]), zip(apps_now, healths)))
+        remote_faustus = self.placement.remote_app("faustus")
+        if remote_faustus is not None:
+            faustus = {**faustus, "where": remote_faustus["where"], "remote_state": remote_faustus["state"],
+                       "remote_url": remote_faustus["url"], "remote_detail": remote_faustus["detail"]}
         profiles = self.profiles_status({a["id"]: a["state"] for a in apps})
         running = sum(1 for a in apps if a["state"] == "running")
         return {
@@ -486,6 +498,17 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        remote = self.placement.remote_app(app_id)
+        if remote is not None and remote["url"]:
+            # Running on the Spark: open it there (its tailnet address) instead of starting a second copy here.
+            if mode == "browser":
+                res = desktop.open_in_browser(remote["url"])
+            else:
+                res = desktop.open_window(remote["url"], app.id, self.config.profiles_dir, browser=self.config.browser,
+                                          size=(int(self.config.window_size[0]), int(self.config.window_size[1])),
+                                          engine=self.config.window_engine, name=app.name, icon=app.icon_path)
+            res.update(app=app_id, where=remote["where"])
+            return res
         h = procs.health(app)
         started: Optional[dict[str, Any]] = None
         if h.state == "down" and autostart and app.launchable:

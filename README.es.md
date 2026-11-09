@@ -717,6 +717,13 @@ Faustus, los modelos de Ollama de este PC y los servidores MCP que solo existen 
 `POST /api/placement/switch {"to": "pc"|"sparks"}`. Herramientas: `hub_placement_status`, `hub_placement_switch`. Estado
 en `data/placement.json`; la mitad de la Spark es `hoard_link/hub/placement_remote.py` (solo biblioteca estándar).
 
+Mientras están en la Spark, el Hub pregunta allí cada 30 s (por SSH, en segundo plano: la página nunca espera) si cada
+servicio de usuario está activo y si su página responde, y lo muestra como su estado: la barra superior («Faustus · En
+marcha en Spark3»), la tarjeta de Faustus (un punto por app y cuándo se comprobó), y Hermes y Prometheus en la lista de
+Hoards y en Sistema, en verde, con la etiqueta «Spark3» en lugar de arrancar/parar, contados entre los que están en marcha.
+«Abrir» los abre en su dirección de Tailscale. `GET /api/placement` y `hub_placement_status` incluyen `remote`
+(`checked`, `ok`, y por app `service`, `http`, `healthy`); `/api/apps` da `where` y la `url` de la Spark.
+
 ### Instancias: otra copia de una app habla como la app
 
 Una copia de una app arrancada con otra carpeta de datos (una instancia de QA, una demo, una rama) escribe allí su

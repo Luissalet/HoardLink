@@ -42,6 +42,7 @@ MIN_FREE_GB = 4.0
 PORTS = {"faustus": 7000, "hermes": 5221, "prometheus": 5205}
 HEALTH = {"faustus": "/", "hermes": "/api/health", "prometheus": "/api/health"}
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15"]
+REMOTE_HEALTH_TTL_S = 30.0       # how old the "are they up on the Spark?" answer may be before it is asked again
 PAUSED_ON_SPARK = [
     "Hermes: la vigilancia de ventanas abiertas de tu navegador («Mi ventana abierta»); necesita Windows y tu navegador",
     "Faustus: el control de tu navegador real y del escritorio de Windows",
@@ -131,9 +132,80 @@ class Placement:
         data = self.state()
         if data["location"] == "sparks" and not data.get("urls") and not (data.get("job") or {}).get("running"):
             self._refresh_urls_later()
-        return {"ok": True, "location": data["location"], "node": data["node"]["name"], "since": data.get("since"),
-                "job": data.get("job"), "apps": list(APPS), "urls": data.get("urls") or {},
-                "paused_on_spark": PAUSED_ON_SPARK, "nodes": ["Spark3"]}
+        out = {"ok": True, "location": data["location"], "node": data["node"]["name"], "since": data.get("since"),
+               "job": data.get("job"), "apps": list(APPS), "urls": data.get("urls") or {},
+               "paused_on_spark": PAUSED_ON_SPARK, "nodes": ["Spark3"]}
+        if data["location"] == "sparks" and not (data.get("job") or {}).get("running"):
+            out["remote"] = self.remote_health()
+        return out
+
+    # ================================================================================= are they up on the Spark?
+    def remote_health(self) -> dict[str, Any]:
+        """Is each of Faustus, Hermes and Prometheus up on the Spark (its user service and its HTTP answer)? The last answer,
+        refreshed in the background once it is older than ``REMOTE_HEALTH_TTL_S``: the Hub page polls every few seconds and
+        must never wait for an SSH round trip. ``{"checked": None, "apps": {}}`` until the first answer arrives."""
+        cached = self.__dict__.get("_remote_health") or {"checked": None, "ok": None, "apps": {}, "error": ""}
+        age = time.time() - float(cached.get("checked") or 0)
+        if age > REMOTE_HEALTH_TTL_S and not self.__dict__.get("_remote_refreshing"):
+            self._remote_refreshing = True
+            threading.Thread(target=self._refresh_remote_health, name="placement-health", daemon=True).start()
+        return cached
+
+    @staticmethod
+    def _health_command() -> str:
+        return "; ".join(f"echo {a} $(systemctl --user is-active {a}.service 2>/dev/null) "
+                         f"$(curl -s -o /dev/null -w '%{{http_code}}' --max-time 4 http://127.0.0.1:{PORTS[a]}{HEALTH[a]} || true)"
+                         for a in APPS)
+
+    @staticmethod
+    def _parse_health(text: str) -> dict[str, dict[str, Any]]:
+        apps: dict[str, dict[str, Any]] = {}
+        for line in (text or "").splitlines():
+            parts = line.split()
+            if not parts or parts[0] not in APPS:
+                continue
+            service = parts[1] if len(parts) > 1 else "unknown"
+            code = parts[2] if len(parts) > 2 else "000"
+            apps[parts[0]] = {"service": service, "http": code,
+                              "healthy": code.startswith(("2", "3")) or code in ("401", "403")}
+        return apps
+
+    def _refresh_remote_health(self) -> None:
+        try:
+            out = self._ssh(self._health_command(), timeout=30)
+            result = {"checked": time.time(), "ok": True, "apps": self._parse_health(out), "error": ""}
+        except Exception as exc:  # noqa: BLE001 - an unreachable Spark is an answer too
+            result = {"checked": time.time(), "ok": False, "apps": {}, "error": str(exc)[-300:]}
+        self._remote_health = result
+        self._remote_refreshing = False
+        try:
+            self.hub.invalidate_snapshot()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def remote_app(self, app_id: str) -> Optional[dict[str, Any]]:
+        """How the Hub should show ``app_id`` while it runs on the Spark (None when it runs here, or is not part of the stack):
+        its state there, where, and the address that reaches it there."""
+        if app_id not in APPS:
+            return None
+        data = self.state()
+        if data["location"] != "sparks" or (data.get("job") or {}).get("running"):
+            return None
+        node = data["node"]["name"]
+        health = self.remote_health()
+        app = (health.get("apps") or {}).get(app_id)
+        if health.get("checked") is None:
+            state, detail = "starting", f"Comprobando en {node}…"
+        elif not health.get("ok"):
+            state, detail = "down", f"No se pudo consultar {node}: {health.get('error') or 'sin respuesta'}"
+        elif app and app["healthy"]:
+            state, detail = "running", f"En marcha en {node} (servicio {app['service']}, HTTP {app['http']})"
+        elif app and app["service"] in ("active", "activating", "reloading"):
+            state, detail = "starting", f"Arrancando en {node} (servicio {app['service']}, HTTP {app['http']})"
+        else:
+            state, detail = "down", f"Parado en {node} (servicio {(app or {}).get('service', 'desconocido')})"
+        return {"state": state, "where": node, "url": (data.get("urls") or {}).get(app_id) or "", "detail": detail,
+                "checked": health.get("checked")}
 
     def local_block(self, app_id: str) -> Optional[str]:
         """Why ``app_id`` must not start on this PC now (None = it may). The switch itself is always allowed."""

@@ -66,7 +66,8 @@ def catalogue() -> list[dict[str, Any]]:
             "name": "hub_placement_status",
             "description": "Where Faustus, Hermes and Prometheus run now: this PC or a Spark (never both).\n"
                            "Also the move in progress with its log, the tailnet links while they are on the Spark and what is "
-                           "paused there. Keywords: dónde corre Faustus, Sparks, apagar el PC, ubicación.",
+                           "paused there, and whether each one is up there (remote: its user service and HTTP answer, checked every 30 s). "
+                           "Keywords: dónde corre Faustus, Sparks, apagar el PC, ubicación, está en marcha en la Spark.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
             "annotations": {"readOnlyHint": True},
         },

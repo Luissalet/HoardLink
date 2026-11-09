@@ -119,6 +119,7 @@ def test_hub_refuses_local_starts_while_on_the_spark(tmp_path):
     try:
         assert hub.placement.status()["location"] == "pc"
         assert hub.placement.local_block("faustus") is None
+        hub.placement._refresh_remote_health = lambda: None                 # no SSH from the tests
         hub.placement._update(location="sparks", urls={"faustus": "https://spark3.example.ts.net"})   # links known: no lookup
         assert "Spark3" in hub.placement.local_block("hermes")
         assert hub.placement.local_block("comfyui") is None            # other apps are not part of the stack
@@ -204,3 +205,70 @@ def test_big_files_travel_as_changed_blocks_only(tmp_path):
     with pytest.raises(EOFError):
         pr.receive_blocks(str(dst), io.BytesIO(b"\x00" * 5), 10, 0)
     assert dst.read_bytes() == smaller and not (tmp_path / "dst.db.placement-tmp").exists()
+
+
+# ---- the Hub shows them as running on the Spark, not as stopped here ---------------------------------------------------
+
+def test_health_command_and_parse_cover_the_three_apps():
+    from hoard_link.hub.placement import Placement, APPS
+    cmd = Placement._health_command()
+    for app in APPS:
+        assert f"is-active {app}.service" in cmd
+    parsed = Placement._parse_health("faustus active 200\nhermes active 000\nprometheus inactive\nnoise line\n")
+    assert parsed["faustus"]["healthy"] is True
+    assert parsed["hermes"] == {"service": "active", "http": "000", "healthy": False}
+    assert parsed["prometheus"]["service"] == "inactive" and parsed["prometheus"]["healthy"] is False
+
+
+def test_apps_on_the_spark_show_its_state_where_and_tailnet_address(tmp_path):
+    hub = _hub(tmp_path)
+    try:
+        pl = hub.placement
+        pl._refresh_remote_health = lambda: None
+        assert pl.remote_app("hermes") is None                                   # on the PC: nothing changes
+        pl._update(location="sparks", urls={"hermes": "https://spark3.example.ts.net:5221/products/",
+                                            "faustus": "https://spark3.example.ts.net"})
+        assert pl.remote_app("hermes")["state"] == "starting"                    # first answer not in yet
+        pl._remote_health = {"checked": time.time(), "ok": True, "error": "", "apps": {
+            "faustus": {"service": "active", "http": "200", "healthy": True},
+            "hermes": {"service": "active", "http": "200", "healthy": True},
+            "prometheus": {"service": "inactive", "http": "000", "healthy": False}}}
+        hermes = pl.remote_app("hermes")
+        assert hermes["state"] == "running" and hermes["where"] == "Spark3" and hermes["url"].endswith(":5221/products/")
+        assert pl.remote_app("prometheus")["state"] == "down"
+        assert pl.remote_app("comfyui") is None
+        status = pl.status()
+        assert status["remote"]["apps"]["faustus"]["healthy"] is True
+        pl._remote_health = {"checked": time.time(), "ok": False, "error": "ssh: timeout", "apps": {}}
+        assert pl.remote_app("faustus")["state"] == "down" and "timeout" in pl.remote_app("faustus")["detail"]
+        pl._update(job={"running": True, "step": "x", "log": []})
+        assert pl.remote_app("hermes") is None and "remote" not in pl.status()   # while moving, the move speaks
+    finally:
+        hub.close()
+
+
+def test_opening_an_app_on_the_spark_opens_its_tailnet_address(tmp_path, monkeypatch):
+    from hoard_link.hub import core
+    hub = _hub(tmp_path)
+    try:
+        pl = hub.placement
+        pl._refresh_remote_health = lambda: None
+        url = "https://spark3.example.ts.net:5205/"
+        pl._update(location="sparks", urls={"prometheus": url})
+        pl._remote_health = {"checked": time.time(), "ok": True, "error": "", "apps": {
+            "prometheus": {"service": "active", "http": "200", "healthy": True}}}
+        from hoard_link.hub.registry import App
+        with hub._lock:
+            hub._apps["prometheus"] = App(id="prometheus", name="Prometheus's Hoard", purpose="", folder=str(tmp_path),
+                                          url="http://127.0.0.1:5205/", health_path="/api/health", expect_service=None,
+                                          launchable=True)
+        st = hub.app_status(hub.get("prometheus"), {}, {})
+        assert st["state"] == "running" and st["where"] == "Spark3" and st["url"] == url
+        assert st["launchable"] is False and st["stoppable"] is False and st["process"] is None
+        seen = {}
+        monkeypatch.setattr(core.desktop, "open_in_browser", lambda u: seen.setdefault("url", u) and {"ok": True})
+        monkeypatch.setattr(core.desktop, "start_app", lambda *a, **k: (_ for _ in ()).throw(AssertionError("started")), raising=False)
+        res = hub.open("prometheus", mode="browser")
+        assert seen["url"] == url and res["where"] == "Spark3"
+    finally:
+        hub.close()

@@ -38,10 +38,16 @@
     // On a Spark (moved there so the PC can be off) it is not "off": it runs elsewhere and is reached there.
     const elsewhere = pl.location === 'sparks' || pl.job?.running;
     const state = elsewhere ? 'elsewhere' : fPending.has('stop') ? 'stopping' : fPending.has('start') ? 'starting' : f.reachable ? 'running' : f.listening ? 'busy' : 'down';
-    const label = {elsewhere: pl.job?.running ? tr('Trasladándose…', 'Moving…') : tr('En ', 'On ') + (pl.node || 'Spark'), running: tr('En marcha', 'Running'), busy: tr('Ocupado, no responde', 'Busy, not answering'), starting: tr('Arrancando…', 'Starting…'), stopping: tr('Parando…', 'Stopping…'), down: f.available === false ? tr('No instalado', 'Not installed') : tr('Apagado', 'Off')}[state];
+    // On the Spark: what the Spark itself says (service up and answering), not this PC's empty port.
+    const remote = elsewhere && !pl.job?.running ? (f.remote_state || 'starting') : '';
+    const node = pl.node || 'Spark';
+    const remoteLabel = {running: tr('En marcha en ', 'Running on ') + node, starting: (pl.remote?.checked ? tr('Arrancando en ', 'Starting on ') : tr('Comprobando en ', 'Checking on ')) + node, down: tr('No responde en ', 'Not answering on ') + node};
+    const label = {elsewhere: pl.job?.running ? tr('Trasladándose…', 'Moving…') : (remoteLabel[remote] || tr('En ', 'On ') + node), running: tr('En marcha', 'Running'), busy: tr('Ocupado, no responde', 'Busy, not answering'), starting: tr('Arrancando…', 'Starting…'), stopping: tr('Parando…', 'Stopping…'), down: f.available === false ? tr('No instalado', 'Not installed') : tr('Apagado', 'Off')}[state];
     let port = '';
     try { port = f.url ? ':' + new URL(f.url).port : ''; } catch (_) { /* keep empty */ }
-    return {f, state, label, port};
+    // The dot and border follow the Spark's state while it runs there (is-elsewhere keeps the Spark-only buttons).
+    const cls = 'is-' + state + (remote ? ' is-' + remote : pl.job?.running ? ' is-starting' : '');
+    return {f, state, label, port, cls, remote};
   }
   function button(label, cls, onclick, {disabled = false, title = ''} = {}) {
     const b = node('button', cls, label); b.type = 'button'; b.onclick = onclick; b.disabled = disabled; if (title) b.title = title; return b;
@@ -69,8 +75,8 @@
     const bar = document.getElementById('hub-statusbar'); if (!bar) return;
     bar.replaceChildren();
     if (!snap) { bar.append(node('span', 'hub-sb-item hub-sb-loading', tr('Consultando estado…', 'Checking status…'))); return; }
-    const {state, label, port} = faustus();
-    const fz = node('div', 'hub-sb-item hub-sb-faustus is-' + state);
+    const {state, label, port, cls} = faustus();
+    const fz = node('div', 'hub-sb-item hub-sb-faustus ' + cls);
     fz.append(node('span', 'hub-dot'), node('strong', '', 'Faustus'), node('span', 'hub-sb-text', label + ((state === 'running' || state === 'busy') && port ? ' · ' + port : '')));
     fz.append(...faustusButtons(true));
     const c = tally();
@@ -95,8 +101,8 @@
   // ---- home overview ------------------------------------------------------------------------------------------
   function overview(box) {
     box.replaceChildren();
-    const {f, state, label} = faustus();
-    const fz = node('section', 'hub-tile hub-tile-faustus is-' + state);
+    const {f, state, label, cls} = faustus();
+    const fz = node('section', 'hub-tile hub-tile-faustus ' + cls);
     const head = node('div', 'hub-tile-head'); head.append(node('span', 'hub-dot'), node('h2', '', 'Faustus'), node('span', 'hub-tile-state', label));
     const moving = snap?.placement?.job?.running;
     const sub = state === 'elsewhere' ? (moving ? tr('Cambiando de ubicación junto a Hermes y Prometheus; abajo ves cada paso.', 'Changing place with Hermes and Prometheus; each step shows below.')
@@ -275,15 +281,17 @@
       tile.querySelector('.hub-launch-pic .hub-dot').className = 'hub-dot is-' + s;
       const desc = window.HubDiscovery ? window.HubDiscovery.description(app, es()) : (app.purpose || '');
       const main = tile.querySelector('.hub-launch-main');
-      main.title = `${app.name} · ${stateText(s)}${app.port ? ' · :' + app.port : ''}\n${desc}\n` + (s === 'unavailable' ? tr('Clic: ver por qué no arranca', 'Click: see why it cannot start')
+      main.title = `${app.name} · ${stateText(s)}${app.where ? ' · ' + tr('en ', 'on ') + app.where : app.port ? ' · :' + app.port : ''}\n${desc}\n` + (app.where ? (app.health?.detail || '') + '\n' : '') + (s === 'unavailable' ? tr('Clic: ver por qué no arranca', 'Click: see why it cannot start')
         : tr('Clic: abrir en ventana · Clic central: abrir en pestaña · Clic derecho: más opciones', 'Click: open in a window · Middle click: open in a tab · Right click: more'));
       main.setAttribute('aria-label', `${app.name}, ${stateText(s)}. ${s === 'unavailable' ? tr('Ver por qué', 'See why') : tr('Abrir en ventana', 'Open in a window')}`);
       const tools = tile.querySelector('.hub-launch-tools');
-      const sig = [s, working, batchBusy, app.launchable, app.stoppable, es()].join('|');
+      const sig = [s, working, batchBusy, app.launchable, app.stoppable, app.where || '', app.health?.detail || '', es()].join('|');
       if (tools.dataset.sig !== sig) {
         tools.dataset.sig = sig; tools.replaceChildren();
         if (canOpen(app)) tools.append(iconButton('tab', tr('Abrir en pestaña', 'Open in a tab') + ' · ' + app.name, () => act.tab(appById(app.id) || app), 'is-hover'));
-        const power = powerButton(app); if (power) tools.append(power);
+        // Running on a Spark: say where instead of a start/stop that does not apply here.
+        if (app.where) { const w = node('span', 'hub-where', app.where); w.title = app.health?.detail || ''; tools.append(w); }
+        const power = app.where ? null : powerButton(app); if (power) tools.append(power);
         tools.append(iconButton('more', tr('Más opciones', 'More options') + ' · ' + app.name, event => {
           const a = appById(app.id); if (!a) return; if (menuEl && menuFor === event.currentTarget) closeMenu(); else openMenu(a, event.currentTarget);
         }, 'hub-ibtn-more'));
@@ -348,7 +356,7 @@
       const s = stateOf(a), p = a.process || null;
       row.className = 'is-' + s + (busy.has(a.id) ? ' is-busy' : '');
       row.querySelector('.st .hub-dot').className = 'hub-dot is-' + s;
-      row.querySelector('.st-label').textContent = busy.has(a.id) ? tr('Trabajando…', 'Working…') : stateText(s);
+      row.querySelector('.st-label').textContent = busy.has(a.id) ? tr('Trabajando…', 'Working…') : stateText(s) + (a.where ? ' · ' + a.where : '');
       row.querySelector('.st').title = a.health?.detail || (a.launchable ? '' : (window.HubDiscovery?.launchMessage(a, es()) || ''));
       row.querySelector('.nm strong').textContent = a.name;
       const desc = window.HubDiscovery ? window.HubDiscovery.description(a, es()) : (a.purpose || '');
@@ -366,7 +374,7 @@
           acts.append(button(s === 'running' ? tr('Abrir', 'Open') : tr('Arrancar y abrir', 'Start & open'), 'hub-btn hub-btn-sm' + (s === 'running' ? ' hub-btn-primary' : ''), () => act.window(a), {disabled: dis, title: tr('Abrir en ventana', 'Open in a window')}));
           acts.append(iconButton('tab', tr('Abrir en pestaña', 'Open in a tab') + ' · ' + a.name, () => act.tab(appById(a.id) || a)));
         }
-        const power = powerButton(a); if (power) acts.append(power);
+        const power = a.where ? null : powerButton(a); if (power) acts.append(power);
         if (s === 'unavailable') acts.append(button(tr('Por qué', 'Why'), 'hub-btn hub-btn-sm hub-btn-ghost', () => act.details(a)));
         acts.append(iconButton('more', tr('Más opciones', 'More options') + ' · ' + a.name, event => {
           const cur = appById(a.id); if (!cur) return; if (menuEl && menuFor === event.currentTarget) closeMenu(); else openMenu(cur, event.currentTarget);

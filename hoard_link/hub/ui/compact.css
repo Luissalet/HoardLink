@@ -291,3 +291,12 @@ body #hub-content { padding-bottom:76px; } /* room for the floating copilot butt
 #hub-content .hub-project-directory .hub-project-name small { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 #hub-content .hub-project-directory .hub-row-actions { display:none; }
 #hub-content .hub-project-filter { max-width:360px; height:34px; margin-bottom:10px; }
+
+/* Apps running on a Spark (Ejecutar en): where they run, and whether each one answers there. */
+.hub-where { align-self:center; margin:0 2px; padding:0 6px; border:1px solid var(--hoard-border-hover); border-radius:999px; font-size:11px; line-height:16px; color:var(--muted); white-space:nowrap; flex:none; }
+.hub-sb-faustus.is-elsewhere.is-running > .hub-dot, .hub-tile-faustus.is-elsewhere.is-running .hub-tile-head .hub-dot { background:var(--green); box-shadow:0 0 6px var(--green); }
+.hub-sb-faustus.is-elsewhere.is-down > .hub-dot, .hub-tile-faustus.is-elsewhere.is-down .hub-tile-head .hub-dot { background:var(--red); box-shadow:0 0 6px var(--red); }
+.placement-health { list-style:none; padding:0; margin:8px 0 2px; display:flex; flex-wrap:wrap; gap:6px 16px; }
+.placement-health li { display:flex; align-items:center; gap:6px; }
+.placement-health li.is-down .hub-dot { background:var(--red); box-shadow:0 0 6px var(--red); }
+.placement-checked { margin:0 0 6px; font-size:12px; }

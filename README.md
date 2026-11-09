@@ -697,6 +697,13 @@ that only exist on Windows. API: `GET /api/placement`, `POST /api/placement/swit
 `hub_placement_status`, `hub_placement_switch`. State in `data/placement.json`; the Spark half is
 `hoard_link/hub/placement_remote.py` (standard library only).
 
+While they live on the Spark the Hub asks there every 30 s (over SSH, in the background: the page never waits) whether
+each user service is active and its page answers, and shows that as their state: the top bar ("Faustus · Running on
+Spark3"), the Faustus tile (one dot per app and when it was checked), and Hermes and Prometheus in the Hoards list and in
+System, green, with a "Spark3" tag instead of start/stop, counted among the running ones. "Open" opens them at their
+Tailscale address. `GET /api/placement` and `hub_placement_status` include `remote` (`checked`, `ok`, and per app
+`service`, `http`, `healthy`); `/api/apps` gives `where` and the Spark `url`.
+
 ### Instances: a second copy of an app speaks as the app
 
 A copy of an app started on another data folder (a QA instance, a demo, a branch) writes its own `mcp-token`
