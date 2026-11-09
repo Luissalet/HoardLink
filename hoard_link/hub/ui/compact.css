@@ -300,3 +300,18 @@ body #hub-content { padding-bottom:76px; } /* room for the floating copilot butt
 .placement-health li { display:flex; align-items:center; gap:6px; }
 .placement-health li.is-down .hub-dot { background:var(--red); box-shadow:0 0 6px var(--red); }
 .placement-checked { margin:0 0 6px; font-size:12px; }
+
+/* Quick PC ⇄ Spark switch in the header (placement.js) */
+.hub-sb-placement { display: inline-flex; }
+.placement-arrow { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 4px 1px 8px;
+  border: 1px solid var(--hoard-border); border-radius: 999px; font-size: 12px; line-height: 1; white-space: nowrap; }
+.placement-arrow .pa-end { color: var(--hoard-text-dim); opacity: .6; }
+.placement-arrow .pa-end.is-here { opacity: 1; color: var(--hoard-accent); font-weight: 600; }
+.placement-arrow .pa-go { all: unset; cursor: pointer; display: inline-grid; place-items: center; width: 26px; height: 22px;
+  border-radius: 999px; font-size: 15px; font-weight: 700; color: var(--hoard-accent-ink, #111); background: var(--hoard-accent); }
+.placement-arrow .pa-go:hover:not(:disabled) { background: var(--hoard-accent-strong, var(--hoard-accent)); }
+.placement-arrow .pa-go:focus-visible { outline: 2px solid var(--hoard-accent); outline-offset: 2px; }
+.placement-arrow .pa-go:disabled { cursor: progress; }
+.placement-arrow .pa-go.is-moving { animation: pa-pulse 1.1s ease-in-out infinite; }
+@keyframes pa-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .placement-arrow .pa-go.is-moving { animation: none; opacity: .6; } }

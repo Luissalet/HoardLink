@@ -76,6 +76,26 @@
     return wrap;
   }
 
+  // The quick switch: "PC ← Spark3" / "PC → Spark3". One click moves Faustus, Hermes and Prometheus to the other side
+  // (no confirmation); the arrow points where they go and pulses while they move.
+  function arrow() {
+    const wrap = el("span", "placement-arrow");
+    if (!state) return wrap;
+    const job = state.job || {};
+    const node = state.node || "Spark";
+    const here = job.running ? job.to : state.location;
+    const to = job.running ? job.to : (state.location === "sparks" ? "pc" : "sparks");
+    const pc = el("span", "pa-end" + (here === "pc" ? " is-here" : ""), t("pc"));
+    const sp = el("span", "pa-end" + (here === "sparks" ? " is-here" : ""), node);
+    const b = el("button", "pa-go" + (job.running ? " is-moving" : ""), to === "pc" ? "\u2190" : "\u2192");
+    b.type = "button"; b.dataset.placementArrow = to; b.disabled = !!job.running;
+    b.title = job.running ? `${t("moving")} ${job.step || ""}` : (to === "sparks" ? t("to_sparks_title", { node }) : t("to_pc_title"));
+    b.setAttribute("aria-label", b.title);
+    b.onclick = (ev) => { ev.stopPropagation(); move(to); };
+    wrap.append(pc, b, sp);
+    return wrap;
+  }
+
   // Confirmation, progress, links, paused features, last error.
   function panel() {
     const job = state.job || {};
@@ -166,9 +186,10 @@
     const strip = document.getElementById("placement");
     if (strip) strip.replaceChildren(controls());
     document.querySelectorAll("[data-placement-slot]").forEach((slot) => slot.replaceChildren(controls()));
+    document.querySelectorAll("[data-placement-arrow-slot]").forEach((slot) => slot.replaceChildren(arrow()));
   }
 
-  window.HubPlacement = { state: () => state, controls };
+  window.HubPlacement = { state: () => state, controls, arrow };
   window.addEventListener("hub:snapshot", (ev) => {
     const snap = ev.detail && ev.detail.snapshot;
     if (snap && snap.placement && !polling) { state = snap.placement; render(); }
