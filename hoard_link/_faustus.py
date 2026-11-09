@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 import httpx
 
 TIMEOUT_S = 1.5
+REMOTE_TIMEOUT_S = 8.0
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 # Names that only resolve inside the person's own network (mDNS and the home/LAN conventions).
@@ -32,11 +33,13 @@ async def _request(
     *,
     json_body: Any = None,
     headers: Optional[dict[str, str]] = None,
+    timeout: Optional[float] = None,
 ) -> tuple[Optional[int], Any]:
+    limit = TIMEOUT_S if timeout is None else timeout
     try:
         resp = await asyncio.wait_for(
-            client.request(method, url, json=json_body, headers=headers, timeout=TIMEOUT_S),
-            TIMEOUT_S,
+            client.request(method, url, json=json_body, headers=headers, timeout=limit),
+            limit,
         )
     except Exception:
         return None, None
@@ -48,9 +51,9 @@ async def _request(
 
 
 async def get(
-    client: httpx.AsyncClient, url: str, headers: Optional[dict[str, str]] = None
+    client: httpx.AsyncClient, url: str, headers: Optional[dict[str, str]] = None, timeout: Optional[float] = None
 ) -> tuple[Optional[int], Any]:
-    return await _request(client, "GET", url, headers=headers)
+    return await _request(client, "GET", url, headers=headers, timeout=timeout)
 
 
 async def post(
@@ -89,7 +92,9 @@ async def find_reachable(
     """Return the first candidate whose /api/health reports healthy."""
     for url in candidate_urls:
         url = url.rstrip("/")
-        status, data = await get(client, f"{url}/api/health")
+        # A Faustus on another machine (a Spark over the tailnet: TLS and a relay) needs more than a local probe.
+        wait = TIMEOUT_S if host_scope(url) == "loopback" else REMOTE_TIMEOUT_S
+        status, data = await get(client, f"{url}/api/health", timeout=wait)
         if status == 200 and isinstance(data, dict) and data.get("status") == "healthy":
             return url
     return None
