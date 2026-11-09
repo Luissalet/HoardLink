@@ -669,7 +669,8 @@ window has a **Browser lanes** panel (domain, holder, since, expires, Release). 
 
 Faustus, Hermes and Prometheus can move to a DGX Spark so the PC can be switched off, and come back. The **Run on**
 control (Home › Faustus tile, and System › Connections) explains the move, asks for confirmation, then shows each step
-and its log. The move:
+and its log. For a quick switch, the header carries a one-click arrow next to Faustus's state (`PC ← Spark3` /
+`PC → Spark3`): it points where the three go, moves them without asking and pulses while they move. The move:
 
 1. prepares the Spark while the PC keeps working: `git archive` of each repository's HEAD (plus Faustus's built UI),
    one venv per app under `~/faustus-stack/<app>` (dependencies only when `requirements.txt` changed; Chromium for Hermes),
