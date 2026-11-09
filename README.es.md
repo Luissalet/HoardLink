@@ -688,7 +688,9 @@ navegador** (dominio, titular, desde, caduca, Liberar). Más detalle en [docs/HU
 
 Faustus, Hermes y Prometheus pueden pasar a una DGX Spark para que puedas apagar el PC, y volver. El control
 **Ejecutar en** (Inicio › tarjeta de Faustus, y Sistema › Conexiones) explica el traslado, pide confirmación y luego
-muestra cada paso con su registro. El traslado:
+muestra cada paso con su registro. Para cambiar rápido, la cabecera lleva una flecha de un clic junto al estado de Faustus
+(`PC ← Spark3` / `PC → Spark3`): apunta adonde van los tres, los traslada sin preguntar y parpadea mientras se mueven. El
+traslado:
 
 1. prepara la Spark mientras el PC sigue funcionando: `git archive` del HEAD de cada repositorio (más la interfaz
    compilada de Faustus), un venv por app en `~/faustus-stack/<app>` (dependencias solo cuando cambia `requirements.txt`;
