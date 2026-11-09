@@ -231,3 +231,21 @@ async def test_the_hub_is_not_asked_when_faustus_answers_here_and_its_answer_nee
     assert await _faustus.placement_urls(client) == ()                       # mid-move: nowhere yet
     client = httpx.AsyncClient(transport=httpx.MockTransport(Router()))
     assert await _faustus.placement_urls(client) == ()                       # no Hub
+
+
+@pytest.mark.asyncio
+async def test_a_faustus_on_another_machine_gets_a_longer_health_probe(monkeypatch):
+    import asyncio
+
+    from hoard_link import _faustus
+
+    monkeypatch.setattr(_faustus, "TIMEOUT_S", 0.05)
+    monkeypatch.setattr(_faustus, "REMOTE_TIMEOUT_S", 2.0)
+
+    async def slow(request):
+        await asyncio.sleep(0.3)                     # TLS through the tailnet relay
+        return httpx.Response(200, json={"status": "healthy"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    assert await _faustus.find_reachable(client, ("https://spark3.example.ts.net",)) == "https://spark3.example.ts.net"
+    assert await _faustus.find_reachable(client, ("http://127.0.0.1:7000",)) is None    # a local one is not waited for
