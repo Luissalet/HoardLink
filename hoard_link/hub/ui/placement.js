@@ -22,6 +22,9 @@
     update: ["Llevar el código nuevo a la Spark", "Send the new code to the Spark"],
     update_hint: ["Copia el código que cambió en el PC y reinicia solo esas apps; sus datos no se tocan.",
                   "Copies the code that changed on the PC and restarts only those apps; their data is left alone."],
+    h_running: ["en marcha", "running"], h_starting: ["arrancando", "starting"], h_down: ["parado o sin respuesta", "stopped or not answering"],
+    h_checking: ["comprobando…", "checking…"], h_unreachable: ["No puedo consultar {node}:", "Cannot reach {node}:"],
+    h_checked: ["comprobado hace {s} s", "checked {s} s ago"],
   };
   const t = (k, vars = {}) => (T[k] ? T[k][es() ? 0 : 1] : k).replace(/\{(\w+)\}/g, (_, v) => vars[v] ?? "");
   let state = null, confirmTo = null, polling = null, lastJobRunning = null;
@@ -91,6 +94,7 @@
     }
     if (state.location === "sparks" && !job.running) {
       box.appendChild(el("p", null, t("on_spark", { node: state.node })));
+      box.appendChild(health());
       const urls = state.urls || {};
       if (Object.keys(urls).length) {
         box.appendChild(el("p", "muted", t("links")));
@@ -116,6 +120,30 @@
       setTimeout(() => { pre.scrollTop = pre.scrollHeight; }, 0);
     }
     return box.childElementCount ? box : null;
+  }
+
+  // Is each one actually up on the Spark? (its user service and its HTTP answer, asked by the Hub over SSH)
+  function health() {
+    const remote = state.remote || {};
+    const wrap = el("div", "placement-health-box");
+    if (remote.checked && remote.ok === false) {
+      wrap.appendChild(el("p", "placement-error", `${t("h_unreachable", { node: state.node })} ${remote.error || ""}`));
+      return wrap;
+    }
+    const ul = el("ul", "placement-health");
+    for (const app of state.apps || []) {
+      const h = (remote.apps || {})[app];
+      const s = !remote.checked ? "starting" : h && h.healthy ? "running" : h && ["active", "activating", "reloading"].includes(h.service) ? "starting" : "down";
+      const li = el("li", "is-" + s);
+      li.dataset.app = app; li.dataset.state = s;
+      li.title = h ? `systemd: ${h.service} · HTTP ${h.http}` : "";
+      li.append(el("span", "hub-dot is-" + s), el("b", null, app[0].toUpperCase() + app.slice(1)),
+                el("span", "muted", !remote.checked ? t("h_checking") : t("h_" + s)));
+      ul.appendChild(li);
+    }
+    wrap.appendChild(ul);
+    if (remote.checked) wrap.appendChild(el("p", "muted placement-checked", t("h_checked", { s: Math.max(0, Math.round(Date.now() / 1000 - remote.checked)) })));
+    return wrap;
   }
 
   // One block: toggle + panel. The Home tile and the System strip both use it.
