@@ -461,10 +461,15 @@ class Link:
         return await self._cached("gpu", lambda: asyncio.to_thread(gpu_free_mb))
 
     async def _faustus_url(self) -> Optional[str]:
-        return await self._cached(
-            "faustus_url",
-            lambda: _faustus.find_reachable(self._client, self.config.faustus_urls),
-        )
+        async def find() -> Optional[str]:
+            url = await _faustus.find_reachable(self._client, self.config.faustus_urls)
+            if url:
+                return url
+            # Not on this PC: the Hub may have moved it to a Spark ("Run on"); it says where it answers now.
+            moved = await _faustus.placement_urls(self._client, self.config.hub_url)
+            return await _faustus.find_reachable(self._client, moved) if moved else None
+
+        return await self._cached("faustus_url", find)
 
     # ------------------------------------------------------------------
     # resolution
