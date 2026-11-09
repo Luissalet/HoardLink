@@ -79,6 +79,10 @@
     const fz = node('div', 'hub-sb-item hub-sb-faustus ' + cls);
     fz.append(node('span', 'hub-dot'), node('strong', '', 'Faustus'), node('span', 'hub-sb-text', label + ((state === 'running' || state === 'busy') && port ? ' · ' + port : '')));
     fz.append(...faustusButtons(true));
+    // Quick switch PC ⇄ Spark (placement.js fills and refreshes it).
+    const arrowSlot = node('span', 'hub-sb-placement'); arrowSlot.dataset.placementArrowSlot = '1';
+    if (window.HubPlacement?.arrow) arrowSlot.append(window.HubPlacement.arrow());
+    fz.append(arrowSlot);
     const c = tally();
     const hoards = node('a', 'hub-sb-item hub-sb-link' + (c.attention ? ' has-attention' : ''));
     hoards.href = '#hub/system'; hoards.title = tr('Estado de los Hoards', 'Hoards status');
