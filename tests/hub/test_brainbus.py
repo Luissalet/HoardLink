@@ -208,8 +208,15 @@ def test_note_links_to_the_shop_and_replace_mode_keeps_hand_edits(hub, brain):
     assert "date: 2029-11-09" in brain.notes[dpath] and "Vence: 2029-11-09" in brain.notes[dpath]
     brain.notes[dpath] = brain.notes[dpath] + "\nMi apunte a mano.\n"
     assert facet.submit(deadline["then"][0], dctx("2029-12-01"), wait=20)["status"] == "done"
-    assert "Vence: 2029-12-01" in brain.notes[dpath] and "Vence: 2029-11-09" not in brain.notes[dpath]
-    assert "Mi apunte a mano." in brain.notes[dpath] and brain.notes[dpath].count(brainbus.BEGIN) == 1
+    assert "- Vence: 2029-12-01\n- Tipo: warranty_end" in brain.notes[dpath] and "Vence: 2029-11-09" not in brain.notes[dpath]
+    assert "date: 2029-12-01" in brain.notes[dpath] and "date: 2029-11-09" not in brain.notes[dpath]
+    assert "Mi apunte a mano." in brain.notes[dpath] and brain.notes[dpath].count("Vence:") == 1
+    # the hub's text was rewritten by hand: the next version goes at the end, the hand-written one stays
+    brain.notes[dpath] = brain.notes[dpath].replace("Vence: 2029-12-01", "Vence (lo cambié yo): enero")
+    assert facet.submit(deadline["then"][0], dctx("2030-01-15"), wait=20)["status"] == "done"
+    final = brain.notes[dpath]
+    assert 0 < final.index("lo cambié yo") < final.index("Mi apunte a mano.") < final.index("Vence: 2030-01-15")
+    assert "<!--" not in final and final.count("Vence: 2030-01-15") == 1
 
 
 # ---- the queue ---------------------------------------------------------------------------------------------------------
@@ -359,3 +366,50 @@ def test_tools(hub, brain):
     hub.events.emit("cookhoard.recipe.imported", {"recipe_id": 5, "title": "Tortilla", "source": "web"}, source="cookhoard")
     assert wait_for(lambda: "Familia/Recetas/Tortilla.md" in brain.notes, timeout=20)
     assert tools.call(hub, "hub_brain_target", {"url": ""})["target"]["source"] == "pc"
+
+
+# ---- the rule engine around it ---------------------------------------------------------------------------------------------
+def test_a_brain_rule_does_not_wait_behind_a_slow_action_of_another_rule(hub, brain):
+    """Rules run in order on one thread, so a backup that takes minutes would hold every later rule; one that only
+    queues a Brain write (or emits) has its own thread."""
+    import threading
+
+    from hoard_link.hub.rules import is_fast
+    release, entered = threading.Event(), threading.Event()
+    real = hub.rules._run_actions
+
+    def runner(acts, ctx, caller):
+        if caller == "rule:slow":
+            entered.set()
+            release.wait(20)
+            return [{"kind": "hub", "ok": True}]
+        return real(acts, ctx, caller)
+
+    hub.rules._run_actions = runner
+    slow = {"id": "slow", "name": "slow", "when": {"type": "x.slow"}, "then": [{"kind": "hub", "tool": "hub_backup_run", "args": {}}], "cooldown_s": 0}
+    fast = {k: v for k, v in factory("rule-brain-kafka-deadline").items() if k != "sample"}
+    assert hub.rules.add(slow)["ok"] and hub.rules.add(fast)["ok"]
+    assert is_fast(fast) and not is_fast(slow) and not is_fast({"then": []})
+    try:
+        hub.events.emit("x.slow", {}, source="x")
+        assert entered.wait(5)
+        hub.events.emit("kafka.deadline.created", {"deadline_id": "t5", "title": "Renovar el seguro", "due": "2027-01-10"}, source="kafka")
+        assert wait_for(lambda: "Familia/Plazos/Renovar el seguro.md" in brain.notes, timeout=20)
+        assert hub.rules.get("slow")["runs"] == 0          # the slow one is still at it
+    finally:
+        release.set()
+    assert wait_for(lambda: hub.rules.get("slow")["runs"] == 1, timeout=10)
+
+
+def test_the_last_event_of_a_type_is_found_past_the_newest_rows(hub):
+    """``type`` filters in SQL: the limit counts matching rows, not the newest rows whatever their type."""
+    hub.events.emit("kafka.deadline.created", {"deadline_id": "old"}, source="kafka")
+    hub.events.emit("lumiere.render.done", {"id": 1}, source="lumiere")          # stored as lumiere.job.done
+    for i in range(40):
+        hub.events.emit("agent.call", {"n": i}, source="x")
+    assert [e["data"]["deadline_id"] for e in hub.events.query(type="kafka.deadline.created", limit=1)] == ["old"]
+    assert len(hub.events.query(type="kafka.*|phileas.*", limit=1)) == 1
+    assert hub.events.query(type="lumiere.render.done", limit=1)[0]["type"] == "lumiere.job.done"
+    assert hub.events.query(type="lumiere.job.done", limit=1)[0]["data"]["_orig_type"] == "lumiere.render.done"
+    assert hub.events.query(type="nothing.like.this", limit=5) == []
+    assert len(hub.events.query(type="agent.call", limit=7)) == 7 and len(hub.events.query(limit=5)) == 5

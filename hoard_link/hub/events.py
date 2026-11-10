@@ -110,6 +110,23 @@ def matches(pattern: str, event_type: str) -> bool:
     return False
 
 
+def _type_sql(pattern: str) -> tuple[str, list[Any]]:
+    """A SQL condition that keeps every row ``pattern`` may match (the rows an alias renamed included: they answer
+    to two names); the exact check stays in Python. Without it the row limit would cut the scan before the filter
+    and "the last event of this type" would only look at the newest few rows."""
+    conds, params = ["data LIKE ?"], ['%"_orig_type"%']
+    for part in str(pattern or "*").split("|"):
+        part = part.strip() or "*"
+        if part == "*":
+            return "", []
+        if any(ch in part for ch in "*?["):
+            conds.append("type GLOB ?"); params.append(part)
+            continue
+        for name in {part, canonical_type(part)}:
+            conds.append("type = ?"); params.append(name)
+    return "(" + " OR ".join(conds) + ")", params
+
+
 class EventLog:
     def __init__(self, path: Optional[str], *, keep: int = DEFAULT_KEEP, now: Callable[[], float] = time.time):
         self.path = path or ":memory:"
@@ -213,11 +230,15 @@ class EventLog:
             where.append("ts <= ?"); params.append(float(until_ts))
         if text:
             where.append("(type LIKE ? OR data LIKE ?)"); params += [f"%{text}%", f"%{text}%"]
+        if type:
+            cond, extra = _type_sql(type)
+            if cond:
+                where.append(cond); params += extra
         limit = max(1, min(int(limit or 100), 2000))
         order = "DESC" if newest_first and not since_id else "ASC"
         sql = f"SELECT id, ts, type, source, data FROM events WHERE {' AND '.join(where)} ORDER BY id {order} LIMIT ?"
         with self._lock:
-            rows = self._db.execute(sql, (*params, limit * (4 if type and ("*" in type or "|" in type or type in EVENT_ALIASES) else 1))).fetchall()
+            rows = self._db.execute(sql, (*params, limit * (4 if type else 1))).fetchall()   # the SQL filter also lets through rows an alias renamed
         out = [self._row(r) for r in rows]
         if type:
             out = [e for e in out if any(matches(type, n) for n in event_names(e))][:limit]
