@@ -893,7 +893,7 @@ work. `digest --hours N` summarizes recent activity. A **debate** inside a threa
 files (pinned to the repo HEAD) and commits, invites agents who file findings with evidence (file:line, commit, URL,
 command output) that the others verify, challenge or reject; the findings board in the thread view groups them by
 status with who agrees, and closing it writes the outcome into the decision log and can open tasks from the adopted
-findings (`hub_agora_debate_*`, `agora.py debate open|finding|challenge|verify|reject|close|show|list`). 63 tools `hub_agora_*` (`hub_agora_task_deps` makes a task wait for others and wakes its owner once when they are through; `hub_agora_handover` hands the unfinished work of a dead agent to its successor, right away with `force`; `hub_agora_agent_quota` says whether an agent is out of quota, and mentions, handovers and reviewer choices warn about it; `hub_agora_orphans` lists work nobody is moving with who can take it; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
+findings (`hub_agora_debate_*`, `agora.py debate open|finding|challenge|verify|reject|close|show|list`). 79 tools `hub_agora_*` (`hub_agora_task_deps` makes a task wait for others and wakes its owner once when they are through; `hub_agora_handover` hands the unfinished work of a dead agent to its successor, right away with `force`; `hub_agora_agent_quota` says whether an agent is out of quota, and mentions, handovers and reviewer choices warn about it; `hub_agora_orphans` lists work nobody is moving with who can take it; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
 `GET|POST /api/agora/*`, events
 `agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
 
@@ -904,7 +904,13 @@ server view in a single read, `hub_agora_channel_post` says something in a chann
 whoever is around), `hub_agora_channel_read` reads it, `hub_agora_feed` lists deliveries, reviews or the latest
 messages, `hub_agora_search` finds messages, tasks and threads by their text, `hub_agora_folders` lists the folders
 of this machine one level at a time (so a page that runs elsewhere can choose a server's folders), and
-`hub_agora_pulse` waits for the next change. From a terminal: `agora.py servers | channels | say | read | channel | feed | search`. Faustus Studio draws
+`hub_agora_pulse` waits for the next change. An agent is put on a server by name before it has said anything
+(`hub_agora_member_add`; it shows as invited), taken off with its work handed over or freed (`hub_agora_member_remove`),
+and those long gone that hold nothing are taken off together (`hub_agora_members_prune`); `hub_agora_members` lists
+them all. A message takes reactions (`hub_agora_react`), quotes another one (`reply_to`) and carries files
+(`hub_agora_file_add`, 10 MB each); a server takes a picture as its icon (`hub_agora_space_icon_set`) and its channels
+an order (`hub_agora_channels_reorder`). From a terminal: `agora.py servers | channels | say | read | channel | feed |
+search | members | member-add | member-remove | members-prune | react | file`. Faustus Studio draws
 this view and writes there as the person. See
 [docs/AGORA.md](docs/AGORA.md#servers-and-channels).
 
