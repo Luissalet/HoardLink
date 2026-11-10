@@ -189,6 +189,11 @@ MIGRATIONS.append(agora_social.SOCIAL_MIGRATION)
 MIGRATIONS.append(agora_channels.MUTED_MIGRATION)
 # the rank the person gives each agent on each server (agora_ranks.py)
 MIGRATIONS.append(agora_ranks.RANKS_MIGRATION)
+# a task's threads, found by the task: reading its activity walked every message, once per task of a list
+MIGRATIONS.append("CREATE INDEX IF NOT EXISTS threads_task ON threads(task_id);")
+#: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
+OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
+                  "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -939,9 +944,7 @@ class Agora:
         since = float(task.get("claimed_at") or task.get("created") or 0)
         cp = self.db.one("SELECT revision,created FROM task_checkpoints WHERE task_id=? AND author=? "
                          "AND created>=? ORDER BY revision DESC LIMIT 1", (task["id"], owner, since))
-        note = self.db.one("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
-                           "WHERE t.task_id=? AND m.author=? AND m.created>=? "
-                           "ORDER BY m.id DESC LIMIT 1", (task["id"], owner, since))
+        note = self.db.one(OWNER_NOTE_SQL, (task["id"], owner, since))
         last_progress = max(since, float(cp["created"]) if cp else since, float(note["created"]) if note else since)
         heartbeat = float(agent["last_seen"]) if agent else None
         fresh = heartbeat is not None and now - heartbeat <= DEFAULT_LOCK_TTL_S
