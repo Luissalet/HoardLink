@@ -1154,6 +1154,11 @@ class AgoraConsoleFacet(Facet):
             return THREAD_ID
         agora = self._agora()
         with agora.db.tx():
+            # The space's #general channel and this console speak in the same thread.
+            found = agora.db.one("SELECT thread_id AS id FROM agora_channels WHERE space_id=? AND slug='general' "
+                                 "AND thread_id IS NOT NULL", (self.space_id,))
+            if found:
+                return found['id']
             found = agora.db.one("SELECT id FROM threads WHERE space_id=? AND kind='handoff' ORDER BY id LIMIT 1", (self.space_id,))
             if found:
                 return found['id']

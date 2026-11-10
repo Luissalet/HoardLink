@@ -15,6 +15,12 @@ Standard library only, so any agent with a terminal can use it (no MCP needed)::
     python scripts/agora.py --as reviewer open "q8 or q4 for live tests?" --kind debate --body-file prop.md --mention builder
     python scripts/agora.py --as builder post 7 --kind disagree --body-file answer.md
     python scripts/agora.py --as reviewer escalate 7 --question "q8 at 500k (slow, faithful) or q4 (fast)?"
+    python scripts/agora.py --as builder servers          # every space as a server: what moves, who is around, what is new for you
+    python scripts/agora.py --as builder --space faustus channels
+    python scripts/agora.py --as builder --space faustus say general "@reviewer the build is green"   # @id mentions, @here everyone around
+    python scripts/agora.py --as builder --space faustus read general --limit 30
+    python scripts/agora.py --as builder --space faustus channel ideas --topic "what to build next" --category chat
+    python scripts/agora.py --space faustus feed --kind deliveries   # what was delivered (reviews | activity)
     python scripts/agora.py watch                         # what each agent is really doing, from its own transcripts
     python scripts/agora.py leaders                       # state of each leader's CLI (working / waiting / idle / login expired / error)
     python scripts/agora.py watch-bind codex:<session id> codex-sparks   # assign a transcript session to an agent ("-" unbinds)
@@ -620,6 +626,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-reviews", action="store_true", help="no traspasa el papel de revisor")
     s.add_argument("--force", action="store_true",
                    help="traspasa ya aunque el origen siga mandando latidos (orden de Luis: sin cuota, trabajo urgente)")
+    sub.add_parser("servers", help="cada espacio como servidor: tareas, quién anda por ahí y qué hay nuevo para ti")
+    sub.add_parser("channels", help="canales del espacio (general siempre existe) con lo que no has leído")
+    s = sub.add_parser("channel", help="crea un canal en el espacio, o lo cambia si ya existe (--archive lo archiva)")
+    s.add_argument("name"); s.add_argument("--title"); s.add_argument("--topic"); s.add_argument("--category")
+    s.add_argument("--position", type=int); s.add_argument("--archive", action="store_true"); s.add_argument("--restore", action="store_true")
+    s = sub.add_parser("say", help="escribe en un canal (general por defecto); @id menciona, @here a quien ande por ahí")
+    s.add_argument("words", nargs="*", help="[canal] texto: con una sola palabra o frase, va a general"); texts(s, "body")
+    s.add_argument("--kind", default="comment"); s.add_argument("--mention", action="append"); s.add_argument("--thread", type=int)
+    s = sub.add_parser("read", help="últimos mensajes de un canal (general por defecto) o de un hilo con --thread")
+    s.add_argument("channel", nargs="?", default="general"); s.add_argument("--limit", type=int, default=30)
+    s.add_argument("--before", type=int); s.add_argument("--peek", action="store_true"); s.add_argument("--thread", type=int)
+    s = sub.add_parser("feed", help="entregas del espacio (deliveries), lo que espera revisión (reviews) o los últimos mensajes (activity)")
+    s.add_argument("--kind", default="deliveries", choices=["deliveries", "reviews", "activity"]); s.add_argument("--limit", type=int, default=20)
+    s = sub.add_parser("search", help="dónde se dijo algo: mensajes, tareas e hilos del espacio (o de todos con --all)")
+    s.add_argument("q"); s.add_argument("--all", action="store_true"); s.add_argument("--limit", type=int, default=20)
     s = sub.add_parser("task"); s.add_argument("task", type=int)
     s = sub.add_parser("thread"); s.add_argument("thread", type=int)
     s = sub.add_parser("ack"); s.add_argument("thread", type=int, nargs="?"); s.add_argument("--all", action="store_true")
@@ -662,7 +683,7 @@ def main(argv: list[str] | None = None) -> int:
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
     _SELECTED_SPACE = a.space
-    reads = {"spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
+    reads = {"servers", "channels", "read", "feed", "search", "spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
     if a.cmd not in reads and not (a.cmd == "debate" and a.dcmd in ("show", "list")) and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
@@ -820,6 +841,48 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "post":
         r = call("POST", "/api/agora/post", {"agent": ag, "thread_id": a.thread, "body": text_arg(a, "body") or "", "kind": a.kind,
                                              "mentions": csv(a.mention)})
+    elif c == "servers":
+        r = call("GET", "/api/agora/servers" + (f"?agent={urllib.parse.quote(ag)}" if ag else ""))
+    elif c == "channels":
+        r = call("GET", "/api/agora/channels" + (f"?agent={urllib.parse.quote(ag)}" if ag else ""))
+    elif c == "channel":
+        listed = call("GET", "/api/agora/channels?archived=1")
+        known = {ch["slug"] for ch in listed.get("channels", [])} if listed.get("ok") else set()
+        fields = {k: v for k, v in {"title": a.title, "topic": a.topic, "category": a.category, "position": a.position}.items() if v is not None}
+        if a.archive or a.restore:
+            fields["archived"] = bool(a.archive)
+        slug = "".join(ch if ch.isalnum() else "-" for ch in a.name.lower()).strip("-")
+        if slug in known or a.name in known:
+            r = call("POST", "/api/agora/channel_update", {"agent": ag, "channel": a.name, **fields}) if fields else \
+                {"ok": True, "channel": next(ch for ch in listed["channels"] if ch["slug"] in (slug, a.name))}
+        else:
+            r = call("POST", "/api/agora/channel_create", {"agent": ag, "slug": a.name, "title": a.title or a.name,
+                                                           **{k: v for k, v in fields.items() if k in ("topic", "category")}})
+    elif c == "say":
+        body = text_arg(a, "body")
+        words = list(a.words or [])
+        if body is None:   # say "texto"  |  say canal "texto"
+            channel, body = ("general", words[0]) if len(words) == 1 else (words[0] if words else "general", " ".join(words[1:]))
+        else:              # say [canal] --body-file f
+            channel = words[0] if words else "general"
+        target = {"thread_id": a.thread} if a.thread else {"channel": channel.lstrip("#")}
+        r = call("POST", "/api/agora/channel_post", {"agent": ag, **target, "body": body, "kind": a.kind, "mentions": csv(a.mention)})
+    elif c == "read":
+        q = {"limit": a.limit}
+        if ag:
+            q["agent"] = ag
+        if a.before:
+            q["before_id"] = a.before
+        if a.peek:
+            q["peek"] = "1"
+        if a.thread:
+            r = call("POST", "/api/agora/channel_read", {**q, "thread_id": a.thread, "peek": a.peek})
+        else:
+            r = call("GET", "/api/agora/channels/" + urllib.parse.quote(a.channel.lstrip("#").lower(), safe="") + "?" + urllib.parse.urlencode(q))
+    elif c == "feed":
+        r = call("GET", "/api/agora/feed?" + urllib.parse.urlencode({"kind": a.kind, "limit": a.limit}))
+    elif c == "search":
+        r = call("GET", "/api/agora/search?" + urllib.parse.urlencode({"q": a.q, "limit": a.limit, **({"all_spaces": "1"} if a.all else {})}))
     elif c == "resolve":
         r = call("POST", "/api/agora/resolve", {"agent": ag, "thread_id": a.thread, "resolution": text_arg(a, "text") or ""})
     elif c == "escalate":
@@ -872,6 +935,58 @@ def main(argv: list[str] | None = None) -> int:
             if locks["missing"] or locks["conflicts"] or locks["owner_changed"]:
                 print("AVISO: revisa propietario y bloqueos antes de retomar")
                 print(json.dumps(locks, ensure_ascii=False, indent=2))
+    elif c == "servers":
+        for sv in r.get("servers", []):
+            n = sv.get("counts") or {}
+            new = (f" · {sv['unread']} sin leer" if sv.get("unread") else "") + (f" · {sv['mentions']} menciones" if sv.get("mentions") else "")
+            wait = f" · te esperan {n.get('waiting')}" if n.get("waiting") else ""
+            print(f"{sv['id']:<14} {short(sv['title'], 34):<34} en curso {n.get('active', 0):>3} · revisión {n.get('review', 0):>3} · "
+                  f"abiertas {n.get('open', 0):>3} · conectados {sv.get('online', 0)}{wait}{new}")
+    elif c == "channels":
+        for ch in r.get("channels", []):
+            new = (f" · {ch['unread']} sin leer" if ch.get("unread") else "") + (f" · {ch['mentions']} menciones" if ch.get("mentions") else "")
+            last = f" · último {ch['last_author']} {when(ch['last_at'])}" if ch.get("last_author") else " · vacío"
+            print(f"#{ch['slug']:<22} [{ch['category']}] {ch['messages']:>5} msj{last}{new}" + (f"\n    {ch['topic']}" if ch.get("topic") else ""))
+    elif c == "channel":
+        ch = r.get("channel") or {}
+        print(f"ok · #{ch.get('slug')} [{ch.get('category')}]" + (" (archivado)" if ch.get("archived") else "") + (f" · {ch.get('topic')}" if ch.get("topic") else ""))
+    elif c == "say":
+        where = f"#{r.get('channel')}" if r.get("channel") else f"hilo {(r.get('thread') or {}).get('id')}"
+        print(f"ok · mensaje {r.get('message_id')} en {where}" + (" · menciona a " + ", ".join(r["mentions"]) if r.get("mentions") else ""))
+        print_quota_warnings(r)
+    elif c == "read":
+        th = r.get("thread") or {}
+        print((f"#{r['channel']}" if r.get("channel") else f"hilo {th.get('id')}") + (f" · {th.get('title')}" if th else " · sin mensajes todavía"))
+        seen_upto = r.get("seen_upto") or 0
+        marked = False
+        for m in r.get("messages", []):
+            if m.get("kind") == "system":
+                continue
+            if ag and not marked and m["id"] > seen_upto and m.get("author") != ag:
+                print("———— nuevo ————")
+                marked = True
+            print(f"\n— {m['author']} · {m['kind']} · {when(m['created'])} · #{m['id']}")
+            print(m.get("body") or "")
+        if (r.get("pagination") or {}).get("has_more"):
+            print(f"\n(hay más: --before {r['pagination']['next_before_id']})")
+    elif c == "feed":
+        for it in r.get("items", []):
+            if r.get("kind") == "activity":
+                print(f"{when(it['created'])} {it['author']:<22} {short(it.get('thread_title'), 40)} · {short(it.get('body'), 110)}")
+            else:
+                commits = ", ".join(str(x)[:9] for x in (it.get("commits") or [])[:4])
+                print(f"#{it['id']:<5} [{it['status']:<8}] {when(it.get('at'))} {str(it.get('owner') or '-'):<20} {short(it['title'], 70)}"
+                      + (f"\n       {commits}" if commits else "") + (f"\n       {short(it.get('summary'), 200)}" if it.get("summary") else ""))
+    elif c == "search":
+        for t in r.get("tasks", []):
+            print(f"tarea #{t['id']:<5} [{t['status']:<10}] {t['space_id']:<12} {short(t['title'], 90)}")
+        for th in r.get("threads", []):
+            print(f"hilo  {th['id']:<6} [{th['status']:<10}] {th['space_id']:<12} {short(th['title'], 90)}")
+        for m in r.get("messages", []):
+            where = f"#{m['task_id']}" if m.get("task_id") else f"hilo {m['thread_id']}"
+            print(f"{when(m['created'])} {m['space_id']:<12} {where:<10} {m['author']:<20} {short(m['snippet'], 200)}")
+        if not (r.get("tasks") or r.get("threads") or r.get("messages")):
+            print("Nada.")
     elif c == "digest":
         print_digest(r)
     elif c == "inbox":
