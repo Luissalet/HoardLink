@@ -31,6 +31,7 @@ from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
 from . import agora_liveness
+from . import agora_ranks
 from .agora_leader_state import build_leader_states
 from .facets import Facet, Reply, Request
 
@@ -62,6 +63,9 @@ _SIGN_IN_REFUSED: dict[str, Any] = {}
 SIGN_IN_REFUSED_TTL_S = 15 * 60
 #: Providers whose runner starts a model that lists no effort levels without one. The others always pass one.
 NO_EFFORT_LEADERS = ("claude", "faustus")
+#: Names of sessions being started right now, on any server: taken until their session is on record or gave up.
+_STARTING_NAMES: set[str] = set()
+_STARTING_LOCK = threading.Lock()
 
 
 class AgoraConsoleFacet(Facet):
@@ -1795,6 +1799,14 @@ class AgoraConsoleFacet(Facet):
                 "dispatch": dispatch, "delivery_semantics": "queued; a mention does not wake an idle agent immediately"}
 
     def _create_worker(self, args: dict[str, Any], actor: str = "codex-console") -> dict[str, Any]:
+        reserved: list[str] = []
+        try:
+            return self._create_worker_now(args, actor, reserved)
+        finally:
+            with _STARTING_LOCK:
+                _STARTING_NAMES.difference_update(reserved)
+
+    def _create_worker_now(self, args: dict[str, Any], actor: str, reserved: list[str]) -> dict[str, Any]:
         leader_id = str(args.get("leader_id") or "").strip().lower()
         model = str(args.get("model") or "").strip()
         effort = str(args.get("effort") or "").strip().lower()
@@ -1803,6 +1815,24 @@ class AgoraConsoleFacet(Facet):
             return {"ok": False, "status": 400, "error": f"leader_id and task (1-{MAX_TASK_CHARS} characters) are required"}
         worker_id = str(uuid.uuid4())
         agent_id = f"{leader_id}-worker-{worker_id[:8]}"
+        # The session may come in under a name of its own choosing (the page proposes one and the person may change
+        # it) and with a rank on this server. A rank is the person's to give: started by anyone else, the session
+        # stands no higher than whoever started it.
+        wanted = str(args.get("name") or "").strip().lower()
+        if wanted:
+            with _STARTING_LOCK:                     # checked and kept in one step: two at once do not both get it
+                status, problem = self._worker_name_problem(leader_id, wanted)
+                if not problem:
+                    _STARTING_NAMES.add(wanted)
+                    reserved.append(wanted)
+            if problem:
+                return {"ok": False, "status": status, "error": problem}
+            agent_id = wanted
+        rank_asked = str(args.get("rank") or "").strip().lower()
+        if rank_asked and rank_asked not in agora_ranks.LEVEL:
+            return {"ok": False, "status": 400, "error": "rank must be one of " + ", ".join(n for n, _ in agora_ranks.LADDER)}
+        by_person = actor == "luis" or args.get("_person") is True
+        rank = self._worker_rank(rank_asked, actor, by_person)
         now = time.time()
         provider = self._provider_data().get(leader_id) or {}
         saved = self._preferences().get(leader_id, {})
@@ -1859,7 +1889,10 @@ class AgoraConsoleFacet(Facet):
         result_path = worker_dir / f"{worker_id}.result.txt"
         prompt = (f"You are independent Agora child worker {agent_id}, assigned by leader {leader_id} for task {worker_id}. "
                   f"Use `{agent_id}` as your own Agora identity and parent the work to `{leader_id}`; never speak or act "
-                  "as the console operator, the leader, or another agent. At the start, use `E:\\Development\\IA\\agora.cmd "
+                  "as the console operator, the leader, or another agent. "
+                  f"Your rank on this server is {rank} (the ladder is director > lead > agent > support; `agora.cmd --space "
+                  f"{self.space_id} ranks` says what a rank decides and who holds which). "
+                  "At the start, use `E:\\Development\\IA\\agora.cmd "
                   f"--space {self.space_id} --as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Read `E:\\Development\\IA\\CRITERIOS.md` "
                   "before `E:\\Development\\IA\\MEMORY.md`, then read the repository's AGENTS.md. Before changing a repository, "
                   "create or claim an Agora task under your identity and take the required path locks. Work only in an "
@@ -1969,9 +2002,14 @@ class AgoraConsoleFacet(Facet):
             db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?)",
                        (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id, model_source, now, now))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
+        # Its rank is written once the session exists: one that never started leaves none behind under its name.
+        self._give_worker_rank(agent_id, rank, "luis" if by_person else actor)
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
                          name=f"agora-worker-{worker_id[:8]}").start()
-        return {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id)}
+        out = {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id), "rank": rank}
+        if rank_asked and rank_asked != rank:
+            out["rank_asked"] = rank_asked           # lowered to the rank of whoever started it
+        return out
 
     def _monitor_worker(self, worker_id: str, process: subprocess.Popen[str], result_path: Path) -> None:
         try:
@@ -1985,7 +2023,7 @@ class AgoraConsoleFacet(Facet):
             except OSError:
                 result = ""
             with self._db_lock, self._db() as db:
-                worker_row = db.execute("SELECT parent_id FROM workers WHERE id=?", (worker_id,)).fetchone()
+                worker_row = db.execute("SELECT parent_id, agent_id FROM workers WHERE id=?", (worker_id,)).fetchone()
                 if worker_row:
                     leader_id = str(worker_row["parent_id"] or "unknown")
             metrics = self._runner_metrics(log_path)
@@ -2001,6 +2039,8 @@ class AgoraConsoleFacet(Facet):
                            (state, result, detail, session_id, session_id, code, outcome, metrics["tool_success_count"],
                             metrics["tool_failure_count"], metrics["provider_error"], time.time(), worker_id))
             self._record("worker", worker_id, state, detail or "Child worker finished.")
+            if state == "failed" and worker_row:
+                self._forget_rank_of_absent(str(worker_row["agent_id"] or ""))
             if leader_id == "claude":
                 self._tidy_claude_worktree(worker_id)
         except Exception:  # noqa: BLE001
@@ -2144,6 +2184,101 @@ class AgoraConsoleFacet(Facet):
             self._record("worker", worker_id, state, f"Lifecycle {action} recorded by {actor}.")
         return {"ok": True, "worker": next((w for w in self._worker_rows() if w["id"] == worker_id), None)}
 
+    # ---- the name and the rank a session comes in with ---------------------------------------------------------
+
+    def _taken_names(self) -> set[str]:
+        """Names no new session may take: the leaders', the console's own, every agent the Agora knows and the
+        sessions running now. A session that never got to start leaves its name free."""
+        taken = {row[2] for row in LEADERS} | set(CONSOLE_IDENTITIES.values()) | {"luis", "hub", "ui", "system"}
+        agora = self._agora()
+        if agora is not None:
+            try:
+                taken |= {str(r["id"]) for r in agora.db.query("SELECT id FROM agents")}
+            except Exception:  # noqa: BLE001 - without the Agora's list, the console's own still counts
+                pass
+        with self._db_lock, self._db() as db:
+            taken |= {str(r["agent_id"]) for r in db.execute(
+                "SELECT agent_id FROM workers WHERE agent_id<>'' AND state IN ('running','stopping')")}
+        return taken | set(_STARTING_NAMES)
+
+    @staticmethod
+    def _model_word(model: str) -> str:
+        """The word of a model's id that tells it apart in a name (opus, sonnet, sol, flash); empty when it has none."""
+        tail = str(model or "").split("::")[-1].lower()
+        plain = ("default", "auto", "gpt", "claude", "codex", "cursor", "faustus", "current", "latest", "model")
+        words = [w for w in re.split(r"[^a-z0-9]+", tail) if w and not any(ch.isdigit() for ch in w) and w not in plain]
+        return words[-1][:12] if words else ""
+
+    def suggest_worker_name(self, leader_id: str, model: str = "") -> dict[str, Any]:
+        """A free name for the next session of a provider: the provider, what tells its model apart, and a number."""
+        leader_id = str(leader_id or "").strip().lower()
+        if leader_id not in {row[0] for row in LEADERS}:
+            return {"ok": False, "status": 400, "error": "leader_id must be codex, claude, cursor or faustus"}
+        word = self._model_word(model)
+        base = f"{leader_id}-{word}" if word else leader_id
+        taken = self._taken_names()
+        number = 1
+        while f"{base}-{number}" in taken:
+            number += 1
+        return {"ok": True, "leader_id": leader_id, "name": f"{base}-{number}"}
+
+    def _worker_name_problem(self, leader_id: str, name: str) -> tuple[int, str]:
+        """Why a session cannot be called ``name``, with the status that says so; ``(0, "")`` when it can."""
+        if not re.fullmatch(r"[a-z][a-z0-9_.\-]{0,39}[a-z0-9]", name):
+            return 400, ("name must be 2 to 41 lowercase letters, digits, - _ or ., start with a letter and end with a "
+                         "letter or a digit")
+        if not name.startswith(leader_id + "-"):
+            return 400, f"name must start with {leader_id}-, so the server shows it among that provider's agents"
+        if name in self._taken_names():
+            return 409, f"{name} is already the name of an agent: choose another"
+        return 0, ""
+
+    def _worker_rank(self, wanted: str, actor: str, by_person: bool = False) -> str:
+        """The rank a new session gets: the one asked for when the person starts it; when an agent does, that one
+        or the agent's own, whichever is lower."""
+        agora = self._agora()
+        wanted = wanted or agora_ranks.DEFAULT
+        if by_person or agora is None:
+            return wanted
+        try:
+            ceiling = agora_ranks.rank_of(agora, actor, self.space_id)
+        except Exception:  # noqa: BLE001
+            ceiling = agora_ranks.DEFAULT
+        return wanted if agora_ranks.LEVEL[wanted] <= agora_ranks.LEVEL.get(ceiling, 2) else ceiling
+
+    def _forget_rank_of_absent(self, agent_id: str) -> None:
+        """A session that failed and is on no server keeps no rank under its name: the name is free again, and whoever
+        takes it later starts as anyone does."""
+        agora = self._agora()
+        if agora is None or not agent_id:
+            return
+        try:
+            with agora.db.tx():
+                if agora.db.one("SELECT 1 AS x FROM coordination_members WHERE space_id=? AND agent=?",
+                                (self.space_id, agent_id)) is None:
+                    agora_ranks.forget(agora, agent_id, self.space_id)
+        except Exception:  # noqa: BLE001 - tidying up never fails the monitor
+            logger.exception("could not forget the rank of %s", agent_id)
+
+    def _give_worker_rank(self, agent_id: str, rank: str, actor: str) -> None:
+        agora = self._agora()
+        if agora is None:
+            return
+        try:
+            with agora.db.tx():      # also when it is the usual rank: a name used before starts again without the old one
+                agora_ranks.set_rank(agora, agent_id, rank, actor, self.space_id)
+        except Exception:  # noqa: BLE001 - a session still starts when its rank could not be written
+            logger.exception("could not write the rank of %s", agent_id)
+
+    @staticmethod
+    def _person_page(req: Request) -> bool:
+        """Whether the request comes from one of the person's own pages: the hub's, or Faustus Studio for them."""
+        try:
+            from .agora import AgoraFacet
+            return bool(AgoraFacet._person_surface(req))
+        except Exception:  # noqa: BLE001
+            return False
+
     @staticmethod
     def _operator(req: Request) -> bool:
         return req.caller() in ("hub", "ui") or req.agent()
@@ -2170,6 +2305,8 @@ class AgoraConsoleFacet(Facet):
             return self.overview(req.q_bool("refresh"))
         if req.path == "/api/agora/console/leaders":
             return self.leader_states(req.q_bool("refresh"))
+        if req.path == "/api/agora/console/name":
+            return self.suggest_worker_name(req.q("leader_id", ""), req.q("model", ""))
         # Let AgoraFacet serve its existing /api/agora/console/usage endpoint.
         return None
 
@@ -2179,6 +2316,7 @@ class AgoraConsoleFacet(Facet):
         if not self._operator(req):
             return {"ok": False, "status": 401, "error": "use the Hub page or its bearer token"}
         args = dict(req.body or {})
+        args.pop("_person", None)                    # never taken from the body: only the page decides it
         sid = args.get('space_id') or 'ecosystem'
         if sid != self.space_id:
             return self.for_space(sid).post(req)
@@ -2210,6 +2348,8 @@ class AgoraConsoleFacet(Facet):
         if req.path == "/api/agora/console/color":
             return self.set_color(args, actor)
         if req.path == "/api/agora/console/worker":
+            if self._person_page(req):
+                args["_person"] = True               # the person starts it: the rank asked for is theirs to give
             return self.worker(args, actor)
         return {"ok": False, "status": 404, "error": f"unknown Agora console route {req.path}"}
 
@@ -2267,6 +2407,8 @@ class AgoraConsoleFacet(Facet):
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},
+                 "name": {"type": "string", "maxLength": 41, "description": "With create: the session's own name instead of <provider>-worker-<id>. It must start with <provider>- and be free."},
+                 "rank": {"type": "string", "enum": ["director", "lead", "agent", "support"], "description": "With create: the session's rank on this server. Never higher than the caller's own, unless the person starts it."},
                  "task": {"type": "string", "maxLength": MAX_TASK_CHARS}, "confirm_idle": {"type": "boolean"},
                  "session_id": {"type": "string"}, "model_source": {"type": "string"},
                  "result": {"type": "string", "maxLength": 20000}, "actor": {"type": "string", "maxLength": 64}}, "additionalProperties": False},
@@ -2284,6 +2426,7 @@ class AgoraConsoleFacet(Facet):
         # The scoped view's implementation, without a second scope dispatch.
         def write(method, args):
             values = dict(args)
+            values.pop("_person", None)
             actor, error = self._mcp_actor(values)
             return error or method(values, actor)
         return {

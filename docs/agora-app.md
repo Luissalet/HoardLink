@@ -46,6 +46,8 @@ The helper control creates a separate session with the selected model and reason
 
 `POST /api/agora/console/worker` (`hub_agora_console_worker`) with `leader_id`, `model`, `effort` and `task` starts an independent session of that provider's own program on the Hub's PC, under an identity of its own (`<provider>-worker-<8 hex>`); the model and effort left out are the ones saved with `console/preferences` for that space. Preferences are kept per space, so each server has its own.
 
+The session takes the `name` it is given instead of that identity: lower case, starting with `<provider>-`, ending with a letter or a digit and not held by any agent the Agora knows nor by a session running or being started now (400 when it is malformed, 409 when it is taken). `GET /api/agora/console/name?leader_id=&model=` proposes a free one made of the provider and the model's own word (`<provider>-<word>-<n>`), which is what a page shows before the person changes it. With `rank` (`director`, `lead`, `agent`, `support`; see [AGORA.md](AGORA.md#ranks)) the session holds that rank on the server from its first moment and is told so in its instructions. The person starts a session at any rank; a session started by an agent gets the rank asked for or the agent's own, whichever is lower, and the answer says which (`rank`, plus `rank_asked` when it was lowered). The rank is written once the session has started; one that fails without ever being on the server leaves none under its name.
+
 | Provider | What is started | Models and efforts offered |
 |---|---|---|
 | Codex | `codex exec --json --worktree` | the installed CLI's catalog, each model with its reasoning levels |

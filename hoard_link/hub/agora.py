@@ -54,6 +54,7 @@ from ..sqlkit import Database
 from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError, SpaceStore, space_id
 from . import agent_watch
 from . import agora_channels
+from . import agora_ranks
 from . import agora_social
 from . import agora_debate
 from .facets import Facet, Reply, Request
@@ -186,6 +187,8 @@ MIGRATIONS.append(agora_channels.CHANNELS_MIGRATION)
 MIGRATIONS.append(agora_social.SOCIAL_MIGRATION)
 # a server the person silenced (agora_channels.py)
 MIGRATIONS.append(agora_channels.MUTED_MIGRATION)
+# the rank the person gives each agent on each server (agora_ranks.py)
+MIGRATIONS.append(agora_ranks.RANKS_MIGRATION)
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -1989,12 +1992,32 @@ class Agora:
                 f"#{b['id']} ({b['status']}" + (f", {b['owner']})" if b.get("owner") else ")") for b in pending)]
         return self._with_unseen(a, res)
 
-    def _owned(self, a: dict[str, Any], *, allow_person: bool = True) -> tuple[str, dict[str, Any]]:
+    def _owned(self, a: dict[str, Any], *, allow_person: bool = True, superior: bool = False) -> tuple[str, dict[str, Any]]:
+        """The caller and the task it acts on as its owner. ``superior`` also lets through whoever outranks the owner
+        on this server (taking work back is part of handing it out)."""
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")) and allow_person)
         task = self._task_row(a.get("task_id"))
         if task.get("owner") != agent and agent != PERSON:
-            raise AgoraError(f"task {task['id']} belongs to {task.get('owner') or 'nobody'}: claim it first", 409)
+            if not (superior and task.get("owner") and agora_ranks.outranks(self, agent, task["owner"])):
+                raise AgoraError(f"task {task['id']} belongs to {task.get('owner') or 'nobody'}: claim it first", 409)
         return agent, task
+
+    def _may_close(self, th: dict[str, Any], agent: str, what: str) -> None:
+        """Rank among the agents of a server: a thread is not resolved against someone of higher rank who disagrees
+        in it, and what a higher rank resolved is not resolved again or reopened from below. The person closes and
+        opens anything; so does an equal of whoever resolved it."""
+        if agent == PERSON:
+            return
+        closer = th.get("resolved_by") if th.get("status") == "resolved" else None
+        if closer and closer != agent and agora_ranks.outranks(self, closer, agent):
+            raise AgoraError(f"{closer} resolved this thread and outranks you on {self.space_id}: to {what} it is "
+                             f"theirs, an equal's or {PERSON}'s. Say why in the thread, or escalate.", 403,
+                             error_code="rank", outranked_by=closer)
+        if what == "resolve":
+            against = agora_ranks.standing_against(self, int(th["id"]), agent)
+            if against:
+                raise AgoraError(f"{against} disagrees in this thread and outranks you on {self.space_id}: convince "
+                                 "them, let them resolve it, or escalate.", 403, error_code="rank", outranked_by=against)
 
     @_space_operation
     def task_update(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -2123,6 +2146,15 @@ class Agora:
             stale_note = self._require_fresh(agent, task, a, "review")
             if stale_note:
                 self._system(task, stale_note, agent)
+            # The review of a higher rank stands: its verdict on this delivery is not replaced from below (neither
+            # approved over its changes, nor sent back over its approval, nor signed again by someone else).
+            if (agent != PERSON and task["status"] in ("changes", "approved")
+                    and task.get("reviewed_submission_revision") == expected_revision
+                    and agora_ranks.outranks(self, task.get("reviewer"), agent)):
+                said = "asked for changes on" if task["status"] == "changes" else "approved"
+                raise AgoraError(f"{task['reviewer']} {said} this delivery and outranks you on {self.space_id}: their "
+                                 f"review stands. Say what you found in the task's thread; a new delivery, they or "
+                                 f"{PERSON} change it.", 403, error_code="rank", outranked_by=task["reviewer"])
             status = "approved" if verdict == "approve" else "changes"
             now = self.clock()
             self.db.execute("UPDATE tasks SET status=?, reviewer=?, reviewed=?, reviewed_commits=?, "
@@ -2180,6 +2212,11 @@ class Agora:
                 if waited < self.review_grace_s and not (a.get("force") and str(a.get("reason") or "").strip()):
                     raise AgoraError(f"task {task['id']} has been waiting for review {int(waited // 60)} min; wait "
                                      f"{int(self.review_grace_s // 60)} min or pass force with a reason", 409)
+            if task["status"] == "changes" and agent != PERSON and agora_ranks.outranks(self, task.get("reviewer"), agent):
+                # The review of a higher rank stands: not even force closes the task over it.
+                raise AgoraError(f"{task['reviewer']} asked for changes on task {task['id']} and outranks you on "
+                                 f"{self.space_id}: address them and submit again; only they or {PERSON} let it "
+                                 "close as it is", 403, error_code="rank", outranked_by=task["reviewer"])
             if task["status"] == "changes" and not (a.get("force") and str(a.get("reason") or "").strip()):
                 raise AgoraError(f"the reviewer asked for changes on task {task['id']}: address them and submit again, "
                                  "or pass force with a reason", 409)
@@ -2237,7 +2274,8 @@ class Agora:
         """Give the task back (``open``) or drop it (``drop: true``) with a reason. Releases its locks."""
         reason = _txt(a.get("reason"), 5000, "reason")
         with self.db.tx():
-            agent, task = self._owned(a)
+            agent, task = self._owned(a, superior=True)
+            taken_from = task.get("owner") if agent != PERSON and task.get("owner") not in (None, agent) else None
             if task["status"] in FINAL:
                 # A dropped task keeps its owner; releasing it again must not bring it back to open.
                 raise AgoraError(f"task {task['id']} is already {task['status']}", 409)
@@ -2248,8 +2286,12 @@ class Agora:
                             ("dropped" if drop else "open", None if not drop else task.get("owner"), now,
                              now if drop else None, task["id"]))
             self.db.execute("DELETE FROM locks WHERE task_id=?", (task["id"],))
-            self._msg(int(task["thread_id"]), agent, "system" if not reason else "comment",
-                      reason or f"{agent} suelta la tarea.")
+            if taken_from:      # someone of higher rank takes it back: said as such, and its owner is told
+                self._msg(int(task["thread_id"]), agent, "comment",
+                          f"{agent} le quita la tarea a {taken_from}." + (f" {reason}" if reason else ""), [taken_from])
+            else:
+                self._msg(int(task["thread_id"]), agent, "system" if not reason else "comment",
+                          reason or f"{agent} suelta la tarea.")
         self._bump("agora.task.released", {"task_id": task["id"], "agent": agent, "dropped": drop})
         res = {"ok": True, "task": self._task_row(task["id"])}
         if drop:
@@ -2463,10 +2505,14 @@ class Agora:
             if caller != PERSON and self.db.one("SELECT id FROM agents WHERE id=?", (caller,)) is None:
                 raise AgoraError(f"{caller} is not registered in the Agora: send a heartbeat first", 403)
             forced_active = False
+            by_rank = False
             if caller not in (PERSON, source):
                 seen = self.db.one("SELECT last_seen FROM agents WHERE id=?", (source,))
                 idle = now - float(seen["last_seen"] or 0) if seen is not None else None
-                if force and idle is not None and idle < self.handover_idle_s:
+                # Whoever outranks the source hands its work over at once: handing out the work is the rank's.
+                by_rank = (not force and idle is not None and idle < self.handover_idle_s
+                           and agora_ranks.outranks(self, caller, source))
+                if (force or by_rank) and idle is not None and idle < self.handover_idle_s:
                     forced_active = True
                 elif idle is not None and idle < self.handover_idle_s:
                     left = self.handover_idle_s - idle
@@ -2543,7 +2589,8 @@ class Agora:
                                     (target, now + float(lk["ttl_s"] or DEFAULT_LOCK_TTL_S), lk["resource"]))
                     locks_moved.append(lk["resource"])
                     locks_by_task.setdefault(int(lk["task_id"]), []).append(lk["resource"])
-            forced_note = f" (forzado: {source} seguía mandando latidos)" if forced_active else ""
+            forced_note = (f" (por rango: {caller} está por encima de {source})" if by_rank
+                           else f" (forzado: {source} seguía mandando latidos)" if forced_active else "")
             for p in plan:
                 task = p["task"]
                 lines = [f"{caller} traspasa de {source} a {target}{forced_note}: {reason}"]
@@ -2681,13 +2728,25 @@ class Agora:
                 stale_note = self._require_fresh(agent, self._task_row(th["task_id"]), a, "post")
                 if stale_note:
                     self._msg(th["id"], agent, "system", stale_note)
-            mid = self._msg(th["id"], agent, kind, body, _list(a.get("mentions"), "mentions"))
+            # What someone of higher rank resolved stays resolved when it is objected to from below: the objection is
+            # there to be read (whoever resolved it is told of it), and they, an equal of theirs or the person may
+            # open it again.
+            stays = (th["status"] == "resolved" and kind in ("disagree", "proposal")
+                     and agora_ranks.outranks(self, th.get("resolved_by"), agent))
+            mentions = _list(a.get("mentions"), "mentions")
+            if stays and th["resolved_by"] not in mentions:
+                mentions = [*mentions, th["resolved_by"]]
+            mid = self._msg(th["id"], agent, kind, body, mentions)
             self._ack(agent, th["id"], mid)
-            if (th["status"] == "resolved" and kind in ("disagree", "proposal")) or \
+            if ((th["status"] == "resolved" and kind in ("disagree", "proposal")) and not stays) or \
                     (th["status"] == "escalated" and agent == PERSON):
                 self.db.execute("UPDATE threads SET status='open' WHERE id=?", (th["id"],))
         self._bump("agora.thread.message", {"thread_id": th["id"], "message_id": mid, "author": agent, "kind": kind})
         out = {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"])}
+        if stays:
+            out["stays_resolved"] = True
+            out["note"] = (f"{th.get('resolved_by')} resolved this thread and outranks you here: it stays resolved. "
+                           "Convince them, or escalate.")
         warnings = self._quota_warnings(_list(a.get("mentions"), "mentions"))
         if warnings:
             out["quota_warnings"] = warnings
@@ -2703,6 +2762,7 @@ class Agora:
             th = self._thread_row(a.get("thread_id"))
             if th["kind"] == "task":
                 raise AgoraError("a task thread closes with task_done / task_release", 409)
+            self._may_close(th, agent, "resolve")
             now = self.clock()
             self._msg(th["id"], agent, "resolution", resolution)
             self.db.execute("UPDATE threads SET status='resolved', resolution=?, resolved_by=?, updated=? WHERE id=?",
@@ -2719,6 +2779,23 @@ class Agora:
             self._touch(agent)
             th = self._thread_row(a.get("thread_id"))
             now = self.clock()
+            # A question goes first to whoever is next above the one who asks and around: it reaches the person when
+            # nobody is, or when the highest rank around sends it up.
+            above = [] if agent == PERSON else agora_ranks.superiors_around(self, agent)
+            # Asked again after those above left it unanswered, it stops waiting for them.
+            waited = bool(above) and agora_ranks.unanswered_above(self, int(th["id"]), agent)
+            if waited:
+                above = []
+            if above:
+                mid = self._msg(th["id"], agent, "escalation", question, above)
+                self._ack(agent, th["id"], mid)
+        if above:
+            self._bump("agora.thread.asked_up", {"thread_id": th["id"], "by": agent, "asked": above, "title": th["title"]})
+            return {"ok": True, "thread": self._thread_row(th["id"]), "asked": above, "reached_person": False,
+                    "note": f"The question went to {', '.join(above)}, who outrank you here and are around: they "
+                            f"answer it, or send it up to {PERSON}. If nobody has answered in "
+                            f"{int(agora_ranks.ASK_UP_WAIT_S // 60)} min, escalate again and it goes to {PERSON}."}
+        with self.db.tx():
             self._msg(th["id"], agent, "escalation", question, [PERSON])
             self.db.execute("UPDATE threads SET status='escalated', updated=? WHERE id=?", (now, th["id"]))
         self._bump("agora.thread.escalated", {"thread_id": th["id"], "by": agent, "title": th["title"]})
@@ -2727,7 +2804,10 @@ class Agora:
                 self.escalate_hook(th, agent, question)
             except Exception:  # noqa: BLE001
                 pass
-        return {"ok": True, "thread": self._thread_row(th["id"])}
+        out = {"ok": True, "thread": self._thread_row(th["id"]), "asked": [PERSON], "reached_person": True}
+        if waited:
+            out["note"] = f"Nobody above you answered: the question went to {PERSON}."
+        return out
 
     @_space_operation
     def reopen(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -2736,6 +2816,7 @@ class Agora:
         with self.db.tx():
             self._touch(agent)
             th = self._thread_row(a.get("thread_id"))
+            self._may_close(th, agent, "reopen")
             self._msg(th["id"], agent, "comment", reason)
             self.db.execute("UPDATE threads SET status='open', updated=? WHERE id=?", (self.clock(), th["id"]))
         self._bump("agora.thread.reopened", {"thread_id": th["id"], "by": agent})

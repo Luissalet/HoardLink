@@ -32,6 +32,7 @@ import time
 import unicodedata
 from typing import Any, Optional
 
+from . import agora_ranks
 from . import agora_social
 
 GENERAL = "general"
@@ -573,6 +574,7 @@ def _members(self: Any, tasks_by_owner: dict[str, list[dict[str, Any]]]) -> list
     pools = self._quota_pools()
     locks = {r["owner"]: int(r["n"]) for r in self.db.query(
         "SELECT owner, COUNT(*) AS n FROM locks WHERE expires>? GROUP BY owner", (now,))}
+    ranks = agora_ranks.ranks_in(self)
     out = []
     for r in self.db.query("SELECT a.* FROM agents a JOIN coordination_members m ON m.agent=a.id "
                            "WHERE m.space_id=? ORDER BY a.last_seen DESC", (self.space_id,)):
@@ -594,8 +596,10 @@ def _members(self: Any, tasks_by_owner: dict[str, list[dict[str, Any]]]) -> list
             presence = "away"
         else:
             presence = state if state in ag.AGENT_STATES else "idle"
+        rank = "person" if person else ranks.get(ident, agora_ranks.DEFAULT)
         out.append({"id": ident, "name": d.get("name") or ident, "kind": d.get("kind") or "agent",
                     "role": "person" if person else (quota.get("provider") or "other"),
+                    "rank": rank, "rank_level": agora_ranks.PERSON_LEVEL if person else agora_ranks.LEVEL[rank],
                     "presence": presence, "state": state, "doing": d.get("doing") or "", "note": d.get("note") or "",
                     "last_seen": d.get("last_seen"), "locks": locks.get(ident, 0),
                     "tasks": tasks_by_owner.get(ident, [])[:6],
@@ -857,14 +861,16 @@ def folders(a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             "folders": found[:MAX_FOLDERS], "truncated": len(found) > MAX_FOLDERS}
 
 
-# Members, reactions, quoting, files, a server's own picture and the order of its channels live in agora_social.
+# Members, reactions, quoting, files, a server's own picture and the order of its channels live in agora_social;
+# the ranks of the agents and assigning work by rank, in agora_ranks.
 OPERATIONS = {"channels": channels, "channel_create": channel_create, "channel_update": channel_update,
               "channel_post": channel_post, "channel_read": channel_read, "seen": seen, "servers": servers,
               "guild": guild, "feed": feed, "search": search, "pulse": pulse, "space_meta_set": space_meta_set,
-              **agora_social.OPERATIONS}
+              **agora_social.OPERATIONS, **agora_ranks.OPERATIONS}
 WRITE_OPS = ("channel_create", "channel_update", "channel_post", "channel_read", "seen", "space_meta_set",
-             *agora_social.WRITE_OPS)
-READ_ROUTES = ("servers", "guild", "channels", "feed", "search", "pulse", *agora_social.READ_ROUTES)
+             *agora_social.WRITE_OPS, *agora_ranks.WRITE_OPS)
+READ_ROUTES = ("servers", "guild", "channels", "feed", "search", "pulse", *agora_social.READ_ROUTES,
+               *agora_ranks.READ_ROUTES)
 
 
 def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
@@ -949,4 +955,5 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                         "choose the working folder or the context folders of a space. parent goes one level up.",
          "inputSchema": schema({"path": {"type": "string", "maxLength": 1000}}, [])},
         *agora_social.tools(schema, agent_prop),
+        *agora_ranks.tools(schema, agent_prop),
     ]
