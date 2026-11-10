@@ -91,6 +91,7 @@ from .lease import LeaseError
 from .rules import example_rules
 from .jobs import example_jobs
 from .events import event_types_help
+from .agora_social import BIG_BODIES as AGORA_BIG_BODIES
 from .linkchat import LINK_MAX_BODY, BadRequest, parse_request
 
 logger = logging.getLogger("hoard_hub")
@@ -609,6 +610,11 @@ class _HubHandler(BaseHTTPRequestHandler):
                     self.close_connection = True
                     return None
                 limit = PROXY_MAX_BODY
+            elif path in AGORA_BIG_BODIES:      # a file or a picture for the Agora, from the family only
+                if self._family_caller() is None:
+                    self.close_connection = True
+                    return self._json({"ok": False, "error": "send the hub's bearer token or use the hub's page"}, 401)
+                limit = AGORA_BIG_BODIES[path]
             body = self._read_body(limit)
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 413)

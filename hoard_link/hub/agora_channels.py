@@ -32,6 +32,8 @@ import time
 import unicodedata
 from typing import Any, Optional
 
+from . import agora_social
+
 GENERAL = "general"
 BOARD_COLUMNS = ("open", "in_progress", "review", "done")
 #: Same grouping as the Hub's own board.
@@ -349,16 +351,25 @@ def channel_post(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     ag = _ag()
     person = bool(a.get("_person"))
     agent = self._agent(a.get("agent"), allow_person=person)
-    body = ag._txt(a.get("body"), 20000, "body", required=True)
+    body = ag._txt(a.get("body"), 20000, "body")
     with self.db.tx():
         self._touch(agent)
         thread, slug = _target_thread(self, a, agent=agent)
+        carried = agora_social.prepare(self, thread, a)       # reply_to and files, checked before anything is written
+        if not body:
+            if not carried["files"]:
+                raise _err("body is required")
+            body = " · ".join(f["name"] for f in carried["files"])
         mentions = list(ag._list(a.get("mentions"), "mentions"))
         for name in _parse_mentions(self, body, agent):
             if name not in mentions:
                 mentions.append(name)
+        quoted = carried["reply"]
+        if quoted and quoted["kind"] != "system" and quoted["author"] not in (agent, None, "system", *mentions):
+            mentions.append(quoted["author"])                 # quoting someone tells them, as naming them does
     out = self.post({"agent": agent, "_person": person, "thread_id": thread, "body": body,
                      "kind": a.get("kind") or "comment", "mentions": mentions})
+    agora_social.attach(self, out["message_id"], carried)
     out["channel"] = slug
     out["mentions"] = mentions
     # Naming the person in a channel also tells them outside the page (the hub's notifications decide how and when).
@@ -399,6 +410,7 @@ def channel_read(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 self._ack(reader, thread)
     page.update(channel=slug, seen_upto=seen)
     page.pop("hub_acknowledged", None)
+    agora_social.decorate(self, page.get("messages") or [], viewer)   # reactions, the quoted message, files
     return page
 
 
@@ -442,6 +454,8 @@ def space_meta_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     current = _meta(self, self.space_id)
     if "icon" in a:
         current["icon"] = ag._txt(a.get("icon"), 120, "icon")
+        if not current["icon"].startswith("img:"):
+            agora_social.drop_icon(self)         # another icon forgets the server's own picture
     if "color" in a:
         color = ag._txt(a.get("color"), 9, "color")
         if color and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
@@ -539,6 +553,8 @@ def _members(self: Any, tasks_by_owner: dict[str, list[dict[str, Any]]]) -> list
         state = str(d.get("state") or "idle")
         if person:
             presence = "person"
+        elif not d.get("last_seen"):
+            presence = "invited"         # put on the server by name (member_add); it has not said anything yet
         elif quiet > ag.STALE_AGENT_S:
             presence = "offline"
         elif quota["state"] == "exhausted":
@@ -810,11 +826,14 @@ def folders(a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             "folders": found[:MAX_FOLDERS], "truncated": len(found) > MAX_FOLDERS}
 
 
+# Members, reactions, quoting, files, a server's own picture and the order of its channels live in agora_social.
 OPERATIONS = {"channels": channels, "channel_create": channel_create, "channel_update": channel_update,
               "channel_post": channel_post, "channel_read": channel_read, "seen": seen, "servers": servers,
-              "guild": guild, "feed": feed, "search": search, "pulse": pulse, "space_meta_set": space_meta_set}
-WRITE_OPS = ("channel_create", "channel_update", "channel_post", "channel_read", "seen", "space_meta_set")
-READ_ROUTES = ("servers", "guild", "channels", "feed", "search", "pulse")
+              "guild": guild, "feed": feed, "search": search, "pulse": pulse, "space_meta_set": space_meta_set,
+              **agora_social.OPERATIONS}
+WRITE_OPS = ("channel_create", "channel_update", "channel_post", "channel_read", "seen", "space_meta_set",
+             *agora_social.WRITE_OPS)
+READ_ROUTES = ("servers", "guild", "channels", "feed", "search", "pulse", *agora_social.READ_ROUTES)
 
 
 def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
@@ -849,11 +868,15 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_channel_post",
          "description": "Say something in a channel (channel, default general) or in any thread (thread_id). @id in "
                         "the text mentions that agent, @luis the person, @here whoever has been around lately; "
-                        "mentions adds more. kind: comment (default), proposal, agree or disagree.",
+                        "mentions adds more. kind: comment (default), proposal, agree or disagree. reply_to quotes "
+                        "a message of the same conversation (and tells its author); files carries files sent with "
+                        "hub_agora_file_add (then body may be empty).",
          "inputSchema": schema({"agent": agent_prop, "channel": chan, "thread_id": {"type": "integer"},
-                                "body": {"type": "string", "minLength": 1, "maxLength": 20000},
+                                "body": {"type": "string", "maxLength": 20000},
                                 "kind": {"type": "string", "enum": ["comment", "proposal", "agree", "disagree"]},
-                                "mentions": {"type": "array", "items": {"type": "string"}}}, ["agent", "body"])},
+                                "mentions": {"type": "array", "items": {"type": "string"}},
+                                "reply_to": {"type": "integer", "minimum": 1},
+                                "files": {"type": "array", "items": {"type": "string"}, "maxItems": 10}}, ["agent"])},
         {"name": "hub_agora_channel_read",
          "description": "The latest messages of a channel (channel) or thread (thread_id), oldest first; before_id "
                         "pages back. With agent the thread counts as seen unless peek, and seen_upto says up to where "
@@ -882,7 +905,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                         "as soon as anything changes.",
          "inputSchema": schema({"since": {"type": "string"}, "wait_s": {"type": "number", "minimum": 0, "maximum": 25}}, [])},
         {"name": "hub_agora_space_meta_set",
-         "description": "How a space looks and what it reads: icon (an app id, a letter or an emoji), color (#rrggbb), "
+         "description": "How a space looks and what it reads: icon (an app id, a letter or an emoji; img:… is its own "
+                        "picture, set with hub_agora_space_icon_set), color (#rrggbb), "
                         "folders (context folders besides its workspace), position in the server list and hidden.",
          "inputSchema": schema({"agent": agent_prop, "icon": {"type": "string", "maxLength": 120},
                                 "color": {"type": "string"}, "folders": {"type": "array", "items": {"type": "string"}},
@@ -891,4 +915,5 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
          "description": "The folders inside path on the Hub's machine (its drives when path is empty), names only: to "
                         "choose the working folder or the context folders of a space. parent goes one level up.",
          "inputSchema": schema({"path": {"type": "string", "maxLength": 1000}}, [])},
+        *agora_social.tools(schema, agent_prop),
     ]

@@ -38,6 +38,7 @@ the current ``--as`` identity and the Hub assigns ``reported_at``.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -102,6 +103,30 @@ def call(method: str, path: str, body: dict | None = None, timeout: float = 150.
             return {"ok": False, "error": f"HTTP {exc.code}"}
     except (urllib.error.URLError, OSError) as exc:
         return {"ok": False, "error": f"hub not reachable at {_url()}: {exc}"}
+
+
+def fetch_file(file_id: str, out: str | None) -> dict:
+    """Save a file a message carries: to ``out`` (a file, or a folder) or to this folder under its own name."""
+    req = urllib.request.Request(_url() + "/api/agora/file/" + urllib.parse.quote(file_id.strip().lower(), safe=""),
+                                 headers={"Authorization": "Bearer " + _token(), "User-Agent": "hoard-agora-cli"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=120) as resp:
+            blob = resp.read()
+            shown = resp.headers.get("Content-Disposition") or ""
+    except urllib.error.HTTPError as exc:
+        try:
+            result = json.loads(exc.read() or b"{}")
+        except ValueError:
+            result = {}
+        return {"ok": False, "status": exc.code, "error": (result.get("error") if isinstance(result, dict) else None) or f"HTTP {exc.code}"}
+    except (urllib.error.URLError, OSError) as exc:
+        return {"ok": False, "error": f"hub not reachable at {_url()}: {exc}"}
+    name = shown.split('filename="', 1)[1].split('"', 1)[0] if 'filename="' in shown else file_id
+    target = os.path.join(out, name) if out and os.path.isdir(out) else (out or name)
+    with open(target, "wb") as fh:
+        fh.write(blob)
+    return {"ok": True, "name": name, "path": os.path.abspath(target), "size": len(blob)}
 
 
 _MOJIBAKE = ("Ã", "Â", "â€", "├", "┬", "┤", "Ô")
@@ -634,6 +659,20 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("say", help="escribe en un canal (general por defecto); @id menciona, @here a quien ande por ahí")
     s.add_argument("words", nargs="*", help="[canal] texto: con una sola palabra o frase, va a general"); texts(s, "body")
     s.add_argument("--kind", default="comment"); s.add_argument("--mention", action="append"); s.add_argument("--thread", type=int)
+    s.add_argument("--reply", type=int, help="cita ese mensaje (y avisa a quien lo escribió)")
+    s.add_argument("--attach", action="append", help="ruta de un fichero que el mensaje lleva adjunto (10 MB como mucho; repetible)")
+    s = sub.add_parser("react", help="reacciona a un mensaje con un emoji o una palabra corta: react 1234 👍 (--off la quita)")
+    s.add_argument("message", type=int); s.add_argument("emoji"); s.add_argument("--off", action="store_true")
+    s = sub.add_parser("file", help="descarga un fichero adjunto por su id: file <id> [--out ruta]")
+    s.add_argument("id"); s.add_argument("--out")
+    s = sub.add_parser("members", help="quién está en el servidor, también los que hace mucho que no vienen")
+    s.add_argument("--q", help="filtra por nombre")
+    s = sub.add_parser("member-add", help="da de alta a un agente en el servidor por su nombre (codex-docs, claude-ui…)")
+    s.add_argument("id"); s.add_argument("--note")
+    s = sub.add_parser("member-remove", help="da de baja a un agente del servidor: su trabajo queda libre, o pasa a --to")
+    s.add_argument("id"); s.add_argument("--to"); s.add_argument("--reason"); s.add_argument("--force", action="store_true")
+    s = sub.add_parser("members-prune", help="da de baja a quien no viene desde hace --days días (30) y no tiene nada en marcha")
+    s.add_argument("--days", type=int, default=30); s.add_argument("--dry-run", action="store_true")
     s = sub.add_parser("read", help="últimos mensajes de un canal (general por defecto) o de un hilo con --thread")
     s.add_argument("channel", nargs="?", default="general"); s.add_argument("--limit", type=int, default=30)
     s.add_argument("--before", type=int); s.add_argument("--peek", action="store_true"); s.add_argument("--thread", type=int)
@@ -683,7 +722,7 @@ def main(argv: list[str] | None = None) -> int:
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
     _SELECTED_SPACE = a.space
-    reads = {"servers", "channels", "read", "feed", "search", "spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
+    reads = {"members", "file", "servers", "channels", "read", "feed", "search", "spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
     if a.cmd not in reads and not (a.cmd == "debate" and a.dcmd in ("show", "list")) and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
@@ -866,7 +905,37 @@ def main(argv: list[str] | None = None) -> int:
         else:              # say [canal] --body-file f
             channel = words[0] if words else "general"
         target = {"thread_id": a.thread} if a.thread else {"channel": channel.lstrip("#")}
-        r = call("POST", "/api/agora/channel_post", {"agent": ag, **target, "body": body, "kind": a.kind, "mentions": csv(a.mention)})
+        files, failed = [], None
+        for path in a.attach or []:   # read here, with this terminal's own access to the disk: the hub never reads a path
+            try:
+                with open(os.path.expanduser(path), "rb") as fh:
+                    blob = fh.read()
+            except OSError as exc:
+                failed = {"ok": False, "error": f"no se puede leer {path}: {exc.strerror or exc}"}
+                break
+            sent = call("POST", "/api/agora/file_add", {"agent": ag, "name": os.path.basename(path),
+                                                        "content_base64": base64.b64encode(blob).decode("ascii")})
+            if not sent.get("ok"):
+                failed = sent
+                break
+            files.append(sent["file"]["id"])
+        r = failed or call("POST", "/api/agora/channel_post", {
+            "agent": ag, **target, "body": body or "", "kind": a.kind, "mentions": csv(a.mention),
+            **({"reply_to": a.reply} if a.reply else {}), **({"files": files} if files else {})})
+    elif c == "react":
+        r = call("POST", "/api/agora/react", {"agent": ag, "message_id": a.message, "emoji": a.emoji, "on": not a.off})
+    elif c == "file":
+        r = fetch_file(a.id, a.out)
+    elif c == "members":
+        r = call("GET", "/api/agora/members" + ("?" + urllib.parse.urlencode({"q": a.q}) if a.q else ""))
+    elif c == "member-add":
+        r = call("POST", "/api/agora/member_add", {"agent": ag, "id": a.id, **({"note": a.note} if a.note else {})})
+    elif c == "member-remove":
+        r = call("POST", "/api/agora/member_remove", {"agent": ag, "id": a.id, "force": a.force,
+                                                      **({"to_agent": a.to} if a.to else {}),
+                                                      **({"reason": a.reason} if a.reason else {})})
+    elif c == "members-prune":
+        r = call("POST", "/api/agora/members_prune", {"agent": ag, "older_than_days": a.days, "dry_run": a.dry_run})
     elif c == "read":
         q = {"limit": a.limit}
         if ag:
@@ -954,6 +1023,33 @@ def main(argv: list[str] | None = None) -> int:
         where = f"#{r.get('channel')}" if r.get("channel") else f"hilo {(r.get('thread') or {}).get('id')}"
         print(f"ok · mensaje {r.get('message_id')} en {where}" + (" · menciona a " + ", ".join(r["mentions"]) if r.get("mentions") else ""))
         print_quota_warnings(r)
+    elif c == "react":
+        shown = " · ".join(f"{x['emoji']} {x['count']}" for x in r.get("reactions") or []) or "ninguna"
+        print(f"ok · mensaje {r.get('message_id')}: {shown}")
+    elif c == "file":
+        print(f"ok · {r.get('name')} guardado en {r.get('path')} ({r.get('size')} bytes)")
+    elif c == "members":
+        for m in r.get("members", []):
+            seen = "todavía no ha entrado" if not m.get("last_seen") else "visto " + when(m["last_seen"])
+            print(f"{m['id']:<30} {m['presence']:<9} {str(m.get('role') or '-'):<8} {seen}"
+                  + (f" · {len(m['tasks'])} tareas" if m.get("tasks") else "") + (f" · {short(m['doing'], 70)}" if m.get("doing") else ""))
+        print(f"{r.get('total', 0)} en el servidor")
+    elif c == "member-add":
+        print(f"ok · {(r.get('member') or {}).get('id')} " + ("dado de alta en el servidor" if r.get("added") else "ya estaba en el servidor"))
+    elif c == "member-remove":
+        parts = [f"ok · {r.get('removed')} fuera del servidor"]
+        if r.get("handed_tasks"):
+            parts.append("pasan a " + str(r.get("handed_to")) + ": " + ", ".join(f"#{i}" for i in r["handed_tasks"]))
+        if r.get("freed_tasks"):
+            parts.append("quedan libres: " + ", ".join(f"#{i}" for i in r["freed_tasks"]))
+        if r.get("left_in_review"):
+            parts.append("siguen en revisión a su nombre: " + ", ".join(f"#{i}" for i in r["left_in_review"]))
+        print(" · ".join(parts))
+    elif c == "members-prune":
+        gone = r.get("removed") or []
+        print(("saldrían " if r.get("dry_run") else "ok · fuera ") + f"{len(gone)}" + (": " + ", ".join(gone[:40]) + (" …" if len(gone) > 40 else "") if gone else ""))
+        for k in r.get("kept") or []:
+            print(f"  se queda {k['id']}: tiene {({'tasks': 'tareas', 'reviews': 'revisiones', 'leases': 'bloqueos'}).get(k['why'], k['why'])}")
     elif c == "read":
         th = r.get("thread") or {}
         print((f"#{r['channel']}" if r.get("channel") else f"hilo {th.get('id')}") + (f" · {th.get('title')}" if th else " · sin mensajes todavía"))
@@ -966,7 +1062,14 @@ def main(argv: list[str] | None = None) -> int:
                 print("———— nuevo ————")
                 marked = True
             print(f"\n— {m['author']} · {m['kind']} · {when(m['created'])} · #{m['id']}")
+            quoted = m.get("reply")
+            if quoted:
+                print(f"  ↪ a {quoted.get('author') or '?'} (#{quoted['id']}): {short(quoted.get('excerpt'), 120)}")
             print(m.get("body") or "")
+            for f in m.get("files") or []:
+                print(f"  📎 {f['name']} ({f['size']} bytes) · agora file {f['id']}")
+            if m.get("reactions"):
+                print("  " + " · ".join(f"{x['emoji']} {x['count']}" for x in m["reactions"]))
         if (r.get("pagination") or {}).get("has_more"):
             print(f"\n(hay más: --before {r['pagination']['next_before_id']})")
     elif c == "feed":

@@ -54,8 +54,9 @@ from ..sqlkit import Database
 from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError, SpaceStore, space_id
 from . import agent_watch
 from . import agora_channels
+from . import agora_social
 from . import agora_debate
-from .facets import Facet, Request
+from .facets import Facet, Reply, Request
 
 # code_peek refs: path/to/file.py#L10-L24@abc1234 (commit optional when the submission lists commits)
 _CODE_PEEK_RE = re.compile(
@@ -181,6 +182,8 @@ MIGRATIONS.append("""
 MIGRATIONS.append(agora_debate.DEBATE_MIGRATION)
 # spaces as servers: channels, how a space looks and where each reader starts counting «new» (agora_channels.py)
 MIGRATIONS.append(agora_channels.CHANNELS_MIGRATION)
+# members by name, reactions, quoted messages and files (agora_social.py)
+MIGRATIONS.append(agora_social.SOCIAL_MIGRATION)
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -2606,8 +2609,8 @@ class Agora:
     def task(self, a: dict[str, Any]) -> dict[str, Any]:
         task = self._task_row(a.get("task_id"))
         msgs = self._messages(int(task["thread_id"])) if task.get("thread_id") else []
-        if a.get("agent") and task.get("thread_id"):
-            # Reading the task with its whole conversation counts as reading its thread (A1).
+        if a.get("agent") and task.get("thread_id") and not a.get("peek"):
+            # Reading the task with its whole conversation counts as reading its thread (A1); a peek only looks.
             # as the person only from the hub's page, like thread(); agents read with their own id
             reader = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
             with self.db.tx():
@@ -2789,7 +2792,8 @@ class Agora:
             # what the reader had seen before this read, so a page can mark what is new to it
             ack = self.db.one("SELECT upto FROM acks WHERE agent=? AND thread_id=?", (reader, th["id"]))
             seen_before = max(int(ack["upto"]) if ack else 0, self.space_store.read_upto(self.space_id, reader))
-            self._ack(reader, th["id"])
+            if not a.get("peek"):       # a peek only looks: the read mark stays where it was
+                self._ack(reader, th["id"])
         stances: dict[str, str] = {}
         msgs = self._messages(th["id"])
         for m in msgs:
@@ -3263,7 +3267,8 @@ TOOLS: list[dict[str, Any]] = [
                              "kind": {"type": "string"}, "limit": {"type": "integer"}, "cursor": {"type": "string"}}, [])},
     {"name": "hub_agora_task", "read": True,
      "description": "One task with its whole conversation and its locks.",
-     "inputSchema": _schema({"task_id": _TASK, "agent": {"type": "string", "description": "who reads; marks the task thread as read"}}, ["task_id"])},
+     "inputSchema": _schema({"task_id": _TASK, "agent": {"type": "string", "description": "who reads; marks the task thread as read"},
+                             "peek": {"type": "boolean", "description": "true: read without marking it as read"}}, ["task_id"])},
     {"name": "hub_agora_lock",
      "description": "Take or renew locks outside a task: model:principal before a live evaluation, merge:Repo before "
                     "integrating into the shared checkout. Conflicts say who holds what.",
@@ -3297,7 +3302,8 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_thread", "read": True,
      "description": "One thread with its messages, each participant's stance and its task.",
      "inputSchema": _schema({"thread_id": _THREAD, "agent": {"type": "string", "description":
-                                                               "your id: marks the thread as seen for you"}},
+                                                               "your id: marks the thread as seen for you"},
+                             "peek": {"type": "boolean", "description": "true: read without marking it as seen"}},
                             ["thread_id"])},
     {"name": "hub_agora_thread_recent", "read": True,
      "description": "Read the latest bounded page of a thread, in chronological order, without marking it seen. "
@@ -3708,6 +3714,10 @@ class AgoraFacet(Facet):
             if not req.caller():    # the names of this machine's folders are not for whoever reaches the port
                 return {"ok": False, "status": 401, "error": "a family bearer token is required to list folders"}
             return self._run(agora_channels.folders, q)
+        if p == "/api/agora/space_icon" or re.fullmatch(r"/api/agora/file/[0-9a-f]{32}", p):
+            if not req.caller():    # what people attach is for the family, not for whoever reaches the port
+                return {"ok": False, "status": 401, "error": "a family bearer token is required"}
+            return self._binary(p, q)
         channel = re.fullmatch(r"/api/agora/channels/([a-z0-9][a-z0-9-]{0,39})", p)
         if channel or p.rsplit("/", 1)[1] in agora_channels.READ_ROUTES:
             for key in ("limit", "before_id", "done_limit", "offline_limit", "thread_id"):
@@ -3726,6 +3736,21 @@ class AgoraFacet(Facet):
             op = p.rsplit("/", 1)[1]
             return self._run({"guild": self._guild, "servers": self._servers}.get(op) or getattr(ag, op), q)
         return {"ok": False, "status": 404, "error": f"unknown Ágora route {p}"}
+
+    def _binary(self, p: str, q: dict[str, Any]) -> Any:
+        """A file a message carries, or a server's own picture, as bytes."""
+        try:
+            if p == "/api/agora/space_icon":
+                blob, ctype = agora_social.icon_read(self.agora.for_space(q.get("space_id")))
+                return Reply(body=blob, content_type=ctype, headers={"Cache-Control": "private, max-age=86400"})
+            row, blob = agora_social.file_read(self.agora, p.rsplit("/", 1)[1])
+        except (AgoraError, SpaceError) as exc:
+            return {"ok": False, "status": getattr(exc, "status", 400), "error": str(exc)}
+        inline = row["type"] in agora_social.INLINE_TYPES
+        name = "".join(ch if ch.isascii() and (ch.isalnum() or ch in "._- ") else "_" for ch in row["name"]) or "file"
+        return Reply(body=blob, content_type=row["type"] if inline else "application/octet-stream",
+                     headers={"Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{name}"',
+                              "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
 
     def post(self, req: Request) -> Optional[Any]:
         p = req.path
