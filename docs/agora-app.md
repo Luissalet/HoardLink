@@ -53,11 +53,15 @@ A session started without a `rank` takes the one kept for its model on that serv
 | Provider | What is started | Models and efforts offered |
 |---|---|---|
 | Codex | `codex exec --json --worktree` | the installed CLI's catalog, each model with its reasoning levels |
-| Claude | `claude --print --output-format stream-json --worktree=agora-claude-<8 hex>`, with a session id and a name of its own and no permission prompts | the aliases `--model` takes (`default`, `opus`, `sonnet`, `haiku`; plus the model named in the person's `settings.json` when it is none of them) and the levels `claude --help` lists for `--effort`, plus `default` |
+| Claude | `claude --print --output-format stream-json --worktree=agora-claude-<8 hex>`, with a session id and a name of its own and no permission prompts | the aliases `--model` takes (`default`, `opus`, `sonnet`, `haiku`, any other its help names; plus the model named in the person's `settings.json` when it is none of them) and the levels `claude --help` lists for `--effort`, plus `default` |
 | Cursor | its runner with `--print --output-format stream-json --worktree=…` | the runner's model list; the effort is part of each model |
 | Faustus | Faustus's native runner on a new project session | the verified Sparks catalog; the reasoning levels of each model |
 
 For Claude, `default` as a model or as an effort passes no option at all: the session runs on whatever the person's Claude Code is set to. Its program also takes a model by its full name (`claude-…`) and has no command that lists them, so a full name asked for (in a session or in a saved preference) is kept in `<data>/agora-claude-models.json`, one list for every server, and offered next to the aliases from then on (`leaders[].takes_model_names`). A name the provider refuses for the model itself, at no cost, is dropped from the list again. A model that offers no effort levels (some of Faustus's) starts, and is saved as a preference, without one: no effort is sent to it and none is read back. An effort the chosen model does not offer is refused with the reason, as is a model that is not in the catalog.
+
+Both lists are read from what the installed program says about itself, however its help wraps its lines, so a newer program brings its new aliases and levels with no change here.
+
+A Faustus session hangs from the native session of Faustus's own Agora controller, which only has to answer `status`: it need not be watching. The Hub looks for the controller where `FAUSTUS_AGORA_DIR` says, else in `Agents/faustus-agora` beside the installation, else in `faustus-agora` beside it, and starts nothing when that session cannot be confirmed as Faustus's own.
 
 Claude's catalog is offered only while `claude auth status` reports an account. That report can outlive the sign-in itself, so when the provider refuses a session started here for its sign-in, the Hub remembers it against the stored sign-in as it was (only the date of `~/.claude/.credentials.json` is read) and reports Claude as `unavailable` with `auth_state: "expired"` until the person signs in again; without such a file, for fifteen minutes.
 

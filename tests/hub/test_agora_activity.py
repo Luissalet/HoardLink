@@ -12,7 +12,7 @@ import pytest
 from hoard_link.hub.agora import Agora, AgoraError
 from hoard_link.hub import tools
 from hoard_link.sqlkit import Database
-from hoard_link.hub.agora import MIGRATIONS
+from hoard_link.hub.agora import MIGRATIONS, OWNER_NOTE_SQL
 from ._hub_fakes import http, make_hub, serve
 
 
@@ -70,6 +70,31 @@ def test_waiting_agent_unknown_heartbeat_and_task_specific_progress(ag):
     ag.heartbeat({"agent": "builder", "state": "working"})
     ag.now[0] += 10801
     assert ag.activity({"task_id": first["id"]})["activity"]["state"] == "quiet"
+
+
+def test_a_tasks_activity_is_read_through_its_threads_not_by_walking_every_message(ag):
+    """A list of tasks reads the activity of each one: with many messages, walking them all per task took seconds."""
+    task = claimed(ag)
+    ag.post({"agent": "builder", "thread_id": task["thread_id"], "body": "Half way."})
+    for n in range(30):
+        ag.thread_open({"agent": "requester", "title": f"Unrelated {n}", "body": "Something else."})
+    plan = " | ".join(row["detail"] for row in ag.db.query("EXPLAIN QUERY PLAN " + OWNER_NOTE_SQL,
+                                                          (task["id"], "builder", 0.0)))
+    assert "threads_task" in plan and "SCAN m" not in plan, plan
+    assert ag._task_activity(ag.task({"task_id": task["id"]})["task"])["message_id"] is not None
+    listed = ag.tasks({"limit": 500})["tasks"]
+    assert [t["activity"]["message_id"] for t in listed if t["id"] == task["id"]] != [None]
+
+
+def test_an_older_agora_gets_the_index_of_threads_by_task(tmp_path):
+    older = Database(tmp_path / "older.db", migrations=MIGRATIONS[:-1])
+    assert "threads_task" not in [row["name"] for row in older.query("PRAGMA index_list(threads)")]
+    older.close()
+    store = Agora(tmp_path / "older.db")
+    try:
+        assert "threads_task" in [row["name"] for row in store.db.query("PRAGMA index_list(threads)")]
+    finally:
+        store.close()
 
 
 def test_observed_running_is_agent_scope_not_task_progress(ag):
