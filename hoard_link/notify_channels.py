@@ -366,7 +366,7 @@ def default_smtp(cfg: dict[str, Any]) -> Any:
 
 def send_smtp(cfg: dict[str, Any], to: Any, subject: str, body: str = "", *, html: Optional[str] = None,
               smtp_factory: Optional[Callable[[dict[str, Any]], Any]] = None,
-              default_from: str = "hoard@localhost") -> dict[str, Any]:
+              default_from: str = "hoard@localhost", hermes_kind: str = "notification") -> dict[str, Any]:
     """Send one mail with plain SMTP. ``cfg``: ``host, port, user, password, tls, from``. ``html`` adds an alternative part.
     Errors: ``not configured: missing SMTP host or recipient``, ``authentication failed``, or the exception name; the password
     is scrubbed from every error."""
@@ -381,6 +381,9 @@ def send_smtp(cfg: dict[str, Any], to: Any, subject: str, body: str = "", *, htm
     msg.set_content(str(body or subject or ""))
     if html:
         msg.add_alternative(str(html), subtype="html")
+    if hermes_kind:
+        from .mail_helper import mark_hermes
+        mark_hermes(msg, hermes_kind)
     secret = cfg.get("password") or ""
     try:
         client = (smtp_factory or default_smtp)(cfg)
@@ -399,14 +402,33 @@ def send_smtp(cfg: dict[str, Any], to: Any, subject: str, body: str = "", *, htm
             client.quit()
         except Exception:  # noqa: BLE001
             pass
+    if hermes_kind and str(cfg.get("host") or "").lower() in ("smtp.gmail.com", "smtp.googlemail.com"):
+        from .mail_helper import label_hermes
+        import imaplib
+
+        def connect():
+            conn = imaplib.IMAP4_SSL("imap.gmail.com", timeout=SMTP_TIMEOUT_S)
+            try:
+                conn.login(cfg.get("user") or "", secret)
+            except Exception:
+                try:
+                    conn.logout()
+                except Exception:
+                    pass
+                raise
+            return conn
+
+        label_hermes(connect, str(msg["Message-ID"]))
     return {"ok": True}
 
 
 def send_via_helper(run: Callable[..., Any], subject: str, body: str = "", *, html: Optional[str] = None,
-                    to: Optional[Iterable[str]] = None, timeout: float = 60.0) -> dict[str, Any]:
+                    to: Optional[Iterable[str]] = None, timeout: float = 60.0, hermes_kind: str = "") -> dict[str, Any]:
     """Send a notification mail through the Faustus account: ``run`` is ``fam_mail.FaustusHelper(...).run`` (or anything with the
     same ``run(action, payload, timeout)`` shape). Without ``to`` the account's own address receives it."""
     payload: dict[str, Any] = {"subject": str(subject or "")[:200], "text": str(body or subject or "")}
+    if hermes_kind:
+        payload["hermes_kind"] = hermes_kind
     if html:
         payload["html"] = str(html)
     if to:

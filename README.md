@@ -22,6 +22,12 @@ processes to adopt them; updating the Hub alone does not update those consumers.
 
 Faustus project tasks share canonical task IDs with agent clients. `hub_agora_task_edit` edits descriptions, acceptance, priority, assignment and clarifications using the task etag; concurrent writes are rejected. Task detail exposes ordered `edits` with actor, timestamp and before/after values, including initial acceptance criteria. Existing leases and review submissions remain shared. Stable origin IDs make earlier project-record imports idempotent. The user-facing board and editor live natively in each Faustus project.
 
+Notification mail through the shared SMTP sender and Faustus account helper uses
+`[Hermes]`, `X-Hermes: 1` and `X-Hermes-Kind` (default `notification`). Gmail sent
+copies receive the `Hermes` label by Message-ID through IMAP, creating it when
+missing. Gmail searches: `label:hermes` or `subject:[Hermes]`. Labelling is
+best-effort after delivery and preserves other labels and flags.
+
 ### One shared answer to "which model server do I use right now?"
 
 Family cohesion: [ownership, overlaps and remaining gaps](docs/commons/cohesion.md).
