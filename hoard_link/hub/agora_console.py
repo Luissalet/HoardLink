@@ -48,6 +48,20 @@ CONSOLE_TURN_ACTIVE_S = 45 * 60
 MAX_TASK_CHARS = 12000
 _COMMIT_REF_RE = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
 CONSOLE_IDENTITIES = {"codex": "codex-agora", "cursor": "cursor-agora"}
+# What `claude --model` takes whatever the account: the aliases of the families, which the CLI resolves to the latest
+# model of each. "default" passes no --model at all: the model the person's Claude Code is set to. The effort levels
+# are not listed here: they are read from the installed CLI's own help.
+CLAUDE_MODELS = (("default", "The model Claude Code is set to"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku"))
+# Claude Code can report an account whose sign-in its provider no longer accepts (`claude auth status` only says an
+# account is stored). A session the provider refused for that is remembered against the stored sign-in as it was, so
+# Claude is not offered again until the person signs in; without such a file, for a while. The refusal is the CLI's own
+# closing event of a session in which the model never answered (see ``_claude_refused_sign_in``), never something a
+# model wrote.
+_AUTH_REFUSAL = re.compile(r"^\s*Failed to authenticate\b.*\b401\b.*authentication_error", re.IGNORECASE | re.DOTALL)
+_SIGN_IN_REFUSED: dict[str, Any] = {}
+SIGN_IN_REFUSED_TTL_S = 15 * 60
+#: Providers whose runner starts a model that lists no effort levels without one. The others always pass one.
+NO_EFFORT_LEADERS = ("claude", "faustus")
 
 
 class AgoraConsoleFacet(Facet):
@@ -323,8 +337,19 @@ class AgoraConsoleFacet(Facet):
                 auth_state = "logged_out"
                 detail = "Claude CLI reports that no account is logged in; no model catalog was discovered."
                 state = "unavailable"
+            elif logged_in is True and self._claude_sign_in_refused():
+                auth_state = "expired"
+                detail = ("Claude Code reports an account on this PC, but its provider refused the last session started "
+                          "here: the sign-in has expired. Open Claude Code on the PC and sign in again.")
+                state = "unavailable"
             elif logged_in is True:
                 auth_state = "reported_logged_in"
+                catalog, current_model, current_effort = self._claude_catalog(executable)
+                if catalog:
+                    return {"state": "available", "auth_state": auth_state, "checked_at": checked_at,
+                            "detail": "Claude Code CLI reports a logged-in account. Models are the aliases its --model option takes "
+                                      "(the account decides which model each one is); effort levels are the ones its --effort option lists.",
+                            "catalog": catalog, "current_model": current_model, "current_effort": current_effort}
                 detail = "Claude CLI reports a logged-in account, but no authenticated model catalog was discovered; provider access is unverified."
                 state = "unverified"
             else:
@@ -341,6 +366,84 @@ class AgoraConsoleFacet(Facet):
             state = "unverified"
         return {"state": state, "auth_state": auth_state, "checked_at": checked_at,
                 "detail": detail, "catalog": []}
+
+    def _claude_catalog(self, executable: str) -> tuple[list[dict[str, Any]], Optional[str], Optional[str]]:
+        """What a Claude session can be started with, read from the installed CLI and nothing else: it has no command
+        that lists models, so the models are the aliases its ``--model`` option takes and the effort levels are the
+        ones its ``--help`` prints for ``--effort``. ``default`` (a model or an effort) passes no option. An install
+        whose help does not show the headless options this hub uses gives no catalog."""
+        try:
+            result = subprocess.run([executable, "--help"], capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=8, check=False,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.TimeoutExpired):
+            return [], None, None
+        text = result.stdout or ""
+        if result.returncode != 0 or any(option not in text for option in ("--print", "--model", "--output-format", "--permission-mode")):
+            return [], None, None
+        listed = re.search(r"--effort\s+<[^>]+>[^\n(]*\(([a-z, ]+)\)", text)
+        efforts = ["default", *[level.strip() for level in (listed.group(1).split(",") if listed else []) if level.strip()]]
+        current_model, current_effort = self._claude_current_settings()
+        models = list(CLAUDE_MODELS)
+        if current_model and current_model not in {model for model, _ in models}:
+            models.append((current_model, current_model))      # what the person runs is offered under its own name
+        catalog = [{"id": model, "name": name, "efforts": efforts, "default_effort": "default"} for model, name in models]
+        return catalog, current_model or "default", current_effort if current_effort in efforts else "default"
+
+    @staticmethod
+    def _claude_sign_in_stamp() -> Optional[float]:
+        """When Claude Code's stored sign-in last changed; None where it keeps none in a file. Only the date is read."""
+        try:
+            return (Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")) / ".credentials.json").stat().st_mtime
+        except OSError:
+            return None
+
+    @classmethod
+    def _note_claude_sign_in_refused(cls) -> None:
+        _SIGN_IN_REFUSED.update(stamp=cls._claude_sign_in_stamp(), at=time.time())
+
+    @staticmethod
+    def _claude_refused_sign_in(log_path: Path) -> bool:
+        """Whether a Claude session ended because its provider refused the sign-in: the CLI's closing ``result`` event
+        is an error that says so and no inference was paid for, so the words are the CLI's and not a model's."""
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines() if log_path.is_file() else []
+        except OSError:
+            return False
+        for line in reversed(lines):
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict) and event.get("type") == "result":
+                return (event.get("is_error") is True and not event.get("total_cost_usd")
+                        and bool(_AUTH_REFUSAL.search(str(event.get("result") or ""))))
+        return False
+
+    @classmethod
+    def _claude_sign_in_refused(cls) -> bool:
+        """Whether the provider refused Claude Code's sign-in and the person has not signed in again since."""
+        if not _SIGN_IN_REFUSED:
+            return False
+        stamp = cls._claude_sign_in_stamp()
+        still = (stamp == _SIGN_IN_REFUSED.get("stamp") if stamp is not None
+                 else time.time() - float(_SIGN_IN_REFUSED.get("at") or 0) < SIGN_IN_REFUSED_TTL_S)
+        if not still:
+            _SIGN_IN_REFUSED.clear()
+        return still
+
+    @staticmethod
+    def _claude_current_settings() -> tuple[Optional[str], Optional[str]]:
+        """The model and effort the person's own Claude Code is set to (``settings.json``); None where it says nothing."""
+        path = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")) / "settings.json"
+        try:
+            settings = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None, None
+        model = settings.get("model") if isinstance(settings, dict) else None
+        effort = settings.get("effortLevel") if isinstance(settings, dict) else None
+        return (model.strip() if isinstance(model, str) and 0 < len(model.strip()) <= 120 and not model.strip().startswith("-") else None,
+                effort.strip().lower() if isinstance(effort, str) and effort.strip() else None)
 
     def _cursor_status(self) -> dict[str, Any]:
         runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
@@ -440,8 +543,12 @@ class AgoraConsoleFacet(Facet):
     def _provider_data(self, force: bool = False) -> dict[str, dict[str, Any]]:
         now = time.monotonic()
         with self._provider_lock:
-            if not force and self._provider_cache and now - self._provider_at < PROBE_TTL_S:
+            # What is kept is good for a while, unless Claude's sign-in was refused (or renewed) since it was looked at.
+            refused = self._claude_sign_in_refused()
+            if (not force and self._provider_cache and now - self._provider_at < PROBE_TTL_S
+                    and getattr(self, "_provider_refused", False) == refused):
                 return self._provider_cache
+            self._provider_refused = refused
             providers = {
                 "codex": self._codex_catalog(),
                 "claude": self._claude_status(),
@@ -1365,11 +1472,15 @@ class AgoraConsoleFacet(Facet):
         # PATCH endpoint treats an empty endpoint_url as absent on Windows form
         # parsing, which skips its model-switch branch; send only the per-session
         # effort here so we never need to repeat or mutate endpoint settings.
-        patch_status, patched = self._faustus_session_request(
-            "PATCH", f"/api/session/{quote(session_id, safe='')}", {"reasoning_effort": effort})
-        levels_status, levels = self._faustus_session_request(
-            "GET", f"/api/session/{quote(session_id, safe='')}/reasoning-effort")
-        if (patch_status != 200 or not isinstance(patched, dict) or patched.get("reasoning_effort") != effort
+        if effort:
+            patch_status, patched = self._faustus_session_request(
+                "PATCH", f"/api/session/{quote(session_id, safe='')}", {"reasoning_effort": effort})
+            levels_status, levels = self._faustus_session_request(
+                "GET", f"/api/session/{quote(session_id, safe='')}/reasoning-effort")
+        else:
+            # The model offers no effort levels: there is nothing to set on the child and nothing to read back.
+            patch_status, patched, levels_status, levels = 200, None, 200, None
+        if effort and (patch_status != 200 or not isinstance(patched, dict) or patched.get("reasoning_effort") != effort
                 or levels_status != 200 or not isinstance(levels, dict)
                 or levels.get("session_id") != session_id or levels.get("reasoning_effort") != effort
                 or effort not in (levels.get("available_levels") or [])):
@@ -1568,17 +1679,23 @@ class AgoraConsoleFacet(Facet):
                                 # route value; endpoint_id makes the target
                                 # route authoritative inside Faustus.
                                 fields = {"model": str(selected["model_id"]), "endpoint_id": str(selected["endpoint_id"]),
-                                          "endpoint_url": endpoint_url, "reasoning_effort": str(pending["effort"])}
+                                          "endpoint_url": endpoint_url}
+                                if pending["effort"]:       # a model with no reasoning levels is set on its own
+                                    fields["reasoning_effort"] = str(pending["effort"])
                                 patch_status, patched = self._faustus_session_request("PATCH", f"/api/session/{encoded_sid}", fields)
                                 verify_status, verified = self._faustus_session_request("GET", f"/api/session/{encoded_sid}/reasoning-effort")
                             else:
                                 patch_status, patched, verify_status, verified = None, None, None, None
+                            effort_applied = (not pending["effort"] or (
+                                isinstance(patched, dict) and patched.get("reasoning_effort") == pending["effort"]
+                                and isinstance(verified, dict) and verified.get("reasoning_effort") == pending["effort"]
+                                and pending["effort"] in (verified.get("available_levels") or [])))
                             if (continue_apply and patch_status == 200 and isinstance(patched, dict) and patched.get("model") == selected["model_id"]
-                                    and patched.get("reasoning_effort") == pending["effort"] and verify_status == 200
-                                    and isinstance(verified, dict) and verified.get("session_id") == session_id
-                                    and verified.get("reasoning_effort") == pending["effort"]
-                                    and pending["effort"] in (verified.get("available_levels") or [])):
-                                detail = "Applied and read back the selected model and reasoning effort for the explicitly bound idle Faustus session."
+                                    and verify_status == 200 and isinstance(verified, dict)
+                                    and verified.get("session_id") == session_id and effort_applied):
+                                detail = ("Applied and read back the selected model and reasoning effort for the explicitly bound idle Faustus session."
+                                          if pending["effort"] else
+                                          "Applied and read back the selected model, which offers no reasoning levels, for the explicitly bound idle Faustus session.")
                                 with self._db_lock, self._db() as db:
                                     db.execute("UPDATE native_preferences SET session_id=?,state='applied',detail=?,updated_at=? WHERE leader_id='faustus' AND state='pending' AND model=? AND effort=?",
                                                (session_id, detail, time.time(), pending["model"], pending["effort"]))
@@ -1604,12 +1721,17 @@ class AgoraConsoleFacet(Facet):
         selected = next((row for row in catalog if row.get("id") == model), None)
         if not effort and selected:
             effort = str(selected.get("default_effort") or "").strip().lower()
-        verified = bool(selected and effort in selected.get("efforts", []))
+        offered = (selected or {}).get("efforts") or []
+        levelless = bool(selected) and not offered and leader_id in NO_EFFORT_LEADERS
+        if levelless:
+            effort = ""             # a model that offers no effort levels is chosen without one
+        verified = bool(selected and (levelless or effort in offered))
         warning = None if verified else "Provider has not verified this model and effort; preference is recorded for the next compatible turn."
-        applies_to = "next_console_leader_turn_and_child_worker_default" if leader_id in ("codex", "cursor") else "pending_native_session_control"
+        applies_to = ("next_console_leader_turn_and_child_worker_default" if leader_id in ("codex", "cursor")
+                      else "child_worker_default" if leader_id == "claude" else "pending_native_session_control")
         if leader_id == "faustus":
             warning = (warning + " " if warning else "") + "Saved for the trusted Faustus session; it will apply only when that exact session is idle."
-        elif leader_id == "claude":
+        elif leader_id == "claude" and not verified:
             warning = (warning + " " if warning else "") + "Claude authentication and model availability are not verified."
         now = time.time()
         with self._db_lock, self._db() as db:
@@ -1688,6 +1810,7 @@ class AgoraConsoleFacet(Facet):
         effort = effort or str(saved.get("effort") or provider.get("current_effort") or "").strip().lower()
         row = next((m for m in provider.get("catalog", []) if m.get("id") == model), None)
         executable = self._codex_executable() if leader_id == "codex" else None
+        claude_executable = shutil.which("claude") if leader_id == "claude" else None
         cursor_runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
         cursor_runner = cursor_runtime / "node.exe"
         cursor_entry = cursor_runtime / "index.js"
@@ -1702,14 +1825,27 @@ class AgoraConsoleFacet(Facet):
             except Exception:  # noqa: BLE001
                 faustus_installation = (None, None)
         runner_available = (bool(executable) if leader_id == "codex" else
+                            bool(claude_executable) if leader_id == "claude" else
                             (cursor_runner.is_file() and cursor_entry.is_file()) if leader_id == "cursor" else
                             bool(faustus_script and faustus_script.is_file()))
-        if row and not effort:
+        offered = (row or {}).get("efforts") or []
+        levelless = bool(row) and not offered and leader_id in NO_EFFORT_LEADERS
+        if levelless:
+            effort = ""             # the model offers no effort levels: it starts without one, whatever was saved
+        elif row and not effort:
             effort = str(row.get("default_effort") or "").strip().lower()
-        if leader_id not in ("codex", "cursor", "faustus") or not runner_available or not row or effort not in row.get("efforts", []):
+        if (leader_id not in ("codex", "claude", "cursor", "faustus") or not runner_available or not row
+                or (not levelless and effort not in offered)):
+            # Why not: the provider's own account of itself when it has no catalog at all (logged out, no CLI),
+            # otherwise what exactly does not fit.
             detail = provider.get("detail") or "This provider has no verified child-worker runner in the Hub."
-            if leader_id in ("codex", "cursor", "faustus") and not runner_available:
+            has_catalog = bool(provider.get("catalog"))
+            if not runner_available and (has_catalog or leader_id in ("codex", "cursor", "faustus")):
                 detail = f"{leader_id.title()} child runner is unavailable to the Hub process."
+            elif runner_available and row:
+                detail = f"{model} does not offer the effort level {effort!r}."
+            elif runner_available and has_catalog:
+                detail = f"{model or 'No model'} is not in the {leader_id.title()} catalog the Hub discovered."
             with self._db_lock, self._db() as db:
                 db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,?,'unavailable',?,?,?)",
                            (worker_id, leader_id, agent_id, model, effort, task, detail, now, now))
@@ -1746,6 +1882,21 @@ class AgoraConsoleFacet(Facet):
             model_source = "installed managed Cursor Agent `models` catalog + independent `--worktree` session"
             worker_cwd = work_dir
             session_id = ""
+            process_env = self._runner_env()
+        elif leader_id == "claude":
+            # A headless session of its own, in its own worktree and under its own session id, so it is found again.
+            # "default" (model or effort) passes no option: what the person's Claude Code is set to.
+            session_id = str(uuid.uuid4())
+            command = [claude_executable, "--print", "--output-format", "stream-json", "--verbose",
+                       "--permission-mode", "bypassPermissions", "--session-id", session_id, "--name", agent_id,
+                       f"--worktree=agora-claude-{worker_id[:8]}"]
+            if model != "default":
+                command.extend(["--model", model])
+            if effort and effort != "default":
+                command.extend(["--effort", effort])
+            command.extend(["--", prompt])
+            model_source = "aliases of the installed Claude Code CLI + independent `claude --print --worktree` session"
+            worker_cwd = work_dir
             process_env = self._runner_env()
         else:
             setup_failed = False
@@ -1790,8 +1941,8 @@ class AgoraConsoleFacet(Facet):
             command = [str(python), "-X", "utf8", str(faustus_script), "-p", prompt,
                        "--url", base_url,
                        "--session", session_id, "--project-id", project_id, "--agent-id", agent_id,
-                       "--model", model_id, "--effort", effort, "--timeout", "1800", "--json", "--events", "all",
-                       "--approve"]
+                       "--model", model_id, *(["--effort", effort] if effort else []),
+                       "--timeout", "1800", "--json", "--events", "all", "--approve"]
             if workspace:
                 command.extend(["--workspace", workspace])
             model_source = "installed Faustus runner + owner-verified native project child session"
@@ -1838,9 +1989,11 @@ class AgoraConsoleFacet(Facet):
                 if worker_row:
                     leader_id = str(worker_row["parent_id"] or "unknown")
             metrics = self._runner_metrics(log_path)
+            if leader_id == "claude" and code != 0 and self._claude_refused_sign_in(log_path):
+                self._note_claude_sign_in_refused()
             state = "completed" if code == 0 else "failed"
             outcome = "provider_error" if metrics["provider_error"] else ("missing_final_response" if not result.strip() else "unverified")
-            provider_name = {"codex": "Codex", "cursor": "Cursor", "faustus": "Faustus"}.get(leader_id, leader_id)
+            provider_name = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "faustus": "Faustus"}.get(leader_id, leader_id)
             detail = (f"{provider_name} provider turn ended with exit code {code}; task outcome is {outcome}." if state == "completed"
                       else f"{provider_name} worker exited with status {code}; task outcome is {outcome}.")
             with self._db_lock, self._db() as db:
@@ -1848,10 +2001,35 @@ class AgoraConsoleFacet(Facet):
                            (state, result, detail, session_id, session_id, code, outcome, metrics["tool_success_count"],
                             metrics["tool_failure_count"], metrics["provider_error"], time.time(), worker_id))
             self._record("worker", worker_id, state, detail or "Child worker finished.")
+            if leader_id == "claude":
+                self._tidy_claude_worktree(worker_id)
         except Exception:  # noqa: BLE001
             logger.exception("worker monitor failed for %s", worker_id)
         finally:
             self._processes.pop(worker_id, None)
+
+    @staticmethod
+    def _tidy_claude_worktree(worker_id: str, root: Optional[Path] = None) -> bool:
+        """A Claude session that left its worktree as it found it leaves nothing behind: the folder goes, and its branch
+        with it when the branch holds no commit of its own. Nothing is forced: a worktree with changes stays where it
+        is, and so does a branch with work that is nowhere else, for whoever reviews it. True when the folder went."""
+        root = root or Path(__file__).resolve().parents[2]
+        name = f"agora-claude-{worker_id[:8]}"
+        path = root / ".claude" / "worktrees" / name
+        if not path.is_dir():
+            return False
+
+        def git(*args: str) -> int:
+            return subprocess.run(["git", "-C", str(root), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=60, check=False,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode
+        try:
+            if git("worktree", "remove", str(path)) != 0:
+                return False
+            git("branch", "-d", f"worktree-{name}")
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     def _worker_log_path(self, worker_id: str) -> Path:
         with self._db_lock, self._db() as db:
@@ -2077,13 +2255,13 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_message", "description": "Post one attributed message to canonical Agora work thread 32 and mention the selected existing leaders. Mentions queue attention; they do not imply that an idle agent woke or replied. MCP agents may supply their own valid actor id; only the Hub page may post as luis.",
              "inputSchema": {"type": "object", "properties": {"body": {"type": "string", "minLength": 1, "maxLength": 20000}, "recipients": {"type": "array", "items": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}}, "actor": {"type": "string", "maxLength": 64}}, "required": ["body"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
-            {"name": "hub_agora_console_preferences", "description": "Save a verified provider model and reasoning effort; Codex/Cursor independent console leaders and child workers consume the saved preferences. Faustus and Claude limitations are reported explicitly.",
+            {"name": "hub_agora_console_preferences", "description": "Save a verified provider model and reasoning effort; Codex/Cursor independent console leaders and the child workers of Codex, Cursor and Claude consume the saved preferences. Faustus limitations are reported explicitly.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "model": {"type": "string"}, "effort": {"type": "string"}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id", "model"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
             {"name": "hub_agora_console_color", "description": "Set the colour that outlines one leader's messages and avatar in the Agora console (#rrggbb; empty restores the default). Shared by the browser and the desktop app.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "color": {"type": "string", "maxLength": 7}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
-            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex or managed Cursor child in an isolated worktree; register external workers from real metadata, or reconcile an ambiguous console session after its operator confirms it is idle.",
+            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex, Claude or managed Cursor child in an isolated worktree, or a Faustus child in its native project, with a model and effort level of that provider's catalog (a model that offers no levels starts without one); register external workers from real metadata, or reconcile an ambiguous console session after its operator confirms it is idle.",
              "inputSchema": {"type": "object", "properties": {
                  "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},

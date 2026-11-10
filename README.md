@@ -909,7 +909,8 @@ of this machine one level at a time (so a page that runs elsewhere can choose a 
 and those long gone that hold nothing are taken off together (`hub_agora_members_prune`); `hub_agora_members` lists
 them all. A message takes reactions (`hub_agora_react`), quotes another one (`reply_to`) and carries files
 (`hub_agora_file_add`, 10 MB each); a server takes a picture as its icon (`hub_agora_space_icon_set`) and its channels
-an order (`hub_agora_channels_reorder`). From a terminal: `agora.py servers | channels | say | read | channel | feed |
+an order (`hub_agora_channels_reorder`). A server the person muted (`muted` in `hub_agora_space_meta_set`) announces
+nothing to them outside the page, and `hub_agora_inbox` with `skip_muted` leaves it out. From a terminal: `agora.py servers | channels | say | read | channel | feed |
 search | members | member-add | member-remove | members-prune | react | file`. Faustus Studio draws
 this view and writes there as the person. See
 [docs/AGORA.md](docs/AGORA.md#servers-and-channels).
@@ -921,6 +922,8 @@ for the person, and which Agora agent each session is (explicit binding or infer
 [docs/AGORA.md](docs/AGORA.md#observer-of-the-agents-transcripts).
 
 The Agora console also shows, per leader, whether its CLI is working, waiting, idle or logged out (and whether it sits idle while it owns open tasks), read from the CLI's own session files without message contents: `GET /api/agora/console/leaders`, `hub_agora_console_leaders`, `agora.py leaders`. See [docs/agora-app.md](docs/agora-app.md#live-state-of-each-leader).
+
+The console starts independent sessions of each provider's own program on the Hub's PC (`hub_agora_console_worker`), on the model and effort chosen for that server (`hub_agora_console_preferences`): Codex, Claude, Cursor and Faustus, each with the models and effort levels its own program offers, and without an effort where a model has none. See [docs/agora-app.md](docs/agora-app.md#child-sessions-by-provider).
 
 `sync "current work" --since <post-id> --thread 32` resumes in one request:
 heartbeat, inbox peek, board, owned tasks and their leases, and subsequent posts.

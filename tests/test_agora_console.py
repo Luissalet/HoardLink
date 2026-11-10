@@ -1289,3 +1289,379 @@ def test_leader_colours_are_shared_validated_and_resettable(tmp_path):
     tool = facet.handlers()["hub_agora_console_color"]
     assert tool({"leader_id": "claude", "color": "#d97757", "actor": "claude"})["color"] == "#d97757"
     assert "hub_agora_console_color" in {t["name"] for t in facet.tools()}
+
+
+# ---- Claude child sessions, and models that offer no effort levels -------------------------------------------------
+
+CLAUDE_HELP = """Usage: claude [options] [command] [prompt]
+
+Options:
+  --effort <level>                                  Effort level for the current session (low, medium, high, max)
+  --model <model>                                   Model for the current session. Provide an alias for the latest model (e.g. 'sonnet' or 'opus') or a model's full name.
+  --output-format <format>                          Output format (only works with --print)
+  --permission-mode <mode>                          Permission mode to use for the session
+  -p, --print                                       Print response and exit
+  -w, --worktree [name]                             Create a new git worktree for this session
+"""
+
+
+def _claude_cli(monkeypatch, tmp_path, *, help_text=CLAUDE_HELP, settings=None, logged_in=True):
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[1:] == ["auth", "status"]:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"loggedIn": logged_in, "email": "private@example.test"}))
+        if command[1:] == ["--help"]:
+            return SimpleNamespace(returncode=0, stdout=help_text)
+        raise AssertionError(command)
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", run)
+    home = tmp_path / "claude-home"
+    home.mkdir(exist_ok=True)
+    if settings is not None:
+        (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    return calls
+
+
+def test_claude_catalog_is_what_the_installed_cli_says_it_takes(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    _claude_cli(monkeypatch, tmp_path, settings={"effortLevel": "high", "enabledPlugins": {}})
+
+    provider = facet._claude_status()
+
+    assert provider["state"] == "available" and provider["auth_state"] == "reported_logged_in"
+    assert [row["id"] for row in provider["catalog"]] == ["default", "opus", "sonnet", "haiku"]
+    assert all(row["efforts"] == ["default", "low", "medium", "high", "max"] and row["default_effort"] == "default"
+               for row in provider["catalog"])
+    assert provider["current_model"] == "default" and provider["current_effort"] == "high"
+    assert "private@example.test" not in json.dumps(provider)
+
+    # the model the person runs, when it is none of the aliases, is offered under its own name
+    _claude_cli(monkeypatch, tmp_path, settings={"model": "their-own-model", "effortLevel": "turbo"})
+    provider = facet._claude_status()
+    assert [row["id"] for row in provider["catalog"]][-1] == "their-own-model"
+    assert provider["current_model"] == "their-own-model" and provider["current_effort"] == "default"
+
+
+def test_claude_has_no_catalog_when_logged_out_or_when_the_cli_shows_no_headless_options(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    _claude_cli(monkeypatch, tmp_path, logged_in=False)
+    logged_out = facet._claude_status()
+    assert logged_out["state"] == "unavailable" and logged_out["catalog"] == []
+    _claude_cli(monkeypatch, tmp_path, help_text="Usage: claude [prompt]\n  --model <model>  Model\n")
+    old = facet._claude_status()
+    assert old["state"] == "unverified" and old["catalog"] == []
+    # a CLI that lists no effort levels still starts, with the one choice of passing none
+    _claude_cli(monkeypatch, tmp_path, help_text=CLAUDE_HELP.replace("  --effort <level>", "  --other <level>"))
+    assert facet._claude_status()["catalog"][0]["efforts"] == ["default"]
+
+
+def _claude_provider(facet):
+    facet._provider_cache["claude"] = {"state": "available", "detail": "installed CLI", "current_model": "default",
+                                        "current_effort": "default", "catalog": [
+        {"id": model, "name": model, "efforts": ["default", "low", "medium", "high", "max"], "default_effort": "default"}
+        for model in ("default", "opus", "sonnet", "haiku")]}
+
+
+def _capture_popen(monkeypatch):
+    commands = []
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.Popen", lambda command, **kwargs: (
+        commands.append((command, kwargs)) or SimpleNamespace(pid=2468)))
+
+    class DeferredThread:
+        def __init__(self, *args, **kwargs):
+            pass
+        def start(self):
+            pass
+    monkeypatch.setattr("hoard_link.hub.agora_console.threading.Thread", DeferredThread)
+    return commands
+
+
+def test_claude_child_worker_is_a_headless_session_of_its_own_with_the_chosen_model_and_effort(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    _claude_provider(facet)
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
+    commands = _capture_popen(monkeypatch)
+
+    response = facet.worker({"leader_id": "claude", "model": "sonnet", "effort": "high", "task": "Review the open delivery."})
+
+    worker = response["worker"]
+    command, options = commands[0]
+    assert worker["state"] == "running" and worker["parent_id"] == "claude"
+    assert worker["agent_id"] == f"claude-worker-{worker['id'][:8]}"
+    assert command[0] == "claude-test.exe" and command[1:5] == ["--print", "--output-format", "stream-json", "--verbose"]
+    assert command[command.index("--permission-mode") + 1] == "bypassPermissions"
+    assert command[command.index("--model") + 1] == "sonnet" and command[command.index("--effort") + 1] == "high"
+    assert command[command.index("--session-id") + 1] == worker["session_id"] and re.fullmatch(r"[0-9a-f-]{36}", worker["session_id"])
+    assert command[command.index("--name") + 1] == worker["agent_id"]
+    assert f"--worktree=agora-claude-{worker['id'][:8]}" in command
+    assert command[-2] == "--" and command[-1].endswith("Task: Review the open delivery.")
+    assert f"--as {worker['agent_id']} hb" in command[-1]
+    assert options["cwd"] == str(Path(__file__).resolve().parents[1])
+    assert worker["model"] == "sonnet" and worker["effort"] == "high" and "Claude Code CLI" in worker["model_source"]
+
+
+def test_claude_default_model_and_effort_pass_no_option_and_the_saved_choice_is_the_default(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    _claude_provider(facet)
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
+    commands = _capture_popen(monkeypatch)
+
+    facet.worker({"leader_id": "claude", "model": "default", "effort": "default", "task": "Say hello."})
+    assert "--model" not in commands[0][0] and "--effort" not in commands[0][0]
+
+    saved = facet.set_preferences({"leader_id": "claude", "model": "opus", "effort": "max"})
+    assert saved["ok"] and saved["verified"] and saved["warning"] is None and saved["applies_to"] == "child_worker_default"
+    facet.worker({"leader_id": "claude", "task": "Use what was saved."})
+    command = commands[1][0]
+    assert command[command.index("--model") + 1] == "opus" and command[command.index("--effort") + 1] == "max"
+    leader = next(row for row in facet.overview()["leaders"] if row["id"] == "claude")
+    assert leader["model"] == "opus" and leader["effort"] == "max" and len(leader["catalog"]) == 4
+
+    unknown = facet.set_preferences({"leader_id": "claude", "model": "not-a-model", "effort": "high"})
+    assert unknown["ok"] and not unknown["verified"] and "not verified" in unknown["warning"]
+
+
+def test_a_claude_worker_that_cannot_start_says_exactly_why(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    _claude_provider(facet)
+    commands = _capture_popen(monkeypatch)
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
+
+    odd_effort = facet.worker({"leader_id": "claude", "model": "opus", "effort": "ultra", "task": "x"})
+    assert odd_effort["worker"]["state"] == "unavailable" and "does not offer the effort level 'ultra'" in odd_effort["warning"]
+    odd_model = facet.worker({"leader_id": "claude", "model": "gpt-something", "effort": "high", "task": "x"})
+    assert odd_model["worker"]["state"] == "unavailable" and "not in the Claude catalog" in odd_model["warning"]
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: None)
+    no_cli = facet.worker({"leader_id": "claude", "model": "opus", "effort": "high", "task": "x"})
+    assert no_cli["worker"]["state"] == "unavailable" and "child runner is unavailable" in no_cli["warning"]
+    assert commands == []
+
+
+def test_a_model_that_offers_no_effort_levels_starts_without_one(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    monkeypatch.delenv("FAUSTUS_OWNER_API_TOKEN", raising=False)
+    _mock_faustus_controller(tmp_path, monkeypatch)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "faustus_run.py").write_text("# installed runner", encoding="utf-8")
+    facet._provider_cache["faustus"] = {"state": "available", "detail": "real Sparks catalog", "catalog": [
+        {"id": "spark-main::plain-model", "model_id": "plain-model", "endpoint_id": "spark-main", "efforts": [], "default_effort": None}]}
+    calls = []
+
+    def request(method, path, fields=None):
+        calls.append((method, path, fields))
+        if path == "/api/coordination/controller-owned-session":
+            return 200, {"binding": {"session_id": "controller-owned-session", "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True, "connector_id": "agora",
+                                     "operations": ["poll", "post"], "resources": [], "repos": [], "thread_ids": [32]}}
+        if path == "/api/coordination/new-child-session":
+            if method == "PUT":
+                return 200, {"binding": {"actor": fields["actor"]}}
+            return 200, {"binding": {"session_id": "new-child-session", "project_id": "faustus-project",
+                                     "actor": calls[-2][2]["actor"], "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "unverified": 0}
+        if method == "POST" and path == "/api/session":
+            return 200, {"id": "new-child-session", "model": "plain-model"}
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project", "workspace": str(tmp_path / "workspace")}}
+        raise AssertionError((method, path))          # no effort is set on the child, and none is read back
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+    commands = _capture_popen(monkeypatch)
+
+    # an effort sent by a page that still remembers another model's does not stop it
+    response = facet.worker({"leader_id": "faustus", "model": "spark-main::plain-model", "effort": "high", "task": "Inspect."})
+
+    worker = response["worker"]
+    command = commands[0][0]
+    assert worker["state"] == "running" and worker["effort"] == ""
+    assert command[command.index("--model") + 1] == "plain-model" and "--effort" not in command
+    assert not [call for call in calls if call[0] == "PATCH"]
+
+
+def test_faustus_native_preference_for_a_model_without_levels_sets_the_model_alone(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    sid = "controller-owned-session"
+    _mock_faustus_controller(tmp_path, monkeypatch)
+    facet._provider_cache["faustus"] = {"state": "available", "detail": "verified catalog", "catalog": [
+        {"id": "spark-main::plain-model", "endpoint_id": "spark-main", "model_id": "plain-model",
+         "efforts": [], "default_effort": None}]}
+    facet._provider_at = 10**9
+    calls = []
+    def request(method, path, fields=None):
+        calls.append((method, path, fields))
+        if path.startswith("/api/projects/resolve/session/"):
+            return 200, {"project": {"id": "faustus-project"}}
+        if path == f"/api/coordination/{sid}":
+            return 200, {"binding": {"session_id": sid, "project_id": "faustus-project",
+                                     "actor": "faustus", "active": True}}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "unverified": 0}
+        if path == "/api/sessions":
+            return 200, [{"id": sid, "model": "glm-flash", "endpoint_url": "http://spark-main.test/v1/chat/completions"}]
+        if method == "PATCH":
+            return 200, {"id": sid, "model": "plain-model", "reasoning_effort": None}
+        return 200, {"session_id": sid, "reasoning_effort": None, "available_levels": []}
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+
+    saved = facet.set_preferences({"leader_id": "faustus", "model": "spark-main::plain-model", "effort": "high"})
+
+    assert saved["effort"] == "" and saved["verified"] and saved["applies_to"] == "next_native_session_turn"
+    patch = next(call for call in calls if call[0] == "PATCH")
+    assert patch[2] == {"model": "plain-model", "endpoint_id": "spark-main",
+                        "endpoint_url": "http://spark-main.test/v1/chat/completions"}
+    with facet._db() as db:
+        native = db.execute("SELECT session_id,model,effort,state FROM native_preferences").fetchone()
+    assert tuple(native) == (sid, "spark-main::plain-model", "", "applied")
+
+
+def test_a_claude_session_refused_for_its_sign_in_takes_claude_off_the_offer_until_the_person_signs_in(tmp_path, monkeypatch):
+    from hoard_link.hub import agora_console
+    monkeypatch.setattr(agora_console, "_SIGN_IN_REFUSED", {})
+    facet = _facet(tmp_path)
+    _claude_cli(monkeypatch, tmp_path, settings={})
+    credentials = tmp_path / "claude-home" / ".credentials.json"
+    credentials.write_text("{}", encoding="utf-8")
+    os.utime(credentials, (1_000, 1_000))
+    assert facet._claude_status()["state"] == "available"
+
+    log = tmp_path / "claude-run.jsonl"
+    log.write_text("\n".join([
+        '{"type":"system","subtype":"init","cwd":"E:/somewhere","session_id":"3b4e0aa9-304b-42e6-9736-9b27f5278159"}',
+        '{"type":"result","subtype":"success","is_error":true,"result":"Failed to authenticate. API Error: 401 '
+        '{\\"type\\":\\"error\\",\\"error\\":{\\"type\\":\\"authentication_error\\",\\"message\\":\\"OAuth access token has expired.\\"}}",'
+        '"session_id":"3b4e0aa9-304b-42e6-9736-9b27f5278159"}',
+    ]), encoding="utf-8")
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,log_path,created_at,updated_at) "
+                   "VALUES(?,?,?,?,?,?,'running',?,?,?)",
+                   ("claude-refused", "claude", "claude-worker-12345678", "haiku", "low", "task", str(log), 1, 1))
+
+    class Process:
+        def wait(self):
+            return 1
+    tidied = []
+    monkeypatch.setattr(AgoraConsoleFacet, "_tidy_claude_worktree", staticmethod(lambda worker_id, root=None: tidied.append(worker_id)))
+    facet._monitor_worker("claude-refused", Process(), tmp_path / "missing-result.txt")
+    assert tidied == ["claude-refused"]                      # and its untouched worktree is taken away
+
+    with facet._db() as db:
+        row = db.execute("SELECT state,outcome,result FROM workers WHERE id='claude-refused'").fetchone()
+    assert row["state"] == "failed" and row["outcome"] == "provider_error" and "Failed to authenticate" in row["result"]
+    refused = facet._claude_status()
+    assert refused["state"] == "unavailable" and refused["auth_state"] == "expired" and refused["catalog"] == []
+    assert "sign in again" in refused["detail"]
+    # what was kept from before the refusal is not served: the next look already says so, and a session is not tried
+    facet._provider_cache = {"codex": {"state": "unverified", "catalog": []}, "claude": {"state": "available", "auth_state": "reported_logged_in",
+                                                                                          "catalog": [{"id": "haiku", "efforts": ["low"]}]},
+                             "cursor": {"state": "unverified", "catalog": []}, "faustus": {"state": "unverified", "catalog": []}}
+    facet._provider_at = time.monotonic()
+    monkeypatch.setattr(facet, "_codex_catalog", lambda: {"state": "unverified", "catalog": []})
+    monkeypatch.setattr(facet, "_cursor_status", lambda: {"state": "unverified", "catalog": []})
+    monkeypatch.setattr(facet, "_faustus_status", lambda: {"state": "unverified", "catalog": []})
+    assert facet._provider_data()["claude"]["auth_state"] == "expired"
+    commands = _capture_popen(monkeypatch)
+    again = facet.worker({"leader_id": "claude", "model": "haiku", "effort": "low", "task": "x"})
+    assert again["worker"]["state"] == "unavailable" and "sign in again" in again["warning"] and commands == []
+
+    # the person signs in: the stored sign-in changes and Claude is offered again
+    os.utime(credentials, (2_000, 2_000))
+    assert facet._claude_status()["state"] == "available"
+    assert facet._provider_data()["claude"]["state"] == "available"
+
+
+def test_a_claude_session_that_fails_for_another_reason_does_not_blame_the_sign_in(tmp_path, monkeypatch):
+    from hoard_link.hub import agora_console
+    monkeypatch.setattr(agora_console, "_SIGN_IN_REFUSED", {})
+    monkeypatch.setattr(AgoraConsoleFacet, "_tidy_claude_worktree", staticmethod(lambda worker_id, root=None: False))
+    facet = _facet(tmp_path)
+
+    class Process:
+        def wait(self):
+            return 1
+    # a turn limit; a model that worked (it cost something) and whose own answer talks about a sign-in problem;
+    # the same words in an event that is not the CLI's closing error
+    endings = (
+        '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"Reached the turn limit."}',
+        '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.02,'
+        '"result":"Failed to authenticate. API Error: 401 authentication_error is the bug I was asked to fix."}',
+        '{"type":"result","subtype":"success","is_error":false,"result":"Failed to authenticate. API Error: 401 authentication_error"}',
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"Failed to authenticate. API Error: 401 authentication_error"}]}}',
+    )
+    for n, ending in enumerate(endings):
+        log = tmp_path / f"claude-run-{n}.jsonl"
+        log.write_text(ending, encoding="utf-8")
+        assert not AgoraConsoleFacet._claude_refused_sign_in(log)
+        with facet._db() as db:
+            db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,log_path,created_at,updated_at) "
+                       "VALUES(?,?,?,?,?,?,'running',?,?,?)",
+                       (f"claude-other-{n}", "claude", f"claude-worker-8765432{n}", "haiku", "low", "task", str(log), 1, 1))
+        facet._monitor_worker(f"claude-other-{n}", Process(), tmp_path / "missing-result.txt")
+    assert agora_console._SIGN_IN_REFUSED == {} and not facet._claude_sign_in_refused()
+    assert not AgoraConsoleFacet._claude_refused_sign_in(tmp_path / "no-such-log.jsonl")
+
+
+def test_a_recorded_refusal_does_not_make_every_look_probe_the_providers_again(tmp_path, monkeypatch):
+    from hoard_link.hub import agora_console
+    monkeypatch.setattr(agora_console, "_SIGN_IN_REFUSED", {})
+    facet = _facet(tmp_path)
+    probes = []
+    monkeypatch.setattr(facet, "_codex_catalog", lambda: probes.append("codex") or {"state": "unverified", "catalog": []})
+    monkeypatch.setattr(facet, "_cursor_status", lambda: {"state": "unverified", "catalog": []})
+    monkeypatch.setattr(facet, "_faustus_status", lambda: {"state": "unverified", "catalog": []})
+    # Claude has since signed out altogether: its status no longer says "expired", yet the refusal is still on record
+    monkeypatch.setattr(facet, "_claude_status", lambda: {"state": "unavailable", "auth_state": "logged_out", "catalog": []})
+    monkeypatch.setattr(AgoraConsoleFacet, "_claude_sign_in_stamp", staticmethod(lambda: 1_000.0))
+    facet._provider_cache, facet._provider_at = {}, 0.0
+    facet._note_claude_sign_in_refused()
+    for _ in range(4):
+        assert facet._provider_data()["claude"]["auth_state"] == "logged_out"
+    assert probes == ["codex"]                                # looked at once, then kept for its usual while
+    monkeypatch.setattr(AgoraConsoleFacet, "_claude_sign_in_stamp", staticmethod(lambda: 2_000.0))   # signed in again
+    facet._provider_data()
+    assert probes == ["codex", "codex"]                       # that is news: looked at again, once
+    facet._provider_data()
+    assert probes == ["codex", "codex"]
+
+
+def test_only_the_runners_that_can_start_without_an_effort_do_so(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    levelless = [{"id": "plain", "name": "plain", "efforts": []}, {"id": "bare", "name": "bare"}]
+    facet._provider_cache["codex"] = {"state": "available", "detail": "catalog", "catalog": levelless}
+    monkeypatch.setattr(facet, "_codex_executable", lambda: "codex-test.exe")
+    commands = _capture_popen(monkeypatch)
+
+    for model in ("plain", "bare"):                           # a catalog row without levels is not a runnable model there
+        response = facet.worker({"leader_id": "codex", "model": model, "effort": "high", "task": "x"})
+        assert response["worker"]["state"] == "unavailable" and "does not offer the effort level" in response["warning"]
+        saved = facet.set_preferences({"leader_id": "codex", "model": model, "effort": "high"})
+        assert saved["ok"] and not saved["verified"] and saved["effort"] == "high"
+    assert commands == []
+
+
+def test_a_claude_worktree_left_as_it_was_found_is_taken_away_and_nothing_is_forced(tmp_path, monkeypatch):
+    calls = []
+    answers = {"worktree": 0}
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.run", lambda command, **kwargs: (
+        calls.append(command) or SimpleNamespace(returncode=answers.get(command[3], 0))))
+    worker = "08d22ae4-a695-4dd1-a35d-d9512b7001d9"
+    assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is False and calls == []      # it made none
+    folder = tmp_path / ".claude" / "worktrees" / "agora-claude-08d22ae4"
+    folder.mkdir(parents=True)
+
+    assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is True
+    assert calls == [["git", "-C", str(tmp_path), "worktree", "remove", str(folder)],
+                     ["git", "-C", str(tmp_path), "branch", "-d", "worktree-agora-claude-08d22ae4"]]
+    assert not any("--force" in part or part == "-D" for command in calls for part in command)
+
+    calls.clear()
+    answers["branch"] = 1                                     # git keeps a branch that holds work of its own: asked, never forced
+    assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is True
+    assert [command[3:5] for command in calls] == [["worktree", "remove"], ["branch", "-d"]]
+
+    calls.clear()
+    answers["worktree"] = 1                                   # git refuses: it holds changes
+    assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is False
+    assert calls == [["git", "-C", str(tmp_path), "worktree", "remove", str(folder)]]       # and its branch is left alone

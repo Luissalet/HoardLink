@@ -184,6 +184,8 @@ MIGRATIONS.append(agora_debate.DEBATE_MIGRATION)
 MIGRATIONS.append(agora_channels.CHANNELS_MIGRATION)
 # members by name, reactions, quoted messages and files (agora_social.py)
 MIGRATIONS.append(agora_social.SOCIAL_MIGRATION)
+# a server the person silenced (agora_channels.py)
+MIGRATIONS.append(agora_channels.MUTED_MIGRATION)
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -2720,7 +2722,7 @@ class Agora:
             self._msg(th["id"], agent, "escalation", question, [PERSON])
             self.db.execute("UPDATE threads SET status='escalated', updated=? WHERE id=?", (now, th["id"]))
         self._bump("agora.thread.escalated", {"thread_id": th["id"], "by": agent, "title": th["title"]})
-        if self.escalate_hook:
+        if self.escalate_hook and not agora_channels.muted(self, th["space_id"]):   # a silenced server asks inside only
             try:
                 self.escalate_hook(th, agent, question)
             except Exception:  # noqa: BLE001
@@ -2910,8 +2912,19 @@ class Agora:
             out['read_cursors'] = {}
             for space in self.space_store.list():
                 sid = space['id']
+                heard = 0.0
+                if a.get('skip_muted'):          # what is worth telling the person, not all that waits for them
+                    if agora_channels.muted(self, sid):
+                        continue                 # a server they silenced is left out
+                    heard = agora_channels.heard_since(self, sid)
                 local = {**a, 'space_id': sid, 'all_spaces': False, 'peek': True, 'wait_s': 0, 'metadata_only': False}
                 page = self.for_space(sid).inbox(local)
+                if heard:                        # heard again: what was said while it was silenced is not told now
+                    asked = {r['id']: float(self.db.scalar(
+                        "SELECT created FROM messages WHERE thread_id=? AND kind='escalation' ORDER BY id DESC LIMIT 1",
+                        (r['id'],), 0) or 0) for r in page['escalated']}      # when the question itself was put
+                    page = {**page, 'pending': [r for r in page['pending'] if float(r.get('created') or 0) >= heard],
+                            'escalated': [r for r in page['escalated'] if asked[r['id']] >= heard]}
                 out['read_cursors'][sid] = page['since_id']
                 for name in fields:
                     out[name].extend({**row, 'space_id': sid} for row in page[name])
@@ -3164,7 +3177,8 @@ TOOLS: list[dict[str, Any]] = [
                     "the read mark: read the bodies with hub_agora_thread or hub_agora_task (with agent).",
      "inputSchema": _schema({"agent": _A, "wait_s": {"type": "number"}, "peek": {"type": "boolean"},
                              "metadata_only": {"type": "boolean"}, "mine_only": {"type": "boolean"}, "since_id": {"type": "integer"},
-                             "all_spaces": {"type": "boolean", "description": "Read all spaces explicitly, with per-space cursors and space_id on each item."}}, ["agent"])},
+                             "all_spaces": {"type": "boolean", "description": "Read all spaces explicitly, with per-space cursors and space_id on each item."},
+                             "skip_muted": {"type": "boolean", "description": "With all_spaces: only what is worth telling the person. Leaves out the servers they silenced and, in one heard again, what was said meanwhile."}}, ["agent"])},
     {"name": "hub_agora_heartbeat",
      "description": "Tell the Ágora you are here and what you are doing (state working|idle|waiting|away). "
                     "Renews every owned lock by default. Optional renew_resources selects exact live owned locks; [] reports state without renewal.",
@@ -3645,6 +3659,7 @@ class AgoraFacet(Facet):
             q["mine_only"] = str(q.get("mine_only", "")).lower() in ("1", "true", "yes")
             q["metadata_only"] = str(q.get("metadata_only", "")).lower() in ("1", "true", "yes")
             q['all_spaces'] = str(q.get('all_spaces', '')).lower() in ('1', 'true', 'yes')
+            q['skip_muted'] = str(q.get('skip_muted', '')).lower() in ('1', 'true', 'yes')
             return self._run(self._inbox, q)
         if p == "/api/agora/tasks":
             return self._run(self._tasks, q)
