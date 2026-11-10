@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
+
+import pytest
 
 from hoard_link.hub.agora_console import AgoraConsoleFacet, THREAD_ID
 from hoard_link.hub.facets import FACET_MODULES, Request
@@ -1346,10 +1350,13 @@ Options:
   --effort <level>                      Effort level for the current session
                                         (low, medium, high, xhigh, max)
   --environment <environment_id>        Create a new cloud session (experimental)
+  --fallback-model <model>              Enable automatic fallback to the
+                                        'spare' model (only works with --print)
   --model <model>                       Model for the current session. Provide
                                         an alias for the latest model (e.g.
                                         'fable', 'opus', or 'sonnet') or a
                                         model's full name (e.g. 'claude-sonnet-4-6').
+                                        The word 'latest' is no alias either.
   -n, --name <name>                     Set a display name ('quoted' here is no alias)
   --output-format <format>              Output format (only works with --print)
   --permission-mode <mode>              Permission mode to use for the session
@@ -1697,6 +1704,48 @@ def test_a_claude_worktree_left_as_it_was_found_is_taken_away_and_nothing_is_for
     (folder / "notes.txt").unlink()
     assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is True and not folder.exists()
     assert [command[3:5] for command in calls] == [["worktree", "remove"], ["worktree", "prune"], ["branch", "-d"]]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_the_lock_a_session_left_on_its_worktree_is_lifted_and_nobody_elses(tmp_path):
+    """A newer program locks the worktree of its session and leaves it locked when it ends: git then refuses to take
+    the worktree away, and every session left one behind."""
+    def git(*args, cwd=tmp_path):
+        done = subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args], cwd=cwd,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        assert done.returncode == 0, done.stderr
+        return done.stdout
+
+    git("init", "-q", "-b", "main")
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    git("add", "a.txt"); git("commit", "-q", "-m", "first")
+
+    def session(worker, reason):
+        name = f"agora-claude-{worker[:8]}"
+        folder = tmp_path / ".claude" / "worktrees" / name
+        git("worktree", "add", "-q", "-b", f"worktree-{name}", str(folder))
+        git("worktree", "lock", "--reason", reason, str(folder))
+        return name, folder
+
+    name, folder = session("11111111-aaaa", "claude session agora-claude-11111111 (pid 4242)")
+    assert AgoraConsoleFacet._tidy_claude_worktree("11111111-aaaa", tmp_path) is True
+    assert not folder.exists() and name not in git("worktree", "list") and name not in git("branch", "--list")
+
+    def locked():
+        return git("worktree", "list", "--porcelain").count("\nlocked")
+
+    # somebody wants these kept: a lock of their own, even one that names the worktree
+    for worker, reason in (("22222222-bbbb", "kept by hand"), ("44444444-dddd", "do not touch agora-claude-44444444")):
+        name, folder = session(worker, reason)
+        assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is False
+        assert folder.is_dir() and name in git("branch", "--list")
+    assert locked() == 2
+
+    name, folder = session("33333333-cccc", "claude session agora-claude-33333333 (pid 4243)")
+    (folder / "notes.txt").write_text("work in progress", encoding="utf-8")       # its own lock, but it left work
+    assert AgoraConsoleFacet._tidy_claude_worktree("33333333-cccc", tmp_path) is False
+    assert (folder / "notes.txt").is_file() and name in git("branch", "--list")
+    assert locked() == 3 and "claude session agora-claude-33333333 (pid 4243)" in git("worktree", "list", "--porcelain")
 
 
 def test_the_controller_of_the_local_agent_is_found_where_the_agents_runtimes_live(tmp_path, monkeypatch):
