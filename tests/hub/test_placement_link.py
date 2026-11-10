@@ -99,7 +99,7 @@ def test_a_tunnel_that_ends_is_reported_and_opened_again_later():
     assert not link.tick()["up"] and len(opened) == 1                               # not before the wait is over
     now[0] += pl.RETRY_S + 1
     assert link.tick()["up"] and len(opened) == 2
-    assert len(placement.sent) == 2                                                # the Spark already knows: told once
+    assert len(placement.sent) == 4                              # told again: its folder may have been wiped meanwhile
 
 
 def test_an_unreachable_spark_is_a_state_not_a_crash():
@@ -108,6 +108,43 @@ def test_an_unreachable_spark_is_a_state_not_a_crash():
     link, opened = _link(placement, [])
     state = link.tick()
     assert state["wanted"] and not state["up"] and "timed out" in state["error"] and opened == []
+
+
+def test_status_never_waits_for_the_spark_and_two_looks_open_one_tunnel():
+    import threading
+
+    placement = FakePlacement()
+    entered, release = threading.Event(), threading.Event()
+    plain = placement._ssh
+
+    def slow(command, timeout=120, input=None):
+        entered.set()
+        assert release.wait(10)
+        return plain(command, timeout=timeout, input=input)
+
+    placement._ssh = slow
+    link, opened = _link(placement, [FakeProc(), FakeProc()])
+    first = threading.Thread(target=link.tick)
+    first.start()
+    assert entered.wait(5)                                       # the first look is talking to the Spark right now
+    answered = threading.Event()
+    threading.Thread(target=lambda: (link.status(), answered.set())).start()
+    assert answered.wait(2)                                      # and the state is still read at once
+    assert link.tick()["up"] is False and opened == []           # a second look does not open another tunnel
+    release.set()
+    first.join(10)
+    assert link.status()["up"] and len(opened) == 1
+
+
+def test_a_stopped_link_does_not_open_again():
+    placement = FakePlacement()
+    proc = FakeProc()
+    link, opened = _link(placement, [proc, FakeProc()])
+    assert link.tick()["up"]
+    link.stop()
+    assert proc.closed
+    link.poke()
+    assert link.tick()["up"] is False and len(opened) == 1
 
 
 def test_coming_back_to_the_pc_closes_it():
