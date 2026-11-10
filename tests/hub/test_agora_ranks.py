@@ -231,6 +231,56 @@ def test_a_question_left_unanswered_above_reaches_the_person_when_asked_again(ag
     assert asked_of_luis == [SONNET]
 
 
+def test_in_a_debate_with_findings_the_highest_rank_decides_and_is_not_closed_over(ag):
+    S = {"space_id": "atlas"}
+    th = ag.thread_open({**S, "agent": SONNET, "title": "¿Caché de la vista?", "kind": "debate", "body": "Hechos."})["thread"]["id"]
+    did = ag.debate_open({**S, "agent": SONNET, "thread_id": th, "participants": [FABLE, OPUS, HAIKU]})["debate"]["id"]
+    f1 = ag.debate_finding({**S, "agent": SONNET, "debate_id": did, "claim": "La vista se rehace en cada lectura",
+                            "disposition": "adopt"})["finding"]["id"]
+    # two below challenge it and the director verifies it: verified
+    ag.debate_challenge({**S, "agent": HAIKU, "finding_id": f1, "note": "no lo veo"})
+    ag.debate_challenge({**S, "agent": OPUS, "finding_id": f1, "note": "solo con refresh"})
+    assert ag.debate_verify({**S, "agent": FABLE, "finding_id": f1})["finding"]["status"] == "verified"
+    # the other way round: everyone below verifies, the director challenges: challenged, and it is not closed over
+    f2 = ag.debate_finding({**S, "agent": SONNET, "debate_id": did, "claim": "Basta con 5 s de caché"})["finding"]["id"]
+    ag.debate_verify({**S, "agent": HAIKU, "finding_id": f2})
+    ag.debate_verify({**S, "agent": OPUS, "finding_id": f2})
+    assert ag.debate_challenge({**S, "agent": FABLE, "finding_id": f2, "note": "mide antes"})["finding"]["status"] == "challenged"
+    refused = _refused(ag.debate_close, {**S, "agent": SONNET, "debate_id": did, "outcome": "Caché de 5 s"})
+    assert refused.extra["error_code"] == "rank" and refused.extra["outranked_by"] == FABLE and f"F{f2}" in str(refused)
+    assert ag.debate_show({**S, "debate_id": did})["debate"]["status"] == "open"
+    # answered and verified by them, it closes; a challenge from below never held it
+    ag.debate_finding({**S, "agent": SONNET, "finding_id": f2, "claim": "Basta con 5 s de caché, medido: 40 ms"})
+    ag.debate_verify({**S, "agent": FABLE, "finding_id": f2})
+    ag.debate_challenge({**S, "agent": HAIKU, "finding_id": f2, "note": "sigo sin verlo"})
+    assert ag.debate_close({**S, "agent": SONNET, "debate_id": did, "outcome": "Caché de 5 s"})["debate"]["status"] == "closed"
+
+    # a finding stands as the ranks are now, not as they were when the stances were taken
+    th4 = ag.thread_open({**S, "agent": SONNET, "title": "Cambian los rangos", "kind": "debate", "body": "?"})["thread"]["id"]
+    d4 = ag.debate_open({**S, "agent": SONNET, "thread_id": th4, "participants": [OPUS, HAIKU]})["debate"]["id"]
+    k = ag.debate_finding({**S, "agent": SONNET, "debate_id": d4, "claim": "Un hecho"})["finding"]["id"]
+    ag.debate_verify({**S, "agent": OPUS, "finding_id": k})
+    assert ag.debate_challenge({**S, "agent": HAIKU, "finding_id": k, "note": "no"})["finding"]["status"] == "verified"
+    ag.member_rank_set({**S, "agent": "luis", "_person": True, "member": HAIKU, "rank": "director"})
+    assert ag.debate_show({**S, "debate_id": d4})["findings"][0]["status"] == "challenged"
+    _refused(ag.debate_close, {**S, "agent": SONNET, "debate_id": d4, "outcome": "Queda"})
+    ag.member_rank_set({**S, "agent": "luis", "_person": True, "member": HAIKU, "rank": "support"})
+    assert ag.debate_close({**S, "agent": SONNET, "debate_id": d4, "outcome": "Queda"})["debate"]["status"] == "closed"
+
+    # the director closes over anyone's challenge, and so does the person; among equals nothing changed
+    th2 = ag.thread_open({**S, "agent": OPUS, "title": "Otro", "kind": "debate", "body": "?"})["thread"]["id"]
+    d2 = ag.debate_open({**S, "agent": OPUS, "thread_id": th2, "participants": [FABLE, SONNET]})["debate"]["id"]
+    g = ag.debate_finding({**S, "agent": SONNET, "debate_id": d2, "claim": "Algo"})["finding"]["id"]
+    ag.debate_challenge({**S, "agent": OPUS, "finding_id": g, "note": "no"})
+    assert ag.debate_close({**S, "agent": FABLE, "debate_id": d2, "outcome": "Visto"})["debate"]["status"] == "closed"
+    ag.heartbeat({**S, "agent": "codex-terra", "state": "working"})
+    th3 = ag.thread_open({**S, "agent": SONNET, "title": "Iguales", "kind": "debate", "body": "?"})["thread"]["id"]
+    d3 = ag.debate_open({**S, "agent": SONNET, "thread_id": th3, "participants": ["codex-terra"]})["debate"]["id"]
+    h = ag.debate_finding({**S, "agent": SONNET, "debate_id": d3, "claim": "Algo más"})["finding"]["id"]
+    ag.debate_challenge({**S, "agent": "codex-terra", "finding_id": h, "note": "no"})
+    assert ag.debate_close({**S, "agent": SONNET, "debate_id": d3, "outcome": "Queda así"})["debate"]["status"] == "closed"
+
+
 def test_a_higher_rank_hands_out_the_work(ag):
     S = {"space_id": "atlas"}
     tid = ag.task_add({**S, "agent": FABLE, "title": "Línea de tiempo"})["task"]["id"]

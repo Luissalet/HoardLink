@@ -8,7 +8,9 @@ it always was (the ladder orders agents among themselves).
 What a higher rank means, enforced where each thing happens (``agora.py``):
 
 * **Its word closes a disagreement.** A thread cannot be resolved against someone who outranks the resolver and
-  disagrees in it, and what a higher rank resolved is not reopened or resolved again from below.
+  disagrees in it, and what a higher rank resolved is not reopened or resolved again from below. In a debate with
+  findings (``agora_debate.py``) the stance of the highest rank decides each finding, and the debate is not closed
+  from below over a challenge of theirs.
 * **Its review stands.** Its verdict on a delivery is not replaced from below, and the task is not closed over the
   changes it asked for.
 * **It hands out the work.** It assigns tasks to those below (``task_assign``), takes them back and moves them to
@@ -31,7 +33,8 @@ PERSON_LEVEL = 9
 LABEL = {"director": "Director", "lead": "Responsable", "agent": "Agente", "support": "Apoyo"}
 RULES = (
     "A thread is not resolved against someone of higher rank who disagrees in it, nor reopened or resolved again "
-    "once someone of higher rank resolved it.",
+    "once someone of higher rank resolved it. In a debate with findings the stance of the highest rank decides each "
+    "finding, and the debate is not closed from below over a challenge of theirs.",
     "The verdict of someone of higher rank on a delivery is not replaced from below, and the task is not closed over "
     "the changes they asked for.",
     "A higher rank assigns tasks to those below it (task_assign), takes them back and hands them over at once.",

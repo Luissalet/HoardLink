@@ -60,6 +60,15 @@ CLAUDE_MODELS = (("default", "The model Claude Code is set to"), ("opus", "Opus"
 # model wrote.
 _AUTH_REFUSAL = re.compile(r"^\s*Failed to authenticate\b.*\b401\b.*authentication_error", re.IGNORECASE | re.DOTALL)
 _SIGN_IN_REFUSED: dict[str, Any] = {}
+# Claude Code takes a model by its full name besides its aliases, and has no command that lists them: the full names
+# the person started a session with are kept (one list for every server) and offered next to the aliases. One the
+# provider refuses for the model itself, at no cost, is dropped from the list again. The two refusals are the CLI's own
+# words: a model it does not know or the account cannot use, and one this version of the program is too old for.
+_CLAUDE_MODEL_NAME = re.compile(r"claude-[a-z0-9][a-z0-9.\-]{1,60}")
+_MODEL_REFUSAL = re.compile(r"issue with the selected model|does not support this model", re.IGNORECASE)
+_CLAUDE_NAMES_KEPT = 40
+#: Raised when that list changes, so the view of every server asks the catalog again.
+_CATALOG_EPOCH = [0]
 SIGN_IN_REFUSED_TTL_S = 15 * 60
 #: Providers whose runner starts a model that lists no effort levels without one. The others always pass one.
 NO_EFFORT_LEADERS = ("claude", "faustus")
@@ -83,6 +92,7 @@ class AgoraConsoleFacet(Facet):
         self._native_preference_lock = threading.Lock()
         self._provider_at = 0.0
         self._provider_cache: dict[str, dict[str, Any]] = {}
+        self._provider_epoch = _CATALOG_EPOCH[0]
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._leader_locks = {"codex": threading.Lock(), "cursor": threading.Lock()}
         self._leader_threads: dict[str, threading.Thread] = {}
@@ -230,6 +240,9 @@ class AgoraConsoleFacet(Facet):
                 CREATE TABLE IF NOT EXISTS provider_diagnostics (
                     provider_id TEXT PRIMARY KEY, state TEXT NOT NULL, detail TEXT NOT NULL,
                     auth_state TEXT NOT NULL DEFAULT 'unknown', checked_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS model_ranks (
+                    leader_id TEXT NOT NULL, model TEXT NOT NULL, rank TEXT NOT NULL,
+                    updated_by TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(leader_id, model));
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(workers)")}
             if "agent_id" not in columns:
@@ -391,8 +404,58 @@ class AgoraConsoleFacet(Facet):
         models = list(CLAUDE_MODELS)
         if current_model and current_model not in {model for model, _ in models}:
             models.append((current_model, current_model))      # what the person runs is offered under its own name
+        for named in self._claude_named_models():              # and the full names the person asked for
+            if named not in {model for model, _ in models}:
+                models.append((named, named))
         catalog = [{"id": model, "name": name, "efforts": efforts, "default_effort": "default"} for model, name in models]
         return catalog, current_model or "default", current_effort if current_effort in efforts else "default"
+
+    def _claude_models_file(self) -> Path:
+        return Path(self.hub.config.data_dir) / "agora-claude-models.json"
+
+    def _claude_named_models(self) -> list[str]:
+        """The full model names kept for Claude sessions, oldest first."""
+        try:
+            kept = json.loads(self._claude_models_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        return [m for m in kept if isinstance(m, str) and _CLAUDE_MODEL_NAME.fullmatch(m)] if isinstance(kept, list) else []
+
+    def _keep_claude_model(self, model: str, keep: bool = True) -> bool:
+        """Add a full model name to the ones offered for Claude, or take it off. True when the list changed."""
+        with self._provider_lock:
+            kept = self._claude_named_models()
+            if (model in kept) == keep or (keep and not _CLAUDE_MODEL_NAME.fullmatch(model)):
+                return False
+            # The newest stay when there are too many: an old name asked for again simply comes back.
+            kept = [*kept, model][-_CLAUDE_NAMES_KEPT:] if keep else [m for m in kept if m != model]
+            path = self._claude_models_file()
+            try:
+                swap = path.with_suffix(".json.new")
+                swap.write_text(json.dumps(kept), encoding="utf-8")
+                os.replace(swap, path)
+            except OSError:
+                return False
+            _CATALOG_EPOCH[0] += 1                            # every server's view asks the catalog again
+            return True
+
+    @staticmethod
+    def _claude_refused_model(log_path: Path) -> bool:
+        """Whether a Claude session ended because its provider would not run the model asked for: the CLI's closing
+        ``result`` event is an error that says so and nothing was paid for."""
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines() if log_path.is_file() else []
+        except OSError:
+            return False
+        for line in reversed(lines):
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict) and event.get("type") == "result":
+                return (event.get("is_error") is True and not event.get("total_cost_usd")
+                        and bool(_MODEL_REFUSAL.search(str(event.get("result") or ""))))
+        return False
 
     @staticmethod
     def _claude_sign_in_stamp() -> Optional[float]:
@@ -550,9 +613,11 @@ class AgoraConsoleFacet(Facet):
             # What is kept is good for a while, unless Claude's sign-in was refused (or renewed) since it was looked at.
             refused = self._claude_sign_in_refused()
             if (not force and self._provider_cache and now - self._provider_at < PROBE_TTL_S
-                    and getattr(self, "_provider_refused", False) == refused):
+                    and getattr(self, "_provider_refused", False) == refused
+                    and self._provider_epoch == _CATALOG_EPOCH[0]):
                 return self._provider_cache
             self._provider_refused = refused
+            self._provider_epoch = _CATALOG_EPOCH[0]
             providers = {
                 "codex": self._codex_catalog(),
                 "claude": self._claude_status(),
@@ -573,6 +638,21 @@ class AgoraConsoleFacet(Facet):
     @staticmethod
     def _utc_now() -> str:
         return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    def _model_ranks(self) -> dict[str, dict[str, str]]:
+        """The rank the person chose for the sessions of each model on this server: {provider: {model: rank}}."""
+        out: dict[str, dict[str, str]] = {}
+        with self._db_lock, self._db() as db:
+            for row in db.execute("SELECT leader_id, model, rank FROM model_ranks"):
+                if row["rank"] in agora_ranks.LEVEL:
+                    out.setdefault(row["leader_id"], {})[row["model"]] = row["rank"]
+        return out
+
+    def _remember_model_rank(self, leader_id: str, model: str, rank: str, actor: str) -> None:
+        with self._db_lock, self._db() as db:
+            db.execute("INSERT INTO model_ranks(leader_id,model,rank,updated_by,updated_at) VALUES(?,?,?,?,?) "
+                       "ON CONFLICT(leader_id,model) DO UPDATE SET rank=excluded.rank,updated_by=excluded.updated_by,"
+                       "updated_at=excluded.updated_at", (leader_id, model, rank, actor[:80], time.time()))
 
     def _preferences(self) -> dict[str, dict[str, Any]]:
         with self._db_lock, self._db() as db:
@@ -1120,6 +1200,7 @@ class AgoraConsoleFacet(Facet):
         live_states = self.leader_states(provider_data=provider_data, faustus_current=faustus_current)["states"]
         console_sessions = {row["leader_id"]: row for row in self._console_sessions()}
         active_console_turns = self._active_console_turns()
+        model_ranks = self._model_ranks()
         now = time.time()
         leaders = []
         for leader_id, name, agent_id in LEADERS:
@@ -1167,7 +1248,11 @@ class AgoraConsoleFacet(Facet):
                             "console_session": console_session,
                             "color": colors.get(leader_id),
                             "live_state": live_states.get(leader_id),
-                            "idle_with_work": bool((live_states.get(leader_id) or {}).get("idle_with_work"))}
+                            "idle_with_work": bool((live_states.get(leader_id) or {}).get("idle_with_work")),
+                            # the rank a session of each model starts with here, where the person chose one
+                            "model_ranks": model_ranks.get(leader_id, {}),
+                            # whether a model can also be asked for by its full name (the provider's program takes it)
+                            "takes_model_names": leader_id == "claude" and bool(catalog)}
             if leader_id == "faustus":
                 leader.update(faustus_current)
             leaders.append(leader)
@@ -1753,6 +1838,25 @@ class AgoraConsoleFacet(Facet):
         return {"ok": True, "leader_id": leader_id, "model": model, "effort": effort,
                 "verified": verified, "applies_to": applies_to, "warning": warning, "updated_at": now}
 
+    def set_model_rank(self, args: dict[str, Any], actor: str = "codex-console") -> dict[str, Any]:
+        """The rank the sessions of one model start with on this server. The person's to say, from their pages; it is
+        also what they last started a session of that model with."""
+        leader_id = str(args.get("leader_id") or "").strip().lower()
+        if leader_id not in {row[0] for row in LEADERS}:
+            return {"ok": False, "status": 400, "error": "leader_id must be codex, claude, cursor or faustus"}
+        model = str(args.get("model") or "").strip()
+        rank = str(args.get("rank") or "").strip().lower()
+        if rank not in agora_ranks.LEVEL:
+            return {"ok": False, "status": 400, "error": "rank must be one of " + ", ".join(n for n, _ in agora_ranks.LADDER)}
+        if not (actor == "luis" or args.get("_person") is True):
+            return {"ok": False, "status": 403, "error": "only the person says which rank the sessions of a model start with"}
+        if not any(row.get("id") == model for row in self._provider_data()[leader_id].get("catalog") or []):
+            return {"ok": False, "status": 400, "error": f"{model or 'that'} is not a model {leader_id} offers here"}
+        self._remember_model_rank(leader_id, model, rank, "luis")
+        self._record("preference", leader_id, "saved", f"{model} starts as {rank}")
+        return {"ok": True, "leader_id": leader_id, "model": model, "rank": rank,
+                "model_ranks": self._model_ranks().get(leader_id, {})}
+
 
     def send_message(self, args: dict[str, Any], actor: str = "codex-console") -> dict[str, Any]:
         body = str(args.get("body") or "").strip()
@@ -1832,13 +1936,20 @@ class AgoraConsoleFacet(Facet):
         if rank_asked and rank_asked not in agora_ranks.LEVEL:
             return {"ok": False, "status": 400, "error": "rank must be one of " + ", ".join(n for n, _ in agora_ranks.LADDER)}
         by_person = actor == "luis" or args.get("_person") is True
-        rank = self._worker_rank(rank_asked, actor, by_person)
         now = time.time()
         provider = self._provider_data().get(leader_id) or {}
         saved = self._preferences().get(leader_id, {})
         model = model or str(saved.get("model") or provider.get("current_model") or "").strip()
         effort = effort or str(saved.get("effort") or provider.get("current_effort") or "").strip().lower()
         row = next((m for m in provider.get("catalog", []) if m.get("id") == model), None)
+        # A model of Claude the person asks for by its full name: it has the effort levels of the provider's other
+        # models, and is kept and offered from then on once a session has started with it.
+        named = (row is None and leader_id == "claude" and by_person and bool(provider.get("catalog"))
+                 and bool(_CLAUDE_MODEL_NAME.fullmatch(model)))
+        if named:
+            row = {**provider["catalog"][0], "id": model, "name": model}
+        # The rank: the one asked for; else the one the person chose for sessions of this model here; else the usual.
+        rank = self._worker_rank(rank_asked or self._model_ranks().get(leader_id, {}).get(model, ""), actor, by_person)
         executable = self._codex_executable() if leader_id == "codex" else None
         claude_executable = shutil.which("claude") if leader_id == "claude" else None
         cursor_runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
@@ -2004,6 +2115,10 @@ class AgoraConsoleFacet(Facet):
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         # Its rank is written once the session exists: one that never started leaves none behind under its name.
         self._give_worker_rank(agent_id, rank, "luis" if by_person else actor)
+        if by_person and rank_asked:
+            self._remember_model_rank(leader_id, model, rank, "luis")    # what the person starts this model as, here
+        if named:
+            self._keep_claude_model(model)
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
                          name=f"agora-worker-{worker_id[:8]}").start()
         out = {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id), "rank": rank}
@@ -2029,6 +2144,13 @@ class AgoraConsoleFacet(Facet):
             metrics = self._runner_metrics(log_path)
             if leader_id == "claude" and code != 0 and self._claude_refused_sign_in(log_path):
                 self._note_claude_sign_in_refused()
+            if leader_id == "claude" and code != 0 and self._claude_refused_model(log_path):
+                with self._db_lock, self._db() as db:
+                    refused = db.execute("SELECT model FROM workers WHERE id=?", (worker_id,)).fetchone()
+                if refused and self._keep_claude_model(str(refused["model"] or ""), keep=False):    # not offered again
+                    with self._db_lock, self._db() as db:     # nor left as the model this server's sessions start with
+                        db.execute("DELETE FROM preferences WHERE leader_id='claude' AND model=?", (refused["model"],))
+                        db.execute("DELETE FROM model_ranks WHERE leader_id='claude' AND model=?", (refused["model"],))
             state = "completed" if code == 0 else "failed"
             outcome = "provider_error" if metrics["provider_error"] else ("missing_final_response" if not result.strip() else "unverified")
             provider_name = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "faustus": "Faustus"}.get(leader_id, leader_id)
@@ -2359,6 +2481,10 @@ class AgoraConsoleFacet(Facet):
             return self.send_message(args, actor)
         if req.path == "/api/agora/console/preferences":
             return self.set_preferences(args, actor)
+        if req.path == "/api/agora/console/model_rank":
+            if self._person_page(req):
+                args["_person"] = True               # the person says which rank a model's sessions start with
+            return self.set_model_rank(args, actor)
         if req.path == "/api/agora/console/color":
             return self.set_color(args, actor)
         if req.path == "/api/agora/console/worker":
@@ -2410,7 +2536,7 @@ class AgoraConsoleFacet(Facet):
              "inputSchema": {"type": "object", "properties": {"body": {"type": "string", "minLength": 1, "maxLength": 20000}, "recipients": {"type": "array", "items": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}}, "actor": {"type": "string", "maxLength": 64}}, "required": ["body"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
             {"name": "hub_agora_console_preferences", "description": "Save a verified provider model and reasoning effort; Codex/Cursor independent console leaders and the child workers of Codex, Cursor and Claude consume the saved preferences. Faustus limitations are reported explicitly.",
-             "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "model": {"type": "string"}, "effort": {"type": "string"}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id", "model"], "additionalProperties": False},
+             "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "model": {"type": "string", "description": "A model of the provider's catalog."}, "effort": {"type": "string"}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id", "model"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
             {"name": "hub_agora_console_color", "description": "Set the colour that outlines one leader's messages and avatar in the Agora console (#rrggbb; empty restores the default). Shared by the browser and the desktop app.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "color": {"type": "string", "maxLength": 7}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id"], "additionalProperties": False},

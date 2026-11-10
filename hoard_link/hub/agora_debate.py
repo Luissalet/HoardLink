@@ -167,12 +167,20 @@ def finding_stances(author: str, events: list[dict[str, Any]]) -> dict[str, str]
     return stances
 
 
-def finding_status(author: str, stances: dict[str, str], person: str = "luis") -> str:
+def finding_status(author: str, stances: dict[str, str], person: str = "luis",
+                   levels: Optional[dict[str, int]] = None) -> str:
+    """Where a finding stands. The person's stance decides it. Otherwise, with ``levels`` ({participant: rank
+    level}), the stances of the highest rank that took one count alone: those below are heard and do not outvote
+    them. Among equals, or without ``levels``, every stance counts the same."""
     if stances.get(author) == "reject":
         return "rejected"
     if person in stances and person != author:
         return {"verify": "verified", "challenge": "challenged", "reject": "rejected"}[stances[person]]
-    values = [v for k, v in stances.items() if k != author]
+    others = {k: v for k, v in stances.items() if k != author}
+    if levels and others:
+        top = max(levels.get(k, 0) for k in others)
+        others = {k: v for k, v in others.items() if levels.get(k, 0) == top}
+    values = list(others.values())
     verifies, challenges, rejects = values.count("verify"), values.count("challenge"), values.count("reject")
     if rejects and rejects > verifies:
         return "rejected"
@@ -181,6 +189,25 @@ def finding_status(author: str, stances: dict[str, str], person: str = "luis") -
     if verifies:
         return "verified"
     return "proposed"
+
+
+def _levels(ag: Any, stances: dict[str, str]) -> dict[str, int]:
+    """The rank level on this server of everyone who took a stance."""
+    from . import agora_ranks
+    return {who: agora_ranks.level(ag, who) for who in stances}
+
+
+def _challenged_from_above(ag: Any, debate_id: int, agent: str) -> Optional[tuple[int, str]]:
+    """A finding left challenged (one whose challenge an even higher rank overruled is settled) by somebody who
+    outranks ``agent``: its id and who."""
+    from . import agora_ranks
+    for f in debate_view(ag, debate_id)["findings"]:
+        if f["status"] != "challenged":
+            continue
+        for who in f["challenged_by"]:
+            if who != agent and agora_ranks.outranks(ag, who, agent):
+                return int(f["id"]), who
+    return None
 
 
 def _freeze_file(repo_path: Any, head: Optional[str], ref: str) -> dict[str, Any]:
@@ -325,6 +352,8 @@ def debate_view(ag: Any, debate_id: Any) -> dict[str, Any]:
         own = [ev for ev in events if ev["finding_id"] == f["id"]]
         stances = finding_stances(f["author"], own)
         f["stances"] = stances
+        # As the ranks stand now: the person may have given or taken one since the last stance was written down.
+        f["status"] = finding_status(f["author"], stances, _ag().PERSON, _levels(ag, stances))
         f["verified_by"] = sorted(k for k, v in stances.items() if v == "verify")
         f["challenged_by"] = sorted(k for k, v in stances.items() if v == "challenge")
         f["rejected_by"] = sorted(k for k, v in stances.items() if v == "reject")
@@ -501,7 +530,8 @@ def debate_finding(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         if finding is not None:
             own = [dict(r) for r in self.db.query("SELECT * FROM agora_debate_events WHERE finding_id=? ORDER BY id",
                                                   (fid,))]
-            status = finding_status(finding["author"], finding_stances(finding["author"], own), A.PERSON)
+            stances = finding_stances(finding["author"], own)
+            status = finding_status(finding["author"], stances, A.PERSON, _levels(self, stances))
             self.db.execute("UPDATE agora_debate_findings SET status=? WHERE id=?", (status, fid))
         self.db.execute("UPDATE agora_debates SET updated=? WHERE id=?", (now, debate["id"]))
     self._bump("agora.debate.finding", {"debate_id": debate["id"], "thread_id": debate["thread_id"], "finding_id": fid,
@@ -537,7 +567,8 @@ def _stance(self: Any, a: dict[str, Any], kind: str) -> dict[str, Any]:
         _event(self, debate["id"], finding["id"], agent, kind, note, mid)
         own = [dict(r) for r in self.db.query("SELECT * FROM agora_debate_events WHERE finding_id=? ORDER BY id",
                                               (finding["id"],))]
-        status = finding_status(finding["author"], finding_stances(finding["author"], own), A.PERSON)
+        stances = finding_stances(finding["author"], own)
+        status = finding_status(finding["author"], stances, A.PERSON, _levels(self, stances))
         self.db.execute("UPDATE agora_debate_findings SET status=?, updated=? WHERE id=?", (status, now, finding["id"]))
         self.db.execute("UPDATE agora_debates SET updated=? WHERE id=?", (now, debate["id"]))
     self._bump("agora.debate.stance", {"debate_id": debate["id"], "thread_id": debate["thread_id"],
@@ -624,6 +655,12 @@ def debate_close(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     # Tasks, the decision thread and its resolution join it as savepoints, so a failure leaves nothing half-done.
     with self.db.tx():
         debate = _open_debate(self, debate["id"])
+        # Rank among agents: a debate is not closed from below over a challenge of someone above that still stands.
+        above = None if person else _challenged_from_above(self, debate["id"], agent)
+        if above:
+            raise A.AgoraError(f"{above[1]} challenges F{above[0]} and outranks you on {self.space_id}: answer the "
+                               "challenge (amend the finding), let them close the debate, or escalate.", 403,
+                               error_code="rank", outranked_by=above[1])
         host, decision_tid, spawned = _close_locked(self, a, agent, person, debate, outcome, disp, picked)
     self._bump("agora.debate.closed", {"debate_id": debate["id"], "thread_id": host["id"], "by": agent,
                                        "decision_thread_id": decision_tid, "tasks": spawned})

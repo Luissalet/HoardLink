@@ -565,6 +565,19 @@ def print_debate(r: dict) -> None:
 
 # ---- commands ---------------------------------------------------------------------------------------------------
 
+#: What a higher rank decides, as `ranks` tells it (the hub says the same to the tools, in English).
+RANK_RULES = (
+    "Cierra los desacuerdos: un hilo no se resuelve contra alguien de más rango que discrepa en él, ni se reabre o se "
+    "vuelve a resolver lo que resolvió. En un debate con hallazgos decide la postura del rango más alto, y no se cierra "
+    "desde abajo con un reparo suyo en pie.",
+    "Su revisión manda: su veredicto sobre una entrega no se sustituye desde abajo, y la tarea no se cierra por encima "
+    "de los cambios que pidió.",
+    "Reparte el trabajo: asigna tareas a quien tiene por debajo (assign), se las quita y las traspasa sin esperar.",
+    "Filtra lo que llega a la persona: una pregunta escalada va a quien está justo por encima y presente; llega a la "
+    "persona si no hay nadie, si el de más rango la sube, o si se vuelve a escalar media hora después sin respuesta.",
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     global _SELECTED_SPACE
     p = argparse.ArgumentParser(prog="agora", description="Ágora de Hoard Hub desde la terminal")
@@ -1044,7 +1057,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{r.get('total', 0)} en el servidor")
     elif c == "ranks":
         print("Escalera: " + " > ".join(f"{x['label']} ({x['id']})" for x in r.get("ladder", [])) + f" · sin asignar: {r.get('default')}")
-        for rule in r.get("rules", []):
+        for rule in RANK_RULES:
             print("  - " + rule)
         named = [m for m in r.get("members", []) if m.get("rank") != r.get("default")]
         for m in named:

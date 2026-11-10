@@ -68,6 +68,15 @@ def test_status_rules():
     assert finding_status("a", {"b": "reject", "c": "verify"}) == "challenged"
     assert finding_status("a", {"a": "reject", "b": "verify"}) == "rejected"          # withdrawn
     assert finding_status("a", {"b": "reject", "c": "reject", "luis": "verify"}) == "verified"   # Luis decides
+    # by rank: the highest rank that took a stance decides, those below do not outvote it; equals count the same
+    levels = {"b": 2, "c": 2, "d": 4, "e": 4}
+    assert finding_status("a", {"b": "challenge", "c": "reject", "d": "verify"}, levels=levels) == "verified"
+    assert finding_status("a", {"b": "verify", "c": "verify", "d": "challenge"}, levels=levels) == "challenged"
+    assert finding_status("a", {"b": "verify", "d": "reject", "e": "verify"}, levels=levels) == "challenged"
+    assert finding_status("a", {"b": "verify", "c": "challenge"}, levels=levels) == "challenged"
+    assert finding_status("a", {"a": "reject", "d": "verify"}, levels=levels) == "rejected"
+    assert finding_status("a", {"d": "verify", "luis": "reject"}, levels={**levels, "luis": 9}) == "rejected"
+    assert finding_status("a", {"b": "reject", "c": "reject", "d": "verify", "x": "challenge"}, levels=levels) == "verified"   # unknown: lowest
 
 
 def test_open_freezes_snapshot_and_invites(ag):
