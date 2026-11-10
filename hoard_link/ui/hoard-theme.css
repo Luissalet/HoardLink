@@ -806,6 +806,26 @@ html[data-hoard-app="prospero"] {
   --hoard-accent-line: rgba(230, 93, 182, 0.38);
 }
 
+html[data-hoard-app="phidias"] {
+  --hoard-deep: #1a1916;
+  --hoard-sunken: #151412;
+  --hoard-surface: #22211e;
+  --hoard-elevated: #2d2b27;
+  --hoard-hover: #35332f;
+  --hoard-border: #3f3d39;
+  --hoard-border-hover: #66625c;
+  --hoard-text: #ece9e1;
+  --hoard-text-muted: #bebbb4;
+  --hoard-text-dim: #a6a39b;
+  --hoard-accent: #e8dcc0;
+  --hoard-accent-strong: #ebe0c7;
+  --hoard-accent-dim: #d1c09a;
+  --hoard-accent-ink: #191815;
+  --hoard-accent-rgb: 232, 220, 192;
+  --hoard-accent-soft: rgba(232, 220, 192, 0.14);
+  --hoard-accent-line: rgba(232, 220, 192, 0.38);
+}
+
 html[data-hoard-app="pygmalion"] {
   --hoard-deep: #1c1417;
   --hoard-sunken: #161012;
