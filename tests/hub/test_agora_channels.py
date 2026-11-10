@@ -342,6 +342,117 @@ def test_only_the_persons_pages_speak_as_the_person(tmp_path):
         assert status == 404
 
 
+def test_only_the_persons_pages_read_and_mark_as_the_person(tmp_path):
+    with ExitStack() as cleanup:
+        hub = make_hub(tmp_path, [])
+        cleanup.callback(hub.close)
+        server = serve(hub)
+        cleanup.callback(server.server_close)
+        cleanup.callback(server.shutdown)
+        base = hub.config.url.rstrip("/")
+        token = {"Authorization": "Bearer " + Path(hub.config.token_file).read_text().strip()}
+        studio = {**token, "X-Hoard-Person": "faustus-studio"}
+
+        def unread():
+            _, listed = http(base + "/api/agora/channels?agent=luis", headers=token)
+            general = next(c for c in listed["channels"] if c["slug"] == "general")
+            return general["unread"], general["mentions"]
+
+        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "abro el canal"}, headers=token)
+        http(base + "/api/agora/channels", headers=studio)              # the person's first look
+        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "ping @luis"}, headers=token)
+        assert unread() == (1, 1)
+        # an agent's token, whatever it asks for, reads as the person without marking anything
+        status, page = http(base + "/api/agora/channel_read", {"agent": "luis", "channel": "general"}, headers=token)
+        assert status == 200 and page["messages"][-1]["body"] == "ping @luis" and unread() == (1, 1)
+        status, page = http(base + "/api/agora/channel_read", {"agent": "luis", "channel": "general", "_person": True}, headers=token)
+        assert status == 200 and unread() == (1, 1)
+        status, out = http(base + "/api/agora/seen", {"agent": "luis"}, headers=token)
+        assert status == 403 and unread() == (1, 1)
+        status, _ = http(base + "/api/agora/channels/general?agent=luis&_person=1", headers=token)
+        assert status == 200 and unread() == (1, 1)
+        # the person's page does mark it
+        status, _ = http(base + "/api/agora/channel_read", {"channel": "general"}, headers=studio)
+        assert status == 200 and unread() == (0, 0)
+        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "otro @luis"}, headers=token)
+        assert unread() == (1, 1)
+        status, _ = http(base + "/api/agora/seen", {}, headers=studio)
+        assert status == 200 and unread() == (0, 0)
+        # a header without a token grants nothing, and neither does an unknown page
+        status, _ = http(base + "/api/agora/channel_post", {"body": "x"}, headers={"X-Hoard-Person": "faustus-studio"})
+        assert status == 401
+        status, _ = http(base + "/api/agora/channel_post", {"agent": "luis", "body": "x"}, headers={**token, "X-Hoard-Person": "otra"})
+        assert status == 403
+        # the folders of this machine need a token
+        status, _ = http(base + "/api/agora/folders?path=")
+        assert status == 401
+
+
+def test_archived_channels_take_no_posts_and_come_back_as_they_were(ag):
+    ag.channel_create({"space_id": "atlas", "agent": "claude", "title": "Diseño", "topic": "pantallas", "category": "ui"})
+    ag.channel_post({"space_id": "atlas", "agent": "codex", "channel": "diseno", "body": "boceto"})
+    with pytest.raises(AgoraError) as odd:
+        ag.channel_update({"space_id": "atlas", "agent": "codex", "channel": "diseno", "archived": "quizá"})
+    assert odd.value.status == 400
+    ag.channel_update({"space_id": "atlas", "agent": "codex", "channel": "diseno", "archived": "false"})
+    assert any(c["slug"] == "diseno" for c in ag.channels({"space_id": "atlas"})["channels"])     # "false" is not a yes
+    ag.channel_update({"space_id": "atlas", "agent": "codex", "channel": "diseno", "archived": True})
+    with pytest.raises(AgoraError) as closed:
+        ag.channel_post({"space_id": "atlas", "agent": "codex", "channel": "diseno", "body": "tarde"})
+    assert closed.value.status == 409 and closed.value.extra.get("error_code") == "channel_archived"
+    back = ag.channel_create({"space_id": "atlas", "agent": "codex", "slug": "diseno"})["channel"]
+    assert (back["title"], back["topic"], back["category"], back["messages"]) == ("Diseño", "pantallas", "ui", 1)
+    ag.channel_update({"space_id": "atlas", "agent": "codex", "channel": "diseno", "archived": True})
+    renamed = ag.channel_create({"space_id": "atlas", "agent": "codex", "title": "Diseno", "topic": "v2"})["channel"]
+    assert (renamed["title"], renamed["topic"], renamed["category"]) == ("Diseno", "v2", "ui")
+
+
+def test_meta_takes_absolute_folders_and_real_booleans(ag):
+    good = ["E:\\Development\\IA", "/srv/datos", "~/notas", "\\\\nas\\compartida"]
+    meta = ag.space_meta_set({"space_id": "atlas", "agent": "claude", "folders": good + [good[0]], "hidden": "false"})["meta"]
+    assert meta["folders"] == good and meta["hidden"] is False
+    for bad in (["relativa/../x"], ["E:\\uno\ndos"], [""], [7]):
+        with pytest.raises(AgoraError):
+            ag.space_meta_set({"space_id": "atlas", "agent": "claude", "folders": bad})
+    with pytest.raises(AgoraError):
+        ag.space_meta_set({"space_id": "atlas", "agent": "claude", "hidden": "a veces"})
+    assert ag.space_meta_set({"space_id": "atlas", "agent": "claude", "hidden": 1})["meta"]["hidden"] is True
+
+
+def test_feed_pages_do_not_skip_deliveries_of_the_same_instant(ag):
+    ids = []
+    for title in ("Uno", "Dos", "Tres"):
+        task = ag.task_add({"space_id": "atlas", "agent": "codex", "title": title, "claim": True})["task"]
+        ag.task_done({"space_id": "atlas", "agent": "codex", "task_id": task["id"], "result": "ok"})
+        ids.append(task["id"])
+    ag.db.execute("UPDATE tasks SET closed_at=1800000500.0, submitted_at=NULL WHERE space_id='atlas'")
+    seen, cursor = [], None
+    for _ in range(5):
+        page = ag.feed({"space_id": "atlas", "limit": 1, **({"before": cursor} if cursor else {})})
+        seen += [i["id"] for i in page["items"]]
+        cursor = page["next_before"]
+        if not cursor:
+            break
+    assert seen == sorted(ids, reverse=True)
+    assert [i["id"] for i in ag.feed({"space_id": "atlas", "before": 1800000500.0})["items"]] == []   # a bare number still works
+    assert ag.feed({"space_id": "atlas", "kind": "activity", "before": 0})["items"] == []          # zero is a cursor, not «none»
+    with pytest.raises(AgoraError):
+        ag.feed({"space_id": "atlas", "before": "ayer"})
+
+
+def test_mentions_ignore_case_and_unknown_readers_leave_no_trace(ag):
+    ag.heartbeat({"agent": "codex", "space_id": "atlas", "doing": "x"})
+    out = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@Codex y @LUIS, mirad"})
+    assert out["mentions"] == ["codex", "luis"]
+    ag.channels({"space_id": "atlas", "agent": "nadie-123"})
+    ag.guild({"space_id": "atlas", "agent": "otro-que-no-existe"})
+    rows = [r["agent"] for r in ag.db.query("SELECT agent FROM agora_seen_floor")]
+    assert "nadie-123" not in rows and "otro-que-no-existe" not in rows
+    with pytest.raises(AgoraError) as unknown:
+        ag.seen({"space_id": "atlas", "agent": "nadie-123"})
+    assert unknown.value.status == 404
+
+
 def test_folders_lists_this_machine_one_level_at_a_time(tmp_path):
     from urllib.parse import quote
 

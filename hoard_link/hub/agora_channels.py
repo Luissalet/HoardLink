@@ -44,7 +44,7 @@ MAX_PULSE_WAIT_S = 25.0
 #: An agent whose last heartbeat is older than this is shown as away even if it said «working».
 AWAY_AFTER_S = 45 * 60.0
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
-_MENTION = re.compile(r"(?<![\w/@.])@([a-z][a-z0-9_.\-]{1,40})")
+_MENTION = re.compile(r"(?<![\w/@.])@([a-z][a-z0-9_.\-]{1,40})", re.IGNORECASE)
 _EVERYONE = ("here", "todos", "all", "everyone", "equipo")
 _EPOCH = int(time.time())
 
@@ -84,6 +84,31 @@ def _int(value: Any, default: int, lo: int, hi: int) -> int:
         return default
 
 
+def _bool(value: Any, name: str) -> bool:
+    """True/False as JSON gives them, or the words a query string carries; anything else is a mistake, not a yes."""
+    if isinstance(value, bool):
+        return value
+    if value in (0, 1):
+        return bool(value)
+    word = str(value).strip().lower()
+    if word in ("true", "1", "yes", "si", "sí"):
+        return True
+    if word in ("false", "0", "no", ""):
+        return False
+    raise _err(f"{name} must be true or false")
+
+
+_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/|~)")
+
+
+def _folder(value: Any) -> str:
+    """A context folder as written: an absolute path (a drive, a share, / or ~) on one line."""
+    text = str(value or "").strip()
+    if not text or len(text) > 2048 or any(ord(ch) < 32 for ch in text) or not _ABSOLUTE.match(text):
+        raise _err(f"a folder must be an absolute path on one line: {text[:80]!r}")
+    return text
+
+
 def _viewer(self: Any, a: dict[str, Any]) -> str:
     who = str(a.get("agent") or "").strip().lower()
     return who if who and _ag()._AGENT_RE.match(who) else ""
@@ -96,8 +121,11 @@ def _floor(self: Any, viewer: str) -> int:
     if row:
         return int(row["msg_id"])
     top = int(self.db.scalar("SELECT MAX(id) FROM messages", (), 0) or 0)
-    self.db.execute("INSERT OR IGNORE INTO agora_seen_floor(agent, space_id, msg_id, updated) VALUES(?,?,?,?)",
-                    (viewer, self.space_id, top, self.clock()))
+    # Remembered only for who the Agora knows (the person, an agent that has been here): a read with a made-up id
+    # counts from now and leaves no row behind.
+    if viewer == _ag().PERSON or self.db.one("SELECT 1 AS known FROM agents WHERE id=?", (viewer,)):
+        self.db.execute("INSERT OR IGNORE INTO agora_seen_floor(agent, space_id, msg_id, updated) VALUES(?,?,?,?)",
+                        (viewer, self.space_id, top, self.clock()))
     return top
 
 
@@ -165,6 +193,9 @@ def _rows(self: Any, *, archived: bool = False) -> list[dict[str, Any]]:
 def _ensure_thread(self: Any, slug: str, agent: str) -> int:
     """The thread of a channel, opening it (and remembering it) when the channel has none yet. Inside a tx."""
     row = _row(self, slug)
+    if row and row.get("archived"):
+        raise _err(f"#{slug} is archived; create it again to bring it back with its messages", 409,
+                   error_code="channel_archived")
     if row and row.get("thread_id"):
         return int(row["thread_id"])
     if row is None and slug != GENERAL:
@@ -219,9 +250,11 @@ def channel_create(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         if existing and not existing["archived"]:
             raise _err(f"#{slug} already exists in {self.space_id}", 409)
         now = self.clock()
-        if existing:   # an archived channel comes back with its history
+        if existing:   # an archived channel comes back with its history, its topic and its category unless given anew
             self.db.execute("UPDATE agora_channels SET archived=0, title=?, topic=?, category=?, updated=? WHERE id=?",
-                            (title, topic, category, now, existing["id"]))
+                            (title if a.get("title") else existing["title"],
+                             topic if "topic" in a else existing["topic"],
+                             category if "category" in a else existing["category"], now, existing["id"]))
             if not existing.get("thread_id"):
                 _ensure_thread(self, slug, agent)
         else:
@@ -250,9 +283,10 @@ def channel_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     if "position" in a:
         changes["position"] = _int(a.get("position"), 0, -1000, 100000)
     if "archived" in a:
-        if slug == GENERAL and a.get("archived"):
+        archived = _bool(a.get("archived"), "archived")
+        if slug == GENERAL and archived:
             raise _err("#general cannot be archived", 409)
-        changes["archived"] = 1 if a.get("archived") else 0
+        changes["archived"] = 1 if archived else 0
     if not changes:
         raise _err("nothing to change: pass title, topic, category, position or archived")
     with self.db.tx():
@@ -334,6 +368,8 @@ def channel_read(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """The latest messages of a channel or thread, oldest first. With ``agent`` it counts as seen (``peek`` keeps
     it unseen) and ``seen_upto`` says up to where that reader had read before."""
     viewer = _viewer(self, a)
+    # The person's reads count as read only from the person's own pages; anyone else looking as the person peeks.
+    peek = _bool(a.get("peek", False), "peek") or (viewer == _ag().PERSON and not a.get("_person"))
     thread, slug = _target_thread(self, a, agent=None)
     limit = _int(a.get("limit"), 50, 1, 200)
     before = a.get("before_id")
@@ -349,7 +385,7 @@ def channel_read(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     if viewer:
         ack = self.db.one("SELECT upto FROM acks WHERE agent=? AND thread_id=?", (viewer, thread))
         seen = max(int(ack["upto"]) if ack else 0, self.space_store.read_upto(self.space_id, viewer), _floor(self, viewer))
-        if not a.get("peek") and not before:
+        if not peek and not before:
             reader = self._agent(viewer, allow_person=True)
             with self.db.tx():
                 self._ack(reader, thread)
@@ -363,6 +399,10 @@ def seen(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     viewer = _viewer(self, a)
     if not viewer:
         raise _err("agent is required")
+    if viewer == _ag().PERSON and not a.get("_person"):
+        raise _err("only the person's own pages mark the person's reads", 403)
+    if viewer != _ag().PERSON and not self.db.one("SELECT 1 AS known FROM agents WHERE id=?", (viewer,)):
+        raise _err(f"the Agora does not know {viewer}", 404)
     top = int(self.db.scalar("SELECT MAX(id) FROM messages", (), 0) or 0)
     self.db.execute("INSERT INTO agora_seen_floor(agent, space_id, msg_id, updated) VALUES(?,?,?,?) "
                     "ON CONFLICT(agent, space_id) DO UPDATE SET msg_id=excluded.msg_id, updated=excluded.updated",
@@ -401,18 +441,18 @@ def space_meta_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         current["color"] = color
     if "folders" in a:
         folders = a.get("folders")
-        if not isinstance(folders, list) or not all(isinstance(f, str) and f.strip() and len(f) <= 2048 for f in folders) \
-                or len(folders) > 40:
+        if not isinstance(folders, list) or not all(isinstance(f, str) for f in folders) or len(folders) > 40:
             raise _err("folders must be a list of up to 40 paths")
         clean: list[str] = []
         for folder in folders:
-            if folder.strip() not in clean:
-                clean.append(folder.strip())
+            path = _folder(folder)
+            if path not in clean:
+                clean.append(path)
         current["folders"] = clean
     if "position" in a:
         current["position"] = None if a.get("position") in (None, "") else _int(a.get("position"), 0, -1000, 100000)
     if "hidden" in a:
-        current["hidden"] = bool(a.get("hidden"))
+        current["hidden"] = _bool(a.get("hidden"), "hidden")
     with self.db.tx():
         self._touch(agent)
         self.db.execute(
@@ -600,12 +640,19 @@ def feed(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     a = a or {}
     kind = str(a.get("kind") or "deliveries").lower()
     limit = _int(a.get("limit"), 40, 1, 200)
+    # ``before`` is what the previous page gave as ``next_before``: a message id for activity, ``<when>:<task id>`` for
+    # the others (a bare number still works), so two deliveries of the same instant are never skipped.
+    raw_before, before_id = str(a.get("before") if a.get("before") is not None else "").strip(), None
     try:
-        before = float(a.get("before")) if a.get("before") not in (None, "") else None
+        if ":" in raw_before:
+            head, tail = raw_before.rsplit(":", 1)
+            before, before_id = float(head), int(tail)
+        else:
+            before = float(raw_before) if raw_before else None
     except (TypeError, ValueError):
-        raise _err("before must be a number") from None
+        raise _err("before must be the next_before of the previous page") from None
     if kind == "activity":
-        cursor = int(before) if before else 2 ** 62
+        cursor = int(before) if before is not None else 2 ** 62
         rows = self.db.query(
             "SELECT m.id, m.thread_id, m.author, m.kind, m.body, m.mentions, m.created, t.title AS thread_title, "
             "t.kind AS thread_kind, t.task_id AS task_id FROM messages m JOIN threads t ON t.id=m.thread_id "
@@ -628,7 +675,10 @@ def feed(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         where.append("status IN ('review','changes','approved')")
     else:
         where.append("(submitted_at IS NOT NULL OR status IN ('review','approved','changes','done'))")
-    if before:
+    if before is not None and before_id is not None:
+        where.append(f"({when}<? OR ({when}=? AND id<?))")
+        params.extend([before, before, before_id])
+    elif before is not None:
         where.append(f"{when}<?")
         params.append(before)
     rows = self.db.query(
@@ -650,7 +700,7 @@ def feed(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         d["column"] = COLUMN_OF.get(d["status"], "open")
         items.append(d)
     return {"ok": True, "kind": kind, "items": items,
-            "next_before": items[-1]["at"] if len(rows) > limit and items else None}
+            "next_before": f"{items[-1]['at']!r}:{items[-1]['id']}" if len(rows) > limit and items else None}
 
 
 def _snippet(text: str, needle: str, around: int = 110) -> str:

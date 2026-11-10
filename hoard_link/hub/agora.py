@@ -3690,6 +3690,8 @@ class AgoraFacet(Facet):
         if p == "/api/agora/orphans":
             return self._run(ag.orphans, q)
         if p == "/api/agora/folders":
+            if not req.caller():    # the names of this machine's folders are not for whoever reaches the port
+                return {"ok": False, "status": 401, "error": "a family bearer token is required to list folders"}
             return self._run(agora_channels.folders, q)
         channel = re.fullmatch(r"/api/agora/channels/([a-z0-9][a-z0-9-]{0,39})", p)
         if channel or p.rsplit("/", 1)[1] in agora_channels.READ_ROUTES:
@@ -3701,7 +3703,8 @@ class AgoraFacet(Facet):
                     q[key] = str(q[key]).lower() in ("1", "true", "yes")
             if "agent" not in q and self._person_surface(req):
                 q["agent"] = PERSON   # the person's pages read as the person
-            if q.get("agent", "").lower() == PERSON and not self._person_surface(req):
+            q["_person"] = self._person_surface(req)   # never taken from the query: only the page decides it
+            if q.get("agent", "").lower() == PERSON and not q["_person"]:
                 q["peek"] = True   # the person's reads count only from the person's own pages
             if channel:
                 return self._run(ag.channel_read, {**q, "channel": channel.group(1)})

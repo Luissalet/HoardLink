@@ -49,6 +49,7 @@ class HubLink:
         self._proc: Any = None
         self._told = ""              # what the Spark was last told: node, port and token, as one digest
         self._next_try = 0.0
+        self._busy = False           # a look is talking to the Spark right now
         self._state: dict[str, Any] = {"wanted": False, "up": False, "since": None, "error": "", "port": LINK_PORT, "node": ""}
 
     # ----------------------------------------------------------------------------------------- life
@@ -67,7 +68,7 @@ class HubLink:
     def poke(self) -> None:
         """Look now instead of at the next turn (after a move, so the tunnel does not wait for the clock)."""
         self._next_try = 0.0
-        if self._thread is not None and self._thread.is_alive():
+        if self._thread is not None and self._thread.is_alive() and not self._stop.is_set():
             threading.Thread(target=self._safe_tick, name=THREAD_NAME + "-poke", daemon=True).start()
 
     def status(self) -> dict[str, Any]:
@@ -84,49 +85,68 @@ class HubLink:
             self.tick()
         except Exception as exc:  # noqa: BLE001 - a link that cannot be kept is reported, never raised into the Hub
             with self._lock:
+                self._busy = False
                 self._state.update(up=False, error=str(exc)[-300:])
 
     # ----------------------------------------------------------------------------------------- one look
     def tick(self) -> dict[str, Any]:
+        """Look once. The lock only guards the decision and the state: everything that talks to the Spark (telling it
+        where the Hub is, opening the tunnel, waiting to see it hold) runs outside it, so ``status()`` never waits for
+        SSH, however unreachable the Spark is. ``_busy`` keeps two looks from opening two tunnels."""
         with self._lock:
             data = self.placement.state()
             node = str((data.get("node") or {}).get("ssh") or "")
-            wanted = data.get("location") == "sparks" and bool(node)
+            wanted = data.get("location") == "sparks" and bool(node) and not self._stop.is_set()
             self._state.update(wanted=wanted, node=node if wanted else "")
             if not wanted:
-                self._close()
+                proc, self._proc = self._proc, None
                 self._state.update(up=False, since=None, error="")
-                return dict(self._state)
-            if self._proc is not None and self._proc.poll() is None:
+                state, action = dict(self._state), "close"
+            elif self._proc is not None and self._proc.poll() is None:
                 if not self._state["up"]:
                     self._state.update(up=True, since=self._clock(), error="")
                 return dict(self._state)
-            if self._proc is not None:                       # it ended: say why and try again later
+            elif self._proc is not None:                     # it ended: say why and try again later
                 self._state.update(up=False, since=None, error=self._why(self._proc) or "el túnel se cerró")
-                self._proc = None
+                self._proc, self._told = None, ""            # the Spark is told again before the next tunnel
                 self._next_try = self._clock() + RETRY_S
                 return dict(self._state)
-            if self._clock() < self._next_try:
+            elif self._busy or self._clock() < self._next_try:
                 return dict(self._state)
-            try:
-                self._tell(node)
-                self._proc = self._open(node)
-            except Exception as exc:  # noqa: BLE001 - the Spark may be off or unreachable: that is a state, not a crash
-                self._proc = None
-                self._state.update(up=False, since=None, error=str(exc)[-300:])
-                self._next_try = self._clock() + RETRY_S
-                return dict(self._state)
-        deadline = time.time() + self._settle_s             # outside the lock: status() must not wait for ssh
-        while time.time() < deadline and self._proc is not None and self._proc.poll() is None:
-            time.sleep(0.2)
+            else:
+                self._busy = True
+                state, action, proc = dict(self._state), "open", None
+        if action == "close":
+            self._end(proc)
+            return state
+        opened, error = None, ""
+        try:
+            self._tell(node)
+            opened = self._open(node)
+            deadline = time.time() + self._settle_s
+            while time.time() < deadline and opened.poll() is None:
+                time.sleep(0.2)
+            if opened.poll() is not None:
+                error, opened = self._why(opened) or "el túnel no se abrió", None
+        except Exception as exc:  # noqa: BLE001 - the Spark may be off or unreachable: that is a state, not a crash
+            self._end(opened)
+            error, opened = str(exc)[-300:] or type(exc).__name__, None
         with self._lock:
-            if self._proc is not None and self._proc.poll() is None:
+            self._busy = False
+            still_wanted = self.placement.state().get("location") == "sparks" and not self._stop.is_set()
+            if opened is not None and still_wanted:
+                self._proc = opened
                 self._state.update(up=True, since=self._clock(), error="")
-            elif self._proc is not None:
-                self._state.update(up=False, since=None, error=self._why(self._proc) or "el túnel no se abrió")
-                self._proc = None
+                opened = None
+            elif opened is None:
+                self._told = ""
                 self._next_try = self._clock() + RETRY_S
-            return dict(self._state)
+                self._state.update(up=False, since=None, error=error)
+            else:                                            # it came back to the PC, or the Hub is stopping, meanwhile
+                self._state.update(wanted=False, node="", up=False, since=None, error="")
+            state = dict(self._state)
+        self._end(opened)                                    # a tunnel nobody wants any more
+        return state
 
     # ----------------------------------------------------------------------------------------- the two halves
     def _hub_port(self) -> int:
@@ -169,6 +189,11 @@ class HubLink:
     def _close(self) -> None:
         with self._lock:
             proc, self._proc = self._proc, None
+        self._end(proc)
+
+    @staticmethod
+    def _end(proc: Any) -> None:
+        """End a tunnel: close our pipe (the remote command reads its end and finishes), then insist if it lingers."""
         if proc is None:
             return
         for step in (lambda: proc.stdin.close(), lambda: proc.wait(timeout=3), proc.terminate, lambda: proc.wait(timeout=3), proc.kill):
