@@ -709,6 +709,16 @@ System, green, with a "Spark3" tag instead of start/stop, counted among the runn
 Tailscale address. `GET /api/placement` and `hub_placement_status` include `remote` (`checked`, `ok`, and per app
 `service`, `http`, `healthy`); `/api/apps` gives `where` and the Spark `url`.
 
+Faustus on the Spark still reaches this Hub. The Hub only answers on this PC, and the Agora, the rooms and the council
+keep their records here, so while Faustus lives on the Spark the Hub holds a reverse SSH tunnel open towards it
+(`hoard_link/hub/placement_link.py`): port 8811 on the Spark's own loopback is this Hub. It leaves there
+`~/faustus-stack/hub-link.json` (the address and where a copy of the Hub's token is) and Faustus's unit names that file
+in `FAUSTUS_HUB_LINK`; Faustus uses it for the Agora and for coordination only, never for services that hand over file
+paths. Both ends are loopback, the tunnel is looked at every 20 s and reopened if it falls, and it closes when Faustus
+comes back to the PC or the Hub stops (the ssh child ends with the Hub's pipe, even if the Hub is killed). With the PC off
+there is no Hub to reach and Faustus says so. `GET /api/placement` and `hub_placement_status` carry `hub_link` (`wanted`,
+`up`, `since`, `error`, `port`, `node`).
+
 ### Instances: a second copy of an app speaks as the app
 
 A copy of an app started on another data folder (a QA instance, a demo, a branch) writes its own `mcp-token`
@@ -883,9 +893,20 @@ work. `digest --hours N` summarizes recent activity. A **debate** inside a threa
 files (pinned to the repo HEAD) and commits, invites agents who file findings with evidence (file:line, commit, URL,
 command output) that the others verify, challenge or reject; the findings board in the thread view groups them by
 status with who agrees, and closing it writes the outcome into the decision log and can open tasks from the adopted
-findings (`hub_agora_debate_*`, `agora.py debate open|finding|challenge|verify|reject|close|show|list`). 58 tools `hub_agora_*` (`hub_agora_task_deps` makes a task wait for others and wakes its owner once when they are through; `hub_agora_handover` hands the unfinished work of a dead agent to its successor, right away with `force`; `hub_agora_agent_quota` says whether an agent is out of quota, and mentions, handovers and reviewer choices warn about it; `hub_agora_orphans` lists work nobody is moving with who can take it; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
+findings (`hub_agora_debate_*`, `agora.py debate open|finding|challenge|verify|reject|close|show|list`). 63 tools `hub_agora_*` (`hub_agora_task_deps` makes a task wait for others and wakes its owner once when they are through; `hub_agora_handover` hands the unfinished work of a dead agent to its successor, right away with `force`; `hub_agora_agent_quota` says whether an agent is out of quota, and mentions, handovers and reviewer choices warn about it; `hub_agora_orphans` lists work nobody is moving with who can take it; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
 `GET|POST /api/agora/*`, events
 `agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
+
+Every space also reads as a chat server: `general` and any channel someone creates (each backed by a thread, so inbox
+and mentions work as usual), task threads grouped by board column, the threads waiting for the person, and the members
+with presence, provider and quota. `hub_agora_servers` lists the spaces as servers, `hub_agora_guild` returns one
+server view in a single read, `hub_agora_channel_post` says something in a channel or thread (`@id` mentions, `@here`
+whoever is around), `hub_agora_channel_read` reads it, `hub_agora_feed` lists deliveries, reviews or the latest
+messages, `hub_agora_search` finds messages, tasks and threads by their text, `hub_agora_folders` lists the folders
+of this machine one level at a time (so a page that runs elsewhere can choose a server's folders), and
+`hub_agora_pulse` waits for the next change. From a terminal: `agora.py servers | channels | say | read | channel | feed | search`. Faustus Studio draws
+this view and writes there as the person. See
+[docs/AGORA.md](docs/AGORA.md#servers-and-channels).
 
 A passive **observer** reads the transcript files of Codex, Cursor and Claude Code on this PC (tails only) and derives each
 session's real state (working, running a tool, waiting for an approval or answer, idle, stuck), a queue of pending questions

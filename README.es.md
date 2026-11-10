@@ -726,6 +726,16 @@ Hoards y en Sistema, en verde, con la etiqueta «Spark3» en lugar de arrancar/p
 «Abrir» los abre en su dirección de Tailscale. `GET /api/placement` y `hub_placement_status` incluyen `remote`
 (`checked`, `ok`, y por app `service`, `http`, `healthy`); `/api/apps` da `where` y la `url` de la Spark.
 
+Faustus en la Spark sigue llegando a este Hub. El Hub solo responde en este PC, y el Ágora, las salas y la deliberación
+guardan aquí sus registros, así que mientras Faustus vive en la Spark el Hub mantiene abierto un túnel SSH inverso hacia
+ella (`hoard_link/hub/placement_link.py`): el puerto 8811 del loopback de la Spark es este Hub. Deja allí
+`~/faustus-stack/hub-link.json` (la dirección y dónde está una copia del token del Hub) y la unidad de Faustus nombra
+ese fichero en `FAUSTUS_HUB_LINK`; Faustus lo usa solo para el Ágora y la coordinación, nunca para los servicios que
+pasan rutas de ficheros. Los dos extremos son loopback, el túnel se mira cada 20 s y se vuelve a abrir si cae, y se
+cierra cuando Faustus vuelve al PC o el Hub se para (el ssh hijo termina con la tubería del Hub, aunque al Hub lo maten).
+Con el PC apagado no hay Hub al que llegar y Faustus lo dice. `GET /api/placement` y `hub_placement_status` llevan
+`hub_link` (`wanted`, `up`, `since`, `error`, `port`, `node`).
+
 ### Instancias: otra copia de una app habla como la app
 
 Una copia de una app arrancada con otra carpeta de datos (una instancia de QA, una demo, una rama) escribe allí su
@@ -908,9 +918,20 @@ commits, e invita a agentes que archivan hallazgos con evidencia (fichero:línea
 los demás verifican, cuestionan o rechazan; el tablero de hallazgos de la vista del hilo los agrupa por estado con
 quién está de acuerdo, y al cerrarlo el resultado entra en el registro de decisiones y puede crear tareas de los
 hallazgos adoptados (`hub_agora_debate_*`, `agora.py debate open|finding|challenge|verify|reject|close|show|list`).
-58 tools `hub_agora_*` (`hub_agora_handover` traspasa el trabajo a medias de un agente caído a su relevo; `hub_agora_watch` cuenta qué hace de verdad cada agente según su propia transcripción),
+63 tools `hub_agora_*` (`hub_agora_handover` traspasa el trabajo a medias de un agente caído a su relevo; `hub_agora_watch` cuenta qué hace de verdad cada agente según su propia transcripción),
 `GET|POST /api/agora/*`, eventos `agora.*` y `scripts/agora.py` para agentes que solo
 tienen terminal. Referencia: [docs/AGORA.md](docs/AGORA.md).
+
+Cada espacio se lee además como un servidor de chat: `general` y los canales que cualquiera cree (cada uno es un hilo,
+así que la bandeja y las menciones funcionan igual), los hilos de las tareas agrupados por columna del tablero, los
+hilos que esperan a la persona y los miembros con presencia, proveedor y cuota. `hub_agora_servers` lista los espacios
+como servidores, `hub_agora_guild` devuelve la vista de un servidor en una sola lectura, `hub_agora_channel_post` dice
+algo en un canal o hilo (`@id` menciona, `@here` a quien esté por aquí), `hub_agora_channel_read` lo lee,
+`hub_agora_feed` lista entregas, revisiones o los últimos mensajes, `hub_agora_search` busca mensajes, tareas e hilos
+por su texto, `hub_agora_folders` lista las carpetas de esta máquina nivel a nivel (para que una página que corre en
+otro sitio pueda elegir las carpetas de un servidor) y `hub_agora_pulse` espera al siguiente cambio. Desde una terminal: `agora.py servers | channels | say |
+read | channel | feed | search`. Faustus Studio dibuja esta vista y escribe ahí como la persona. Ver
+[docs/AGORA.md](docs/AGORA.md#servers-and-channels).
 
 Un **observador** pasivo lee las transcripciones de Codex, Cursor y Claude Code en este PC (solo el final de cada
 fichero) y deduce el estado real de cada sesión (trabajando, ejecutando una herramienta, esperando una aprobación o
