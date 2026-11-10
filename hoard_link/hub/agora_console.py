@@ -403,9 +403,11 @@ class AgoraConsoleFacet(Facet):
         efforts = ["default", *[level.strip() for level in (listed.group(1).split(",") if listed else []) if level.strip()]]
         current_model, current_effort = self._claude_current_settings()
         models = list(CLAUDE_MODELS)
-        # An alias the help itself names for --model and that is not known here (a newer one) is offered as well.
+        # An alias the help itself names for --model and that is not known here (a newer one) is offered as well:
+        # the ones it gives as examples of an alias, not any other word it quotes there.
         said = re.search(r"--model <[^>]+> (.*?)(?= -[a-zA-Z], --| --[a-z])", flat)
-        newer = [alias for alias in re.findall(r"'([a-z][a-z0-9]{1,30})'", said.group(1) if said else "")
+        examples = re.search(r"alias[^()]*\(([^()]*)\)", said.group(1)) if said else None
+        newer = [alias for alias in re.findall(r"'([a-z][a-z0-9]{1,30})'", examples.group(1) if examples else "")
                  if alias not in {model for model, _ in models}]
         models[1:1] = [(alias, alias.capitalize()) for alias in dict.fromkeys(newer)]
         if current_model and current_model not in {model for model, _ in models}:
@@ -2193,7 +2195,8 @@ class AgoraConsoleFacet(Facet):
     def _tidy_claude_worktree(worker_id: str, root: Optional[Path] = None) -> bool:
         """A Claude session that left its worktree as it found it leaves nothing behind: the folder goes, and its branch
         with it when the branch holds no commit of its own. Nothing is forced: a worktree with changes stays where it
-        is, and so does a branch with work that is nowhere else, for whoever reviews it. True when the folder went."""
+        is, and so does a branch with work that is nowhere else, for whoever reviews it. The lock the session's own
+        program left on the worktree is lifted first; nobody else's is. True when the folder went."""
         root = root or Path(__file__).resolve().parents[2]
         name = f"agora-claude-{worker_id[:8]}"
         path = root / ".claude" / "worktrees" / name
@@ -2204,8 +2207,30 @@ class AgoraConsoleFacet(Facet):
             return subprocess.run(["git", "-C", str(root), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=60, check=False,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode
+        def own_lock() -> Optional[str]:
+            # The provider's program locks the worktree of its session, saying whose it is («claude session <name> …»),
+            # and leaves the lock there when it ends. That one is lifted; a lock anyone else put stays, and the
+            # worktree with it. Answers the lock's reason when it is the program's own.
+            try:
+                pointer = (path / ".git").read_text(encoding="utf-8", errors="replace").strip()
+                if not pointer.startswith("gitdir:"):
+                    return None
+                kept = Path(pointer[len("gitdir:"):].strip())
+                kept = kept if kept.is_absolute() else path / kept
+                reason = (kept / "locked").read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                return None
+            return reason if re.match(r"claude session " + re.escape(name) + r"(?![\w-])", reason, re.IGNORECASE) else None
+
         try:
-            if git("worktree", "remove", str(path)) != 0:
+            removed = git("worktree", "remove", str(path)) == 0
+            reason = None if removed else own_lock()
+            if reason:
+                git("worktree", "unlock", str(path))
+                removed = git("worktree", "remove", str(path)) == 0     # still unforced: one with changes stays
+                if not removed:
+                    git("worktree", "lock", "--reason", reason, str(path))     # and stays as its program left it
+            if not removed:
                 # The program that just left may still hold the folder for a moment (Windows): git then empties and
                 # forgets the worktree but cannot take the folder itself away. An empty folder is finished off here;
                 # one with anything in it holds changes and stays as it is.
