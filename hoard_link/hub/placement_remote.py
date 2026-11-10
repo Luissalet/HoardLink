@@ -304,7 +304,9 @@ WantedBy=default.target
 # whose names end in .ts.net and only reach the person's own devices.
 TAILNET = "*.ts.net"
 UNITS = {
-    "faustus": ("Faustus", "faustus", "server_runtime.py serve --port 7000 --token placement", "6G", {}),
+    # FAUSTUS_HUB_LINK: where the Hub of the PC is while its tunnel is open (placement_link.py), for the Agora and coordination.
+    "faustus": ("Faustus", "faustus", "server_runtime.py serve --port 7000 --token placement", "6G",
+                {"FAUSTUS_HUB_LINK": "{stack}/hub-link.json"}),
     "hermes": ("Hermes's Hoard", "hermes", "-m hermes_hoard --no-browser", "2G",
                {"FAUSTUS_DIR": "{stack}/faustus", "HERMES_ALLOWED_HOSTS": TAILNET, "TANTALUS_ALLOWED_HOSTS": TAILNET,
                 "PHILEAS_ALLOWED_HOSTS": TAILNET}),

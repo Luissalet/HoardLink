@@ -88,6 +88,9 @@ class Placement:
         self._run = runner or subprocess.run
         self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
+        # Faustus on the Spark keeps reaching this Hub (Agora, rooms, council) through a tunnel; started by the Hub's main.
+        from .placement_link import HubLink
+        self.link = HubLink(self)
         data = self.state()
         if (data.get("job") or {}).get("running"):        # the Hub stopped mid-switch: say so instead of looking busy forever
             data["job"].update(running=False, ok=False, step="error",
@@ -138,6 +141,7 @@ class Placement:
                "paused_on_spark": PAUSED_ON_SPARK, "nodes": ["Spark3"]}
         if data["location"] == "sparks" and not (data.get("job") or {}).get("running"):
             out["remote"] = self.remote_health()
+            out["hub_link"] = self.link.status()
         return out
 
     # ================================================================================= are they up on the Spark?
@@ -570,6 +574,7 @@ class Placement:
         except Exception as exc:  # noqa: BLE001 - reported in the job; the side that was running is restarted
             self._log(f"ERROR: {exc}")
             self._finish(ok=False, error=str(exc)[:500])
+        self.link.poke()                                   # open or close the tunnel now, not at its next look
         try:
             self.hub.invalidate_snapshot()
             self.hub.emit("hub.placement.changed", {"location": self.state()["location"], "ok": self.state()["job"].get("ok")})

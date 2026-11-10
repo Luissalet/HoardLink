@@ -148,6 +148,10 @@ class Hub:
     def close(self) -> None:
         from . import facets as _facets
         _facets.close_all(getattr(self, "facets", []))
+        try:
+            self.placement.link.stop()
+        except Exception:  # noqa: BLE001
+            pass
         for part in (self.jobs, self.rules, self.link, self.events):
             try:
                 part.close()
