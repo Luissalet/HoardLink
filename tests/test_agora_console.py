@@ -1665,3 +1665,108 @@ def test_a_claude_worktree_left_as_it_was_found_is_taken_away_and_nothing_is_for
     answers["worktree"] = 1                                   # git refuses: it holds changes
     assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is False
     assert calls == [["git", "-C", str(tmp_path), "worktree", "remove", str(folder)]]       # and its branch is left alone
+
+
+# ---- the name and the rank a session comes in with ------------------------------------------------------------------
+
+def _with_real_agora(facet, tmp_path):
+    from hoard_link.hub.agora import Agora
+    store = Agora(tmp_path / "agora.db")
+    facet.hub.agora = store
+    return store
+
+
+def test_a_session_takes_the_name_it_is_given_and_the_hub_proposes_free_ones(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    store.heartbeat({"agent": "claude-sonnet-1", "state": "working"})          # a name somebody already answers to
+    _claude_provider(facet)
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
+    commands = _capture_popen(monkeypatch)
+    try:
+        assert facet.suggest_worker_name("claude", "sonnet")["name"] == "claude-sonnet-2"
+        assert facet.suggest_worker_name("claude", "default")["name"] == "claude-1"
+        assert facet.suggest_worker_name("codex", "gpt-6.1-sol")["name"] == "codex-sol-1"
+        assert facet.suggest_worker_name("faustus", "sparks-068db9bc::deepseek-v4.1-flash")["name"] == "faustus-flash-1"
+        assert facet.suggest_worker_name("nobody")["ok"] is False
+        assert facet.get(_request("GET", "/api/agora/console/name", query={"leader_id": ["claude"], "model": ["opus"]}))["name"] == "claude-opus-1"
+
+        started = facet.worker({"leader_id": "claude", "model": "sonnet", "effort": "low", "task": "Review it.", "name": "Claude-Revisor"})
+        worker, command = started["worker"], commands[0][0]
+        assert worker["agent_id"] == "claude-revisor" and worker["state"] == "running"
+        assert command[command.index("--name") + 1] == "claude-revisor" and "--as claude-revisor hb" in command[-1]
+        assert "Your rank on this server is agent" in command[-1]
+        assert facet.worker({"leader_id": "claude", "model": "sonnet", "effort": "low", "task": "x"})["worker"]["agent_id"].startswith("claude-worker-")
+
+        # a name is the provider's, well formed and nobody else's
+        for bad, status in (("claude-revisor", 409), ("claude-sonnet-1", 409), ("codex-agora", 400), ("claude", 400),
+                            ("codex-otro", 400), ("claude-con espacios", 400), ("claude-" + "x" * 60, 400),
+                            ("claude-", 400), ("claude-revisor-", 400)):
+            out = facet.worker({"leader_id": "claude", "model": "sonnet", "effort": "low", "task": "x", "name": bad})
+            assert out["ok"] is False and out["status"] == status, bad
+        assert len(commands) == 2
+        # the name of a session that never got to start is free again
+        monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: None)
+        assert facet.worker({"leader_id": "claude", "model": "sonnet", "effort": "low", "task": "x", "name": "claude-otra"})["worker"]["state"] == "unavailable"
+        monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
+        assert facet.worker({"leader_id": "claude", "model": "sonnet", "effort": "low", "task": "x", "name": "claude-otra"})["worker"]["state"] == "running"
+    finally:
+        store.close()
+
+
+def test_a_session_gets_the_rank_the_person_gives_and_never_more_than_whoever_starts_it(tmp_path, monkeypatch):
+    from hoard_link.hub import agora_ranks
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    store.heartbeat({"agent": "claude-opus-1", "state": "working"})
+    store.member_rank_set({"agent": "luis", "_person": True, "member": "claude-opus-1", "rank": "lead"})
+    _claude_provider(facet)
+    monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
+    commands = _capture_popen(monkeypatch)
+    base = {"leader_id": "claude", "model": "sonnet", "effort": "low", "task": "x"}
+    rank = lambda name: agora_ranks.rank_of(store, name)                     # noqa: E731
+    try:
+        # the person, from the hub's page or from another of their pages
+        facet.post(_request("POST", "/api/agora/console/worker", body={**base, "name": "claude-a", "rank": "director"}))
+        assert rank("claude-a") == "director" and "Your rank on this server is director" in commands[-1][0][-1]
+        facet.worker({**base, "name": "claude-b", "rank": "director", "_person": True}, "codex-console")
+        assert rank("claude-b") == "director"
+        with store.db.tx():
+            assert store.db.one("SELECT set_by FROM agora_ranks WHERE agent='claude-b'")["set_by"] == "luis"
+        # an agent starting one: its own rank is the ceiling, whatever it asks for or writes in the body
+        facet.worker({**base, "name": "claude-c", "rank": "director"}, "claude-opus-1")
+        assert rank("claude-c") == "lead" and "Your rank on this server is lead" in commands[-1][0][-1]
+        lowered = facet.worker({**base, "name": "claude-c2", "rank": "director"}, "claude-opus-1")
+        assert lowered["rank"] == "lead" and lowered["rank_asked"] == "director"      # it is told what it got
+        asked = facet.worker({**base, "name": "claude-c3", "rank": "support"}, "claude-opus-1")
+        assert asked["rank"] == "support" and "rank_asked" not in asked
+        facet.worker({**base, "name": "claude-d", "rank": "support"}, "claude-opus-1")
+        assert rank("claude-d") == "support"
+        facet.post(_request("POST", "/api/agora/console/worker", body={**base, "name": "claude-e", "rank": "director", "_person": True},
+                            caller="hub", agent=True))
+        assert rank("claude-e") == "agent"                                # the body does not make anyone the person
+        tool = facet.handlers()["hub_agora_console_worker"]
+        tool({**base, "name": "claude-f", "rank": "director", "_person": True, "actor": "claude-opus-1"})
+        assert rank("claude-f") == "lead"
+        # no rank asked for: an agent like any other, and nothing is written
+        facet.worker({**base, "name": "claude-g"}, "luis")
+        assert rank("claude-g") == "agent" and store.db.one("SELECT 1 AS x FROM agora_ranks WHERE agent='claude-g'") is None
+        out = facet.worker({**base, "name": "claude-h", "rank": "emperor"}, "luis")
+        assert out["ok"] is False and out["status"] == 400 and len(commands) == 9
+        # a session that cannot start is given no rank
+        monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: None)
+        refused = facet.worker({**base, "name": "claude-i", "rank": "director"}, "luis")
+        assert refused["worker"]["state"] == "unavailable" and rank("claude-i") == "agent"
+
+        # a session that fails without ever being on the server leaves no rank under its name, which is free again;
+        # one that is on the server keeps the rank it has there
+        class Gone:
+            def wait(self):
+                return 1
+        ids = {w["agent_id"]: w["id"] for w in facet._worker_rows()}
+        store.heartbeat({"agent": "claude-b", "state": "working"})
+        for name in ("claude-a", "claude-b"):
+            facet._monitor_worker(ids[name], Gone(), tmp_path / "no-result.txt")
+        assert rank("claude-a") == "agent" and rank("claude-b") == "director"
+    finally:
+        store.close()

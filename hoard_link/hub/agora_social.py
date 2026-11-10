@@ -152,6 +152,8 @@ def _drop_membership(self: Any, ident: str) -> bool:
     """Take ``ident`` off this server; True when it is on no server any more and the Ágora forgets it. Inside a tx."""
     self.db.execute("DELETE FROM coordination_members WHERE space_id=? AND agent=?", (self.space_id, ident))
     self.db.execute("DELETE FROM agora_seen_floor WHERE agent=? AND space_id=?", (ident, self.space_id))
+    from . import agora_ranks
+    agora_ranks.forget(self, ident)                  # no rank where it is not
     if self.db.one("SELECT 1 AS x FROM coordination_members WHERE agent=? LIMIT 1", (ident,)) is not None:
         return False
     self.db.execute("DELETE FROM locks WHERE owner=?", (ident,))

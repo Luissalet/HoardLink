@@ -673,6 +673,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("id"); s.add_argument("--to"); s.add_argument("--reason"); s.add_argument("--force", action="store_true")
     s = sub.add_parser("members-prune", help="da de baja a quien no viene desde hace --days días (30) y no tiene nada en marcha")
     s.add_argument("--days", type=int, default=30); s.add_argument("--dry-run", action="store_true")
+    sub.add_parser("ranks", help="los rangos del servidor: la escalera, qué manda un rango más alto y el de cada miembro")
+    s = sub.add_parser("assign", help="asigna una tarea a un agente de menos rango que tú: assign <tarea> <agente> [--note \"…\"]")
+    s.add_argument("task", type=int); s.add_argument("to"); s.add_argument("--note")
     s = sub.add_parser("read", help="últimos mensajes de un canal (general por defecto) o de un hilo con --thread")
     s.add_argument("channel", nargs="?", default="general"); s.add_argument("--limit", type=int, default=30)
     s.add_argument("--before", type=int); s.add_argument("--peek", action="store_true"); s.add_argument("--thread", type=int)
@@ -722,7 +725,7 @@ def main(argv: list[str] | None = None) -> int:
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
     _SELECTED_SPACE = a.space
-    reads = {"members", "file", "servers", "channels", "read", "feed", "search", "spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
+    reads = {"members", "ranks", "file", "servers", "channels", "read", "feed", "search", "spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
     if a.cmd not in reads and not (a.cmd == "debate" and a.dcmd in ("show", "list")) and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
@@ -936,6 +939,11 @@ def main(argv: list[str] | None = None) -> int:
                                                       **({"reason": a.reason} if a.reason else {})})
     elif c == "members-prune":
         r = call("POST", "/api/agora/members_prune", {"agent": ag, "older_than_days": a.days, "dry_run": a.dry_run})
+    elif c == "ranks":
+        r = call("GET", "/api/agora/ranks")
+    elif c == "assign":
+        r = call("POST", "/api/agora/task_assign", {"agent": ag, "task_id": a.task, "to_agent": a.to,
+                                                    **({"note": a.note} if a.note else {})})
     elif c == "read":
         q = {"limit": a.limit}
         if ag:
@@ -1031,9 +1039,21 @@ def main(argv: list[str] | None = None) -> int:
     elif c == "members":
         for m in r.get("members", []):
             seen = "todavía no ha entrado" if not m.get("last_seen") else "visto " + when(m["last_seen"])
-            print(f"{m['id']:<30} {m['presence']:<9} {str(m.get('role') or '-'):<8} {seen}"
+            print(f"{m['id']:<30} {m['presence']:<9} {str(m.get('role') or '-'):<8} {str(m.get('rank') or '-'):<9} {seen}"
                   + (f" · {len(m['tasks'])} tareas" if m.get("tasks") else "") + (f" · {short(m['doing'], 70)}" if m.get("doing") else ""))
         print(f"{r.get('total', 0)} en el servidor")
+    elif c == "ranks":
+        print("Escalera: " + " > ".join(f"{x['label']} ({x['id']})" for x in r.get("ladder", [])) + f" · sin asignar: {r.get('default')}")
+        for rule in r.get("rules", []):
+            print("  - " + rule)
+        named = [m for m in r.get("members", []) if m.get("rank") != r.get("default")]
+        for m in named:
+            print(f"{m['id']:<30} {m['rank']}")
+        print(f"{len(named)} con rango propio de {len(r.get('members', []))} en el servidor")
+    elif c == "assign":
+        t = r.get("task") or {}
+        print(f"ok · tarea #{t.get('id')} [{t.get('status')}] es de {t.get('owner')}"
+              + (f" (antes, de {r['moved_from']})" if r.get("moved_from") else "") + (" · ya lo era" if r.get("noop") else ""))
     elif c == "member-add":
         print(f"ok · {(r.get('member') or {}).get('id')} " + ("dado de alta en el servidor" if r.get("added") else "ya estaba en el servidor"))
     elif c == "member-remove":
@@ -1128,6 +1148,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ok · {'tarea #' if 'priority' in brief else 'hilo '}{brief['id']} [{brief.get('status')}] {brief.get('title')}")
         else:
             print("ok · " + json.dumps(brief, ensure_ascii=False))
+        if c == "escalate" and r.get("asked"):      # by rank, a question may go to another agent before the person
+            print("  la pregunta ha ido a: " + ", ".join(r["asked"]) + ("" if r.get("reached_person") else " (por rango; llega a la persona si la suben)"))
+        if r.get("stays_resolved"):
+            print("  el hilo sigue resuelto: lo cerró alguien de más rango")
         if r.get("locks"):
             print("  bloqueos: " + ", ".join(r["locks"]))
         print_quota_warnings(r)
