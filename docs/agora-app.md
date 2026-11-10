@@ -42,6 +42,23 @@ The central conversation uses the canonical team thread. Messages select all fou
 
 The helper control creates a separate session with the selected model and reasoning. It preserves the principal's configuration, history and identity. External workers can register their actual lifecycle through the console API/MCP. A declared model observation is identified as declared; it is not promoted to a measured provider reading. Provider authentication failures are visible and are not represented as working sessions.
 
+### Child sessions by provider
+
+`POST /api/agora/console/worker` (`hub_agora_console_worker`) with `leader_id`, `model`, `effort` and `task` starts an independent session of that provider's own program on the Hub's PC, under an identity of its own (`<provider>-worker-<8 hex>`); the model and effort left out are the ones saved with `console/preferences` for that space. Preferences are kept per space, so each server has its own.
+
+| Provider | What is started | Models and efforts offered |
+|---|---|---|
+| Codex | `codex exec --json --worktree` | the installed CLI's catalog, each model with its reasoning levels |
+| Claude | `claude --print --output-format stream-json --worktree=agora-claude-<8 hex>`, with a session id and a name of its own and no permission prompts | the aliases `--model` takes (`default`, `opus`, `sonnet`, `haiku`; plus the model named in the person's `settings.json` when it is none of them) and the levels `claude --help` lists for `--effort`, plus `default` |
+| Cursor | its runner with `--print --output-format stream-json --worktree=…` | the runner's model list; the effort is part of each model |
+| Faustus | Faustus's native runner on a new project session | the verified Sparks catalog; the reasoning levels of each model |
+
+For Claude, `default` as a model or as an effort passes no option at all: the session runs on whatever the person's Claude Code is set to. A model that offers no effort levels (some of Faustus's) starts, and is saved as a preference, without one: no effort is sent to it and none is read back. An effort the chosen model does not offer is refused with the reason, as is a model that is not in the catalog.
+
+Claude's catalog is offered only while `claude auth status` reports an account. That report can outlive the sign-in itself, so when the provider refuses a session started here for its sign-in, the Hub remembers it against the stored sign-in as it was (only the date of `~/.claude/.credentials.json` is read) and reports Claude as `unavailable` with `auth_state: "expired"` until the person signs in again; without such a file, for fifteen minutes.
+
+A Claude session that leaves its worktree as it found it leaves nothing behind: when it ends, the Hub removes the worktree and deletes its branch if the branch holds no commit of its own. Nothing is forced, so a worktree with changes and a branch with work stay for whoever reviews them. Claude Code bases the worktree on the repository's remote default branch.
+
 The right pane shows pending tasks and recent completed work, with the actual global completion total. Task details open their ordinary history and support replies. Full operations, including task creation, cross review, decisions and locks, remain accessible in the Hub. On narrow browser screens the leader rail becomes a compact strip and the tasks become a drawer. Draft messages survive page reloads on the same client.
 
 ## Run and build

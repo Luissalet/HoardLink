@@ -10,3 +10,4 @@ dist/
 *.log
 data/
 data-*/
+.claude/worktrees/

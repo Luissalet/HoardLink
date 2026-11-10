@@ -63,6 +63,12 @@ CHANNELS_MIGRATION = """
         updated REAL NOT NULL, PRIMARY KEY(agent, space_id));
 """
 
+#: Appended to ``agora.MIGRATIONS`` after the social one: a muted server tells the person nothing outside the page.
+MUTED_MIGRATION = """
+    ALTER TABLE agora_space_meta ADD COLUMN muted INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE agora_space_meta ADD COLUMN heard_since REAL NOT NULL DEFAULT 0;
+"""
+
 
 def _ag() -> Any:
     from . import agora
@@ -374,7 +380,7 @@ def channel_post(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     out["mentions"] = mentions
     # Naming the person in a channel also tells them outside the page (the hub's notifications decide how and when).
     hook = getattr(self, "mention_hook", None)
-    if hook and ag.PERSON in mentions and agent != ag.PERSON:
+    if hook and ag.PERSON in mentions and agent != ag.PERSON and not muted(self, self.space_id):
         try:
             hook({"id": thread, "space_id": self.space_id, "channel": slug, "title": (out.get("thread") or {}).get("title") or ""},
                  agent, body)
@@ -434,24 +440,39 @@ def seen(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 
 def _meta(self: Any, sid: str) -> dict[str, Any]:
     row = self.db.one("SELECT * FROM agora_space_meta WHERE space_id=?", (sid,))
-    out = {"icon": "", "color": "", "folders": [], "position": None, "hidden": False}
+    out = {"icon": "", "color": "", "folders": [], "position": None, "hidden": False, "muted": False}
     if row:
         try:
             folders = json.loads(row["folders"] or "[]")
         except ValueError:
             folders = []
         out.update(icon=row["icon"] or "", color=row["color"] or "", position=row["position"],
-                   hidden=bool(row["hidden"]), folders=[str(f) for f in folders if isinstance(f, str)])
+                   hidden=bool(row["hidden"]), muted=bool(row["muted"]),
+                   folders=[str(f) for f in folders if isinstance(f, str)])
     return out
+
+
+def muted(self: Any, sid: str) -> bool:
+    """Whether the person silenced this server: what happens in it is not announced to them outside the page."""
+    return bool(self.db.scalar("SELECT muted FROM agora_space_meta WHERE space_id=?", (sid,), 0))
+
+
+def heard_since(self: Any, sid: str) -> float:
+    """When the person last took the silence off this server (0 when it never was silenced): what was said in it
+    before that was said while nobody was to be told, and is not announced afterwards either."""
+    return float(self.db.scalar("SELECT heard_since FROM agora_space_meta WHERE space_id=?", (sid,), 0) or 0)
 
 
 def space_meta_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """How a space looks and what it reads: ``icon`` (an app id, a letter or an emoji), ``color``, ``folders``
-    (context folders the agents of this space should know besides its workspace), ``position`` and ``hidden``."""
+    (context folders the agents of this space should know besides its workspace), ``position``, ``hidden`` and
+    ``muted`` (nothing that happens in it is announced to the person outside the page). Only the person silences a
+    server or hears it again, from their own pages: an agent may not decide what the person is told."""
     ag = _ag()
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     self.space_store.get(self.space_id)
     current = _meta(self, self.space_id)
+    was_muted = current["muted"]
     if "icon" in a:
         current["icon"] = ag._txt(a.get("icon"), 120, "icon")
         if not current["icon"].startswith("img:"):
@@ -475,14 +496,23 @@ def space_meta_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         current["position"] = None if a.get("position") in (None, "") else _int(a.get("position"), 0, -1000, 100000)
     if "hidden" in a:
         current["hidden"] = _bool(a.get("hidden"), "hidden")
+    if "muted" in a:
+        if not a.get("_person"):
+            raise _err("only the person silences a server or hears it again, from their own pages", 403)
+        current["muted"] = _bool(a.get("muted"), "muted")
+    heard = heard_since(self, self.space_id)
+    if was_muted and not current["muted"]:
+        heard = self.clock()                      # from now on it is heard; what was said meanwhile stays untold
     with self.db.tx():
         self._touch(agent)
         self.db.execute(
-            "INSERT INTO agora_space_meta(space_id, icon, color, folders, position, hidden, updated) VALUES(?,?,?,?,?,?,?) "
+            "INSERT INTO agora_space_meta(space_id, icon, color, folders, position, hidden, muted, heard_since, updated) "
+            "VALUES(?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(space_id) DO UPDATE SET icon=excluded.icon, color=excluded.color, folders=excluded.folders, "
-            "position=excluded.position, hidden=excluded.hidden, updated=excluded.updated",
+            "position=excluded.position, hidden=excluded.hidden, muted=excluded.muted, heard_since=excluded.heard_since, "
+            "updated=excluded.updated",
             (self.space_id, current["icon"], current["color"], json.dumps(current["folders"], ensure_ascii=False),
-             current["position"], 1 if current["hidden"] else 0, self.clock()))
+             current["position"], 1 if current["hidden"] else 0, 1 if current["muted"] else 0, heard, self.clock()))
     self._bump("agora.space.updated", {"by": agent})
     return {"ok": True, "meta": _meta(self, self.space_id)}
 
@@ -522,7 +552,8 @@ def servers(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             unread[r["space_id"]] = (int(r["n"]), int(r["hits"] or 0))
     out = []
     for sp in listing:
-        meta = metas.get(sp["id"]) or {"icon": "", "color": "", "folders": [], "position": None, "hidden": False}
+        meta = metas.get(sp["id"]) or {"icon": "", "color": "", "folders": [], "position": None, "hidden": False,
+                                       "muted": False}
         n, hits = unread.get(sp["id"], (0, 0))
         out.append({"id": sp["id"], "title": sp["title"], "description": sp.get("description") or "",
                     "project_id": sp.get("project_id") or "", "workspace": sp.get("workspace") or "",
@@ -907,7 +938,9 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_space_meta_set",
          "description": "How a space looks and what it reads: icon (an app id, a letter or an emoji; img:… is its own "
                         "picture, set with hub_agora_space_icon_set), color (#rrggbb), "
-                        "folders (context folders besides its workspace), position in the server list and hidden.",
+                        "folders (context folders besides its workspace), position in the server list and hidden. "
+                        "Whether a server is muted (it announces nothing to the person outside the page) is the "
+                        "person's own choice, made from their pages: hub_agora_servers shows it, no tool changes it.",
          "inputSchema": schema({"agent": agent_prop, "icon": {"type": "string", "maxLength": 120},
                                 "color": {"type": "string"}, "folders": {"type": "array", "items": {"type": "string"}},
                                 "position": {"type": ["integer", "null"]}, "hidden": {"type": "boolean"}}, ["agent"])},

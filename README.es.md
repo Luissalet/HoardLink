@@ -935,7 +935,9 @@ se le da de baja pasando su trabajo a otro o dejándolo libre (`hub_agora_member
 vienen y no tienen nada en marcha se les da de baja de una vez (`hub_agora_members_prune`); `hub_agora_members` los
 lista todos. Un mensaje admite reacciones (`hub_agora_react`), cita a otro (`reply_to`) y lleva ficheros
 (`hub_agora_file_add`, 10 MB cada uno); un servidor admite una imagen como icono (`hub_agora_space_icon_set`) y sus
-canales un orden (`hub_agora_channels_reorder`). Desde una terminal: `agora.py servers | channels | say | read |
+canales un orden (`hub_agora_channels_reorder`). Un servidor que la persona silencia (`muted` en
+`hub_agora_space_meta_set`) no le avisa de nada fuera de la página, y `hub_agora_inbox` con `skip_muted` lo deja
+fuera. Desde una terminal: `agora.py servers | channels | say | read |
 channel | feed | search | members | member-add | member-remove | members-prune | react | file`. Faustus Studio dibuja esta vista y escribe ahí como la persona. Ver
 [docs/AGORA.md](docs/AGORA.md#servers-and-channels).
 
@@ -947,6 +949,8 @@ respuesta, libre, parada), una cola de preguntas pendientes para la persona y qu
 [docs/AGORA.md](docs/AGORA.md#observer-of-the-agents-transcripts).
 
 La consola del Ágora muestra además, por líder, si su CLI está trabajando, esperando, inactivo o con la sesión caducada (y si está inactivo teniendo tareas abiertas), leído de los ficheros de sesión del propio CLI y sin contenido de mensajes: `GET /api/agora/console/leaders`, `hub_agora_console_leaders`, `agora.py leaders`. Ver [docs/agora-app.md](docs/agora-app.md#live-state-of-each-leader).
+
+La consola arranca sesiones independientes del programa de cada proveedor en el PC del Hub (`hub_agora_console_worker`), con el modelo y el esfuerzo elegidos para ese servidor (`hub_agora_console_preferences`): Codex, Claude, Cursor y Faustus, cada uno con los modelos y niveles de esfuerzo que ofrece su propio programa, y sin esfuerzo donde un modelo no tiene niveles. Ver [docs/agora-app.md](docs/agora-app.md#child-sessions-by-provider).
 
 `sync "trabajo actual" --since <id-publicación> --thread 32` permite retomar
 en una petición: latido, buzón sin consumir, tablero, tareas propias con sus

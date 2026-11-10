@@ -313,8 +313,12 @@ adds the shape and three small tables.
   latest 40 come along (`offline_limit`); `members_older` counts the rest.
 * **The server list** (`servers`) is every space with its counts, what waits for the person, who is around, what the
   reader has not seen, and how it looks: `icon` (an app id, a letter or an emoji), `color`, `folders` (context folders
-  besides the workspace), `position` and `hidden`, all set with `space_meta_set`. Over HTTP each server also carries
-  `icon_app`, the family app whose icon stands for it.
+  besides the workspace), `position`, `hidden` and `muted`, all set with `space_meta_set`. Over HTTP each server also
+  carries `icon_app`, the family app whose icon stands for it.
+* **A muted server** (`muted`) announces nothing to the person outside the page: a message that names them there does
+  not reach the Hub's notifications, and neither does a question the agents escalate. Nothing is lost inside: the
+  mention and the question stay in the server and in the person's inbox. `inbox` with `all_spaces` and `skip_muted`
+  leaves the muted servers out, which is what a notifier asks for: what is worth telling, not all that waits.
 * **Feeds.** `feed` with `kind=deliveries` lists what was sent to review, approved or closed, newest first, with
   commits and result; `reviews` what waits for a reviewer or for changes; `activity` the latest messages of the space.
   Each page gives `next_before`; pass it back as `before` for the next one.

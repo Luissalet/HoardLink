@@ -230,7 +230,8 @@ def test_servers_list_spaces_with_meta_and_put_the_home_first(ag):
     ag.task_add({"space_id": "zeta", "agent": "claude", "title": "algo", "claim": True})
     meta = ag.space_meta_set({"space_id": "zeta", "agent": "claude", "icon": "Z", "color": "#aa3355",
                               "folders": ["E:/zeta/docs", "E:/zeta/docs", " E:/notas "]})["meta"]
-    assert meta == {"icon": "Z", "color": "#aa3355", "folders": ["E:/zeta/docs", "E:/notas"], "position": None, "hidden": False}
+    assert meta == {"icon": "Z", "color": "#aa3355", "folders": ["E:/zeta/docs", "E:/notas"], "position": None,
+                    "hidden": False, "muted": False}
     with pytest.raises(AgoraError):
         ag.space_meta_set({"space_id": "zeta", "agent": "claude", "color": "red"})
     with pytest.raises(AgoraError):
@@ -398,6 +399,83 @@ def test_naming_the_person_in_a_channel_tells_them_once_per_conversation(ag):
     ag.mention_hook = lambda *a: (_ for _ in ()).throw(RuntimeError("sin avisos"))
     sent = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis otra vez"})
     assert sent["ok"] and sent["mentions"] == ["luis"]            # a notification that fails never loses the message
+
+
+def test_a_muted_server_announces_nothing_outside_the_page(ag):
+    told, asked = [], []
+    ag.mention_hook = lambda where, agent, body: told.append((where["space_id"], body))
+    ag.escalate_hook = lambda thread, agent, question: asked.append((thread["space_id"], question))
+    ag.space_create({"agent": "claude", "id": "zeta", "title": "Zeta"})
+    # only the person silences a server: an agent may not decide what the person is told
+    for attempt in ({"agent": "claude", "muted": True}, {"agent": "luis", "muted": True}):
+        with pytest.raises(AgoraError) as refused:
+            ag.space_meta_set({"space_id": "atlas", **attempt})
+        assert refused.value.status == 403
+    assert ag.guild({"space_id": "atlas"})["space"]["meta"]["muted"] is False
+    assert ag.space_meta_set({"space_id": "atlas", "agent": "luis", "_person": True, "muted": True})["meta"]["muted"] is True
+    with pytest.raises(AgoraError):
+        ag.space_meta_set({"space_id": "atlas", "agent": "luis", "_person": True, "muted": "a ratos"})
+
+    quiet = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis ¿publicamos?"})
+    ag.escalate({"space_id": "atlas", "agent": "claude", "thread_id": quiet["thread"]["id"], "question": "¿sí o no?"})
+    loud = ag.channel_post({"space_id": "zeta", "agent": "claude", "body": "@luis aquí sí"})
+    ag.escalate({"space_id": "zeta", "agent": "claude", "thread_id": loud["thread"]["id"], "question": "¿y aquí?"})
+
+    assert told == [("zeta", "@luis aquí sí")] and asked == [("zeta", "¿y aquí?")]
+    # nothing is lost inside: the mention and the question are there, and the list says which server is quiet
+    listing = {s["id"]: s for s in ag.servers({"agent": "luis", "_person": True})["servers"]}
+    assert listing["atlas"]["muted"] is True and listing["zeta"]["muted"] is False
+    everything = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True})
+    assert {q["space_id"] for q in everything["escalated"]} == {"atlas", "zeta"}
+    assert {m["space_id"] for m in everything["pending"]} == {"atlas", "zeta"}
+    heard = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
+    assert {q["space_id"] for q in heard["escalated"]} == {"zeta"} and {m["space_id"] for m in heard["pending"]} == {"zeta"}
+    assert "atlas" not in heard["read_cursors"]
+    assert ag.guild({"space_id": "atlas"})["space"]["meta"]["muted"] is True
+    # an agent changing something else leaves the silence as it was
+    ag.space_meta_set({"space_id": "atlas", "agent": "claude", "color": "#112233"})
+    assert ag.guild({"space_id": "atlas"})["space"]["meta"]["muted"] is True
+    # heard again: what comes now is told, what was said meanwhile is not told late
+    ag.space_meta_set({"space_id": "atlas", "agent": "luis", "_person": True, "muted": False})
+    ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis ya se oye"})
+    assert told[-1] == ("atlas", "@luis ya se oye")
+    heard = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
+    assert [m["body"] for m in heard["pending"] if m["space_id"] == "atlas"] == ["@luis ya se oye"]
+    assert not [q for q in heard["escalated"] if q["space_id"] == "atlas"]
+    everything = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True})
+    assert len([m for m in everything["pending"] if m["space_id"] == "atlas"]) == 3      # the inbox itself keeps them all
+    assert [q["space_id"] for q in everything["escalated"]].count("atlas") == 1
+    # another change keeps the moment it was heard again; a server never silenced has none
+    ag.space_meta_set({"space_id": "atlas", "agent": "claude", "color": "#445566"})
+    again = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
+    assert [m["body"] for m in again["pending"] if m["space_id"] == "atlas"] == ["@luis ya se oye"]
+    assert len([m for m in again["pending"] if m["space_id"] == "zeta"]) == 2 and [q["space_id"] for q in again["escalated"]] == ["zeta"]
+
+
+def test_muting_and_the_heard_inbox_over_http(tmp_path):
+    with ExitStack() as cleanup:
+        hub = make_hub(tmp_path, [])
+        cleanup.callback(hub.close)
+        server = serve(hub)
+        cleanup.callback(server.server_close)
+        cleanup.callback(server.shutdown)
+        base = hub.config.url.rstrip("/")
+        token = {"Authorization": "Bearer " + Path(hub.config.token_file).read_text().strip()}
+        studio = {**token, "X-Hoard-Person": "faustus-studio"}
+        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "@luis ¿lo ves?"}, headers=token)
+
+        status, out = http(base + "/api/agora/space_meta_set", {"agent": "claude", "muted": True}, headers=token)
+        assert status == 403                                   # an agent's token does not silence the person's server
+        status, out = http(base + "/api/agora/space_meta_set", {"muted": True}, headers=studio)
+        assert status == 200 and out["meta"]["muted"] is True
+        inbox = "/api/agora/inbox?agent=luis&all_spaces=1&peek=1&mine_only=1"
+        status, everything = http(base + inbox, headers=token)
+        status, heard = http(base + inbox + "&skip_muted=1", headers=token)
+        assert len(everything["pending"]) == 1 and heard["pending"] == []
+        tools = {t["name"]: t for t in hub.facet("agora").tools()} if hasattr(hub, "facet") else {}
+        if tools:                                              # no tool lets an agent change it
+            assert "muted" not in tools["hub_agora_space_meta_set"]["inputSchema"]["properties"]
+            assert "skip_muted" in tools["hub_agora_inbox"]["inputSchema"]["properties"]
 
 
 def test_the_hub_notifies_a_mention_of_the_person(tmp_path):
