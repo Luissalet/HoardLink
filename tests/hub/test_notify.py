@@ -557,7 +557,7 @@ def test_email_through_smtp(hub):
     smtp = FakeSMTP.instances[0]
     assert smtp.logged == ("bot@example.com", "hunter2") and smtp.quit_called
     msg = smtp.messages[0]
-    assert msg["Subject"] == "Invoice due" and msg["To"] == "me@example.com" and msg["From"] == "Hoard <bot@example.com>"
+    assert msg["Subject"] == "[Hermes] Invoice due" and msg["To"] == "me@example.com" and msg["From"] == "Hoard <bot@example.com>"
     assert "Pay it" in msg.get_body(("plain",)).get_content() and "<h3>" in msg.get_body(("html",)).get_content()
     assert seen_cfg["host"] == "smtp.example.com" and seen_cfg["port"] == 587 and seen_cfg["tls"] is True
 

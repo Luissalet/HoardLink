@@ -7,8 +7,8 @@ It runs with Faustus's own Python, inside the Faustus folder::
 so the mail password never leaves Faustus: the caller only receives messages. The file imports nothing from ``hoard_link``
 and uses the standard library only, because it runs under another interpreter. Callers run it through
 ``hoard_link.fam_mail.FaustusHelper`` (Python) or their own spawn (Node); the hub's mail gateway runs it for the family.
-Folders are opened read-only (EXAMINE) and every fetch uses BODY.PEEK: nothing is ever marked as read, moved, flagged or
-deleted. It started as the Kafka / Phileas / Ledger / Tantalus helpers (same author, MIT) and is their superset.
+Mail reads use read-only folders (EXAMINE) and BODY.PEEK. Sending adds the Hermes Gmail label to the sent copy via
+IMAP after SMTP succeeds; no message is marked as read, moved or deleted. It started as the Kafka / Phileas / Ledger / Tantalus helpers (same author, MIT) and is their superset.
 
 Requests (``action``); ``owner`` (optional) picks the Faustus user whose accounts are used (without it, the only owner that
 has accounts), ``account`` narrows a request to one account:
@@ -31,7 +31,8 @@ has accounts), ``account`` narrows a request to one account:
     {"action": "read", "message_id": "<...>", "account": "?", "folder": "?", "uid": 0}
         one message (found by Message-ID in any folder searched, or directly by account + folder + uid)
     {"action": "send", "subject": "...", "text": "...", "html": "...", "to": [...], "from_name": "..."}
-        a notification mail through the account's SMTP; no ``to`` = the account's own address
+        a notification mail through the account's SMTP; no ``to`` = the account's own address. Optional ``hermes_kind``
+        defaults to notification; adds [Hermes], X-Hermes and X-Hermes-Kind, plus the Gmail Hermes label best-effort.
 
 Every message (fetch, scan, read) is the record ``message_id, subject, from_name, from_address, date, ts, date_ts, to, cc,
 in_reply_to, references, text, links, attachments[{name, mime, size, sha, path}], images[{alt, src}], headers{list_unsubscribe,
@@ -62,6 +63,7 @@ import json
 import re
 import smtplib
 import ssl
+import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
@@ -787,7 +789,7 @@ def send_info(server, request: dict) -> dict:
     _sel, cfg = server._resolve_send_config(request.get("account") or None)
     sender = str(cfg.get("from_address") or cfg.get("smtp_user") or "")
     to = _addresses(request.get("to")) or _addresses(sender)
-    return {"cfg": cfg, "sender": sender, "to": to,
+    return {"selector": _sel, "cfg": cfg, "sender": sender, "to": to,
             "info": {"account": cfg.get("account_name") or "", "from": _mask(sender), "to": [_mask(a) for a in to],
                      "server": f"{cfg.get('smtp_host')}:{cfg.get('smtp_port')}"}}
 
@@ -802,7 +804,60 @@ def build_message(request: dict, sender: str, to: list) -> EmailMessage:
     msg.set_content(str(request.get("text") or request.get("subject") or ""))
     if request.get("html"):
         msg.add_alternative(str(request["html"]), subtype="html")
+    mark_hermes(msg, request.get("hermes_kind") or "notification")
     return msg
+
+
+def mark_hermes(msg: EmailMessage, kind: str) -> None:
+    """Identify automated Hermes mail without changing its body or recipients."""
+    subject = str(msg.get("Subject") or "")
+    if not subject.startswith("[Hermes]"):
+        msg.replace_header("Subject", "[Hermes] " + subject)
+    msg["X-Hermes"] = "1"
+    msg["X-Hermes-Kind"] = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", str(kind))[:80] or "notification"
+    if not msg.get("Message-ID"):
+        msg["Message-ID"] = make_msgid()
+
+
+def label_hermes(connect, message_id: str) -> bool:
+    """Best-effort Gmail label on the sent copy; never changes flags or other labels."""
+    conn = None
+    try:
+        conn = connect()
+        status, lines = conn.list()
+        folders = []
+        if status == "OK":
+            for line in lines or []:
+                line = line.decode("ascii", "replace") if isinstance(line, bytes) else str(line)
+                match = re.match(r'\([^)]*\\All\b[^)]*\)\s+(?:"[^"]*"|NIL)\s+(.+)$', line, re.I)
+                if match:
+                    folders.append(match.group(1))
+        folders.extend(['"[Gmail]/All Mail"', '"[Gmail]/Todos"', '"[Google Mail]/All Mail"'])
+        for folder in dict.fromkeys(folders):
+            status, _ = conn.select(folder, readonly=False)
+            if status == "OK":
+                break
+        else:
+            return False
+        # SMTP acceptance can precede the copy becoming visible through IMAP.
+        for attempt in range(3):
+            status, data = conn.uid("SEARCH", None, "HEADER", "Message-ID", '"' + message_id + '"')
+            uids = b" ".join(part for part in data or [] if isinstance(part, bytes)).split()
+            if status == "OK" and uids:
+                status, labels = conn.list('""', '"Hermes"')
+                if status == "OK" and not any(labels or []):
+                    conn.create('"Hermes"')
+                status, _ = conn.uid("STORE", b",".join(uids), "+X-GM-LABELS", '("Hermes")')
+                return status == "OK"
+            if attempt < 2:
+                time.sleep(1)
+        return False
+    except Exception:  # noqa: BLE001 — a delivered mail must remain successful
+        return False
+    finally:
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.logout()
 
 
 def send(server, request: dict) -> dict:
@@ -826,6 +881,9 @@ def send(server, request: dict) -> dict:
         if client is not None:
             with contextlib.suppress(Exception):
                 client.quit()
+    if _is_gmail(str(cfg.get("imap_host") or cfg.get("smtp_host") or "").lower()):
+        with contextlib.suppress(Exception):
+            label_hermes(lambda: server._imap_connect(meta["selector"]), str(msg["Message-ID"]))
     return {"ok": True, "error": "", **info}
 
 
