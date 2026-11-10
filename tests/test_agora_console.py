@@ -1338,6 +1338,29 @@ def test_claude_catalog_is_what_the_installed_cli_says_it_takes(tmp_path, monkey
     assert provider["current_model"] == "default" and provider["current_effort"] == "high"
     assert "private@example.test" not in json.dumps(provider)
 
+    # a newer CLI wraps its help and names an alias this hub did not know: its levels are read all the same, and
+    # the alias is offered (a model's full name given as an example is not an alias)
+    wrapped = """Usage: claude [options] [command] [prompt]
+
+Options:
+  --effort <level>                      Effort level for the current session
+                                        (low, medium, high, xhigh, max)
+  --environment <environment_id>        Create a new cloud session (experimental)
+  --model <model>                       Model for the current session. Provide
+                                        an alias for the latest model (e.g.
+                                        'fable', 'opus', or 'sonnet') or a
+                                        model's full name (e.g. 'claude-sonnet-4-6').
+  -n, --name <name>                     Set a display name ('quoted' here is no alias)
+  --output-format <format>              Output format (only works with --print)
+  --permission-mode <mode>              Permission mode to use for the session
+  -p, --print                           Print response and exit
+"""
+    _claude_cli(monkeypatch, tmp_path, help_text=wrapped)
+    provider = facet._claude_status()
+    assert [row["id"] for row in provider["catalog"]] == ["default", "fable", "opus", "sonnet", "haiku"]
+    assert provider["catalog"][1]["name"] == "Fable"
+    assert provider["catalog"][0]["efforts"] == ["default", "low", "medium", "high", "xhigh", "max"]
+
     # the model the person runs, when it is none of the aliases, is offered under its own name
     _claude_cli(monkeypatch, tmp_path, settings={"model": "their-own-model", "effortLevel": "turbo"})
     provider = facet._claude_status()
@@ -1674,6 +1697,22 @@ def test_a_claude_worktree_left_as_it_was_found_is_taken_away_and_nothing_is_for
     (folder / "notes.txt").unlink()
     assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is True and not folder.exists()
     assert [command[3:5] for command in calls] == [["worktree", "remove"], ["worktree", "prune"], ["branch", "-d"]]
+
+
+def test_the_controller_of_the_local_agent_is_found_where_the_agents_runtimes_live(tmp_path, monkeypatch):
+    root = tmp_path / "IA" / "Faustus"
+    root.mkdir(parents=True)
+    monkeypatch.delenv("FAUSTUS_AGORA_DIR", raising=False)
+    beside, agents = tmp_path / "IA" / "faustus-agora", tmp_path / "IA" / "Agents" / "faustus-agora"
+    assert AgoraConsoleFacet._faustus_controller_dir(root) == beside            # nowhere yet: where it always was looked for
+    beside.mkdir()
+    (beside / "faustus_agora.py").write_text("", encoding="utf-8")
+    assert AgoraConsoleFacet._faustus_controller_dir(root) == beside
+    agents.mkdir(parents=True)
+    (agents / "faustus_agora.py").write_text("", encoding="utf-8")
+    assert AgoraConsoleFacet._faustus_controller_dir(root) == agents            # with the other agents' runtimes first
+    monkeypatch.setenv("FAUSTUS_AGORA_DIR", str(tmp_path / "elsewhere"))
+    assert AgoraConsoleFacet._faustus_controller_dir(root) == tmp_path / "elsewhere"   # what the person says wins
 
 
 # ---- the name and the rank a session comes in with ------------------------------------------------------------------

@@ -398,10 +398,16 @@ class AgoraConsoleFacet(Facet):
         text = result.stdout or ""
         if result.returncode != 0 or any(option not in text for option in ("--print", "--model", "--output-format", "--permission-mode")):
             return [], None, None
-        listed = re.search(r"--effort\s+<[^>]+>[^\n(]*\(([a-z, ]+)\)", text)
+        flat = " ".join(text.split())      # a help that wraps its lines says the same over several of them
+        listed = re.search(r"--effort <[^>]+>[^()]{0,120}\(([a-z, ]+)\)", flat)
         efforts = ["default", *[level.strip() for level in (listed.group(1).split(",") if listed else []) if level.strip()]]
         current_model, current_effort = self._claude_current_settings()
         models = list(CLAUDE_MODELS)
+        # An alias the help itself names for --model and that is not known here (a newer one) is offered as well.
+        said = re.search(r"--model <[^>]+> (.*?)(?= -[a-zA-Z], --| --[a-z])", flat)
+        newer = [alias for alias in re.findall(r"'([a-z][a-z0-9]{1,30})'", said.group(1) if said else "")
+                 if alias not in {model for model, _ in models}]
+        models[1:1] = [(alias, alias.capitalize()) for alias in dict.fromkeys(newer)]
         if current_model and current_model not in {model for model, _ in models}:
             models.append((current_model, current_model))      # what the person runs is offered under its own name
         for named in self._claude_named_models():              # and the full names the person asked for
@@ -1400,6 +1406,19 @@ class AgoraConsoleFacet(Facet):
                 env[key] = str(value)
         return env
 
+    @staticmethod
+    def _faustus_controller_dir(root: Any) -> Path:
+        """Where Faustus's Agora controller lives: where the person says (``FAUSTUS_AGORA_DIR``), else with the other
+        agents' runtimes beside the installation, else beside the installation itself."""
+        told = os.environ.get("FAUSTUS_AGORA_DIR")
+        if told:
+            return Path(told)
+        beside = Path(root).parent
+        for candidate in (beside / "Agents" / "faustus-agora", beside / "faustus-agora"):
+            if (candidate / "faustus_agora.py").is_file():
+                return candidate
+        return beside / "faustus-agora"
+
     def _faustus_bound_session(self) -> tuple[Optional[dict[str, Any]], str]:
         runtime = getattr(self.hub, "faustus_runtime", None)
         try:
@@ -1409,7 +1428,7 @@ class AgoraConsoleFacet(Facet):
         root, python = installation if isinstance(installation, tuple) and len(installation) == 2 else (None, None)
         if root is None or python is None:
             return None, "The Faustus installation is unavailable; its controller binding cannot be checked."
-        controller_dir = Path(os.environ.get("FAUSTUS_AGORA_DIR") or (Path(root).parent / "faustus-agora"))
+        controller_dir = self._faustus_controller_dir(root)
         controller = controller_dir / "faustus_agora.py"
         if not controller.is_file():
             return None, "The Faustus Agora controller is not present beside the configured installation."
@@ -1474,7 +1493,7 @@ class AgoraConsoleFacet(Facet):
         if root is None:
             yield False, "Faustus installation is unavailable; the controller turn lock cannot be acquired."
             return
-        controller_dir = Path(os.environ.get("FAUSTUS_AGORA_DIR") or (Path(root).parent / "faustus-agora"))
+        controller_dir = self._faustus_controller_dir(root)
         lock_path = controller_dir / "run.lock"
         handle = None
         locked = False
