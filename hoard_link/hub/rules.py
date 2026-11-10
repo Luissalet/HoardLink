@@ -367,6 +367,11 @@ def example_rules() -> list[dict[str, Any]]:
     """The recommended rules: shown in the UI as templates and installed together by
     :meth:`RuleStore.install_examples` (the "Install the recommended rules" button,
     ``hub_rule_install_defaults``). Each has a stable ``id`` so installing twice adds nothing."""
+    from .brainbus import factory_rules as _brain_rules  # late: brainbus is a facet, rules is core
+    return _core_rules() + [{k: v for k, v in r.items() if k != "sample"} for r in _brain_rules()]
+
+
+def _core_rules() -> list[dict[str, Any]]:
     return [
         {"id": "rule-backup-on-stop", "name": "Backup when an app stops", "when": {"type": "hub.app.stopped"},
          "then": [{"kind": "hub", "tool": "hub_backup_run", "args": {"apps": ["${event.data.app}"]}}],

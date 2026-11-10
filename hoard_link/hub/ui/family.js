@@ -15,7 +15,7 @@
       no_events: "No events yet. Apps post to /api/events; the hub emits hub.* itself.",
       no_rules: "No rules. A rule runs actions when an event matches.", no_jobs: "No jobs. A job runs actions on a clock.",
       no_backups: "No snapshots yet.", live_off: "● disconnected", live_on: "● live",
-      edit_rule_hint: "JSON. when: {type: glob, source?, where?}. then: [{kind: tool, app, tool, args} | {kind: hub, tool, args} | {kind: event, type, data} | {kind: start_app|stop_app|restart_app, app} | {kind: profile_start|profile_stop, name}]. ${event.data.x}, ${today}, ${now} in strings.",
+      edit_rule_hint: "JSON. when: {type: glob, source?, where?}. then: [{kind: tool, app, tool, args} | {kind: hub, tool, args} | {kind: event, type, data} | {kind: start_app|stop_app|restart_app, app} | {kind: profile_start|profile_stop, name} | {kind: brain, key, entity: {name, type}, note: {folder, title, text, mode, date}, links: [{to, type, rel}]}]. ${event.data.x}, ${today}, ${now} in strings.",
       edit_job_hint: "JSON. every: '30m'|'6h'|'1d' or at: 'HH:MM' (+ days: [mon..sun|weekdays]). then: the same action list as rules.",
       confirm_remove: "Remove?", confirm_restore: (s, a) => `Restore ${a} from ${s} to a side folder next to its data?`,
       backup_summary: (s) => `${s.snapshots} snapshot${s.snapshots === 1 ? "" : "s"} · ${fmtBytes(s.store_bytes)} in store · ${s.objects} files${s.last ? " · last " + fmtTs(s.last.ts) : ""}`,
@@ -51,7 +51,7 @@
       no_events: "Aún no hay eventos. Las apps hacen POST a /api/events; el hub emite los hub.* por su cuenta.",
       no_rules: "Sin reglas. Una regla ejecuta acciones cuando un evento encaja.", no_jobs: "Sin tareas. Una tarea ejecuta acciones con reloj.",
       no_backups: "Aún no hay copias.", live_off: "● desconectado", live_on: "● en vivo",
-      edit_rule_hint: "JSON. when: {type: patrón, source?, where?}. then: [{kind: tool, app, tool, args} | {kind: hub, tool, args} | {kind: event, type, data} | {kind: start_app|stop_app|restart_app, app} | {kind: profile_start|profile_stop, name}]. ${event.data.x}, ${today}, ${now} dentro de cadenas.",
+      edit_rule_hint: "JSON. when: {type: patrón, source?, where?}. then: [{kind: tool, app, tool, args} | {kind: hub, tool, args} | {kind: event, type, data} | {kind: start_app|stop_app|restart_app, app} | {kind: profile_start|profile_stop, name} | {kind: brain, key, entity: {name, type}, note: {folder, title, text, mode, date}, links: [{to, type, rel}]}]. ${event.data.x}, ${today}, ${now} dentro de cadenas.",
       edit_job_hint: "JSON. every: '30m'|'6h'|'1d' o at: 'HH:MM' (+ days: [mon..sun|weekdays]). then: la misma lista de acciones que las reglas.",
       confirm_remove: "¿Quitar?", confirm_restore: (s, a) => `¿Restaurar ${a} desde ${s} en una carpeta aparte junto a sus datos?`,
       backup_summary: (s) => `${s.snapshots} copia${s.snapshots === 1 ? "" : "s"} · ${fmtBytes(s.store_bytes)} en el almacén · ${s.objects} ficheros${s.last ? " · última " + fmtTs(s.last.ts) : ""}`,
@@ -246,6 +246,7 @@
     if(a.kind==='restart_app')return (es?'Reiniciar ':'Restart ')+app;
     if(a.kind==='profile_start')return (es?'Iniciar grupo ':'Start group ')+a.name;
     if(a.kind==='profile_stop')return (es?'Parar grupo ':'Stop group ')+a.name;
+    if(a.kind==='brain')return (es?'Escribir en el Cerebro: ':'Write to the Brain: ')+[a.entity&&(es?'entidad':'entity'),a.note&&(es?'nota':'note'),(a.links||[]).length&&(es?'enlaces':'links')].filter(Boolean).join(' + ');
     if (a.kind === "tool") return `${a.app}.${a.tool}${a.args && Object.keys(a.args).length ? "(" + Object.keys(a.args).join(", ") + ")" : ""}`;
     if (a.kind === "hub") return `hub.${a.tool}`;
     if (a.kind === "event") return `emit ${a.type}`;
