@@ -2065,7 +2065,21 @@ class AgoraConsoleFacet(Facet):
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode
         try:
             if git("worktree", "remove", str(path)) != 0:
-                return False
+                # The program that just left may still hold the folder for a moment (Windows): git then empties and
+                # forgets the worktree but cannot take the folder itself away. An empty folder is finished off here;
+                # one with anything in it holds changes and stays as it is.
+                for _ in range(6):
+                    if not path.exists():
+                        break
+                    if any(path.iterdir()):
+                        return False
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        time.sleep(0.5)
+                if path.exists():
+                    return False
+                git("worktree", "prune")
             git("branch", "-d", f"worktree-{name}")
             return True
         except (OSError, subprocess.SubprocessError):
