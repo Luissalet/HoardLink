@@ -9,7 +9,10 @@ is the action list of ``actions.py``, with ``${event.data.x}`` available.
 
 The engine listens to the event log and runs matching rules on one
 worker thread, in order, so a burst of events never spawns a burst of
-threads and two rules never race on the same app. Guards against loops:
+threads and two rules never race on the same app. A rule whose actions
+only emit an event or queue a write to the Brain (``FAST_KINDS``) runs on
+a second thread of its own: it touches no app, so it must not wait behind
+a backup or a restart another rule started. Guards against loops:
 a rule never fires on ``hub.rule.*`` events, nor on an event that one of
 its own actions emitted (``data._via_rule``), and ``cooldown_s`` (default
 5) caps how often each rule can fire. Every run is recorded as a
@@ -35,6 +38,14 @@ HISTORY = 100
 #: (the same switch as ``"auto_install": false`` in ``<data>/rules_meta.json``).
 AUTO_INSTALL_ENV = "HOARD_HUB_AUTO_RULES"
 META_NAME = "rules_meta.json"
+#: Action kinds that return at once (they emit, or queue on disk) and touch no app.
+FAST_KINDS = ("brain", "event")
+
+
+def is_fast(rule: dict[str, Any]) -> bool:
+    """True when every action of ``rule`` is one of :data:`FAST_KINDS`."""
+    then = rule.get("then") or []
+    return bool(then) and all(isinstance(a, dict) and a.get("kind") in FAST_KINDS for a in then)
 
 
 def _get(event: dict[str, Any], path: str) -> Any:
@@ -91,6 +102,8 @@ class RuleEngine:
         self._last_fire: dict[str, float] = {}
         self._queue: "queue.Queue[tuple[dict[str, Any], dict[str, Any]]]" = queue.Queue()
         self._worker: Optional[threading.Thread] = None
+        self._fast_queue: "queue.Queue[tuple[dict[str, Any], dict[str, Any]]]" = queue.Queue()
+        self._fast_worker: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._load()
         if auto_install is None:
@@ -280,7 +293,7 @@ class RuleEngine:
                 self._last_fire[r["id"]] = self._now()
                 due.append(dict(r))
         for r in due:
-            self._queue.put((r, event))
+            (self._fast_queue if is_fast(r) else self._queue).put((r, event))
         if due:
             self._ensure_worker()
 
@@ -316,11 +329,16 @@ class RuleEngine:
             if self._worker is None or not self._worker.is_alive():
                 self._worker = threading.Thread(target=self._loop, name="hoard-hub-rules", daemon=True)
                 self._worker.start()
+            if not self._fast_queue.empty() and (self._fast_worker is None or not self._fast_worker.is_alive()):
+                self._fast_worker = threading.Thread(target=self._loop, args=(self._fast_queue,),
+                                                     name="hoard-hub-rules-fast", daemon=True)
+                self._fast_worker.start()
 
-    def _loop(self) -> None:
+    def _loop(self, pending: Optional["queue.Queue[tuple[dict[str, Any], dict[str, Any]]]"] = None) -> None:
+        pending = self._queue if pending is None else pending
         while not self._stop.is_set():
             try:
-                rule, event = self._queue.get(timeout=30.0)
+                rule, event = pending.get(timeout=30.0)
             except queue.Empty:
                 return
             self.run(rule, event, manual=False)

@@ -32,8 +32,8 @@ history, what each key points to) and `<data>/brain_bus.json` (a fixed Faustus a
   Faustus's vocabulary: `works_at`, `part_of`, `knows`, `owns`, `uses`...). The note cites every entity and carries
   `[[Name]]` links to them. `each` repeats a link over a list of the event.
 
-The note is `<folder>/<title>.md` in the vault. The hub owns only the block between `<!-- hoard-hub:begin -->` and
-`<!-- hoard-hub:end -->`: what you write outside it stays.
+The note is `<folder>/<title>.md` in the vault, with no markers in it. The hub replaces only the text it wrote the
+last time: what you add around it stays, and if you rewrite the hub's text the next version goes at the end.
 
 ## Once, not twice
 
@@ -51,6 +51,9 @@ PC and a Spark leave the row `pending`; it is retried after 20 s, 1 min, 3 min, 
 order, and nothing is dropped. A write Faustus refuses (4xx) is `failed` with its reason and can be retried from the
 tab. A Faustus without `POST /api/brain/entities` still gets the notes (an entity on its own becomes a card note under
 `Familia/<type>/`); the write is `partial` and the hub adds the entities by itself once the route answers.
+
+Rules run in order on one thread, and some take minutes (a backup when an app stops). A rule whose actions only write
+to the Brain or emit an event runs on a second thread, so it never waits behind those.
 
 States: `pending`, `done`, `partial`, `failed`. Each finished write emits `hub.brain.written {rule, key, status, note,
 entity, event_id}`.

@@ -44,7 +44,6 @@ from typing import Any, Optional
 
 from .facets import Facet, Request
 
-BEGIN, END = "<!-- hoard-hub:begin -->", "<!-- hoard-hub:end -->"
 TYPES = ("person", "project", "organization", "place", "tool", "concept", "event", "other")
 TYPE_NAMES = {"person": "persona", "project": "proyecto", "organization": "organización", "place": "lugar",
               "tool": "herramienta", "concept": "concepto", "event": "evento", "other": "entidad"}
@@ -204,7 +203,7 @@ def build_plan(action: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         tags = [t for t in (render(x, ctx).lower().replace(" ", "-") for x in (note.get("tags") or [])) if t]
         plan["note"] = {"folder": safe_folder(render(note.get("folder") or "Familia", ctx)), "title": title, "mode": mode,
                         "date": render(note.get("date"), ctx)[:32], "tags": tags[:8],
-                        "text": " · ".join(lines) if mode == "append" else "\n".join(lines)}
+                        "text": " · ".join(lines) if mode == "append" else "\n".join(f"- {line}" for line in lines)}
     if "entity" not in plan and "note" not in plan:
         return {"skip": "la acción no define ni entidad ni nota"}
     # the key names the thing: an event that lacks what the key is made of is about nothing we can name
@@ -253,9 +252,11 @@ def zone_text(plan: dict[str, Any], log: list[dict[str, Any]]) -> str:
     return "\n\n".join(p for p in parts if p.strip())
 
 
-def compose_note(existing: Optional[str], plan: dict[str, Any], zone: str, *, now_iso: str) -> str:
-    """The whole file: a new note with its header, or the existing one with only the hub's zone replaced."""
-    block = f"{BEGIN}\n{zone}\n{END}"
+def compose_note(existing: Optional[str], plan: dict[str, Any], zone: str, *, now_iso: str, previous: str = "") -> str:
+    """The whole file: a new note with its header, or the existing one with only the hub's part replaced. The hub's
+    part is the text it wrote last time (``previous``): no markers in the note. When that text is no longer there
+    (someone rewrote it) the new text goes at the end and what the person wrote stays."""
+    block = zone
     if existing is None:
         note = plan.get("note") or {}
         tags = ["familia"] + [t for t in (note.get("tags") or []) if t != "familia"]
@@ -264,10 +265,34 @@ def compose_note(existing: Optional[str], plan: dict[str, Any], zone: str, *, no
             head.append(f"date: {note['date']}")
         head += [f"hub_key: {json.dumps(plan['key'], ensure_ascii=False)}", "---", ""]
         return "\n".join(head) + block + "\n"
-    a, b = existing.find(BEGIN), existing.find(END)
-    if a >= 0 and b > a:
-        return existing[:a] + block + existing[b + len(END):]
-    return existing.rstrip("\n") + "\n\n" + block + "\n"
+    if block in existing:
+        return existing
+    if previous and previous in existing:
+        out = existing.replace(previous, block, 1)
+    else:
+        out = existing.rstrip("\n") + "\n\n" + block + "\n"
+    return _refresh_header(out, plan, now_iso)
+
+
+def _refresh_header(text: str, plan: dict[str, Any], now_iso: str) -> str:
+    """``updated`` and ``date`` of a note the hub created (its header carries ``hub_key``) follow the latest write."""
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---", 4)
+    head = text[4:end] if end > 0 else ""
+    if "hub_key:" not in head:
+        return text
+    lines = head.split("\n")
+    fields = {"updated": now_iso}
+    if (plan.get("note") or {}).get("date"):
+        fields["date"] = plan["note"]["date"]
+    for key, value in fields.items():
+        at = next((i for i, line in enumerate(lines) if line.startswith(key + ":")), None)
+        if at is None:
+            lines.insert(next((i for i, line in enumerate(lines) if line.startswith("hub_key:")), len(lines)), f"{key}: {value}")
+        else:
+            lines[at] = f"{key}: {value}"
+    return "---\n" + "\n".join(lines) + text[end:]
 
 
 # ------------------------------------------------------------------------------------------ recommended rules
@@ -463,7 +488,9 @@ class BrainFacet(Facet):
             "CREATE TABLE IF NOT EXISTS things (key TEXT PRIMARY KEY, entity_id TEXT NOT NULL DEFAULT '', entity_name TEXT NOT NULL DEFAULT '', "
             "note_path TEXT NOT NULL DEFAULT '', plan_hash TEXT NOT NULL DEFAULT '', hashes TEXT NOT NULL DEFAULT '[]', "
             "log TEXT NOT NULL DEFAULT '[]', base TEXT NOT NULL DEFAULT '', writes INTEGER NOT NULL DEFAULT 0, "
-            "repeats INTEGER NOT NULL DEFAULT 0, updated REAL NOT NULL DEFAULT 0)")
+            "repeats INTEGER NOT NULL DEFAULT 0, updated REAL NOT NULL DEFAULT 0, zone TEXT NOT NULL DEFAULT '')")
+        if "zone" not in [c[1] for c in self._db.execute("PRAGMA table_info(things)").fetchall()]:
+            self._db.execute("ALTER TABLE things ADD COLUMN zone TEXT NOT NULL DEFAULT ''")
         self._db.commit()
 
     def start(self) -> None:
@@ -541,13 +568,13 @@ class BrainFacet(Facet):
 
     def _thing(self, key: str) -> Optional[dict[str, Any]]:
         with self._lock:
-            r = self._db.execute("SELECT key, entity_id, entity_name, note_path, plan_hash, hashes, log, base, writes, repeats, updated "
+            r = self._db.execute("SELECT key, entity_id, entity_name, note_path, plan_hash, hashes, log, base, writes, repeats, updated, zone "
                                  "FROM things WHERE key=?", (key,)).fetchone()
         if not r:
             return None
         return {"key": r[0], "entity_id": r[1], "entity_name": r[2], "note_path": r[3], "plan_hash": r[4],
                 "hashes": json.loads(r[5] or "[]"), "log": json.loads(r[6] or "[]"), "base": r[7], "writes": int(r[8]),
-                "repeats": int(r[9]), "updated": float(r[10])}
+                "repeats": int(r[9]), "updated": float(r[10]), "zone": r[11]}
 
     def get_write(self, write_id: int) -> Optional[dict[str, Any]]:
         with self._lock:
@@ -751,6 +778,7 @@ class BrainFacet(Facet):
             log = log[-MAX_LOG:]
         supported: Optional[bool] = None
         path = ""
+        zone = str(thing.get("zone") or "")
         probe = None
         if entity or links:
             # ask for the route with the first thing it would create; None = this Faustus has no such route
@@ -760,7 +788,9 @@ class BrainFacet(Facet):
         if note or (entity and not supported):
             path = thing.get("note_path") or note_path(plan)
             existing = api.read_note(path)
-            content = compose_note(existing, plan, zone_text(plan, log), now_iso=datetime.now().astimezone().isoformat(timespec="seconds"))
+            previous, zone = zone, zone_text(plan, log)
+            content = compose_note(existing, plan, zone, previous=previous,
+                                   now_iso=datetime.now().astimezone().isoformat(timespec="seconds"))
             if existing != content:
                 path = api.write_note(path, content)
             result["note"] = {"path": path, "created": existing is None, "written": existing != content,
@@ -790,13 +820,13 @@ class BrainFacet(Facet):
         hashes = [x for x in (thing.get("hashes") or []) if x != h][-(MAX_LOG - 1):] + [h]
         with self._lock:
             self._db.execute(
-                "INSERT INTO things (key, entity_id, entity_name, note_path, plan_hash, hashes, log, base, writes, updated) "
-                "VALUES (?,?,?,?,?,?,?,?,1,?) ON CONFLICT(key) DO UPDATE SET entity_id=excluded.entity_id, entity_name=excluded.entity_name, "
+                "INSERT INTO things (key, entity_id, entity_name, note_path, plan_hash, hashes, log, base, writes, updated, zone) "
+                "VALUES (?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(key) DO UPDATE SET entity_id=excluded.entity_id, entity_name=excluded.entity_name, "
                 "note_path=excluded.note_path, plan_hash=excluded.plan_hash, hashes=excluded.hashes, log=excluded.log, base=excluded.base, "
-                "writes=things.writes+1, updated=excluded.updated",
+                "writes=things.writes+1, updated=excluded.updated, zone=excluded.zone",
                 (key, (result.get("entity") or {}).get("id") or thing.get("entity_id") or "",
                  (entity or {}).get("name") or thing.get("entity_name") or "", path or thing.get("note_path") or "", h,
-                 json.dumps(hashes), json.dumps(log, ensure_ascii=False), base, time.time()))
+                 json.dumps(hashes), json.dumps(log, ensure_ascii=False), base, time.time(), zone))
             self._db.commit()
         return result
 
