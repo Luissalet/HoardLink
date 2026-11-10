@@ -53,6 +53,7 @@ from typing import Any, Callable, Optional
 from ..sqlkit import Database
 from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError, SpaceStore, space_id
 from . import agent_watch
+from . import agora_channels
 from . import agora_debate
 from .facets import Facet, Request
 
@@ -65,6 +66,8 @@ _GIT_TIMEOUT_S = 15.0
 CREATE_NO_WINDOW = 0x08000000
 
 PERSON = "luis"
+#: Pages that may speak as the person besides the hub's own (see ``AgoraFacet._person_surface``).
+PERSON_SURFACES = ("faustus-studio",)
 STALE_AGENT_S = 6 * 3600.0
 #: Silence (no heartbeat) after which another agent may take over the work of an agent that stopped answering.
 HANDOVER_IDLE_S = 30 * 60.0
@@ -176,6 +179,8 @@ MIGRATIONS.append("""
 """)
 # structured debates with findings inside a thread (agora_debate.py)
 MIGRATIONS.append(agora_debate.DEBATE_MIGRATION)
+# spaces as servers: channels, how a space looks and where each reader starts counting «new» (agora_channels.py)
+MIGRATIONS.append(agora_channels.CHANNELS_MIGRATION)
 #: A blocker stops holding its dependents back once it reaches one of these.
 DEP_CLEAR = ("approved", "done", "dropped")
 #: Kinds whose work may be closed without a cross review (recorded as «exenta», not as «sin revisión»).
@@ -3061,6 +3066,9 @@ class Agora:
 # debate_open, debate_finding, debate_verify, debate_challenge, debate_reject, debate_close, debate_show, debate_list
 for _name, _fn in agora_debate.OPERATIONS.items():
     setattr(Agora, _name, _space_operation(_fn))
+# servers, guild, channels, channel_create/update/post/read, seen, feed, pulse, space_meta_set
+for _name, _fn in agora_channels.OPERATIONS.items():
+    setattr(Agora, _name, _space_operation(_fn))
 
 
 # ---- facet ---------------------------------------------------------------------------------------------------
@@ -3321,6 +3329,7 @@ TOOLS: list[dict[str, Any]] = [
                              "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
 ]
 TOOLS.extend(agora_debate.tools(_schema, _A))
+TOOLS.extend(agora_channels.tools(_schema, _A))
 
 for _tool in TOOLS:
     _tool["inputSchema"]["properties"]["space_id"] = _SPACE
@@ -3342,7 +3351,7 @@ TOOLS.extend([
 
 _WRITE_OPS = ("space_create", "space_update", "checkpoint", "heartbeat", "sync", "task_add", "task_edit", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
-              "usage_report", "orphan_sweep", "task_deps", *agora_debate.WRITE_OPS)
+              "usage_report", "orphan_sweep", "task_deps", *agora_debate.WRITE_OPS, *agora_channels.WRITE_OPS)
 
 
 def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -3541,6 +3550,53 @@ class AgoraFacet(Facet):
                     app="hub", priority="high", url=target if url else "",
                     dedupe_key=f"agora-escalation-{thread['id']}-{int(time.time() // 60)}", tags=["agora"])
 
+    @staticmethod
+    def _person_surface(req: Request) -> bool:
+        """True when the request comes from one of the person's own pages: the hub's page, or Faustus Studio
+        speaking for the person signed in there (the hub's token plus ``X-Hoard-Person``). Agents never send it."""
+        if req.caller() == "ui":
+            return True
+        headers = req.headers
+        surface = str(headers.get("X-Hoard-Person") or "").strip().lower() if headers is not None else ""
+        return surface in PERSON_SURFACES and req.caller() in ("hub", "faustus")
+
+    #: Spaces whose icon is not the app of the same id.
+    _SPACE_ICONS = {"ecosystem": "hub", "hoardlink": "hub", "writers": "writer", "kinect": "kinect-hoard"}
+
+    def _servers(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """The server list plus ``icon_app``: the family app whose icon stands for each space (the app that lives
+        in the space's workspace, else the app of the same id)."""
+        out = self.agora.servers(a or {})
+        try:
+            apps = list(getattr(self.hub, "apps", None) or [])
+            with_icon = {app.id for app in apps if getattr(app, "icon_path", None)}
+            by_folder = {os.path.normcase(os.path.normpath(str(app.folder))): app.id for app in apps
+                         if getattr(app, "folder", None) and app.id in with_icon
+                         and "compatibility" not in os.path.normpath(str(app.folder)).split(os.sep)}
+        except Exception:  # noqa: BLE001 - icons are a nicety
+            return out
+        for server in out.get("servers", []):
+            sid = server["id"]
+            folder = os.path.normcase(os.path.normpath(server["workspace"])) if server.get("workspace") else ""
+            alias = self._SPACE_ICONS.get(sid)
+            server["icon_app"] = alias or by_folder.get(folder) or (sid if sid in with_icon else None) or \
+                ("faustus" if sid == "faustus" else None)
+        return out
+
+    def _guild(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """The server view plus, per member, what its transcripts say it is doing (``observed``)."""
+        out = self.agora.guild(a or {})
+        if not self._watch_enabled():
+            return out
+        try:
+            view = self.watch.view()
+        except Exception as exc:  # noqa: BLE001 - the view must not depend on the filesystem being readable
+            out["watch_error"] = str(exc)[:200]
+            return out
+        for member in out.get("members", []):
+            member["observed"] = _observed(view["agents"].get(member.get("id")))
+        return out
+
     def _run(self, fn: Callable[[dict[str, Any]], dict[str, Any]], args: dict[str, Any]) -> dict[str, Any]:
         try:
             return fn(args)
@@ -3633,6 +3689,24 @@ class AgoraFacet(Facet):
             return self._run(ag.agent_quota_state, q)
         if p == "/api/agora/orphans":
             return self._run(ag.orphans, q)
+        if p == "/api/agora/folders":
+            return self._run(agora_channels.folders, q)
+        channel = re.fullmatch(r"/api/agora/channels/([a-z0-9][a-z0-9-]{0,39})", p)
+        if channel or p.rsplit("/", 1)[1] in agora_channels.READ_ROUTES:
+            for key in ("limit", "before_id", "done_limit", "offline_limit", "thread_id"):
+                if key in q and re.fullmatch(r"[0-9]+", q[key]):
+                    q[key] = int(q[key])
+            for key in ("peek", "archived", "all_spaces"):
+                if key in q:
+                    q[key] = str(q[key]).lower() in ("1", "true", "yes")
+            if "agent" not in q and self._person_surface(req):
+                q["agent"] = PERSON   # the person's pages read as the person
+            if q.get("agent", "").lower() == PERSON and not self._person_surface(req):
+                q["peek"] = True   # the person's reads count only from the person's own pages
+            if channel:
+                return self._run(ag.channel_read, {**q, "channel": channel.group(1)})
+            op = p.rsplit("/", 1)[1]
+            return self._run({"guild": self._guild, "servers": self._servers}.get(op) or getattr(ag, op), q)
         return {"ok": False, "status": 404, "error": f"unknown Ágora route {p}"}
 
     def post(self, req: Request) -> Optional[Any]:
@@ -3653,7 +3727,7 @@ class AgoraFacet(Facet):
             return {"ok": False, "status": 401, "error": "send the hub's bearer token (data/mcp-token) or use the hub's page"}
         args = dict(req.body or {})
         args.pop("_person", None)
-        if caller == "ui":
+        if caller == "ui" or self._person_surface(req):
             args.setdefault("agent", PERSON)
             args["_person"] = str(args.get("agent", "")).lower() == PERSON
         if op == "checkpoint":
@@ -3714,4 +3788,7 @@ class AgoraFacet(Facet):
             "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(self._digest),
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
             **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_debate.OPERATIONS},
+            **{f"hub_agora_{op}": wrap({"guild": self._guild, "servers": self._servers}.get(op) or getattr(ag, op))
+               for op in agora_channels.OPERATIONS},
+            "hub_agora_folders": wrap(agora_channels.folders),
         }
