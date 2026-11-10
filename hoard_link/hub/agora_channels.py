@@ -361,6 +361,14 @@ def channel_post(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                      "kind": a.get("kind") or "comment", "mentions": mentions})
     out["channel"] = slug
     out["mentions"] = mentions
+    # Naming the person in a channel also tells them outside the page (the hub's notifications decide how and when).
+    hook = getattr(self, "mention_hook", None)
+    if hook and ag.PERSON in mentions and agent != ag.PERSON:
+        try:
+            hook({"id": thread, "space_id": self.space_id, "channel": slug, "title": (out.get("thread") or {}).get("title") or ""},
+                 agent, body)
+        except Exception:  # noqa: BLE001 - a notification that fails never loses the message
+            pass
     return out
 
 

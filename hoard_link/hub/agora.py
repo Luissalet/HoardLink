@@ -3409,6 +3409,7 @@ class AgoraFacet(Facet):
         self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
+        self.agora.mention_hook = self._notify_mention      # an agent naming the person in a channel reaches them too
 
         self._watch: Optional[agent_watch.AgentWatch] = None
         self._watch_lock = threading.Lock()
@@ -3538,6 +3539,20 @@ class AgoraFacet(Facet):
         self._enrich(out, out["waiting"]["progress"])
         out["waiting"]["progress"] = [t for t in out["waiting"]["progress"] if t["activity"]["state"] == "stalled"]
         return out
+
+    def _notify_mention(self, where: dict[str, Any], agent: str, body: str) -> None:
+        """An agent named the person in a channel or thread: tell them, once per conversation every ten minutes. It goes
+        as an ordinary notification, so quiet hours and the digest apply; only an escalation is urgent."""
+        notify = self.hub.facet("notify") if hasattr(self.hub, "facet") else None
+        if notify is None:
+            return
+        url = str(getattr(self.hub.config, "url", "") or "").rstrip("/")
+        sid = where.get("space_id", DEFAULT_SPACE_ID)
+        target = f"{url}/" + (f"?space_id={sid}" if sid != DEFAULT_SPACE_ID else "") + f"#agora-{where['id']}"
+        place = f"#{where['channel']}" if where.get("channel") else (where.get("title") or "un hilo")
+        notify.send(f"Ágora: {agent} te menciona en {place}"[:200], " ".join(str(body or "").split())[:600],
+                    app="hub", priority="normal", url=target if url else "", group="agora-mentions",
+                    dedupe_key=f"agora-mention-{where['id']}-{int(time.time() // 600)}", tags=["agora", sid])
 
     def _notify_person(self, thread: dict[str, Any], agent: str, question: str) -> None:
         notify = self.hub.facet("notify") if hasattr(self.hub, "facet") else None

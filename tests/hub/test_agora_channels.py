@@ -388,6 +388,33 @@ def test_only_the_persons_pages_read_and_mark_as_the_person(tmp_path):
         assert status == 401
 
 
+def test_naming_the_person_in_a_channel_tells_them_once_per_conversation(ag):
+    told = []
+    ag.mention_hook = lambda where, agent, body: told.append((where["space_id"], where["channel"], agent, body))
+    ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "sin nadie"})
+    ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis ¿publicamos?"})
+    ag.channel_post({"space_id": "atlas", "agent": "luis", "_person": True, "body": "me nombro yo: @luis"})
+    assert told == [("atlas", "general", "claude", "@luis ¿publicamos?")]
+    ag.mention_hook = lambda *a: (_ for _ in ()).throw(RuntimeError("sin avisos"))
+    sent = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis otra vez"})
+    assert sent["ok"] and sent["mentions"] == ["luis"]            # a notification that fails never loses the message
+
+
+def test_the_hub_notifies_a_mention_of_the_person(tmp_path):
+    with ExitStack() as cleanup:
+        hub = make_hub(tmp_path, [])
+        cleanup.callback(hub.close)
+        sent = []
+        notify = hub.facet("notify")
+        cleanup.enter_context(pytest.MonkeyPatch.context()).setattr(
+            notify, "send", lambda title, body="", **kw: sent.append({"title": title, "body": body, **kw}) or {"ok": True})
+        agora = hub.facet("agora").agora
+        agora.channel_post({"agent": "claude", "body": "@luis mira   esto\ncuando puedas"})
+        assert len(sent) == 1 and sent[0]["title"] == "Ágora: claude te menciona en #general"
+        assert sent[0]["body"] == "@luis mira esto cuando puedas" and sent[0]["priority"] == "normal"
+        assert sent[0]["dedupe_key"].startswith("agora-mention-") and "#agora-" in sent[0]["url"]
+
+
 def test_archived_channels_take_no_posts_and_come_back_as_they_were(ag):
     ag.channel_create({"space_id": "atlas", "agent": "claude", "title": "Diseño", "topic": "pantallas", "category": "ui"})
     ag.channel_post({"space_id": "atlas", "agent": "codex", "channel": "diseno", "body": "boceto"})
