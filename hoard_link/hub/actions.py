@@ -8,7 +8,9 @@ Action shapes (JSON objects, ``kind`` picks one):
   hub's own tools;
 * ``{"kind": "event", "type": "digest.wanted", "data": {...}}`` — emit an event;
 * ``{"kind": "start_app" | "stop_app" | "restart_app", "app": "funes"}``;
-* ``{"kind": "profile_start" | "profile_stop", "name": "video"}``.
+* ``{"kind": "profile_start" | "profile_stop", "name": "video"}``;
+* ``{"kind": "brain", "key": ..., "entity": {...}, "note": {...}, "links": [...]}`` — create or update an entity
+  or a note in Faustus's Brain and link it (``brainbus.py`` has the template and the queue).
 
 A ``tool`` action whose app is not installed (or a ``hub`` action naming a tool this hub does not have) is
 recorded as ``{ok: True, skipped: True, reason}``: a recommended rule for an app the person does not have
@@ -34,7 +36,7 @@ from typing import Any, Optional
 from . import contract as family
 
 _PLACEHOLDER = re.compile(r"\$\{([a-zA-Z0-9_.\-]+)\}")
-KINDS = ("tool", "hub", "event", "start_app", "stop_app", "restart_app", "profile_start", "profile_stop")
+KINDS = ("tool", "hub", "event", "start_app", "stop_app", "restart_app", "profile_start", "profile_stop", "brain")
 
 
 def _lookup(ctx: dict[str, Any], path: str) -> Any:
@@ -99,6 +101,9 @@ def validate(actions: Any) -> list[str]:
             problems.append(f"action {i}: '{kind}' needs app")
         if kind in ("profile_start", "profile_stop") and not a.get("name"):
             problems.append(f"action {i}: '{kind}' needs name")
+        if kind == "brain":
+            from .brainbus import validate_action
+            problems += [f"action {i}: {p}" for p in validate_action(a)]
         if "args" in a and not isinstance(a["args"], dict):
             problems.append(f"action {i}: args must be an object")
     return problems
@@ -151,6 +156,12 @@ def run_one(hub: Any, action: dict[str, Any], ctx: dict[str, Any], *, caller: st
                 data = {**data, "_via_rule": via}
             ev = hub.events.emit(str(action.get("type")), data, source=str(action.get("source") or "hub"))
             return {"kind": kind, "ok": True, "event_id": ev["id"], "type": ev["type"]}
+        if kind == "brain":
+            # the facet renders the template itself (it has fallbacks and lists) and queues the write on disk
+            facet = hub.facet("brain") if callable(getattr(hub, "facet", None)) else None
+            if facet is None:
+                return {"kind": kind, "ok": True, "skipped": True, "reason": "the brain facet is not loaded"}
+            return {"kind": kind, **facet.submit(action, ctx)}
         if kind in ("start_app", "stop_app", "restart_app"):
             fn = {"start_app": hub.start, "stop_app": hub.stop, "restart_app": hub.restart}[kind]
             kwargs = {"automatic": True} if automatic and kind != "stop_app" else {}
@@ -209,6 +220,9 @@ def describe(action: dict[str, Any]) -> str:
         return f"{kind} {action.get('app')}"
     if kind in ("profile_start", "profile_stop"):
         return f"{kind} {action.get('name')}"
+    if kind == "brain":
+        target = (action.get("entity") or {}).get("name") or (action.get("note") or {}).get("title") or ""
+        return f"brain {target}".strip()
     return str(kind)
 
 

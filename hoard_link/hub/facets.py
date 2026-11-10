@@ -58,6 +58,7 @@ FACET_MODULES = (
     "agent_sessions",
     "aliases",
     "parity",
+    "brainbus",
 )
 
 

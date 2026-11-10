@@ -273,6 +273,7 @@ def event_types_help() -> list[dict[str, str]]:
          "data": "job_id, title, kind, progress (0..1), gpu, eta_s, url, error — what the Work tab follows; legacy names are aliased"},
         {"type": "hub.backup.done|failed", "who": "hub", "data": "snapshot, apps, files, bytes (stored as hub.job.done|failed, kind backup)"},
         {"type": "hub.rule.ran", "who": "hub", "data": "rule, event_id, results"},
+        {"type": "hub.brain.written", "who": "hub", "data": "rule, key, status (done | partial), note, entity, event_id — a rule wrote to Faustus's Brain"},
         {"type": "hub.job.ran", "who": "hub", "data": "job, results"},
         {"type": "hub.lease.granted|released", "who": "hub", "data": "lease_id, owner, gpu, vram_mb"},
         {"type": "hub.lane.acquired|released|expired", "who": "hub",

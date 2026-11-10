@@ -783,6 +783,10 @@ convierte veinte apps sueltas en un sistema sin añadir una vigesimoprimera:
   app, un perfil; con plantillas `${event.data.x}`, enfriamiento y guardas
   contra bucles. Pestaña **Reglas** del hub o `hub_rule_add`; con plantillas
   («transcripción → borradores de tarjetas», «servicio caído → reiniciar»).
+  Una regla también puede escribir en el Cerebro de Faustus
+  (`{"kind": "brain", ...}`): un evento se convierte en una entidad o una
+  nota, enlazada con otras, una sola vez; ver
+  [docs/facets/brain.md](docs/facets/brain.md).
 - **Tareas.** Las mismas acciones con reloj: `every: "6h"` o `at: "04:00"`
   (+ días); las perdidas durante una suspensión se recuperan. Pestaña
   **Tareas** / `hub_job_add`.
@@ -879,6 +883,7 @@ Doce *facetas* viven en el hub, cada una con sus rutas, herramientas y pestaña 
 | Búsqueda | Una consulta sobre las herramientas de búsqueda de todas las apps en marcha, más correo y referencias | [docs/facets/search.md](docs/facets/search.md) |
 | Trabajos | Los trabajos largos de cada app (eventos `<app>.job.*`) con progreso y GPU; los fallos avisan | [docs/facets/work.md](docs/facets/work.md) |
 | Compras | Pago en Ledger → envío en Phileas → factura y garantía en Kafka → objeto en HomeHoard; deja de vigilar en Tantalus lo que ya compraste | [docs/facets/purchases.md](docs/facets/purchases.md) |
+| Reglas del Cerebro | Un evento del bus crea o actualiza una entidad o una nota en el Cerebro de Faustus y la enlaza (un compromiso → la persona; un envío → una nota enlazada a la tienda; un plazo → una nota con fecha; un acta → una nota enlazada a los asistentes). El mismo evento dos veces escribe una vez; Faustus se localiza por la colocación (PC o Spark); si no responde, la escritura espera en disco y se reintenta. Pestaña **Cerebro**: activar o no cada regla, probarla con un evento de ejemplo y ver qué escribiría, e historial con enlace a cada nota | [docs/facets/brain.md](docs/facets/brain.md) |
 | Sesiones de agente (0.8.2) | Lo que han escrito los agentes en las apps que llevan diario de escrituras, agrupado por agente y sesión; deshacer una sesión entera (primero en simulación); tokens por agente con perfil `read_only` / `drafts` / `all` | [docs/facets/agent-sessions.md](docs/facets/agent-sessions.md), [docs/commons/accountable-agents.md](docs/commons/accountable-agents.md) |
 | Nombres es/en (0.8.3) | Un mapa español/inglés de Pokémon (y formas), movimientos, habilidades, objetos, naturalezas, tipos, medallas, lugares e ingredientes; búsqueda sin acentos y tolerante a erratas, traducción y `expand` para repetir en el otro idioma una búsqueda vacía (`/api/aliases/*`, `hub_alias_lookup`, `hub_alias_expand`) | [docs/facets/aliases.md](docs/facets/aliases.md) |
 | Paridad (0.8.3) | Kit de prueba diferencial (`hoard_link.parity`): corpus con semilla, oráculo y sonda como procesos, trazas de estado y de llamadas al generador aleatorio comparadas por bloques con la primera divergencia, versiones ancladas, ejecución selectiva y caché del oráculo; `hub_parity_compare`, `hub_parity_status`, `hub_parity_run` | [docs/parity.md](docs/parity.md) |

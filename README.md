@@ -763,6 +763,9 @@ turns twenty separate apps into one system without adding a twenty-first:
   `${event.data.x}` templating, a cooldown and loop guards. Edited in the
   hub's **Rules** tab or with `hub_rule_add`; templates included
   ("transcript → flashcard drafts", "service down → restart").
+  A rule can also write to Faustus's Brain (`{"kind": "brain", ...}`): an
+  event becomes an entity or a note, linked to others, once — see
+  [docs/facets/brain.md](docs/facets/brain.md).
 - **Jobs.** The same actions on a clock: `every: "6h"` or `at: "04:00"`
   (+ days), missed runs caught up after sleep. **Jobs** tab / `hub_job_add`.
 - **Backups.** Deduplicated snapshots of every app's `data/` folder (SQLite
@@ -856,6 +859,7 @@ Twelve *facets* sit on the hub, each with its own routes, tools and tab (`hoard_
 | Purchases | Ledger payment → Phileas shipment → Kafka invoice and warranty → HomeHoard item; stops the Tantalus watcher of what you bought | [docs/facets/purchases.md](docs/facets/purchases.md) |
 | Web (0.8) | One polite fetcher for every app: per-host throttle and block cooldown shared by the family, robots.txt, response cache, one optional browser profile, search, link previews (`hoard_link.fam_web`, JS `fam-web.js`) | [docs/commons/web.md](docs/commons/web.md#family-service-hub-facet-web) |
 | Services (0.8.1) | Owner catalogue status; opt-in audio download → transcription → transcript indexing, with separate job and indexing states | [docs/commons/services.md](docs/commons/services.md#11-hub-service-discovery-and-media-imports) |
+| Brain rules | An event of the bus creates or updates an entity or a note in Faustus's Brain and links it (a commitment → the person; a shipment → a note linked to the shop; a deadline → a dated note; minutes → a note linked to the attendees). Same event twice writes once; Faustus is found through the placement (PC or Spark); a write waits on disk while Faustus does not answer. Tab **Cerebro**: rules on/off, try a rule with a sample event, history with a link to each note | [docs/facets/brain.md](docs/facets/brain.md) |
 | Agent sessions (0.8.2) | What agents wrote in the apps that keep a write journal, grouped by agent and session; undo a whole session (dry run first); per-agent tokens with `read_only` / `drafts` / `all` profiles | [docs/facets/agent-sessions.md](docs/facets/agent-sessions.md), [docs/commons/accountable-agents.md](docs/commons/accountable-agents.md) |
 | Names es/en (0.8.3) | One Spanish/English map of Pokémon (and forms), moves, abilities, items, natures, types, badges, places and ingredients; accent-free fuzzy lookup, translation and `expand` to retry an empty search in the other language (`/api/aliases/*`, `hub_alias_lookup`, `hub_alias_expand`) | [docs/facets/aliases.md](docs/facets/aliases.md) |
 | Parity (0.8.3) | Differential test kit (`hoard_link.parity`): seeded corpus, oracle and probe as processes, traces of state and random-number calls compared block by block with the first divergence, version locks, selective runs, oracle cache; `hub_parity_compare`, `hub_parity_status`, `hub_parity_run` | [docs/parity.md](docs/parity.md) |
