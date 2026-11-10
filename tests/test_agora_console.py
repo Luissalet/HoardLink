@@ -1663,8 +1663,17 @@ def test_a_claude_worktree_left_as_it_was_found_is_taken_away_and_nothing_is_for
 
     calls.clear()
     answers["worktree"] = 1                                   # git refuses: it holds changes
+    (folder / "notes.txt").write_text("work in progress", encoding="utf-8")
     assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is False
     assert calls == [["git", "-C", str(tmp_path), "worktree", "remove", str(folder)]]       # and its branch is left alone
+    assert (folder / "notes.txt").is_file()
+
+    # git emptied and forgot the worktree but could not take the folder away (still held by the program that left):
+    # the empty folder goes, and so does the branch
+    calls.clear()
+    (folder / "notes.txt").unlink()
+    assert AgoraConsoleFacet._tidy_claude_worktree(worker, tmp_path) is True and not folder.exists()
+    assert [command[3:5] for command in calls] == [["worktree", "remove"], ["worktree", "prune"], ["branch", "-d"]]
 
 
 # ---- the name and the rank a session comes in with ------------------------------------------------------------------
