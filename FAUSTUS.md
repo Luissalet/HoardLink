@@ -35,3 +35,7 @@ and writes its results and screenshots to the requested evidence directory.
 Distribute the shared files with `scripts/sync_vendored.py --files app_bridge.py
 copilot.py copilot_stdlib.py app-bridge.js copilot.js`. Running processes adopt the
 updated library on their next ordinary restart.
+
+## Skills
+
+The `skills` block of `faustus-plugin.json` names the procedures of the family's skill library that fit this app's work: `hoard-daily-digest`, `hoard-family-recap`, `hoard-what-happened`, `hoard-meeting-prep`, `team-agent-orchestration`. The hub's Skills tab shows and changes them. This app does not hand them to connecting agents yet.
