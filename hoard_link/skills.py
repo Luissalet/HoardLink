@@ -18,8 +18,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
+import sys
 import threading
 import time
 from pathlib import Path
@@ -430,8 +432,11 @@ def own_manifest() -> Optional[Path]:
 
 def auto(app: str, data_dir: Any = None) -> Optional[Shelf]:
     """The shelf of the app this copy of the package belongs to, with nothing to set up: what the ``skills`` block of its
-    manifest asks for plus what the person chose. None only when there is no manifest. The copies go to ``data_dir`` when it is a plain path, else next to the app's token (``family.configure``), else to the
+    manifest asks for plus what the person chose. None when there is no manifest, under pytest (pass ``skills=`` to test it)
+    and with ``HOARD_SKILLS=0``. The copies go to ``data_dir`` when it is a plain path, else next to the app's token (``family.configure``), else to the
     ``data`` folder beside the manifest."""
+    if "pytest" in sys.modules or os.environ.get("HOARD_SKILLS", "1").strip().lower() in ("0", "false", "no", "off"):
+        return None                                        # an app's own tests see the app, not this computer's library
     manifest = own_manifest()
     if manifest is None:
         return None
