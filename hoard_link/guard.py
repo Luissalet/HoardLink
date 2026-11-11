@@ -14,7 +14,8 @@ Rules (the ones the 17 identical ``guard.py`` copies had):
    origins (Vite on 5173 / 5174 / 4173).
 3. Fetch Metadata: cross-site top-level navigations pass. A framed GET navigation (``iframe`` / ``frame``) also
    passes when its Referer origin is a configured Faustus URL or the Hub placement's ``urls.faustus``.
-   Placement is fetched lazily in the background and cached for 60 seconds; the current request never waits.
+   Placement refreshes lazily every 60 seconds, keeping the last successful origin in memory and in the app's
+   data directory. A cold framed navigation waits up to 1.5 seconds for the first discovery.
    Unknown parents, ``embed`` / ``object`` and cross-site API calls remain rejected. Requests without
    ``Sec-Fetch-*`` headers (curl, the MCP bridge) pass.
 4. State-changing methods are never accepted as navigations (an HTML form post from another page): the API takes JSON
@@ -32,11 +33,14 @@ A rejected request gets ``403 {"error": "<message>"}`` (the envelope the family 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import tempfile
 import threading
 import time
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any, Callable, Optional, Union
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -72,40 +76,78 @@ def _url_origin(value: str) -> str:
 
 
 class FaustusOrigins:
-    """Configured parent origins plus a nonblocking, single-flight Hub placement cache."""
+    """Configured parents and durable last-known placement, with single-flight refresh."""
 
     def __init__(self, *, faustus_urls: Optional[Iterable[str]] = None, hub_url: Optional[str] = None,
-                 config_path: Any = None) -> None:
+                 config_path: Any = None, cache_path: Any = None) -> None:
         from .config import LinkConfig
+        from .family import status
         config = LinkConfig.load(path=config_path)
         urls = config.faustus_urls if faustus_urls is None else faustus_urls
         self.configured = frozenset(filter(None, map(_url_origin, urls)))
         self.hub_url = (hub_url or os.environ.get("HOARD_HUB_URL") or config.hub_url or "http://127.0.0.1:8810").rstrip("/")
+        token_file = status().get("token_file") or os.environ.get("HOARD_TOKEN_FILE")
+        data_dir = Path(token_file).parent if token_file else Path(config_path).parent if config_path else None
+        self.cache_path = Path(cache_path) if cache_path is not None else data_dir / "dock-origins.json" if data_dir else None
         self.discovered: frozenset[str] = frozenset()
+        if self.cache_path is not None:
+            try:
+                saved = json.loads(self.cache_path.read_text(encoding="utf-8"))
+                if saved.get("hub_url") == self.hub_url:
+                    self.discovered = frozenset(filter(None, map(_url_origin, saved.get("origins", []))))
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
         self.expires = 0.0
         self.lock = threading.Lock()
+        self.ready = threading.Event()
+
+    def _save(self) -> None:
+        if self.cache_path is None:
+            return
+        temporary = None
+        try:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.cache_path.parent,
+                                             prefix="dock-origins-", suffix=".tmp", delete=False) as output:
+                temporary = output.name
+                json.dump({"hub_url": self.hub_url, "origins": sorted(self.discovered)}, output)
+            os.replace(temporary, self.cache_path)
+        except OSError:  # Read-only data folders still keep the in-memory result.
+            pass
+        finally:
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
     def _refresh(self) -> None:
         try:
-            with urlopen(self.hub_url + "/api/placement", timeout=2) as response:
+            with urlopen(self.hub_url + "/api/placement", timeout=1.5) as response:
                 payload = json.load(response)
             origin = _url_origin(payload.get("urls", {}).get("faustus", ""))
-            self.discovered = frozenset({origin}) if origin else frozenset()
-        except Exception:  # A Hub outage leaves the ordinary guard rules in place.
-            self.discovered = frozenset()
+            if origin:
+                self.discovered = frozenset({origin})
+                self._save()
+        except Exception:  # A Hub outage preserves the last successful placement.
+            pass
         finally:
             self.expires = time.monotonic() + 60
+            self.ready.set()
             self.lock.release()
 
-    def current(self) -> frozenset[str]:
+    def current(self, parent: str = "") -> frozenset[str]:
         now = time.monotonic()
-        known = self.discovered if now < self.expires else frozenset()
         if now >= self.expires and self.lock.acquire(blocking=False):
+            self.ready.clear()
             threading.Thread(target=self._refresh, daemon=True, name="hoard-dock-placement").start()
-        return self.configured | known
+        if parent and parent not in self.configured and not self.discovered:
+            self.ready.wait(1.5)
+        return self.configured | self.discovered
 
 
 _default_faustus_origins: Optional[FaustusOrigins] = None
+_default_faustus_origins_lock = threading.Lock()
 
 
 def _dock_origins(method: str, headers: Mapping[str, str], resolver: Optional[FaustusOrigins] = None) -> Iterable[str]:
@@ -113,10 +155,11 @@ def _dock_origins(method: str, headers: Mapping[str, str], resolver: Optional[Fa
     if str(method).upper() != "GET" or headers.get("sec-fetch-site") != "cross-site" or headers.get("sec-fetch-mode") != "navigate" or headers.get("sec-fetch-dest") not in ("iframe", "frame"):
         return ()
     if resolver is None:
-        if _default_faustus_origins is None:
-            _default_faustus_origins = FaustusOrigins()
+        with _default_faustus_origins_lock:
+            if _default_faustus_origins is None:
+                _default_faustus_origins = FaustusOrigins()
         resolver = _default_faustus_origins
-    return resolver.current()
+    return resolver.current(parent=_url_origin(headers.get("referer", "")))
 
 
 def _authority(value: Optional[str]) -> str:
@@ -336,10 +379,13 @@ class GuardMiddleware:
             port = 0
         method = "GET" if kind == "websocket" else scope.get("method", "GET")
         headers = _scope_headers(scope)
+        origins = ()
+        if kind == "http" and headers.get("sec-fetch-site") == "cross-site":
+            origins = await asyncio.to_thread(_dock_origins, method, headers, self.faustus_origins)
         verdict = check_request(method, headers,
                                 port, self.allowed, dev_origins=self.dev_origins, strict_ports=self.strict_ports,
                                 guard_safe_methods=kind == "websocket" or self.guard_safe_methods,
-                                faustus_origins=_dock_origins(method, headers, self.faustus_origins) if kind == "http" else ())
+                                faustus_origins=origins)
         if verdict is None:
             return await self.app(scope, receive, send)
         status, message = verdict

@@ -14,6 +14,7 @@ import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import path from "node:path";
+import { status as familyStatus } from "../hoard-link.js";
 import { checkBearer } from "./server.js";
 import { autoCopilot, injectLauncher, resolveFaustus } from "./copilot.js";
 
@@ -36,19 +37,47 @@ function urlOrigin(value) {
   } catch { return ""; }
 }
 
-/** Configured Faustus parents plus the Hub placement, refreshed at most every 60 s without waiting on a request. */
-export function createFaustusOrigins({ faustusUrls = null, hubUrl = null, configPath = null, env = process.env, appId = "app" } = {}) {
+/** Last-known placement survives refresh and restart. A cold framed navigation waits at most 1.5 s. */
+export function createFaustusOrigins({ faustusUrls = null, hubUrl = null, configPath = null, cachePath = null,
+  env = process.env, appId = "app" } = {}) {
   const configured = resolveFaustus({ faustusUrls, configPath, env, appId }).urls.map(urlOrigin).filter(Boolean);
   let raw = {};
   if (configPath) { try { raw = JSON.parse(fs.readFileSync(configPath, "utf8").replace(/^\uFEFF/, "")); } catch { /* defaults */ } }
   const base = String(hubUrl || env.HOARD_HUB_URL || raw.gpu_lease?.hub_url || "http://127.0.0.1:8810").replace(/\/+$/, "");
-  let discovered = [], expires = 0, pending = false;
-  return function current() {
+  const tokenFile = familyStatus().tokenFile || env.HOARD_TOKEN_FILE;
+  const dataDir = tokenFile ? path.dirname(tokenFile) : configPath ? path.dirname(configPath) : null;
+  const cache = cachePath || (dataDir ? path.join(dataDir, "dock-origins.json") : null);
+  let discovered = [], expires = 0, pending = null;
+  if (cache) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(cache, "utf8"));
+      if (saved.hub_url === base) discovered = saved.origins.map(urlOrigin).filter(Boolean);
+    } catch { /* No successful discovery has been saved yet. */ }
+  }
+  function save() {
+    if (!cache) return;
+    const temporary = `${cache}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.mkdirSync(path.dirname(cache), { recursive: true });
+      fs.writeFileSync(temporary, JSON.stringify({ hub_url: base, origins: discovered }));
+      fs.renameSync(temporary, cache);
+    } catch { /* Read-only data folders keep the in-memory result. */ }
+    finally { try { fs.unlinkSync(temporary); } catch { /* Already renamed. */ } }
+  }
+  return function current(parent = "") {
     const now = Date.now();
-    const known = now < expires ? discovered : [];
     if (now >= expires && !pending) {
-      pending = true;
-      const finish = (values = []) => { discovered = values; expires = Date.now() + 60000; pending = false; };
+      let complete;
+      pending = new Promise(resolve => { complete = resolve; });
+      let finished = false;
+      const finish = (origin = "") => {
+        if (finished) return;
+        finished = true;
+        if (origin) { discovered = [origin]; save(); }
+        expires = Date.now() + 60000;
+        pending = null;
+        complete();
+      };
       try {
         const url = new URL(base + "/api/placement");
         const req = (url.protocol === "https:" ? https : http).get(url, (res) => {
@@ -59,15 +88,21 @@ export function createFaustusOrigins({ faustusUrls = null, hubUrl = null, config
           res.on("end", () => {
             try {
               const origin = res.statusCode === 200 ? urlOrigin(JSON.parse(body)?.urls?.faustus) : "";
-              finish(origin ? [origin] : []);
+              finish(origin);
             } catch { finish(); }
           });
         });
-        req.setTimeout(2000, () => req.destroy());
+        req.setTimeout(1500, () => req.destroy());
         req.on("error", () => finish());
       } catch { finish(); }
     }
-    return [...configured, ...known];
+    if (parent && !configured.includes(parent) && !discovered.length && pending) {
+      return new Promise(resolve => {
+        const timeout = setTimeout(() => resolve([...configured, ...discovered]), 1500);
+        pending.then(() => { clearTimeout(timeout); resolve([...configured, ...discovered]); });
+      });
+    }
+    return [...configured, ...discovered];
   };
 }
 
@@ -199,14 +234,18 @@ export function createGuard({ port = null, portGetter = null, allowedHosts = [],
   let parents = faustusOrigins;
   return function guard(req, res, next) {
     const current = portGetter ? Number(portGetter()) || null : port;
+    const decide = origins => {
+      const verdict = checkRequest(req.method, req.headers, current, allowed, { devOrigins, strictPorts, faustusOrigins: origins });
+      if (verdict) return res.status(verdict[0]).json({ error: verdict[1] });
+      next();
+    };
     let origins = [];
     if (isDockNavigation(req.method, req.headers)) {
       parents ??= createFaustusOrigins({ faustusUrls, hubUrl, configPath, appId });
-      origins = parents();
+      origins = parents(urlOrigin(req.headers.referer));
     }
-    const verdict = checkRequest(req.method, req.headers, current, allowed, { devOrigins, strictPorts, faustusOrigins: origins });
-    if (verdict) return res.status(verdict[0]).json({ error: verdict[1] });
-    next();
+    if (origins instanceof Promise) return origins.then(decide, next);
+    return decide(origins);
   };
 }
 
