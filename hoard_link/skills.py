@@ -484,7 +484,7 @@ def attach(server: Any, app: str, root: Any = None, data_dir: Any = None) -> Opt
     manifest is beside (or up to two folders above); the copies are read from ``data_dir``, else ``$<APP>_DATA_DIR``, else the
     ``data`` folder beside the manifest. It only reads the copy (the hub or the app keeps it). Returns the shelf, or None when
     there is nothing to hand out (no manifest, an empty shelf, under pytest, ``HOARD_SKILLS=0``). Never raises."""
-    if "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("HOARD_SKILLS", "1").strip().lower() in ("0", "false", "no", "off"):
+    if _off():
         return None                                        # an app's own tests see the app, not this computer's library
     try:
         return _attach(server, app, root, data_dir)
@@ -493,7 +493,12 @@ def attach(server: Any, app: str, root: Any = None, data_dir: Any = None) -> Opt
         return None
 
 
-def _attach(server: Any, app: str, root: Any, data_dir: Any) -> Optional[Shelf]:
+def _off() -> bool:
+    return "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("HOARD_SKILLS", "1").strip().lower() in ("0", "false", "no", "off")
+
+
+def _bridge_shelf(app: str, root: Any, data_dir: Any) -> Optional[Shelf]:
+    """The shelf as a bridge reads it: the copy beside the app's data, never the library."""
     here = Path(root).resolve() if root else Path.cwd()
     if here.is_file() or here.suffix:
         here = here.parent
@@ -503,7 +508,80 @@ def _attach(server: Any, app: str, root: Any, data_dir: Any) -> Optional[Shelf]:
     where = data_dir or os.environ.get(f"{re.sub(r'[^A-Za-z0-9]+', '_', app).upper()}_DATA_DIR") or manifest.parent / "data"
     shelf = Shelf(app, where, wants_of(manifest), max_age_s=float("inf"))
     shelf._checked = time.monotonic()                      # never looks the library up from a bridge
-    if not shelf.list(refresh=False):
+    return shelf
+
+
+def _as_prompt(shelf: Shelf, app: str, name: Any) -> dict[str, Any]:
+    row = shelf.read(str(name))
+    text = str(row["text"])
+    if text.startswith("---") and "\n---" in text[3:]:
+        text = text[text.index("\n---", 3) + 4:].lstrip("\n")                                    # the front matter is for the library
+    return {"description": str(row.get("name") or name), "messages": [
+        {"role": "user", "content": {"type": "text", "text": f"Follow this procedure with the tools of {app}.\n\n{text}"}}]}
+
+
+class RawBridge:
+    """The shelf for a bridge that speaks MCP's JSON-RPC by hand (see :func:`raw`)."""
+
+    def __init__(self, app: str, shelf: Optional[Shelf]) -> None:
+        self.app, self.shelf = app, shelf
+
+    def _rows(self) -> list[dict[str, Any]]:
+        try:
+            return self.shelf.list(refresh=False) if self.shelf is not None else []
+        except Exception:  # noqa: BLE001
+            return []
+
+    def answer(self, method: Any, params: Any = None) -> Optional[dict[str, Any]]:
+        """The result of a request the shelf answers itself (a skill tool's ``tools/call``, ``prompts/list``,
+        ``prompts/get``); None for everything else: the bridge goes on as it always did."""
+        params = params if isinstance(params, Mapping) else {}
+        if not self._rows():
+            return None
+        if method == "tools/call" and params.get("name") in _BRIDGE_TOOLS:
+            try:
+                body, failed = self.shelf.call(str(params["name"]), params.get("arguments") or {}), False       # type: ignore[union-attr]
+            except (KeyError, ValueError) as error:
+                body, failed = {"error": str(error.args[0]) if error.args else str(error), "code": "not_found" if isinstance(error, KeyError) else "invalid"}, True
+            return {"content": [{"type": "text", "text": json.dumps(body, ensure_ascii=False)}], "isError": failed}
+        if method == "prompts/list":
+            return {"prompts": [{"name": f"skill-{s['slug']}", "description": str(s.get("description") or "")[:900]} for s in self._rows()]}
+        if method == "prompts/get":
+            return _as_prompt(self.shelf, self.app, params.get("name"))                                         # type: ignore[arg-type]
+        return None
+
+    def extend(self, method: Any, result: Any) -> Any:
+        """``result`` of ``initialize`` (the skills named in the instructions, prompts offered) or ``tools/list`` (the skill
+        tools added); any other result comes back as it is."""
+        rows = self._rows()
+        if not rows or not isinstance(result, Mapping):
+            return result
+        if method == "initialize":
+            told = self.shelf.instructions(rows)                                                                # type: ignore[union-attr]
+            return {**result, "capabilities": {**(result.get("capabilities") or {}), "prompts": {}},
+                    "instructions": "\n\n".join(x for x in (result.get("instructions"), told) if x)}
+        if method == "tools/list":
+            tools = list(result.get("tools") or [])
+            if any(isinstance(t, Mapping) and t.get("name") == "skills_list" for t in tools):
+                return result
+            return {**result, "tools": tools + [e for e in self.shelf.catalog() if e["name"] in _BRIDGE_TOOLS]}  # type: ignore[union-attr]
+        return result
+
+
+def raw(app: str, root: Any = None, data_dir: Any = None) -> RawBridge:
+    """For a bridge that answers MCP's JSON-RPC by hand: ``shelf = skills.raw("myapp", root=__file__)``, then
+    ``own = shelf.answer(method, params)`` before its own dispatch (not None = that is the result) and
+    ``shelf.extend(method, result)`` on what it returns. With nothing to hand out both leave everything as it was."""
+    try:
+        return RawBridge(app, None if _off() else _bridge_shelf(app, root, data_dir))
+    except Exception as error:  # noqa: BLE001
+        log.debug("no skills for %s's bridge: %s", app, error)
+        return RawBridge(app, None)
+
+
+def _attach(server: Any, app: str, root: Any, data_dir: Any) -> Optional[Shelf]:
+    shelf = _bridge_shelf(app, root, data_dir)
+    if shelf is None or not shelf.list(refresh=False):
         return None
 
     import asyncio
@@ -535,12 +613,7 @@ def _attach(server: Any, app: str, root: Any, data_dir: Any) -> Optional[Shelf]:
         return [types.Prompt.model_validate({"name": f"skill-{s['slug']}", "description": str(s.get("description") or "")[:900]}) for s in shelf.list(refresh=False)]
 
     def prompt(name: Any) -> Any:
-        row = shelf.read(str(name))
-        text = str(row["text"])
-        if text.startswith("---") and "\n---" in text[3:]:
-            text = text[text.index("\n---", 3) + 4:].lstrip("\n")                                # the front matter is for the library
-        return types.GetPromptResult.model_validate({"description": str(row.get("name") or name), "messages": [
-            {"role": "user", "content": {"type": "text", "text": f"Follow this procedure with the tools of {app}.\n\n{text}"}}]})
+        return types.GetPromptResult.model_validate(_as_prompt(shelf, app, name))
 
     def is_skill(name: Any) -> bool:
         return str(name or "").startswith("skill-")

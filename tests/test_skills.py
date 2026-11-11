@@ -1,6 +1,8 @@
 """The skills shelf: what an app takes from the library, what an agent that connects gets."""
 from __future__ import annotations
 
+import json
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -97,10 +99,12 @@ def test_the_hub_assigns_skills_to_any_app(tmp_path):
     (folder / "pkg" / "hoard_link").mkdir(parents=True)
     (folder / "pkg" / "hoard_link" / "skills.py").write_text("", encoding="utf-8")
     (folder / "pkg" / "hoard_link" / "bridge.py").write_text("def _own_skills(): ...", encoding="utf-8")
-    (folder / "faustus-plugin.json").write_text('{"id": "one", "skills": {"slugs": ["alpha"]}}', encoding="utf-8")
+    (folder / "mcp_server.py").write_text("CatalogBridge(app='one')", encoding="utf-8")
+    (folder / "faustus-plugin.json").write_text('{"id": "one", "skills": {"slugs": ["alpha"]}, "mcp": {"args": ["{ONE_DIR}/mcp_server.py"]}}', encoding="utf-8")
     bare = tmp_path / "apps" / "two"
     bare.mkdir()
-    (bare / "faustus-plugin.json").write_text('{"id": "two"}', encoding="utf-8")
+    (bare / "own.py").write_text("server = Server('two')", encoding="utf-8")
+    (bare / "faustus-plugin.json").write_text('{"id": "two", "mcp": {"args": ["-m", "own"]}}', encoding="utf-8")
     apps = [SimpleNamespace(id="one", name="One", folder=str(folder), data_dir=str(folder / "data"), manifest_path=str(folder / "faustus-plugin.json"), url="http://127.0.0.1:9"),
             SimpleNamespace(id="two", name="Two", folder=str(bare), data_dir="", manifest_path=str(bare / "faustus-plugin.json"), url="http://127.0.0.1:9")]
     facet = SkillsFacet(SimpleNamespace(apps=apps, config=SimpleNamespace(faustus_dir=str(lib))))
@@ -121,7 +125,9 @@ def test_the_hub_assigns_skills_to_any_app(tmp_path):
     page = facet.get(req("GET", "/api/skills/page", app="one"))
     assert b'"/api/skills/app/one"' in page.body and page.content_type.startswith("text/html")
     assert facet.handlers()["hub_skills_assign"]({"app": "one", "slug": "beta"})["ok"]
-    assert [t["name"] for t in SkillsFacet.tools()] == ["hub_skills_overview", "hub_skills_library", "hub_skills_assign"]
+    assert [t["name"] for t in SkillsFacet.tools()] == ["hub_skills_overview", "hub_skills_library", "hub_skill_read", "hub_skills_assign"]
+    assert "Do alpha." in facet.handlers()["hub_skill_read"]({"app": "one", "slug": "alpha"})["text"]
+    assert not facet.handlers()["hub_skill_read"]({"app": "one", "slug": "nope"})["ok"]
 
 
 def test_the_bridge_hands_out_skills_for_an_app_whose_own_tool_list_does_not(tmp_path):
@@ -177,3 +183,26 @@ def test_a_hand_written_mcp_server_is_given_the_shelf(tmp_path):
         wanted = types.GetPromptRequest
     handlers = getattr(low, table)
     assert wanted in handlers and handlers.get(wanted) is not None and handlers[wanted] is not None
+
+
+def test_a_bridge_that_speaks_json_rpc_by_hand_is_given_the_shelf(tmp_path):
+    lib = library(tmp_path)
+    assert skills.raw("app", root=tmp_path).shelf is None                                                      # an app's own tests never see it
+    idle = skills.RawBridge("app", skills.Shelf("app", tmp_path / "none", {"slugs": ["alpha"]}, library=str(lib), max_age_s=float("inf")))
+    idle.shelf._checked = __import__("time").monotonic()
+    assert idle.answer("prompts/list") is None and idle.extend("tools/list", {"tools": []}) == {"tools": []}    # nothing copied: nothing changes
+    skills.Shelf("app", tmp_path / "data", {"slugs": ["alpha"]}, library=str(lib)).refresh(force=True)
+    shelf = skills.Shelf("app", tmp_path / "data", {"slugs": ["alpha"]}, library=str(lib), max_age_s=float("inf"))
+    shelf._checked = __import__("time").monotonic()
+    bridge = skills.RawBridge("app", shelf)
+    start = bridge.extend("initialize", {"capabilities": {"tools": {}}, "instructions": "An app."})
+    assert start["capabilities"] == {"tools": {}, "prompts": {}} and start["instructions"].startswith("An app.\n\nSkills.") and "- alpha: About alpha." in start["instructions"]
+    names = [t["name"] for t in bridge.extend("tools/list", {"tools": [{"name": "ping"}]})["tools"]]
+    assert names == ["ping", "skills_list", "skill_read", "skills_library", "skills_assign"]
+    assert bridge.extend("tools/list", {"tools": [{"name": "skills_list"}]}) == {"tools": [{"name": "skills_list"}]}                # an app that hands them out is left alone
+    read = bridge.answer("tools/call", {"name": "skill_read", "arguments": {"slug": "alpha"}})
+    assert not read["isError"] and "Do alpha." in json.loads(read["content"][0]["text"])["text"]
+    assert bridge.answer("tools/call", {"name": "skill_read", "arguments": {"slug": "nope"}})["isError"]
+    assert bridge.answer("tools/call", {"name": "ping"}) is None and bridge.answer("tools/list") is None
+    assert [p["name"] for p in bridge.answer("prompts/list")["prompts"]] == ["skill-alpha"]
+    assert "Do alpha." in bridge.answer("prompts/get", {"name": "skill-alpha"})["messages"][0]["content"]["text"]
