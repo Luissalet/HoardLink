@@ -332,7 +332,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
         ? "instant"
         : "smooth",
     });
-  }, [following, followKey]);
+  }, [following, followKey, followActor?.target.at]);
 
   const actor = data?.actors.find((a) => a.id === selected);
   const fresh = (at: number) => at > firstSnapshot.current;
