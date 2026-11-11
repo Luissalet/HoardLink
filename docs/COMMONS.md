@@ -104,3 +104,11 @@ Agents have the same through `skills_library` and `skills_assign`. A shelf with 
 catalogue. The hub's Skills tab (System) lists every app with what it carries and opens that page for any of them,
 running or not (`hub/skills.py`: `/api/skills/overview`, `/api/skills/page?app=`, `/api/skills/app/<id>/...`,
 `POST /api/skills/refresh`; tools `hub_skills_overview`, `hub_skills_library`, `hub_skills_assign`).
+
+An app that builds its own tool list instead of using `make_agent_router` hands the same skills out through its MCP
+bridge. `CatalogBridge` reads the shelf beside the app's data (it never looks the library up: the hub or the app keeps
+the copy) and, when the app's catalogue brings no skills, adds `skills_list`, `skill_read`, `skills_library` and
+`skills_assign`, the instructions and the prompts, and answers them itself. The Node bridge
+(`createBridge` in `express.js`) does it from `<data>/skills/`, the folder beside the token file: `skills_list`,
+`skill_read` and the prompts (`skillsDir: false` turns it off). The hub's tab marks the apps whose bridge does not do
+it yet (their own bridge, or a copy of the shared code from before).

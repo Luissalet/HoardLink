@@ -6,7 +6,7 @@
 //   Guard     LOCAL_HOSTS DEV_ORIGINS hostOf portOf parseAllowedHosts isAllowedHost checkRequest createGuard
 //   Agent     capResult makeAgentRoutes
 //   Service   installSpa installErrorHandlers runServer   (installSpa also mounts the Faustus copilot: copilot.js)
-//   Bridge    createBridge
+//   Bridge    createBridge shelfSkills readSkill skillsInstructions installSkills
 //
 // The guard and capResult behave exactly like the Python modules (tests/vectors/guard.json and agentkit.json run against both).
 
@@ -400,6 +400,77 @@ function readLocalUrl({ baseUrl, portFile, urlFile }) {
   return "";
 }
 
+/** The skills copied beside the app's data (`<data>/skills/index.json`, kept by the hub or the app): `[{ slug, name, description,
+ * version, files }]`; nothing there is an empty list. */
+export function shelfSkills(dir) {
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(dir, "index.json"), "utf8"));
+    return Array.isArray(data?.skills) ? data.skills.filter((s) => s && typeof s.slug === "string" && /^[a-z0-9][a-z0-9-]*$/.test(s.slug)) : [];
+  } catch { return []; }
+}
+
+/** One skill's procedure (or one of the reference files its row names), as text; throws with what to do when it is not there. */
+export function readSkill(dir, slug, file = "") {
+  const wanted = String(slug ?? "").trim().toLowerCase().replace(/^skill-/, "");
+  const row = shelfSkills(dir).find((s) => s.slug === wanted || String(s.name ?? "").toLowerCase() === wanted);
+  if (!row) throw new Error(`No skill called "${wanted}" on this app's shelf. skills_list names the ones there are.`);
+  const rel = String(file || "SKILL.md").replace(/\\/g, "/");
+  const files = Array.isArray(row.files) ? row.files : [];
+  if (rel !== "SKILL.md" && !files.includes(rel)) throw new Error(`The skill ${row.slug} has no file "${rel}". Its files: ${files.join(", ") || "none"}.`);
+  const text = fs.readFileSync(path.join(dir, row.slug, ...rel.split("/")), "utf8");
+  return { slug: row.slug, name: row.name ?? row.slug, version: row.version ?? "", file: rel, files, text };
+}
+
+/** `instructions` with the skills in `dir` named at the end (unchanged when there are none, or with `HOARD_SKILLS=0`). */
+export function skillsInstructions(dir, instructions = "") {
+  const carried = dir && process.env.HOARD_SKILLS !== "0" ? shelfSkills(dir) : [];
+  if (!carried.length) return instructions;
+  return [instructions, ["Skills. This app carries procedures from the family's skill library for the work it does. Before a task one of "
+    + "them covers, read it with skill_read and follow it; skills_list gives them again.", ...carried.map((s) => `- ${s.slug}: ${s.description ?? ""}`)].join("\n")]
+    .filter(Boolean).join("\n\n");
+}
+
+/** Give an McpServer the skills in `dir`: the tools `skills_list` and `skill_read` (answered from the copy on disk) and a prompt
+ * `skill-<slug>` per skill. `z` (zod) describes skill_read's arguments; without it `await ready()` before connecting looks for the
+ * app's own zod, and if there is none the list carries each procedure's text. Returns { skills, handlers, ready() }; with no
+ * skills there (or `HOARD_SKILLS=0`) nothing is registered. */
+export function installSkills(server, { dir = "", z = null } = {}) {
+  const handlers = new Map();
+  const carried = dir && process.env.HOARD_SKILLS !== "0" ? shelfSkills(dir) : [];
+  if (!carried.length) return { skills: [], handlers, async ready() {} };
+  const reply = (body, isError = false) => ({ ...(isError ? { isError: true } : {}), content: [{ type: "text", text: JSON.stringify(body) }] });
+  const readOnly = { readOnlyHint: true, idempotentHint: true, openWorldHint: false };
+  const local = (fn) => async (args) => { try { return reply(fn(args ?? {})); } catch (error) { return reply({ error: error.message, code: "not_found" }, true); } };
+  let readRegistered = false;
+  const registerRead = (zod) => {
+    if (readRegistered || !zod) return;
+    readRegistered = true;
+    const handler = local((args) => readSkill(dir, args.slug, args.file));
+    handlers.set("skill_read", handler);
+    server.registerTool("skill_read", { description: "One of this app's skills in full: the procedure to follow, its pitfalls and how to verify the result. "
+      + "`file` reads one of its reference files instead.", inputSchema: { slug: zod.string().describe("The skill's slug, from skills_list."),
+      file: zod.string().optional().describe("One of the skill's reference files; empty = the procedure itself.") }, annotations: readOnly }, handler);
+  };
+  const list = local(() => ({ skills: shelfSkills(dir).map((s) => {
+    const row = { slug: s.slug, name: s.name ?? s.slug, description: s.description ?? "", version: s.version ?? "", files: Array.isArray(s.files) ? s.files : [] };
+    if (!readRegistered) { try { row.text = readSkill(dir, s.slug).text; } catch { /* listed without its text */ } }
+    return row;
+  }) }));
+  handlers.set("skills_list", list);
+  server.registerTool("skills_list", { description: "The skills this app carries: procedures from the family's skill library for the kind of work done here "
+    + "(slug, what each is for and when to use it, version, reference files). Read the one that fits with skill_read before starting.", annotations: readOnly }, list);
+  registerRead(z);
+  if (typeof server.registerPrompt === "function") {
+    for (const s of carried) {
+      server.registerPrompt(`skill-${s.slug}`, { description: String(s.description ?? "").slice(0, 300) }, () => {
+        const body = readSkill(dir, s.slug).text.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
+        return { messages: [{ role: "user", content: { type: "text", text: body } }] };
+      });
+    }
+  }
+  return { skills: carried, handlers, async ready() { if (!readRegistered) registerRead((await import("zod").catch(() => null))?.z); } };
+}
+
 /** The MCP stdio bridge of a Node app (Links' mcp.js + bridge-call.js and Ledger's outcome_unknown, once). The MCP SDK classes are
  * injected: `createBridge({ app, service, version, McpServer, StdioServerTransport, tools, instructions, baseUrl | urlFile | portFile,
  * token | tokenFile, callTimeoutMs, defaultTimeoutMs, heartbeatMs, messages })`. Each tool (`{ name, description, schema, annotations,
@@ -409,11 +480,17 @@ function readLocalUrl({ baseUrl, portFile, urlFile }) {
  * * Per-call timeout: `callTimeoutMs(name, args, tool)` or `tool.timeoutMs` or `defaultTimeoutMs` (90 s); calls longer than
  *   `heartbeatMs` (10 s) send progress notifications while the client asked for them.
  * * A tool that is not readOnly whose request was sent (connected) but got no complete answer returns `outcome_unknown`.
- * * The app's error envelope (code / hint / issues / details / candidates) is forwarded; 401 and a missing token are said plainly. */
+ * * The app's error envelope (code / hint / issues / details / candidates) is forwarded; 401 and a missing token are said plainly.
+ * * Skills: when `<data>/skills/` (`skillsDir`, by default the folder beside the token file) holds procedures from the family's
+ *   library, they are named at the end of the instructions, listed and read with `skills_list` / `skill_read` (answered here, with
+ *   the app closed too) and offered as prompts called `skill-<slug>` (`installSkills`). `skillsDir: false` or `HOARD_SKILLS=0` turns that off. */
 export function createBridge({ app = "", service = "", version = "0.0.0", McpServer, StdioServerTransport, tools = [], instructions = "", baseUrl = "",
   urlFile = "", portFile = "", defaultPort = 0, token = "", tokenFile = "", callTimeoutMs = null, defaultTimeoutMs = 90000, heartbeatMs = 10000,
-  messages = {}, z = null } = {}) {
+  messages = {}, z = null, skillsDir = null } = {}) {
   if (typeof McpServer !== "function") throw new Error("createBridge needs McpServer (from @modelcontextprotocol/sdk/server/mcp.js)");
+  const shelfDir = skillsDir === false || tools.some((t) => t.name === "skills_list") ? ""
+    : (skillsDir || (tokenFile ? path.join(path.dirname(tokenFile), "skills") : ""));
+  instructions = skillsInstructions(shelfDir, instructions);
   const title = messages.title || service || app;
   const text = {
     offline: `Open ${title} so the assistant can reach your data.`,
@@ -485,10 +562,15 @@ export function createBridge({ app = "", service = "", version = "0.0.0", McpSer
     handlers.set(tool.name, handler);
     server.registerTool(tool.name, { description: tool.description, ...(schema !== undefined ? { inputSchema: schema } : {}), annotations: tool.annotations }, handler);
   }
+  const shelf = installSkills(server, { dir: shelfDir, z });
+  for (const [name, handler] of shelf.handlers) handlers.set(name, handler);
   return {
-    server, handlers, call: (name, args, extra) => call(tools.find((t) => t.name === name), args ?? {}, extra),
+    server, handlers, skills: shelf.skills, call: (name, args, extra) => (shelf.handlers.has(name) ? shelf.handlers.get(name)(args ?? {}, extra)
+      : call(tools.find((t) => t.name === name), args ?? {}, extra)),
     async start() {
       if (typeof StdioServerTransport !== "function") throw new Error("createBridge needs StdioServerTransport");
+      await shelf.ready();
+      for (const [name, handler] of shelf.handlers) handlers.set(name, handler);
       await server.connect(new StdioServerTransport());
     },
   };

@@ -106,6 +106,7 @@ class SkillsFacet(Facet):
             if app is None:
                 return {"ok": False, "status": 404, "error": "unknown app"}
             page = skills.PAGE.replace("__APP__", json.dumps(app.name)).replace("__BASE__", json.dumps(f"/api/skills/app/{app.id}"))
+            page = page.replace('href="/hoard-theme.css"', 'href="/ui/hoard-theme.css"')
             return Reply(body=page.encode("utf-8"), content_type="text/html; charset=utf-8")
         found = self._route(req)
         if found is None:
@@ -194,11 +195,17 @@ class SkillsFacet(Facet):
 
 
 def _serves(app: Any) -> bool:
-    """Whether the app's own copy of the library can hand skills to agents (it has ``skills.py`` beside ``agentkit.py``)."""
+    """Whether an agent that connects to the app is handed its skills: its copy of the shared bridge does it."""
     for root, dirs, files in os.walk(app.folder):
         dirs[:] = [d for d in dirs if d not in (".venv", "venv", "node_modules", ".git", "build", "dist", "data", "__pycache__", "runtime")]
-        if os.path.basename(root) == "hoard_link" and "agentkit.py" in files:
-            return "skills.py" in files
+        if os.path.basename(root) == "hoard_link" and "bridge.py" in files:
+            if "skills.py" not in files:
+                return False
+            try:
+                with open(os.path.join(root, "bridge.py"), encoding="utf-8") as fh:
+                    return "_own_skills" in fh.read()
+            except OSError:
+                return False
         if root.count(os.sep) - app.folder.count(os.sep) >= 3:
             dirs[:] = []
     return False
