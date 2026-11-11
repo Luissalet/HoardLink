@@ -27,6 +27,26 @@ class SkillsFacet(Facet):
     id = "skills"
     ui_scripts = ("skills.js",)
 
+    def start(self) -> None:
+        """Keep every app's copies current from here: an app only reads its copy when an agent lists its tools."""
+        self._stop = threading.Event()
+
+        def loop() -> None:
+            wait = 20.0
+            while not self._stop.wait(wait):
+                wait = 900.0
+                try:
+                    self.refresh_all()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        threading.Thread(target=loop, daemon=True, name="skills-keeper").start()
+
+    def close(self) -> None:
+        stop = getattr(self, "_stop", None)
+        if stop is not None:
+            stop.set()
+
     # ----- one app
     def _app(self, app_id: str) -> Any:
         return next((a for a in self.hub.apps if a.id == app_id), None)
