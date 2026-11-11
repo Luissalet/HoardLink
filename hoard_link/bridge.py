@@ -402,7 +402,8 @@ class CatalogBridge:
             try:
                 from . import skills as _skills
                 manifest = next((p / "faustus-plugin.json" for p in (self.root, *list(self.root.parents)[:2]) if (p / "faustus-plugin.json").is_file()), None)
-                off = "pytest" in sys.modules or os.environ.get("HOARD_SKILLS", "1").strip().lower() in ("0", "false", "no", "off")
+                off = ("pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ          # also the bridges an app's tests start
+                       or os.environ.get("HOARD_SKILLS", "1").strip().lower() in ("0", "false", "no", "off"))
                 if manifest is not None and not off:
                     self._shelf_obj = _skills.Shelf(self.app, lambda: Path(self._token_path()).parent, _skills.wants_of(manifest), max_age_s=float("inf"))
                     self._shelf_obj._checked = time.monotonic()        # never looks the library up from here
