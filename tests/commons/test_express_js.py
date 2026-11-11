@@ -578,3 +578,31 @@ def test_real_mcp_sdk_bridge_over_stdio(tmp_path):
         assert any(m.get("method") == "notifications/progress" for m in lines)
     finally:
         child.kill()
+
+
+def test_bridge_hands_out_the_skills_copied_beside_the_token():
+    out = run_node(BRIDGE + r"""
+    const dir = path.join(path.dirname(tokenFile), "skills");
+    fs.mkdirSync(path.join(dir, "alpha", "references"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "alpha", "SKILL.md"), "---\nname: alpha\n---\n# Alpha\nDo alpha.\n");
+    fs.writeFileSync(path.join(dir, "alpha", "references", "notes.md"), "Notes.");
+    fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ skills: [{ slug: "alpha", name: "alpha", description: "About alpha.", version: "1.0.0", files: ["references/notes.md"] }, { slug: "../x" }] }));
+    class Prompting extends FakeMcpServer { constructor(...a) { super(...a); this.prompts = new Map(); } registerPrompt(name, config, cb) { this.prompts.set(name, { config, cb }); } }
+    const zod = { string: () => { const t = { describe: () => t, optional: () => t }; return t; } };
+    const bridge = make({ McpServer: Prompting, z: zod });
+    const plain = make();                       // no zod to describe skill_read's arguments with: the list carries the text
+    const off = make({ skillsDir: false });
+    return { names: [...bridge.server.tools.keys()], instructions: bridge.server.options.instructions,
+      list: body(await bridge.call("skills_list")), read: body(await bridge.call("skill_read", { slug: "alpha" })),
+      file: body(await bridge.call("skill_read", { slug: "skill-alpha", file: "references/notes.md" })),
+      missing: await bridge.call("skill_read", { slug: "nope" }), escape: await bridge.call("skill_read", { slug: "alpha", file: "../index.json" }),
+      prompt: bridge.server.prompts.get("skill-alpha").cb().messages[0].content.text,
+      plainNames: [...plain.server.tools.keys()], plainList: body(await plain.call("skills_list")),
+      offNames: [...off.server.tools.keys()], offInstructions: off.server.options.instructions, hits: hits.length };
+    """)
+    assert out["names"][-2:] == ["skills_list", "skill_read"] and out["instructions"].startswith("Hello.\n\nSkills.") and "- alpha: About alpha." in out["instructions"]
+    assert out["list"] == {"skills": [{"slug": "alpha", "name": "alpha", "description": "About alpha.", "version": "1.0.0", "files": ["references/notes.md"]}]}
+    assert "Do alpha." in out["read"]["text"] and out["file"]["text"] == "Notes." and out["prompt"] == "# Alpha\nDo alpha.\n"
+    assert out["missing"]["isError"] and out["escape"]["isError"]
+    assert out["plainNames"][-1] == "skills_list" and "skill_read" not in out["plainNames"] and "Do alpha." in out["plainList"]["skills"][0]["text"]
+    assert "skills_list" not in out["offNames"] and out["offInstructions"] == "Hello." and out["hits"] == 0

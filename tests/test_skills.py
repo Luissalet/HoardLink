@@ -95,8 +95,8 @@ def test_the_hub_assigns_skills_to_any_app(tmp_path):
     lib = library(tmp_path)
     folder = tmp_path / "apps" / "one"
     (folder / "pkg" / "hoard_link").mkdir(parents=True)
-    for name in ("agentkit.py", "skills.py"):
-        (folder / "pkg" / "hoard_link" / name).write_text("", encoding="utf-8")
+    (folder / "pkg" / "hoard_link" / "skills.py").write_text("", encoding="utf-8")
+    (folder / "pkg" / "hoard_link" / "bridge.py").write_text("def _own_skills(): ...", encoding="utf-8")
     (folder / "faustus-plugin.json").write_text('{"id": "one", "skills": {"slugs": ["alpha"]}}', encoding="utf-8")
     bare = tmp_path / "apps" / "two"
     bare.mkdir()
@@ -149,3 +149,31 @@ def test_the_bridge_hands_out_skills_for_an_app_whose_own_tool_list_does_not(tmp
     bridge.skills = []
     bridge._own_skills()
     assert not bridge._local_skills and bridge.skills == []
+
+
+def test_a_hand_written_mcp_server_is_given_the_shelf(tmp_path):
+    pytest = __import__("pytest")
+    pytest.importorskip("mcp")
+    try:
+        from mcp.server.fastmcp import FastMCP as Base          # mcp 1.x
+        table, wanted = "request_handlers", None
+    except ImportError:
+        from mcp.server.mcpserver import MCPServer as Base      # mcp 2.x
+        table, wanted = "_request_handlers", "prompts/get"
+    lib = library(tmp_path)
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "faustus-plugin.json").write_text('{"id": "app", "skills": {"slugs": ["alpha"]}}', encoding="utf-8")
+    server = Base("app", instructions="An app.")
+    assert skills.attach(server, "app", root=app / "mcp_server.py") is None                                    # an app's own tests never see it
+    assert skills._attach(server, "app", app / "mcp_server.py", None) is None                                  # nothing copied yet: nothing handed out
+    skills.Shelf("app", app / "data", {"slugs": ["alpha"]}, library=str(lib)).refresh(force=True)
+    shelf = skills._attach(server, "app", app / "mcp_server.py", None)
+    low = getattr(server, "_mcp_server", None) or getattr(server, "_lowlevel_server", None)
+    assert [s["slug"] for s in shelf.list(refresh=False)] == ["alpha"]
+    assert low.instructions.startswith("An app.\n\nSkills.") and "- alpha: About alpha." in low.instructions
+    if wanted is None:
+        from mcp import types
+        wanted = types.GetPromptRequest
+    handlers = getattr(low, table)
+    assert wanted in handlers and handlers.get(wanted) is not None and handlers[wanted] is not None

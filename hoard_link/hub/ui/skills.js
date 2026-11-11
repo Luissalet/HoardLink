@@ -27,7 +27,7 @@
         row.appendChild(el("span", app.count ? "" : "hint", what));
         const state = el("span", app.serves ? "ok" : "warn", app.serves ? text(`${app.count} para sus agentes`, `${app.count} for its agents`)
           : text("Aún no las sirve", "Does not serve them yet"));
-        if (!app.serves) state.title = text("Su copia del código común es anterior a las skills, o es una app Node.", "Its copy of the shared code predates skills, or it is a Node app.");
+        if (!app.serves) state.title = text("Su puente no reparte skills todavía: copia anterior del código común, puente propio o app Node.", "Its bridge does not hand out skills yet: an older copy of the shared code, its own bridge, or a Node app.");
         row.appendChild(state);
         const pick = el("button", "small", text("Elegir", "Choose"));
         pick.setAttribute("aria-label", text("Elegir skills de ", "Choose skills of ") + app.name);
