@@ -5,7 +5,7 @@
   "use strict";
   const es = () => (document.documentElement.lang || "es").startsWith("es");
   const T = {
-    run_on: ["Ejecutar en", "Run on"], pc: ["PC", "PC"],
+    run_on: ["Ejecutar en", "Run on"], pc: ["PC", "PC"], spark_target: ["Spark de destino", "Target Spark"],
     moving: ["Trasladando:", "Moving:"], on_spark: ["Faustus, Hermes y Prometheus corren en {node}. Puedes apagar el PC.", "Faustus, Hermes and Prometheus run on {node}. You can switch the PC off."],
     to_sparks_title: ["Pasar Faustus, Hermes y Prometheus a {node}", "Move Faustus, Hermes and Prometheus to {node}"],
     to_sparks_body: ["Los paro aquí, copio su código y sus datos a {node} y los arranco allí; nunca corren en los dos a la vez. Tarda unos minutos (la primera vez, más). Después puedes apagar el PC.",
@@ -27,7 +27,7 @@
     h_checked: ["comprobado hace {s} s", "checked {s} s ago"],
   };
   const t = (k, vars = {}) => (T[k] ? T[k][es() ? 0 : 1] : k).replace(/\{(\w+)\}/g, (_, v) => vars[v] ?? "");
-  let state = null, confirmTo = null, polling = null, lastJobRunning = null;
+  let state = null, confirmTo = null, confirmNode = "", polling = null, lastJobRunning = null;
 
   function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function list(items) { const ul = el("ul"); (items || []).forEach((p) => ul.appendChild(el("li", null, p))); return ul; }
@@ -37,10 +37,11 @@
     render();
   }
 
-  async function move(to) {
+  async function move(to, node = "") {
     confirmTo = null;
     try {
-      const r = await fetch("/api/placement/switch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to }) });
+      const r = await fetch("/api/placement/switch", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(node ? { to, node } : { to }) });
       const d = await r.json();
       if (!d.ok && window.hubToast) window.hubToast(d.error || "error", "err");
     } catch (e) { if (window.hubToast) window.hubToast(String(e), "err"); }
@@ -68,7 +69,7 @@
       b.type = "button"; b.dataset.placementTo = to;
       b.setAttribute("aria-pressed", String(state.location === to));
       b.disabled = !!job.running || (state.location === to && job.ok !== false);
-      b.onclick = () => { confirmTo = to; render(); };
+      b.onclick = () => { confirmTo = to; confirmNode = state.node; render(); };
       seg.appendChild(b);
     }
     wrap.appendChild(seg);
@@ -102,12 +103,36 @@
     const box = el("div", "placement-panel");
     if (confirmTo && !job.running) {
       box.classList.add("is-confirm");
-      box.appendChild(el("h3", null, confirmTo === "sparks" ? t("to_sparks_title", { node: state.node }) : t("to_pc_title")));
-      box.appendChild(el("p", null, confirmTo === "sparks" ? t("to_sparks_body", { node: state.node }) : t("to_pc_body")));
+      const title = el("h3");
+      const body = el("p");
+      const updateCopy = () => {
+        title.textContent = confirmTo === "sparks" ? t("to_sparks_title", { node: confirmNode }) : t("to_pc_title");
+        body.textContent = confirmTo === "sparks" ? t("to_sparks_body", { node: confirmNode }) : t("to_pc_body");
+      };
+      updateCopy();
+      box.append(title);
+      if (confirmTo === "sparks" && state.location === "pc" && state.nodes?.length > 1) {
+        const label = el("label", null, t("spark_target") + " ");
+        const select = el("select");
+        select.dataset.placementNode = "";
+        for (const node of state.nodes) {
+          const option = el("option", null, node);
+          option.value = node;
+          select.append(option);
+        }
+        select.value = state.nodes.includes(confirmNode) ? confirmNode : state.node;
+        select.onchange = () => {
+          confirmNode = select.value;
+          updateCopy();
+        };
+        label.append(select);
+        box.append(label);
+      }
+      box.append(body);
       if (confirmTo === "sparks") { box.appendChild(el("p", "muted", t("paused"))); box.appendChild(list(state.paused_on_spark)); }
       const row = el("div", "placement-actions");
       const go = el("button", "hub-btn hub-btn-primary primary", t("go")); go.type = "button"; go.dataset.placementConfirm = confirmTo;
-      go.onclick = () => move(confirmTo);
+      go.onclick = () => move(confirmTo, confirmTo === "sparks" ? confirmNode : "");
       const no = el("button", "hub-btn ghost", t("cancel")); no.type = "button"; no.onclick = () => { confirmTo = null; render(); };
       row.append(go, no); box.appendChild(row);
       return box;
@@ -192,7 +217,11 @@
   window.HubPlacement = { state: () => state, controls, arrow };
   window.addEventListener("hub:snapshot", (ev) => {
     const snap = ev.detail && ev.detail.snapshot;
-    if (snap && snap.placement && !polling) { state = snap.placement; render(); }
+    if (snap && snap.placement && !polling) {
+      state = snap.placement;
+      if (confirmTo && !state.job?.running && document.activeElement?.closest(".placement-panel")) return;
+      render();
+    }
   });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fetchState); else fetchState();
 })();

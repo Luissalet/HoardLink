@@ -700,11 +700,16 @@ While they are on the Spark the Hub refuses to start them here (by hand, automat
 and their own launchers on the PC refuse too (`<faustus>/data/runtime/placement.json`, `<app>/data/placement-elsewhere.json`).
 Coming back stops the Spark services, brings the data home the same way (files the PC would lose go to
 `data/placement-trash/<when>/`, last three kept; nothing is pulled if the Spark copy looks incomplete), restores the PC
-settings, removes the markers and starts the three here.
+settings, removes the markers and starts the three here. The Hub skips file transfers for unchanged folders and
+checks all three remote services over one SSH connection per poll.
+
+When the apps are on the PC, the Spark button lets you choose a destination from Prometheus's configured nodes.
+The arrow in the header uses the last selected Spark. To switch between Sparks, return to the PC first.
 
 Paused while on the Spark: Hermes's watch of open browser windows (it needs Windows; those targets wait quietly instead
 of asking for help), Faustus's control of your real browser and Windows desktop, Ollama models of this PC, and MCP servers
-that only exist on Windows. API: `GET /api/placement`, `POST /api/placement/switch {"to": "pc"|"sparks"}`. Tools:
+that only exist on Windows. API: `GET /api/placement`, `POST /api/placement/switch` with `to` set to `pc` or `sparks`
+and an optional `node` for the destination Spark. Tools:
 `hub_placement_status`, `hub_placement_switch`. State in `data/placement.json`; the Spark half is
 `hoard_link/hub/placement_remote.py` (standard library only).
 
