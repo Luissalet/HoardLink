@@ -165,7 +165,7 @@ export async function serviceAvailable(service, timeoutMs = 1000) {
     try { token = fs.readFileSync(st.tokenFile, "utf8").replace(/^﻿/, "").trim(); } catch { token = ""; }
     const res = await fetch(`${st.hub}/api/apps/${encodeURIComponent(owner)}`, { headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, signal: ctl.signal });
     const body = res.status === 200 ? await res.json().catch(() => null) : null;
-    ok = Boolean(body && body.state === "running");
+    ok = Boolean(body && (body.state === "running" || body.state === "foreign")); // foreign: healthy, served by another app (Funes inside Talos)
   } catch { ok = false; } finally { clearTimeout(timer); }
   availCache.set(key, { at: Date.now(), ok });
   return ok;
