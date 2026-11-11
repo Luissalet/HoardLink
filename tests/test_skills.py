@@ -33,6 +33,13 @@ def test_shelf_takes_named_then_closest_and_follows_the_library(tmp_path):
     assert first["added"] == ["beta", "delta", "alpha"] and first["source"] == "library"
     assert [s["slug"] for s in shelf.list()] == ["beta", "delta", "alpha"]          # named, then two shared tags, then one; the draft stays out
     assert shelf.read("delta")["files"] == ["references/example.md"]               # text files only
+    theirs = lib / "theirs"
+    theirs.mkdir()
+    (theirs / "SKILL.md").write_text("---\nname: theirs\ndescription: Drives another app. Use when there.\ntags: [3d, mesh, blender]\napps: [other]\n---\n\nSteps.\n", encoding="utf-8")
+    assert "theirs" not in [s["slug"] for s in skills.Shelf("app", tmp_path / "d2", {"tags": ["3d", "mesh"]}, library=str(lib)).list()]
+    assert "theirs" in [s["slug"] for s in skills.Shelf("other", tmp_path / "d3", {"tags": ["3d", "mesh"]}, library=str(lib)).list()]
+    assert "theirs" in [s["slug"] for s in skills.Shelf("app", tmp_path / "d4", {"slugs": ["theirs"]}, library=str(lib)).list()]
+    theirs.joinpath("SKILL.md").unlink()
     assert shelf.read("skill-alpha", "references/example.md")["text"] == "An example."
     (lib / "delta" / "SKILL.md").write_text((lib / "delta" / "SKILL.md").read_text(encoding="utf-8") + "\nMore.\n", encoding="utf-8")
     (lib / "alpha" / "SKILL.md").unlink()

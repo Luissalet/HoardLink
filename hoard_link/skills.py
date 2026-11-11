@@ -82,7 +82,8 @@ def find_library(setting: Any = None) -> Optional[Path]:
 
 class Shelf:
     """The skills of one app. ``wants`` = ``{"slugs": [...], "tags": [...], "categories": [...], "limit": 12}``: the slugs
-    are taken as they are; the rest of the room goes to the library's skills that share most tags (or a category) with it."""
+    are taken as they are; the rest of the room goes to the library's skills that share most tags (or a category) with it.
+    A skill whose front matter says ``apps: [a, b]`` drives those apps' own tools: the others only get it by naming it."""
 
     def __init__(self, app: str, data_dir: Union[str, Path, Callable[[], Any]], wants: Optional[Mapping[str, Any]] = None, *,
                  library: Any = None, max_age_s: float = 900.0) -> None:
@@ -128,6 +129,9 @@ class Shelf:
             if slug in slugs:
                 named.append((slugs.index(slug), slug, meta, text))
                 continue
+            only = _words(meta.get("apps"))
+            if only and self.app.lower() not in only:
+                continue                                   # a procedure written for other apps' tools: only by name
             shared = len(tags & set(_words(meta.get("tags"))))
             if shared or str(meta.get("category") or "").lower() in cats:
                 scored.append((-shared, slug, meta, text))
