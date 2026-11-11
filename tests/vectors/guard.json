@@ -1385,5 +1385,405 @@
    403,
    "Only local access is allowed."
   ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example/studio?dock=darwin"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "frame",
+    "referer": "https://spark.example/studio?dock=darwin"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "POST",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example/studio?dock=darwin"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "HEAD",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example/studio?dock=darwin"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "OPTIONS",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example/studio?dock=darwin"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "embed",
+    "referer": "https://spark.example/studio?dock=darwin"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "object",
+    "referer": "https://spark.example/studio?dock=darwin"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example/studio?dock=darwin"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": ""
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://evil.example/"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example.evil.test/"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example:444/"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "http://spark.example/"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example:443/path"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": null
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://user@spark.example/"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "null"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Cross-site requests are not allowed."
+  ]
+ },
+ {
+  "fn": "check_request",
+  "args": [
+   "GET",
+   {
+    "host": "localhost:5190",
+    "sec-fetch-site": "cross-site",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "iframe",
+    "referer": "https://spark.example/studio?dock=darwin",
+    "origin": "https://spark.example"
+   },
+   5190,
+   []
+  ],
+  "opts": {
+   "faustus_origins": [
+    "https://spark.example"
+   ]
+  },
+  "expect": [
+   403,
+   "Origin not allowed."
+  ]
  }
 ]

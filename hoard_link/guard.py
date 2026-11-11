@@ -12,8 +12,11 @@ Rules (the ones the 17 identical ``guard.py`` copies had):
    variable (exact hostnames or ``*.suffix``, for a LAN name or a tailnet), compared without the port, case-insensitive.
 2. ``Origin`` (when present): its host must pass the host rule (any scheme or port), or be one of the dev-server
    origins (Vite on 5173 / 5174 / 4173).
-3. Fetch Metadata: a cross-site request is only accepted when it is a top-level navigation (mode ``navigate`` and not
-   embedded in a frame). Requests without ``Sec-Fetch-*`` headers (curl, the MCP bridge) pass.
+3. Fetch Metadata: cross-site top-level navigations pass. A framed GET navigation (``iframe`` / ``frame``) also
+   passes when its Referer origin is a configured Faustus URL or the Hub placement's ``urls.faustus``.
+   Placement is fetched lazily in the background and cached for 60 seconds; the current request never waits.
+   Unknown parents, ``embed`` / ``object`` and cross-site API calls remain rejected. Requests without
+   ``Sec-Fetch-*`` headers (curl, the MCP bridge) pass.
 4. State-changing methods are never accepted as navigations (an HTML form post from another page): the API takes JSON
    from ``fetch()`` only.
 
@@ -31,11 +34,16 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from collections.abc import Iterable, Mapping
 from typing import Any, Callable, Optional, Union
+from urllib.parse import urlsplit
+from urllib.request import urlopen
 
 __all__ = ["LOCAL_HOSTS", "DEV_ORIGINS", "FRAME_DESTS", "SAFE_METHODS", "host_of", "port_of", "parse_allowed_hosts",
-           "is_allowed_host", "check_request", "install_guard", "GuardMiddleware", "check_handler", "wsgi_middleware"]
+           "is_allowed_host", "check_request", "install_guard", "GuardMiddleware", "check_handler", "wsgi_middleware",
+           "FaustusOrigins"]
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 # The Vite dev server (5173 / 5174) and ``vite preview`` (4173), under both spellings of loopback.
@@ -47,6 +55,68 @@ _MSG_HOST = "Only local access is allowed."
 _MSG_ORIGIN = "Origin not allowed."
 _MSG_SITE = "Cross-site requests are not allowed."
 _MSG_FORM = "Form submissions are not allowed."
+
+
+def _url_origin(value: str) -> str:
+    try:
+        url = urlsplit(value)
+        if url.scheme.lower() not in ("http", "https") or not url.hostname or url.username is not None or url.password is not None:
+            return ""
+        port = url.port or (443 if url.scheme.lower() == "https" else 80)
+        host = url.hostname.lower()
+        host = f"[{host}]" if ":" in host else host
+        suffix = "" if port == (443 if url.scheme.lower() == "https" else 80) else f":{port}"
+        return f"{url.scheme.lower()}://{host}{suffix}"
+    except (ValueError, TypeError, AttributeError):
+        return ""
+
+
+class FaustusOrigins:
+    """Configured parent origins plus a nonblocking, single-flight Hub placement cache."""
+
+    def __init__(self, *, faustus_urls: Optional[Iterable[str]] = None, hub_url: Optional[str] = None,
+                 config_path: Any = None) -> None:
+        from .config import LinkConfig
+        config = LinkConfig.load(path=config_path)
+        urls = config.faustus_urls if faustus_urls is None else faustus_urls
+        self.configured = frozenset(filter(None, map(_url_origin, urls)))
+        self.hub_url = (hub_url or os.environ.get("HOARD_HUB_URL") or config.hub_url or "http://127.0.0.1:8810").rstrip("/")
+        self.discovered: frozenset[str] = frozenset()
+        self.expires = 0.0
+        self.lock = threading.Lock()
+
+    def _refresh(self) -> None:
+        try:
+            with urlopen(self.hub_url + "/api/placement", timeout=2) as response:
+                payload = json.load(response)
+            origin = _url_origin(payload.get("urls", {}).get("faustus", ""))
+            self.discovered = frozenset({origin}) if origin else frozenset()
+        except Exception:  # A Hub outage leaves the ordinary guard rules in place.
+            self.discovered = frozenset()
+        finally:
+            self.expires = time.monotonic() + 60
+            self.lock.release()
+
+    def current(self) -> frozenset[str]:
+        now = time.monotonic()
+        known = self.discovered if now < self.expires else frozenset()
+        if now >= self.expires and self.lock.acquire(blocking=False):
+            threading.Thread(target=self._refresh, daemon=True, name="hoard-dock-placement").start()
+        return self.configured | known
+
+
+_default_faustus_origins: Optional[FaustusOrigins] = None
+
+
+def _dock_origins(method: str, headers: Mapping[str, str], resolver: Optional[FaustusOrigins] = None) -> Iterable[str]:
+    global _default_faustus_origins
+    if str(method).upper() != "GET" or headers.get("sec-fetch-site") != "cross-site" or headers.get("sec-fetch-mode") != "navigate" or headers.get("sec-fetch-dest") not in ("iframe", "frame"):
+        return ()
+    if resolver is None:
+        if _default_faustus_origins is None:
+            _default_faustus_origins = FaustusOrigins()
+        resolver = _default_faustus_origins
+    return resolver.current()
 
 
 def _authority(value: Optional[str]) -> str:
@@ -165,7 +235,7 @@ def _origin_ok(origin: str, port: Optional[int], allowed: tuple[str, ...], dev_o
 
 def check_request(method: str, headers: Mapping[str, str], port: Optional[int] = None, allowed: Iterable[str] = (), *,
                   dev_origins: Iterable[str] = DEV_ORIGINS, strict_ports: bool = False,
-                  guard_safe_methods: bool = True) -> Optional[tuple[int, str]]:
+                  guard_safe_methods: bool = True, faustus_origins: Iterable[str] = ()) -> Optional[tuple[int, str]]:
     """``None`` when the request may proceed, otherwise ``(status, message)`` (always 403). ``headers`` is any
     mapping with lowercase names (``host``, ``origin``, ``sec-fetch-site`` / ``-mode`` / ``-dest``)."""
     allowed_t = tuple(allowed)
@@ -180,7 +250,10 @@ def check_request(method: str, headers: Mapping[str, str], port: Optional[int] =
     site = headers.get("sec-fetch-site")
     mode = headers.get("sec-fetch-mode")
     dest = headers.get("sec-fetch-dest")
-    if site == "cross-site" and (mode != "navigate" or dest in FRAME_DESTS):
+    parent = _url_origin(headers.get("referer", ""))
+    dock = (str(method).upper() == "GET" and mode == "navigate" and dest in ("iframe", "frame")
+            and bool(parent) and parent in faustus_origins)
+    if site == "cross-site" and (mode != "navigate" or dest in FRAME_DESTS) and not dock:
         return 403, _MSG_SITE
     if mode == "navigate" and str(method).upper() not in SAFE_METHODS:
         return 403, _MSG_FORM
@@ -189,11 +262,13 @@ def check_request(method: str, headers: Mapping[str, str], port: Optional[int] =
 
 # ------------------------------------------------------------------------------------------------ ASGI
 
-def check_handler(handler: Any, *, allowed: Iterable[str] = (), strict_ports: bool = False) -> bool:
+def check_handler(handler: Any, *, allowed: Iterable[str] = (), strict_ports: bool = False,
+                  faustus_origins: Optional[FaustusOrigins] = None) -> bool:
     """Guard an http.server handler. Return True to proceed; send JSON on refusal."""
     headers = {key.lower(): value for key, value in handler.headers.items()}
     port = handler.server.server_address[1]
-    verdict = check_request(handler.command, headers, port, allowed, strict_ports=strict_ports)
+    verdict = check_request(handler.command, headers, port, allowed, strict_ports=strict_ports,
+                            faustus_origins=_dock_origins(handler.command, headers, faustus_origins))
     if verdict is None:
         return True
     status, message = verdict
@@ -208,13 +283,16 @@ def check_handler(handler: Any, *, allowed: Iterable[str] = (), strict_ports: bo
     return False
 
 
-def wsgi_middleware(app: Any, *, port_getter: Callable[[], int], allowed: Iterable[str] = (), strict_ports: bool = False) -> Any:
+def wsgi_middleware(app: Any, *, port_getter: Callable[[], int], allowed: Iterable[str] = (), strict_ports: bool = False,
+                    faustus_origins: Optional[FaustusOrigins] = None) -> Any:
     """Apply the same request rules to a Flask or other WSGI application."""
     patterns = tuple(allowed)
 
     def guarded(environ: dict[str, Any], start_response: Any) -> Any:
         headers = {key[5:].lower().replace("_", "-"): value for key, value in environ.items() if key.startswith("HTTP_")}
-        verdict = check_request(environ.get("REQUEST_METHOD", "GET"), headers, port_getter(), patterns, strict_ports=strict_ports)
+        method = environ.get("REQUEST_METHOD", "GET")
+        verdict = check_request(method, headers, port_getter(), patterns, strict_ports=strict_ports,
+                                faustus_origins=_dock_origins(method, headers, faustus_origins))
         if verdict is None:
             return app(environ, start_response)
         status, message = verdict
@@ -238,13 +316,15 @@ class GuardMiddleware:
     """Pure ASGI middleware: ``check_request`` on every ``http`` and ``websocket`` scope (``lifespan`` passes)."""
 
     def __init__(self, app: Any, *, port_getter: Callable[[], int], allowed: Iterable[str] = (),
-                 dev_origins: Iterable[str] = DEV_ORIGINS, strict_ports: bool = False, guard_safe_methods: bool = True) -> None:
+                 dev_origins: Iterable[str] = DEV_ORIGINS, strict_ports: bool = False, guard_safe_methods: bool = True,
+                 faustus_origins: Optional[FaustusOrigins] = None) -> None:
         self.app = app
         self.port_getter = port_getter
         self.allowed = tuple(allowed)
         self.dev_origins = tuple(dev_origins)
         self.strict_ports = strict_ports
         self.guard_safe_methods = guard_safe_methods
+        self.faustus_origins = faustus_origins
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         kind = scope.get("type")
@@ -254,9 +334,12 @@ class GuardMiddleware:
             port = int(self.port_getter() or 0)
         except Exception:  # noqa: BLE001 - a broken getter must not take the app down; the port is then not enforced
             port = 0
-        verdict = check_request("GET" if kind == "websocket" else scope.get("method", "GET"), _scope_headers(scope),
+        method = "GET" if kind == "websocket" else scope.get("method", "GET")
+        headers = _scope_headers(scope)
+        verdict = check_request(method, headers,
                                 port, self.allowed, dev_origins=self.dev_origins, strict_ports=self.strict_ports,
-                                guard_safe_methods=kind == "websocket" or self.guard_safe_methods)
+                                guard_safe_methods=kind == "websocket" or self.guard_safe_methods,
+                                faustus_origins=_dock_origins(method, headers, self.faustus_origins) if kind == "http" else ())
         if verdict is None:
             return await self.app(scope, receive, send)
         status, message = verdict
@@ -273,7 +356,9 @@ class GuardMiddleware:
 
 def install_guard(app: Any, *, port_getter: Callable[[], int], allowed_env: str = "ALLOWED_HOSTS",
                   allowed_hosts: Union[str, Iterable[str], None] = None, dev_origins: Iterable[str] = DEV_ORIGINS,
-                  strict_ports: bool = False, guard_safe_methods: bool = True) -> None:
+                  strict_ports: bool = False, guard_safe_methods: bool = True,
+                  faustus_origins: Optional[FaustusOrigins] = None, faustus_urls: Optional[Iterable[str]] = None,
+                  hub_url: Optional[str] = None, config_path: Any = None) -> None:
     """Put the guard in front of ``app`` (a FastAPI / Starlette application: ``app.add_middleware``).
 
     ``port_getter`` returns the port the app really listens on (known after the port search, so it is read per
@@ -281,5 +366,8 @@ def install_guard(app: Any, *, port_getter: Callable[[], int], allowed_env: str 
     ``config.allowed_hosts``) and the comma-separated environment variable named by ``allowed_env`` (the app's
     ``KAFKA_ALLOWED_HOSTS``...), both read once, now."""
     patterns = parse_allowed_hosts(allowed_hosts) + parse_allowed_hosts(os.environ.get(allowed_env) if allowed_env else None)
+    if faustus_origins is None and any(value is not None for value in (faustus_urls, hub_url, config_path)):
+        faustus_origins = FaustusOrigins(faustus_urls=faustus_urls, hub_url=hub_url, config_path=config_path)
     app.add_middleware(GuardMiddleware, port_getter=port_getter, allowed=tuple(dict.fromkeys(patterns)),
-                       dev_origins=tuple(dev_origins), strict_ports=strict_ports, guard_safe_methods=guard_safe_methods)
+                       dev_origins=tuple(dev_origins), strict_ports=strict_ports, guard_safe_methods=guard_safe_methods,
+                       faustus_origins=faustus_origins)

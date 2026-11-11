@@ -12,6 +12,14 @@ Three parts:
 
 The bridge does nothing unless the page is framed **and** the parent sends `dock/hello`. A Hoard opened in its own window or in the Hub behaves exactly as before.
 
+## Faustus hosted on another machine
+
+The request guard allows a cross-site **GET** with `Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: iframe` or `frame` when the `Referer` has an exact Faustus origin (scheme, hostname and effective port). Parents come from the link configuration's `faustus_urls` / `HOARD_FAUSTUS_URL`, plus `GET <hub>/api/placement` → `urls.faustus`. Python `install_guard` and Node `createGuard` accept an explicit `config_path` / `configPath`, Faustus URLs and Hub URL when the app uses a backend configuration file; Python's stdlib/WSGI guards accept a shared `FaustusOrigins` instance too. `HOARD_HUB_URL` overrides the default Hub at `http://127.0.0.1:8810`.
+
+Placement discovery is lazy and runs in the background, with one request in flight and a 60-second cache. The first navigation uses only origins already known; if the parent has just moved, retry the frame after discovery completes. An unavailable Hub grants no additional origin. POST, cross-site API calls, `embed` / `object`, missing Referer and unknown parents keep their previous rejection rules; Host and Origin checks still apply. No parent gets permission to call the Hoard API across sites.
+
+The bridge's greeting supports HTTPS parents on a different host, including the Spark. It checks `event.source === window.parent`, requires `host: "faustus"`, then pins all later messages and replies to the greeting's exact origin. The Hoard's own subsequent API requests remain same-origin.
+
 ## Messages (window.postMessage)
 
 Every message is an object with `hoardDock: 1` and a `type`. The bridge accepts host messages only from `window.parent` and, after `dock/hello`, only from that message's origin. The host accepts page messages only from the frame it created and its origin.
