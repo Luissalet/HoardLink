@@ -557,7 +557,7 @@ CatalogBridge(app="kafka", service="kafka-hoard", package="kafka_hoard", default
 createGuard({ port, portGetter, allowedHosts, devOrigins, strictPorts })     checkRequest(method, headers, port, allowed, { devOrigins, strictPorts })
 hostOf  portOf  parseAllowedHosts  isAllowedHost  LOCAL_HOSTS  DEV_ORIGINS
 capResult(data, limit = 20000)    errorBody(error) -> { status, body }
-makeAgentRoutes({ app, tools, callTool, z, toJsonSchema, token, tokenGetter, instructions, capLimit, recordCall }) -> { catalog, tools, call, install(app) }
+makeAgentRoutes({ app, tools, callTool, z, toJsonSchema, token, tokenGetter, instructions, capLimit, uncappedTools, recordCall }) -> { catalog, tools, call, install(app) }
 installSpa(app, distDir, { express, apiPrefix })    installErrorHandlers(app, { log })
 runServer({ service, createApp, port, host, onShutdown, forceMs, log, exit, signals }) -> { server, port, shutdown }
 createBridge({ app, service, version, McpServer, StdioServerTransport, tools, instructions, baseUrl, urlFile, portFile, defaultPort, token, tokenFile,
@@ -570,6 +570,10 @@ No npm dependency: `express`, `zod` and the MCP SDK are passed in (`installSpa(a
 `makeAgentRoutes` expects `express.json()` before it; `installSpa` after the API routes; `installErrorHandlers` last. `postJson` uses `node:http` (fetch
 gives up on a response that takes over five minutes to start) and tells whether the connection was made, which is what separates "app stopped" from
 `outcome_unknown`.
+
+Complete exports can opt out of the result cap with `uncappedTools: ["export_history"]` on `makeAgentRoutes`, or by returning
+an object with `__uncapped: true` (including a non-enumerable property). `capResult` strips that marker from the response
+without changing the original result. Ordinary tools keep their configured cap; an export's JSON, CSV or calendar text stays complete.
 
 ## Deviations and limits
 

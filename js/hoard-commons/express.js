@@ -256,6 +256,11 @@ const sizeOf = (value) => Buffer.byteLength(JSON.stringify(value, (k, v) => (typ
 /** Keep a tool result under ~`limit` bytes of JSON (same rules as hoard_link.agentkit.cap_result): the largest top-level list is
  * halved until it fits, one huge string is cut, and a "truncated" block says what was cut. A list result becomes { result: [...] }. */
 export function capResult(data, limit = 20000) {
+  if (data !== null && typeof data === "object" && data.__uncapped === true) {
+    const out = { ...data };
+    delete out.__uncapped;
+    return out;
+  }
   if (Array.isArray(data)) {
     const wrapped = { result: data };
     const capped = capResult(wrapped, limit);
@@ -309,10 +314,12 @@ export function errorBody(error) {
  * (after express.json()). `tools` is the app's list (`{ name, description, annotations, schema, timeoutMs?, run? }`); `z` (zod) or
  * `toJsonSchema(tool)` turns a tool's schema into JSON Schema; `callTool(name, args)` runs one (default: parse with `tool.schema`
  * and call `tool.run(args)`); `token` / `tokenGetter` is the Bearer token; `recordCall` is family.recordCall; results are capped
- * at `capLimit` bytes (20000) unless the tool's result has a `__uncapped` marker. */
+ * at `capLimit` bytes (20000) unless its name is in `uncappedTools` or its result has a `__uncapped: true` marker.
+ * The marker is removed from the response without modifying the tool's result. */
 export function makeAgentRoutes({ app = "", tools = [], callTool = null, z = null, toJsonSchema = null, token = "", tokenGetter = null,
-  instructions = "", capLimit = 20000, recordCall = null } = {}) {
+  instructions = "", capLimit = 20000, uncappedTools = [], recordCall = null } = {}) {
   const index = new Map(tools.map((t) => [t.name, t]));
+  const uncapped = new Set(uncappedTools);
   const catalog = () => tools.map((t) => {
     let schema = { type: "object", properties: {} };
     if (toJsonSchema) schema = toJsonSchema(t);
@@ -342,7 +349,7 @@ export function makeAgentRoutes({ app = "", tools = [], callTool = null, z = nul
       let result = await run(name, args ?? {});
       if (result === undefined || result === null || typeof result !== "object" || Array.isArray(result)) result = { result: result ?? null };
       ok = true;
-      return res.json(capResult(result, capLimit));
+      return res.json(capResult(result, uncapped.has(name) ? Infinity : capLimit));
     } catch (error) {
       const { status, body } = errorBody(error);
       failure = body.error;
