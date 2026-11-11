@@ -122,3 +122,30 @@ def test_the_hub_assigns_skills_to_any_app(tmp_path):
     assert b'"/api/skills/app/one"' in page.body and page.content_type.startswith("text/html")
     assert facet.handlers()["hub_skills_assign"]({"app": "one", "slug": "beta"})["ok"]
     assert [t["name"] for t in SkillsFacet.tools()] == ["hub_skills_overview", "hub_skills_library", "hub_skills_assign"]
+
+
+def test_the_bridge_hands_out_skills_for_an_app_whose_own_tool_list_does_not(tmp_path):
+    import asyncio
+    import time
+
+    from hoard_link.bridge import CatalogBridge
+
+    lib = library(tmp_path)
+    skills.Shelf("app", tmp_path / "data", {"slugs": ["alpha"]}, library=str(lib)).refresh(force=True)          # the hub (or the app) keeps the copy
+    bridge = CatalogBridge(app="app", service="svc", package="pkg", default_port=1, root=str(tmp_path / "mcp_server.py"))
+    assert bridge._shelf() is None                                                                             # an app's own tests never see it
+    reader = skills.Shelf("app", tmp_path / "data", {"slugs": ["alpha"]}, library=str(lib), max_age_s=float("inf"))
+    reader._checked = time.monotonic()
+    bridge._shelf_obj = reader
+    bridge._catalog = [{"name": "ping", "description": "", "inputSchema": {"type": "object"}}]
+    bridge.instructions = "An app."
+    bridge._own_skills()
+    assert [t["name"] for t in bridge._catalog] == ["ping", "skills_list", "skill_read", "skills_library", "skills_assign"]
+    assert "- alpha: About alpha." in bridge.instructions and [s["slug"] for s in bridge.skills] == ["alpha"]
+    assert "Do alpha." in asyncio.run(bridge.call("skill_read", {"slug": "alpha"})).body["text"]
+    assert asyncio.run(bridge.call("skill_read", {"slug": "nope"})).is_error
+    # an app that already hands them out is left alone
+    bridge._catalog = [{"name": "skills_list"}]
+    bridge.skills = []
+    bridge._own_skills()
+    assert not bridge._local_skills and bridge.skills == []
