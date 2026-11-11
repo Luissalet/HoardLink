@@ -1,0 +1,37 @@
+# Hoard Hub and Hoard Link
+
+## App Dock page bridge
+
+The shared copilot launcher includes the App Dock bridge on FastAPI, standard-library
+HTTP and Node hosts. It activates when a framed page receives `dock/hello` from its
+parent, then binds subsequent messages to that parent's origin.
+
+The bridge reports title, relative URL, selected text and optional app context.
+`app_read` returns visible text and stable control refs. `app_click`, `app_fill`,
+`app_select`, `app_navigate`, `app_scroll`, `app_highlight` and `app_wait` operate on
+the live page. Text matching ignores case and accents. Ambiguous or missing targets
+return candidate labels and refs.
+
+Each actor has a named, coloured cursor with eased travel, press feedback, visible
+typing and highlight notes. Multiple actors can act concurrently. Cursor annotations
+fit the viewport, idle cursors fade after twenty seconds and reduced-motion skips
+travel and typing animation.
+
+Apps register custom tools with `window.HoardApp.registerTool`, supply live context
+with `setContext` and refresh through `onChanged`. Registrations queued before the
+bridge loads are replayed. `HoardApp.message(text, send)` forwards an app question
+to the host. The bridge supports up to 64 tools and a 45-second call deadline.
+Custom handlers receive an abort signal for cooperative cancellation.
+
+The Faustus host and server consume the bridge protocol. This repository supplies
+the page component. App-specific tool handlers are registered by each application.
+Only pages that set `HoardApp.reloadOnChange = true` opt into the default reload.
+
+Run `python -m pytest tests/test_app_bridge.py` for browser-based protocol, schema,
+target matching, navigation, form events, concurrent cursor and mobile-bound checks.
+`tests/commons/app_bridge_live.py` exercises a live Links Hoard through a host iframe
+and writes its results and screenshots to the requested evidence directory.
+
+Distribute the shared files with `scripts/sync_vendored.py --files app_bridge.py
+copilot.py copilot_stdlib.py app-bridge.js copilot.js`. Running processes adopt the
+updated library on their next ordinary restart.

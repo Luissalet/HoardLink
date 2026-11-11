@@ -161,7 +161,8 @@ class CopilotRelay:
                 self._reply(handler, 200, json.dumps(info, ensure_ascii=False).encode("utf-8"))
             elif route.endswith("/launcher.js"):
                 from .copilot_launcher import LAUNCHER_JS
-                self._reply(handler, 200, LAUNCHER_JS.encode("utf-8"), "application/javascript", {"Cache-Control": "no-cache"})
+                from .app_bridge import BRIDGE_JS
+                self._reply(handler, 200, (LAUNCHER_JS + "\n" + BRIDGE_JS).encode("utf-8"), "application/javascript", {"Cache-Control": "no-cache"})
             elif route.endswith("/panel.js"):
                 self._relay(handler, "/api/hoard-copilot/panel.js", method=handler.command)
             else:

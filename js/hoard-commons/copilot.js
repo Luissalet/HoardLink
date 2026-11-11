@@ -30,7 +30,10 @@ const FORWARD_RESPONSE = ["content-type", "x-odysseus-run-id", "x-faustus-idempo
 let launcherCache = null;
 /** The browser launcher (generated from hoard_link/copilot_launcher.py by scripts/sync_vendored.py). */
 export function launcherJs() {
-  if (launcherCache === null) launcherCache = fs.readFileSync(path.join(HERE, "copilot-launcher.js"), "utf8");
+  if (launcherCache === null) {
+    launcherCache = fs.readFileSync(path.join(HERE, "copilot-launcher.js"), "utf8") + "\n" +
+      fs.readFileSync(path.join(HERE, "app-bridge.js"), "utf8");
+  }
   return launcherCache;
 }
 
