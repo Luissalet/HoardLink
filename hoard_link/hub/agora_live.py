@@ -31,6 +31,17 @@ def file_path(text: str) -> str:
     return ""
 
 
+def task_progress(task: dict[str, Any]) -> str:
+    compact = task.get("checkpoint_summary") or {}
+    full = task.get("latest_checkpoint") or {}
+    return snippet(compact.get("summary") or (full.get("payload") or {}).get("summary") or full.get("summary"))
+
+
+def task_signal_at(task: dict[str, Any]) -> float:
+    checkpoint = task.get("checkpoint_summary") or task.get("latest_checkpoint") or {}
+    return max(task.get("updated", 0), checkpoint.get("created", 0))
+
+
 def project(board: dict[str, Any], watch: dict[str, Any], messages: list[dict[str, Any]],
             *, now: float, channel: str = "general", colors: dict[str, str] | None = None) -> dict[str, Any]:
     tasks = board.get("tasks", [])
@@ -63,14 +74,13 @@ def project(board: dict[str, Any], watch: dict[str, Any], messages: list[dict[st
         if not active and (member.get("state") not in ("working", "waiting") or member.get("stale")):
             continue
         own = sorted((t for t in tasks if t.get("owner") == agent),
-                     key=lambda t: t.get("updated", 0), reverse=True)
+                     key=task_signal_at, reverse=True)
         target = {"kind": "rest", "id": agent, "at": 0}
         note = snippet(member.get("doing", ""))
         if own:
             task = own[0]
-            target = {"kind": "task", "id": str(task["id"]), "at": task.get("updated", 0)}
-            checkpoint = task.get("latest_checkpoint") or {}
-            note = snippet(checkpoint.get("summary") or note)
+            target = {"kind": "task", "id": str(task["id"]), "at": task_signal_at(task)}
+            note = task_progress(task) or note
         action = {**(session.get("last_action") or {}), **(session.get("tool") or {})}
         action_at = action.get("since", 0)
         if action_at and action_at >= target["at"]:
@@ -113,7 +123,7 @@ def project(board: dict[str, Any], watch: dict[str, Any], messages: list[dict[st
                        "session": session or None})
     return {"ok": True, "now": now, "space": board.get("space"), "channel": channel,
             "tasks": [{**{k:t.get(k) for k in ("id", "title", "status", "owner", "repo", "thread_id", "updated")},
-                       "progress": snippet((t.get("latest_checkpoint") or {}).get("summary") or t.get("checkpoint_summary"))}
+                       "progress": task_progress(t)}
                       for t in tasks],
             "files": list(files.values()), "messages": messages, "actors": actors,
             "watch_error": watch.get("error") if not watch.get("ok", True) else None}
