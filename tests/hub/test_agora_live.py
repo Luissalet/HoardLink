@@ -55,6 +55,18 @@ def test_commands_never_invent_file_paths():
     assert file_path("src/a.py") == "src/a.py"
 
 
+def test_checkpoint_summary_moves_to_the_task_at_its_own_source_time():
+    board = snapshot()
+    board["tasks"][0]["checkpoint_summary"] = {"created":950,"summary":"Tests are complete","revision":1}
+    view = project(board,{},[],now=960)
+    assert view["actors"][0]["target"] == {"kind":"task","id":"1","at":950}
+    assert view["actors"][0]["note"] == "Tests are complete"
+    assert view["tasks"][0]["progress"] == "Tests are complete"
+    board["tasks"][0].pop("checkpoint_summary")
+    board["tasks"][0]["latest_checkpoint"] = {"created":950,"payload":{"summary":"Full checkpoint"}}
+    assert project(board,{},[],now=960)["tasks"][0]["progress"] == "Full checkpoint"
+
+
 def test_edit_excerpt_preserves_lines_and_existing_sanitization():
     action = _action_details({"file_path":"src/a.py", "new_string":"def render():\n    return ready\nAuthorization: Bearer secret-value"})
     assert action["path"] == "src/a.py"
