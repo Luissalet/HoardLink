@@ -77,3 +77,22 @@ The web service in the hub: [commons/web.md](commons/web.md#family-service-hub-f
 
 The shared test vectors are in `tests/vectors/`; `tests/commons/` runs every vector against the Python module and,
 when `node` is installed, against its Node twin.
+
+## Skills for the agents that connect
+
+`hoard_link/skills.py`. Faustus keeps a library of procedures (`skills/library/<slug>/SKILL.md`). An app names the ones
+its work needs in a `skills` block of its `faustus-plugin.json`:
+
+```json
+"skills": {"slugs": ["blender-asset-production"], "tags": ["3d", "mesh"], "categories": [], "limit": 8}
+```
+
+`slugs` are taken as they are; the rest of the room (`limit`, 12 by default) goes to the published skills that share
+most `tags` (or a category). With that block and nothing else, `make_agent_router` gives the app a `Shelf`
+(`skills.auto`): the skills are copied to `<data>/skills/` with their text reference files, named at the end of the
+instructions an agent reads on connecting, listed and read with `skills_list` / `skill_read` / `skills_refresh`
+(answered by the router), returned as `"skills"` by `GET /api/agent/tools`, and offered by the MCP bridge as prompts
+called `skill-<slug>`. The copy is what is served, so they are there with Faustus closed; the library is looked at again
+when the copy is older than fifteen minutes, and a skill that was improved, added or dropped there follows. The library
+is found through `fam_mail.faustus_dir`. `skills.make_router(shelf)` adds `GET /api/skills`, `GET /api/skills/{slug}`
+and `POST /api/skills/refresh` for the app's own page. `skills=False` turns the whole thing off.
