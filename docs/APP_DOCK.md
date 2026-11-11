@@ -20,6 +20,8 @@ Placement discovery is lazy and runs in the background, with one request in flig
 
 The bridge's greeting supports HTTPS parents on a different host, including the Spark. It checks `event.source === window.parent`, requires `host: "faustus"`, then pins all later messages and replies to the greeting's exact origin. The Hoard's own subsequent API requests remain same-origin.
 
+The host iframe must set `referrerPolicy="origin"`: Faustus's page policy is `no-referrer`, and a default HTTPS-to-HTTP frame navigation also omits the Referer. This iframe-specific policy sends just the parent's origin so the guard can recognize it; the rest of the host page keeps its existing policy.
+
 ## Messages (window.postMessage)
 
 Every message is an object with `hoardDock: 1` and a `type`. The bridge accepts host messages only from `window.parent` and, after `dock/hello`, only from that message's origin. The host accepts page messages only from the frame it created and its origin.
