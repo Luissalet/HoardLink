@@ -315,6 +315,8 @@ class CatalogBridge:
         self._base_url = base_url
         self.instructions = instructions
         self.skills: list[dict[str, Any]] = []
+        self._shelf_obj: Any = None
+        self._local_skills = False
         if root is None:
             root = sys.argv[0] if sys.argv and sys.argv[0] else os.getcwd()
         root_path = Path(root).resolve()
@@ -388,8 +390,46 @@ class CatalogBridge:
         if isinstance(data, dict) and isinstance(data.get("instructions"), str):
             self.instructions = data["instructions"]
         self.skills = [s for s in (data.get("skills") or []) if isinstance(s, dict) and s.get("slug")] if isinstance(data, dict) else []
+        self._own_skills()
         self._fetched_at = time.monotonic()
         return self._catalog
+
+    def _shelf(self) -> Any:
+        """The app's skills shelf as this bridge reads it from the app's data folder (None when there is no manifest, under
+        pytest, or with HOARD_SKILLS=0). It only reads: the app and the hub keep the copies."""
+        if self._shelf_obj is None:
+            self._shelf_obj = False
+            try:
+                from . import skills as _skills
+                manifest = self.root / "faustus-plugin.json"
+                off = "pytest" in sys.modules or os.environ.get("HOARD_SKILLS", "1").strip().lower() in ("0", "false", "no", "off")
+                if manifest.is_file() and not off:
+                    self._shelf_obj = _skills.Shelf(self.app, lambda: self.data_dir, _skills.wants_of(manifest), max_age_s=float("inf"))
+                    self._shelf_obj._checked = time.monotonic()        # never looks the library up from here
+            except Exception:  # noqa: BLE001
+                self._shelf_obj = False
+        return self._shelf_obj or None
+
+    def _own_skills(self) -> None:
+        """An app whose own tool list does not hand out skills (it does not use the shared agent router) still gives its
+        agents the ones on its shelf: the bridge adds the tools, the instructions and the prompts itself."""
+        self._local_skills = False
+        names = {str(t.get("name")) for t in self._catalog}
+        shelf = self._shelf()
+        if self.skills or shelf is None or "skills_list" in names:
+            return
+        try:
+            carried = shelf.list(refresh=False)
+        except Exception:  # noqa: BLE001
+            carried = []
+        if not carried:
+            return
+        self._local_skills = True
+        self.skills = carried
+        self._catalog = self._catalog + [e for e in shelf.catalog() if e["name"] not in names and e["name"] != "skills_refresh"]
+        extra = shelf.instructions(carried)
+        if extra and "Skills." not in (self.instructions or ""):
+            self.instructions = (self.instructions or "") + ("\n\n" if self.instructions else "") + extra
 
     async def tools(self, *, force: bool = False) -> list[dict[str, Any]]:
         """The catalogue, refreshed when ``force`` or older than ``refresh_tools_s``. A failed refresh keeps the last good one;
@@ -429,6 +469,13 @@ class CatalogBridge:
     async def call(self, name: str, arguments: Optional[Mapping[str, Any]] = None, progress: Optional[Progress] = None) -> BridgeResult:
         """Proxy ``name(arguments)`` to the app and shape the answer as MCP content. Never raises."""
         arguments = dict(arguments or {})
+        if getattr(self, "_local_skills", False) and name in ("skills_list", "skill_read", "skills_library", "skills_assign"):
+            try:
+                body = await asyncio.to_thread(self._shelf().call, name, arguments)
+                return BridgeResult(content=[_text(body)], body=body)
+            except (KeyError, ValueError) as error:
+                body = {"error": str(error.args[0]) if error.args else str(error), "code": "not_found" if isinstance(error, KeyError) else "invalid"}
+                return BridgeResult(content=[_text(body)], is_error=True, body=body)
         try:
             if self.tool_meta(name) is None:
                 try:
