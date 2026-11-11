@@ -85,7 +85,8 @@ def test_info_panel_and_common_launcher(private_host):
     assert 'fixture-backend-secret' not in json.dumps(first)
     assert request(base,'/api/copilot/panel.js').read()==b'export const sharedPanel=true;'
     from hoard_link.copilot_launcher import LAUNCHER_JS
-    assert request(base,'/api/copilot/launcher.js').read()==LAUNCHER_JS.encode()
+    from hoard_link.app_bridge import BRIDGE_JS
+    assert request(base,'/api/copilot/launcher.js').read()==(LAUNCHER_JS + "\n" + BRIDGE_JS).encode()
     with request(base,'/') as response:assert b'/ui/copilot.js' in response.read()
 
 

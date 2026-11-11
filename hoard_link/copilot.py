@@ -285,6 +285,7 @@ def install_copilot(app, app_id, data_dir, *, app_name=None, faustus_urls=None, 
     from starlette.responses import Response
     from .config import LinkConfig
     from .copilot_launcher import LAUNCHER_JS
+    from .app_bridge import BRIDGE_JS
 
     if faustus_urls is None or token is None:
         link = LinkConfig.load(path=config_path, app=app_id)
@@ -296,7 +297,7 @@ def install_copilot(app, app_id, data_dir, *, app_name=None, faustus_urls=None, 
     router = make_copilot_router(app_id, data_dir, faustus_urls=faustus_urls, token=token, app_name=app_name)
 
     async def launcher():
-        return Response(LAUNCHER_JS, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        return Response(LAUNCHER_JS + "\n" + BRIDGE_JS, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
     router.add_api_route("/launcher.js", launcher, methods=["GET"], include_in_schema=False)
     before = len(getattr(app.router, "routes", []))
