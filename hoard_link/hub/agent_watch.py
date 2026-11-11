@@ -183,6 +183,27 @@ def _title_from(text: str) -> str:
     return snippet(t.strip(), TITLE_MAX)
 
 
+def _action_details(value: Any) -> dict[str, str]:
+    """Keep an explicit edited path and a short sanitized excerpt before whitespace is folded."""
+    if isinstance(value, str) and value.lstrip().startswith('{'):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            pass
+    path = ""
+    text = value if isinstance(value, str) else ""
+    if isinstance(value, dict):
+        path = value.get("file_path") or value.get("path") or ""
+        text = next((value[k] for k in ("patch", "content", "new_string", "newText", "input")
+                     if isinstance(value.get(k), str)), "")
+    patch = re.search(r"\*\*\* (?:Update|Add|Delete) File:\s*([^\r\n]+)", text)
+    if patch:
+        path = patch[1].strip()
+    preview = "\n".join(_mask(ln) for ln in text.splitlines()
+                        if not any(rx.search(ln) for rx in _SECRET_RES))[:SNIPPET]
+    return {"path": snippet(path), "preview": preview} if path else {}
+
+
 def _input_summary(value: Any, _depth: int = 0) -> str:
     """A snippet of what a tool call does: its command / path / query, whichever is there (never the whole input)."""
     if isinstance(value, str):
@@ -276,7 +297,9 @@ class Session:
         self.open_tools: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
         self.pending: "OrderedDict[str, dict[str, Any]]" = OrderedDict()   # explicit questions / approvals
         self.last_tool = ""
+        self.last_action: Optional[dict[str, Any]] = None
         self.last_text = ""
+        self.last_text_at = 0.0
         self.tokens: Optional[int] = None
         self.token_base: Optional[int] = None
         self.token_total: Optional[int] = None
@@ -308,6 +331,8 @@ class Session:
             call_id = f"anon-{self.seq}"
         self.open_tools.pop(call_id, None)
         self.open_tools[call_id] = {"name": name or "tool", "since": ts, "input": _input_summary(args)}
+        self.last_action = dict(self.open_tools[call_id])
+        self.last_action.update(_action_details(args))
         while len(self.open_tools) > MAX_OPEN_TOOLS:
             self.open_tools.popitem(last=False)
         self.last_tool = name or self.last_tool
@@ -316,6 +341,11 @@ class Session:
         if any(k in low for k in _QUESTION_KEYS) or low in _ASK_TOOLS:
             self.pending[call_id] = {"kind": "question", "what": _input_summary(args) or name, "since": ts,
                                      "tool": name, "confidence": "explicit", "call_id": call_id}
+
+    def _record_text(self, text: str, ts: float) -> None:
+        if cleaned := snippet(text):
+            self.last_text = cleaned
+            self.last_text_at = ts
 
     def _tool_end(self, call_id: str) -> None:
         self.open_tools.pop(call_id, None)
@@ -392,7 +422,7 @@ class Session:
                 self._turn_end(parse_ts(p.get("completed_at")) or ts)
                 msg = p.get("last_agent_message")
                 if isinstance(msg, str) and snippet(msg):
-                    self.last_text = snippet(msg)
+                    self._record_text(msg, ts)
             elif pt in ("turn_aborted", "task_aborted", "task_failed"):
                 self._turn_end(ts)
             elif pt == "token_count":
@@ -406,7 +436,7 @@ class Session:
                 elif isinstance(last, int):
                     self.tokens = last
             elif pt == "agent_message" and isinstance(p.get("message"), str):
-                self.last_text = snippet(p["message"]) or self.last_text
+                self._record_text(p["message"], ts)
             elif any(k in low for k in _QUESTION_KEYS):
                 self._codex_question(pt, p, ts)
         elif t == "response_item":
@@ -414,9 +444,9 @@ class Session:
                 if p.get("role") == "assistant":
                     txt = snippet(_first_text(p.get("content")))
                     if txt:
-                        self.last_text = txt
+                        self._record_text(txt, ts)
             elif pt == "agent_message" and isinstance(p.get("message"), str):
-                self.last_text = snippet(p["message"]) or self.last_text
+                self._record_text(p["message"], ts)
             elif pt == "reasoning":
                 return
             elif pt.endswith("_call_output") or pt.endswith("_call_result"):
@@ -492,11 +522,11 @@ class Session:
                     if part.get("type") == "text" and isinstance(part.get("text"), str):
                         got = snippet(part["text"])
                         if got:
-                            self.last_text = got
+                            self._record_text(got, ts)
                     elif part.get("type") == "tool_use":
                         self._tool_start(str(part.get("id") or ""), str(part.get("name") or "tool"), part.get("input"), ts)
             elif isinstance(content, str):
-                self.last_text = snippet(content) or self.last_text
+                self._record_text(content, ts)
 
     # -- Claude Code ------------------------------------------------------------------------------------------
 
@@ -551,7 +581,7 @@ class Session:
                     if part.get("type") == "text" and isinstance(part.get("text"), str):
                         got = snippet(part["text"])
                         if got:
-                            self.last_text = got
+                            self._record_text(got, ts)
                     elif part.get("type") == "tool_use":
                         self._tool_start(str(part.get("id") or ""), str(part.get("name") or "tool"), part.get("input"), ts)
             if msg.get("stop_reason") in ("end_turn", "stop_sequence", "max_tokens", "refusal"):
@@ -960,7 +990,8 @@ class AgentWatch:
             "key": s.key, "engine": s.engine, "session_id": s.session_id, "file": s.path, "cwd": s.cwd,
             "workspace": s.workspace, "title": s.title, "state": d["state"], "since": d["since"],
             "last_activity": last_activity(s), "turn_started_at": s.turn_started if s.turn_open else None,
-            "tool": d["tool"], "last_tool": s.last_tool, "last_text": s.last_text, "tokens": s.tokens,
+            "tool": d["tool"], "last_tool": s.last_tool, "last_action": s.last_action,
+            "last_text": s.last_text, "last_text_at": s.last_text_at, "tokens": s.tokens,
             "agent": agent, "binding": how, "questions": questions, "originator": s.originator or None,
         }
 

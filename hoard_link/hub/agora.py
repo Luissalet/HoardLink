@@ -57,6 +57,7 @@ from . import agora_channels
 from . import agora_ranks
 from . import agora_social
 from . import agora_debate
+from . import agora_live
 from .facets import Facet, Reply, Request
 
 # code_peek refs: path/to/file.py#L10-L24@abc1234 (commit optional when the submission lists commits)
@@ -3564,6 +3565,19 @@ class AgoraFacet(Facet):
         except agent_watch.WatchError as exc:
             return {"ok": False, "status": exc.status, "error": str(exc)}
 
+    def _live(self, a: dict[str, Any]) -> dict[str, Any]:
+        board = self.agora.board(a)
+        channel = str(a.get("channel") or "general")
+        messages = self.agora.channel_read({"space_id": board["space"]["id"], "channel": channel,
+                                            "limit": 40, "peek": True})["messages"]
+        try:
+            watch = self._watch_view({})
+        except Exception as exc:
+            watch = {"ok": False, "error": str(exc)[:200]}
+        console = self.hub.facet("agora_console")
+        colors = console._colors() if console is not None else {}
+        return agora_live.project(board, watch, messages, now=self.agora.clock(), channel=channel, colors=colors)
+
     def _board(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """The Ágora board plus, per agent, what its transcripts say it is doing (``observed``)."""
         out = self._run(self.agora.board, a or {})
@@ -3736,6 +3750,8 @@ class AgoraFacet(Facet):
             return self._board(q)
         if p == "/api/agora/watch":
             return self._watch_view(q)
+        if p == "/api/agora/live":
+            return self._run(self._live, q)
         if p == "/api/agora/inbox":
             if q.get("agent", "").lower() == PERSON and req.caller() != "ui":
                 q["peek"] = "1"
@@ -3884,7 +3900,7 @@ class AgoraFacet(Facet):
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
         out = []
-        for t in [*TOOLS, *agent_watch.TOOLS]:
+        for t in [*TOOLS, *agent_watch.TOOLS, agora_live.TOOL]:
             d = {k: v for k, v in t.items() if k != "read"}
             d["annotations"] = {"readOnlyHint": bool(t.get("read"))}
             out.append(d)
@@ -3929,6 +3945,7 @@ class AgoraFacet(Facet):
             "hub_agora_decisions": wrap(ag.decisions), "hub_agora_threads": wrap(ag.threads),
             "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(self._digest),
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
+            "hub_agora_live": wrap(self._live),
             **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_debate.OPERATIONS},
             **{f"hub_agora_{op}": wrap({"guild": self._guild, "servers": self._servers}.get(op) or getattr(ag, op))
                for op in agora_channels.OPERATIONS},

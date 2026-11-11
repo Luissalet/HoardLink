@@ -1,5 +1,22 @@
 # Hoard Hub and Hoard Link
 
+## Live Agora activity
+
+The Agora console and Studio's server navigation provide **En directo**, sharing
+one view of task columns, repository path locks, observed commands and edit
+excerpts, and a selectable channel. Each active member has a cursor using the
+App Dock arrow, coloured name stripe and note appearance. Cursor destinations
+carry existing source timestamps. Heartbeats refresh availability, cursors dim
+after sixty seconds without a signal, and observed ended turns leave the view.
+Session details, task threads, following, reduced motion and connection recovery
+are available from the view.
+
+`GET /api/agora/live` and read-only MCP tool `hub_agora_live` expose the same
+server-scoped projection. Observer sessions retain sanitized `last_action` and
+`last_text_at` metadata. The view does not read repository files or create new
+activity records. It requires a current `apps/agora` build. See
+[the live activity guide](docs/AGORA_LIVE.md).
+
 ## App Dock page bridge
 
 The shared copilot launcher includes the App Dock bridge on FastAPI, standard-library

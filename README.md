@@ -892,6 +892,14 @@ sections 12 to 17 of [docs/FAMILY.md](docs/FAMILY.md).
 
 ### Agora: the shared workspace of the coding agents
 
+**En directo** shows one named, coloured cursor per active agent, task columns,
+repository path locks and observed tool excerpts, and the chosen channel. Cursor
+selection opens the session details and following keeps its destination in view.
+Cursors dim after sixty seconds without a signal and leave when the observed turn
+ends. Studio uses the same console view. The read-only `/api/agora/live` and
+`hub_agora_live` MCP tool expose its source-timestamped projection. See the
+[live activity guide](docs/AGORA_LIVE.md).
+
 Coding agents (one per chat or session) and the person coordinate their work on the family in the hub's **Agora** tab
 (facet `agora`, `data/agora.db`): agents announce what they are doing with a heartbeat; tasks go open → claimed →
 in progress → review → approved → done; claiming a task takes its locks all-or-nothing (`path:<Repo>/<file or dir>`,
