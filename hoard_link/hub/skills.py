@@ -1,0 +1,184 @@
+"""Skills facet: which procedures of the skill library each app of the family carries, in one place.
+
+Every app keeps its own shelf (:mod:`hoard_link.skills`): what its manifest asks for plus what the person added or took
+away, copied into the app's data folder. This facet reads and changes those shelves from the hub, running or not, and
+serves the same skills page an app serves for itself.
+
+* ``GET  /api/skills/overview``                 -> every app with the skills it carries
+* ``GET  /api/skills/page?app=ID``              -> the skills page of that app
+* ``GET  /api/skills/app/ID[?q=]``              -> its state (shelf, library, choices)
+* ``GET  /api/skills/app/ID/read/SLUG``         -> one skill's text
+* ``POST /api/skills/app/ID/assign|refresh|create``
+* ``POST /api/skills/refresh``                  -> bring every app's copies up to date
+"""
+from __future__ import annotations
+
+import json
+import os
+import threading
+import urllib.request
+from typing import Any, Optional
+
+from .. import skills
+from .facets import Facet, Reply, Request
+
+
+class SkillsFacet(Facet):
+    id = "skills"
+    ui_scripts = ("skills.js",)
+
+    # ----- one app
+    def _app(self, app_id: str) -> Any:
+        return next((a for a in self.hub.apps if a.id == app_id), None)
+
+    def _shelf(self, app: Any) -> skills.Shelf:
+        data = app.data_dir or os.path.join(app.folder, "data")
+        return skills.Shelf(app.id, data, skills.wants_of(app.manifest_path), library=self.hub.config.faustus_dir, max_age_s=0)
+
+    def _poke(self, app: Any) -> None:
+        """Tell a running app its shelf changed (it would notice by itself in a few minutes)."""
+        def go() -> None:
+            try:
+                req = urllib.request.Request(app.url.rstrip("/") + "/api/agent/skills/refresh", data=b"{}", method="POST",
+                                             headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=4).read()
+            except Exception:  # noqa: BLE001 - stopped, or a copy of the library that has no skills page yet
+                pass
+        threading.Thread(target=go, daemon=True, name=f"skills-poke-{app.id}").start()
+
+    # ----- all of them
+    def overview(self) -> dict[str, Any]:
+        library = skills.find_library(self.hub.config.faustus_dir)
+        rows = []
+        for app in sorted(self.hub.apps, key=lambda a: a.name.lower()):
+            shelf = self._shelf(app)
+            index = shelf._index()
+            carried = [s.get("slug") for s in index["skills"] if isinstance(s, dict)]
+            rows.append({"id": app.id, "name": app.name, "skills": carried, "count": len(carried), "refreshed_at": index.get("refreshed_at"),
+                         "asks": bool(shelf.wants), "serves": _serves(app)})
+        return {"ok": True, "apps": rows, "library": str(library) if library else None,
+                "library_skills": len(skills.library_rows(library)) if library else 0}
+
+    def refresh_all(self) -> dict[str, Any]:
+        out = []
+        for app in self.hub.apps:
+            report = self._shelf(app).refresh(force=True)
+            if report.get("added") or report.get("updated") or report.get("removed"):
+                out.append({"app": app.id, **{k: report[k] for k in ("added", "updated", "removed")}})
+                self._poke(app)
+        return {"ok": True, "changed": out, "apps": len(self.hub.apps)}
+
+    # ----- routes
+    def _route(self, req: Request) -> Optional[tuple[Any, str]]:
+        parts = req.path.split("/")                        # ['', 'api', 'skills', 'app', ID, ...]
+        if len(parts) < 5 or parts[:4] != ["", "api", "skills", "app"]:
+            return None
+        app = self._app(parts[4])
+        if app is None:
+            return None
+        return app, "/".join(parts[5:])
+
+    def get(self, req: Request) -> Any:
+        if req.path == "/api/skills/overview":
+            return self.overview()
+        if req.path == "/api/skills/page":
+            app = self._app(str(req.q("app") or ""))
+            if app is None:
+                return {"ok": False, "status": 404, "error": "unknown app"}
+            page = skills.PAGE.replace("__APP__", json.dumps(app.name)).replace("__BASE__", json.dumps(f"/api/skills/app/{app.id}"))
+            return Reply(body=page.encode("utf-8"), content_type="text/html; charset=utf-8")
+        found = self._route(req)
+        if found is None:
+            return None
+        app, rest = found
+        shelf = self._shelf(app)
+        if rest == "":
+            return shelf.state(str(req.q("q") or ""))
+        if rest.startswith("read/"):
+            slug = rest[5:]
+            try:
+                return shelf.read(slug, str(req.q("file") or ""))
+            except (KeyError, ValueError) as error:
+                library = skills.find_library(self.hub.config.faustus_dir)
+                path = os.path.join(str(library), slug, "SKILL.md") if library is not None and skills._SLUG.match(slug) else ""
+                if path and os.path.isfile(path):
+                    with open(path, encoding="utf-8") as fh:
+                        return {"slug": slug, "name": slug, "file": "SKILL.md", "files": [], "text": fh.read()}
+                return {"ok": False, "status": 404, "error": str(error.args[0]) if error.args else str(error)}
+        return None
+
+    def post(self, req: Request) -> Any:
+        if req.path == "/api/skills/refresh":
+            return self.refresh_all()
+        found = self._route(req)
+        if found is None:
+            return None
+        app, rest = found
+        shelf = self._shelf(app)
+        try:
+            if rest == "assign":
+                out = shelf.assign(str(req.body.get("slug") or ""), req.body.get("on") is not False)
+            elif rest == "refresh":
+                out = shelf.call("skills_refresh")
+            elif rest == "create":
+                out = shelf.create(req.body)
+            else:
+                return None
+        except KeyError as error:
+            return {"ok": False, "status": 404, "error": str(error.args[0]) if error.args else str(error)}
+        except ValueError as error:
+            return {"ok": False, "status": 400, "error": str(error)}
+        self._poke(app)
+        return out
+
+    # ----- for agents
+    @classmethod
+    def tools(cls) -> list[dict[str, Any]]:
+        read_only = {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False}
+        return [
+            {"name": "hub_skills_overview", "annotations": read_only, "inputSchema": {"type": "object", "properties": {}},
+             "description": "Which procedures of the family's skill library each app carries for the agents that connect to it "
+                            "(app, skills, whether its manifest asks for any, whether the app serves them)."},
+            {"name": "hub_skills_library", "annotations": read_only,
+             "inputSchema": {"type": "object", "required": ["app"], "properties": {
+                 "app": {"type": "string", "description": "App id."}, "query": {"type": "string", "description": "Words to look for in slug, description and tags."}}},
+             "description": "The skill library as one app sees it: every skill with whether that app carries it (`on`) and why. Use it to "
+                            "choose what to assign."},
+            {"name": "hub_skills_assign", "annotations": {"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False, "openWorldHint": False},
+             "inputSchema": {"type": "object", "required": ["app", "slug"], "properties": {
+                 "app": {"type": "string", "description": "App id."}, "slug": {"type": "string", "description": "Skill slug in the library."},
+                 "on": {"type": "boolean", "default": True, "description": "true gives the skill to the app; false takes it away."}}},
+             "description": "Give an app a skill of the library, or take one away. It stays for every agent that connects to that app; the "
+                            "app is told when it is running."},
+        ]
+
+    def handlers(self) -> dict[str, Any]:
+        def library(a: dict[str, Any]) -> Any:
+            app = self._app(str(a.get("app") or ""))
+            if app is None:
+                return {"ok": False, "error": "unknown app", "apps": [x.id for x in self.hub.apps]}
+            return {"ok": True, "app": app.id, "skills": self._shelf(app).catalogue(str(a.get("query") or ""), 80)}
+
+        def assign(a: dict[str, Any]) -> Any:
+            app = self._app(str(a.get("app") or ""))
+            if app is None:
+                return {"ok": False, "error": "unknown app", "apps": [x.id for x in self.hub.apps]}
+            try:
+                out = self._shelf(app).assign(str(a.get("slug") or ""), a.get("on") is not False)
+            except (KeyError, ValueError) as error:
+                return {"ok": False, "error": str(error.args[0]) if error.args else str(error)}
+            self._poke(app)
+            return {"ok": True, **out}
+
+        return {"hub_skills_overview": lambda a: self.overview(), "hub_skills_library": library, "hub_skills_assign": assign}
+
+
+def _serves(app: Any) -> bool:
+    """Whether the app's own copy of the library can hand skills to agents (it has ``skills.py`` beside ``agentkit.py``)."""
+    for root, dirs, files in os.walk(app.folder):
+        dirs[:] = [d for d in dirs if d not in (".venv", "venv", "node_modules", ".git", "build", "dist", "data", "__pycache__", "runtime")]
+        if os.path.basename(root) == "hoard_link" and "agentkit.py" in files:
+            return "skills.py" in files
+        if root.count(os.sep) - app.folder.count(os.sep) >= 3:
+            dirs[:] = []
+    return False
