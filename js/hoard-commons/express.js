@@ -12,9 +12,10 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import { checkBearer } from "./server.js";
-import { autoCopilot, injectLauncher } from "./copilot.js";
+import { autoCopilot, injectLauncher, resolveFaustus } from "./copilot.js";
 
 // ------------------------------------------------------------------------------------------------ guard
 
@@ -27,6 +28,53 @@ const MSG_HOST = "Only local access is allowed.";
 const MSG_ORIGIN = "Origin not allowed.";
 const MSG_SITE = "Cross-site requests are not allowed.";
 const MSG_FORM = "Form submissions are not allowed.";
+
+function urlOrigin(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.origin : "";
+  } catch { return ""; }
+}
+
+/** Configured Faustus parents plus the Hub placement, refreshed at most every 60 s without waiting on a request. */
+export function createFaustusOrigins({ faustusUrls = null, hubUrl = null, configPath = null, env = process.env, appId = "app" } = {}) {
+  const configured = resolveFaustus({ faustusUrls, configPath, env, appId }).urls.map(urlOrigin).filter(Boolean);
+  let raw = {};
+  if (configPath) { try { raw = JSON.parse(fs.readFileSync(configPath, "utf8").replace(/^\uFEFF/, "")); } catch { /* defaults */ } }
+  const base = String(hubUrl || env.HOARD_HUB_URL || raw.gpu_lease?.hub_url || "http://127.0.0.1:8810").replace(/\/+$/, "");
+  let discovered = [], expires = 0, pending = false;
+  return function current() {
+    const now = Date.now();
+    const known = now < expires ? discovered : [];
+    if (now >= expires && !pending) {
+      pending = true;
+      const finish = (values = []) => { discovered = values; expires = Date.now() + 60000; pending = false; };
+      try {
+        const url = new URL(base + "/api/placement");
+        const req = (url.protocol === "https:" ? https : http).get(url, (res) => {
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => { body += chunk; if (body.length > 1048576) req.destroy(); });
+          res.on("error", () => finish());
+          res.on("end", () => {
+            try {
+              const origin = res.statusCode === 200 ? urlOrigin(JSON.parse(body)?.urls?.faustus) : "";
+              finish(origin ? [origin] : []);
+            } catch { finish(); }
+          });
+        });
+        req.setTimeout(2000, () => req.destroy());
+        req.on("error", () => finish());
+      } catch { finish(); }
+    }
+    return [...configured, ...known];
+  };
+}
+
+function isDockNavigation(method, headers) {
+  return String(method).toUpperCase() === "GET" && headers["sec-fetch-site"] === "cross-site"
+    && headers["sec-fetch-mode"] === "navigate" && ["iframe", "frame"].includes(headers["sec-fetch-dest"]);
+}
 
 function authority(value) {
   let text = String(value ?? "").trim().toLowerCase();
@@ -128,7 +176,7 @@ function originOk(origin, port, allowed, devOrigins, strictPorts) {
 }
 
 /** null when the request may proceed, otherwise [status, message] (always 403). `headers` has lowercase names (Node's req.headers). */
-export function checkRequest(method, headers, port = null, allowed = [], { devOrigins = DEV_ORIGINS, strictPorts = false } = {}) {
+export function checkRequest(method, headers, port = null, allowed = [], { devOrigins = DEV_ORIGINS, strictPorts = false, faustusOrigins = [] } = {}) {
   const allowedList = Array.from(allowed);
   if (!isAllowedHost(headers.host, port, allowedList, { strictPorts })) return [403, MSG_HOST];
   const origin = headers.origin;
@@ -136,18 +184,27 @@ export function checkRequest(method, headers, port = null, allowed = [], { devOr
   const site = headers["sec-fetch-site"];
   const mode = headers["sec-fetch-mode"];
   const dest = headers["sec-fetch-dest"];
-  if (site === "cross-site" && (mode !== "navigate" || FRAME_DESTS.has(dest))) return [403, MSG_SITE];
+  const parent = urlOrigin(headers.referer);
+  const dock = isDockNavigation(method, headers) && parent && faustusOrigins.includes(parent);
+  if (site === "cross-site" && (mode !== "navigate" || FRAME_DESTS.has(dest)) && !dock) return [403, MSG_SITE];
   if (mode === "navigate" && !SAFE_METHODS.has(String(method).toUpperCase())) return [403, MSG_FORM];
   return null;
 }
 
 /** Express middleware: 403 { error } when checkRequest() rejects. `port` (a number) or `portGetter` (a function: the port is
  * only known after the port search); `allowedHosts` a list or a comma-separated string (e.g. process.env.LINKS_ALLOWED_HOSTS). */
-export function createGuard({ port = null, portGetter = null, allowedHosts = [], devOrigins = DEV_ORIGINS, strictPorts = false } = {}) {
+export function createGuard({ port = null, portGetter = null, allowedHosts = [], devOrigins = DEV_ORIGINS, strictPorts = false,
+  faustusOrigins = null, faustusUrls = null, hubUrl = null, configPath = null, appId = "app" } = {}) {
   const allowed = parseAllowedHosts(allowedHosts);
+  let parents = faustusOrigins;
   return function guard(req, res, next) {
     const current = portGetter ? Number(portGetter()) || null : port;
-    const verdict = checkRequest(req.method, req.headers, current, allowed, { devOrigins, strictPorts });
+    let origins = [];
+    if (isDockNavigation(req.method, req.headers)) {
+      parents ??= createFaustusOrigins({ faustusUrls, hubUrl, configPath, appId });
+      origins = parents();
+    }
+    const verdict = checkRequest(req.method, req.headers, current, allowed, { devOrigins, strictPorts, faustusOrigins: origins });
     if (verdict) return res.status(verdict[0]).json({ error: verdict[1] });
     next();
   };
