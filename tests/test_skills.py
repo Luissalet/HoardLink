@@ -59,10 +59,9 @@ def test_an_agent_that_connects_gets_them(tmp_path):
     app = FastAPI()
     app.include_router(make_agent_router(tools_fn=lambda: [{"name": "ping", "description": "", "annotations": {"readOnlyHint": True}, "inputSchema": {"type": "object"}}],
                                          call_fn=lambda name, arguments: {"pong": True}, token_fn=lambda: "t", instructions="An app.", app_name="app", skills=shelf))
-    app.include_router(skills.make_router(shelf))
     with TestClient(app) as c:
         listing = c.get("/api/agent/tools").json()
-        assert [t["name"] for t in listing["tools"]] == ["ping", "skills_list", "skill_read", "skills_refresh"]
+        assert [t["name"] for t in listing["tools"]] == ["ping", "skills_list", "skill_read", "skills_refresh", "skills_library", "skills_assign"]
         assert listing["instructions"].startswith("An app.\n\nSkills.") and "- alpha: About alpha." in listing["instructions"]
         assert [s["slug"] for s in listing["skills"]] == ["alpha"]
         auth = {"Authorization": "Bearer t"}
@@ -70,7 +69,11 @@ def test_an_agent_that_connects_gets_them(tmp_path):
         assert c.post("/api/agent/call", json={"name": "skill_read", "arguments": {"slug": "nope"}}, headers=auth).status_code == 404
         assert c.post("/api/agent/call", json={"name": "ping", "arguments": {}}, headers=auth).json() == {"pong": True}
         assert c.post("/api/agent/call", json={"name": "skills_list"}).status_code == 401
-        assert c.get("/api/skills").json()["skills"][0]["slug"] == "alpha"
+        state = c.get("/api/agent/skills").json()
+        assert state["shelf"][0]["slug"] == "alpha" and state["shelf"][0]["why"] == "manifest" and len(state["library_skills"]) == 4
+        assert c.post("/api/agent/skills/assign", json={"slug": "gamma"}).json()["shelf"][1]["why"] == "added"
+        assert c.post("/api/agent/skills/assign", json={"slug": "alpha", "on": False}).json()["shelf"][0]["slug"] == "gamma"
+        assert "__BASE__" not in c.get("/api/agent/skills/page").text
 
 
 def test_an_app_without_skills_is_as_before(tmp_path):
@@ -80,3 +83,40 @@ def test_an_app_without_skills_is_as_before(tmp_path):
     with TestClient(app) as c:
         listing = c.get("/api/agent/tools").json()
         assert listing == {"instructions": "An app.", "tools": [], "app": "app"}
+
+
+def test_the_hub_assigns_skills_to_any_app(tmp_path):
+    from types import SimpleNamespace
+
+    from hoard_link.hub.skills import SkillsFacet
+
+    lib = library(tmp_path)
+    folder = tmp_path / "apps" / "one"
+    (folder / "pkg" / "hoard_link").mkdir(parents=True)
+    for name in ("agentkit.py", "skills.py"):
+        (folder / "pkg" / "hoard_link" / name).write_text("", encoding="utf-8")
+    (folder / "faustus-plugin.json").write_text('{"id": "one", "skills": {"slugs": ["alpha"]}}', encoding="utf-8")
+    bare = tmp_path / "apps" / "two"
+    bare.mkdir()
+    (bare / "faustus-plugin.json").write_text('{"id": "two"}', encoding="utf-8")
+    apps = [SimpleNamespace(id="one", name="One", folder=str(folder), data_dir=str(folder / "data"), manifest_path=str(folder / "faustus-plugin.json"), url="http://127.0.0.1:9"),
+            SimpleNamespace(id="two", name="Two", folder=str(bare), data_dir="", manifest_path=str(bare / "faustus-plugin.json"), url="http://127.0.0.1:9")]
+    facet = SkillsFacet(SimpleNamespace(apps=apps, config=SimpleNamespace(faustus_dir=str(lib))))
+
+    def req(method, path, body=None, **query):
+        from hoard_link.hub.facets import Request
+        return Request(method=method, path=path, query={k: [v] for k, v in query.items()}, body=body or {}, caller=lambda: "ui", agent=lambda: False)
+
+    assert facet.post(req("POST", "/api/skills/refresh"))["changed"] == [{"app": "one", "added": ["alpha"], "updated": [], "removed": []}]
+    rows = {r["id"]: r for r in facet.get(req("GET", "/api/skills/overview"))["apps"]}
+    assert rows["one"]["skills"] == ["alpha"] and rows["one"]["serves"] and rows["two"]["skills"] == [] and not rows["two"]["serves"]
+    out = facet.post(req("POST", "/api/skills/app/two/assign", {"slug": "gamma"}))
+    assert [s["slug"] for s in out["shelf"]] == ["gamma"] and (bare / "data" / "skills" / "gamma" / "SKILL.md").is_file()
+    assert facet.post(req("POST", "/api/skills/app/two/assign", {"slug": "nope"}))["status"] == 404
+    state = facet.get(req("GET", "/api/skills/app/one", q="python"))
+    assert [s["slug"] for s in state["library_skills"]] == ["gamma"] and state["shelf"][0]["why"] == "manifest"
+    assert "Do delta." in facet.get(req("GET", "/api/skills/app/one/read/delta"))["text"]                # not on the shelf: read from the library
+    page = facet.get(req("GET", "/api/skills/page", app="one"))
+    assert b'"/api/skills/app/one"' in page.body and page.content_type.startswith("text/html")
+    assert facet.handlers()["hub_skills_assign"]({"app": "one", "slug": "beta"})["ok"]
+    assert [t["name"] for t in SkillsFacet.tools()] == ["hub_skills_overview", "hub_skills_library", "hub_skills_assign"]

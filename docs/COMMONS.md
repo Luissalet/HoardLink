@@ -96,3 +96,11 @@ called `skill-<slug>`. The copy is what is served, so they are there with Faustu
 when the copy is older than fifteen minutes, and a skill that was improved, added or dropped there follows. The library
 is found through `fam_mail.faustus_dir`. `skills.make_router(shelf)` adds `GET /api/skills`, `GET /api/skills/{slug}`
 and `POST /api/skills/refresh` for the app's own page. `skills=False` turns the whole thing off.
+
+The person chooses on the app's skills page (`/api/agent/skills/page`, mounted by `make_agent_router`): what is on the
+shelf and why (asked by the manifest, added, by affinity), the whole library with search, add, take away, read, refresh
+and a form that writes a new skill into the library. The choices are `<data>/skills/choices.json` (`add`, `remove`).
+Agents have the same through `skills_library` and `skills_assign`. A shelf with nothing on it adds nothing to the
+catalogue. The hub's Skills tab (System) lists every app with what it carries and opens that page for any of them,
+running or not (`hub/skills.py`: `/api/skills/overview`, `/api/skills/page?app=`, `/api/skills/app/<id>/...`,
+`POST /api/skills/refresh`; tools `hub_skills_overview`, `hub_skills_library`, `hub_skills_assign`).

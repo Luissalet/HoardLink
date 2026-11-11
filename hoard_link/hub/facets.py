@@ -49,6 +49,7 @@ FACET_MODULES = (
     "workspace",
     "resources",
     "capabilities",
+    "skills",
     "instances",
     # Must precede AgoraFacet, whose historical /api/agora prefix catches all
     # console routes that it does not recognize.

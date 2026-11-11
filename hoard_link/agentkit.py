@@ -342,7 +342,7 @@ def _with_reason(entry: Mapping[str, Any]) -> dict[str, Any]:
     return {**entry, "inputSchema": schema}
 
 
-_SKILL_TOOLS = ("skills_list", "skill_read", "skills_refresh")
+_SKILL_TOOLS = ("skills_list", "skill_read", "skills_refresh", "skills_library", "skills_assign")
 
 
 def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], call_fn: Callable[..., Any],
@@ -390,10 +390,12 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
       objects, ``tools_fn`` only returns the catalogue). ``ctx_fn(request)`` gives the context those hooks and ``undo`` get
       (default: ``request.app.state.services``).
 
-    * ``skills``: the app's :class:`hoard_link.skills.Shelf`; left out, an app whose ``faustus-plugin.json`` has a ``skills``
-      block gets one by itself (:func:`hoard_link.skills.auto`), and ``skills=False`` turns that off. Its skills are named at the end of the instructions, the
-      catalogue gains ``skills_list`` / ``skill_read`` / ``skills_refresh`` (answered here, never by ``call_fn``) and
-      ``GET /tools`` also returns ``"skills"`` (the MCP bridge offers them as prompts).
+    * ``skills``: the app's :class:`hoard_link.skills.Shelf`; left out, the app gets one by itself from its
+      ``faustus-plugin.json`` (:func:`hoard_link.skills.auto`: the manifest's ``skills`` block plus what the person chose;
+      an empty shelf adds nothing to the catalogue), and ``skills=False`` turns that off. Its skills are named at the end of the instructions, the
+      catalogue gains ``skills_list`` / ``skill_read`` / ``skills_refresh`` / ``skills_library`` / ``skills_assign`` (answered
+      here, never by ``call_fn``), ``GET /tools`` also returns ``"skills"`` (the MCP bridge offers them as prompts) and the
+      app gets its skills page at ``/api/agent/skills/page`` (choose, add, take away, write a new one).
 
     Journal lines, the undo answer and the profile rules are described in ``docs/COMMONS.md`` (section *Accountable agents*)."""
     from fastapi import APIRouter, Request
@@ -431,6 +433,12 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
             skills = None
     elif skills is False:
         skills = None
+    if skills is not None:
+        try:
+            from . import skills as _skills
+            _skills.mount(router, skills, "/skills", title=app_name)      # the app's skills page: /api/agent/skills/page
+        except Exception:  # noqa: BLE001
+            logging.getLogger(f"hoard_link.agent.{app_name}").exception("skills page not mounted")
     handled = (AppError, *tuple(error_types))
     agent_log = logging.getLogger(f"hoard_link.agent.{app_name}")
     tool_index: dict[str, Tool] = dict(_index(tools)) if tools is not None else {}
@@ -506,10 +514,11 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
         if skills is not None:
             try:
                 carried = skills.list()
-                taken = {str(entry.get("name")) for entry in listing if isinstance(entry, Mapping)}
-                listing += [entry for entry in skills.catalog() if entry["name"] not in taken]
-                extra = skills.instructions()
-                text = (text or "") + (("\n\n" if text else "") + extra if extra else "")
+                if carried:                                # an app that carries none shows nothing of this to its agents
+                    taken = {str(entry.get("name")) for entry in listing if isinstance(entry, Mapping)}
+                    listing += [entry for entry in skills.catalog() if entry["name"] not in taken]
+                    extra = skills.instructions()
+                    text = (text or "") + (("\n\n" if text else "") + extra if extra else "")
             except Exception:  # noqa: BLE001 - the skills never take the tools down with them
                 agent_log.exception("skills shelf failed")
         if reasons:
@@ -521,7 +530,7 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
         out: dict[str, Any] = {"instructions": text, "tools": listing, "app": app_name}
         if reasons:
             out["reasons_required"] = True
-        if skills is not None:
+        if carried:
             out["skills"] = carried
         return out
 

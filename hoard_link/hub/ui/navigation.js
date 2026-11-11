@@ -32,7 +32,7 @@
     {id: 'apps', label: ['Aplicaciones', 'Applications'], description: ['Abre una aplicación o gestiona sus grupos de arranque.', 'Open an app or manage startup groups.']},
     {id: 'communication', label: ['Bandeja', 'Inbox'], defaultView: 'notify', facets: ['notify', 'mailgate', 'chats', 'refs', 'search'], description: ['Avisos, correo, chats y enlaces de la familia.', 'Family notifications, mail, chats and links.']},
     {id: 'automation', label: ['Automatización', 'Automation'], facets: ['jobs', 'rules', 'work', 'purchases'], description: ['Trabajos, reglas, tareas programadas y compras.', 'Work, rules, scheduled jobs and purchases.']},
-    {id: 'system', label: ['Sistema', 'System'], defaultView: 'resources', facets: ['resources', 'services', 'capabilities', 'agent_sessions', 'repos', 'events', 'backups', 'audit', 'web'], description: ['Recursos, servidores y mantenimiento del entorno compartido.', 'Resources, servers and shared environment maintenance.']},
+    {id: 'system', label: ['Sistema', 'System'], defaultView: 'resources', facets: ['resources', 'services', 'capabilities', 'skills', 'agent_sessions', 'repos', 'events', 'backups', 'audit', 'web'], description: ['Recursos, servidores y mantenimiento del entorno compartido.', 'Resources, servers and shared environment maintenance.']},
   ];
   const descriptions = {
     notify: ['Avisos de tus aplicaciones, con filtros de estado y esfera.', 'Notifications from your apps, filtered by state and sphere.'],
@@ -44,6 +44,7 @@
     purchases: ['Compras, pedidos y su estado a lo largo del proceso.', 'Purchases, orders and their progress.'],
     services: ['Comprueba qué aplicación ofrece cada servicio compartido.', 'Check which application supplies each shared service.'],
     capabilities: ['Encuentra herramientas disponibles y sus requisitos.', 'Find available tools and their requirements.'],
+    skills: ['Elige qué procedimientos de la biblioteca de skills lleva cada aplicación para sus agentes.', 'Choose which procedures of the skill library each application carries for its agents.'],
     agent_sessions: ['Consulta las escrituras de los agentes y sus motivos.', 'Review agent writes and their reasons.'],
     web: ['Leer páginas y buscar en la web con los servicios configurados.', 'Read pages and search the web using configured services.'],
     resources: ['GPU, reservas y carriles de navegador.', 'GPUs, leases and browser lanes.'],
