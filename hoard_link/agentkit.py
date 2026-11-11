@@ -513,11 +513,11 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
         carried: list[Any] = []
         if skills is not None:
             try:
-                carried = skills.list()
+                carried = skills.list(refresh=False)      # listing the tools reads the copy; it never looks up or writes
                 if carried:                                # an app that carries none shows nothing of this to its agents
                     taken = {str(entry.get("name")) for entry in listing if isinstance(entry, Mapping)}
                     listing += [entry for entry in skills.catalog() if entry["name"] not in taken]
-                    extra = skills.instructions()
+                    extra = skills.instructions(carried)
                     text = (text or "") + (("\n\n" if text else "") + extra if extra else "")
             except Exception:  # noqa: BLE001 - the skills never take the tools down with them
                 agent_log.exception("skills shelf failed")
@@ -580,6 +580,8 @@ def make_agent_router(*, tools_fn: Callable[..., Sequence[Mapping[str, Any]]], c
                 except Exception:  # noqa: BLE001 - the call itself reports a bad argument; no snapshot means no undo
                     capture_failed = True
             outcome["ran"] = True
+            if skills is not None:
+                skills.refresh_soon()                      # an agent at work: time to look at the library again
             if skills is not None and body.name in _SKILL_TOOLS and tool_index.get(body.name) is None:
                 result = await run_in_threadpool(skills.call, body.name, arguments)
                 outcome["ok"] = True

@@ -57,6 +57,8 @@ def test_shelf_takes_named_then_closest_and_follows_the_library(tmp_path):
 def test_an_agent_that_connects_gets_them(tmp_path):
     shelf = skills.Shelf("app", tmp_path / "data", {"slugs": ["alpha"]}, library=str(library(tmp_path)))
     app = FastAPI()
+    assert shelf.list(refresh=False) == [] and not (tmp_path / "data").exists()         # only reading: nothing looked up, nothing written
+    shelf.refresh(force=True)
     app.include_router(make_agent_router(tools_fn=lambda: [{"name": "ping", "description": "", "annotations": {"readOnlyHint": True}, "inputSchema": {"type": "object"}}],
                                          call_fn=lambda name, arguments: {"pong": True}, token_fn=lambda: "t", instructions="An app.", app_name="app", skills=shelf))
     with TestClient(app) as c:

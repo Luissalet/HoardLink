@@ -285,9 +285,27 @@ class Shelf:
         return names
 
     # ----- reading
-    def list(self) -> list[dict[str, Any]]:
-        """The skills on the shelf: ``{slug, name, description, version, category, tags, why, files}``."""
-        self.refresh()
+    def refresh_soon(self) -> None:
+        """Bring the shelf up to date in the background when its copy is old (never blocks, never raises)."""
+        if time.monotonic() - self._checked < self.max_age_s or getattr(self, "_busy", False):
+            return
+        self._busy = True
+
+        def go() -> None:
+            try:
+                self.refresh()
+            except Exception:  # noqa: BLE001
+                log.exception("skills refresh failed")
+            finally:
+                self._busy = False
+
+        threading.Thread(target=go, daemon=True, name=f"skills-{self.app}").start()
+
+    def list(self, refresh: bool = True) -> list[dict[str, Any]]:
+        """The skills on the shelf: ``{slug, name, description, version, category, tags, why, files}``. ``refresh=False``
+        only reads the copy: nothing is looked up or written (what listing an app's tools does)."""
+        if refresh:
+            self.refresh()
         keys = ("slug", "name", "description", "version", "category", "tags", "why", "files")
         return [{k: s.get(k) for k in keys} for s in self._index()["skills"] if isinstance(s, dict)]
 
@@ -333,8 +351,8 @@ class Shelf:
                 "wants": {k: self.wants.get(k) for k in ("slugs", "tags", "categories", "limit") if self.wants.get(k)}, "choices": self.choices()}
 
     # ----- what an agent sees
-    def instructions(self) -> str:
-        rows = self.list()
+    def instructions(self, rows: Optional[list[dict[str, Any]]] = None) -> str:
+        rows = self.list() if rows is None else rows
         if not rows:
             return ""
         lines = ["Skills. This app carries procedures from the family's skill library for the work it does. Before a task one of "
