@@ -3199,6 +3199,7 @@ _CHECKPOINT_SCHEMA = _schema({
 
 
 TOOLS: list[dict[str, Any]] = [
+    agora_live.TOOL,
     {"name": "hub_agora_activity", "read": True,
      "description": "Task progress evidence: task notes/checkpoints versus heartbeat and agent observation. Read-only inference; never changes status or wakes agents.",
      "inputSchema": _schema({"task_id": _TASK, "idle_after_s": {"type": "integer", "minimum": 60, "maximum": 604800}}, ["task_id"])},
@@ -3900,7 +3901,7 @@ class AgoraFacet(Facet):
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
         out = []
-        for t in [*TOOLS, *agent_watch.TOOLS, agora_live.TOOL]:
+        for t in [*TOOLS, *agent_watch.TOOLS]:
             d = {k: v for k, v in t.items() if k != "read"}
             d["annotations"] = {"readOnlyHint": bool(t.get("read"))}
             out.append(d)
