@@ -395,16 +395,16 @@ class CatalogBridge:
         return self._catalog
 
     def _shelf(self) -> Any:
-        """The app's skills shelf as this bridge reads it from the app's data folder (None when there is no manifest, under
+        """The app's skills shelf as this bridge reads it from the folder its token is in (None when there is no manifest, under
         pytest, or with HOARD_SKILLS=0). It only reads: the app and the hub keep the copies."""
         if self._shelf_obj is None:
             self._shelf_obj = False
             try:
                 from . import skills as _skills
-                manifest = self.root / "faustus-plugin.json"
+                manifest = next((p / "faustus-plugin.json" for p in (self.root, *list(self.root.parents)[:2]) if (p / "faustus-plugin.json").is_file()), None)
                 off = "pytest" in sys.modules or os.environ.get("HOARD_SKILLS", "1").strip().lower() in ("0", "false", "no", "off")
-                if manifest.is_file() and not off:
-                    self._shelf_obj = _skills.Shelf(self.app, lambda: self.data_dir, _skills.wants_of(manifest), max_age_s=float("inf"))
+                if manifest is not None and not off:
+                    self._shelf_obj = _skills.Shelf(self.app, lambda: Path(self._token_path()).parent, _skills.wants_of(manifest), max_age_s=float("inf"))
                     self._shelf_obj._checked = time.monotonic()        # never looks the library up from here
             except Exception:  # noqa: BLE001
                 self._shelf_obj = False
