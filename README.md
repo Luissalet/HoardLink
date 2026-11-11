@@ -1235,3 +1235,7 @@ Agora provides persistent project spaces, conversations, deliberations, tasks an
 Completed copilot tools notify host views immediately, while the turn continues.
 Hosts may provide `hoardCopilot.onChange`; existing refresh callbacks remain
 compatible. See [live copilot updates](docs/copilot-live-refresh.md).
+
+## Skills
+
+The `skills` block of `faustus-plugin.json` names the procedures of the family's skill library that fit this app's work: `hoard-daily-digest`, `hoard-family-recap`, `hoard-what-happened`, `hoard-meeting-prep`, `team-agent-orchestration`. The hub's Skills tab shows and changes them. This app does not hand them to connecting agents yet.
