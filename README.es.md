@@ -1,5 +1,10 @@
 # Hoard Hub
 
+Sistema → Skills → Ver flujos muestra los procedimientos de agente de cada app,
+con disparador, pasos, salidas esperadas y lectura de la skill completa. Usa la
+estantería actual sin arrancar aplicaciones. También está disponible por MCP
+con `hub_agent_flows` y en [la API del catálogo](docs/AGENT-FLOWS.md).
+
 Hoard Hub es el centro de escritorio de la familia y la casa de Hoard Link, la
 librería pequeña (`hoard_link`) que cada aplicación lleva copiada; las dos viven
 en este repositorio.
