@@ -147,6 +147,46 @@ def test_switch_refuses_unknown_targets_and_a_second_move(tmp_path):
         hub.close()
 
 
+def test_switch_uses_configured_node_and_retains_live_source(tmp_path, monkeypatch):
+    hub = _hub(tmp_path)
+    pl = hub.placement
+    monkeypatch.setattr(pl, "_configured_sparks", lambda: [{"name": "Spark4", "ssh": "Spark4Asus", "host": "spark4.local"}])
+    seen = []
+    monkeypatch.setattr(pl, "_run_switch", lambda to: seen.append((to, pl._node())))
+    try:
+        assert "Spark4" in pl.status()["nodes"]
+        assert not pl.switch("sparks", "unconfigured")["ok"]
+        pl._update(deployed={"faustus": "old"}, location="sparks")
+        assert not pl.switch("sparks", "Spark4")["ok"]
+        assert pl._node() == "Spark3"
+        pl._update(location="pc")
+        assert pl.switch("sparks", "Spark4")["ok"]
+        pl._thread.join(timeout=2)
+        assert seen == [("sparks", "Spark4Asus")]
+        assert pl.state()["deployed"] == {}
+        assert pl.status()["job"]["node"] == "Spark4"
+    finally:
+        hub.close()
+
+
+def test_unchanged_folders_skip_transfer_in_both_directions(tmp_path, monkeypatch):
+    hub = _hub(tmp_path)
+    pl = hub.placement
+    local = tmp_path / "source"
+    for name in ("one", "two", "three"):
+        _write(local / name, name)
+    monkeypatch.setattr(pl, "_remote", lambda _: pr.manifest(str(local), []))
+    writes = []
+    monkeypatch.setattr(pl, "_put_text", lambda path, text: writes.append(path))
+    try:
+        assert pl._push_dir(local, "~/source", [])["bytes"] == 0
+        assert pl._pull_dir("source", local, "~/source", [], tmp_path / "trash")["bytes"] == 0
+        assert writes == ["~/faustus-stack/excludes.json"] * 2
+        assert not (tmp_path / "trash").exists()
+    finally:
+        hub.close()
+
+
 def test_a_switch_cut_short_by_a_hub_restart_is_reported_not_left_running(tmp_path):
     from hoard_link.hub.placement import Placement
     hub = _hub(tmp_path)

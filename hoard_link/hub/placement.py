@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -138,7 +139,7 @@ class Placement:
             self._refresh_urls_later()
         out = {"ok": True, "location": data["location"], "node": data["node"]["name"], "since": data.get("since"),
                "job": data.get("job"), "apps": list(APPS), "urls": data.get("urls") or {},
-               "paused_on_spark": PAUSED_ON_SPARK, "nodes": ["Spark3"]}
+               "paused_on_spark": PAUSED_ON_SPARK, "nodes": list(self._placement_nodes(data["node"]))}
         if data["location"] == "sparks" and not (data.get("job") or {}).get("running"):
             out["remote"] = self.remote_health()
             out["hub_link"] = self.link.status()
@@ -363,15 +364,31 @@ class Placement:
         self._put_text(f"{STACK}/prometheus-ssh/config", self._prometheus_ssh_config())
         return list(self._remote(f"units {STACK}") or [])
 
-    def _prometheus_ssh_config(self) -> str:
-        """Prometheus's own SSH config on the Spark (``PROMETHEUS_SSH_DIR``): the same node aliases as on this PC, each with
-        its address from Prometheus's settings and the key every Spark accepts. The Spark's own ~/.ssh/config is not touched."""
+    def _configured_sparks(self) -> list[dict[str, str]]:
+        app = self.hub.get("prometheus")
+        if app is None or not getattr(app, "folder", None):
+            return []
         try:
-            nodes = json.loads((self.local_dirs()["prometheus"] / "data" / "settings.json").read_text(encoding="utf-8")).get("nodes") or []
-        except (OSError, ValueError, PlacementError):
-            nodes = []
+            data = json.loads((Path(app.folder) / "data" / "settings.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        nodes = data.get("nodes") if isinstance(data, dict) else None
+        return [node for node in nodes if isinstance(node, dict)] if isinstance(nodes, list) else []
+
+    def _placement_nodes(self, current: dict[str, str]) -> dict[str, dict[str, str]]:
+        choices = {DEFAULT_NODE["name"]: dict(DEFAULT_NODE)}
+        for node in self._configured_sparks():
+            alias = str(node.get("ssh") or "").strip()
+            name = str(node.get("name") or alias).strip()
+            if re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", alias) and name:
+                choices[name] = {"name": name, "ssh": alias, "host": str(node.get("host") or "").strip()}
+        choices[current["name"]] = current
+        return choices
+
+    def _prometheus_ssh_config(self) -> str:
+        """Write Prometheus's own SSH configuration without changing ~/.ssh/config on the Spark."""
         lines = ["# written by the Hoard Hub (placement): how Prometheus reaches the Sparks from here", ""]
-        for node in nodes:
+        for node in self._configured_sparks():
             alias, host = str(node.get("ssh") or "").strip(), str(node.get("host") or "").strip()
             if alias and host and " " not in alias:
                 lines += [f"Host {alias}", f"  Hostname {host}", ""]
@@ -394,6 +411,8 @@ class Placement:
         big = [r for r in changed if r in theirs and mine[r][0] >= pr.BIG_FILE and theirs[r][0] >= pr.BIG_FILE]
         sent = sum(self._push_blocks(local / r, f"{remote}/{shlex.quote(r)}", mine[r]) for r in big)
         changed = [r for r in changed if r not in big]
+        if not changed and not deleted:
+            return {"copied": len(big), "removed": 0, "bytes": sent}
         self._put_text(f"{STACK}/deleted.json", json.dumps(deleted))
         proc = self._stream(f"python3 {REMOTE_HELPER} apply {remote} - {STACK}/deleted.json")
         try:
@@ -447,6 +466,8 @@ class Placement:
         big = [r for r in changed if r in mine and mine[r][0] >= pr.BIG_FILE and theirs[r][0] >= pr.BIG_FILE]
         got = sum(self._pull_blocks(local / r, f"{remote}/{shlex.quote(r)}", theirs[r]) for r in big)
         changed = [r for r in changed if r not in big]
+        if not changed and not deleted:
+            return {"copied": len(big), "removed": 0, "bytes": got, "extracted": 0, "skipped": 0, "skipped_files": []}
         self._put_text(f"{STACK}/files.json", json.dumps(changed))
         proc = subprocess.Popen(["ssh", *SSH_OPTS, self._node(), f"python3 {REMOTE_HELPER} pack {remote} {STACK}/files.json -"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=_flags())
@@ -547,18 +568,31 @@ class Placement:
             self._log(f"no he podido enviar el aviso: {exc}")
 
     # ================================================================================= the switch
-    def switch(self, to: str) -> dict[str, Any]:
+    def switch(self, to: str, node: str = "") -> dict[str, Any]:
         if to not in ("pc", "sparks"):
             return {"ok": False, "error": "destino desconocido (pc | sparks)"}
         with self._lock:
             data = self.state()
             if (data.get("job") or {}).get("running"):
                 return {"ok": False, "error": "ya hay un traslado en marcha", "job": data["job"]}
+            if node and to != "sparks":
+                return {"ok": False, "error": "solo se puede elegir una Spark al mover los servicios a una Spark"}
+            if node:
+                target = self._placement_nodes(data["node"]).get(node)
+                if target is None:
+                    return {"ok": False, "error": f"Spark no configurada: {node}"}
+                if target["ssh"] != data["node"]["ssh"]:
+                    if data["location"] == "sparks":
+                        return {"ok": False, "error": "vuelve al PC antes de elegir otra Spark"}
+                    data.update(node=target, deployed={}, urls={})
+                    self._remote_health = None
             if data["location"] == to == "pc" and (data.get("job") or {}).get("ok", True):
                 return {"ok": True, "already": True, "location": to}
             # Already on the Spark: "move there" again brings the PC's newer code (and dependencies) over and restarts
             # only the apps whose code changed. Their data stays where it is.
             data["job"] = {"running": True, "to": to, "started": time.time(), "step": "preparando", "log": [], "error": ""}
+            if to == "sparks":
+                data["job"]["node"] = data["node"]["name"]
             self._save(data)
         self._thread = threading.Thread(target=self._run_switch, args=(to,), name=THREAD_NAME, daemon=True)
         self._thread.start()
@@ -630,13 +664,11 @@ class Placement:
             raise PlacementError(f"la Spark solo tiene {gb:.1f} GB libres (hacen falta {MIN_FREE_GB:.0f}); no muevo nada")
 
     def _wait_remote_health(self, timeout: float = 300) -> dict[str, bool]:
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         ok = {a: False for a in APPS}
-        while time.time() < deadline and not all(ok.values()):
-            for app_id, port in PORTS.items():
-                if not ok[app_id]:
-                    code = self._ssh(f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 5 http://127.0.0.1:{port}{HEALTH[app_id]} || true").strip()
-                    ok[app_id] = code.startswith(("2", "3")) or code in ("401", "403")
+        while time.monotonic() < deadline and not all(ok.values()):
+            health = self._parse_health(self._ssh(self._health_command(), timeout=30))
+            ok = {app_id: bool(health.get(app_id, {}).get("healthy")) for app_id in APPS}
             if not all(ok.values()):
                 time.sleep(5)
         return ok

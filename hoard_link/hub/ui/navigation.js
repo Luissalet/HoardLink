@@ -232,7 +232,15 @@
     const launches=node('div','hub-launch-grid');
     if(window.HubStatus)window.HubStatus.launcher(launches);else for(const app of apps)launches.append(appLaunch(app));
     appArea.append(launches);container.append(appArea);
-    const footer=node('div','hub-home-footer');footer.append(link(tr('Programar una acción','Schedule an action'),'#hub/jobs'),link(tr('Estado del entorno','Environment status'),'#hub/system'),link(tr('Ayuda y ajustes','Help and settings'),'#hub/help'));container.append(footer);
+    const footer=node('div','hub-home-footer');
+    const commonAgora = new URL(location.href);
+    commonAgora.searchParams.set('space_id', 'ecosystem');
+    commonAgora.hash = 'agora';
+    footer.append(link(tr('Ágora común','Shared Agora'), commonAgora.href),
+      link(tr('Programar una acción','Schedule an action'),'#hub/jobs'),
+      link(tr('Estado del entorno','Environment status'),'#hub/system'),
+      link(tr('Ayuda y ajustes','Help and settings'),'#hub/help'));
+    container.append(footer);
     if(!homeData && !homeLoading && !homeError)loadHome();
   }
   function projectOverview(container) {
