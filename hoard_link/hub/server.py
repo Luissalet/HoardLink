@@ -20,7 +20,7 @@ GET  /api/apps/<id>/log        last lines of its log
 POST /api/apps/<id>/start|stop|restart|open|close-windows|folder
 POST /api/apps/start-all | stop-all | rescan
 GET  /api/placement            where Faustus, Hermes and Prometheus run (pc | sparks), the switch in progress and its log
-POST /api/placement/switch     {"to": "pc" | "sparks"} -> moves the three (never running on both at once)
+POST /api/placement/switch     {"to": "pc" | "sparks", "node": "Spark2" (optional)} -> moves the three
 GET  /api/backends             what Hoard Link resolves right now
 GET  /api/memory               what each GPU holds and which server holds it
 GET  /api/services             local backend servers (ComfyUI, Ollama, configured) and who started them
@@ -696,7 +696,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 res = hub.faustus_start() if path.endswith("/start") else hub.faustus_stop()
                 return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/placement/switch":
-                res = hub.placement.switch(str(body.get("to") or ""))
+                res = hub.placement.switch(str(body.get("to") or ""), str(body.get("node") or ""))
                 return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/apps/start-all":
                 return self._json(hub.start_all())

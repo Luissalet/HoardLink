@@ -75,8 +75,10 @@ def catalogue() -> list[dict[str, Any]]:
             "name": "hub_placement_switch",
             "description": "Move Faustus, Hermes and Prometheus to the Spark (PC can be switched off) or back to this PC.\n"
                            "Stops them on one side, copies code and data, starts them on the other; takes minutes, follow it "
-                           "with hub_placement_status. Keywords: ejecutar en las Sparks, volver al PC, mover Faustus.",
-            "inputSchema": {"type": "object", "properties": {"to": {"type": "string", "enum": ["pc", "sparks"]}},
+                           "with hub_placement_status. Set node to one of its nodes when moving from the PC to a Spark. "
+                           "Keywords: ejecutar en las Sparks, volver al PC, mover Faustus.",
+            "inputSchema": {"type": "object", "properties": {"to": {"type": "string", "enum": ["pc", "sparks"]},
+                                                               "node": {"type": "string"}},
                             "required": ["to"], "additionalProperties": False},
         },
         {
@@ -737,7 +739,7 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_faustus_start": lambda a: hub.faustus_start(automatic=bool(a.get("_automatic"))),
         "hub_faustus_stop": lambda _: hub.faustus_stop(),
         "hub_placement_status": lambda _: hub.placement.status(),
-        "hub_placement_switch": lambda a: hub.placement.switch(str(a.get("to") or "")),
+        "hub_placement_switch": lambda a: hub.placement.switch(str(a.get("to") or ""), str(a.get("node") or "")),
         "hub_start_app": lambda a: hub.start(str(a.get("app", "")), wait=bool(a.get("wait", True)), automatic=bool(a.get("_automatic"))),
         "hub_stop_app": lambda a: hub.stop(str(a.get("app", ""))),
         "hub_restart_app": lambda a: hub.restart(str(a.get("app", "")), automatic=bool(a.get("_automatic"))),

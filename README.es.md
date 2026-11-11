@@ -711,12 +711,17 @@ Mientras están en la Spark el Hub se niega a arrancarlos aquí (a mano, automá
 perfil), y sus propios lanzadores del PC también (`<faustus>/data/runtime/placement.json`,
 `<app>/data/placement-elsewhere.json`). La vuelta para los servicios de la Spark, trae los datos del mismo modo (lo que el
 PC perdería va a `data/placement-trash/<cuándo>/`, se guardan los tres últimos; no se trae nada si la copia de la Spark
-parece incompleta), restaura los ajustes del PC, quita las marcas y los arranca aquí.
+parece incompleta), restaura los ajustes del PC, quita las marcas y los arranca aquí. El Hub omite la transferencia
+de carpetas sin cambios y comprueba los tres servicios remotos en una conexión SSH por consulta.
+
+Cuando las apps están en el PC, el botón de Spark permite elegir una de las máquinas configuradas en Prometheus.
+La flecha de la cabecera usa la última Spark elegida. Para cambiar de Spark, primero hay que volver al PC.
 
 En pausa mientras están en la Spark: la vigilancia de ventanas abiertas del navegador de Hermes (necesita Windows; esos
 objetivos esperan en silencio en vez de pedir ayuda), el control de tu navegador real y del escritorio de Windows desde
 Faustus, los modelos de Ollama de este PC y los servidores MCP que solo existen en Windows. API: `GET /api/placement`,
-`POST /api/placement/switch {"to": "pc"|"sparks"}`. Herramientas: `hub_placement_status`, `hub_placement_switch`. Estado
+`POST /api/placement/switch` con `to` igual a `pc` o `sparks` y el campo opcional `node` para la Spark de destino.
+Herramientas `hub_placement_status` y `hub_placement_switch`. Estado
 en `data/placement.json`; la mitad de la Spark es `hoard_link/hub/placement_remote.py` (solo biblioteca estándar).
 
 Mientras están en la Spark, el Hub pregunta allí cada 30 s (por SSH, en segundo plano: la página nunca espera) si cada
