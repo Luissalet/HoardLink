@@ -21,6 +21,7 @@ import urllib.request
 from typing import Any, Optional
 
 from .. import skills
+from .. import agent_flows
 from .facets import Facet, Reply, Request
 
 
@@ -90,6 +91,18 @@ class SkillsFacet(Facet):
         return {"ok": True, "changed": out, "apps": len(self.hub.apps)}
 
     # ----- routes
+    def flows(self, app_id: str = "", query: str = "") -> dict[str, Any]:
+        if app_id and self._app(app_id) is None:
+            return {"ok": False, "status": 404, "error": "unknown app"}
+        apps = []
+        for app in sorted(self.hub.apps, key=lambda a: a.name.lower()):
+            if app_id and app.id != app_id:
+                continue
+            flows = agent_flows.catalogue(self._shelf(app), base=f"/api/skills/app/{app.id}", query=query)
+            apps.append({"id": app.id, "name": app.name, "flows": flows, "count": len(flows),
+                         "shelf_url": "/api/skills/page?app=" + app.id})
+        return {"ok": True, "apps": apps, "kind": "written_procedures", "executed": False}
+
     def _route(self, req: Request) -> Optional[tuple[Any, str]]:
         parts = req.path.split("/")                        # ['', 'api', 'skills', 'app', ID, ...]
         if len(parts) < 5 or parts[:4] != ["", "api", "skills", "app"]:
@@ -100,6 +113,8 @@ class SkillsFacet(Facet):
         return app, "/".join(parts[5:])
 
     def get(self, req: Request) -> Any:
+        if req.path == "/api/skills/flows":
+            return self.flows(str(req.q("app") or ""), str(req.q("q") or ""))
         if req.path == "/api/skills/overview":
             return self.overview()
         if req.path == "/api/skills/page":
@@ -158,6 +173,9 @@ class SkillsFacet(Facet):
     def tools(cls) -> list[dict[str, Any]]:
         read_only = {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False}
         return [
+            {"name": "hub_agent_flows", "annotations": read_only,
+             "inputSchema": {"type": "object", "properties": {"app": {"type": "string"}, "query": {"type": "string"}}},
+             "description": "Written agent flows per app, from its current skill shelf: trigger, full steps, outputs when declared, verification, version and source hash. Does not execute flows or start apps."},
             {"name": "hub_skills_overview", "annotations": read_only, "inputSchema": {"type": "object", "properties": {}},
              "description": "Which procedures of the family's skill library each app carries for the agents that connect to it "
                             "(app, skills, whether its manifest asks for any, whether the app serves them)."},
@@ -207,7 +225,8 @@ class SkillsFacet(Facet):
             except (KeyError, ValueError) as error:
                 return {"ok": False, "error": str(error.args[0]) if error.args else str(error)}
 
-        return {"hub_skills_overview": lambda a: self.overview(), "hub_skills_library": library, "hub_skill_read": read, "hub_skills_assign": assign}
+        return {"hub_agent_flows": lambda a: self.flows(str(a.get("app") or ""), str(a.get("query") or "")),
+                "hub_skills_overview": lambda a: self.overview(), "hub_skills_library": library, "hub_skill_read": read, "hub_skills_assign": assign}
 
 
 _HANDS_OUT = ("family_skills", "installSkills", "skillCall", "skills_list")

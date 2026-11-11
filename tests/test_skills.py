@@ -125,7 +125,7 @@ def test_the_hub_assigns_skills_to_any_app(tmp_path):
     page = facet.get(req("GET", "/api/skills/page", app="one"))
     assert b'"/api/skills/app/one"' in page.body and page.content_type.startswith("text/html")
     assert facet.handlers()["hub_skills_assign"]({"app": "one", "slug": "beta"})["ok"]
-    assert [t["name"] for t in SkillsFacet.tools()] == ["hub_skills_overview", "hub_skills_library", "hub_skill_read", "hub_skills_assign"]
+    assert [t["name"] for t in SkillsFacet.tools()] == ["hub_agent_flows", "hub_skills_overview", "hub_skills_library", "hub_skill_read", "hub_skills_assign"]
     assert "Do alpha." in facet.handlers()["hub_skill_read"]({"app": "one", "slug": "alpha"})["text"]
     assert not facet.handlers()["hub_skill_read"]({"app": "one", "slug": "nope"})["ok"]
 
