@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import urllib.request
 from typing import Any, Optional
@@ -165,6 +166,12 @@ class SkillsFacet(Facet):
                  "app": {"type": "string", "description": "App id."}, "query": {"type": "string", "description": "Words to look for in slug, description and tags."}}},
              "description": "The skill library as one app sees it: every skill with whether that app carries it (`on`) and why. Use it to "
                             "choose what to assign."},
+            {"name": "hub_skill_read", "annotations": read_only,
+             "inputSchema": {"type": "object", "required": ["app", "slug"], "properties": {
+                 "app": {"type": "string", "description": "App id."}, "slug": {"type": "string", "description": "A skill that app carries (hub_skills_overview names them)."},
+                 "file": {"type": "string", "description": "One of the skill's reference files; empty = the procedure itself."}}},
+             "description": "One of an app's skills in full: the procedure to follow with that app's tools, its pitfalls and how to verify the "
+                            "result. Works for every app, running or not, also the ones whose own bridge does not hand skills out."},
             {"name": "hub_skills_assign", "annotations": {"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False, "openWorldHint": False},
              "inputSchema": {"type": "object", "required": ["app", "slug"], "properties": {
                  "app": {"type": "string", "description": "App id."}, "slug": {"type": "string", "description": "Skill slug in the library."},
@@ -191,21 +198,67 @@ class SkillsFacet(Facet):
             self._poke(app)
             return {"ok": True, **out}
 
-        return {"hub_skills_overview": lambda a: self.overview(), "hub_skills_library": library, "hub_skills_assign": assign}
+        def read(a: dict[str, Any]) -> Any:
+            app = self._app(str(a.get("app") or ""))
+            if app is None:
+                return {"ok": False, "error": "unknown app", "apps": [x.id for x in self.hub.apps]}
+            try:
+                return {"ok": True, "app": app.id, **self._shelf(app).read(str(a.get("slug") or ""), str(a.get("file") or ""))}
+            except (KeyError, ValueError) as error:
+                return {"ok": False, "error": str(error.args[0]) if error.args else str(error)}
+
+        return {"hub_skills_overview": lambda a: self.overview(), "hub_skills_library": library, "hub_skill_read": read, "hub_skills_assign": assign}
+
+
+_HANDS_OUT = ("family_skills", "installSkills", "skillCall", "skills_list")
+
+
+def _shared_bridge(folder: str) -> bool:
+    """Whether the app's copy of the shared bridge hands out the shelf."""
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d not in (".venv", "venv", "node_modules", ".git", "build", "dist", "data", "__pycache__", "runtime")]
+        if os.path.basename(root) == "hoard_link" and "bridge.py" in files:
+            try:
+                with open(os.path.join(root, "bridge.py"), encoding="utf-8") as fh:
+                    return "skills.py" in files and "_own_skills" in fh.read()
+            except OSError:
+                return False
+        if root.count(os.sep) - folder.count(os.sep) >= 3:
+            dirs[:] = []
+    return False
 
 
 def _serves(app: Any) -> bool:
-    """Whether an agent that connects to the app is handed its skills: its copy of the shared bridge does it."""
-    for root, dirs, files in os.walk(app.folder):
-        dirs[:] = [d for d in dirs if d not in (".venv", "venv", "node_modules", ".git", "build", "dist", "data", "__pycache__", "runtime")]
-        if os.path.basename(root) == "hoard_link" and "bridge.py" in files:
-            if "skills.py" not in files:
-                return False
-            try:
-                with open(os.path.join(root, "bridge.py"), encoding="utf-8") as fh:
-                    return "_own_skills" in fh.read()
-            except OSError:
-                return False
-        if root.count(os.sep) - app.folder.count(os.sep) >= 3:
-            dirs[:] = []
-    return False
+    """Whether an agent that connects to the app is handed its skills: the program its manifest starts as MCP server is
+    read, and it either is the shared bridge (Python or Node) in a copy that does it, or does it itself."""
+    try:
+        with open(app.manifest_path, encoding="utf-8-sig") as fh:
+            args = [str(a) for a in ((json.load(fh).get("mcp") or {}).get("args") or [])]
+    except (OSError, ValueError, AttributeError):
+        return False
+    entry = ""
+    for i, arg in enumerate(args):
+        if arg == "-m" and i + 1 < len(args):
+            entry = os.path.join(app.folder, *args[i + 1].split(".")) + ".py"
+            break
+        found = re.search(r"\}[/\\]([\w./\\ -]+\.(?:py|mjs|js))$", arg)
+        if found:
+            entry = os.path.join(app.folder, *re.split(r"[/\\]", found.group(1)))
+            break
+    sources = []
+    for path in (entry, os.path.join(os.path.dirname(entry), "server.mjs")) if entry else ():
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                sources.append(fh.read())
+        except OSError:
+            pass
+    text = "\n".join(sources)
+    if "CatalogBridge" in text:
+        return _shared_bridge(app.folder)
+    if "createBridge" in text:
+        try:
+            with open(os.path.join(app.folder, "server", "hoard-commons", "express.js"), encoding="utf-8") as fh:
+                return "installSkills" in fh.read()
+        except OSError:
+            return False
+    return any(mark in text for mark in _HANDS_OUT)
