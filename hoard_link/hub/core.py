@@ -475,6 +475,12 @@ class Hub:
             with lock:
                 if self.automation_blocked(app_id):
                     return {"ok": False, "error": "manually stopped; start it explicitly to resume"}
+                busy = self.work_in_progress(app)
+                if busy:
+                    # A watchdog or a rule never cuts a job in half: the app says what it is doing and the restart waits
+                    # for the next look (an explicit restart still goes through).
+                    return {"ok": True, "app": app_id, "skipped": True, "busy": busy,
+                            "reason": "work in progress; not restarted automatically"}
                 stopped = self._stop_app(app)
                 if not stopped.get("ok"):
                     return stopped
@@ -488,6 +494,23 @@ class Hub:
         started = self.start(app_id, automatic=automatic)
         started["stopped"] = stopped
         return started
+
+    @staticmethod
+    def work_in_progress(app: App) -> Optional[dict[str, Any]]:
+        """What the app reports as work in progress in its own ``/api/health`` (``busy``), or None.
+
+        An app that is mid-job (a video digest, a download) says so there; a supervisor that restarts it would throw that
+        work away. Only the app's own answer counts: an app that does not report ``busy`` is never held back."""
+        try:
+            status, body = procs.fetch_json(app.health_url(), timeout=3.0)
+        except Exception:  # noqa: BLE001 - an app that does not answer is not "busy", it is down
+            return None
+        if status is None or not isinstance(body, dict):
+            return None
+        busy = body.get("busy")
+        if isinstance(busy, dict) and busy.get("working"):
+            return busy
+        return None
 
     def open(self, app_id: str, mode: str = "window", autostart: bool = True, *, automatic: bool = False) -> dict[str, Any]:
         with self._lock:
