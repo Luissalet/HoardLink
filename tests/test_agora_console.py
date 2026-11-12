@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -799,6 +800,10 @@ def test_faustus_worker_starts_independent_native_project_session(tmp_path, monk
     assert worker["state"] == "running" and worker["agent_id"].startswith("faustus-worker-")
     assert worker["session_id"] == "new-child-session" and worker["parent_id"] == "faustus"
     assert command[command.index("--session") + 1] == "new-child-session"
+    assert "--no-timeout" in command and "--timeout" not in command
+    assert float(command[command.index("--idle-timeout") + 1]) == 3600
+    assert command[command.index("--max-legs") + 1] == "0"
+    assert "submit TASK_ID" in command[command.index("-p") + 1]
     assert command[command.index("--project-id") + 1] == "faustus-project"
     assert command[command.index("--agent-id") + 1] == worker["agent_id"]
     assert command[command.index("--model") + 1] == "glm-flash"
@@ -1248,7 +1253,7 @@ def test_faustus_run_summary_error_is_provider_error_with_native_tool_counts(tmp
     assert row["state"] == "failed" and row["outcome"] == "provider_error"
     assert row["process_exit_code"] == 1 and row["tool_success_count"] == 1 and row["tool_failure_count"] == 1
     assert row["provider_error"] == "The resumed chat keeps its automatic identity."
-    assert "Faustus worker exited" in row["detail"] and "missing_final_response" not in row["detail"]
+    assert "Faustus: turno interrumpido" in row["detail"] and "missing_final_response" not in row["detail"]
 
 
 def test_hub_restart_marks_ambiguous_leader_turn_unknown_without_replay(tmp_path):
@@ -1994,3 +1999,87 @@ def test_a_session_gets_the_rank_the_person_gives_and_never_more_than_whoever_st
         assert rank("claude-a") == "agent" and rank("claude-b") == "director"
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("leader,submit,dirty,expected", [
+    ("codex", False, False, "incomplete"),
+    ("claude", True, True, "incomplete"),
+    ("faustus", True, False, "completed"),
+])
+def test_managed_worker_checks_task_delivery_and_git(tmp_path, monkeypatch, leader, submit, dirty, expected):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    agent = leader + "-qa"
+    task_id = store.task_add({"agent": agent, "title": "Check delivery", "repo": "QA"})["task"]["id"]
+    store.task_claim({"agent": agent, "task_id": task_id})
+    if submit:
+        store.task_submit({"agent": agent, "task_id": task_id, "summary": "Verified fixture"})
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    if dirty:
+        (workspace / "uncommitted.txt").write_text("uncommitted", encoding="utf-8")
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,workspace,created_at,updated_at)"
+                   " VALUES('test',?,?, 'model','', 'task','running',?,1,1)",
+                   (leader, agent, str(workspace)))
+    monkeypatch.setattr(facet, "_tidy_claude_worktree", lambda *a: None)
+    facet._monitor_worker("test", SimpleNamespace(wait=lambda: 0), tmp_path / "no-result")
+    worker = facet._worker_rows()[0]
+    assert worker["state"] == expected
+    task = store.task({"task_id": task_id})
+    assert task["task"]["status"] == ("review" if submit else "blocked")
+    if expected == "incomplete":
+        expected_issue = "sin commit" if dirty else "sin entregar"
+        assert expected_issue in worker["detail"]
+        assert expected_issue in task["messages"][-1]["body"]
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_interrupted_faustus_worker_continues_original_session_once(tmp_path, monkeypatch, restart):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    agent = "faustus-qa"
+    task = store.task_add({"agent": agent, "title": "Continue fixture"})["task"]
+    store.task_claim({"agent": agent, "task_id": task["id"]})
+    log = tmp_path / "first.jsonl"
+    if not restart:
+        log.write_text(json.dumps({"type": "run_summary", "stop": "inactivity", "idle_timeout": 120,
+                                   "error": "no events", "session": "native-child"}), encoding="utf-8")
+    command = ["python", "faustus_run.py", "-p", "original", "--url", "http://127.0.0.1:7000",
+               "--session", "native-child", "--project-id", "project", "--agent-id", agent,
+               "--workspace", str(tmp_path), "--no-timeout"]
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,workspace,created_at,updated_at,"
+                   "session_id,faustus_url,launch_command,launch_cwd,log_path) "
+                   "VALUES('test','faustus',?,'model','','task','running',?,1,1,'native-child',?,?,?,?)",
+                   (agent, str(tmp_path), "http://127.0.0.1:7000", json.dumps(command), str(tmp_path), str(log)))
+    monkeypatch.setattr(facet, "_faustus_session_request", lambda method, path, **kw: (
+        (200, {"runs": {}, "running": []}) if path == "/api/chat/activity" else (200, [{"id": "native-child"}])))
+    commands = []
+    popen = subprocess.Popen
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.Popen", lambda cmd, **kw: (
+        popen(cmd, **kw) if cmd[0] == "git" else commands.append(cmd) or SimpleNamespace(pid=2)))
+    thread = threading.Thread
+    monkeypatch.setattr("hoard_link.hub.agora_console.threading.Thread", lambda **kw: (
+        SimpleNamespace(start=lambda: None) if kw.get("name", "").startswith("agora-worker-") else thread(**kw)))
+    if restart:
+        facet._reconcile_workers()
+        with facet._db() as db:
+            row = db.execute("SELECT * FROM workers WHERE id='test'").fetchone()
+        facet._recover_worker(row)
+    else:
+        facet._monitor_worker("test", SimpleNamespace(wait=lambda: 3), tmp_path / "no-result")
+    worker = facet._worker_rows()[0]
+    assert worker["state"] == "running" and worker["retry_count"] == 1
+    assert worker["workspace"] == str(tmp_path) and worker["session_id"] == "native-child"
+    assert commands[0][4:] == command[4:]
+    assert "commit" in commands[0][3] and "submit" in commands[0][3]
+    cause = "reinicio" if restart else "inactividad tras 2 min"
+    assert cause in worker["detail"]
+    assert store.task({"task_id": task["id"]})["task"]["status"] == "blocked"
+    process = facet._processes["test"]
+    process.wait = lambda: 1
+    facet._monitor_worker("test", process, tmp_path / "no-result")
+    worker = facet._worker_rows()[0]
+    assert worker["state"] == "failed" and worker["can_continue"] and len(commands) == 1

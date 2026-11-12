@@ -2054,6 +2054,18 @@ class Agora:
         self._rearm_dependents(task["id"])
         return {"ok": True, "task": self._task_row(task["id"])}
 
+    def worker_status(self, agent: str, task_ids: list[int], detail: str) -> None:
+        """Record a console-observed stop without releasing the worker's task or locks."""
+        for task_id in task_ids:
+            with self.db.tx():
+                task = self._task_row(task_id)
+                if task["owner"] != agent:
+                    continue
+                if task["status"] in ("claimed", "in_progress"):
+                    self.db.execute("UPDATE tasks SET status='blocked', updated=? WHERE id=?", (self.clock(), task_id))
+                self._system(task, detail, "agora-console")
+            self._bump("agora.task.status", {"task_id": task_id, "agent": agent})
+
     @_space_operation
     def task_submit(self, a: dict[str, Any]) -> dict[str, Any]:
         """Ask for review: what changed, where (branch/commits) and how it was verified.

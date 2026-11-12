@@ -115,7 +115,7 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     with (data / "server.log").open("a", encoding="utf-8") as log:
         process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
             stdout=log, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    runtime = {"url": base, "process": process, "data": str(data)}
+    runtime = {"url": base, "process": process, "data": str(data), "endpoint": endpoint}
     from .contract import _get
     try:
         deadline = time.monotonic() + 120
