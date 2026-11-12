@@ -144,9 +144,32 @@ async def test_child_exit_unblocks_inflight_request(relay):
 def test_missing_session_auth_and_cross_site_requests(relay):
     endpoint = relay.url + "/api/mcp/apps/fixture/mcp"
     with httpx.Client(trust_env=False) as client:
-        assert client.post(endpoint, json={}).status_code == 401
+        for _ in range(10):
+            unauthorized = client.post(endpoint, json={})
+            assert unauthorized.status_code == 401
         headers = {"Authorization": "Bearer hub-secret"}
         assert client.post(endpoint, headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).status_code == 404
         assert client.delete(endpoint, headers=headers).status_code == 404
         assert client.post(endpoint, headers={**headers, "Sec-Fetch-Site": "cross-site"}, json={}).status_code == 403
+    assert relay.facet._sessions == {}
+
+
+def test_document_sized_messages_reuse_the_session(relay):
+    endpoint = relay.url + "/api/mcp/apps/fixture/mcp"
+    headers = {"Authorization": "Bearer hub-secret"}
+    with httpx.Client(trust_env=False) as client:
+        response = client.post(endpoint, headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "fixture", "version": "1"}}})
+        assert response.status_code == 200
+        headers["Mcp-Session-Id"] = response.headers["Mcp-Session-Id"]
+        try:
+            response = client.post(endpoint, headers=headers, json={"jsonrpc": "2.0", "id": 2, "method": "ping",
+                "params": {"document": "x" * (5 * 1024 * 1024)}})
+            assert response.json() == {"jsonrpc": "2.0", "id": 2, "result": {}}
+            assert len(relay.facet._sessions) == 1
+            wrong_app = client.post(relay.url + "/api/mcp/apps/another/mcp", headers=headers,
+                json={"jsonrpc": "2.0", "id": 3, "method": "ping"})
+            assert wrong_app.status_code == 404
+        finally:
+            assert client.delete(endpoint, headers=headers).status_code == 200
     assert relay.facet._sessions == {}
