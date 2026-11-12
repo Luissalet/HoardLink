@@ -1,82 +1,71 @@
 # Hoard Hub
 
-Hoard Hub is the family's desktop hub and the home of Hoard Link, the small
-library (`hoard_link`) every app vendors; both live in this repository.
+Hoard Hub is the desktop control centre of the Hoard family of local apps, and the home of Hoard Link, the small Python library (`hoard_link`) that every app vendors to find and call the local AI models.
 
-The family's text inference uses the configured Sparks service. Native reasoning
-levels, explicit thinking budgets and supported structured-output requests survive
-the Python, Hub and Node chat paths. Streaming distinguishes the initial wait,
-meaningful output inactivity and the whole request deadline; comments and empty
-frames do not renew output activity. Incomplete streams remain errors and are
-not replayed after output has begun. Existing synchronous extension hooks retain
-their original signatures. [Family controls](docs/FAMILY.md) ·
-[Extension contract](docs/commons/link-extension-contract.md).
+[Español](README.es.md)
 
-Long MCP tools advertise their wait allowance in discovery. The bridge preserves
-text, images and native error results across MCP SDK 1.9, 1.30 and 2.3; structured
-content is included when that SDK's protocol schema supports it. An explicit
-caller timeout still applies, and progress does not restart the whole-operation
-deadline. [MCP compatibility](docs/commons/mcp-bridge-compatibility.md).
-Vendored consumers must synchronize the shared files and restart their own
-processes to adopt them; updating the Hub alone does not update those consumers.
+![Hoard Hub](docs/hub.png)
 
-Faustus project tasks share canonical task IDs with agent clients. `hub_agora_task_edit` edits descriptions, acceptance, priority, assignment and clarifications using the task etag; concurrent writes are rejected. Task detail exposes ordered `edits` with actor, timestamp and before/after values, including initial acceptance criteria. Existing leases and review submissions remain shared. Stable origin IDs make earlier project-record imports idempotent. The user-facing board and editor live natively in each Faustus project.
+## What it is
 
-Notification mail through the shared SMTP sender and Faustus account helper uses
-`[Hermes]`, `X-Hermes: 1` and `X-Hermes-Kind` (default `notification`). Gmail sent
-copies receive the `Hermes` label by Message-ID through IMAP, creating it when
-missing. Gmail searches: `label:hermes` or `subject:[Hermes]`. Labelling is
-best-effort after delivery and preserves other labels and flags.
+The repository holds two halves of one idea.
 
-### One shared answer to "which model server do I use right now?"
+**Hoard Link** is a library (standard library plus `httpx`; no server, no port, no UI) that answers one question for any app: for capability X (`llm`, `vision`, `embeddings`, `tts`, `stt`, `image`, `video`, `music`), which server and which model do I use right now, and why? It prefers servers that are already running, so a GPU-bound machine never loads a second copy of a model, and it never disturbs what the person is doing in Faustus.
 
-Family cohesion: [ownership, overlaps and remaining gaps](docs/commons/cohesion.md).
-The Hub now audits shared-code drift and workflow prerequisites; media imports
-keep checkpoints across restarts and resume explicitly without resubmitting known jobs.
+**Hoard Hub** is a loopback server with its own desktop window. It shows one card per app of the family (read from each app's `faustus-plugin.json`), starts, stops and opens them, shares the GPUs between them, and acts as the family's nervous system: events, rules, jobs, backups, notifications, mail, agenda, search and the Agora workspace where coding agents coordinate.
 
-**The shared model backend for agent-controlled apps: pick the
-already-loaded local server for a capability instead of loading a second
-copy of a model.**
+## What Hoard Link does
 
-[Español](README.es.md) · [Quick start](#quick-start) ·
-[Hoard Hub](#hoard-hub-the-desktop-launcher) · [Use with Faustus](#use-with-faustus) · [API](#api) ·
-[Portfolio](https://luissalet.github.io/Portfolio/#projects)
+- Resolves a model server per capability in a fixed order: explicit configuration (`backend.json`, `HOARD_*` environment), the Faustus model registry (local and private-network entries only; cloud endpoints are ignored), then loopback probes for llama.cpp, Ollama, OpenAI-compatible servers and ComfyUI. If nothing resolves it returns `unavailable` with the reasons, fit for a Settings screen.
+- Calls the server it found: `chat` (text and vision, with streaming-aware timeouts), `embed`, `tts`, and a `ComfyClient` for image and video graphs. Reasoning is separated from the answer, and `effort` (off, low, medium, high, max) maps to each server's native thinking controls.
+- Uses only resident models by default (`only_resident`), checks that a model has the requested capability, and can wait for a busy llama-server (`wait_idle`) so background jobs yield to the foreground.
+- Orders candidates by measured routes: a benchmarking app writes `~/.hoard/routes.json` with the best model per task, and `task="code"` picks accordingly. Routes only rank; they never load a model or override an explicit URL.
+- Takes GPU memory leases from the Hub (`lease(vram_mb=..., gpu=[2, 3])`) so two programs never take the same free gigabytes, and browser lanes (`lane(url)`) so only one app at a time drives a given site. Without a hub both degrade quietly to local behaviour.
+- Starts backends on its own when Faustus is not around (`hoard_link.launch`: ComfyUI, Ollama, custom commands).
+- Serves live public data with a stale-while-failing cache (`hoard_link.livefeed`).
+- Includes the shared building blocks of the family: notification, mail, agenda, references and web-fetch clients (`fam_*`), the Faustus copilot panel for every app (`install_spa`), the shared Spanish/English name map for Pokémon data, a differential parity test kit and the common theme.
 
-Shared native projects through Atlas and the Hub: [workspace guide](docs/commons/workspace.md).
+Limits: no music generation through probing, no websocket progress for ComfyUI, `tts` needs Faustus or a configured command, and an explicit configuration is trusted as given (a stale address shows up as a `BackendError` on the first call).
 
-App icons update on the Hub's normal polling cycle without a restart, page reload or manual rescan: [icon refresh](docs/HUB-ICONS.md).
+## What Hoard Hub does
 
-Hoard Link is a small Python library — standard library plus `httpx`, no
-server, no port, no UI — that a set of local apps can each vendor a copy
-of to answer one question: **for capability X (`llm`, `vision`,
-`embeddings`, `tts`, `stt`, `image`, `video`, `music`), which server and
-which model do I use right now, and why?** — and then to actually call it.
+**Apps**
+- One card per app: icon, name, purpose, port and state (running, starting, stopped, port busy), plus the process behind the port (pid, memory, uptime, children).
+- Actions: Open window, Browser, Start, Stop (only when the health check proves the listener is that app), Restart, Close windows, Folder, Log, and Start all / Stop all. Manual stops persist across restarts of the Hub.
+- Profiles: named sets of apps, external commands (a ComfyUI per GPU, a llama-server) and desktop windows started or stopped together, with JSON export and import.
+- `launch_overrides` let a machine start an app differently from its manifest, for example a developer build.
+- Autostart at Windows login without admin rights.
+- A status bar on every page with Faustus (running, port, open, start, stop), the number of running Hoards and one meter per GPU.
 
-## Why sharing matters on a GPU-bound machine
+**Hoard Window and shared theme**
+- Every app opens as the same kind of frameless desktop window (a small Electron shell in `shell/`, or a Chromium app window) with its own profile, taskbar entry and remembered size.
+- `hoard-theme.css` carries the shared design tokens and one palette per app; a script syncs every vendored copy.
 
-On a machine running **Faustus** (a local AI workspace) plus several
-plugin apps, the GPU is the scarce resource. A realistic setup is one
-`llama-server` (llama.cpp) serving a 27B model that by itself fills most
-of a large GPU, sometimes with Ollama and ComfyUI alongside it. If every app that wants
-an LLM call loaded its *own* model, the machine would run out of VRAM
-after the second app started. Hoard Link's job is to make every app ask
-"is someone already serving what I need?" before it ever asks a server to
-load anything, and to never disturb whatever the human is doing with
-Faustus at that moment.
+**GPU and browsers**
+- A GPU panel with per-GPU used, reserved and available memory, granted and queued leases, protected GPUs and a Release button.
+- A Browser lanes panel with one lane per site domain and per browser profile.
 
-Hoard Link does not run its own model server and does not manage
-lifecycles. It resolves an address, and — for chat/embeddings/tts — makes
-the HTTP call for you against the server it found.
+**Run on: this PC or a Spark**
+- Faustus, Hermes and Prometheus can move to a DGX Spark and back, with incremental data copy, settings rewrite, health checks, a refusal to start them on the PC while they live on the Spark, and a one-click switch in the header. Remote state is polled in the background, and a reverse SSH tunnel keeps the Hub reachable from Faustus.
+- The Hub also relays each installed app's stdio MCP over HTTP so Faustus on a Spark can use apps on the PC or on a Spark.
 
-Hoard Hub scans sibling manifests when refreshed. The local HomeHoard inventory
-bridge and Mercator dashboard appear as separate launchable cards; Scribe has
-been absorbed by Funes and is excluded. The hub uses each app's `app-icon.png`
-for its card. HomeHoard, Mercator and Hypatia also serve their icon as the
-window favicon. None of the recommended rules has a Scribe action.
+**Family layer**
+- Event bus, calls between apps, rules (when an event matches, run an action), scheduled jobs, deduplicated backups of every app's data with verify and restore, and a family audit.
+- Twelve-plus facets, each with its own tab and tools: spheres (personal, work, freelance, each with its own accounts, quiet hours and routing), notifications (Windows, ntfy, Telegram, mail), a single mail pass for the whole family, Slack and Microsoft 365 chats, Today (agenda, morning digest, subscribable calendar), references between records, cross-app search, long-job tracking, purchases, a polite shared web fetcher, brain rules into Faustus, agent sessions with undo, Spanish/English names, and parity testing.
+- Repos tab: unpushed commits, dirty trees, stray branches, drifted vendored copies, missing README or LICENSE, failing CI and tracked secrets, read-only.
+- Models for every app over HTTP (`/api/link/chat`, `/api/link/status`) so Node apps share the same resolution, leases and reasoning effort.
+- Instances: a second copy of an app on another data folder can speak as the app.
+- Fleet view that reconciles declared apps, jobs, rules and watchers into Today, Waiting for you, Blocked and Paused.
 
-## Quick start
+**Agora**
+- The shared workspace of the coding agents and the person: heartbeats, tasks (open, claimed, in progress, review, approved, done) with all-or-nothing locks, threads, debates with evidence, decision log, reviews bound to submission revisions, checkpoints, timelines and an inbox with long poll.
+- Spaces read as chat servers with channels, mentions, reactions, files, members and ranks.
+- A live view with one cursor per active agent, an observer of Codex, Cursor and Claude Code transcripts, and a native Tauri console (also at `/agora/`) that launches worker sessions of each provider, including Faustus workers, with receipts, continue and stop.
+- Reference: `docs/AGORA.md`.
 
-Windows (PowerShell):
+## Run it
+
+Requirements: Python 3.11 or newer, `httpx`; `psutil` for process control; `pywebview` optional for a native window; Node for the Hoard Window shell.
 
 ```powershell
 git clone https://github.com/Luissalet/HoardLink.git
@@ -84,1237 +73,72 @@ cd HoardLink
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-python examples/status.py
+python examples/status.py            # what each capability resolves to, and why
 ```
 
-Linux / macOS:
-
-```bash
-git clone https://github.com/Luissalet/HoardLink.git
-cd HoardLink
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e ".[dev]"
-python examples/status.py
-```
-
-`examples/status.py` prints one line per capability: what resolved and
-why, or why nothing did. On a machine with no model server running, every
-line reads `unavailable` followed by the reasons, e.g.
-
-```
-hoard-link 0.1.1
-       llm  unavailable  Faustus not reachable on configured/default ports; no llama.cpp server found on ports 8080-8090; Ollama not reachable on 11434; no OpenAI-compatible server found on 1234
-```
-
-Start `llama-server`, Ollama or ComfyUI (or point `HOARD_LLM_URL` at a
-server) and run it again to see that capability resolve. Pass a
-`backend.json` path as the first argument to try your own configuration.
-
-## What's new in 0.7
-
-- **Faustus copilot in every app.** `install_spa` / `installSpa` give any app that called `family.configure` a
-  Faustus button and side panel: the relay, the launcher in the app's HTML and each turn's context (route, heading,
-  objects in the URL, selection, plus what the app adds with `window.hoardCopilot`), with no app code. Off with
-  `copilot=False` / `HOARD_COPILOT=0`; details in [docs/FAMILY.md](docs/FAMILY.md#every-hoard-gets-the-copilot-from-install_spa--installspa).
-- **Spheres.** Personal and work (or freelance) lives kept apart: each sphere has its own mail accounts,
-  chat sources, VIP senders, keywords, quiet hours, notification routing and morning digest. A chip in the
-  hub's top bar (and in Faustus) switches the active one; work mail never reaches personal apps.
-- **One notification centre.** Apps ask the hub to tell the person (`fam_notify.notify`, JS `notify`); the hub
-  picks Windows, ntfy, Telegram or mail by priority and sphere, holds what arrives in quiet hours or twice, and
-  keeps the history. The apps keep their own channels as the fallback.
-- **One pass over the inbox.** The mail gateway reads the Faustus mail accounts once for the whole family,
-  classifies each message (sphere, priority, which apps want it) and lets each app read only its share; plus
-  "needs you" and "nobody's" lists. Slack and Microsoft 365 (Teams chats, Outlook) as chat sources.
-- **Today.** Every app's dated things (deadlines, deliveries, birthdays, maintenance, releases, renewals,
-  exams…) in one agenda, a morning digest per sphere (with a short summary when a local model is loaded) and a
-  calendar you can subscribe to from the phone (`/calendar.ics`).
-- **References, search, jobs, purchases.** Links between records of different apps, one search box over
-  every app, the long jobs of every app with their GPU, and the life of each purchase (paid → shipped →
-  delivered → filed → stored).
-- **Seventeen recommended rules** install themselves (and stay removed when you remove one).
-
-## What's new in 0.6
-
-- **Measured routes.** A benchmarking app (Galton's Hoard) writes which
-  local model is best for which task to `~/.hoard/routes.json`, and
-  `link.resolve("llm", task="code")` / `link.chat(..., task="code")` use it
-  to order the models resolution already considers. Routes only rank; they
-  never load a model and never override an explicit URL. See
-  [Measured routes](#measured-routes).
-- **GPU lists in leases.** `lease(gpu=[2, 3])` asks for "any of GPUs 2 or
-  3", and the hub setting `lease.protected_gpus` keeps chosen GPUs out of
-  every `"any"` request. See [GPU memory leases](#gpu-memory-leases).
-- Two new palettes in the shared theme: `galton` and `pygmalion`.
-
-## Resolution order
-
-For each capability, in order:
-
-```mermaid
-flowchart LR
-    A["resolve(cap)"] --> B{"backend.json /<br/>HOARD_* env"}
-    B -- set --> R["Resolution"]
-    B -- not set --> C{"Faustus on<br/>:7000 / :7001"}
-    C -- local entry --> R
-    C -- no match --> D{"loopback probes<br/>llama.cpp · Ollama ·<br/>OpenAI-compatible · ComfyUI"}
-    D -- found --> R
-    D -- nothing --> U["unavailable + reasons"]
-```
-
-1. **Explicit configuration** — the app's own `backend.json` and
-   `HOARD_<CAP>_URL` / `HOARD_<CAP>_MODEL` / `HOARD_FAUSTUS_URL` /
-   `HOARD_FAUSTUS_TOKEN` / `HOARD_COMFY_URL` environment overrides. A
-   capability with a `url` (or a `command`) wins outright and is not
-   probed; a stale address surfaces as `BackendError` (status `0`: no
-   HTTP response) the first time it's actually called. A `model` without
-   a `url` is only a *preference*, applied wherever the later steps have
-   a choice (Ollama resident models, the Faustus model list, an
-   OpenAI-compatible server's model list).
-2. **Faustus** — if a Faustus instance answers `GET /api/health` as
-   healthy on `127.0.0.1:7000` or `:7001` (configurable), Hoard Link reads
-   `GET /api/models` (with a bearer token when one is configured) for the
-   model-server registry Faustus itself uses, and talks to that server
-   **directly** — same server, same resident model, which is the actual
-   sharing. Only local entries (category `local`) on this machine or on the
-   person's own network (private addresses and `.local` names, such as a
-   DGX Spark cluster next to the PC) are used: a cloud endpoint in Faustus's
-   registry is skipped so the app's data never leaves home. A model another
-   machine is already serving goes before anything this PC would hold or load
-   on its own GPUs, and is only chosen while its `/v1/models` still lists it. When
-   Faustus is too busy to answer `/api/health` or `/api/models` within the
-   1.5 s timeout, the registry it returned in the last 15 minutes is used
-   instead (every entry is still verified), so a long Faustus turn does not
-   push the family onto this PC's GPUs. An Ollama entry is cross-checked against
-   that Ollama's `/api/ps` before it is called resident. With no token
-   configured the request is sent without one (a Faustus with auth
-   disabled still answers); a 401 then says a token is needed. For `tts`/`stt` it also tries Faustus's own
-   `/api/tts/*`/`/api/stt/*` endpoints; a 401/403 there is recorded as a
-   reason (a browser-only session) and resolution moves on rather than
-   failing.
-3. **Shared servers on loopback**, probed in parallel with a 1s
-   wall-clock timeout per request and cached for 30s (single-flight:
-   concurrent resolutions share one probe; the probing client ignores
-   `HTTP(S)_PROXY`): llama.cpp (`8080`–`8090`, via `/health`, `/props`,
-   `/v1/models`, `/slots`), Ollama (`11434`, via `/api/ps` for **resident**
-   models, `/api/tags`, `/api/show` for capabilities), a generic
-   OpenAI-compatible chat server on `1234` (`llm` only), and
-   ComfyUI (`8188`, `image`/`video`). A port only counts as a
-   llama-server if `/health` returns 200 and its `/props` carries
-   llama-server keys (`/health` alone never proves identity). Per-URL
-   residency probes also use a short single-flight cache (~2.5s). No probe
-   ever raises, whatever JSON a port answers with.
-4. **Nothing** — the capability comes back `unavailable`, with the list of
-   reasons collected along the way (why Faustus didn't answer, why no
-   loopback server matched, etc.) so an app's Settings screen can show a
-   human exactly what to fix.
-
-## Policies
-
-- **`only_resident = True` by default.** Hoard Link picks models that are
-  already loaded — Ollama's `/api/ps`, or a llama-server, which always
-  serves exactly the one model it was started with. It will not ask a
-  server to load a different model unless the app's config sets
-  `allow_load: true` for that capability (or `only_resident: false`
-  globally), and it never sends `keep_alive`. A model that would load is
-  still checked (`/api/show`) for the capability asked for, and an
-  embedding-only model is never picked for `llm`.
-- **Yield to the foreground.** `await link.wait_idle("llm", max_wait_s=30)`
-  is `True` immediately when the resolved llama-server has no slot
-  `is_processing`, otherwise it polls every 2s until it does or
-  `max_wait_s` elapses (then `False`, and the caller decides to postpone
-  its background job). This works whether the llama-server came from
-  probing, the Faustus registry or explicit config (`provider:
-  "llamacpp"`). Ollama exposes no busy signal, so `wait_idle` always
-  returns `True` for it — documented here rather than guessed at.
-- **GPU jobs know free VRAM first.** `gpu_free_mb()` shells out to
-  `nvidia-smi --query-gpu=index,memory.total,memory.used
-  --format=csv,noheader,nounits` (best effort — no NVIDIA GPU or no
-  `nvidia-smi` on PATH just yields `[]`; on Windows it runs with
-  `CREATE_NO_WINDOW` and also looks in the legacy `NVSMI` folder).
-  `resolve("image")` runs it in a worker thread and reports the GPU with
-  the most free memory plus a per-GPU list. `ComfyClient` never calls
-  `/free` on its own; only when the caller asks for it.
-- **Every resolution explains itself.** `Resolution.reason` is a sentence
-  fit for a Settings screen, e.g. `"llm -> llama.cpp at 127.0.0.1:8081
-  (qwen3.8-27b-q8-llamacpp), from Faustus registry; resident"`.
-
-## Measured routes
-
-An app that measures the local models (Galton's Hoard) writes its findings
-to `~/.hoard/routes.json` (`HOARD_HOME` moves `~/.hoard`; `HOARD_ROUTES_FILE`
-names the file itself). Hoard Link reads it and uses it for one thing:
-**ordering the candidates resolution already considers**.
-
-```json
-{"schema": 1, "source": "galton", "updated_at": "2026-10-02T10:00:00+02:00",
- "tasks": {"code": {"capability": "llm",
-                    "prefer": [{"names": ["qwen3.8:27b-q4_K_M", "qwen3.8-27b-q4-llamacpp"],
-                                "score": 0.81, "ci": [0.74, 0.87], "n": 60, "tok_s": 34.2, "vram_gb": 17.1}],
-                    "explain": "..."}},
- "capabilities": {"llm": {"prefer": [...]}, "vision": {"prefer": [...]}}}
-```
-
-```python
-res = await link.resolve("llm", task="code")
-reply = await link.chat(messages, task="code")      # also link.sync.*, wait_idle(), status(task=...)
-```
-
-- **Order.** Among the resident models (or, when loading is allowed, the
-  loadable ones) the order is: the model pinned by config or environment
-  (`capabilities.llm.model`, `HOARD_LLM_MODEL`) first; then the names under
-  `tasks[task].prefer` (only if that task is about this capability), then
-  those under `capabilities[cap].prefer`; then the original order. Between
-  several resident llama.cpp servers, the one serving the best-ranked model
-  wins.
-- **What they never do.** Routes never make a server load a model (a
-  measured model that is not resident is ignored while `only_resident` is
-  on) and never override an explicit `url`/`command`. Nothing is probed
-  that was not probed before.
-- **Names.** A name matches case-insensitively, with or without Ollama's
-  `:latest`, and a GGUF file by its file-name stem (`D:\models\x.gguf`,
-  `x.gguf` and `x` are the same model). Each `names` list is one model's
-  aliases across servers.
-- **Visible.** When a measured preference changed the pick, the
-  `Resolution.reason` ends with `; ranked by measured routes (task code)`
-  and `details["routes"]` is `{"task", "source", "updated_at"}`.
-  `link.status()` adds a `routes` entry: `{file, updated_at, source, tasks,
-  problem}`.
-- **Safe.** The file is cached by path, mtime and size; a missing or broken
-  file is an empty set of routes with a `problem` string, never an error.
-- **Off.** `"routes": {"enabled": false}` in `backend.json`, or
-  `HOARD_ROUTES=0`. `"routes": {"file": "..."}` / `HOARD_ROUTES_FILE`
-  point at another file.
-
-## Installing (vendoring)
-
-Hoard Link is meant to be **copied**, not installed as a third-party
-dependency, so each app ships one committed copy of the exact behaviour
-its tests were written against. Copy the whole `hoard_link/` directory
-(every `.py` file, no `__pycache__/`) into your package, never edit the
-copy, and to update, replace the directory wholesale. Record where the
-copy came from in a `VENDORED.txt` next to it:
-
-```
-<app_pkg>/
-  hoard_link/        <- copy of this repo's hoard_link/ directory
-    VENDORED.txt     <- "Vendored from HoardLink (https://github.com/Luissalet/HoardLink), version 0.1.1"
-  ...
-```
-
-Every app that vendors the same version carries a byte-identical copy, so
-a fix lands everywhere by re-copying one release.
-
-```python
-from .hoard_link import Link, LinkConfig
-```
-
-If your app already manages its own dependencies with `httpx` present,
-that's the only third-party requirement. Python 3.11+, stdlib +
-`httpx>=0.27,<1.0`, no platform-specific code — it runs the same on
-Windows and Linux.
-
-## `backend.json` schema
-
-Every key is optional; everything not set falls through to Faustus, then
-loopback probing.
-
-```json
-{
-  "only_resident": true,
-  "faustus": {"url": "http://127.0.0.1:7000", "token": "ody_..."},
-  "comfy": {"url": "http://127.0.0.1:8188"},
-  "capabilities": {
-    "llm": {
-      "url": "http://127.0.0.1:8081/v1/chat/completions",
-      "model": "qwen3.8-27b-q8-llamacpp",
-      "api": "openai",
-      "provider": "llamacpp",
-      "allow_load": false,
-      "vram_mb": 20000
-    },
-    "tts": {"command": ["piper", "--model", "es_ES.onnx", "--output_file", "{out}"]}
-  },
-  "gpu_lease": {"enabled": true, "hub_url": "http://127.0.0.1:8810", "timeout_s": 300, "vram_mb": 8192},
-  "routes": {"enabled": true, "file": "~/.hoard/routes.json"}
-}
-```
-
-Environment overrides (highest priority, layered on top of the file):
-`HOARD_<CAP>_URL`, `HOARD_<CAP>_MODEL` (e.g. `HOARD_LLM_URL`,
-`HOARD_VISION_MODEL`), `HOARD_FAUSTUS_URL`, `HOARD_FAUSTUS_TOKEN`,
-`HOARD_COMFY_URL`, `HOARD_GPU_LEASE=0` (no GPU leases),
-`HOARD_HUB_URL` (where the hub is), `HOARD_ROUTES=0` (ignore
-[measured routes](#measured-routes)), `HOARD_ROUTES_FILE`. An empty variable counts as unset.
-
-- `gpu_lease` and `vram_mb` only matter when a call would make a server
-  **load** a model (`allow_load`, or `only_resident: false`): see
-  [GPU memory leases](#gpu-memory-leases). `vram_mb` on a capability is
-  what a load of its model needs; without it the size of the Ollama model
-  file plus 20% and 512 MiB is used, else `gpu_lease.vram_mb`.
-
-- `url` may be a server root (`http://127.0.0.1:8081`), a `/v1` base or a
-  full endpoint; chat and embeddings each append the path they need. A
-  URL under `/api/` implies `"api": "ollama"`, otherwise `"openai"`.
-- `command` is a list of strings. `{text}`, `{voice}` and `{out}` are
-  replaced literally; without `{text}` the text is written to the
-  command's stdin (how Piper reads it), without `{out}` the audio is read
-  from stdout. It runs without a console window, with a 120 s timeout.
-- The file is read as UTF-8 with or without a BOM (Notepad's default).
-
-## Hoard Hub: the desktop launcher
-
-The Hub has six destinations: Home, Projects, Applications, Inbox, Automation and System. Home brings together pending items, unread notices, browser-local project visits and application launch entries. Projects opens an overview of pending tasks and conversations, then that project's own Agora; native links preserve `space_id`. The directory contains existing Agora spaces, not the complete Faustus project catalog. Applications can be found by purpose categories and Spanish synonyms for known entries, while unknown manifests keep their actual description fallback. The catalog retains one opening action, **Manage**, filters and startup groups. Related tools are visible contextual links. Search and Help/settings remain directly accessible. See the [navigation guide](docs/hub-navigation.md).
-
-Every page carries a status bar in its header: Faustus (running or off, port, **Open**, **Start**/**Stop**), how many Hoards are running (with a warning when any needs attention) and one meter per GPU; the last two lead to System. Home opens with three compact tiles (Faustus, Hoards, GPU) and ends with a dense launcher of every Hoard, running ones first. On each tile: click opens it in a window (starting it if needed), middle click or the arrow icon opens it in a browser tab, the play/stop icon starts it without opening or stops it, and right click or **⋯** opens its menu (window, browser tab, copy address, start, restart, stop, close its windows, log, folder, details, with state, port, uptime and memory on top). The same menu and gestures work on the Applications tiles and the System status table. Applications uses compact tiles (icon, name, one-line description, state, uptime and memory, **Open** and a floating **Manage** menu) and a **Table** view. System › Status and connections opens with Faustus and the Hoards status table: state, port, PID, uptime, RAM and windows of each one, state filters, search and per-row actions (open, start, restart, stop, log), plus **Start all** and **Stop all**. All of it comes from the `/api/apps` poll the page already made, with no new requests. A Faustus that still holds its port but misses the health deadline shows as **Busy, not answering** (with its PID) instead of Off, and is never offered a second start. Projects is a grid of cards with each project's workload from `GET /api/agora/spaces` (`counts`: open, in progress, in review, blocked, waiting for you; `last_activity`), sorted with projects that wait for you first. `/api/apps` serves every caller within 1.5 s from one probe and reuses static process facts and icon lookups, so several open Hub pages cost one scan.
-
-Automation starts with the intended task: schedule an action, respond to an event, review runs or track purchases. Five known events have human labels; backups and common application/group actions use normal fields. Custom tools/events retain technical advanced fields, and complete JSON remains a separate editing mode. Notifications show a brief excerpt and disclose the complete original body; search offers recovery and optional source details. Mail retains one active inbox and a full reader whose Back action preserves filters and page. System puts Faustus and the Hoards first, then connections, then GPU resources, and explains stopped/unconfirmed states. The official Hoard dark theme, original Hub icon, divided lists and document scrolling apply throughout the Hub; the separate `apps/agora` console keeps its own design. Existing APIs/MCP, forms, drafts and data remain available. Navigation starts no app or model.
-
-In a project’s Agora, **Waiting for you → Reply here** opens an answer beside the complete question. **Send** posts a reply without completing its task; **Reply and close** resolves only non-task threads. Cancel and failed sends retain the text, and drafts remain scoped to their project/thread during refresh and language/project changes. Waiting items and conversations load independently of the board. Selecting a project from Agora stays in Agora. These use the existing authenticated API and human UI identity; no new MCP tools were introduced.
-
-
-The repository also ships **Hoard Hub** (`hoard_link.hub`), the other
-half of the same idea: the library answers *which model server do I use*,
-the hub answers *which of my apps are up, and open that one* — without
-any AI workspace in the loop. It is a small loopback server with a card
-per app and its own desktop window.
-
-Every app in the family carries a `faustus-plugin.json` in its repository
-root (id, name, purpose, URL, health check, launch hint). The hub reads
-those manifests straight from the folders next to this repository (or any
-roots you configure) — nothing new to write — and for each app shows:
-
-* its **icon**, name, purpose, port, and **state**: running (health check
-  answered with the expected `service`), starting (a listener, no healthy
-  answer yet), stopped, or *port busy* (something else answers there; the
-  hub will never stop that process);
-* the **process** behind the port: pid, executable, memory, uptime,
-  children (psutil);
-* actions: **Open window** (the app's UI as its own desktop window — a
-  [Hoard Window](#hoard-window-and-the-shared-theme) with an integrated
-  title bar in the app's colours when the shell is installed, otherwise a
-  Chromium `--app` window; either way with a per-app profile, so it has its
-  own taskbar entry and can be found and closed again), **Browser**,
-  **Start** (the manifest's launch hint, detached, output to
-  `data/logs/<id>.log`), **Stop** (the process tree, only when the
-  health check says the listener really is that app), **Restart**,
-  **Close windows**, **Folder**, **Log**;
-* at the top, Faustus status with **Start** and **Stop** controls, what Hoard Link resolves
-  right now for every capability, plus free VRAM per GPU. Faustus uses its own installed
-  `server_runtime.py`, including its tray instances; set `faustus_dir` if it is not discovered;
-* **Stop all** stops apps, Faustus, profile commands and managed backend servers with one click.
-  Failed stops are shown. Manual stops persist across Hub restarts and prevent recovery rules
-  or scheduled jobs from relaunching the stopped app until an explicit **Start**, **Open**,
-  profile start or **Start all**. A configured backend's `stop_argv` runs before removing its
-  supervisor so a model watchdog cannot undo the stop;
-* **profile** chips to start or stop a named set of apps at once (see
-  [Profiles](#profiles));
-* a **GPU** panel: per GPU used / reserved / available, and the
-  [GPU memory leases](#gpu-memory-leases) granted and queued, each with a
-  Release button.
-
-Closing the hub's window stops the hub; the apps it started keep running,
-on purpose — it is a remote control, not a parent.
+The Hub:
 
 ```powershell
-pip install psutil            # pids, memory, process-tree stops
-python -m hoard_link.hub      # server on 127.0.0.1:8810 + desktop window
-python -m hoard_link.hub --no-window   # server only (for an agent)
-python -m hoard_link.hub --profile video       # and start a profile once it is up
-python -m hoard_link.hub --install-autostart   # Windows: start the hub at login
+python -m hoard_link.hub                      # server on 127.0.0.1:8810 plus desktop window
+python -m hoard_link.hub --no-window          # server only
+python -m hoard_link.hub --profile video      # start a profile once it is up
+python -m hoard_link.hub --install-autostart  # start at Windows login (also --uninstall-autostart)
 ```
 
-On Windows, double-click `Hoard Hub.cmd`. Configuration lives in
-`data/hub.json` (`roots`, `icon_dirs`, `browser`, `window_engine`, `faustus_dir`,
-`faustus_python`, `window_size`, `exit_with_window`, `language`,
-`profiles`, `lease_headroom_mb`, `launch_overrides`) or the
-`HOARD_HUB_*` environment variables; `pip install "hoard-link[desktop]"`
-adds pywebview for a native hub window.
+On Windows, double-click `Hoard Hub.cmd`. Configuration lives in `data/hub.json` (`roots`, `browser`, `window_engine`, `faustus_dir`, `profiles`, `launch_overrides`, `lease_headroom_mb`, `language`, `repos` and more) or in `HOARD_HUB_*` environment variables. Closing the window stops the Hub; the apps it started keep running.
 
-The Hub uses Faustus's shared copilot panel and session harness. Its host adapter
-supplies the selected app, profile, family tab or Agora task/thread, plus pending
-form fields; a completed turn refreshes those views without replacing dirty inputs.
-Profile membership edits use per-app patches so concurrent edits keep unrelated
-members and commands. See [the Hub copilot contract](docs/HUB.md#shared-copilot).
-
-`launch_overrides` starts an app on this machine differently from how its
-manifest ships it, without touching the manifest — a developer build of a
-desktop app, say, whose library lives in the dev server's origin:
-
-```json
-{ "launch_overrides": { "writer": {
-    "executable": "node", "argv": ["scripts/dev-desktop.mjs"], "cwd": "{APP_DIR}",
-    "readiness_url": "{APP_URL}/api/health", "timeout_s": 120, "kind": "window-app" } } }
-```
-
-`{APP_DIR}` is the app's folder, `{APP_URL}` its URL, `%VAR%` comes from the
-environment; the hub re-reads it on every rescan, and `/api/apps` shows
-`launch_source: override`. A manifest's own `launch_hint.executable` may also
-be a list tried in order (an installed copy under `%LOCALAPPDATA%` first, a
-build in the repository second).
-
-### Hoard Window and the shared theme
-
-Every app in the family shares one look — dark charcoal surfaces tinted
-with the app's own colour, the app's name in a serif display face in its
-accent, a 220 px sidebar under a 64 px brand row, bordered cards, one accent
-per app — and opens as the same kind of desktop window.
-
-* **`hoard_link/ui/hoard-theme.css`** — the shared tokens (`--hoard-deep`,
-  `--hoard-surface`, `--hoard-elevated`, `--hoard-border`, `--hoard-text`,
-  `--hoard-accent`, `--hoard-accent-ink`, radii, fonts…) with one palette
-  per app under `html[data-hoard-app="<id>"]`. It is generated by
-  `scripts/hoard_palettes.py` (the accent of each app is the colour of its
-  dragon icon) and vendored byte-identical into every app;
-  `python scripts/sync_theme.py` refreshes every copy, `--check` lists stale
-  ones. An app loads it before its own CSS, sets `data-hoard-app` and a
-  `theme-color` on `<html>`, and points its own variables at the tokens.
-  The hub serves it at `/ui/hoard-theme.css` and uses it itself.
-* **`shell/` — Hoard Window**, a small Electron program shared by every
-  app (`npm install` once inside `shell/`). The window has no native frame:
-  a 36 px bar on top takes the app's colours from the page
-  (`--hoard-deep`, else `theme-color`, else the body background) and
-  Windows draws the real minimise / maximise / close buttons over it, so
-  Snap layouts and drag-to-move stay native. The ☰ menu has reload,
-  back/forward, home, zoom, open in the browser, copy address, always on
-  top and developer tools. Each app gets its own profile
-  (`data/profiles/<id>`), taskbar group and icon; size, position and zoom
-  are remembered per app; same-origin links stay in the window, the rest
-  go to the default browser. `window_engine` in `data/hub.json`
-  (`auto` | `shell` | `chromium`, or `HOARD_HUB_WINDOW_ENGINE`) picks the
-  route; `auto` uses the shell whenever `shell/node_modules/electron`
-  exists. See [`shell/README.md`](shell/README.md).
-
-### Start at login (Windows)
-
-```powershell
-python -m hoard_link.hub --install-autostart                  # headless hub at every login
-python -m hoard_link.hub --install-autostart --profile video  # ...and start the "video" profile
-python -m hoard_link.hub --autostart-status
-python -m hoard_link.hub --uninstall-autostart
-```
-
-`--install-autostart` writes `Hoard Hub.cmd` in your Startup folder
-(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`). It changes
-to this repository and launches `pythonw -m hoard_link.hub --no-window
-[--profile <name>]` detached (the `pythonw` next to the interpreter you ran
-the command with, so run it from the venv, or as
-`"Hoard Hub.cmd" --install-autostart`): no console stays open, the hub
-logs to `data/logs/hub.log`, and GPU leases and profiles are available
-from the moment you log in. `--window` opens the hub's window at login
-instead (it keeps serving when you close it); `--port`, `--data-dir` and
-`--roots` given with it are kept. No registry keys and no admin rights;
-`--uninstall-autostart` deletes the file (and refuses to delete a file of
-that name it did not write). On Linux and macOS these commands are a
-no-op that says so and prints the command to put in a systemd user unit or
-a launchd agent.
-
-`--profile <name>` also works on any normal start: the hub starts that
-profile once it is listening, and a second launch while a hub is already
-running asks the running hub to start it.
-
-### Profiles
-
-A profile is a named set of apps to start together — optionally with
-external commands (a ComfyUI instance per GPU, a llama-server, a script)
-and the apps to open as desktop windows — declared in `data/hub.json`:
-
-```json
-{
-  "profiles": {
-    "writing": {"apps": ["borges", "funes"], "desktop": ["hypatia"]},
-    "video": {
-      "apps": ["daguerre"],
-      "commands": [
-        {"name": "comfy gpu1", "cmd": "python main.py --port 8189", "cwd": "D:/ComfyUI",
-         "health": "http://127.0.0.1:8189/system_stats", "env": {"CUDA_VISIBLE_DEVICES": "1"}}
-      ],
-      "desktop": ["daguerre"]
-    }
-  }
-}
-```
-
-The main screen shows one chip per profile (running count, start ▶,
-stop ■). Commands get the same running/down treatment as apps: their
-`health` URL when given, else whether the process the hub started is
-alive; their output goes to `data/logs/cmd-<profile>--<name>.log`, and the
-hub only ever stops a command it started itself. No profile is defined by
-default; [docs/HUB.md](docs/HUB.md#profiles) has two complete examples.
-HTTP: `GET /api/profiles`, `GET /api/profiles/<name>`,
-`POST /api/profiles/<name>/start|stop`. Portable JSON export/import has a
-dependency and machine-path preview; import saves configuration but never
-starts members. See [docs/PROFILE-PORTABILITY.md](docs/PROFILE-PORTABILITY.md).
-
-### GPU memory leases
-
-Several programs want the same GPUs at once: a llama-server holding a big
-model across GPUs, Ollama loading another, a few ComfyUI instances
-rendering video, speech-to-text in one app, an image embedder in another.
-When each of them looks at `nvidia-smi` on its own, two can see the same
-free gigabytes at the same moment, both load, and one runs out of memory.
-The hub is the one long-lived local process every app can reach, so it
-keeps a single queue for the machine:
+Using Hoard Link in an app: copy the whole `hoard_link/` directory into the app (never edit the copy), and use
 
 ```python
-from hoard_link import lease
-
-with lease(vram_mb=6000, purpose="whisper large-v3", owner="funes") as l:
-    model = load_model(device=f"cuda:{l.gpu}" if l.gpu is not None else "cuda")
-    ...                        # renewed in the background, released on exit
-
-async with lease(vram_mb=20000, purpose="video render", owner="daguerre", priority=1, timeout_s=600) as l:
-    ...
-```
-
-* A request is **granted** when `vram_mb` fits on a GPU (the one asked
-  for, or the one with most room), counting both what `nvidia-smi`
-  reports and what the hub already promised to others; otherwise it is
-  **queued** — higher `priority` first, then first come first served. A
-  queued request that does not fit holds back later ones for the same
-  GPU, so a big render is not starved by a stream of small loads.
-* Per GPU: `available = total - max(used, base + reserved) - headroom`,
-  where `reserved` is the sum of granted leases and `base` is what the GPU
-  used the last time it had no lease. Two reservations are never
-  double-booked before their models load, and a loaded model is not
-  counted twice (then `used` already includes it). `lease_headroom_mb` in
-  `hub.json` (default 256) stays free on every GPU.
-* A lease lives `ttl_s` (default 1800 s) and the client renews it while it
-  is held. A lease that is not renewed expires, and one whose owner
-  process died (`pid`, checked with psutil) is reaped, so a crashed app
-  never blocks the queue. A queued request that is not polled for 90 s
-  leaves the queue. Leases are kept in `data/leases.json` across hub
-  restarts.
-* **Which GPU.** `gpu=2` pins one GPU; `gpu=[2, 3]` (or `"2,3"`) means
-  "any of these": the hub places the lease on the listed GPU with the most
-  room, and the "can never fit" check uses the largest GPU in the list; the
-  default `"any"` considers every GPU. With no hub, the local fallback
-  picks the listed GPU with the most free memory. `lease.protected_gpus`
-  in `hub.json` (a list, empty by default) keeps GPUs out of every `"any"`
-  request: only a request that names them (`gpu=0` or a list containing 0)
-  gets them. It is shown in `hub_lease_status` and `GET /api/lease`.
-* Entering waits for the grant; `timeout_s` bounds the wait and raises
-  `LeaseTimeout` (the queued request is withdrawn). A request larger than
-  any eligible GPU raises `LeaseError`.
-* **Without a hub nothing breaks.** When no hub answers and none can be
-  started (the same headless start the MCP bridge uses; off with
-  `HOARD_HUB_AUTOSTART=0`), the lease falls back to the old local check:
-  it reads `gpu_free_mb()`, picks a GPU with room when there is one, logs a
-  warning and lets the app proceed. `l.via` is `"hub"` or `"local"`.
-* The client finds the hub through `hub_url=`, `HOARD_HUB_URL`, the `url`
-  file in `HOARD_HUB_DATA_DIR` or in the HoardLink checkout's `data/`
-  (a copy vendored into an app looks for a sibling `HoardLink` folder),
-  then `http://127.0.0.1:8810`.
-* `Link.chat()` and `Link.embed()` take a lease by themselves when the call
-  would make the server **load** a model (a resident model needs none),
-  release it afterwards, and turn a queue wait longer than
-  `gpu_lease.timeout_s` into `Unavailable`. A request the hub rejects
-  outright (e.g. an estimate larger than one GPU, for a model Ollama would
-  split across several) loads without a lease.
-* A successful inventory query returning no GPUs keeps the CPU-host fallback.
-  Missing `nvidia-smi`, timeouts, driver errors and invalid memory rows are
-  probe failures: new requests remain queued, with the reason. The Hub shows
-  an unavailable inventory instead of claiming there are zero GPUs. A recovered
-  query applies the ordinary memory accounting before admitting queued work.
-
-HTTP (loopback, no token, same cross-site guard as the UI):
-`POST /api/lease/request` `{owner, purpose, vram_mb, gpu, priority, ttl_s, wait, pid}`
-→ `{lease_id, state, gpu, expires_at, position}` (`wait: true` long-polls
-up to 25 s; send `{lease_id, wait: true}` to keep waiting on the same
-place in the queue), `POST /api/lease/renew` `{lease_id, ttl_s}`,
-`POST /api/lease/release` `{lease_id}`, `GET /api/lease` (GPUs with
-used/free/reserved/available, the leases and the queue),
-`GET /api/lease/<id>`. The hub window has a **GPU** panel with the same
-picture and a Release button per lease.
-
-### Browser lanes: one app at a time per site
-
-Apps that drive a web browser (Tantalus reading shops, Faustus' browser tools, Argus, Phileas) used to be able to hit
-the same shop together, or share one Edge profile at the same moment, which doubles the automation footprint and gets the
-machine blocked. The hub keeps one **lane** per registrable root domain (`shop.example.co.uk` → `example.co.uk`, with a
-small built-in public-suffix list, no extra dependency) and, optionally, one per browser profile folder:
-
-```python
-from hoard_link import lane, LaneBusy
-
-with lane("https://shop.example.com/p/1", holder="tantalus", ttl_s=300, wait_s=60) as l:
-    ...          # renewed in the background, released on exit
-
-try:
-    with lane("example.com", holder="faustus", wait_s=20, profile=r"C:\edge-profile"):
-        ...
-except LaneBusy as busy:
-    print(busy.held_by, busy.since)          # who has it, since when
-
-with lane("example.com", holder="argus", wait_s=0, raise_on_busy=False) as l:
-    if not l.acquired:
-        return f"busy: {l.held_by}"
-```
-
-* Entering waits up to `wait_s` (the hub serves waiters in arrival order) and then raises `LaneBusy` — or, with
-  `raise_on_busy=False`, enters with `acquired == False` and `held_by` / `since` filled in.
-* A holder that crashes frees the lane when its `ttl_s` runs out (at once when its process is gone); a long session keeps
-  it: the client renews it every `ttl_s / 3`. Only the holder can renew or release a lane.
-* **Without a hub nothing breaks:** if none answers (or it is too old to know lanes) the context manager logs once and
-  the caller proceeds (`l.via == "local"`). Unlike the GPU lease, this client never starts a hub.
-* Nesting in the same thread or task counts instead of deadlocking (`l.via == "nested"`).
-
-HTTP (loopback; **acquire, renew and release need a family token**, the same `Authorization: Bearer` an app uses for the
-rest of the hub; the lane belongs to the token owner, an app speaks only for itself and `force` exists only on the hub
-page): `POST /api/lane/acquire` `{domain | url, holder, purpose, ttl_s, wait_s (max 30), profile, pid[, ticket]}` →
-`{granted: true, lease_id, ...}` or `{granted: false, busy: true, held_by, since, expires_in_s, ticket}` (send the
-`ticket` back to keep your place in the queue; it is issued by the hub and bound to you), `POST /api/lane/renew`
-`{lease_id, holder, ttl_s}`, `POST /api/lane/release` `{lease_id, holder}` (403 for another owner), `GET /api/lane`
-(active lanes and who waits; lease ids only for authenticated callers). Clients find the token on their own
-(`HOARD_TOKEN_FILE` / `HOARD_HUB_TOKEN_FILE`, or the family descriptor) and, if the hub refuses it, carry on locally.
-Tools: `hub_lane_status`, `hub_lane_acquire` (lease capped at 10 minutes: call `hub_lane_renew` to keep it),
-`hub_lane_renew`, `hub_lane_release`. Forcing a lane free is a button of the hub window, never a tool. Events: `hub.lane.acquired|released|expired`. The hub
-window has a **Browser lanes** panel (domain, holder, since, expires, Release). Details in [docs/HUB.md](docs/HUB.md).
-
-### Run on: this PC or a Spark (never both)
-
-Faustus, Hermes and Prometheus can move to a DGX Spark so the PC can be switched off, and come back. The **Run on**
-control (Home › Faustus tile, and System › Connections) explains the move, asks for confirmation, then shows each step
-and its log. For a quick switch, the header carries a one-click arrow next to Faustus's state (`PC ← Spark3` /
-`PC → Spark3`): it points where the three go, moves them without asking and pulses while they move. The move:
-
-1. prepares the Spark while the PC keeps working: `git archive` of each repository's HEAD (plus Faustus's built UI),
-   one venv per app under `~/faustus-stack/<app>` (dependencies only when `requirements.txt` changed; Chromium for Hermes),
-   systemd **user** services (`faustus`, `hermes`, `prometheus`, with memory caps and linger so they survive logout), and
-   the SSH aliases Prometheus needs on the Spark, and Node.js (current LTS, under `~/faustus-stack/node`) for Faustus's
-   WhatsApp bridge;
-2. stops the three on the PC — and Faustus's WhatsApp bridge, which outlives Faustus on purpose — and checks their ports
-   are free;
-3. copies their data incrementally over SSH as a tar stream (size + modification time decide what changed). Files of
-   16 MB or more that exist on both sides travel as changed 4 MB blocks only, so a multi-GB database costs seconds after
-   the first move. Caches, logs and per-machine browser profiles stay on each side. The WhatsApp session and its message
-   store travel with Faustus (a session may run in one place only: two copies break its encryption keys); Faustus's
-   keeper starts the bridge again wherever Faustus now runs;
-4. rewrites the settings that hold machine paths (Hermes's Faustus folder for its mail, Prometheus's recipes folder),
-   keeping the PC values to restore later;
-5. starts the services, waits for their health checks, publishes them on the Spark's Tailscale name (HTTPS, only your
-   devices) and mails you the links and what is paused. If anything fails before that point, the Spark side is stopped
-   and the PC side started again.
-
-While they are on the Spark the Hub refuses to start them here (by hand, automatically, from "start all" or a profile),
-and their own launchers on the PC refuse too (`<faustus>/data/runtime/placement.json`, `<app>/data/placement-elsewhere.json`).
-Coming back stops the Spark services, brings the data home the same way (files the PC would lose go to
-`data/placement-trash/<when>/`, last three kept; nothing is pulled if the Spark copy looks incomplete), restores the PC
-settings, removes the markers and starts the three here. The Hub skips file transfers for unchanged folders and
-checks all three remote services over one SSH connection per poll.
-
-When the apps are on the PC, the Spark button lets you choose a destination from Prometheus's configured nodes.
-The arrow in the header uses the last selected Spark. To switch between Sparks, return to the PC first.
-
-Paused while on the Spark: Hermes's watch of open browser windows (it needs Windows; those targets wait quietly instead
-of asking for help), Faustus's control of your real browser and Windows desktop, Ollama models of this PC, and MCP servers
-that only exist on Windows. API: `GET /api/placement`, `POST /api/placement/switch` with `to` set to `pc` or `sparks`
-and an optional `node` for the destination Spark. Tools:
-`hub_placement_status`, `hub_placement_switch`. State in `data/placement.json`; the Spark half is
-`hoard_link/hub/placement_remote.py` (standard library only).
-
-While they live on the Spark the Hub asks there every 30 s (over SSH, in the background: the page never waits) whether
-each user service is active and its page answers, and shows that as their state: the top bar ("Faustus · Running on
-Spark3"), the Faustus tile (one dot per app and when it was checked), and Hermes and Prometheus in the Hoards list and in
-System, green, with a "Spark3" tag instead of start/stop, counted among the running ones. "Open" opens them at their
-Tailscale address. `GET /api/placement` and `hub_placement_status` include `remote` (`checked`, `ok`, and per app
-`service`, `http`, `healthy`); `/api/apps` gives `where` and the Spark `url`.
-
-Faustus on the Spark still reaches this Hub. The Hub only answers on this PC, and the Agora, the rooms and the council
-keep their records here, so while Faustus lives on the Spark the Hub holds a reverse SSH tunnel open towards it
-(`hoard_link/hub/placement_link.py`): port 8811 on the Spark's own loopback is this Hub. It leaves there
-`~/faustus-stack/hub-link.json` (the address and where a copy of the Hub's token is) and Faustus's unit names that file
-in `FAUSTUS_HUB_LINK`; Faustus uses it for the Agora and for coordination only, never for services that hand over file
-paths. Both ends are loopback, the tunnel is looked at every 20 s and reopened if it falls, and it closes when Faustus
-comes back to the PC or the Hub stops (the ssh child ends with the Hub's pipe, even if the Hub is killed). With the PC off
-there is no Hub to reach and Faustus says so. `GET /api/placement` and `hub_placement_status` carry `hub_link` (`wanted`,
-`up`, `since`, `error`, `port`, `node`).
-
-### Instances: a second copy of an app speaks as the app
-
-A copy of an app started on another data folder (a QA instance, a demo, a branch) writes its own `mcp-token`
-there, and the hub only knew the token of the app's registered folder: every family call of the copy came back
-`the hub refused this app's token`. List the copy and its token counts as that app: `POST /api/instances/add`
-`{app, data_dir | token_file, label?}`, `POST /api/instances/remove` `{app?, data_dir? | token_file?}` (hub page or
-hub token), `GET /api/instances` (any family caller; each row says whether its token file has a token and whether
-the app is registered). Tools: `hub_instance_list`, `hub_instance_add`, `hub_instance_remove`. The list is kept in
-`data/instance-tokens.json`; a rotated token is read again like the app's own.
-
-### Driving the hub from an agent
-
-The hub speaks the same contract as the apps it manages:
-`GET /api/agent/tools` and `POST /api/agent/call` with the bearer token
-from `data/mcp-token`, and a stdio MCP bridge
-(`python -m hoard_link.hub.mcp`) that proxies to it and starts a headless
-hub when none is listening. Tools: `hub_list_apps`, `hub_app_status`,
-`hub_start_app`, `hub_stop_app`, `hub_restart_app`, `hub_open_app`,
-`hub_close_windows`, `hub_start_all`, `hub_stop_all`, `hub_backends`,
-`hub_lease_status`, `hub_lease_request`, `hub_lease_release`,
-`hub_lane_status`, `hub_lane_acquire`, `hub_lane_release`,
-`hub_instance_list`, `hub_instance_add`, `hub_instance_remove`,
-`hub_profile_list`, `hub_profile_start`, `hub_profile_stop`,
-`hub_repos`, `hub_repo`, `hub_repos_refresh`, `hub_repo_fetch`,
-`hub_repo_push_command`, `hub_link_status`, `hub_link_chat`, `hub_rescan`. More in [docs/HUB.md](docs/HUB.md). The repository's own `faustus-plugin.json` lets Faustus
-adopt the hub like any other app.
-
-App MCP bridges built on `hoard_link.bridge.CatalogBridge` start a missing app
-through a short-lived launcher. Closing the stdio MCP host therefore leaves
-that app running. This separates the app from the host's process tree; it does
-not guarantee survival when an enclosing Windows Job Object is configured to
-terminate its processes on close.
-
-### The family layer (0.4): events, rules, jobs, backups, the proxy
-
-Since 0.4 the hub is also the family's nervous system — the part that
-turns twenty separate apps into one system without adding a twenty-first:
-
-- **Event bus.** Every app posts events to `POST /api/events` with its
-  own token (`hoard_link.family.emit(...)` in Python, `server/hoard-link.js`
-  in Node): one `agent.call` per tool the assistant ran, its own
-  milestones (`links.watch.new`), and the hub adds
-  `hub.app.started`, `hub.backup.done`, `hub.rule.ran`… Read them with
-  `GET /api/events` (filters, `since_id` to tail), follow them with
-  `GET /api/events/stream` (SSE), count them with `/api/events/stats`.
-  Kept in `data/events.db`; Cassandra's Hoard mirrors them for good.
-- **Calls between apps.** `POST /api/apps/<id>/call` runs a tool of any
-  app with *that app's* token, authenticated with the caller's own — no
-  app needs another's port or token file (`family.call("hypatia", ...)`).
-- **Rules.** *When* an event matches → *then* run actions: a tool of an
-  app, a hub tool, another event, start/stop an app, a profile — with
-  `${event.data.x}` templating, a cooldown and loop guards. Edited in the
-  hub's **Rules** tab or with `hub_rule_add`; templates included
-  ("transcript → flashcard drafts", "service down → restart").
-  A rule can also write to Faustus's Brain (`{"kind": "brain", ...}`): an
-  event becomes an entity or a note, linked to others, once — see
-  [docs/facets/brain.md](docs/facets/brain.md).
-- **Jobs.** The same actions on a clock: `every: "6h"` or `at: "04:00"`
-  (+ days), missed runs caught up after sleep. **Jobs** tab / `hub_job_add`.
-- **Backups.** Deduplicated snapshots of every app's `data/` folder (SQLite
-  copied consistently while in use), restore to a side folder or in place,
-  verify, prune. **Backups** tab / `hub_backup_*`. The "Nightly backup" job
-  template makes it automatic.
-- **Audit.** `GET /api/audit` / `hub_family_audit`: which apps answer the
-  shared contract, have a token, emit events, vendor an up-to-date library,
-  keep `data/` git-ignored — with recommendations. `scripts/sync_vendored.py`
-  refreshes every vendored copy of the library in the sibling folders.
-
-Tools added: `hub_events`, `hub_event_emit`, `hub_event_stats`,
-`hub_call_app`, `hub_app_tools`, `hub_rules`, `hub_rule_add`,
-`hub_rule_update`, `hub_rule_remove`, `hub_rule_run`, `hub_jobs`,
-`hub_job_add`, `hub_job_update`, `hub_job_remove`, `hub_job_run`,
-`hub_backup_run`, `hub_backup_status`, `hub_backup_restore`,
-`hub_backup_verify`, `hub_backup_prune`, `hub_family_audit`. The whole
-contract — manifest, agent routes, event conventions, actions, vendoring —
-is in [docs/FAMILY.md](docs/FAMILY.md).
-
-### Repos (0.5): the state of every git repository
-
-The hub's **Repos** tab lists the git repositories next to the apps (and
-Faustus, and the portfolio) with what usually goes unnoticed: commits not
-pushed to any remote, uncommitted changes, stray branches, a vendored copy
-of `hoard_link`, a theme copy or a plugin manifest that drifted from the
-canonical one, missing README / LICENSE, failing CI (through `gh`, when it is
-installed and logged in) and tracked files that look like secrets. Click a
-repository for its issues, unpushed commits and dirty files, and copy the
-exact `git push` command to run. The hub only reads: it never pushes,
-commits, resets or checks anything out (`fetch` is the one network call, and
-only when asked). `hub_repos` and four more tools give an agent the same
-view, `hub.repos.scan` / `hub.repos.issue` events feed rules, and a
-recommended rule turns new problems into digest items. Settings under
-`repos` in `data/hub.json`; the reference is the *Repos* section of
-[docs/HUB.md](docs/HUB.md).
-
-### Models for every app (0.6)
-
-Python apps call the local models through the vendored `Link`; Node apps
-(and apps that carry no `httpx`) cannot. Since 0.6 the hub, which already
-has a Link, serves them over HTTP: `POST /api/link/chat` takes
-`{messages, capability: "llm" | "vision", images, json, effort, max_tokens,
-temperature, timeout_s}` with any family token and answers `{ok, text, json,
-model, provider, ms}`; `GET /api/link/status` says which model serves `llm`,
-`vision`, `embed` and `tts`, and why not when none does. The calls use the
-same model resolution, GPU lease and reasoning effort as an app's own Link,
-at most `link_chat_concurrency` (default 2) at a time with the rest queued,
-and never store or log what was said (the `hub.link.chat` event carries the
-app, capability, outcome, duration and model only). With no model the answer
-is `503 no_model` with the reasons, never an invented text. `json: true` (or
-a JSON Schema) also returns the parsed answer, read leniently from fenced or
-prose-wrapped output, next to the raw text.
-
-```js
-import * as family from "./hoard-link.js";            // server/hoard-link.js, vendored
-const r = await family.chat({ messages: [{ role: "user", content: "..." }], json: true, effort: "low" });
-// { ok, text, json, model, provider, error }  error: no_model | timeout | hub_down | http_<code>
-```
-
-Python without Link: `hoard_link.family.chat(messages, json=True)` and
-`family.link_status()` (standard library only). For an assistant:
-`hub_link_chat` and `hub_link_status`. The contract and the status codes are
-in [docs/FAMILY.md](docs/FAMILY.md#10-models-for-every-app); the hub's
-settings in [docs/HUB.md](docs/HUB.md#models-for-every-app).
-
-For incremental answers use `family.streamChat(...)` (Node),
-`family.stream_chat(...)` (stdlib Python), or native async
-`Link.stream_chat(...)`; HTTP callers add `stream: true` to `/api/link/chat`.
-Events carry real text, reasoning, tool arguments, usage and the provider's
-finish reason, plus identified queue/heartbeat states. Closing/cancelling the
-iterator cancels upstream and releases the queue slot. Total and upstream
-inactivity timeouts are independent; `finish_reason: length` has
-`completed: false`. Blocking calls remain available. See the
-[streaming contract and examples](docs/FAMILY.md#incremental-generation).
-
-### Spheres, notifications, mail, Today and more (0.7)
-
-Twelve *facets* sit on the hub, each with its own routes, tools and tab (`hoard_link/hub/facets.py`):
-
-| Facet | What it does | Reference |
-|---|---|---|
-| Spheres | Personal / work / freelance: mail accounts, chat sources, VIP, keywords, mute, quiet hours, notification routing, digest time; selector in the top bar | [docs/facets/spheres.md](docs/facets/spheres.md) |
-| Notifications | `POST /api/notify` from any app; Windows toast, ntfy, Telegram, mail (through Faustus or SMTP); quiet hours, duplicates, rate limit, history | [docs/facets/notify.md](docs/facets/notify.md) |
-| Mail | One incremental read of the Faustus mail accounts for every app; interests, claims, "needs you", "nobody's"; off until you turn it on | [docs/facets/mail.md](docs/facets/mail.md) |
-| Chats | Slack (token) and Microsoft 365 (token or device-code login: Teams chats and Outlook) per sphere | [docs/facets/chats.md](docs/facets/chats.md) |
-| Today | The family agenda (`GET /api/family/agenda` on each app), the morning digest per sphere, `/calendar.ics` with a token, export folder, optional LAN listener | [docs/facets/today.md](docs/facets/today.md) |
-| References | `hoard://app/kind/id` links between records, both directions | [docs/facets/refs.md](docs/facets/refs.md) |
-| Search | One query over every running app's search tools, plus mail and references | [docs/facets/search.md](docs/facets/search.md) |
-| Work | Long jobs of every app (`<app>.job.*` events) with progress and GPU; failures notify | [docs/facets/work.md](docs/facets/work.md) |
-| Purchases | Ledger payment → Phileas shipment → Kafka invoice and warranty → HomeHoard item; stops the Tantalus watcher of what you bought | [docs/facets/purchases.md](docs/facets/purchases.md) |
-| Web (0.8) | One polite fetcher for every app: per-host throttle and block cooldown shared by the family, robots.txt, response cache, one optional browser profile, search, link previews (`hoard_link.fam_web`, JS `fam-web.js`) | [docs/commons/web.md](docs/commons/web.md#family-service-hub-facet-web) |
-| Services (0.8.1) | Owner catalogue status; opt-in audio download → transcription → transcript indexing, with separate job and indexing states | [docs/commons/services.md](docs/commons/services.md#11-hub-service-discovery-and-media-imports) |
-| Brain rules | An event of the bus creates or updates an entity or a note in Faustus's Brain and links it (a commitment → the person; a shipment → a note linked to the shop; a deadline → a dated note; minutes → a note linked to the attendees). Same event twice writes once; Faustus is found through the placement (PC or Spark); a write waits on disk while Faustus does not answer. Tab **Cerebro**: rules on/off, try a rule with a sample event, history with a link to each note | [docs/facets/brain.md](docs/facets/brain.md) |
-| Agent sessions (0.8.2) | What agents wrote in the apps that keep a write journal, grouped by agent and session; undo a whole session (dry run first); per-agent tokens with `read_only` / `drafts` / `all` profiles | [docs/facets/agent-sessions.md](docs/facets/agent-sessions.md), [docs/commons/accountable-agents.md](docs/commons/accountable-agents.md) |
-| Names es/en (0.8.3) | One Spanish/English map of Pokémon (and forms), moves, abilities, items, natures, types, badges, places and ingredients; accent-free fuzzy lookup, translation and `expand` to retry an empty search in the other language (`/api/aliases/*`, `hub_alias_lookup`, `hub_alias_expand`) | [docs/facets/aliases.md](docs/facets/aliases.md) |
-| Parity (0.8.3) | Differential test kit (`hoard_link.parity`): seeded corpus, oracle and probe as processes, traces of state and random-number calls compared block by block with the first divergence, version locks, selective runs, oracle cache; `hub_parity_compare`, `hub_parity_status`, `hub_parity_run` | [docs/parity.md](docs/parity.md) |
-
-App side (vendored with the library): `hoard_link.fam_notify`, `fam_mail`, `fam_agenda`, `fam_refs`, `fam_web`
-(standard library); Node apps get the same functions in `hoard-link.js` (`notify`, `mail*`, `installAgenda`,
-`refs*`; the web service in `hoard-commons/fam-web.js`: `webFetch`, `webSearch`, `webFetchOrLocal`...). The contracts are
-sections 12 to 17 of [docs/FAMILY.md](docs/FAMILY.md).
-
-### Agora: the shared workspace of the coding agents
-
-**En directo** shows one named, coloured cursor per active agent, task columns,
-repository path locks and observed tool excerpts, and the chosen channel. Cursor
-selection opens the session details and following keeps its destination in view.
-Cursors dim after sixty seconds without a signal and leave when the observed turn
-ends. Studio uses the same console view. The read-only `/api/agora/live` and
-`hub_agora_live` MCP tool expose its source-timestamped projection. See the
-[live activity guide](docs/AGORA_LIVE.md).
-
-Coding agents (one per chat or session) and the person coordinate their work on the family in the hub's **Agora** tab
-(facet `agora`, `data/agora.db`): agents announce what they are doing with a heartbeat; tasks go open → claimed →
-in progress → review → approved → done; claiming a task takes its locks all-or-nothing (`path:<Repo>/<file or dir>`,
-`repo:`, `merge:` for integrating into the shared checkout, `model:principal`, `gpu:`, `port:`, `app:`), leases that
-expire unless renewed; every task has a thread, and debates, questions and decisions get their own; two rounds
-without agreement escalate to the person, who is notified and decides from the page; resolved threads are the
-decision log; each agent has an inbox with long poll. Locks are grouped by owner, task and repository;
-mentions stay pending until read or acknowledged, and task closures distinguish approved, exempt and unreviewed
-work. `digest --hours N` summarizes recent activity. A **debate** inside a thread freezes the question with its linked
-files (pinned to the repo HEAD) and commits, invites agents who file findings with evidence (file:line, commit, URL,
-command output) that the others verify, challenge or reject; the findings board in the thread view groups them by
-status with who agrees, and closing it writes the outcome into the decision log and can open tasks from the adopted
-findings (`hub_agora_debate_*`, `agora.py debate open|finding|challenge|verify|reject|close|show|list`). 79 tools `hub_agora_*` (`hub_agora_task_deps` makes a task wait for others and wakes its owner once when they are through; `hub_agora_handover` hands the unfinished work of a dead agent to its successor, right away with `force`; `hub_agora_agent_quota` says whether an agent is out of quota, and mentions, handovers and reviewer choices warn about it; `hub_agora_orphans` lists work nobody is moving with who can take it; `hub_agora_watch` reports what each agent is really doing from its own transcripts),
-`GET|POST /api/agora/*`, events
-`agora.*`, and `scripts/agora.py` for agents with only a terminal. Reference: [docs/AGORA.md](docs/AGORA.md).
-
-Every space also reads as a chat server: `general` and any channel someone creates (each backed by a thread, so inbox
-and mentions work as usual), task threads grouped by board column, the threads waiting for the person, and the members
-with presence, provider and quota. `hub_agora_servers` lists the spaces as servers, `hub_agora_guild` returns one
-server view in a single read, `hub_agora_channel_post` says something in a channel or thread (`@id` mentions, `@here`
-whoever is around), `hub_agora_channel_read` reads it, `hub_agora_feed` lists deliveries, reviews or the latest
-messages, `hub_agora_search` finds messages, tasks and threads by their text, `hub_agora_folders` lists the folders
-of this machine one level at a time (so a page that runs elsewhere can choose a server's folders), and
-`hub_agora_pulse` waits for the next change. An agent is put on a server by name before it has said anything
-(`hub_agora_member_add`; it shows as invited), taken off with its work handed over or freed (`hub_agora_member_remove`),
-and those long gone that hold nothing are taken off together (`hub_agora_members_prune`); `hub_agora_members` lists
-them all. A message takes reactions (`hub_agora_react`), quotes another one (`reply_to`) and carries files
-(`hub_agora_file_add`, 10 MB each); a server takes a picture as its icon (`hub_agora_space_icon_set`) and its channels
-an order (`hub_agora_channels_reorder`). A server the person muted (`muted` in `hub_agora_space_meta_set`) announces
-nothing to them outside the page, and `hub_agora_inbox` with `skip_muted` leaves it out. From a terminal: `agora.py servers | channels | say | read | channel | feed |
-search | members | member-add | member-remove | members-prune | react | file`. Faustus Studio draws
-this view and writes there as the person. See
-[docs/AGORA.md](docs/AGORA.md#servers-and-channels).
-
-A passive **observer** reads the transcript files of Codex, Cursor and Claude Code on this PC (tails only) and derives each
-session's real state (working, running a tool, waiting for an approval or answer, idle, stuck), a queue of pending questions
-for the person, and which Agora agent each session is (explicit binding or inferred from its own `agora` calls):
-`GET /api/agora/watch`, `hub_agora_watch`, `agora.py watch`, and the agents panel of the page. See
-[docs/AGORA.md](docs/AGORA.md#observer-of-the-agents-transcripts).
-
-The Agora console also shows, per leader, whether its CLI is working, waiting, idle or logged out (and whether it sits idle while it owns open tasks), read from the CLI's own session files without message contents: `GET /api/agora/console/leaders`, `hub_agora_console_leaders`, `agora.py leaders`. See [docs/agora-app.md](docs/agora-app.md#live-state-of-each-leader).
-
-The console starts independent sessions of each provider's own program on the Hub's PC (`hub_agora_console_worker`), on the model and effort chosen for that server (`hub_agora_console_preferences`): Codex, Claude, Cursor and Faustus, each with the models and effort levels its own program offers, and without an effort where a model has none. A session takes the name it is given (`GET /api/agora/console/name` proposes a free one) and the rank it is started with, or the rank the person keeps for its model on that server; a Claude session also takes a model by its full name. See [docs/agora-app.md](docs/agora-app.md#child-sessions-by-provider).
-
-On each server every agent holds a **rank** of one fixed ladder (director > lead > agent > support; `agent` until the person says otherwise, and only the person gives ranks, from their own pages). A higher rank settles disagreements (a thread is not resolved against it, nor reopened once it resolved it; in a debate with findings its stance decides each finding), its review stands (what it sent back is not approved or closed from below), it hands out the work (`hub_agora_task_assign`, taking a task back, handing it over at once) and questions go to it before they reach the person (`escalate` asks whoever is next above and around). `hub_agora_ranks`, `GET /api/agora/ranks` and `agora.py ranks | assign` show and use it. See [docs/AGORA.md](docs/AGORA.md#ranks).
-
-`sync "current work" --since <post-id> --thread 32` resumes in one request:
-heartbeat, inbox peek, board, owned tasks and their leases, and subsequent posts.
-The same operation is available as `hub_agora_sync` and `POST /api/agora/sync`.
-Persist `next_since_id` only after receiving and processing the response; keep
-separate cursors for different thread filters. IDs survive a Hub restart. Sync
-does not acknowledge mentions or advance the inbox read mark: use the existing
-thread/read/ack operations when you have actually handled a message. A bundled
-response is not a transactional snapshot of every concurrent operation.
-
-`checkpoint <task> --data-file checkpoint.json --expected-revision 0` appends declared progress for the current
-task owner; `checkpoints <task> --after 0 --limit 100` reads its durable history. MCP exposes
-`hub_agora_checkpoint` and `hub_agora_checkpoints`. The payload supports summary, workspace, branch, full hashes,
-next steps, declared tests and artifacts. Stale revisions conflict; exact immediate retries add no duplicate.
-Task detail and owned tasks in sync include the full checkpoint; lists carry a short `checkpoint_summary`.
-The Hub drawer displays the latest checkpoint and missing/conflicting lock warnings. Checkpoints neither renew
-locks nor change task or review state, and do not verify paths/tests or guarantee workspace exclusivity.
-
-Task progress now separates the owner's latest task report from the agent heartbeat. A recent heartbeat without
-task notes/checkpoints for one hour produces an inferred progress warning, without changing task status or waking
-an agent; expected waiting/review states are excluded. Recent running-agent observations prevent treating silence
-on a particular task as proven inactivity. Thresholds are configurable through `agent_watch.task_idle_s`.
-`activity <task>` / `hub_agora_activity` reads evidence and elapsed time. `timeline <task> --after <message-id>` /
-`hub_agora_timeline` pages a durable chronology of task and associated debate messages, state/lock/review records,
-and enriched checkpoints. The task drawer shows the chronology, supports loading more, and preserves composer
-drafts while refreshing. Details and limits: [docs/agora-activity.md](docs/agora-activity.md).
-
-Every task submission has a monotonic `submission_revision`, including resubmissions
-with the same commits. A review must send `expected_submission_revision` from the
-submission actually inspected. A stale vote returns HTTP409 without changing the
-task, vote messages, events or reviewer heartbeat. Missing or invalid revisions
-are refused; the CLI requires `review … --revision N` and does not fetch a newer
-revision automatically. The page preserves a drafted note's revision during
-polling and requires an explicit choice before applying it to a newer submission.
-This binds a vote to the submitted record; it does not verify Git objects, files
-on disk or whether a reviewer genuinely ran the reported checks.
-
-### Live feeds (`hoard_link.livefeed`)
-
-For public data that changes by the minute (earthquakes, flights, storms, wind, orbital elements, prices), one
-`LiveFeed` per source keeps the last good answer per key in memory and on disk, lets one request per key go out at a
-time while the other callers wait for it, retries with growing pauses, and when the source fails serves the last good
-answer marked `stale` with its age and the error, instead of failing.
-
-```python
-from hoard_link.livefeed import LiveFeed
-feed = LiveFeed("usgs", ttl_s=120, disk_dir=data_dir / "feeds")
-got = feed.get("4.5_day", lambda: fetch_json(url))
-got.data, got.freshness, got.age_s, got.meta()   # freshness: fresh | cached | stale
-```
-
-`max_stale_s` (a week by default) bounds how old a stale answer may be; past it `LiveFeedError` is raised. Faustus's
-public-data tools use it for every source.
-
-## Use with Faustus
-
-Nothing to configure when Faustus runs on the same machine with auth
-disabled: Hoard Link finds it on `127.0.0.1:7000` or `:7001`, reads its
-model registry and talks to the same local servers Faustus already has
-loaded (see [Resolution order](#resolution-order), step 2). Point
-`faustus.url` in `backend.json` (or `HOARD_FAUSTUS_URL`) at any other
-port.
-
-When Faustus requires auth, mint a token scoped to `chat` (the scope the model registry
-and TTS/STT endpoints accept today) and put it in the app's
-`backend.json` under `faustus.token`, or export it as
-`HOARD_FAUSTUS_TOKEN` for the app's process. Faustus tokens look like
-`ody_...`; treat them like any other local secret (keep them out of the
-app's own git history — `backend.json` typically lives under the app's
-gitignored `data/` directory).
-
-## API
-
-```python
-import os
 from hoard_link import Link, LinkConfig
-
 link = Link(LinkConfig.load(path_to_backend_json, env=os.environ, app="argus"))
-
-res = await link.resolve("vision")   # Resolution(capability, provider, url, model, api, state, reason, details)
-res = await link.resolve("llm", task="code")   # same, ranked by the measured routes for that task
-
-status = await link.status()         # dict for GET /api/backend in the app: every capability's Resolution + "routes"
-
-text = await link.chat(
-    [{"role": "user", "content": "..."}],
-    images=[jpeg_bytes],
-    max_tokens=300,
-    temperature=0.2,
-    capability="vision",
-    response_format=None,
-    effort=None,                      # off | low | medium | high | max; None = HOARD_LLM_EFFORT, else server default
-    task=None,                        # a measured route ("code"): prefer the model measured best for it
-)                                     # -> ChatResult(text, model, provider, usage, elapsed_ms, reasoning, effort)
-
-vecs = await link.embed(["a", "b"])  # when an embeddings server resolves; else raises Unavailable
-
-wav = await link.tts("Hola", voice=None)   # Faustus TTS or a configured command; else Unavailable
-
-comfy = await link.comfy()           # ComfyClient, or None if nothing resolves
-
-idle = await link.wait_idle("llm", max_wait_s=30)   # True/False, see Policies above
-
-link.sync.chat(...)                  # same calls, blocking, for synchronous app code
-
-from hoard_link import lease, Lease, LeaseTimeout, LeaseError
-with lease(vram_mb=6000, purpose="whisper", owner="funes", gpu=None, priority=0,
-           timeout_s=None, hub_url=None) as l:   # also `async with`; gpu: None | 2 | [2, 3]
-    l.gpu, l.via, l.lease_id          # GPU index (or None), "hub" | "local", id on the hub
+text = await link.chat([{"role": "user", "content": "..."}], task="code", effort="low")
 ```
 
-- `api` is `"openai"` (`/v1/chat/completions`, images as `image_url` data
-  URLs on the last user message) or `"ollama"` (`/api/chat`, `images:
-  [base64]` on the last user message, `stream: false`).
-- Reasoning is kept out of `ChatResult.text` and exposed as
-  `ChatResult.reasoning`: closed `<think>...</think>` blocks, an orphan
-  `</think>` (the chat template opened the tag in the prompt), an
-  unterminated `<think>` (cut off by `max_tokens`), and out-of-band
-  fields (`reasoning_content` from llama-server, Ollama's `thinking`).
-- `effort` sets how hard the model reasons before answering
-  (`hoard_link/reasoning.py`). OpenAI dialect: `chat_template_kwargs.
-  enable_thinking` plus the budget as `thinking_budget_tokens` (the name
-  current llama-server builds honour) and `reasoning_budget`, and
-  `reasoning_effort`; Ollama: `think`. Budgets: low 1k, medium 4k, high 8k,
-  max 16k tokens. When thinking and `max_tokens` is set, the cap grows by the
-  budget (reasoning spends the same tokens, and a small cap used to end
-  mid-thought with no answer); the HTTP timeout grows with it. A 400 that
-  names a reasoning field retries once without them. Default per capability:
-  `capabilities.<cap>.effort` in `backend.json` or `HOARD_<CAP>_EFFORT`.
-  Quality work (grading, reports, plans) should pass `effort="max"`; titles
-  and tags `effort="off"`.
-- For HTTP-verified GLM-5.3-Flash native budget support, both chat modes use
-  Low/High/Max: off and medium select Low, max stays Max, and native
-  `thinking_token_budget` replaces the llama-server aliases. Existing explicit
-  profile budgets remain; no effort adds no cap. `clear_thinking` defaults to
-  true and optional `chat_template_kwargs` preserves explicit false. Response
-  metadata identifies requested/effective effort and says thought cannot be
-  disabled. The same options pass through Hub API/MCP and family clients.
-  See [the verified-model contract](docs/FAMILY.md#model-specific-reasoning-controls).
-- `response_format` is passed through on the OpenAI dialect and mapped to
-  Ollama's `format` (`json_object` -> `"json"`, `json_schema` -> the
-  schema). Images get their real MIME type (JPEG, PNG, GIF, WebP).
-- `ComfyClient(url)`: `system_stats()`, `object_info(node=None)`,
-  `upload_image(bytes, filename, overwrite=True)`,
-  `queue(workflow: dict, client_id) -> prompt_id`,
-  `wait(prompt_id, timeout_s, on_progress=None)`,
-  `outputs(prompt_id) -> list[OutputFile]`, `download(output) -> bytes`,
-  `interrupt()`, `free(unload_models=False, free_memory=False)`.
-  `queue()` validates the **API format** (a dict of node id ->
-  `{class_type, inputs}`) and raises a clear `ValueError` if handed the
-  UI's `{"nodes": [...], "links": [...]}` export instead. HTTP errors
-  raise `BackendError` with the response body (so `/prompt`'s
-  `node_errors` reach the caller), and `wait()` raises `BackendError`
-  when the job finished with an execution error.
-- Errors: `Unavailable(capability, reasons)` when nothing resolved,
-  `BackendError(provider, status, body_excerpt)` for any failed call to a
-  resolved server: a non-2xx status, a reply that is not the expected
-  JSON, or `status == 0` when there was no HTTP response at all.
-- `link.sync.*` runs on a private event-loop thread with its own HTTP
-  client, so an app can mix `await link.chat()` and `link.sync.chat()`
-  on one `Link`. If you inject your own `httpx.AsyncClient`, it is shared
-  as given; don't mix both styles on it. Calling `link.sync.*` from that
-  private thread (e.g. inside a callback) raises `RuntimeError` instead
-  of deadlocking.
+`backend.json` and the `HOARD_<CAP>_URL`, `HOARD_<CAP>_MODEL`, `HOARD_FAUSTUS_URL` and `HOARD_FAUSTUS_TOKEN` variables override discovery. Details: `docs/HUB.md`, `docs/FAMILY.md`.
 
-## Starting the backends without Faustus (`hoard_link.launch`)
+## Connection with Faustus
 
-Resolution only finds servers that are already running. When Faustus is
-not there to have started them, an app (or the hub) starts them itself:
+- Hoard Link finds Faustus on `127.0.0.1:7000` or `:7001`, reads its model registry and talks directly to the servers it already has loaded. When Faustus needs auth, put a token scoped to `chat` in `backend.json` under `faustus.token` or in `HOARD_FAUSTUS_TOKEN`.
+- The repository ships a `faustus-plugin.json`, so Faustus adopts the Hub like any other app. Its `skills` block names the procedures of the family skill library that fit the Hub.
+- Agents drive the Hub over `GET /api/agent/tools` and `POST /api/agent/call` with the bearer token in `data/mcp-token`, or through the stdio bridge `python -m hoard_link.hub.mcp`, which starts a headless Hub if none is listening.
+- MCP tools by group: apps and profiles (`hub_list_apps`, `hub_start_app`, `hub_stop_all`, `hub_profile_*`), GPU and lanes (`hub_lease_*`, `hub_lane_*`), instances, family layer (`hub_events`, `hub_rule_*`, `hub_job_*`, `hub_backup_*`, `hub_family_audit`, `hub_call_app`), repos (`hub_repos`, `hub_repo_*`), model access (`hub_link_status`, `hub_link_chat`), placement (`hub_placement_*`), fleet and capability search (`hub_fleet_status`, `hub_capability_find`), mail (`hub_mail_accounts`, `hub_mail_compose`), MCP relays (`hub_mcp_apps`) and the Agora (`hub_agora_*`, about eighty tools). `scripts/agora.py` gives the same Agora operations to agents that only have a terminal.
+- The Hub's own window carries Faustus's shared copilot panel.
 
-```python
-from hoard_link.launch import Launcher
+## Screens
 
-ln = Launcher(app="prospero")
-ln.statuses()                              # comfyui@8188, ollama, cmd:<id>: running / down / unavailable
-ln.start("comfyui@8188", gpu="auto", wait_s=120)
-ln.stop("comfyui@8188")                    # only if the family started it
-```
+The Hub overview is the screenshot at the top. `qa276-r2-ui-es-mobile.png` shows the Spanish mobile layout.
 
-- **ComfyUI** is found in `COMFYUI_DIR`, `comfyui.dir` or the usual folders
-  (`~/ComfyUI`, `D:\LocalAI\ComfyUI`, the portable build...), with the Python
-  of its `venv`, `.venv` or `python_embeded`. It runs on loopback with
-  `--cuda-device` (the GPU with the most free memory unless you pick one); a
-  server on any port other than 8188 gets its own output, temp, user and
-  database folders under `~/.hoard/backends/comfyui-<port>/`. Flags are only
-  passed when the install's `cli_args.py` knows them.
-- **Ollama** is found on `PATH` or in its default install folder (`ollama serve`).
-- **Anything else** (a llama.cpp server, a TTS server) is a command in
-  `~/.hoard/backends.json` with a loopback health URL.
+<details>
+<summary>Mobile layout</summary>
 
-`~/.hoard` (`HOARD_HOME` moves it) is shared by every app and the hub:
-`backends.json` says where things are installed, `backends/state.json`
-which processes the family started (pid and creation time, so a recycled
-pid is never taken for ours) and `backends/logs/` their output. A ComfyUI
-the hub started shows up in Prospero and can be stopped there, and the
-other way round; a server started by hand or by Faustus is reported as
-running and never stopped. A server whose port is open but whose health
-page does not answer in time (ComfyUI loading a large model mid-render)
-counts as running with `busy: true`, so nothing starts a second copy on top
-of it. Stdlib only.
+![Hub on a phone](qa276-r2-ui-es-mobile.png)
 
-```json
-{
-  "comfyui": {"dir": "D:/LocalAI/ComfyUI", "python": null, "gpu": "auto", "args": []},
-  "ollama": {"exe": null},
-  "commands": [
-    {"id": "llamacpp", "label": "llama.cpp", "argv": ["powershell", "-NoProfile", "-File", "D:/LocalAI/Start-LlamaServer.ps1"],
-     "cwd": "D:/LocalAI", "health": "http://127.0.0.1:8081/health", "capabilities": ["llm", "vision"]}
-  ]
-}
-```
+</details>
 
-`hoard_link.launch.memory(launcher)` says what each GPU holds and which server holds it (the
-models ComfyUI, llama.cpp and Ollama keep loaded; a model server started by hand shows by process
-name and port). `hoard_link.launch.host_stats()` gives RAM (and on Windows the committed
-memory, RAM plus page file) and CPU use, stdlib only; `memory()` includes it
-as `host` and each GPU carries its use, temperature and power.
+## Layout
 
-A command may declare `stop_argv` (its own stop script): then it can be stopped
-even when it was started outside the family.
-
-The hub shows these servers under its backends strip with start and stop
-buttons, and exposes `GET /api/services`, `POST /api/services/start|stop`,
-`GET /api/memory` and the tools `hub_services`, `hub_service_start`, `hub_service_stop`, `hub_gpu_memory`.
-
-## Boundaries (what this library does not do)
-
-- **No music generation.** ComfyUI's `object_info` gives no reliable
-  signal for audio/music graphs the way `CheckpointLoaderSimple` does for
-  image checkpoints, so `music` only resolves through explicit
-  configuration or a matching Faustus registry entry, never through
-  loopback probing.
-- **No websocket progress for ComfyUI.** `ComfyClient.wait()` polls
-  `/history/{id}`; it does not open `/ws` for push progress. A poll every
-  second is simple, correct and testable offline; a websocket client is a
-  second thing to keep alive and reconnect, which isn't worth it for a
-  job-completion wait.
-- **`resolve()` does not verify explicit configuration.** Resolution-order
-  source #1 is trusted as given; a stale `backend.json` entry surfaces as
-  a `BackendError` with `status == 0` on the first real call rather than
-  being probed ahead of time. This keeps explicit configuration doing exactly one
-  thing (override everything else) instead of two.
-- **The sync facade is one background thread per `Link`.** It is meant
-  for an app whose own request handlers are synchronous; it is not a
-  thread pool and does not parallelize calls to the same `Link`. Called
-  from async code it blocks that thread until the result is ready, so
-  prefer `await` there.
-- **No TTS over HTTP URL.** `tts` works through Faustus's TTS service or
-  a configured `command`; a `tts` capability with only a `url` resolves
-  but `link.tts()` raises `Unavailable`.
-- **No cloud endpoints.** Faustus registry entries that are not local
-  are ignored on purpose.
-- **Vision on a chat server.** `vision` also resolves to a chat endpoint
-  of the registry: one whose `models_vision` lists models that accept
-  images, or an OpenAI-compatible server on this machine or the local
-  network (a model served on the cluster) that Faustus has no answer for
-  yet. The second kind is used only after a one-token request with an
-  8x8 image succeeds; a 400 about images rules it out, and both answers
-  are kept for an hour.
+| Path | Contents |
+|---|---|
+| `hoard_link/` | The library: resolution, chat, embeddings, TTS, ComfyUI, leases, lanes, launch, livefeed, `fam_*` clients |
+| `hoard_link/hub/` | The Hub server, facets, placement, Agora and the web UI |
+| `apps/agora/` | The native Agora console (Tauri) |
+| `shell/` | Hoard Window, the shared Electron shell |
+| `js/` | Node counterparts (`hoard-link.js`, `hoard-commons`) |
+| `docs/` | Reference: HUB, FAMILY, AGORA, facets, commons |
+| `scripts/` | Theme and vendor sync, palettes, cohesion audit, `agora.py` |
+| `examples/` | `status.py` |
+| `tests/` | The pytest suite |
+| `data/` | Hub configuration, tokens, logs, Agora database, backups (not tracked) |
 
 ## Tests
 
-With the virtual environment from the [Quick start](#quick-start) active,
-on Windows or Linux:
-
-```
+```powershell
 pytest -q
 ```
 
-546 tests, offline (`httpx.MockTransport`), in about a minute. The only
-real sockets are in the sync-facade tests and the hub tests, which start
-tiny HTTP servers on ephemeral `127.0.0.1` ports (a fake app answering
-`/api/health`, a launchable one the hub really starts and stops, profile
-commands, and a hub with fake GPUs for the lease client); the Repos tests
-run the real `git` on temporary repositories with a bare repository as the
-remote (and a fake `gh` runner for CI); the
-TTS-command tests run the current Python interpreter as the "TTS binary". No test needs network access or a
-downloaded model, so CI (`.github/workflows/ci.yml`: Ubuntu and Windows,
-Python 3.11 to 3.13) runs the same suite with no GPU and no network.
+The suite runs offline against mock transports and tiny local HTTP servers; it needs no GPU, network or downloaded model.
 
-## License
+## Licence
 
-MIT — see [LICENSE](LICENSE).
-
-## Family expansion · 2026-10-04
-
-`hub_capability_find` searches all installed sibling manifests, including stdio-only MCP plugins such as GamerHoard. With `check=true` it checks at most eight HTTP catalogues, returns real schemas/annotations and distinguishes declarations from connectivity. It never starts apps or infers model readiness from a catalogue. `hub_recipe_plan` maps 15 cross-family workflows to actual declared capabilities and lists uncovered stages, including measured CAD, personal continuity and the games library. The Capabilities tab exposes both. These plans use existing family execution and resource services; stdio-only tools are called through Faustus MCP, not through a fabricated HTTP endpoint. Discovery does not change the Hub's web-app launcher inventory.
-
-## Agora desktop console
-
-The team console has its own Rust/Tauri Windows window and a full browser view at `/agora/`. It preserves the existing Hub coordination store and operations. See [run, model catalogs, quota pools and worker validation](docs/agora-app.md). Source checkouts require a frontend build; unavailable providers and quotas remain explicit. Quota bars read Codex, Claude and Cursor where their own clients do (app-server, Claude Code's OAuth usage endpoint, the Cursor app's usage summary); messages from Luis are right-hand bubbles and each provider's messages are outlined in a colour he picks.
-
-## Fleet monitoring
-
-`GET /api/fleet` and MCP `hub_fleet_status` reconcile declared apps, Hub jobs/rules and authenticated family watcher/task metadata. Faustus Home and the morning digest separate Today, Waiting for you, Blocked, Unverified and Paused. `hub_fleet_register` declares a cadence and `hub_fleet_report` records bounded outcomes. Two missed schedule opportunities (counted from the last success, declaration or resume) and user-waiting transitions produce one notification through existing routing, never a storm (a burst is one summary) and never a second one for an app outage Cassandra already reported, at most one per item every half hour (a push the gap blocks waits and goes out later if the item is still failing), and an item that reappears in its producer's list restarts its clock instead of being silent on the spot; requests are served from a background cache and never wait for probes; monitoring never starts, restarts or approves work. Windows tasks are explicitly named and read as metadata only; unsupported schedules remain unverified. See [configuration, timing and coverage](docs/FLEET.md).
-
-## Ágora compartida
-
-Agora provides persistent project spaces, conversations, deliberations, tasks and decisions. The original ecosystem Agora becomes **Faustus y Hoards**, preserving its history and identifiers. Canonical room and coordination repositories live in the Hub; native Faustus model/tool execution remains unchanged. Physical reservations and quotas stay global. Normal HTTP, MCP and CLI expose spaces and rooms; old Council/Group contracts remain compatible. [Architecture and evidence](docs/agora-council/PLAN.md) · [spaces](docs/agora-council/SPACES.md).
-
-Completed copilot tools notify host views immediately, while the turn continues.
-Hosts may provide `hoardCopilot.onChange`; existing refresh callbacks remain
-compatible. See [live copilot updates](docs/copilot-live-refresh.md).
-
-## Skills
-
-The `skills` block of `faustus-plugin.json` names the procedures of the family's skill library that fit this app's work: `hoard-daily-digest`, `hoard-family-recap`, `hoard-what-happened`, `hoard-meeting-prep`, `team-agent-orchestration`. The hub's Skills tab shows and changes them. This app does not hand them to connecting agents yet.
-
-## Outbound family mail
-
-The mail service saves remote drafts or sends explicitly through the connected Faustus account. Python uses fam_mail.send_status / fam_mail.send; Node uses mailStatus / mailSend. MCP exposes hub_mail_accounts and hub_mail_compose. Draft is the default; recipients, subject, body, cc/bcc and gateway-local attachment paths are supported. Outgoing mail works independently of inbox polling. There is no sending retry or fallback. See [the mail contract](docs/commons/services.md#outbound-mail).
-
-
-## Family MCP through the Hub link
-
-When Faustus runs on another machine, the PC Hub serves each installed app's
-manifest-declared stdio MCP over Streamable HTTP at
-`/api/mcp/apps/<id>/mcp`, authenticated with the existing Hub-link token.
-Each HTTP session reuses its own hidden bridge process and closes it on session
-termination or Hub shutdown. Initialization instructions, tools, skills, prompts,
-resources, structured results and bidirectional JSON-RPC messages pass through.
-Connecting starts the bridge. Starting the app remains an explicit Hub action.
-
-`GET /api/mcp/apps` and `GET /api/mcp/apps/<id>?check=1` describe the available
-relays and optional health at the app's current location. MCP `hub_mcp_apps` exposes the same discovery.
-Faustus resolves the transport when connecting and checks health through the Hub.
-Saved connector commands, environment, disabled preferences and PC browser URLs
-retain their meaning. Legacy MCP rows whose command exactly matches a family
-manifest can use the relay through `/api/mcp/resolve`.
-
-## Faustus workers from Agora
-
-The console discovers Faustus through the same placement state published by
-`GET /api/placement`. A worker uses its Agora space's workspace and a separate
-native project/session, with its own coordination identity and the selected
-Sparks model. The existing local controller workflow remains available.
-
-Windows repositories execute on the PC. When the main Faustus runs on a Spark,
-an explicit worker launch automatically starts a hidden PC Faustus with separate
-data under `<hub-data>/agora-console/faustus/<agent>`, an ephemeral loopback port
-and that Spark's configured model endpoint. It connects to the real Hub URL and
-Hub MCP with the existing token file. Its server and connector processes end
-with the worker. Browsing the model catalog starts no worker runtime.
-
-The console launches Faustus workers with no wall-clock deadline or approval leg
-limit. A worker stops after an hour without turn events by default. Set
-`HOARD_AGORA_WORKER_IDLE_SECONDS` on the Hub to change that interval. Stop
-cancels the exact native run. After an interruption the console attempts one
-automatic continuation when it confirms the original session is idle. The
-worker receipt also offers **Continuar** for that same session and workspace
-(`action: continue` over HTTP and MCP).
-
-Managed workers are told to commit changes and submit their Agora task. The
-console checks the submission and the Git status of the recorded worktree.
-Incomplete or interrupted work is reported in the worker receipt and task
-thread. The task keeps its owner and locks so it can be resumed.
-
-Worker details show the actual server URL, workspace and observed tool counts.
-**Detener turno** reads that session's current run ID and cancels it through
-`POST /api/chat/stop/<session_id>` with the native run identity and work scope.
-The durable receipt reports cancellation separately from task completion.
-HTTP `/api/agora/console/worker` and MCP `hub_agora_console_worker` share this
-flow, including `action=stop`. Native Spark workspaces can use the placed
-instance directly with its connected Agora connector.
-
-### Apps placed on a Spark
-
-For apps managed by placement, the relay resolves the declared bridge on the
-current machine. On a Spark it uses placement's existing SSH connection, the
-app's native venv and token file, with bridge autostart disabled. Health is read
-on that Spark and metadata carries the tailnet URL. Reconnecting after a move
-back to the PC resolves the installed local command again. A move in progress
-reports that the connector can reconnect when placement finishes.
+MIT, see [LICENSE](LICENSE).
