@@ -42,7 +42,8 @@ THREAD_NAME = "placement-switch"
 MIN_FREE_GB = 4.0
 PORTS = {"faustus": 7000, "hermes": 5221, "prometheus": 5205}
 HEALTH = {"faustus": "/", "hermes": "/api/health", "prometheus": "/api/health"}
-SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15"]
+SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+            "-o", "TCPKeepAlive=yes"]
 REMOTE_HEALTH_TTL_S = 30.0       # how old the "are they up on the Spark?" answer may be before it is asked again
 SERVE_STATUS_TIMEOUT_S = 10.0    # asking tailscale what it already publishes is a quick question
 SERVE_TIMEOUT_S = 15.0           # publishing a port must never hold the switch: a hung serve is a warning, not a failure
@@ -151,6 +152,10 @@ class Placement:
         if data["location"] == "sparks" and not (data.get("job") or {}).get("running"):
             out["remote"] = self.remote_health()
             out["hub_link"] = self.link.status()
+        else:
+            link = self.link.status()
+            if link.get("up") or link.get("error"):
+                out["hub_link"] = link                # a link that is failing is worth seeing even while a move runs
         return out
 
     # ================================================================================= are they up on the Spark?
@@ -238,8 +243,11 @@ class Placement:
 
     def _ssh(self, command: str, timeout: float = 120, input: Optional[str] = None) -> str:
         # Bytes both ways: text mode on Windows would turn every "\n" sent into "\r\n" and read the Spark's UTF-8 as cp1252.
+        # With nothing to send, ssh's own stdin is /dev/null: the remote command sees end-of-input at once instead of
+        # waiting on a pipe that never closes, which is what left "sshd: …@notty" sessions behind on the Spark.
         r = self._run(["ssh", *SSH_OPTS, self._node(), command], capture_output=True, timeout=timeout,
-                      input=input.encode("utf-8") if input is not None else None, creationflags=_flags())
+                      input=input.encode("utf-8") if input is not None else None,
+                      stdin=None if input is not None else subprocess.DEVNULL, creationflags=_flags())
         out = (r.stdout or b"").decode("utf-8", errors="replace")
         if r.returncode != 0:
             err = (r.stderr or b"").decode("utf-8", errors="replace")

@@ -11,9 +11,12 @@ from hoard_link.hub import placement_remote as pr
 
 class FakeProc:
     def __init__(self, code=None, err=b""):
-        self.code, self.err, self.closed, self.killed = code, err, False, False
-        self.stdin = types.SimpleNamespace(close=self._close_stdin)
+        self.code, self.err, self.closed, self.killed, self.written = code, err, False, False, b""
+        self.stdin = types.SimpleNamespace(close=self._close_stdin, write=self._write, flush=lambda: None)
         self.stderr = types.SimpleNamespace(read=lambda: self.err)
+
+    def _write(self, data):
+        self.written += data
 
     def _close_stdin(self):
         self.closed = True
@@ -38,6 +41,7 @@ class FakePlacement:
         self.hub = types.SimpleNamespace(token="tok-1", config=types.SimpleNamespace(port=8810))
         self.sent: list[tuple[str, str]] = []
         self.fail = ""
+        self.probe = ""
 
     def state(self):
         return dict(self.data)
@@ -46,6 +50,8 @@ class FakePlacement:
         if self.fail:
             raise RuntimeError(self.fail)
         self.sent.append((command, input))
+        if "ss -ltnpH" in command:
+            return self.probe
         return ""
 
 
@@ -62,7 +68,8 @@ def _link(placement, procs):
 
 def test_no_tunnel_while_faustus_is_on_the_pc():
     link, opened = _link(FakePlacement("pc"), [])
-    assert link.tick() == {"wanted": False, "up": False, "since": None, "error": "", "port": pl.LINK_PORT, "node": ""}
+    assert link.tick() == {"wanted": False, "up": False, "since": None, "error": "", "port": pl.LINK_PORT, "node": "",
+                           "freed": ""}
     assert opened == []
 
 
@@ -79,10 +86,12 @@ def test_on_the_spark_it_tells_where_the_hub_is_and_opens_the_tunnel():
     assert "hub-link.json" in link_cmd
     assert told["url"] == f"http://127.0.0.1:{pl.LINK_PORT}" and told["token_file"].endswith("/faustus-stack/hub-token")
     argv, kwargs = opened[0]
-    assert argv[0] == "ssh" and f"127.0.0.1:{pl.LINK_PORT}:127.0.0.1:8810" in argv and argv[-2:] == ["Spark3", "cat > /dev/null"]
+    assert argv[0] == "ssh" and f"127.0.0.1:{pl.LINK_PORT}:127.0.0.1:8810" in argv and argv[-2:] == ["Spark3", pl.REMOTE_CMD]
     assert "ExitOnForwardFailure=yes" in argv and kwargs["stdin"] is not None       # our pipe: the child ends with us
+    assert f"-t {pl.REMOTE_IDLE_S}" in pl.REMOTE_CMD                                # and lets go of the port if we die
     link.tick()                                                                    # still up: nothing is sent again
     assert len(placement.sent) == 2 and len(opened) == 1
+    assert proc.written == b"\n"                                                    # the remote command is kept waiting
 
 
 def test_a_tunnel_that_ends_is_reported_and_opened_again_later():
@@ -188,7 +197,72 @@ def test_the_placement_status_carries_the_link(tmp_path):
         hub.placement._refresh_remote_health = lambda: None
         hub.placement._update(location="sparks", urls={"faustus": "https://spark3.example.ts.net"})
         status = hub.placement.status()
-        assert status["hub_link"] == {"wanted": False, "up": False, "since": None, "error": "", "port": pl.LINK_PORT, "node": ""}
+        assert status["hub_link"] == {"wanted": False, "up": False, "since": None, "error": "", "port": pl.LINK_PORT,
+                                      "node": "", "freed": ""}
         assert hub.placement.link._thread is None                                  # a Hub built in a test never opens ssh
     finally:
         hub.close()
+
+
+def test_a_port_held_by_the_tunnel_of_a_dead_hub_is_freed_and_the_tunnel_opens_at_once():
+    """The 12-11 blue screen: the Spark kept listening on 8811 from the sshd of the Hub that was gone, so every new
+    tunnel failed with ExitOnForwardFailure for ever. The one session that owns that listener is ended and the tunnel
+    opens in the same look, without waiting RETRY_S."""
+    placement = FakePlacement()
+    busy = FakeProc(255, b"Warning: remote port forwarding failed for listen port 8811\n")
+    placement.probe = (f"LISTEN 0 128 127.0.0.1:{pl.LINK_PORT} 0.0.0.0:* users:((\"sshd\",pid=4242,fd=9))\n--\n"
+                       "4242 900 3600 sshd: luissalet@notty\n"
+                       "900 1 3600 sshd: luissalet [priv]\n")
+    link, opened = _link(placement, [busy, FakeProc()])
+    state = link.tick()
+    assert state["up"] and state["error"] == "" and state["freed"]
+    assert f"kill 4242" in [cmd for cmd, _ in placement.sent][-1]
+    assert len(opened) == 2                                                       # freed, then opened again at once
+    assert "4242" in state["freed"] and str(pl.LINK_PORT) in state["freed"]
+
+
+def test_a_port_held_by_anything_else_is_reported_and_left_alone():
+    placement = FakePlacement()
+    busy = FakeProc(255, b"Warning: remote port forwarding failed for listen port 8811\n")
+    placement.probe = (f"LISTEN 0 128 127.0.0.1:{pl.LINK_PORT} 0.0.0.0:* users:((\"python3\",pid=77,fd=3))\n--\n"
+                       "4242 900 3600 sshd: luissalet@notty\n")
+    link, opened = _link(placement, [busy])
+    state = link.tick()
+    assert not state["up"] and "remote port forwarding failed" in state["error"]
+    assert "no lo toco" in state["freed"] and len(opened) == 1
+    assert not any(cmd.startswith("kill") for cmd, _ in placement.sent)
+
+
+def test_a_session_with_a_command_behind_it_is_never_ended():
+    placement = FakePlacement()
+    busy = FakeProc(255, b"Warning: remote port forwarding failed for listen port 8811\n")
+    placement.probe = (f"LISTEN 0 128 127.0.0.1:{pl.LINK_PORT} 0.0.0.0:* users:((\"sshd\",pid=4242,fd=9))\n--\n"
+                       "4242 900 30 sshd: luissalet@pts/0\n")
+    link, opened = _link(placement, [busy])
+    state = link.tick()
+    assert not state["up"] and "no la toco" in state["freed"] and len(opened) == 1
+    assert not any(cmd.startswith("kill") for cmd, _ in placement.sent)
+
+
+def test_a_plain_ssh_step_hands_ssh_no_pipe_to_wait_on(tmp_path):
+    """The orphan "sshd: …@notty" sessions of #3102: a step with nothing to send must give ssh /dev/null, not a pipe
+    that stays open until the timeout."""
+    import subprocess
+    from hoard_link.hub import placement as plp
+
+    class FakeHub:
+        def __init__(self, data_dir):
+            self.config = types.SimpleNamespace(data_dir=str(data_dir))
+
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(kwargs)
+        return types.SimpleNamespace(returncode=0, stdout=b"ok\n", stderr=b"")
+
+    placement = plp.Placement(FakeHub(tmp_path / "data"), runner=run)
+    assert placement._ssh("true") == "ok\n"
+    assert calls[0]["stdin"] is subprocess.DEVNULL
+    assert placement._ssh("cat > x", input="body") == "ok\n"
+    assert calls[1]["stdin"] is None and calls[1]["input"] == b"body"
+    assert "ServerAliveCountMax=3" in plp.SSH_OPTS and "TCPKeepAlive=yes" in plp.SSH_OPTS
