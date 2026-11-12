@@ -44,6 +44,8 @@ PORTS = {"faustus": 7000, "hermes": 5221, "prometheus": 5205}
 HEALTH = {"faustus": "/", "hermes": "/api/health", "prometheus": "/api/health"}
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15"]
 REMOTE_HEALTH_TTL_S = 30.0       # how old the "are they up on the Spark?" answer may be before it is asked again
+SERVE_STATUS_TIMEOUT_S = 10.0    # asking tailscale what it already publishes is a quick question
+SERVE_TIMEOUT_S = 15.0           # publishing a port must never hold the switch: a hung serve is a warning, not a failure
 PAUSED_ON_SPARK = [
     "Hermes: la vigilancia de ventanas abiertas de tu navegador («Mi ventana abierta»); necesita Windows y tu navegador",
     "Faustus: el control de tu navegador real y del escritorio de Windows",
@@ -798,10 +800,42 @@ class Placement:
         dns = (status.get("Self") or {}).get("DNSName", "").rstrip(".")
         if status.get("BackendState") != "Running" or not dns:
             return {}
+        served = self._served_ports()
         for https, port in ((443, PORTS["faustus"]), (PORTS["hermes"], PORTS["hermes"]), (PORTS["prometheus"], PORTS["prometheus"])):
-            self._ssh(f"sudo -n tailscale serve --bg --https={https} http://127.0.0.1:{port} >/dev/null 2>&1 || true", timeout=60)
+            self._serve_tailnet(https, port, served)
         return {"faustus": f"https://{dns}", "hermes": f"https://{dns}:{PORTS['hermes']}/products/",
                 "prometheus": f"https://{dns}:{PORTS['prometheus']}/"}
+
+    @staticmethod
+    def _parse_served(text: str) -> set[int]:
+        """The HTTPS ports ``tailscale serve status`` says are already published (443 when the line carries no port)."""
+        ports: set[int] = set()
+        for line in (text or "").splitlines():
+            match = re.match(r"\s*https://[^\s:/]+(?::(\d+))?", line)
+            if match:
+                ports.add(int(match.group(1) or 443))
+        return ports
+
+    def _served_ports(self) -> set[int]:
+        """What the Spark already publishes; empty when it cannot be asked, so the caller tries to publish again."""
+        try:
+            return self._parse_served(self._ssh("tailscale serve status 2>/dev/null || true", timeout=SERVE_STATUS_TIMEOUT_S))
+        except Exception:  # noqa: BLE001 - not knowing is the same as "not served": the serve step decides
+            return set()
+
+    def _serve_tailnet(self, https: int, port: int, served: Optional[set[int]] = None) -> bool:
+        """Publish 127.0.0.1:port at https://<node>:https, unless it is already served. Never fatal: the apps answering is
+        what makes the move succeed, so a serve that fails or hangs only leaves a warning in the job log."""
+        if https in (self._served_ports() if served is None else served):
+            self._log(f"tailscale serve: el puerto {https} ya estaba publicado")
+            return True
+        try:
+            self._ssh(f"sudo -n tailscale serve --bg --https={https} http://127.0.0.1:{port} >/dev/null 2>&1 || true",
+                      timeout=SERVE_TIMEOUT_S)
+            return True
+        except Exception as exc:  # noqa: BLE001 - a port that will not publish is a warning, not a failed move
+            self._log(f"aviso: no he podido publicar el puerto {https} en la tailnet ({str(exc)[-200:]}); sigo")
+            return False
 
     def _refresh_urls_later(self) -> None:
         """On the Spark without links yet (Tailscale was approved after the move): look again, at most once a minute."""
