@@ -105,17 +105,6 @@ text = await link.chat([{"role": "user", "content": "..."}], task="code", effort
 - MCP tools by group: apps and profiles (`hub_list_apps`, `hub_start_app`, `hub_stop_all`, `hub_profile_*`), GPU and lanes (`hub_lease_*`, `hub_lane_*`), instances, family layer (`hub_events`, `hub_rule_*`, `hub_job_*`, `hub_backup_*`, `hub_family_audit`, `hub_call_app`), repos (`hub_repos`, `hub_repo_*`), model access (`hub_link_status`, `hub_link_chat`), placement (`hub_placement_*`), fleet and capability search (`hub_fleet_status`, `hub_capability_find`), mail (`hub_mail_accounts`, `hub_mail_compose`), MCP relays (`hub_mcp_apps`) and the Agora (`hub_agora_*`, about eighty tools). `scripts/agora.py` gives the same Agora operations to agents that only have a terminal.
 - The Hub's own window carries Faustus's shared copilot panel.
 
-## Screens
-
-The Hub overview is the screenshot at the top. `qa276-r2-ui-es-mobile.png` shows the Spanish mobile layout.
-
-<details>
-<summary>Mobile layout</summary>
-
-![Hub on a phone](qa276-r2-ui-es-mobile.png)
-
-</details>
-
 ## Layout
 
 | Path | Contents |
