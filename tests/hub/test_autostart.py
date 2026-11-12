@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from hoard_link.hub import __main__ as cli
-from hoard_link.hub import autostart
+from hoard_link.hub import autostart, procs
 from hoard_link.hub.server import make_server
 
 
@@ -126,6 +126,25 @@ def test_profile_on_second_launch_goes_to_the_running_hub(hub):
     try:
         assert cli._start_profile_remote(hub.config.url, "p")["ok"]
         assert cli._start_profile_remote(hub.config.url, "nope")["ok"] is False
+    finally:
+        server.shutdown()
+        hub.stop("launch")
+
+
+def test_manifest_opt_out_preserves_explicit_start(hub):
+    app = hub.get("launch")
+    app.family["auto_start"] = False
+    hub.config.profiles = {"p": {"apps": ["launch"]}}
+    assert not hub.start("launch", automatic=True)["ok"]
+    assert cli._start_profile(hub, "p")["apps"] == []
+    assert not any(result.get("app") == "launch" for result in hub.start_all()["results"])
+    server = make_server(hub, port=hub.config.port)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert cli._start_profile_remote(hub.config.url, "p")["apps"] == []
+        assert hub.start("launch")["ok"]
+        assert hub.restart("launch", automatic=True)["skipped"]
+        assert procs.health(app).state == "healthy"
     finally:
         server.shutdown()
         hub.stop("launch")

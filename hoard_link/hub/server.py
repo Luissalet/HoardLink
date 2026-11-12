@@ -733,7 +733,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 name = unquote(parts[3])
                 if name not in hub.profiles():
                     return self._json({"ok": False, "error": f"unknown profile: {name}"}, 404)
-                res = hub.profile_start(name) if parts[4] == "start" else hub.profile_stop(name)
+                res = hub.profile_start(name, startup=body.get("startup") is True) if parts[4] == "start" else hub.profile_stop(name)
                 return self._json(res, 200 if res.get("ok") else 409)
             if len(parts) == 5 and parts[1] == "api" and parts[2] in ("rules", "jobs"):
                 coll = hub.rules if parts[2] == "rules" else hub.jobs
