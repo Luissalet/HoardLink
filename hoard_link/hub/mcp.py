@@ -125,6 +125,9 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
                 wait = max(90.0, budget + 15.0)
             except (TypeError, ValueError, OverflowError):
                 wait = 135.0
+        elif name == "hub_agora_console_worker" and args.get("leader_id") == "faustus":
+            # An explicit PC worker may first start its own headless runtime.
+            wait = 180.0
         status, body = _request("POST", "/api/agent/call", {"tool": name, "arguments": args}, timeout=wait)
         if status is None:
             return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text({"ok": False, "error": "hub did not answer"}), "isError": True}}

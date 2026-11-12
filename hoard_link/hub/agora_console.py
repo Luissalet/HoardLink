@@ -94,6 +94,7 @@ class AgoraConsoleFacet(Facet):
         self._provider_cache: dict[str, dict[str, Any]] = {}
         self._provider_epoch = _CATALOG_EPOCH[0]
         self._processes: dict[str, subprocess.Popen[str]] = {}
+        self._faustus_runtimes: dict[str, dict[str, Any]] = {}
         self._leader_locks = {"codex": threading.Lock(), "cursor": threading.Lock()}
         self._leader_threads: dict[str, threading.Thread] = {}
         self._wakeups: dict[str, threading.Timer] = {}
@@ -247,6 +248,9 @@ class AgoraConsoleFacet(Facet):
             columns = {row[1] for row in db.execute("PRAGMA table_info(workers)")}
             if "agent_id" not in columns:
                 db.execute("ALTER TABLE workers ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''")
+            for name in ("faustus_url", "workspace"):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE workers ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             if "session_id" not in columns:
                 db.execute("ALTER TABLE workers ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
             if "model_source" not in columns:
@@ -554,15 +558,16 @@ class AgoraConsoleFacet(Facet):
             return {"state": "unavailable", "detail": f"Could not read Cursor Agent model catalog: {type(exc).__name__}.", "catalog": []}
 
     def _faustus_status(self) -> dict[str, Any]:
-        # Faustus is Hub-managed and intentionally is not a registry App. Use
-        # its cached special-service health record and configured loopback URL.
+        # Faustus is a special service. Its catalog follows placement while
+        # the PC keeps its existing cached special-service health record.
         try:
-            service = self.hub.faustus_status() if hasattr(self.hub, "faustus_status") else {}
+            from .agora_faustus import service as placed_service
+            service = placed_service(self.hub)
         except Exception as exc:  # noqa: BLE001
             return {"state": "unverified", "detail": f"Hub Faustus health lookup failed: {type(exc).__name__}.", "catalog": []}
         configured_urls = list(getattr(getattr(self.hub, "config", None), "faustus_urls", ()) or ())
         base_url = str(service.get("url") or "").rstrip("/") if isinstance(service, dict) else ""
-        if not base_url or base_url.rstrip("/") not in {str(url).rstrip("/") for url in configured_urls}:
+        if not base_url or (not service.get("remote") and base_url not in {str(url).rstrip("/") for url in configured_urls}):
             return {"state": "unavailable", "detail": "Faustus has no reachable URL in the Hub's configured service list.", "catalog": []}
         health = service.get("body") if isinstance(service, dict) else None
         if not service.get("reachable") or not isinstance(health, dict) or health.get("service") != "faustus":
@@ -694,8 +699,18 @@ class AgoraConsoleFacet(Facet):
     def _worker_rows(self) -> list[dict[str, Any]]:
         with self._db_lock, self._db() as db:
             rows = db.execute("SELECT * FROM workers ORDER BY created_at DESC LIMIT 100").fetchall()
-        return [{k: row[k] for k in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
-                for row in rows]
+        workers = []
+        for row in rows:
+            worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
+            if row["parent_id"] == "faustus" and row["state"] == "running" and row["log_path"]:
+                path = Path(row["log_path"])
+                worker.update(self._runner_metrics(path))
+                try:
+                    worker["updated_at"] = path.stat().st_mtime
+                except OSError:
+                    pass
+            workers.append(worker)
+        return workers
 
     def _console_sessions(self) -> list[dict[str, Any]]:
         with self._db_lock, self._db() as db:
@@ -1382,7 +1397,7 @@ class AgoraConsoleFacet(Facet):
                 # Provider execution sessions are per space; messages/tasks
                 # remain canonical in Agora's one coordination database.
                 view._db_path = Path(self.hub.config.data_dir) / ('agora-console-' + sid + '.db')
-                view._leader_threads = {}; view._wakeups = {}; view._processes = {}
+                view._leader_threads = {}; view._wakeups = {}; view._processes = {}; view._faustus_runtimes = {}
                 view._leader_locks = {'codex': threading.Lock(), 'cursor': threading.Lock()}
                 view._capacity_reporter_started = False
                 view._init_db()
@@ -1554,6 +1569,10 @@ class AgoraConsoleFacet(Facet):
 
     def _prepare_faustus_worker_session(self, agent_id: str, model: dict[str, Any], effort: str
                                        ) -> tuple[Optional[dict[str, Any]], str]:
+        from .agora_faustus import prepare
+        placement = getattr(self.hub, "placement", None)
+        if self.space_id != "ecosystem" or (placement is not None and placement.state().get("location") == "sparks"):
+            return prepare(self, agent_id, model, effort)
         parent, detail = self._faustus_bound_session()
         if parent is None:
             return None, f"Faustus child setup failed at stage=parent_binding: {detail}"
@@ -1639,16 +1658,20 @@ class AgoraConsoleFacet(Facet):
                 "workspace": str(child_project.get("workspace") or parent.get("workspace") or "")}, ""
 
     def _faustus_session_request(self, method: str, path: str,
-                                 fields: Optional[dict[str, Any]] = None) -> tuple[Optional[int], Any]:
+                                 fields: Optional[dict[str, Any]] = None, *, base_url: str = "",
+                                 expected_run_id: str = "") -> tuple[Optional[int], Any]:
         try:
-            service = self.hub.faustus_status() if hasattr(self.hub, "faustus_status") else {}
+            from .agora_faustus import service as placed_service
+            service = ({"url": base_url, "reachable": True, "body": {"service": "faustus"}, "explicit": True}
+                       if base_url else placed_service(self.hub))
         except Exception as exc:  # noqa: BLE001
             return None, {"error": f"Hub Faustus health lookup failed: {type(exc).__name__}"}
         configured = list(getattr(getattr(self.hub, "config", None), "faustus_urls", ()) or ())
         base_url = str(service.get("url") or "").rstrip("/") if isinstance(service, dict) else ""
         health = service.get("body") if isinstance(service, dict) else None
         if (not service.get("reachable") or not isinstance(health, dict) or health.get("service") != "faustus"
-                or base_url not in {str(url).rstrip("/") for url in configured}):
+                or (not service.get("remote") and not service.get("explicit")
+                    and base_url not in {str(url).rstrip("/") for url in configured})):
             return None, {"error": "Hub has not confirmed a reachable Faustus service URL"}
         runtime = getattr(self.hub, "faustus_runtime", None)
         try:
@@ -1669,9 +1692,12 @@ class AgoraConsoleFacet(Facet):
         url = base_url + path
         if method == "GET":
             return _get(url, token, 6.0)
-        if method == "PUT" and path.startswith("/api/coordination/") and isinstance(fields, dict):
+        if ((method == "PUT" and path.startswith("/api/coordination/"))
+                or (method == "POST" and (path == "/api/projects" or path.startswith("/api/chat/stop/")))) and isinstance(fields, dict):
             headers = {"Accept": "application/json", "Content-Type": "application/json",
                        "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})}
+            if expected_run_id:
+                headers["X-Odysseus-Run-Id"] = expected_run_id
             request = urllib.request.Request(url, data=json.dumps(fields).encode("utf-8"),
                                              method=method, headers=headers)
         elif method in ("PATCH", "POST") and isinstance(fields, dict):
@@ -2080,6 +2106,8 @@ class AgoraConsoleFacet(Facet):
                              type(exc).__name__, locations or "unavailable")
                 setup_error = (f"Faustus child setup failed at stage=child_session_prepare ({type(exc).__name__}); "
                                "no child runner was launched.")
+                if isinstance(exc, RuntimeError):
+                    setup_error += " " + str(exc)[:500]
             if faustus_session is None or setup_error:
                 session_id = str((faustus_session or {}).get("session_id") or "")
                 state = "failed" if session_id or setup_failed else "unavailable"
@@ -2094,10 +2122,17 @@ class AgoraConsoleFacet(Facet):
             workspace = faustus_session.get("workspace") or ""
             model_id = str(row.get("model_id") or "")
             python, root = faustus_installation[1], Path(faustus_installation[0])
-            base_url = str(self.hub.faustus_status().get("url") or "http://127.0.0.1:7000").rstrip("/")
+            from .agora_faustus import service as placed_service
+            base_url = str(faustus_session.get("url") or placed_service(self.hub).get("url") or "").rstrip("/")
+            if faustus_session.get("runtime"):
+                self._faustus_runtimes[worker_id] = faustus_session["runtime"]
             context = []
             agora = self._agora()
-            recent = agora.thread_recent({"thread_id": self.thread_id, "limit": 40}) if agora is not None else {}
+            try:
+                recent = agora.thread_recent({"thread_id": self.thread_id, "limit": 40}) if agora is not None else {}
+            except Exception:  # noqa: BLE001 - optional context must not strand a prepared worker runtime
+                logger.info("Agora worker context is unavailable", exc_info=False)
+                recent = {}
             for message in (recent.get("messages", []) if isinstance(recent, dict) else [])[-8:]:
                 if isinstance(message, dict) and str(message.get("body") or "").strip():
                     context.append(f"{str(message.get('author') or 'unknown')[:80]}: {str(message.get('body'))[:1200]}")
@@ -2111,6 +2146,8 @@ class AgoraConsoleFacet(Facet):
             if workspace:
                 command.extend(["--workspace", workspace])
             model_source = "installed Faustus runner + owner-verified native project child session"
+            if faustus_session.get("runtime"):
+                model_source += " + dedicated PC runtime using the placed Sparks endpoint"
             worker_cwd = root
             process_env = self._runner_env()
             process_env.pop("FAUSTUS_API_TOKEN", None)
@@ -2118,12 +2155,15 @@ class AgoraConsoleFacet(Facet):
             if owner_token:
                 process_env["FAUSTUS_API_TOKEN"] = owner_token
         try:
-            log = open(log_path, "a", encoding="utf-8")
-            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                       text=True, cwd=str(worker_cwd), env=process_env,
-                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            log.close()
+            with open(log_path, "a", encoding="utf-8") as log:
+                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                           text=True, cwd=str(worker_cwd), env=process_env,
+                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except OSError as exc:
+            runtime = self._faustus_runtimes.pop(worker_id, None)
+            if runtime:
+                from .agora_faustus import stop_pc
+                stop_pc(runtime)
             with self._db_lock, self._db() as db:
                 db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,session_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'failed',?,?,?,?)",
                            (worker_id, leader_id, agent_id, model, effort, task,
@@ -2133,6 +2173,8 @@ class AgoraConsoleFacet(Facet):
         with self._db_lock, self._db() as db:
             db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?)",
                        (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id, model_source, now, now))
+            if leader_id == "faustus":
+                db.execute("UPDATE workers SET faustus_url=?,workspace=? WHERE id=?", (base_url, workspace, worker_id))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         # Its rank is written once the session exists: one that never started leaves none behind under its name.
         self._give_worker_rank(agent_id, rank, "luis" if by_person else actor)
@@ -2159,7 +2201,7 @@ class AgoraConsoleFacet(Facet):
             except OSError:
                 result = ""
             with self._db_lock, self._db() as db:
-                worker_row = db.execute("SELECT parent_id, agent_id FROM workers WHERE id=?", (worker_id,)).fetchone()
+                worker_row = db.execute("SELECT parent_id, agent_id, state FROM workers WHERE id=?", (worker_id,)).fetchone()
                 if worker_row:
                     leader_id = str(worker_row["parent_id"] or "unknown")
             metrics = self._runner_metrics(log_path)
@@ -2173,10 +2215,15 @@ class AgoraConsoleFacet(Facet):
                         db.execute("DELETE FROM preferences WHERE leader_id='claude' AND model=?", (refused["model"],))
                         db.execute("DELETE FROM model_ranks WHERE leader_id='claude' AND model=?", (refused["model"],))
             state = "completed" if code == 0 else "failed"
+            if worker_row and worker_row["state"] == "stopping":
+                state = "stopped"
             outcome = "provider_error" if metrics["provider_error"] else ("missing_final_response" if not result.strip() else "unverified")
             provider_name = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "faustus": "Faustus"}.get(leader_id, leader_id)
             detail = (f"{provider_name} provider turn ended with exit code {code}; task outcome is {outcome}." if state == "completed"
                       else f"{provider_name} worker exited with status {code}; task outcome is {outcome}.")
+            if state == "stopped":
+                outcome = "cancelled"
+                detail = f"{provider_name} confirmed cancellation of the worker turn; runner exited with status {code}."
             with self._db_lock, self._db() as db:
                 db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=CASE WHEN ?='' THEN session_id ELSE ? END,process_exit_code=?,outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,updated_at=? WHERE id=?",
                            (state, result, detail, session_id, session_id, code, outcome, metrics["tool_success_count"],
@@ -2190,6 +2237,10 @@ class AgoraConsoleFacet(Facet):
             logger.exception("worker monitor failed for %s", worker_id)
         finally:
             self._processes.pop(worker_id, None)
+            runtime = self._faustus_runtimes.pop(worker_id, None)
+            if runtime:
+                from .agora_faustus import stop_pc
+                stop_pc(runtime)
 
     @staticmethod
     def _tidy_claude_worktree(worker_id: str, root: Optional[Path] = None) -> bool:
@@ -2287,6 +2338,42 @@ class AgoraConsoleFacet(Facet):
         return session_id, final_text, workspace
 
     def _stop_worker(self, worker_id: str) -> dict[str, Any]:
+        with self._db_lock, self._db() as db:
+            worker = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
+        if worker is not None and worker["parent_id"] == "faustus" and worker["session_id"] and worker["state"] in ("running", "unknown", "stopping"):
+            base_url = worker["faustus_url"]
+            if not base_url and worker["log_path"]:
+                # Older receipts predate faustus_url but the native runner
+                # records its own address at run_start.
+                try:
+                    for line in Path(worker["log_path"]).read_text(encoding="utf-8").splitlines():
+                        try:
+                            event = json.loads(line)
+                        except ValueError:
+                            continue
+                        if event.get("type") == "run_start" and event.get("session") == worker["session_id"]:
+                            base_url = str(event.get("url") or "")
+                            break
+                except OSError:
+                    pass
+            if not base_url:
+                return {"ok": False, "status": 409, "error": "The Faustus worker address is unavailable in its receipt"}
+            status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
+            run_id = (activity.get("runs") or {}).get(worker["session_id"]) if status == 200 and isinstance(activity, dict) else None
+            if not run_id:
+                return {"ok": False, "status": 409, "error": "Faustus has not confirmed an active run for this worker"}
+            status, stopped = self._faustus_session_request("POST", "/api/chat/stop/" + quote(worker["session_id"], safe=""),
+                {"scope": "work"}, base_url=base_url, expected_run_id=run_id)
+            if status != 200 or not isinstance(stopped, dict) or not stopped.get("stopped"):
+                return {"ok": False, "status": 409, "error": "Faustus has not confirmed that the worker turn stopped", "stop": stopped}
+            state = "stopping" if worker_id in self._processes else "stopped"
+            with self._db_lock, self._db() as db:
+                db.execute("UPDATE workers SET state=?,detail='Faustus confirmed cancellation of the worker turn.',updated_at=? WHERE id=? AND state IN ('running','unknown','stopping')",
+                           (state, time.time(), worker_id))
+                current = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
+                state = current["state"]
+            self._record("worker", worker_id, state, "Faustus confirmed cancellation of the worker turn.")
+            return {"ok": True, "worker_id": worker_id, "state": state, "stop": stopped}
         process = self._processes.get(worker_id)
         if process is None:
             with self._db_lock, self._db() as db:
@@ -2585,7 +2672,7 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_color", "description": "Set the colour that outlines one leader's messages and avatar in the Agora console (#rrggbb; empty restores the default). Shared by the browser and the desktop app.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "color": {"type": "string", "maxLength": 7}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
-            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex, Claude or managed Cursor child in an isolated worktree, or a Faustus child in its native project, with a model and effort level of that provider's catalog (a model that offers no levels starts without one); register external workers from real metadata, or reconcile an ambiguous console session after its operator confirms it is idle.",
+            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex, Claude or managed Cursor child in an isolated worktree, or a Faustus child in the space's workspace, with a model and effort level from the provider catalog. Faustus follows placement. A PC workspace with Faustus on a Spark starts a dedicated headless PC runtime using that Sparks model. Worker receipts report the actual Faustus URL, workspace and observed tool counts. Stop cancels that worker's exact active run through the native API. Models without effort levels start without one. Also register external workers or reconcile an ambiguous console session.",
              "inputSchema": {"type": "object", "properties": {
                  "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
