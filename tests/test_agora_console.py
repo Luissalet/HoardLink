@@ -2083,3 +2083,57 @@ def test_interrupted_faustus_worker_continues_original_session_once(tmp_path, mo
     facet._monitor_worker("test", process, tmp_path / "no-result")
     worker = facet._worker_rows()[0]
     assert worker["state"] == "failed" and worker["can_continue"] and len(commands) == 1
+
+
+def test_faustus_checks_the_registered_task_branch_outside_the_space_workspace(tmp_path):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    repo, worktree = tmp_path / "repo", tmp_path / "task worktree"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                    "commit", "--allow-empty", "-qm", "Baseline"], check=True)
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", "qa-branch", str(worktree)], check=True)
+    store.repo_lookup = lambda name: repo if name == "QA" else None
+    agent = "faustus-qa"
+    task = store.task_add({"agent": agent, "title": "Check branch worktree", "repo": "QA",
+                           "paths": ["draft.txt"]})["task"]
+    store.task_claim({"agent": agent, "task_id": task["id"]})
+    store.task_submit({"agent": agent, "task_id": task["id"], "summary": "Fixture", "branch": "qa-branch"})
+    worker = {"agent_id": agent, "workspace": str(tmp_path), "created_at": 1}
+    assert facet._verify_worker_delivery(worker)["issues"] == []
+    (worktree / "draft.txt").write_text("dirty", encoding="utf-8")
+    assert facet._verify_worker_delivery(worker)["issues"] == [f"Hay cambios sin commit en {worktree.as_posix()}."]
+
+
+def test_legacy_faustus_receipt_reuses_session_and_replaces_old_time_limit(tmp_path):
+    facet = _facet(tmp_path)
+    log = tmp_path / "old-run.jsonl"
+    log.write_text(json.dumps({"type": "run_start", "session": "native-child", "project_id": "original-project",
+                               "agent_id": "faustus-qa", "model": "fixture", "timeout": 1800}), encoding="utf-8")
+    row = {"parent_id": "faustus", "agent_id": "faustus-qa", "session_id": "native-child",
+           "state": "failed", "launch_command": "", "workspace": str(tmp_path / "worktree"),
+           "log_path": str(log), "faustus_url": "http://127.0.0.1:7000", "effort": ""}
+    assert facet._worker_can_continue(row)
+    command, cwd = facet._worker_launch_spec(row)
+    assert cwd == str(tmp_path)
+    assert command[command.index("--session") + 1] == "native-child"
+    assert command[command.index("--project-id") + 1] == "original-project"
+    assert command[command.index("--workspace") + 1] == row["workspace"]
+    assert "--no-timeout" in command and "--timeout" not in command
+
+
+def test_recovery_adopts_only_the_recorded_runtime_process(tmp_path, monkeypatch):
+    from hoard_link.hub import procs
+    facet = _facet(tmp_path)
+    row = {"id": "worker", "runtime_pid": 1200, "runtime_started_at": 77.0}
+    monkeypatch.setattr(procs, "proc_info", lambda pid: SimpleNamespace(created_at=78.0))
+    facet._adopt_worker_runtime(row)
+    assert not facet._faustus_runtimes
+
+    killed = []
+    monkeypatch.setattr(procs, "proc_info", lambda pid: SimpleNamespace(created_at=77.0))
+    monkeypatch.setattr(procs, "terminate_tree", lambda pid, **kw: killed.append((pid, kw)))
+    facet._adopt_worker_runtime(row)
+    facet._close_worker_runtime("worker")
+    assert killed == [(1200, {"created_at": 77.0})]
+    assert not facet._faustus_runtimes

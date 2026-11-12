@@ -115,8 +115,10 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     with (data / "server.log").open("a", encoding="utf-8") as log:
         process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
             stdout=log, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    runtime = {"url": base, "process": process, "data": str(data), "endpoint": endpoint}
+    from . import procs
     from .contract import _get
+    runtime = {"url": base, "process": process, "data": str(data), "endpoint": endpoint,
+               "pid": process.pid, "created_at": procs.proc_info(process.pid).created_at}
     try:
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
@@ -135,7 +137,13 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
 
 
 def stop_pc(runtime: dict) -> None:
-    process = runtime["process"]
+    process = runtime.get("process")
+    if process is None:
+        # After a Hub restart only the verified PID and creation time remain.
+        from . import procs
+        if runtime.get("created_at") is not None:
+            procs.terminate_tree(runtime["pid"], created_at=runtime["created_at"])
+        return
     if process.poll() is None:
         # A Windows venv launcher can forward to another Python process. Stop
         # the dedicated runtime's descendants as well as that launcher.

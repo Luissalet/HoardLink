@@ -255,6 +255,7 @@ class AgoraConsoleFacet(Facet):
                 db.execute("ALTER TABLE workers ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''")
             for name, declaration in (("launch_command", "TEXT NOT NULL DEFAULT ''"), ("launch_cwd", "TEXT NOT NULL DEFAULT ''"),
                                       ("retry_count", "INTEGER NOT NULL DEFAULT 0"), ("runtime_endpoint", "TEXT NOT NULL DEFAULT ''"),
+                                      ("runtime_pid", "INTEGER"), ("runtime_started_at", "REAL"),
                                       ("verification", "TEXT NOT NULL DEFAULT ''")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE workers ADD COLUMN {name} {declaration}")
@@ -712,8 +713,7 @@ class AgoraConsoleFacet(Facet):
         workers = []
         for row in rows:
             worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
-            worker["can_continue"] = bool(row["parent_id"] == "faustus" and row["session_id"] and row["launch_command"]
-                                          and row["state"] in ("failed", "incomplete", "stopped", "unknown"))
+            worker["can_continue"] = self._worker_can_continue(row)
             worker["retry_count"] = row["retry_count"]
             if row["parent_id"] == "faustus" and row["state"] == "running" and row["log_path"]:
                 path = Path(row["log_path"])
@@ -813,7 +813,13 @@ class AgoraConsoleFacet(Facet):
         if state != "completed":
             self._post_worker_status(worker, detail, verification)
         if state == "failed" and not worker["retry_count"] and worker["parent_id"] == "faustus":
-            self._continue_worker(worker["id"], automatic=True)
+            if self._continue_worker(worker["id"], automatic=True)["ok"]:
+                return
+        with self._db_lock, self._db() as db:
+            current = db.execute("SELECT state FROM workers WHERE id=?", (worker["id"],)).fetchone()
+            if current["state"] not in ("starting", "running", "unknown"):
+                self._adopt_worker_runtime(worker)
+                self._close_worker_runtime(worker["id"])
 
     def _start_queued_leaders(self) -> None:
         for leader_id in ("codex", "cursor"):
@@ -2263,11 +2269,13 @@ class AgoraConsoleFacet(Facet):
             db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?)",
                        (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id, model_source, now, now))
             if leader_id == "faustus":
-                endpoint = (faustus_session.get("runtime") or {}).get("endpoint", "")
+                runtime = faustus_session.get("runtime") or {}
                 resume_command = command.copy()
                 resume_command[resume_command.index("-p") + 1] = ""
-                db.execute("UPDATE workers SET faustus_url=?,workspace=?,runtime_endpoint=?,launch_command=?,launch_cwd=? WHERE id=?",
-                           (base_url, workspace, endpoint, json.dumps(resume_command), str(worker_cwd), worker_id))
+                db.execute("UPDATE workers SET faustus_url=?,workspace=?,runtime_endpoint=?,runtime_pid=?,"
+                           "runtime_started_at=?,launch_command=?,launch_cwd=? WHERE id=?",
+                           (base_url, workspace, runtime.get("endpoint", ""), runtime.get("pid"), runtime.get("created_at"),
+                            json.dumps(resume_command), str(worker_cwd), worker_id))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         # Its rank is written once the session exists: one that never started leaves none behind under its name.
         self._give_worker_rank(agent_id, rank, "luis" if by_person else actor)
@@ -2291,7 +2299,7 @@ class AgoraConsoleFacet(Facet):
         return value if math.isfinite(value) and value > 0 else 3600
 
     @staticmethod
-    def _worker_summary(path: Path) -> dict[str, Any]:
+    def _worker_summary(path: Path, kind: str = "run_summary") -> dict[str, Any]:
         summary = {}
         if path.is_file():
             with path.open(encoding="utf-8", errors="replace") as stream:
@@ -2300,7 +2308,7 @@ class AgoraConsoleFacet(Facet):
                         event = json.loads(line)
                     except ValueError:
                         continue
-                    if isinstance(event, dict) and event.get("type") == "run_summary":
+                    if isinstance(event, dict) and event.get("type") == kind:
                         summary = event
         return summary
 
@@ -2340,71 +2348,158 @@ class AgoraConsoleFacet(Facet):
                 issues.append("No hay ninguna entrega del trabajador en el Ágora.")
             for task in tasks:
                 if task["status"] not in ("review", "approved", "done") or not task["submission_revision"]:
-                    issues.append(f"#{task['id']} sigue sin entregar ({task['status']}).")
+                    issues.append(f"#{task['id']} sigue sin entregar.")
 
+        workspaces = set()
+        recorded_root = ""
         workspace = worker["workspace"]
-        needs_git = any(t.get("paths") or t.get("commits") for t in tasks)
         if workspace:
-            path = Path(workspace)
             try:
-                if not path.is_dir():
+                if not Path(workspace).is_dir():
                     raise FileNotFoundError(workspace)
-                git_root = subprocess.run(["git", "-C", workspace, "rev-parse", "--show-toplevel"],
-                                          capture_output=True, encoding="utf-8", errors="replace", timeout=5)
-                if git_root.returncode == 0:
-                    dirty = subprocess.run(["git", "-C", workspace, "status", "--porcelain", "--untracked-files=normal"],
-                                           capture_output=True, encoding="utf-8", errors="replace", timeout=10, check=True)
-                    if dirty.stdout.strip():
-                        issues.append(f"Hay cambios sin commit en {git_root.stdout.strip()}.")
-                elif (path / ".git").exists() or needs_git:
+                root = self._git_worker_info(workspace, "rev-parse", "--show-toplevel")
+                if root.returncode == 0:
+                    recorded_root = root.stdout.strip()
+                elif (Path(workspace) / ".git").exists():
                     issues.append(f"No se pudo verificar el estado Git de {workspace}.")
             except (OSError, subprocess.SubprocessError):
                 issues.append(f"No se pudo verificar el estado Git de {workspace}.")
-        elif needs_git:
-            issues.append("No consta la carpeta de trabajo para comprobar los commits.")
+
+        for task in tasks:
+            if not task.get("paths") and not task.get("commits"):
+                continue
+            branch = task.get("branch")
+            repo_lookup = getattr(agora, "repo_lookup", None)
+            repo = repo_lookup(task["repo"]) if branch and task.get("repo") and repo_lookup else None
+            if repo:
+                branch = branch.removeprefix("refs/heads/")
+                try:
+                    entries = self._git_worker_info(str(repo), "worktree", "list", "--porcelain", "-z", check=True)
+                    for entry in entries.stdout.split("\0\0"):
+                        fields = entry.split("\0")
+                        if fields[0].startswith("worktree ") and f"branch refs/heads/{branch}" in fields:
+                            workspaces.add(fields[0].removeprefix("worktree "))
+                            break
+                    else:
+                        if recorded_root:
+                            workspaces.add(recorded_root)
+                        else:
+                            issues.append(f"#{task['id']}: no se encontró la carpeta de la rama {branch}.")
+                except (OSError, subprocess.SubprocessError):
+                    issues.append(f"#{task['id']}: no se pudo localizar la carpeta de la rama {branch}.")
+            elif recorded_root:
+                workspaces.add(recorded_root)
+            else:
+                issues.append(f"#{task['id']}: no consta la carpeta de trabajo para comprobar los commits.")
+        if not workspaces and recorded_root:
+            workspaces.add(recorded_root)
+        for path in sorted(workspaces):
+            try:
+                dirty = self._git_worker_info(path, "status", "--porcelain", "--untracked-files=normal", check=True)
+                if dirty.stdout.strip():
+                    issues.append(f"Hay cambios sin commit en {path}.")
+            except (OSError, subprocess.SubprocessError):
+                issues.append(f"No se pudo verificar el estado Git de {path}.")
         return {"issues": issues, "tasks": [task["id"] for task in tasks]}
+
+    @staticmethod
+    def _git_worker_info(path: str, *args: str, check: bool = False) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", path, *args], capture_output=True, encoding="utf-8",
+                              errors="replace", timeout=10, check=check)
 
     def _post_worker_status(self, worker: dict[str, Any], detail: str, verification: dict[str, Any]) -> None:
         agora = self._agora()
         if agora is not None and hasattr(agora, "worker_status"):
             agora.worker_status(worker["agent_id"], verification["tasks"], detail)
 
+    def _adopt_worker_runtime(self, row: Any) -> None:
+        from . import procs
+        worker_id, pid, started_at = row["id"], row["runtime_pid"], row["runtime_started_at"]
+        if not pid or started_at is None or worker_id in self._faustus_runtimes:
+            return
+        if procs.proc_info(pid).created_at == started_at:
+            self._faustus_runtimes[worker_id] = {"pid": pid, "created_at": started_at}
+
     def _close_worker_runtime(self, worker_id: str) -> None:
-        runtime = self._faustus_runtimes.pop(worker_id, None)
+        with self._db_lock:
+            runtime = self._faustus_runtimes.pop(worker_id, None)
         if runtime:
             from .agora_faustus import stop_pc
             stop_pc(runtime)
 
-    def _continue_worker(self, worker_id: str, automatic: bool = False) -> dict[str, Any]:
+    @staticmethod
+    def _worker_can_continue(row: Any) -> bool:
+        return bool(row["parent_id"] == "faustus" and row["session_id"]
+                    and (row["launch_command"] or (row["log_path"] and row["faustus_url"]))
+                    and row["state"] in ("failed", "incomplete", "stopped", "unknown"))
+
+    def _worker_launch_spec(self, row: Any) -> tuple[list[str], str]:
+        if row["launch_command"]:
+            return json.loads(row["launch_command"]), row["launch_cwd"]
+        start = self._worker_summary(Path(row["log_path"]), "run_start")
+        root, python = self.hub.faustus_runtime.installation()
+        project, model = start.get("project_id"), start.get("model")
+        if not (root and python and project and model and start.get("session") == row["session_id"]
+                and start.get("agent_id") == row["agent_id"]):
+            raise RuntimeError("El recibo anterior no identifica la sesión y el proyecto originales.")
+        command = [str(python), "-X", "utf8", str(Path(root) / "scripts" / "faustus_run.py"),
+                   "-p", "", "--url", row["faustus_url"], "--session", row["session_id"],
+                   "--project-id", project, "--agent-id", row["agent_id"], "--model", model,
+                   "--no-timeout", "--idle-timeout", str(self._worker_idle_seconds()),
+                   "--max-legs", "0", "--json", "--events", "all", "--approve"]
+        if row["workspace"]:
+            command.extend(["--workspace", row["workspace"]])
+        if row["effort"]:
+            command.extend(["--effort", row["effort"]])
+        return command, str(root)
+
+    def _continue_worker(self, worker_id: str, automatic: bool = False,
+                         previous_process: Optional[subprocess.Popen[str]] = None) -> dict[str, Any]:
         with self._db_lock, self._db() as db:
             row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
             if row is None:
                 return {"ok": False, "status": 404, "error": "unknown worker"}
-            if (row["parent_id"] != "faustus" or not row["launch_command"] or not row["session_id"]
-                    or row["state"] not in ("failed", "incomplete", "stopped", "unknown")
-                    or worker_id in self._processes or (automatic and row["retry_count"])):
+            if (not self._worker_can_continue(row)
+                    or self._processes.get(worker_id) not in (None, previous_process)
+                    or (automatic and row["retry_count"])):
                 return {"ok": False, "status": 409, "error": "No idle Faustus session is available to continue"}
             if row["state"] == "unknown" and self._original_worker_running(row):
                 return {"ok": False, "status": 409, "error": "The original runner is still alive"}
             db.execute("UPDATE workers SET state='starting',retry_count=retry_count+?,updated_at=? WHERE id=?",
                        (int(automatic), time.time(), worker_id))
+            self._processes.pop(worker_id, None)
 
-        command = json.loads(row["launch_command"])
+        self._adopt_worker_runtime(row)
         base_url = row["faustus_url"]
+        session_busy = False
         try:
+            command, cwd = self._worker_launch_spec(row)
+            if (command[command.index("--session") + 1] != row["session_id"]
+                    or command[command.index("--agent-id") + 1] != row["agent_id"]):
+                raise RuntimeError("El recibo no coincide con la sesión o identidad original.")
             status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
-            if status != 200 and row["runtime_endpoint"]:
+            runtime = self._faustus_runtimes.get(worker_id)
+            runtime_process = runtime.get("process") if runtime else None
+            runtime_alive = runtime is not None and (runtime_process is None or runtime_process.poll() is None)
+            if status != 200 and row["runtime_endpoint"] and not runtime_alive:
+                self._close_worker_runtime(worker_id)
                 from .agora_faustus import start_pc
                 model = command[command.index("--model") + 1]
-                runtime = start_pc(self, row["agent_id"], Path(row["launch_cwd"]), command[0],
+                runtime = start_pc(self, row["agent_id"], Path(cwd), command[0],
                                    row["runtime_endpoint"], model)
                 self._faustus_runtimes[worker_id] = runtime
                 base_url = runtime["url"]
                 status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
-            if (status != 200 or not isinstance(activity, dict)
-                    or row["session_id"] in (activity.get("running") or ())
-                    or row["session_id"] in (activity.get("runs") or {})):
-                raise RuntimeError("Faustus no ha confirmado que la sesión esté disponible.")
+            for attempt in range(6 if automatic else 1):
+                if status != 200 or not isinstance(activity, dict):
+                    raise RuntimeError("Faustus no ha confirmado que la sesión esté disponible.")
+                session_busy = (row["session_id"] in (activity.get("running") or ())
+                                or row["session_id"] in (activity.get("runs") or {}))
+                if not session_busy:
+                    break
+                if attempt == 5 or not automatic or self._recovery_stop.wait(1):
+                    raise RuntimeError("La sesión original aún tiene un turno activo.")
+                status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
             status, sessions = self._faustus_session_request("GET", "/api/sessions", base_url=base_url)
             if status != 200 or not isinstance(sessions, list) or not any(
                     isinstance(session, dict) and session.get("id") == row["session_id"] for session in sessions):
@@ -2417,22 +2512,29 @@ class AgoraConsoleFacet(Facet):
             log_path = Path(row["log_path"]).with_name(f"{worker_id}-resume-{time.time_ns()}.jsonl")
             with log_path.open("w", encoding="utf-8") as log:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                           text=True, cwd=row["launch_cwd"], env=self._faustus_runner_env(),
+                                           text=True, cwd=cwd, env=self._faustus_runner_env(),
                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, RuntimeError, ValueError) as exc:
-            self._close_worker_runtime(worker_id)
+            if not session_busy:
+                self._close_worker_runtime(worker_id)
             detail = row["detail"] + " Continuación pendiente: " + str(exc)[:300]
+            state = "unknown" if session_busy else row["state"]
             with self._db_lock, self._db() as db:
                 db.execute("UPDATE workers SET state=?,detail=?,updated_at=? WHERE id=?",
-                           (row["state"], detail, time.time(), worker_id))
-            self._record("worker", worker_id, row["state"], detail)
+                           (state, detail, time.time(), worker_id))
+            self._record("worker", worker_id, state, detail)
             return {"ok": False, "status": 409, "error": detail}
         with self._db_lock, self._db() as db:
             self._processes[worker_id] = process
             detail = ("Continuación automática. " if automatic else "Continuación solicitada. ") + row["detail"]
+            runtime = self._faustus_runtimes.get(worker_id, {})
+            resume_command = command.copy()
+            resume_command[resume_command.index("-p") + 1] = ""
             db.execute("UPDATE workers SET state='running',pid=?,log_path=?,faustus_url=?,detail=?,"
+                       "runtime_pid=?,runtime_started_at=?,launch_command=?,launch_cwd=?,"
                        "outcome='unverified',result='',process_exit_code=NULL,updated_at=? WHERE id=?",
-                       (process.pid, str(log_path), base_url, detail, time.time(), worker_id))
+                       (process.pid, str(log_path), base_url, detail, runtime.get("pid"), runtime.get("created_at"),
+                        json.dumps(resume_command), cwd, time.time(), worker_id))
         self._record("worker", worker_id, "running", detail)
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, log_path.with_suffix(".txt")),
                          daemon=True, name=f"agora-worker-{worker_id[:8]}").start()
@@ -2489,8 +2591,6 @@ class AgoraConsoleFacet(Facet):
                 else:
                     state, outcome = "completed", "submitted"
                     detail = "Entrega comprobada en el Ágora."
-                    if worker["detail"].startswith(("Continuación automática.", "Continuación solicitada.")):
-                        detail += " " + worker["detail"]
                 if state in ("failed", "stopped") and verification["issues"]:
                     detail += " " + " ".join(verification["issues"])
                 db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=?,workspace=?,process_exit_code=?,"
@@ -2502,9 +2602,7 @@ class AgoraConsoleFacet(Facet):
             if state != "completed":
                 self._post_worker_status(worker, detail, verification)
             if state == "failed" and leader == "faustus" and not worker["retry_count"] and verification["issues"]:
-                with self._db_lock:
-                    self._processes.pop(worker_id, None)
-                if self._continue_worker(worker_id, automatic=True)["ok"]:
+                if self._continue_worker(worker_id, automatic=True, previous_process=process)["ok"]:
                     return
             if state == "failed":
                 self._forget_rank_of_absent(worker["agent_id"])
@@ -2517,10 +2615,12 @@ class AgoraConsoleFacet(Facet):
                            "WHERE id=? AND state IN ('running','stopping')",
                            ("El proceso terminó, pero no se pudo verificar el resultado.", time.time(), worker_id))
         finally:
-            with self._db_lock:
-                if self._processes.get(worker_id) in (None, process):
+            if self._processes.get(worker_id) is process:
+                try:
                     self._close_worker_runtime(worker_id)
-                    self._processes.pop(worker_id, None)
+                finally:
+                    with self._db_lock:
+                        self._processes.pop(worker_id, None)
 
     @staticmethod
     def _tidy_claude_worktree(worker_id: str, root: Optional[Path] = None) -> bool:
@@ -2649,10 +2749,17 @@ class AgoraConsoleFacet(Facet):
                 return {"ok": False, "status": 409, "error": "Faustus has not confirmed that the worker turn stopped", "stop": stopped}
             state = "stopping" if worker_id in self._processes else "stopped"
             with self._db_lock, self._db() as db:
-                db.execute("UPDATE workers SET state=?,detail='Faustus confirmed cancellation of the worker turn.',updated_at=? WHERE id=? AND state IN ('running','unknown','stopping')",
-                           (state, time.time(), worker_id))
+                updated = db.execute("UPDATE workers SET state=?,detail='Faustus confirmed cancellation of the worker turn.',updated_at=? WHERE id=? AND state IN ('running','unknown','stopping')",
+                                     (state, time.time(), worker_id)).rowcount
                 current = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
                 state = current["state"]
+                if state == "stopped" and updated:
+                    db.execute("UPDATE workers SET outcome='cancelled' WHERE id=?", (worker_id,))
+                    self._adopt_worker_runtime(worker)
+                    self._close_worker_runtime(worker_id)
+            if state == "stopped" and updated:
+                verification = self._verify_worker_delivery(dict(worker))
+                self._post_worker_status(dict(worker), "Faustus: turno detenido.", verification)
             self._record("worker", worker_id, state, "Faustus confirmed cancellation of the worker turn.")
             return {"ok": True, "worker_id": worker_id, "state": state, "stop": stopped}
         process = self._processes.get(worker_id)
