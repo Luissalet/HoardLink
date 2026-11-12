@@ -1256,3 +1256,21 @@ The `skills` block of `faustus-plugin.json` names the procedures of the family's
 ## Outbound family mail
 
 The mail service saves remote drafts or sends explicitly through the connected Faustus account. Python uses fam_mail.send_status / fam_mail.send; Node uses mailStatus / mailSend. MCP exposes hub_mail_accounts and hub_mail_compose. Draft is the default; recipients, subject, body, cc/bcc and gateway-local attachment paths are supported. Outgoing mail works independently of inbox polling. There is no sending retry or fallback. See [the mail contract](docs/commons/services.md#outbound-mail).
+
+
+## Family MCP through the Hub link
+
+When Faustus runs on another machine, the PC Hub serves each installed app's
+manifest-declared stdio MCP over Streamable HTTP at
+`/api/mcp/apps/<id>/mcp`, authenticated with the existing Hub-link token.
+Each HTTP session reuses its own hidden bridge process and closes it on session
+termination or Hub shutdown. Initialization instructions, tools, skills, prompts,
+resources, structured results and bidirectional JSON-RPC messages pass through.
+Connecting starts the bridge. Starting the app remains an explicit Hub action.
+
+`GET /api/mcp/apps` and `GET /api/mcp/apps/<id>?check=1` describe the available
+relays and optional PC health. MCP `hub_mcp_apps` exposes the same discovery.
+Faustus resolves the transport when connecting and checks health through the Hub.
+Saved connector commands, environment, disabled preferences and PC browser URLs
+retain their meaning. Legacy MCP rows whose command exactly matches a family
+manifest can use the relay through `/api/mcp/resolve`.

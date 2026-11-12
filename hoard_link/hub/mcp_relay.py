@@ -1,0 +1,312 @@
+"""Serve an app's declared stdio MCP over the existing authenticated Hub link.
+
+Each HTTP session owns its child. Requests reuse that child until DELETE,
+process exit or Hub shutdown. JSON-RPC is forwarded intact, including skills,
+prompts, resources, notifications and requests from the server to its client.
+Connecting starts only the MCP bridge. App startup remains an explicit Hub action.
+"""
+from __future__ import annotations
+
+import json
+import os
+import queue
+import subprocess
+import threading
+import time
+import uuid
+from urllib.parse import unquote, urlsplit
+
+from .. import proc
+from . import contract, registry
+from .config import REPO_DIR
+from .facets import Facet, Reply
+
+PREFIX = "/api/mcp/apps/"
+
+
+def launch_spec(hub, app):
+    """Resolve the installed manifest on the machine where its files live."""
+    with open(app.manifest_path, encoding="utf-8-sig") as source:
+        manifest = json.load(source)
+    bridge = manifest.get("mcp") or {}
+    if bridge.get("transport", "stdio") != "stdio" or not bridge.get("command"):
+        raise ValueError("app has no stdio MCP server")
+    values = registry._hub_values(app.folder, hub.config.faustus_dir, hub.config.faustus_python)
+    values.update(APP_URL=app.url, TOKEN_FILE=app.token_file)
+    missing = set()
+
+    def fill(value):
+        return registry.expand_env(registry.resolve_placeholders(
+            str(value), folder=app.folder, defaults=manifest.get("defaults") or {}, extra=values, missing=missing))
+
+    command = fill(bridge["command"])
+    args = [fill(arg) for arg in bridge.get("args") or []]
+    env = dict(os.environ)
+    env.update({key: fill(value) for key, value in (bridge.get("env") or {}).items()})
+    if missing:
+        raise ValueError("unresolved MCP placeholders: " + ", ".join(sorted(missing)))
+    return [command, *args], env
+
+
+class Session:
+    def __init__(self, app_id, argv, env, cwd):
+        self.id = uuid.uuid4().hex
+        self.app_id = app_id
+        self.events = queue.Queue()
+        self._pending = {}
+        self._lock = threading.RLock()
+        self._write_lock = threading.Lock()
+        self._closed = False
+        self.process = proc.popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        threading.Thread(target=self._read, daemon=True, name="mcp-relay-" + app_id).start()
+        threading.Thread(target=self._stderr, daemon=True, name="mcp-stderr-" + app_id).start()
+
+    def _stderr(self):
+        for _ in self.process.stderr:
+            pass
+
+    def _read(self):
+        try:
+            for line in self.process.stdout:
+                try:
+                    message = json.loads(line)
+                except ValueError:
+                    continue  # tolerate a bridge's non-protocol startup line
+                if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+                    continue
+                with self._lock:
+                    pending = self._pending.get(json.dumps(message.get("id"))) if "method" not in message else None
+                if pending is not None:
+                    pending.put(message)
+                else:
+                    self.events.put(message)
+        finally:
+            self.close()
+
+    def send(self, message):
+        with self._write_lock:
+            if self._closed:
+                raise OSError("MCP bridge closed")
+            self.process.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
+            self.process.stdin.flush()
+
+    def request(self, message):
+        key = json.dumps(message["id"])
+        pending = queue.Queue()
+        with self._lock:
+            if self._closed:
+                raise OSError("MCP bridge closed")
+            if key in self._pending:
+                raise ValueError("duplicate in-flight JSON-RPC id")
+            self._pending[key] = pending
+        try:
+            self.send(message)
+            result = pending.get()
+            if result is None:
+                raise OSError("MCP bridge exited before responding")
+            return result
+        finally:
+            with self._lock:
+                self._pending.pop(key, None)
+
+    def close(self):
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            for pending in self._pending.values():
+                pending.put(None)
+            self.events.put(None)
+        # Kill only this session's process tree, including interpreter launchers.
+        proc.kill_tree(self.process, grace_s=1)
+        for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
+            try:
+                pipe.close()
+            except OSError:
+                pass
+
+
+class McpRelayFacet(Facet):
+    id = "mcp_relay"
+
+    def __init__(self, hub):
+        super().__init__(hub)
+        self._lock = threading.Lock()
+        self._sessions = {}
+        # The Hub intentionally omits itself from its app cards.
+        self._own_app = registry.read_manifest(REPO_DIR / "faustus-plugin.json",
+            faustus_dir=hub.config.faustus_dir, faustus_python=hub.config.faustus_python)
+        self._own_app.url = hub.config.url
+        self._own_app.token_file = hub.config.token_file
+
+    def _app(self, app_id):
+        return self._own_app if app_id == self._own_app.id else self.hub.get(app_id)
+
+    def close(self):
+        with self._lock:
+            sessions, self._sessions = list(self._sessions.values()), {}
+        for session in sessions:
+            session.close()
+
+    def describe(self, app_id, *, check=False):
+        app = self._app(app_id)
+        if app is None:
+            raise KeyError(app_id)
+        launch_spec(self.hub, app)
+        result = {"id": app.id, "name": app.name, "app_url": app.url,
+                  "transport": "http", "mcp_path": PREFIX + app.id + "/mcp"}
+        if check:
+            started = time.monotonic()
+            code, body = contract._get(app.health_url(), contract.read_token(app.token_file), 2)
+            result["health"] = {"reachable": code is not None, "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "latency_ms": int((time.monotonic() - started) * 1000), "status_code": code,
+                                "body": body if isinstance(body, dict) else None,
+                                "detail": "" if code == 200 else "app health answered " + str(code)}
+        return result
+
+    def list_apps(self):
+        apps = []
+        for app in [*self.hub.apps, self._own_app]:
+            try:
+                apps.append(self.describe(app.id))
+            except (OSError, ValueError):
+                pass
+        return {"apps": apps}
+
+    def get(self, req):
+        if req.path != PREFIX.rstrip("/") and not req.path.startswith(PREFIX):
+            return None
+        if not req.agent():
+            return Reply({"ok": False, "error": "Hub bearer token required"}, 401)
+        if req.path == PREFIX.rstrip("/"):
+            return self.list_apps()
+        try:
+            return self.describe(unquote(req.path[len(PREFIX):]), check=req.q_bool("check"))
+        except KeyError:
+            return Reply({"ok": False, "error": "unknown family app"}, 404)
+        except (OSError, ValueError) as exc:
+            return Reply({"ok": False, "error": str(exc)}, 422)
+
+    def post(self, req):
+        if req.path != "/api/mcp/resolve":
+            return None
+        if not req.agent():
+            return Reply({"ok": False, "error": "Hub bearer token required"}, 401)
+        # Old MCP rows may predate the connector sidecar. Match their actual
+        # declared program on the PC, without accepting executable overrides.
+        argv = [req.body.get("command") or "", *(req.body.get("args") or [])]
+        wanted = [os.path.normcase(os.path.normpath(str(arg))) for arg in argv]
+        for app in [*self.hub.apps, self._own_app]:
+            try:
+                declared, _ = launch_spec(self.hub, app)
+                if wanted == [os.path.normcase(os.path.normpath(arg)) for arg in declared]:
+                    return {"app": self.describe(app.id)}
+            except (OSError, ValueError):
+                continue
+        return {"app": None}
+
+    @classmethod
+    def tools(cls):
+        return [{"name": "hub_mcp_apps", "description": "Family apps reachable through the Hub's MCP relay, with optional app health. Does not start apps or bridges.",
+                 "annotations": {"readOnlyHint": True}, "inputSchema": {"type": "object", "properties": {
+                     "app": {"type": "string"}, "check": {"type": "boolean", "default": False}}}}]
+
+    def handlers(self):
+        def describe(arguments):
+            if arguments.get("app"):
+                return self.describe(str(arguments["app"]), check=bool(arguments.get("check")))
+            return self.list_apps()
+        return {"hub_mcp_apps": describe}
+
+    def handle(self, handler):
+        """Streamable HTTP, handled before the ordinary JSON API body reader."""
+        if not handler._agent_ok():
+            handler.close_connection = True
+            return
+        app_id = unquote(urlsplit(handler.path).path[len(PREFIX):-len("/mcp")])
+        session_id = handler.headers.get("Mcp-Session-Id")
+        with self._lock:
+            session = self._sessions.get(session_id)
+        if session is not None and session.app_id != app_id:
+            return handler._json({"error": "session belongs to another app"}, 404)
+        if handler.command == "DELETE":
+            if session is None:
+                return handler._json({"error": "unknown MCP session"}, 404)
+            with self._lock:
+                self._sessions.pop(session_id, None)
+            session.close()
+            return handler._json({}, 200)
+        if handler.command == "GET":
+            if session is None or session._closed:
+                return handler._json({"error": "unknown MCP session"}, 404)
+            return self._stream(handler, session)
+        if handler.command != "POST":
+            return handler._json({"error": "method not allowed"}, 405)
+        # The authenticated transport carries the same image/document arguments
+        # as stdio. Its message size is independent of the Hub's small UI forms.
+        message = handler._read_body(limit=int(handler.headers.get("Content-Length") or 0))
+        if message.get("jsonrpc") != "2.0":
+            return handler._json({"error": "expected a JSON-RPC message"}, 400)
+        created = False
+        try:
+            if session is None:
+                if session_id or message.get("method") != "initialize" or "id" not in message:
+                    return handler._json({"error": "unknown MCP session"}, 404)
+                app = self._app(app_id)
+                if app is None:
+                    return handler._json({"error": "unknown family app"}, 404)
+                argv, env = launch_spec(self.hub, app)
+                session = Session(app_id, argv, env, app.folder)
+                with self._lock:
+                    self._sessions[session.id] = session
+                created = True
+            if "method" in message and "id" in message:
+                result = session.request(message)
+                if created and "error" in result:
+                    session.close()
+                    with self._lock:
+                        self._sessions.pop(session.id, None)
+                return self._reply(handler, result, 200, session.id)
+            session.send(message)
+            return self._reply(handler, None, 202, session.id)
+        except (OSError, ValueError) as exc:
+            if session is not None:
+                session.close()
+                with self._lock:
+                    self._sessions.pop(session.id, None)
+            return handler._json({"jsonrpc": "2.0", "id": message.get("id"),
+                                  "error": {"code": -32000, "message": str(exc)}}, 200 if session else 422)
+
+    @staticmethod
+    def _reply(handler, payload, status, session_id):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else b""
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Mcp-Session-Id", session_id)
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    @staticmethod
+    def _stream(handler, session):
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Connection", "close")
+        handler.end_headers()
+        handler.close_connection = True
+        try:
+            while not session._closed:
+                try:
+                    message = session.events.get(timeout=10)
+                except queue.Empty:
+                    handler.wfile.write(b": keepalive\n\n")
+                else:
+                    if message is None:
+                        return
+                    handler.wfile.write(("event: message\ndata: " + json.dumps(message, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                handler.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return

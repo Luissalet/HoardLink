@@ -49,7 +49,7 @@ SERVE_TIMEOUT_S = 15.0           # publishing a port must never hold the switch:
 PAUSED_ON_SPARK = [
     "Hermes: la vigilancia de ventanas abiertas de tu navegador («Mi ventana abierta»); necesita Windows y tu navegador",
     "Faustus: el control de tu navegador real y del escritorio de Windows",
-    "Faustus: los modelos de Ollama de este PC y los servidores MCP que solo existen en Windows",
+    "Faustus: los modelos de Ollama de este PC y los conectores de sus apps cuando el PC o el enlace del Hub están apagados",
 ]
 # Caches and per-machine browser profiles stay on each side; everything else is the app's state and moves with it.
 COMMON_EXCLUDES = ["*.placement-tmp", "*/browser-profile", "browser-profile", "placement-elsewhere.json",

@@ -32,6 +32,7 @@
     "app-proxy",
     "family-audit",
     "family-capability-discovery",
+    "family-mcp-relay",
     "live-tool-schema-discovery",
     "cross-hoard-recipes",
     "agora-debates-with-findings"
