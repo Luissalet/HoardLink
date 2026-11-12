@@ -161,6 +161,15 @@ def test_cancelled_runner_reports_stopped_outcome(tmp_path):
     assert row["process_exit_code"] == 1 and "confirmed cancellation" in row["detail"]
 
 
+def test_restart_during_cancellation_reports_unknown(tmp_path):
+    facet = _facet(tmp_path)
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,created_at,updated_at) "
+                   "VALUES('worker','faustus','model','','task','stopping',1,1)")
+    facet._reconcile_workers()
+    assert facet._worker_rows()[0]["state"] == "unknown"
+
+
 def test_unconfirmed_stop_does_not_claim_cancellation(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     with facet._db() as db:
