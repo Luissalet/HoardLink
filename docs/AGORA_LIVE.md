@@ -8,6 +8,13 @@ path locks, explicitly observed paths and tool commands. The selected channel sh
 its recent messages. The arrow, coloured name stripe and note follow the App Dock
 bridge's cursor appearance.
 
+The live view inherits the console palette. An explicit light app theme uses its
+light palette. Studio shares its resolved semantic tokens with the embedded view
+on load and whenever the host theme changes, including system theme changes.
+Each target reserves a separate berth for every actor below its readable content.
+Names and notes stay outside that content and other actors' notes. Notes fold away
+after eight seconds in both motion modes. Cursor travel takes 900 milliseconds.
+
 Each active member has one cursor. The latest source-timestamped task, lock, tool
 or channel message determines its destination. A heartbeat renews availability
 without moving it. Tool excerpts retain their source time after the tool returns,
@@ -52,6 +59,8 @@ console build. `AGORA_LIVE_EVIDENCE` optionally selects a screenshot directory.
 Fixtures use isolated state and synthetic transcripts. They exercise simultaneous
 cursors, file excerpts, channel updates, task submission, follow, recovery,
 sixty-second rest, end of turn and reduced motion at desktop and phone widths.
+Both themes verify content/label separation, automatic note folding, simultaneous
+travel by three actors and the followed cursor's position inside the viewport.
 
 Faustus forwards `live=1` through its existing `/api/hoard/agora/open` redirect.
 Both applications require this Hub API and a current console build.
