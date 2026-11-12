@@ -194,3 +194,35 @@ def test_a_slow_faustus_start_can_be_cancelled_without_waiting_for_readiness(tmp
     runtime.cancel_start()
     worker.join(5)
     assert not worker.is_alive() and killed.is_set() and results[0]["cancelled"] and not results[0]["ok"]
+
+
+def test_an_automatic_restart_never_cuts_work_in_progress(hub, monkeypatch):
+    """A watchdog or a rule that restarts an app waits while the app says it is mid-job (its /api/health busy block)."""
+    stopped, started = [], []
+    monkeypatch.setattr(hub, "_stop_app", lambda app: stopped.append(app.id) or {"ok": True, "app": app.id})
+    monkeypatch.setattr(hub, "start", lambda app_id, **kw: started.append(app_id) or {"ok": True, "app": app_id})
+    busy = {"digest": {"running": "abc", "queued": 0, "stage": "sound"}, "working": True}
+    monkeypatch.setattr(procs, "fetch_json", lambda url, timeout=3.0: (200, {"service": "links-hoard", "busy": busy}))
+
+    res = hub.restart("launch", automatic=True)
+    assert res["ok"] and res["skipped"] and res["busy"] == busy
+    assert stopped == [] and started == [], "the app is not stopped in the middle of a digest"
+
+    # an explicit restart still goes through: the person asked for it
+    res = hub.restart("launch")
+    assert res["ok"] and stopped == ["launch"] and started == ["launch"]
+
+
+def test_an_app_that_reports_nothing_busy_is_restarted(hub, monkeypatch):
+    stopped, started = [], []
+    monkeypatch.setattr(hub, "_stop_app", lambda app: stopped.append(app.id) or {"ok": True, "app": app.id})
+    monkeypatch.setattr(hub, "start", lambda app_id, **kw: started.append(app_id) or {"ok": True, "app": app_id})
+    monkeypatch.setattr(procs, "fetch_json", lambda url, timeout=3.0: (200, {"service": "links-hoard", "busy": {"digest": {"running": None, "queued": 0}, "working": False}}))
+    assert hub.restart("launch", automatic=True)["ok"]
+    assert stopped == ["launch"] and started == ["launch"]
+
+    # an app that does not answer is down, not busy: it is restarted too
+    stopped.clear(); started.clear()
+    monkeypatch.setattr(procs, "fetch_json", lambda url, timeout=3.0: (None, None))
+    assert hub.restart("launch", automatic=True)["ok"]
+    assert stopped == ["launch"] and started == ["launch"]
