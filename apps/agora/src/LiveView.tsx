@@ -58,6 +58,7 @@ type Snapshot = {
   actors: Actor[];
   watch_error?: string;
 };
+type CursorPoint = { x: number; y: number; width: number; hidden: boolean };
 const columns = [
   { id: "open", label: "Por hacer", states: ["open"] },
   {
@@ -111,11 +112,13 @@ function AgentCursor({
   actor,
   point,
   resting,
+  noteVisible,
   onSelect,
 }: {
   actor: Actor;
-  point: { x: number; y: number; up?: boolean };
+  point: CursorPoint;
   resting: boolean;
+  noteVisible: boolean;
   onSelect: () => void;
 }) {
   return (
@@ -124,12 +127,13 @@ function AgentCursor({
       className="aglive-cursor"
       data-agent={actor.id}
       data-resting={resting || undefined}
-      data-up={point.up || undefined}
+      data-hidden={point.hidden || undefined}
       aria-label={`Sesión de ${actor.name}`}
       onClick={onSelect}
       style={
         {
           "--actor-color": actor.color,
+          "--cursor-width": `${point.width}px`,
           transform: `translate(${point.x}px, ${point.y}px)`,
         } as CSSProperties
       }
@@ -144,7 +148,7 @@ function AgentCursor({
         />
       </svg>
       <span className="aglive-name">{actor.name}</span>
-      {actor.note && !resting && (
+      {noteVisible && (
         <span className="aglive-note" key={actor.note}>
           {actor.note}
         </span>
@@ -159,9 +163,8 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
   const [selected, setSelected] = useState("");
   const [following, setFollowing] = useState("");
   const [now, setNow] = useState(Date.now() / 1000);
-  const [points, setPoints] = useState<
-    Record<string, { x: number; y: number; up?: boolean }>
-  >({});
+  const [points, setPoints] = useState<Record<string, CursorPoint>>({});
+  const [hostTheme, setHostTheme] = useState<CSSProperties>({});
   const [taskDetail, setTaskDetail] = useState<{
     task: Task;
     messages: Message[];
@@ -177,6 +180,36 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
   const clockOffset = useRef(0);
   const taskRects = useRef(new Map<string, DOMRect>());
   const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (window.parent === window) return;
+    function receive(event: MessageEvent) {
+      if (event.source !== window.parent || event.data?.type !== "aglive/theme")
+        return;
+      const theme: Record<string, string> = {};
+      for (const name of [
+        "canvas",
+        "surface",
+        "sunken",
+        "hover",
+        "text",
+        "muted",
+        "line",
+        "strong",
+        "accent",
+        "focus",
+        "error",
+        "error-bg",
+        "scheme",
+      ]) {
+        const value = event.data.tokens?.[name];
+        if (typeof value === "string") theme[`--aglive-${name}`] = value;
+      }
+      setHostTheme(theme as CSSProperties);
+    }
+    window.addEventListener("message", receive);
+    window.parent.postMessage({ type: "aglive/ready" }, "*");
+    return () => window.removeEventListener("message", receive);
+  }, []);
   useEffect(() => {
     firstSnapshot.current = 0;
     setData(null);
@@ -228,6 +261,26 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
     if (node) targets.current.set(key, node);
     else targets.current.delete(key);
   };
+  const noteVisible = (actor: Actor) =>
+    !!actor.note &&
+    !error &&
+    now - actor.last_signal < 60 &&
+    now - actor.target.at < 8;
+  // Each actor gets a separate berth outside the target's readable content.
+  // Reserving its actual height also prevents collisions in narrow columns.
+  const berths = (key: string) => (
+    <div className="aglive-berths" aria-hidden="true">
+      {data?.actors
+        .filter((a) => `${a.target.kind}:${a.target.id}` === key)
+        .map((a) => (
+          <div
+            key={a.id}
+            data-berth={a.id}
+            style={{ height: noteVisible(a) ? 116 : 38 }}
+          />
+        ))}
+    </div>
+  );
   useLayoutEffect(() => {
     const viewport = stage.current,
       area = content.current;
@@ -235,38 +288,25 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
     let frame = 0;
     function locate() {
       const rect = area!.getBoundingClientRect();
-      const groups = new Map<string, number>();
-      const next: Record<string, { x: number; y: number; up?: boolean }> = {};
+      const next: Record<string, CursorPoint> = {};
       for (const actor of data!.actors) {
         const key = actor.target.kind + ":" + actor.target.id;
         const element =
           targets.current.get(key) || targets.current.get("rest:" + actor.id);
         if (!element) continue;
-        const box = element.getBoundingClientRect();
+        const berth = Array.from(
+          element.querySelectorAll<HTMLElement>("[data-berth]"),
+        ).find((node) => node.dataset.berth === actor.id);
+        const box = (berth || element).getBoundingClientRect();
         const column = element
           .closest(".aglive-column > div")
           ?.getBoundingClientRect();
-        const slot = groups.get(key) || 0;
-        groups.set(key, slot + 1);
         next[actor.id] = {
-          up: box.top + 150 > viewport!.getBoundingClientRect().bottom,
-          x: Math.max(
-            6,
-            Math.min(
-              area!.clientWidth - 175,
-              box.left - rect.left + 12 + slot * 38,
-            ),
-          ),
-          y: Math.max(
-            6,
-            Math.min(
-              column ? column.bottom - rect.top - 35 : Infinity,
-              Math.max(
-                column ? column.top - rect.top : 0,
-                box.top - rect.top + Math.min(box.height / 2, 30) + slot * 20,
-              ),
-            ),
-          ),
+          x: box.left - rect.left + 2,
+          y: box.top - rect.top + 4,
+          width: Math.max(70, Math.min(220, box.width - 40)),
+          hidden:
+            !!column && (box.top < column.top || box.bottom > column.bottom),
         };
       }
       setPoints(next);
@@ -278,6 +318,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
     locate();
     const observer = new ResizeObserver(schedule);
     observer.observe(area);
+    for (const node of targets.current.values()) observer.observe(node);
     viewport.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     return () => {
@@ -286,7 +327,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
       viewport.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
     };
-  }, [data]);
+  }, [data, now, error]);
 
   // Preserve each card's old rectangle across column changes and move the real card.
   useLayoutEffect(() => {
@@ -325,19 +366,33 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
     const element =
       targets.current.get(followKey) ||
       targets.current.get("rest:" + following);
-    element?.scrollIntoView({
-      block: "nearest",
-      inline: "nearest",
-      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
-        ? "instant"
-        : "smooth",
-    });
+    const berth =
+      element &&
+      Array.from(element.querySelectorAll<HTMLElement>("[data-berth]")).find(
+        (node) => node.dataset.berth === following,
+      );
+    const target = berth || element;
+    function accompany() {
+      target?.scrollIntoView({
+        block: "nearest",
+        inline: "nearest",
+        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "instant"
+          : "smooth",
+      });
+    }
+    accompany();
+    // New observed text and folded notes can change the destination after arrival.
+    const observer = new ResizeObserver(accompany);
+    if (content.current) observer.observe(content.current);
+    if (element) observer.observe(element);
+    return () => observer.disconnect();
   }, [following, followKey, followActor?.target.at]);
 
   const actor = data?.actors.find((a) => a.id === selected);
   const fresh = (at: number) => at > firstSnapshot.current;
   const groups = new Map<string, FileRow[]>();
-  for (const file of data?.files || []) {
+  for (const file of [...(data?.files || [])].sort((a, b) => b.at - a.at)) {
     const repo = (file.repo || "Sin repositorio observado").toLocaleLowerCase();
     const rows = groups.get(repo) || [];
     rows.push(file);
@@ -357,6 +412,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
       className="aglive"
       aria-label="Ágora en directo"
       data-testid="agora-live"
+      style={hostTheme}
     >
       <header className="aglive-head">
         {onClose && (
@@ -399,22 +455,23 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
       )}
       <div className="aglive-team" aria-label="Agentes en directo">
         {data?.actors.map((a) => (
-          <button
-            key={a.id}
-            ref={bind("rest:" + a.id)}
-            className="aglive-agent"
-            aria-pressed={selected === a.id}
-            onClick={() => setSelected(a.id)}
-            style={{ "--actor-color": a.color } as CSSProperties}
-          >
-            <i />
-            {a.name}
-            <small>
-              {error || now - a.last_signal >= 60
-                ? "En reposo"
-                : states[a.state] || a.state}
-            </small>
-          </button>
+          <div key={a.id}>
+            <button
+              key={a.id}
+              className="aglive-agent"
+              aria-pressed={selected === a.id}
+              onClick={() => setSelected(a.id)}
+              style={{ "--actor-color": a.color } as CSSProperties}
+            >
+              <i />
+              {a.name}
+              <small>
+                {error || now - a.last_signal >= 60
+                  ? "En reposo"
+                  : states[a.state] || a.state}
+              </small>
+            </button>
+          </div>
         ))}
         {data && !data.actors.length && (
           <p>Ningún agente activo en este servidor.</p>
@@ -422,6 +479,15 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
       </div>
       <div className="aglive-stage" ref={stage}>
         <div className="aglive-content" ref={content}>
+          <div className="aglive-resting-area">
+            {data?.actors
+              .filter((a) => a.target.kind === "rest")
+              .map((a) => (
+                <div key={a.id} ref={bind("rest:" + a.id)}>
+                  {berths("rest:" + a.id)}
+                </div>
+              ))}
+          </div>
           <section className="aglive-board" aria-label="Pizarra">
             <h2>Pizarra</h2>
             <div className="aglive-columns">
@@ -439,22 +505,28 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                     {data?.tasks
                       .filter((t) => col.states.includes(t.status || t.state))
                       .map((t) => (
-                        <button
-                          className="aglive-task"
+                        <div
+                          className="aglive-target"
                           key={t.id}
                           ref={bind("task:" + t.id)}
-                          onClick={() => void openTask(t)}
                         >
-                          <span>
-                            #{t.id} · {t.repo || "Equipo"}
-                          </span>
-                          <strong>{t.title}</strong>
-                          <small>
-                            {t.owner || "Sin asignar"}
-                            {t.status === "blocked" ? " · Bloqueada" : ""}
-                          </small>
-                          {t.progress && <small>{t.progress}</small>}
-                        </button>
+                          <button
+                            className="aglive-task"
+                            key={t.id}
+                            onClick={() => void openTask(t)}
+                          >
+                            <span>
+                              #{t.id} · {t.repo || "Equipo"}
+                            </span>
+                            <strong>{t.title}</strong>
+                            <small>
+                              {t.owner || "Sin asignar"}
+                              {t.status === "blocked" ? " · Bloqueada" : ""}
+                            </small>
+                            {t.progress && <small>{t.progress}</small>}
+                          </button>
+                          {berths("task:" + t.id)}
+                        </div>
                       ))}
                   </div>
                 </section>
@@ -476,34 +548,37 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                 <div className="aglive-repo" key={repo}>
                   <h3>{repo}</h3>
                   {files.map((file) => (
-                    <article
-                      className="aglive-file"
+                    <div
+                      className="aglive-target"
                       key={file.id}
                       ref={bind("file:" + file.id)}
                     >
-                      <div>
-                        <strong>{file.path}</strong>
-                        <span>
-                          {file.source === "lock"
-                            ? "Bloqueo"
-                            : file.source === "command"
-                              ? "Comando observado"
-                              : "Fichero observado"}
-                        </span>
-                      </div>
-                      <small>
-                        {file.owners.join(", ")} · {clock(file.at)}
-                      </small>
-                      {file.preview && (
-                        <pre>
-                          <ObservedText
-                            key={file.at + file.preview}
-                            text={file.preview}
-                            fresh={fresh(file.at)}
-                          />
-                        </pre>
-                      )}
-                    </article>
+                      <article className="aglive-file" key={file.id}>
+                        <div>
+                          <strong>{file.path}</strong>
+                          <span>
+                            {file.source === "lock"
+                              ? "Bloqueo"
+                              : file.source === "command"
+                                ? "Comando observado"
+                                : "Fichero observado"}
+                          </span>
+                        </div>
+                        <small>
+                          {file.owners.join(", ")} · {clock(file.at)}
+                        </small>
+                        {file.preview && (
+                          <pre>
+                            <ObservedText
+                              key={file.at + file.preview}
+                              text={file.preview}
+                              fresh={fresh(file.at)}
+                            />
+                          </pre>
+                        )}
+                      </article>
+                      {berths("file:" + file.id)}
+                    </div>
                   ))}
                 </div>
               ))}
@@ -536,19 +611,25 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                 <p className="aglive-empty">Sin mensajes en este canal.</p>
               )}
               {[...(data?.messages || [])].reverse().map((m) => (
-                <article
-                  className="aglive-message"
+                <div
+                  className="aglive-target"
                   key={m.id}
                   ref={bind("message:" + m.id)}
                 >
-                  <div>
-                    <strong>{m.author || m.agent}</strong>
-                    <time>{clock(m.created || 0)}</time>
-                  </div>
-                  <p>
-                    <ObservedText text={m.body} fresh={fresh(m.created || 0)} />
-                  </p>
-                </article>
+                  <article className="aglive-message" key={m.id}>
+                    <div>
+                      <strong>{m.author || m.agent}</strong>
+                      <time>{clock(m.created || 0)}</time>
+                    </div>
+                    <p>
+                      <ObservedText
+                        text={m.body}
+                        fresh={fresh(m.created || 0)}
+                      />
+                    </p>
+                  </article>
+                  {berths("message:" + m.id)}
+                </div>
               ))}
             </section>
           </div>
@@ -561,6 +642,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                     actor={a}
                     point={points[a.id]}
                     resting={!!error || now - a.last_signal >= 60}
+                    noteVisible={noteVisible(a)}
                     onSelect={() => setSelected(a.id)}
                   />
                 ),

@@ -105,8 +105,8 @@ def test_http_mcp_and_completed_tool_retention(tmp_path, roots):
         hub.close()
 
 
-@pytest.mark.parametrize("width,motion", [(1440,"no-preference"),(390,"reduce")])
-def test_live_browser_targets_follow_recovery_and_lifecycle(tmp_path, roots, width, motion):
+@pytest.mark.parametrize("width,motion,theme", [(1440,"no-preference","light"),(1440,"no-preference","dark"),(390,"no-preference","light"),(390,"reduce","dark")])
+def test_live_browser_targets_follow_recovery_and_lifecycle(tmp_path, roots, width, motion, theme):
     browser_api = pytest.importorskip("playwright.sync_api")
     if not (Path(__file__).parents[2]/"apps/agora/dist/index.html").exists():
         pytest.skip("Build apps/agora before browser tests")
@@ -138,19 +138,53 @@ def test_live_browser_targets_follow_recovery_and_lifecycle(tmp_path, roots, wid
                 errors = []
                 page.on("pageerror",lambda err:errors.append(str(err)))
                 page.goto(hub.config.url+"/agora/?view=live")
+                page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
                 browser_api.expect(page.locator(".aglive-cursor")).to_have_count(3)
                 browser_api.expect(page.locator(".aglive-file pre")).to_contain_text("+    return observed_state")
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 if motion == "reduce":
                     assert page.locator(".aglive-cursor").first.evaluate("el=>getComputedStyle(el).transitionDuration") == "0s"
-                page.get_by_role("button",name="Sesión de codex-one",exact=True).click()
+                page.locator(".aglive-agent",has_text="codex-one").click()
                 page.get_by_role("button",name="Seguir a codex-one",exact=True).click()
                 assert page.get_by_role("button",name="Dejar de seguir").get_attribute("aria-pressed") == "true"
                 page.get_by_role("button",name="Cerrar detalle",exact=True).click()
+                page.evaluate("""() => {
+                  window.travel = {};
+                  window.recordTravel = true;
+                  const sample = () => {
+                    for (const el of document.querySelectorAll('.aglive-cursor')) {
+                      (window.travel[el.dataset.agent] ||= []).push(getComputedStyle(el).transform);
+                    }
+                    if (window.recordTravel) requestAnimationFrame(sample);
+                  };
+                  requestAnimationFrame(sample);
+                }""")
                 tick[0] += 10
                 ag.channel_post({"agent":"codex-one","channel":"general","body":"Observed result is ready."})
+                ag.channel_post({"agent":"claude-two","channel":"general","body":"Navigation reviewed."})
+                ag.channel_post({"agent":"faustus-three","channel":"general","body":"Checks completed."})
                 browser_api.expect(page.locator(".aglive-message p",has_text="Observed result is ready.")).to_be_visible(timeout=10000)
-                page.screenshot(path=str(evidence/f"live-active-{width}.png"),full_page=False)
+                page.wait_for_timeout(1600)
+                for note in page.locator('.aglive-note').all():
+                    assert note.evaluate('el => el.getBoundingClientRect().height') >= 24
+                travel = page.evaluate("() => {window.recordTravel = false; return Object.fromEntries(Object.entries(window.travel).map(([id, frames]) => [id, new Set(frames).size]));}")
+                if motion != "reduce":
+                    assert all(count >= 6 for count in travel.values()), travel
+                # Follow must bring the actual cursor berth into the scrolled viewport.
+                assert page.locator('[data-berth="codex-one"]').evaluate("""el => {
+                  const box = el.getBoundingClientRect(), view = document.querySelector('.aglive-stage').getBoundingClientRect();
+                  return box.top >= view.top - 1 && box.bottom <= view.bottom + 1;
+                }""")
+                # Labels and notes have their own space, outside every target's content.
+                assert page.evaluate("""() => {
+                  const contents = [...document.querySelectorAll('.aglive-task,.aglive-file,.aglive-message')].map(el => el.getBoundingClientRect());
+                  const labels = [...document.querySelectorAll('.aglive-cursor:not([data-hidden]) .aglive-name,.aglive-cursor:not([data-hidden]) .aglive-note')].map(el => el.getBoundingClientRect());
+                  const overlaps = (a,b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+                  return labels.every((a,i) => contents.every(b => !overlaps(a,b)) && labels.slice(i+1).every(b => !overlaps(a,b)));
+                }""")
+                page.screenshot(path=str(evidence/f"live-active-{theme}-{width}.png"),full_page=False)
+                tick[0] += 9
+                browser_api.expect(page.locator('.aglive-note')).to_have_count(0,timeout=10000)
                 # A status change moves the existing task and its owner's cursor to the new column.
                 tick[0] += 1
                 ag.task_submit({"agent":"claude-two","task_id":tasks[1]["id"],"summary":"Ready","commits":["abcdef1"]})
@@ -165,7 +199,7 @@ def test_live_browser_targets_follow_recovery_and_lifecycle(tmp_path, roots, wid
                 put(transcript,[cx_done(tick[0],text="Finished QA")],tick[0],append=True)
                 tick[0] += 6  # The observer refreshes at most every five source-clock seconds.
                 browser_api.expect(page.locator('.aglive-cursor[data-agent="codex-one"]')).to_have_count(0,timeout=10000)
-                page.screenshot(path=str(evidence/f"live-rest-{width}.png"),full_page=False)
+                page.screenshot(path=str(evidence/f"live-rest-{theme}-{width}.png"),full_page=False)
                 assert not errors
             finally:
                 browser.close()

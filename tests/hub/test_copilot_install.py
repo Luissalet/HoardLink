@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from hoard_link.copilot import LAUNCHER_PATH, inject_launcher, install_copilot
 from hoard_link.copilot_launcher import LAUNCHER_JS
+from hoard_link.app_bridge import BRIDGE_JS
 
 PAGE = "<!doctype html><html lang='es'><head><title>App</title></head><body><div id='root'></div></body></html>"
 
@@ -86,7 +87,7 @@ def test_relay_and_launcher_win_over_the_spa_catch_all(tmp_path, faustus):
         assert info["app_id"] == "argus" and info["app_name"] == "Argus's Hoard" and info["data_space_id"]
         launcher = client.get(LAUNCHER_PATH)
         assert launcher.status_code == 200 and launcher.headers["content-type"].startswith("application/javascript")
-        assert "faustus-chat" in launcher.text and launcher.text == LAUNCHER_JS
+        assert "faustus-chat" in launcher.text and launcher.text == LAUNCHER_JS + "\n" + BRIDGE_JS
         assert client.get("/api/copilot/panel.js").text == "export const ok = 1;"
 
 
