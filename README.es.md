@@ -105,17 +105,6 @@ text = await link.chat([{"role": "user", "content": "..."}], task="code", effort
 - Herramientas MCP por grupos: apps y perfiles (`hub_list_apps`, `hub_start_app`, `hub_stop_all`, `hub_profile_*`), GPU y carriles (`hub_lease_*`, `hub_lane_*`), instancias, capa de familia (`hub_events`, `hub_rule_*`, `hub_job_*`, `hub_backup_*`, `hub_family_audit`, `hub_call_app`), repos (`hub_repos`, `hub_repo_*`), acceso a modelos (`hub_link_status`, `hub_link_chat`), colocación (`hub_placement_*`), flota y búsqueda de capacidades (`hub_fleet_status`, `hub_capability_find`), correo (`hub_mail_accounts`, `hub_mail_compose`), relés MCP (`hub_mcp_apps`) y el Ágora (`hub_agora_*`, unas ochenta herramientas). `scripts/agora.py` ofrece las mismas operaciones del Ágora a agentes que solo tienen terminal.
 - La ventana del propio Hub lleva el panel copiloto compartido de Faustus.
 
-## Capturas
-
-La captura de arriba es la vista general del Hub. `qa276-r2-ui-es-mobile.png` muestra la disposición móvil en español.
-
-<details>
-<summary>Disposición móvil</summary>
-
-![Hub en el móvil](qa276-r2-ui-es-mobile.png)
-
-</details>
-
 ## Estructura
 
 | Ruta | Contenido |
