@@ -1274,3 +1274,25 @@ Faustus resolves the transport when connecting and checks health through the Hub
 Saved connector commands, environment, disabled preferences and PC browser URLs
 retain their meaning. Legacy MCP rows whose command exactly matches a family
 manifest can use the relay through `/api/mcp/resolve`.
+
+## Faustus workers from Agora
+
+The console discovers Faustus through the same placement state published by
+`GET /api/placement`. A worker uses its Agora space's workspace and a separate
+native project/session, with its own coordination identity and the selected
+Sparks model. The existing local controller workflow remains available.
+
+Windows repositories execute on the PC. When the main Faustus runs on a Spark,
+an explicit worker launch automatically starts a hidden PC Faustus with separate
+data under `<hub-data>/agora-console/faustus/<agent>`, an ephemeral loopback port
+and that Spark's configured model endpoint. It connects to the real Hub URL and
+Hub MCP with the existing token file. Its server and connector processes end
+with the worker. Browsing the model catalog starts no worker runtime.
+
+Worker details show the actual server URL, workspace and observed tool counts.
+**Detener turno** reads that session's current run ID and cancels it through
+`POST /api/chat/stop/<session_id>` with the native run identity and work scope.
+The durable receipt reports cancellation separately from task completion.
+HTTP `/api/agora/console/worker` and MCP `hub_agora_console_worker` share this
+flow, including `action=stop`. Native Spark workspaces can use the placed
+instance directly with its connected Agora connector.

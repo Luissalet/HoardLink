@@ -1257,3 +1257,25 @@ permiten consultar los relés y comprobar la salud en el PC. Faustus resuelve el
 transporte al conectar y conserva comandos guardados, entorno, preferencias de
 desactivación y URLs del navegador del PC. Las entradas MCP antiguas cuyo comando
 coincide exactamente con un manifiesto familiar usan `/api/mcp/resolve`.
+
+## Trabajadores de Faustus desde el Agora
+
+La consola consulta la ubicacion publicada por `GET /api/placement`. Cada
+trabajador usa la carpeta del espacio y una sesion propia con su identidad de
+coordinacion y el modelo elegido de las Sparks. El flujo del controlador local
+sigue disponible.
+
+Los repositorios de Windows se trabajan en el PC. Si Faustus vive en una Spark,
+la consola arranca automaticamente un Faustus sin interfaz al lanzar el
+trabajador, con datos propios en `<hub-data>/agora-console/faustus/<agente>`,
+puerto loopback efimero y el endpoint configurado de las Sparks. Conserva la
+URL real del Hub y conecta su MCP con el fichero de token existente. Al terminar
+el trabajador cierra el servidor y sus procesos de conector. Consultar modelos
+no arranca este servicio.
+
+La ficha muestra servidor, carpeta y herramientas observadas. **Detener turno**
+consulta el identificador de ejecucion y cancela el turno nativo y sus trabajos.
+El recibo distingue la cancelacion del resultado de la tarea. HTTP
+`/api/agora/console/worker` y MCP `hub_agora_console_worker` comparten el flujo,
+incluido `action=stop`. Las carpetas propias de la Spark pueden usar directamente
+la instancia ubicada alli y su conector del Agora.
