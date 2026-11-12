@@ -332,6 +332,8 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        if automatic and app.family.get("auto_start") is False:
+            return {"ok": False, "app": app_id, "error": "This app must be started explicitly."}
         elsewhere = self.placement.local_block(app_id)
         if elsewhere:
             return {"ok": False, "app": app_id, "error": elsewhere, "placement": True}
@@ -470,6 +472,8 @@ class Hub:
             app = self.get(app_id)
             if app is None:
                 return {"ok": False, "error": f"unknown app: {app_id}"}
+            if app.family.get("auto_start") is False:
+                return {"ok": True, "app": app_id, "skipped": True, "reason": "This app must be started explicitly."}
             with self._lock:
                 lock = self._start_locks.setdefault(app_id, threading.RLock())
             with lock:
@@ -591,7 +595,7 @@ class Hub:
 
     def start_all(self, *, automatic: bool = False) -> dict[str, Any]:
         results = [self.start(a.id, wait=False, automatic=automatic) for a in self.apps
-                   if a.launchable and not self.placement.local_block(a.id)]   # the ones running on a Spark are not "down"
+                   if a.launchable and a.family.get("auto_start") is not False and not self.placement.local_block(a.id)]   # the ones running on a Spark are not "down"
         faustus = (self.faustus_start(automatic=automatic)
                    if self.faustus_runtime.available() and not self.placement.local_block("faustus") else {"ok": True, "skipped": True})
         return {"ok": all(r.get("ok") for r in results) and faustus["ok"], "results": results, "faustus": faustus}
@@ -659,19 +663,22 @@ class Hub:
                 return dict(p, ok=True)
         return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
 
-    def profile_start(self, name: str, *, automatic: bool = False) -> dict[str, Any]:
+    def profile_start(self, name: str, *, automatic: bool = False, startup: bool = False) -> dict[str, Any]:
         """Start the profile's apps and commands together (not waiting for
         each), then open its desktop apps as windows (that waits for them)."""
         p = self.profiles().get(name)
         if p is None:
             return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
+        members = p.members
+        if startup or automatic:
+            members = [a for a in members if (app := self.get(a)) is None or app.family.get("auto_start") is not False]
         if self._stopping_all.is_set() or (automatic and
-                (self.automation_blocked("profile:" + name) or any(self.automation_blocked(a) for a in p.members))):
+                (self.automation_blocked("profile:" + name) or any(self.automation_blocked(a) for a in members))):
             return {"ok": False, "error": "profile was manually stopped; start it explicitly to resume"}
         if not automatic:
             self._manual_stop(["profile:" + name], False)
-        unknown = [a for a in p.members if self.get(a) is None]
-        known = [a for a in p.members if self.get(a) is not None]
+        unknown = [a for a in members if self.get(a) is None]
+        known = [a for a in members if a not in unknown]
         # A desktop app is started by open() itself (which waits for it to be
         # ready before opening the window); starting it here too would race.
         plain = [a for a in known if a not in p.desktop]

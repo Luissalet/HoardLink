@@ -57,7 +57,7 @@ def _start_profile(hub: Hub, name: str) -> dict:
     if name not in hub.profiles():
         log.warning("--profile %s: no such profile (have: %s)", name, ", ".join(hub.profiles()) or "none")
         return {"ok": False, "error": f"unknown profile: {name}"}
-    res = hub.profile_start(name)
+    res = hub.profile_start(name, startup=True)
     if res.get("ok"):
         log.info("profile %s started", name)
     else:
@@ -67,7 +67,7 @@ def _start_profile(hub: Hub, name: str) -> dict:
 
 def _start_profile_remote(url: str, name: str) -> dict:
     from urllib.parse import quote
-    status, body = procs.fetch_json_post(url.rstrip("/") + f"/api/profiles/{quote(name, safe='')}/start", {})
+    status, body = procs.fetch_json_post(url.rstrip("/") + f"/api/profiles/{quote(name, safe='')}/start", {"startup": True})
     return body if isinstance(body, dict) else {"ok": False, "error": f"HTTP {status}"}
 
 
