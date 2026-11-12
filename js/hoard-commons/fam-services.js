@@ -17,10 +17,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { call, status as familyStatus } from "../hoard-link.js";
+import { call, status as familyStatus, mailCompose, mailSendStatus } from "../hoard-link.js";
 
 const serviceContract = JSON.parse(fs.readFileSync(new URL("./family-services.json", import.meta.url), "utf8"));
 export const OWNERS = Object.freeze(Object.fromEntries(Object.entries(serviceContract.services).map(([name, spec]) => [name, spec.owner])));
+
+export const mailStatus = ({ timeoutS = 10 } = {}) => mailSendStatus({ timeoutMs: timeoutS * 1000 });
+/** Draft by default; only explicit mode=send sends. Absolute attachment paths live on the gateway machine. */
+export const mailSend = async (to, subject, body, { mode = "draft", cc = [], bcc = [], attachments = [], html = "", account = "", fromName = "", timeoutS = 70 } = {}) =>
+  mailCompose({ to, subject, body, mode, cc, bcc, attachments, html, account, from_name: fromName }, { timeoutMs: timeoutS * 1000 });
 export const HUB_MAX_S = 900;
 export const HUB_MARGIN_S = 20;
 export const MAX_WAIT_S = 150;
@@ -152,6 +157,7 @@ const availCache = new Map();
 
 /** True when the hub answers and the app that owns `service` ("media", "stt", "tts", "docs", "embed" or an app id) is running. Cached 30 s. */
 export async function serviceAvailable(service, timeoutMs = 1000) {
+  if (String(service).toLowerCase() === "mail") return Boolean((await mailStatus({ timeoutS: timeoutMs / 1000 })).available);
   const owner = OWNERS[String(service || "").toLowerCase()] || String(service || "");
   const st = familyStatus();
   const key = `${st.hub}|${owner}`;

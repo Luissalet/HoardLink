@@ -1,4 +1,4 @@
-# Family services: media, speech, documents, embeddings
+# Family services: media, speech, documents, embeddings and mail
 
 Five capabilities have state that should exist once per machine: one yt-dlp and its updater, one Whisper model in memory, one set of
 voices, one OCR engine and PDF workshop, one embedding model. Each has **one owner app**; every other app calls it through the hub with a
@@ -13,10 +13,59 @@ call exactly these tools, and the migration table at the end says which app swit
 | Text to speech | `prospero` (Prospero's Hoard, Python) | `fam_media.speak`, `speak_bytes` | `speak` |
 | PDF operations, extraction, OCR | `kafka` (Kafka's Hoard, Python) | `fam_docs.*` | `pdf*`, `imagesToPdf`, `imagesCompress`, `docsExtract`, `docsOcr*` |
 | Text embeddings | `borges` (Borges's Hoard, Python) | `fam_embed.status`, `embed_texts`, `embed_query` | `embedStatus`, `embedTexts`, `embedQuery` |
+| Outbound mail and remote drafts | `hub` (mail gateway, accounts in Faustus) | `fam_mail.send_status`, `fam_mail.send` | `mailStatus`, `mailSend` |
 
 `available(service)` (`fam_media.available("media" | "stt" | "tts")`, `fam_docs.available()`, `fam_embed.available()`; Node: `serviceAvailable`) is
 `GET /api/apps/<owner>` -> `state == "running"`, cached 30 s. It is for settings pages and routing hints; the calls themselves do not need it
 (a call to an app that is down answers at once).
+
+Mail uses the authenticated gateway routes below; it is available independently of inbox polling.
+`fam_mail.available()` still describes the incoming mail gateway. Use `send_status()["available"]`
+for outgoing mail; Node `serviceAvailable("mail")` checks that same outgoing status.
+
+## Outbound mail
+
+The Hub owns `mail`: it already runs the family's mail helper with Faustus's interpreter.
+Credentials stay in Faustus. Hermes's tracking modules consume this infrastructure; they do not
+provide a separate account store. Neither sending nor saving a draft starts a Hoard or fetches the inbox.
+
+* `GET /api/mail/accounts` / MCP `hub_mail_accounts`: `{ok, available, accounts, error, via:"hub"}`.
+  Accounts are filtered by the caller's existing sphere access. `available` checks local account
+  configuration, not SMTP connectivity; execution reports authentication and delivery errors.
+* `POST /api/mail/compose` / MCP `hub_mail_compose`: `{to:[address], subject, body, mode?:"draft"|"send",
+  cc?:[address], bcc?:[address], html?:string, attachments?:[absolute_path], account?:string, from_name?:string}`.
+  At least one recipient is required. `account` selects a connected account by name, id or address;
+  without it, the configured default sender is used when accessible, else the first accessible account.
+  Attachment paths refer to files on the gateway machine; paths on a remote caller are not uploaded.
+* The default `mode:"draft"` saves a MIME message with attachments in the account's advertised IMAP
+  `\\Drafts` folder and returns `{ok:true, state:"draft", sent:false, message_id, folder}`. No SMTP send.
+* Explicit `mode:"send"` returns `{ok:true, state:"sent", sent:true, message_id, accepted, refused:[]}`
+  only after SMTP accepts every envelope recipient. Bcc recipients are omitted from the transmitted headers.
+  Partial delivery returns `ok:false, state:"partial"` with accepted/refused recipients. A lost SMTP reply
+  may mean the message was accepted: `state:"unknown"` does not justify resending. These are SMTP receipts,
+  not proof of recipient reading or final delivery to another server.
+* No sending client retries or falls back to a second sender. An older Hub returns `kind:"tool_missing"`;
+  a missing Hub returns `kind:"hub_down"`. Keep the draft/text for the person to review. Authentication
+  uses the calling app's existing family bearer token; these routes add no approval workflow.
+
+```python
+from hoard_link import family, fam_mail
+family.configure("ledger", DATA_DIR)
+draft = fam_mail.send([address], "Invoice", "Body", attachments=[absolute_path])
+sent = fam_mail.send([address], "Invoice", "Body", mode="send")  # explicit user action
+```
+
+```js
+import { mailStatus, mailSend } from "./hoard-commons/fam-services.js";
+const status = await mailStatus();
+const sent = await mailSend([address], "Invoice", "Body", { mode: "send", attachments: [absolutePath] });
+```
+
+Ledger's Cobros uses this service from its Enviar button and `receivable_send` tool. Only `state:"sent"`
+plus `sent:true` marks the notice sent and records `sent_at`; otherwise its editable text remains available
+to copy. `receivables.auto_send` defaults to false. Enabling it sends only newly prepared notices; a failed
+notice is not automatically retried on later checks. Day-14 escalations stay internal. Concurrent sends
+of the same notice in the server process are rejected. Draft generation alone sends nothing by default.
 
 ---
 

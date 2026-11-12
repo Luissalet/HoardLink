@@ -38,6 +38,13 @@ class ServicesFacet(Facet):
 
     def _probe(self, service: tuple[str, str, tuple[str, ...]]) -> dict[str, Any]:
         key, owner, required = service
+        if key == "mail" and owner == "hub":
+            gate = self.hub.facet("mailgate")
+            result = gate.mail_accounts() if gate else {}
+            ready = bool(result.get("available"))
+            return {"service": key, "owner": owner, "name": "Hoard Hub", "url": "", "tools": list(required),
+                    "available": ready, "state": "ready" if ready else "unavailable",
+                    "error": result.get("error") or ("" if ready else "no connected sending account")}
         app = self.hub.get(owner)
         row = {"service": key, "owner": owner, "name": app.name if app else owner,
                "url": app.url if app else "", "tools": list(required), "available": False}

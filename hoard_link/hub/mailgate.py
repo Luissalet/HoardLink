@@ -804,6 +804,41 @@ class MailGate(Facet):
             req["to"] = [str(t) for t in to] if not isinstance(to, str) else [to]
         return self.call_helper(req, timeout=60)
 
+    def mail_accounts(self, caller: str = "hub", refresh: bool = False) -> dict[str, Any]:
+        """Outbound availability is independent of the inbox polling switch."""
+        answer = self.helper_status(refresh=refresh)
+        rows = [r for r in answer.get("accounts", []) if caller in ("hub", "ui") or
+                self.app_allowed(self._sphere_for_account(str(r.get("account") or ""), str(r.get("id") or ""),
+                                                        str(r.get("address") or "")), caller)]
+        return {"ok": bool(answer.get("ok")), "available": bool(answer.get("ok") and answer.get("send_ready") and rows),
+                "accounts": rows, "default_account": next((r["account"] for r in rows if r.get("account") == answer.get("account")),
+                                                         rows[0].get("account", "") if rows else ""),
+                "error": answer.get("error", ""), "via": "hub"}
+
+    def compose_mail(self, body: dict[str, Any], caller: str = "hub") -> dict[str, Any]:
+        """Explicit compose mutation shared by authenticated HTTP callers and MCP."""
+        if body.get("mode", "draft") not in ("draft", "send"):
+            return _bad(400, "mode must be draft or send")
+        for key in ("subject", "body", "html", "from_name", "account"):
+            if key in body and not isinstance(body[key], str):
+                return _bad(400, f"{key} must be a string")
+        if not str(body.get("subject") or "").strip():
+            return _bad(400, "subject is required")
+        for key in ("to", "cc", "bcc", "attachments"):
+            if key in body and (not isinstance(body[key], list) or any(not isinstance(v, str) for v in body[key])):
+                return _bad(400, f"{key} must be a list of strings")
+        accounts = self.mail_accounts(caller)
+        if not accounts["ok"]:
+            return {**accounts, "kind": "app_down"}
+        wanted = body.get("account") or accounts.get("default_account")
+        rows = accounts["accounts"]
+        row = next((r for r in rows if wanted in (r.get("account"), r.get("id"), r.get("address"))), None) if wanted else next(iter(rows), None)
+        if row is None:
+            return _bad(400, "no connected account matches this caller and selector")
+        request = {k: body[k] for k in ("to", "cc", "bcc", "subject", "body", "html", "from_name", "attachments", "mode") if k in body}
+        request.update(action="compose", account=row["account"])
+        return {**self.call_helper(request, timeout=60), "via": "hub"}
+
     # -- ingest --------------------------------------------------------------------
     def _interests_for(self, sphere: str, msg: dict[str, Any]) -> list[str]:
         out = []
@@ -1078,6 +1113,8 @@ class MailGate(Facet):
 
         if p == "/api/mail/status":
             return self.status(refresh=req.q_bool("refresh") and priv)
+        if p == "/api/mail/accounts":
+            return self.mail_accounts(who, refresh=req.q_bool("refresh"))
         if p == "/api/mail/config":
             return {"ok": True, "config": self.config(), "defaults": DEFAULT_CONFIG} if priv else _bad(403, "ui or hub only")
         if p == "/api/mail/interests":
@@ -1152,6 +1189,8 @@ class MailGate(Facet):
             return _bad(401, "a family bearer token (or the hub page) is required")
         priv = who in ("ui", "hub")
         body = req.body if isinstance(req.body, dict) else {}
+        if p == "/api/mail/compose":
+            return self.compose_mail(body, who)
         if p == "/api/mail/config":
             if not priv:
                 return _bad(403, "ui or hub only")
@@ -1202,6 +1241,15 @@ class MailGate(Facet):
     def tools(cls) -> list[dict[str, Any]]:
         sphere = {"type": "string", "description": "Sphere id (personal, work…); empty = all."}
         return [
+            {"name": "hub_mail_accounts", "description": "Connected accounts and outbound mail availability / cuentas de correo y envio.\nDoes not fetch mail.",
+             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}, "annotations": {"readOnlyHint": True}},
+            {"name": "hub_mail_compose", "description": "Save a mail draft or send with mode=send / redactar, borrador, enviar correo, adjuntos.\nUses a connected account. Recipients and attachment paths are explicit. Draft by default. Never retries.",
+             "inputSchema": {"type": "object", "properties": {
+                 **{k: {"type": "string"} for k in ("subject", "body", "html", "from_name", "account")},
+                 **{k: {"type": "array", "items": {"type": "string"}} for k in ("to", "cc", "bcc", "attachments")},
+                 "mode": {"type": "string", "enum": ["draft", "send"], "default": "draft"}},
+                 "required": ["subject", "body", "to"], "additionalProperties": False},
+             "annotations": {"readOnlyHint": False, "idempotentHint": False}},
             {"name": "hub_mail_status",
              "description": "Mail gateway state: accounts, last pass, counts / estado del correo. Keywords: mail, email.",
              "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -1267,7 +1315,8 @@ class MailGate(Facet):
         def fetch(_: dict[str, Any]) -> Any:
             return self.run_pass()
 
-        return {"hub_mail_status": status, "hub_mail_search": search, "hub_mail_get": get_, "hub_mail_attention": attention,
+        return {"hub_mail_accounts": lambda _: self.mail_accounts(), "hub_mail_compose": self.compose_mail,
+                "hub_mail_status": status, "hub_mail_search": search, "hub_mail_get": get_, "hub_mail_attention": attention,
                 "hub_mail_unclaimed": unclaimed, "hub_mail_fetch": fetch}
 
     def info(self) -> dict[str, Any]:

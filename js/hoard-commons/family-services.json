@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "services": {
+    "mail": {"owner": "hub", "tools": ["hub_mail_accounts", "hub_mail_compose"]},
     "media": {"owner": "links", "tools": ["media_download", "media_status", "media_cancel", "media_audio_for_asr", "media_subtitles"]},
     "stt": {"owner": "funes", "tools": ["transcribe_file", "transcribe_status", "transcribe_cancel"]},
     "tts": {"owner": "prospero", "tools": ["voice_tts"]},

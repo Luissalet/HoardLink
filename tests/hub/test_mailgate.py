@@ -533,7 +533,7 @@ def test_the_loop_runs_a_pass_on_its_clock(gate):
 
 def test_tools_catalogue_shape():
     tools = {t["name"]: t for t in MailGate.tools()}
-    assert set(tools) == {"hub_mail_status", "hub_mail_search", "hub_mail_get", "hub_mail_attention", "hub_mail_unclaimed", "hub_mail_fetch"}
+    assert set(tools) == {"hub_mail_status", "hub_mail_search", "hub_mail_get", "hub_mail_attention", "hub_mail_unclaimed", "hub_mail_fetch", "hub_mail_accounts", "hub_mail_compose"}
     for t in tools.values():
         first = t["description"].split("\n")[0]
         assert len(first) <= 110, (t["name"], len(first))

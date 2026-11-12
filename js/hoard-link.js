@@ -704,6 +704,22 @@ export async function mailClaim(ids, kind, ref, { timeoutMs = 10000 } = {}) {
   return mailAnswer(st, data);
 }
 
+/** Outbound mail uses the gateway even when inbox polling is disabled. No retries. */
+export async function mailSendStatus({ timeoutMs = 10000 } = {}) {
+  const { status: st, data } = await mailGet("/api/mail/accounts", timeoutMs);
+  return { ...mailAnswer(st, data), via: "hub" };
+}
+
+export async function mailCompose(body, { timeoutMs = 70000 } = {}) {
+  const { status: st, data } = await post("/api/mail/compose", body, timeoutMs);
+  const answer = { ...mailAnswer(st, data), via: "hub" };
+  if (st === null) Object.assign(answer, { kind: "hub_down", state: "unknown", sent: false });
+  else if (st === 404) answer.kind = "tool_missing";
+  else if (st === 401) answer.kind = "auth";
+  else if (!answer.ok) answer.kind ||= "tool_error";
+  return answer;
+}
+
 /** Copy one attachment (an element of a message's attachments) into destDir; resolves to the new path, or "" when it cannot be had.
  *  Uses the local file when the hub's path is readable from here, else downloads it through the hub. */
 export async function mailCopyAttachment(att, destDir, { timeoutMs = 30000 } = {}) {
