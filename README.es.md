@@ -1241,3 +1241,19 @@ MIT — ver [LICENSE](LICENSE).
 ## Correo saliente de la familia
 
 El servicio mail guarda borradores remotos o envía de forma explícita desde la cuenta conectada de Faustus. Python usa fam_mail.send_status / fam_mail.send; Node usa mailStatus / mailSend. MCP expone hub_mail_accounts y hub_mail_compose. Por defecto guarda un borrador; admite destinatarios, asunto, cuerpo, copias y adjuntos con rutas accesibles desde la pasarela. El envío funciona aunque esté apagada la lectura del buzón, sin reintentos ni otro remitente de respaldo. [Contrato de correo](docs/commons/services.md#outbound-mail).
+
+
+## MCP de las apps por el enlace del Hub
+
+Cuando Faustus corre en otra máquina, el Hub del PC sirve el MCP stdio declarado
+por cada app mediante Streamable HTTP en `/api/mcp/apps/<id>/mcp`, con el token
+del enlace existente. Cada sesión reutiliza su proceso de puente y lo cierra al
+terminar la sesión o el Hub. Conserva instrucciones, herramientas, skills,
+prompts, recursos, resultados estructurados y mensajes en ambas direcciones.
+Conectar inicia el puente. Arrancar la app sigue siendo una acción explícita.
+
+`GET /api/mcp/apps`, `GET /api/mcp/apps/<id>?check=1` y MCP `hub_mcp_apps`
+permiten consultar los relés y comprobar la salud en el PC. Faustus resuelve el
+transporte al conectar y conserva comandos guardados, entorno, preferencias de
+desactivación y URLs del navegador del PC. Las entradas MCP antiguas cuyo comando
+coincide exactamente con un manifiesto familiar usan `/api/mcp/resolve`.

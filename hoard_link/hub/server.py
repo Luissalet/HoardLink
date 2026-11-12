@@ -438,6 +438,8 @@ class _HubHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if not self._guard():
             return
+        if self._mcp_relay():
+            return
         url = urlsplit(self.path)
         path = url.path.rstrip("/") or "/"
         query = parse_qs(url.query)
@@ -581,6 +583,8 @@ class _HubHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         if not self._guard():
+            return
+        if self._mcp_relay():
             return
         path = urlsplit(self.path).path.rstrip("/")
         hub = self.hub
@@ -799,6 +803,27 @@ class _HubHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             logger.exception("POST %s failed", path)
             return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
+
+
+    def _mcp_relay(self) -> bool:
+        from .mcp_relay import PREFIX
+        path = urlsplit(self.path).path
+        if not path.startswith(PREFIX) or not path.endswith("/mcp"):
+            return False
+        relay = self.hub.facet("mcp_relay")
+        if relay is None:
+            self._json({"error": "MCP relay unavailable"}, 503)
+            return True
+        try:
+            relay.handle(self)
+        except ValueError as exc:
+            self.close_connection = True
+            self._json({"error": str(exc)}, 400)
+        return True
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        if self._guard() and not self._mcp_relay():
+            self._json({"error": "not found"}, 404)
 
 
 def serve_in_thread(hub: Hub, host: str = "127.0.0.1", port: Optional[int] = None) -> tuple[ThreadingHTTPServer, threading.Thread]:
