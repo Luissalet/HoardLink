@@ -15,7 +15,8 @@ def test_python_hub_and_node_share_the_exact_owner_contract():
     mirror = repo / "js/hoard-commons/family-services.json"
     assert canonical.read_bytes() == mirror.read_bytes()
     assert services.SERVICES is service_contracts.SERVICES
-    assert (fam_media.LINKS, fam_media.FUNES, fam_media.PROSPERO, fam_docs.KAFKA, fam_embed.BORGES, fam_workspace.OWNER) == tuple(service_contracts.OWNERS.values())
+    assert (fam_media.LINKS, fam_media.FUNES, fam_media.PROSPERO, fam_docs.KAFKA, fam_embed.BORGES, fam_workspace.OWNER) == tuple(service_contracts.OWNERS[k] for k in ("media", "stt", "tts", "docs", "embed", "storage"))
+    assert service_contracts.OWNERS["mail"] == "hub"
     node = shutil.which("node")
     if not node:
         pytest.skip("Node unavailable")

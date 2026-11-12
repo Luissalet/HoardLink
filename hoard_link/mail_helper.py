@@ -60,6 +60,7 @@ import hashlib
 import html as _html
 import io
 import json
+import mimetypes
 import re
 import smtplib
 import ssl
@@ -887,6 +888,79 @@ def send(server, request: dict) -> dict:
     return {"ok": True, "error": "", **info}
 
 
+def compose(server, request: dict) -> dict:
+    """Compose a family message; draft by default, SMTP only for explicit mode=send.
+
+    This is separate from notification sending so existing callers retain their defaults.
+    Attachment paths refer to files on the mail gateway's machine.
+    """
+    mode = request.get("mode", "draft")
+    if mode not in ("draft", "send"):
+        return {"ok": False, "error": "mode must be draft or send"}
+    try:
+        recipients = {}
+        for key in ("to", "cc", "bcc"):
+            values = request.get(key) or []
+            if not isinstance(values, list) or any(not isinstance(v, str) or _addresses([v]) != [v] for v in values):
+                raise ValueError(f"{key} must contain valid email addresses")
+            recipients[key] = list(dict.fromkeys(values))
+        envelope = list(dict.fromkeys(sum(recipients.values(), [])))
+        if not envelope:
+            raise ValueError("at least one recipient is required")
+        if not isinstance(request.get("subject"), str) or not request["subject"].strip():
+            raise ValueError("subject is required")
+        paths = request.get("attachments") or []
+        if not isinstance(paths, list) or any(not isinstance(p, str) or not os.path.isabs(p) for p in paths):
+            raise ValueError("attachments must be absolute file paths on the gateway machine")
+        meta = send_info(server, request)
+        msg = build_message({**request, "text": request.get("body", ""), "hermes_kind": "mail"}, meta["sender"], recipients["to"])
+        if recipients["cc"]:
+            msg["Cc"] = ", ".join(recipients["cc"])
+        # Bcc is stored only in the draft. SMTP receives the complete envelope explicitly.
+        if mode == "draft" and recipients["bcc"]:
+            msg["Bcc"] = ", ".join(recipients["bcc"])
+        for path in paths:
+            mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+            major, minor = mime.split("/", 1)
+            with open(path, "rb") as stream:
+                msg.add_attachment(stream.read(), maintype=major, subtype=minor, filename=os.path.basename(path))
+    except (ValueError, TypeError, OSError, KeyError) as exc:
+        return {"ok": False, "error": str(exc)[:200]}
+    client = None
+    try:
+        if mode == "draft":
+            client = server._imap_connect(meta["selector"])
+            status, lines = client.list()
+            folder = None
+            if status == "OK":
+                for line in lines or []:
+                    line = line.decode("ascii", "replace") if isinstance(line, bytes) else str(line)
+                    match = re.match(r'\([^)]*\\Drafts\b[^)]*\)\s+(?:"[^"]*"|NIL)\s+(.+)$', line, re.I)
+                    if match:
+                        folder = match.group(1)
+                        break
+            if not folder:
+                raise ValueError("the account does not advertise a Drafts folder")
+            status, result = client.append(folder, "\\Draft", None, msg.as_bytes())
+            if status != "OK":
+                raise ValueError("the account refused to save the draft")
+            return {"ok": True, "state": "draft", "sent": False, "message_id": str(msg["Message-ID"]), "folder": folder}
+        client = _connect(meta["cfg"])
+        refused = client.send_message(msg, from_addr=meta["sender"], to_addrs=envelope)
+        # A partial delivery must not be retried blindly: report accepted recipients too.
+        accepted = [a for a in envelope if a not in (refused or {})]
+        return {"ok": not bool(refused), "state": "partial" if refused else "sent", "sent": not bool(refused),
+                "message_id": str(msg["Message-ID"]), "accepted": accepted, "refused": list(refused or {}),
+                "error": "some recipients were refused; do not resend to accepted recipients" if refused else ""}
+    except Exception as exc:  # noqa: BLE001 — never retry a mail mutation here
+        return {"ok": False, "state": "unknown" if mode == "send" else "draft", "sent": False,
+                "message_id": str(msg["Message-ID"]), "error": type(exc).__name__ + ": " + str(exc)[:160]}
+    finally:
+        if client is not None:
+            with contextlib.suppress(Exception):
+                client.logout() if mode == "draft" else client.quit()
+
+
 # ------------------------------------------------------------------ entry
 def handle(request: dict, root: str) -> dict:
     try:
@@ -907,11 +981,14 @@ def handle(request: dict, root: str) -> dict:
                           "user": _mask(r.get("imap_user") or ""), "server": f"{r.get('imap_host')}:{r.get('imap_port')}"} for r in rows]}
     try:
         info.update(send_info(server, request)["info"])
+        info["send_ready"] = True
     except Exception:  # noqa: BLE001 — reading may work even when sending is not configured
-        pass
+        info["send_ready"] = False
     action = request.get("action")
     if action == "send":
         return send(server, request)
+    if action == "compose":
+        return compose(server, request)
     if action == "fetch":
         return fetch(server, request)
     if action == "scan":
