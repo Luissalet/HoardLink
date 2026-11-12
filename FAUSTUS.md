@@ -56,3 +56,7 @@ updated library on their next ordinary restart.
 ## Skills
 
 The `skills` block of `faustus-plugin.json` names the procedures of the family's skill library that fit this app's work: `hoard-daily-digest`, `hoard-family-recap`, `hoard-what-happened`, `hoard-meeting-prep`, `team-agent-orchestration`. The hub's Skills tab shows and changes them. This app does not hand them to connecting agents yet.
+
+## Outbound mail service
+
+The Hub owns mail through its existing gateway and connected Faustus accounts. hub_mail_accounts checks outgoing configuration; hub_mail_compose saves a remote draft by default or sends only for explicit mode=send. to/cc/bcc, subject/body/html and absolute gateway-local attachment paths are supported. SMTP acceptance, partial delivery and unknown outcomes are distinguished. Python fam_mail.send and Node fam-services.mailSend call the authenticated gateway without retrying or switching senders. Ledger Cobros uses this service; automatic notice sending is off by default. See docs/commons/services.md#outbound-mail.

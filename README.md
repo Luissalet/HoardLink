@@ -1252,3 +1252,7 @@ compatible. See [live copilot updates](docs/copilot-live-refresh.md).
 ## Skills
 
 The `skills` block of `faustus-plugin.json` names the procedures of the family's skill library that fit this app's work: `hoard-daily-digest`, `hoard-family-recap`, `hoard-what-happened`, `hoard-meeting-prep`, `team-agent-orchestration`. The hub's Skills tab shows and changes them. This app does not hand them to connecting agents yet.
+
+## Outbound family mail
+
+The mail service saves remote drafts or sends explicitly through the connected Faustus account. Python uses fam_mail.send_status / fam_mail.send; Node uses mailStatus / mailSend. MCP exposes hub_mail_accounts and hub_mail_compose. Draft is the default; recipients, subject, body, cc/bcc and gateway-local attachment paths are supported. Outgoing mail works independently of inbox polling. There is no sending retry or fallback. See [the mail contract](docs/commons/services.md#outbound-mail).
