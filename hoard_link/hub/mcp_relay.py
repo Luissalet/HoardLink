@@ -221,9 +221,15 @@ class McpRelayFacet(Facet):
 
     def handle(self, handler):
         """Streamable HTTP, handled before the ordinary JSON API body reader."""
+        message = {}
+        if handler.command == "POST":
+            # Drain each message before returning an HTTP error. Closing a
+            # socket with unread POST data can reset even the error response.
+            message = handler._read_body(limit=int(handler.headers.get("Content-Length") or 0))
         if not handler._agent_ok():
-            handler.close_connection = True
             return
+        if handler.command == "POST" and message.get("jsonrpc") != "2.0":
+            return handler._json({"error": "expected a JSON-RPC message"}, 400)
         app_id = unquote(urlsplit(handler.path).path[len(PREFIX):-len("/mcp")])
         session_id = handler.headers.get("Mcp-Session-Id")
         with self._lock:
@@ -243,11 +249,6 @@ class McpRelayFacet(Facet):
             return self._stream(handler, session)
         if handler.command != "POST":
             return handler._json({"error": "method not allowed"}, 405)
-        # The authenticated transport carries the same image/document arguments
-        # as stdio. Its message size is independent of the Hub's small UI forms.
-        message = handler._read_body(limit=int(handler.headers.get("Content-Length") or 0))
-        if message.get("jsonrpc") != "2.0":
-            return handler._json({"error": "expected a JSON-RPC message"}, 400)
         created = False
         try:
             if session is None:
