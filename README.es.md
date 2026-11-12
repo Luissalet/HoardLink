@@ -1253,7 +1253,7 @@ prompts, recursos, resultados estructurados y mensajes en ambas direcciones.
 Conectar inicia el puente. Arrancar la app sigue siendo una acción explícita.
 
 `GET /api/mcp/apps`, `GET /api/mcp/apps/<id>?check=1` y MCP `hub_mcp_apps`
-permiten consultar los relés y comprobar la salud en el PC. Faustus resuelve el
+permiten consultar los relés y comprobar la salud donde está la app. Faustus resuelve el
 transporte al conectar y conserva comandos guardados, entorno, preferencias de
 desactivación y URLs del navegador del PC. Las entradas MCP antiguas cuyo comando
 coincide exactamente con un manifiesto familiar usan `/api/mcp/resolve`.
@@ -1279,3 +1279,12 @@ El recibo distingue la cancelación del resultado de la tarea. HTTP
 `/api/agora/console/worker` y MCP `hub_agora_console_worker` comparten el flujo,
 incluido `action=stop`. Las carpetas propias de la Spark pueden usar directamente
 la instancia ubicada allí y su conector del Ágora.
+
+### Apps colocadas en una Spark
+
+El relé resuelve el puente declarado en la máquina que indica placement.
+En la Spark utiliza su conexión SSH existente, el venv nativo y el fichero de
+token de la app, con autoinicio del puente desactivado. La salud se consulta en
+esa Spark y los metadatos muestran su URL tailnet. Al volver al PC, una nueva
+conexión resuelve de nuevo el comando local. Durante un traslado se indica
+que hay que reconectar cuando termine placement.

@@ -78,6 +78,85 @@ def test_manifest_resolution_uses_installed_pc_paths_and_assigned_port(relay):
     assert env["APP_TOKEN_FILE"] == relay.app.token_file
 
 
+@pytest.fixture
+def placed(relay):
+    relay.app.id = "prometheus"
+    manifest = json.loads((relay.root / "faustus-plugin.json").read_text(encoding="utf-8"))
+    manifest["mcp"]["command"] = "{PYTHON}"
+    manifest["defaults"]["PYTHON"] = sys.executable
+    (relay.root / "faustus-plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
+    state = {"location": "sparks", "node": {"ssh": "Spark3", "name": "Spark3"},
+             "urls": {"prometheus": "https://spark3.example.ts.net:5205/"}, "job": {"running": False}}
+    relay.hub.placement = SimpleNamespace(state=lambda: state)
+    return state
+
+
+def test_placed_bridge_uses_remote_runtime_and_token_without_starting_app(relay, placed):
+    import shlex
+    from hoard_link.hub.placement import SPARK_STACK
+    argv, env = launch_spec(relay.hub, relay.app)
+    assert argv[0] == "ssh"
+    assert argv[-2] == "Spark3"
+    command = shlex.split(argv[-1])
+    assert command[:3] == ["cd", SPARK_STACK + "/prometheus", "&&"]
+    assert "APP_ENDPOINT=http://127.0.0.1:5205" in command
+    assert "APP_TOKEN_FILE=" + SPARK_STACK + "/prometheus/data/token" in command
+    assert "PROMETHEUS_BRIDGE_AUTOSTART=0" in command
+    assert SPARK_STACK + "/prometheus/venv/bin/python" in command
+    assert SPARK_STACK + "/prometheus/bridge.py" in command
+    assert str(relay.root) not in argv[-1]
+    placed["location"] = "pc"
+    assert launch_spec(relay.hub, relay.app)[0][0] == sys.executable
+
+
+def test_placed_health_and_metadata_follow_placement(relay, placed):
+    seen = []
+    def ssh(command, **kwargs):
+        seen.append(command)
+        return json.dumps([200, {"service": "prometheus-hoard"}])
+    relay.hub.placement._ssh = ssh
+    description = relay.facet.describe("prometheus", check=True)
+    assert description["app_url"] == placed["urls"]["prometheus"].rstrip("/")
+    assert description["location"] == "sparks"
+    assert description["health"]["body"] == {"service": "prometheus-hoard"}
+    assert description["health"]["reachable"] is True
+    assert len(seen) == 1
+    assert "/prometheus/data/token" in seen[0]
+    assert relay.facet._sessions == {}
+
+
+@pytest.mark.parametrize("error", [OSError("SSH unavailable"), ValueError("bad remote response")])
+def test_placed_health_failure_does_not_probe_pc_or_start_bridge(relay, placed, monkeypatch, error):
+    def fail(*args, **kwargs):
+        raise error
+    relay.hub.placement._ssh = fail
+    from hoard_link.hub import contract
+    monkeypatch.setattr(contract, "_get", lambda *args: pytest.fail("PC health must not be used"))
+    result = relay.facet.describe("prometheus", check=True)
+    assert result["health"]["reachable"] is False
+    assert result["health"]["status_code"] is None
+    assert relay.facet._sessions == {}
+
+
+def test_placed_legacy_resolution_still_matches_saved_pc_command(relay, placed):
+    with httpx.Client(trust_env=False) as client:
+        response = client.post(relay.url + "/api/mcp/resolve", headers={"Authorization": "Bearer hub-secret"},
+            json={"command": sys.executable, "args": [str(relay.root) + "/bridge.py"]})
+    assert response.json()["app"]["id"] == "prometheus"
+
+
+def test_placement_transition_never_spawns_pc_bridge(relay, placed):
+    placed["job"]["running"] = True
+    with pytest.raises(ValueError, match="placement is moving"):
+        launch_spec(relay.hub, relay.app)
+    with httpx.Client(trust_env=False) as client:
+        response = client.post(relay.url + "/api/mcp/resolve", headers={"Authorization": "Bearer hub-secret"},
+            json={"command": sys.executable, "args": [str(relay.root) + "/bridge.py"]})
+    assert response.status_code == 422
+    assert "placement is moving" in response.json()["error"]
+    assert relay.facet._sessions == {}
+
+
 def test_metadata_requires_existing_hub_credential_and_never_starts_child(relay):
     with httpx.Client(trust_env=False) as client:
         assert client.get(relay.url + "/api/mcp/apps/fixture").status_code == 401
