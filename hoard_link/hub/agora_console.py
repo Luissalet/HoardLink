@@ -726,7 +726,7 @@ class AgoraConsoleFacet(Facet):
 
     def _reconcile_workers(self) -> None:
         with self._db_lock, self._db() as db:
-            db.execute("UPDATE workers SET state='unknown', detail='Hub restarted; the child may still be running, but its completion cannot be observed here.', updated_at=? WHERE state IN ('starting','running','paused')",
+            db.execute("UPDATE workers SET state='unknown', detail='Hub restarted; the child may still be running, but its completion cannot be observed here.', updated_at=? WHERE state IN ('starting','running','paused','stopping')",
                        (time.time(),))
             # A CLI request may have reached the provider before the Hub died.
             # Never replay it automatically: that could create duplicate paid work.
