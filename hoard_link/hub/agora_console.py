@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import copy
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -32,7 +33,7 @@ from urllib.parse import quote, urlencode
 
 from . import agora_liveness
 from . import agora_ranks
-from .agora_leader_state import build_leader_states
+from .agora_leader_state import build_leader_states, resolve_paths
 from .facets import Facet, Reply, Request
 
 logger = logging.getLogger("hoard_hub.agora_console")
@@ -95,6 +96,7 @@ class AgoraConsoleFacet(Facet):
         self._provider_epoch = _CATALOG_EPOCH[0]
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._faustus_runtimes: dict[str, dict[str, Any]] = {}
+        self._recovery_stop = threading.Event()
         self._leader_locks = {"codex": threading.Lock(), "cursor": threading.Lock()}
         self._leader_threads: dict[str, threading.Thread] = {}
         self._wakeups: dict[str, threading.Timer] = {}
@@ -111,6 +113,8 @@ class AgoraConsoleFacet(Facet):
                 path = Path(self.hub.config.data_dir) / ('agora-console-' + space['id'] + '.db')
                 if space['id'] != 'ecosystem' and path.exists():
                     self.for_space(space['id'])
+        for view in (self, *self._space_views.values()):
+            view._start_worker_recovery()
         config = getattr(self.hub, "config", None)
         hub_url = str(getattr(config, "url", "") or "").rstrip("/")
         data_dir = str(getattr(config, "data_dir", "") or "")
@@ -145,6 +149,7 @@ class AgoraConsoleFacet(Facet):
             logger.info("Claude/Cursor quota reporter could not start", exc_info=False)
 
     def close(self) -> None:
+        self._recovery_stop.set()
         for view in list(self._space_views.values()):
             view.close()
         self._space_views.clear()
@@ -248,6 +253,11 @@ class AgoraConsoleFacet(Facet):
             columns = {row[1] for row in db.execute("PRAGMA table_info(workers)")}
             if "agent_id" not in columns:
                 db.execute("ALTER TABLE workers ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''")
+            for name, declaration in (("launch_command", "TEXT NOT NULL DEFAULT ''"), ("launch_cwd", "TEXT NOT NULL DEFAULT ''"),
+                                      ("retry_count", "INTEGER NOT NULL DEFAULT 0"), ("runtime_endpoint", "TEXT NOT NULL DEFAULT ''"),
+                                      ("verification", "TEXT NOT NULL DEFAULT ''")):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE workers ADD COLUMN {name} {declaration}")
             for name in ("faustus_url", "workspace"):
                 if name not in columns:
                     db.execute(f"ALTER TABLE workers ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
@@ -702,6 +712,9 @@ class AgoraConsoleFacet(Facet):
         workers = []
         for row in rows:
             worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
+            worker["can_continue"] = bool(row["parent_id"] == "faustus" and row["session_id"] and row["launch_command"]
+                                          and row["state"] in ("failed", "incomplete", "stopped", "unknown"))
+            worker["retry_count"] = row["retry_count"]
             if row["parent_id"] == "faustus" and row["state"] == "running" and row["log_path"]:
                 path = Path(row["log_path"])
                 worker.update(self._runner_metrics(path))
@@ -726,14 +739,81 @@ class AgoraConsoleFacet(Facet):
 
     def _reconcile_workers(self) -> None:
         with self._db_lock, self._db() as db:
-            db.execute("UPDATE workers SET state='unknown', detail='Hub restarted; the child may still be running, but its completion cannot be observed here.', updated_at=? WHERE state IN ('starting','running','paused','stopping')",
-                       (time.time(),))
+            db.execute("UPDATE workers SET outcome=CASE WHEN state='stopping' THEN 'hub_restart_stopping' ELSE 'hub_restart' END,"
+                       "state='unknown',detail=?,updated_at=? WHERE state IN ('starting','running','paused','stopping')",
+                       ("El Hub se reinició durante el turno. Comprobando el proceso y la sesión original.", time.time()))
             # A CLI request may have reached the provider before the Hub died.
             # Never replay it automatically: that could create duplicate paid work.
             db.execute("UPDATE leader_turns SET state='unknown', detail='Hub restarted during this provider turn; completion is ambiguous and it will not be retried automatically.', updated_at=? WHERE state='working'",
                        (time.time(),))
             db.execute("UPDATE leader_sessions SET state='unknown', detail='Hub restarted; session state needs reconciliation before another turn.', updated_at=? WHERE state='working'",
                        (time.time(),))
+
+    @staticmethod
+    def _original_worker_running(row: Any) -> bool:
+        from . import procs
+        pid = row["pid"]
+        if not pid or not procs.pid_running(pid):
+            return False
+        started = procs.proc_info(pid).created_at
+        return started is None or row["created_at"] - 1 <= started <= row["updated_at"]
+
+    def _start_worker_recovery(self) -> None:
+        with self._db_lock, self._db() as db:
+            pending = db.execute("SELECT 1 FROM workers WHERE state='unknown' AND outcome LIKE 'hub_restart%' LIMIT 1").fetchone()
+        if pending:
+            threading.Thread(target=self._recover_workers, daemon=True, name="agora-worker-recovery").start()
+
+    def _recover_workers(self) -> None:
+        while not self._recovery_stop.is_set():
+            with self._db_lock, self._db() as db:
+                rows = db.execute("SELECT * FROM workers WHERE state='unknown' AND outcome LIKE 'hub_restart%'").fetchall()
+            if not rows:
+                return
+            for row in rows:
+                try:
+                    self._recover_worker(row)
+                except Exception:  # noqa: BLE001 - keep the remaining receipts recoverable
+                    logger.exception("worker restart reconciliation failed for %s", row["id"])
+            self._recovery_stop.wait(5)
+
+    def _recover_worker(self, row: Any) -> None:
+        if self._original_worker_running(row):
+            return
+        worker = dict(row)
+        log_path = Path(worker["log_path"])
+        session_id, result, workspace = self._read_runner_receipt(log_path)
+        worker["workspace"] = workspace or worker["workspace"]
+        worker["session_id"] = worker["session_id"] or session_id
+        if not worker["workspace"] and worker["session_id"]:
+            worker["workspace"] = self._worker_workspace(worker["parent_id"], worker["session_id"])
+        verification = self._verify_worker_delivery(worker)
+        summary = self._worker_summary(log_path)
+        state, outcome, detail = "failed", "hub_restart", "Turno interrumpido por el reinicio del Hub."
+        if worker["outcome"] == "hub_restart_stopping" or summary.get("stop") == "cancelled":
+            state, outcome, detail = "stopped", "cancelled", "Turno detenido antes de recuperar el Hub."
+        elif not verification["issues"]:
+            state, outcome, detail = "completed", "submitted", "Entrega comprobada en el Ágora tras recuperar el Hub."
+        elif summary.get("stop") == "answered":
+            state, outcome, detail = "incomplete", "incomplete", "El turno terminó durante el reinicio del Hub. Entrega incompleta."
+        elif summary.get("stop") == "inactivity":
+            outcome = "inactivity"
+            minutes = (summary.get("idle_timeout") or self._worker_idle_seconds()) / 60
+            detail = f"Cortado por inactividad tras {minutes:g} min sin eventos del turno."
+        if verification["issues"]:
+            detail += " " + " ".join(verification["issues"])
+        with self._db_lock, self._db() as db:
+            updated = db.execute("UPDATE workers SET state=?,outcome=?,detail=?,result=?,session_id=?,workspace=?,"
+                                 "verification=?,updated_at=? WHERE id=? AND state='unknown'",
+                                 (state, outcome, detail, result[:20000], worker["session_id"], worker["workspace"],
+                                  json.dumps(verification), time.time(), worker["id"])).rowcount
+        if not updated:
+            return
+        self._record("worker", worker["id"], state, detail)
+        if state != "completed":
+            self._post_worker_status(worker, detail, verification)
+        if state == "failed" and not worker["retry_count"] and worker["parent_id"] == "faustus":
+            self._continue_worker(worker["id"], automatic=True)
 
     def _start_queued_leaders(self) -> None:
         for leader_id in ("codex", "cursor"):
@@ -1423,6 +1503,14 @@ class AgoraConsoleFacet(Facet):
                 env[key] = str(value)
         return env
 
+    def _faustus_runner_env(self) -> dict[str, str]:
+        env = self._runner_env()
+        env.pop("FAUSTUS_API_TOKEN", None)
+        owner_token = os.environ.get("FAUSTUS_OWNER_API_TOKEN", "").strip()
+        if owner_token:
+            env["FAUSTUS_API_TOKEN"] = owner_token
+        return env
+
     @staticmethod
     def _faustus_controller_dir(root: Any) -> Path:
         """Where Faustus's Agora controller lives: where the person says (``FAUSTUS_AGORA_DIR``), else with the other
@@ -2055,7 +2143,11 @@ class AgoraConsoleFacet(Facet):
                   "before `E:\\Development\\IA\\MEMORY.md`, then read the repository's AGENTS.md. Before changing a repository, "
                   "create or claim an Agora task under your identity and take the required path locks. Work only in an "
                   "isolated worktree and follow repository skills. Do not claim results that are not supported by your work; "
-                  "return a concise result and concrete evidence.\n\n"
+                  "Before ending, commit all work you made (English messages as Luissalet, no trailers, no push) and submit "
+                  "each claimed task with `agora.cmd --space "
+                  f"{self.space_id} --as {agent_id} submit TASK_ID --commits HASHES --summary-file FILE`. "
+                  "Ending the provider turn without an Agora delivery is incomplete. If blocked, report the exact cause "
+                  "in the task thread and preserve the session/worktree. Return concrete evidence.\n\n"
                   f"Task: {task}")
         if leader_id == "codex":
             command = [executable, "exec", "--json", "--model", model, "--config", f'model_reasoning_effort="{effort}"',
@@ -2142,18 +2234,15 @@ class AgoraConsoleFacet(Facet):
                        "--url", base_url,
                        "--session", session_id, "--project-id", project_id, "--agent-id", agent_id,
                        "--model", model_id, *(["--effort", effort] if effort else []),
-                       "--timeout", "1800", "--json", "--events", "all", "--approve"]
+                       "--no-timeout", "--idle-timeout", str(self._worker_idle_seconds()),
+                       "--max-legs", "0", "--json", "--events", "all", "--approve"]
             if workspace:
                 command.extend(["--workspace", workspace])
             model_source = "installed Faustus runner + owner-verified native project child session"
             if faustus_session.get("runtime"):
                 model_source += " + dedicated PC runtime using the placed Sparks endpoint"
             worker_cwd = root
-            process_env = self._runner_env()
-            process_env.pop("FAUSTUS_API_TOKEN", None)
-            owner_token = os.environ.get("FAUSTUS_OWNER_API_TOKEN", "").strip()
-            if owner_token:
-                process_env["FAUSTUS_API_TOKEN"] = owner_token
+            process_env = self._faustus_runner_env()
         try:
             with open(log_path, "a", encoding="utf-8") as log:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
@@ -2174,7 +2263,11 @@ class AgoraConsoleFacet(Facet):
             db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?)",
                        (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id, model_source, now, now))
             if leader_id == "faustus":
-                db.execute("UPDATE workers SET faustus_url=?,workspace=? WHERE id=?", (base_url, workspace, worker_id))
+                endpoint = (faustus_session.get("runtime") or {}).get("endpoint", "")
+                resume_command = command.copy()
+                resume_command[resume_command.index("-p") + 1] = ""
+                db.execute("UPDATE workers SET faustus_url=?,workspace=?,runtime_endpoint=?,launch_command=?,launch_cwd=? WHERE id=?",
+                           (base_url, workspace, endpoint, json.dumps(resume_command), str(worker_cwd), worker_id))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         # Its rank is written once the session exists: one that never started leaves none behind under its name.
         self._give_worker_rank(agent_id, rank, "luis" if by_person else actor)
@@ -2189,58 +2282,245 @@ class AgoraConsoleFacet(Facet):
             out["rank_asked"] = rank_asked           # lowered to the rank of whoever started it
         return out
 
+    @staticmethod
+    def _worker_idle_seconds() -> float:
+        try:
+            value = float(os.environ.get("HOARD_AGORA_WORKER_IDLE_SECONDS", "3600"))
+        except ValueError:
+            return 3600
+        return value if math.isfinite(value) and value > 0 else 3600
+
+    @staticmethod
+    def _worker_summary(path: Path) -> dict[str, Any]:
+        summary = {}
+        if path.is_file():
+            with path.open(encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(event, dict) and event.get("type") == "run_summary":
+                        summary = event
+        return summary
+
+    def _worker_workspace(self, leader: str, session_id: str) -> str:
+        if leader == "cursor":
+            found = self._cursor_workspace_from_receipts(session_id)
+            return str(found) if found else ""
+        if leader == "codex" and re.fullmatch(r"[0-9a-f-]{36}", session_id):
+            root = resolve_paths()["codex_sessions"]
+            for path in root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"):
+                try:
+                    with path.open(encoding="utf-8") as stream:
+                        metadata = json.loads(stream.readline())
+                    payload = metadata.get("payload") or {}
+                    if metadata.get("type") == "session_meta" and payload.get("id") == session_id:
+                        return str(payload.get("cwd") or "")
+                except (OSError, ValueError):
+                    continue
+        return ""
+
+    def _verify_worker_delivery(self, worker: dict[str, Any]) -> dict[str, Any]:
+        agora = self._agora()
+        issues = []
+        tasks = []
+        if not worker["agent_id"] or agora is None or not hasattr(agora, "tasks"):
+            issues.append("No se pudo comprobar la entrega en el Ágora.")
+        else:
+            cursor = None
+            while True:
+                page = agora.tasks({"owner": worker["agent_id"], "cursor": cursor, "limit": 100})
+                tasks.extend(t for t in page["tasks"] if t["updated"] >= worker["created_at"]
+                             or t["status"] in ("claimed", "in_progress", "blocked", "changes"))
+                cursor = page.get("next_cursor")
+                if not cursor:
+                    break
+            if not tasks:
+                issues.append("No hay ninguna entrega del trabajador en el Ágora.")
+            for task in tasks:
+                if task["status"] not in ("review", "approved", "done") or not task["submission_revision"]:
+                    issues.append(f"#{task['id']} sigue sin entregar ({task['status']}).")
+
+        workspace = worker["workspace"]
+        needs_git = any(t.get("paths") or t.get("commits") for t in tasks)
+        if workspace:
+            path = Path(workspace)
+            try:
+                if not path.is_dir():
+                    raise FileNotFoundError(workspace)
+                git_root = subprocess.run(["git", "-C", workspace, "rev-parse", "--show-toplevel"],
+                                          capture_output=True, encoding="utf-8", errors="replace", timeout=5)
+                if git_root.returncode == 0:
+                    dirty = subprocess.run(["git", "-C", workspace, "status", "--porcelain", "--untracked-files=normal"],
+                                           capture_output=True, encoding="utf-8", errors="replace", timeout=10, check=True)
+                    if dirty.stdout.strip():
+                        issues.append(f"Hay cambios sin commit en {git_root.stdout.strip()}.")
+                elif (path / ".git").exists() or needs_git:
+                    issues.append(f"No se pudo verificar el estado Git de {workspace}.")
+            except (OSError, subprocess.SubprocessError):
+                issues.append(f"No se pudo verificar el estado Git de {workspace}.")
+        elif needs_git:
+            issues.append("No consta la carpeta de trabajo para comprobar los commits.")
+        return {"issues": issues, "tasks": [task["id"] for task in tasks]}
+
+    def _post_worker_status(self, worker: dict[str, Any], detail: str, verification: dict[str, Any]) -> None:
+        agora = self._agora()
+        if agora is not None and hasattr(agora, "worker_status"):
+            agora.worker_status(worker["agent_id"], verification["tasks"], detail)
+
+    def _close_worker_runtime(self, worker_id: str) -> None:
+        runtime = self._faustus_runtimes.pop(worker_id, None)
+        if runtime:
+            from .agora_faustus import stop_pc
+            stop_pc(runtime)
+
+    def _continue_worker(self, worker_id: str, automatic: bool = False) -> dict[str, Any]:
+        with self._db_lock, self._db() as db:
+            row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "status": 404, "error": "unknown worker"}
+            if (row["parent_id"] != "faustus" or not row["launch_command"] or not row["session_id"]
+                    or row["state"] not in ("failed", "incomplete", "stopped", "unknown")
+                    or worker_id in self._processes or (automatic and row["retry_count"])):
+                return {"ok": False, "status": 409, "error": "No idle Faustus session is available to continue"}
+            if row["state"] == "unknown" and self._original_worker_running(row):
+                return {"ok": False, "status": 409, "error": "The original runner is still alive"}
+            db.execute("UPDATE workers SET state='starting',retry_count=retry_count+?,updated_at=? WHERE id=?",
+                       (int(automatic), time.time(), worker_id))
+
+        command = json.loads(row["launch_command"])
+        base_url = row["faustus_url"]
+        try:
+            status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
+            if status != 200 and row["runtime_endpoint"]:
+                from .agora_faustus import start_pc
+                model = command[command.index("--model") + 1]
+                runtime = start_pc(self, row["agent_id"], Path(row["launch_cwd"]), command[0],
+                                   row["runtime_endpoint"], model)
+                self._faustus_runtimes[worker_id] = runtime
+                base_url = runtime["url"]
+                status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
+            if (status != 200 or not isinstance(activity, dict)
+                    or row["session_id"] in (activity.get("running") or ())
+                    or row["session_id"] in (activity.get("runs") or {})):
+                raise RuntimeError("Faustus no ha confirmado que la sesión esté disponible.")
+            status, sessions = self._faustus_session_request("GET", "/api/sessions", base_url=base_url)
+            if status != 200 or not isinstance(sessions, list) or not any(
+                    isinstance(session, dict) and session.get("id") == row["session_id"] for session in sessions):
+                raise RuntimeError("Faustus no encuentra la sesión original.")
+            command[command.index("--url") + 1] = base_url
+            command[command.index("-p") + 1] = (
+                "Continue the assigned task in this same session and worktree. Read the task thread and inspect "
+                "the existing work before repeating any action. Complete verification, commit your changes and "
+                "submit the task in Agora before ending. Prior stop: " + row["detail"])
+            log_path = Path(row["log_path"]).with_name(f"{worker_id}-resume-{time.time_ns()}.jsonl")
+            with log_path.open("w", encoding="utf-8") as log:
+                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                           text=True, cwd=row["launch_cwd"], env=self._faustus_runner_env(),
+                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._close_worker_runtime(worker_id)
+            detail = row["detail"] + " Continuación pendiente: " + str(exc)[:300]
+            with self._db_lock, self._db() as db:
+                db.execute("UPDATE workers SET state=?,detail=?,updated_at=? WHERE id=?",
+                           (row["state"], detail, time.time(), worker_id))
+            self._record("worker", worker_id, row["state"], detail)
+            return {"ok": False, "status": 409, "error": detail}
+        with self._db_lock, self._db() as db:
+            self._processes[worker_id] = process
+            detail = ("Continuación automática. " if automatic else "Continuación solicitada. ") + row["detail"]
+            db.execute("UPDATE workers SET state='running',pid=?,log_path=?,faustus_url=?,detail=?,"
+                       "outcome='unverified',result='',process_exit_code=NULL,updated_at=? WHERE id=?",
+                       (process.pid, str(log_path), base_url, detail, time.time(), worker_id))
+        self._record("worker", worker_id, "running", detail)
+        threading.Thread(target=self._monitor_worker, args=(worker_id, process, log_path.with_suffix(".txt")),
+                         daemon=True, name=f"agora-worker-{worker_id[:8]}").start()
+        return {"ok": True, "worker_id": worker_id, "state": "running"}
+
     def _monitor_worker(self, worker_id: str, process: subprocess.Popen[str], result_path: Path) -> None:
         try:
             code = process.wait()
-            session_id = ""
-            leader_id = "unknown"
-            try:
-                log_path = self._worker_log_path(worker_id)
-                session_id, stream_result, _ = self._read_runner_receipt(log_path)
-                result = result_path.read_text(encoding="utf-8")[:20000] if result_path.is_file() else stream_result[:20000]
-            except OSError:
-                result = ""
             with self._db_lock, self._db() as db:
-                worker_row = db.execute("SELECT parent_id, agent_id, state FROM workers WHERE id=?", (worker_id,)).fetchone()
-                if worker_row:
-                    leader_id = str(worker_row["parent_id"] or "unknown")
+                row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
+            if row is None:
+                return
+            worker = dict(row)
+            leader = worker["parent_id"]
+            log_path = self._worker_log_path(worker_id)
+            session_id, stream_result, workspace = self._read_runner_receipt(log_path)
+            if leader != "faustus":
+                worker["session_id"] = session_id or worker["session_id"]
+            worker["workspace"] = workspace or worker["workspace"]
+            if not worker["workspace"] and worker["session_id"]:
+                worker["workspace"] = self._worker_workspace(leader, worker["session_id"])
+            result = result_path.read_text(encoding="utf-8")[:20000] if result_path.is_file() else stream_result[:20000]
             metrics = self._runner_metrics(log_path)
-            if leader_id == "claude" and code != 0 and self._claude_refused_sign_in(log_path):
+            summary = self._worker_summary(log_path)
+            cause = str(summary.get("stop") or "")
+            refused_sign_in = leader == "claude" and code != 0 and self._claude_refused_sign_in(log_path)
+            if refused_sign_in:
                 self._note_claude_sign_in_refused()
-            if leader_id == "claude" and code != 0 and self._claude_refused_model(log_path):
-                with self._db_lock, self._db() as db:
-                    refused = db.execute("SELECT model FROM workers WHERE id=?", (worker_id,)).fetchone()
-                if refused and self._keep_claude_model(str(refused["model"] or ""), keep=False):    # not offered again
-                    with self._db_lock, self._db() as db:     # nor left as the model this server's sessions start with
-                        db.execute("DELETE FROM preferences WHERE leader_id='claude' AND model=?", (refused["model"],))
-                        db.execute("DELETE FROM model_ranks WHERE leader_id='claude' AND model=?", (refused["model"],))
-            state = "completed" if code == 0 else "failed"
-            if worker_row and worker_row["state"] == "stopping":
-                state = "stopped"
-            outcome = "provider_error" if metrics["provider_error"] else ("missing_final_response" if not result.strip() else "unverified")
-            provider_name = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "faustus": "Faustus"}.get(leader_id, leader_id)
-            detail = (f"{provider_name} provider turn ended with exit code {code}; task outcome is {outcome}." if state == "completed"
-                      else f"{provider_name} worker exited with status {code}; task outcome is {outcome}.")
-            if state == "stopped":
-                outcome = "cancelled"
-                detail = f"{provider_name} confirmed cancellation of the worker turn; runner exited with status {code}."
+            if leader == "claude" and code != 0 and self._claude_refused_model(log_path):
+                if self._keep_claude_model(worker["model"], keep=False):
+                    with self._db_lock, self._db() as db:
+                        db.execute("DELETE FROM preferences WHERE leader_id='claude' AND model=?", (worker["model"],))
+                        db.execute("DELETE FROM model_ranks WHERE leader_id='claude' AND model=?", (worker["model"],))
+
+            verification = self._verify_worker_delivery(worker)
             with self._db_lock, self._db() as db:
-                db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=CASE WHEN ?='' THEN session_id ELSE ? END,process_exit_code=?,outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,updated_at=? WHERE id=?",
-                           (state, result, detail, session_id, session_id, code, outcome, metrics["tool_success_count"],
-                            metrics["tool_failure_count"], metrics["provider_error"], time.time(), worker_id))
-            self._record("worker", worker_id, state, detail or "Child worker finished.")
-            if state == "failed" and worker_row:
-                self._forget_rank_of_absent(str(worker_row["agent_id"] or ""))
-            if leader_id == "claude":
+                current = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
+                if current["state"] in ("stopping", "stopped") or cause == "cancelled":
+                    state, outcome = "stopped", "cancelled"
+                    detail = f"{leader.title()}: turno detenido."
+                elif cause == "inactivity":
+                    state, outcome = "failed", "inactivity"
+                    minutes = (summary.get("idle_timeout") or self._worker_idle_seconds()) / 60
+                    detail = f"Cortado por inactividad tras {minutes:g} min sin eventos del turno."
+                elif code or cause not in ("", "answered"):
+                    state = "failed"
+                    outcome = ("provider_error" if cause == "error" or (not cause and metrics["provider_error"])
+                               else cause if cause not in ("", "answered") else "process_exit")
+                    reason = summary.get("error") or metrics["provider_error"] or ""
+                    detail = f"{leader.title()}: turno interrumpido ({outcome}, salida {code}). {reason[:500]}".strip()
+                elif verification["issues"]:
+                    state, outcome = "incomplete", "incomplete"
+                    detail = "Trabajo incompleto: " + " ".join(verification["issues"])
+                else:
+                    state, outcome = "completed", "submitted"
+                    detail = "Entrega comprobada en el Ágora."
+                    if worker["detail"].startswith(("Continuación automática.", "Continuación solicitada.")):
+                        detail += " " + worker["detail"]
+                if state in ("failed", "stopped") and verification["issues"]:
+                    detail += " " + " ".join(verification["issues"])
+                db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=?,workspace=?,process_exit_code=?,"
+                           "outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,verification=?,updated_at=? WHERE id=?",
+                           (state, result, detail, worker["session_id"], worker["workspace"], code, outcome,
+                            metrics["tool_success_count"], metrics["tool_failure_count"], metrics["provider_error"],
+                            json.dumps(verification), time.time(), worker_id))
+            self._record("worker", worker_id, state, detail)
+            if state != "completed":
+                self._post_worker_status(worker, detail, verification)
+            if state == "failed" and leader == "faustus" and not worker["retry_count"] and verification["issues"]:
+                with self._db_lock:
+                    self._processes.pop(worker_id, None)
+                if self._continue_worker(worker_id, automatic=True)["ok"]:
+                    return
+            if state == "failed":
+                self._forget_rank_of_absent(worker["agent_id"])
+            if leader == "claude" and (state == "completed" or refused_sign_in):
                 self._tidy_claude_worktree(worker_id)
         except Exception:  # noqa: BLE001
             logger.exception("worker monitor failed for %s", worker_id)
+            with self._db_lock, self._db() as db:
+                db.execute("UPDATE workers SET state='failed',outcome='verification_error',detail=?,updated_at=? "
+                           "WHERE id=? AND state IN ('running','stopping')",
+                           ("El proceso terminó, pero no se pudo verificar el resultado.", time.time(), worker_id))
         finally:
-            self._processes.pop(worker_id, None)
-            runtime = self._faustus_runtimes.pop(worker_id, None)
-            if runtime:
-                from .agora_faustus import stop_pc
-                stop_pc(runtime)
+            with self._db_lock:
+                if self._processes.get(worker_id) in (None, process):
+                    self._close_worker_runtime(worker_id)
+                    self._processes.pop(worker_id, None)
 
     @staticmethod
     def _tidy_claude_worktree(worker_id: str, root: Optional[Path] = None) -> bool:
@@ -2321,7 +2601,8 @@ class AgoraConsoleFacet(Facet):
                 if not isinstance(event, dict):
                     continue
                 payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
-                if event.get("type") == "system" and event.get("subtype") == "init":
+                if (event.get("type") in ("session_meta", "thread.started")
+                        or (event.get("type") == "system" and event.get("subtype") == "init")):
                     current_workspace = payload.get("cwd")
                     if isinstance(current_workspace, str) and current_workspace:
                         workspace = current_workspace
@@ -2381,6 +2662,8 @@ class AgoraConsoleFacet(Facet):
             if row is None:
                 return {"ok": False, "status": 404, "error": "unknown worker"}
             return {"ok": False, "status": 409, "error": f"worker is {row['state']} or is not managed by this Hub process"}
+        with self._db_lock, self._db() as db:
+            db.execute("UPDATE workers SET state='stopping' WHERE id=?", (worker_id,))
         process.terminate()
         self._record("worker", worker_id, "stopping", "Stop requested by the Hub operator.")
         return {"ok": True, "worker_id": worker_id, "state": "stopping"}
@@ -2406,9 +2689,11 @@ class AgoraConsoleFacet(Facet):
             self._ensure_leader_drain(leader_id)
             return {"ok": True, "leader_id": leader_id, "session_id": session_id, "state": "idle",
                     "detail": "The ambiguous turn remains unknown; queued later turns may now continue."}
+        if action in ("continue", "resume"):
+            return self._continue_worker(str(args.get("worker_id") or ""))
         if action in ("stop", "cancel"):
             return self._stop_worker(str(args.get("worker_id") or ""))
-        return {"ok": False, "status": 400, "error": "action must be create, stop, register, heartbeat, finish or reconcile"}
+        return {"ok": False, "status": 400, "error": "action must be create, stop, continue, register, heartbeat, finish or reconcile"}
 
     def _external_worker(self, args: dict[str, Any], action: str, actor: str) -> dict[str, Any]:
         worker_id = str(args.get("worker_id") or "").strip()
@@ -2672,9 +2957,9 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_color", "description": "Set the colour that outlines one leader's messages and avatar in the Agora console (#rrggbb; empty restores the default). Shared by the browser and the desktop app.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "color": {"type": "string", "maxLength": 7}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
-            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex, Claude or managed Cursor child in an isolated worktree, or a Faustus child in the space's workspace, with a model and effort level from the provider catalog. Faustus follows placement. A PC workspace with Faustus on a Spark starts a dedicated headless PC runtime using that Sparks model. Worker receipts report the actual Faustus URL, workspace and observed tool counts. Stop cancels that worker's exact active run through the native API. Models without effort levels start without one. Also register external workers or reconcile an ambiguous console session.",
+            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex, Claude or managed Cursor child in an isolated worktree, or a Faustus child in the space's workspace, with a model and effort level from the provider catalog. Faustus follows placement. A PC workspace with Faustus on a Spark starts a dedicated headless PC runtime using that Sparks model. Worker receipts report the actual Faustus URL, workspace and observed tool counts. Stop cancels that worker's exact active run through the native API. Continue resumes the original idle Faustus session and workspace. Models without effort levels start without one. Also register external workers or reconcile an ambiguous console session.",
              "inputSchema": {"type": "object", "properties": {
-                 "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile"]},
+                 "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile", "continue"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},

@@ -158,7 +158,7 @@ def test_cancelled_runner_reports_stopped_outcome(tmp_path):
     facet._monitor_worker("worker", SimpleNamespace(wait=lambda: 1), tmp_path / "result.txt")
     row = facet._worker_rows()[0]
     assert row["state"] == "stopped" and row["outcome"] == "cancelled"
-    assert row["process_exit_code"] == 1 and "confirmed cancellation" in row["detail"]
+    assert row["process_exit_code"] == 1 and "turno detenido" in row["detail"]
 
 
 def test_restart_during_cancellation_reports_unknown(tmp_path):
