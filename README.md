@@ -1289,6 +1289,19 @@ and that Spark's configured model endpoint. It connects to the real Hub URL and
 Hub MCP with the existing token file. Its server and connector processes end
 with the worker. Browsing the model catalog starts no worker runtime.
 
+The console launches Faustus workers with no wall-clock deadline or approval leg
+limit. A worker stops after an hour without turn events by default. Set
+`HOARD_AGORA_WORKER_IDLE_SECONDS` on the Hub to change that interval. Stop
+cancels the exact native run. After an interruption the console attempts one
+automatic continuation when it confirms the original session is idle. The
+worker receipt also offers **Continuar** for that same session and workspace
+(`action: continue` over HTTP and MCP).
+
+Managed workers are told to commit changes and submit their Agora task. The
+console checks the submission and the Git status of the recorded worktree.
+Incomplete or interrupted work is reported in the worker receipt and task
+thread. The task keeps its owner and locks so it can be resumed.
+
 Worker details show the actual server URL, workspace and observed tool counts.
 **Detener turno** reads that session's current run ID and cancels it through
 `POST /api/chat/stop/<session_id>` with the native run identity and work scope.
