@@ -46,6 +46,12 @@ SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveI
 REMOTE_HEALTH_TTL_S = 30.0       # how old the "are they up on the Spark?" answer may be before it is asked again
 SERVE_STATUS_TIMEOUT_S = 10.0    # asking tailscale what it already publishes is a quick question
 SERVE_TIMEOUT_S = 15.0           # publishing a port must never hold the switch: a hung serve is a warning, not a failure
+SSH_STEP_TIMEOUT_S = 20.0        # a step that only asks or writes a line answers in seconds, or it is hung
+SSH_STEP_ATTEMPTS = 3            # ssh to a Spark hangs now and then; the same command answers at once on the next try
+SSH_STEP_RETRY_MAX_S = 120.0     # a step allowed to take longer than this is real work: a timeout there is not a hang
+# What a hung or dropped ssh connection looks like in its own error text (a real command failure is not retried).
+SSH_TRANSIENT = ("connection timed out", "connection reset", "connection closed", "broken pipe", "no route to host",
+                 "kex_exchange_identification", "not responding", "timed out")
 PAUSED_ON_SPARK = [
     "Hermes: la vigilancia de ventanas abiertas de tu navegador («Mi ventana abierta»); necesita Windows y tu navegador",
     "Faustus: el control de tu navegador real y del escritorio de Windows",
@@ -240,15 +246,38 @@ class Placement:
             raise PlacementError(f"ssh {self._node()}: {(err or out).strip()[-400:]}")
         return out
 
+    def _ssh_step(self, command: str, timeout: float = SSH_STEP_TIMEOUT_S, input: Optional[str] = None,
+                  what: str = "") -> str:
+        """A short ssh step (ask something, write a line): a hung or dropped connection is retried, a real failure is not.
+        ssh to a Spark hangs now and then — the same command answers in under a second on the next try — and one hang used
+        to end a whole move."""
+        reason = ""
+        attempts = SSH_STEP_ATTEMPTS if timeout <= SSH_STEP_RETRY_MAX_S else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._ssh(command, timeout=timeout, input=input)
+            except subprocess.TimeoutExpired:
+                reason = f"sin respuesta en {timeout:.0f} s"
+            except PlacementError as exc:
+                if not any(mark in str(exc).lower() for mark in SSH_TRANSIENT):
+                    raise
+                reason = str(exc)[-200:]
+            if attempt < attempts:
+                self._log(f"aviso: ssh {self._node()} {what or 'en un paso corto'} falló ({reason}); reintento "
+                          f"{attempt + 1}/{attempts}")
+                time.sleep(2 * attempt)
+        raise PlacementError(f"ssh {self._node()} {what or 'en un paso corto'}: {reason} tras "
+                             f"{attempts} intento{'s' if attempts > 1 else ''}")
+
     def _put_text(self, remote: str, text: str) -> None:
-        self._ssh(f"cat > {remote}", input=text, timeout=60)
+        self._ssh_step(f"cat > {remote}", input=text, timeout=60, what=f"escribiendo {remote}")
 
     def _remote(self, args: str, timeout: float = 600) -> Any:
-        out = self._ssh(f"python3 {REMOTE_HELPER} {args}", timeout=timeout)
+        out = self._ssh_step(f"python3 {REMOTE_HELPER} {args}", timeout=timeout, what=f"paso remoto «{args.split()[0]}»")
         return json.loads(out.strip().splitlines()[-1]) if out.strip() else None
 
     def _upload_helper(self) -> None:
-        self._ssh(f"mkdir -p {STACK}")
+        self._ssh_step(f"mkdir -p {STACK}", what="creando la carpeta del stack")
         self._put_text(REMOTE_HELPER, Path(pr.__file__).read_text(encoding="utf-8"))
         mail = Path(__file__).resolve().parent.parent / "mail_helper.py"
         if mail.is_file():
@@ -277,7 +306,8 @@ class Placement:
         extra = [p for p in EXTRA_UNTRACKED.get(app_id, []) if (folder / p).exists()]
         stamp = head + "|" + "|".join(f"{p}:{max((f.stat().st_mtime_ns for f in (folder / p).rglob('*') if f.is_file()), default=0)}"
                                       for p in extra)
-        if deployed.get(app_id) == stamp and self._ssh(f"test -d {STACK}/{app_id} && echo ok || true").strip() == "ok":
+        if deployed.get(app_id) == stamp and self._ssh_step(f"test -d {STACK}/{app_id} && echo ok || true",
+                                                            what=f"comprobando {app_id}").strip() == "ok":
             self._log(f"{app_id}: el código ya está al día en la Spark ({head[:8]})")
             return
         self._log(f"{app_id}: enviando el código {head[:8]}", step=f"código de {app_id}")
@@ -300,13 +330,17 @@ class Placement:
             if proc.returncode != 0:
                 raise PlacementError(f"{rel} de {app_id}: {err.decode(errors='replace').strip()[-300:]}")
         deployed[app_id] = stamp
+        # New code on disk owes a restart until one succeeds: a job that dies before restarting must not leave the Spark
+        # running the old process while the next switch says "the code is already up to date".
+        deployed[app_id + ":restart"] = True
 
     def _ensure_runtime(self, app_id: str, folder: Path, deployed: dict[str, Any]) -> None:
         # The committed requirements: that is what git archive sent (uncommitted edits stay on the PC).
         req = subprocess.run(["git", "show", "HEAD:requirements.txt"], cwd=folder, capture_output=True, creationflags=_flags())
         digest = hashlib.sha256(req.stdout).hexdigest()[:16] if req.returncode == 0 else ""
         key = app_id + ":requirements"
-        if deployed.get(key) == digest and self._ssh(f"test -x {STACK}/{app_id}/venv/bin/python && echo ok || true").strip() == "ok":
+        if deployed.get(key) == digest and self._ssh_step(f"test -x {STACK}/{app_id}/venv/bin/python && echo ok || true",
+                                                          what=f"comprobando el venv de {app_id}").strip() == "ok":
             return
         self._log(f"{app_id}: instalando dependencias en la Spark (la primera vez tarda unos minutos)", step=f"dependencias de {app_id}")
         self._ssh(f"cd {STACK}/{app_id} && (test -x venv/bin/python || python3 -m venv venv) && venv/bin/pip install -q --upgrade pip"
@@ -319,7 +353,8 @@ class Placement:
     def _ensure_node_runtime(self) -> None:
         """Node.js for Faustus's WhatsApp bridge (the Spark has no system Node): the current LTS unpacked under
         ``~/faustus-stack/node``, where Faustus looks for it. Nothing to do when a Node is already there or on PATH."""
-        out = self._ssh(f"if command -v node >/dev/null 2>&1 || test -x {STACK}/node/bin/node; then echo ok; fi").strip()
+        out = self._ssh_step(f"if command -v node >/dev/null 2>&1 || test -x {STACK}/node/bin/node; then echo ok; fi",
+                             what="comprobando Node.js").strip()
         if out == "ok":
             return
         self._log("instalando Node.js en la Spark para el puente de WhatsApp", step="Node.js")
@@ -360,9 +395,10 @@ class Placement:
     def _ensure_node(self) -> list[str]:
         """Services survive logout (linger), Prometheus reaches every Spark (itself included) with the key the Sparks share,
         units written. Returns the services whose unit file changed."""
-        self._ssh(f"sudo -n loginctl enable-linger $USER >/dev/null 2>&1; mkdir -p ~/.ssh {STACK}/prometheus-ssh; touch ~/.ssh/authorized_keys;"
-                  f" if [ -f {SPARK_KEY}.pub ]; then grep -qF \"$(cat {SPARK_KEY}.pub)\" ~/.ssh/authorized_keys"
-                  f" || cat {SPARK_KEY}.pub >> ~/.ssh/authorized_keys; fi")
+        self._ssh_step(f"sudo -n loginctl enable-linger $USER >/dev/null 2>&1; mkdir -p ~/.ssh {STACK}/prometheus-ssh;"
+                       f" touch ~/.ssh/authorized_keys;"
+                       f" if [ -f {SPARK_KEY}.pub ]; then grep -qF \"$(cat {SPARK_KEY}.pub)\" ~/.ssh/authorized_keys"
+                       f" || cat {SPARK_KEY}.pub >> ~/.ssh/authorized_keys; fi", what="preparando los servicios")
         self._put_text(f"{STACK}/prometheus-ssh/config", self._prometheus_ssh_config())
         return list(self._remote(f"units {STACK}") or [])
 
@@ -659,7 +695,7 @@ class Placement:
                 self._log(f"{app_id}: {res.get('error')}")
 
     def _check_node(self) -> None:
-        free = self._ssh("awk '/MemAvailable/ {print $2}' /proc/meminfo").strip()
+        free = self._ssh_step("awk '/MemAvailable/ {print $2}' /proc/meminfo", what="leyendo la memoria libre").strip()
         gb = int(free or 0) / 1024 / 1024
         self._log(f"{self.state()['node']['name']}: {gb:.1f} GB de memoria libre")
         if gb < MIN_FREE_GB:
@@ -669,7 +705,7 @@ class Placement:
         deadline = time.monotonic() + timeout
         ok = {a: False for a in APPS}
         while time.monotonic() < deadline and not all(ok.values()):
-            health = self._parse_health(self._ssh(self._health_command(), timeout=30))
+            health = self._parse_health(self._ssh_step(self._health_command(), timeout=30, what="preguntando por las apps"))
             ok = {app_id: bool(health.get(app_id, {}).get("healthy")) for app_id in APPS}
             if not all(ok.values()):
                 time.sleep(5)
@@ -685,6 +721,7 @@ class Placement:
         self._ensure_node_runtime()
         for app_id in APPS:                                      # code and venvs first: the PC keeps running meanwhile
             self._deploy_code(app_id, dirs[app_id], deployed)
+            self._update(deployed=deployed)                      # the restart it owes survives a failure in the next step
             self._ensure_runtime(app_id, dirs[app_id], deployed)
             self._update(deployed=deployed)
         saved = self._read_local_paths(dirs)
@@ -703,6 +740,9 @@ class Placement:
             health = self._wait_remote_health()
             if not all(health.values()):
                 raise PlacementError("no responden en la Spark: " + ", ".join(a for a, v in health.items() if not v))
+            for app_id in APPS:                              # they run the code on disk now: nothing owes a restart
+                deployed.pop(app_id + ":restart", None)
+            self._update(deployed=deployed)
         except Exception:
             self._log("vuelvo a arrancar en el PC: el traslado no terminó")
             try:
@@ -735,9 +775,11 @@ class Placement:
         changed = []
         for app_id in APPS:
             self._deploy_code(app_id, dirs[app_id], deployed)
+            self._update(deployed=deployed)                      # the restart it owes survives a failure in the next step
             self._ensure_runtime(app_id, dirs[app_id], deployed)
             if (deployed.get(app_id) != before.get(app_id) or app_id in units_changed
-                    or deployed.get(app_id + ":requirements") != before.get(app_id + ":requirements")):
+                    or deployed.get(app_id + ":requirements") != before.get(app_id + ":requirements")
+                    or deployed.get(app_id + ":restart")):
                 changed.append(app_id)
             self._update(deployed=deployed)
         # Settings the Spark needs may have grown since the move (a newer Hub): write them again; Hermes reads them at start.
@@ -751,6 +793,9 @@ class Placement:
             health = self._wait_remote_health()
             if not all(health.values()):
                 raise PlacementError("no responden en la Spark: " + ", ".join(a for a, v in health.items() if not v))
+            for app_id in changed:                           # restarted: the code on disk is what runs now
+                deployed.pop(app_id + ":restart", None)
+            self._update(deployed=deployed)
         urls = self._tailnet_urls() or self.state().get("urls") or {}
         self._update(urls=urls)
         self._log("listo: el código de la Spark está al día" + ("" if changed else " (no había cambios)"))
@@ -793,7 +838,7 @@ class Placement:
         """Publish the three apps on the Spark's tailnet name (HTTPS, only for the person's own devices) and return the
         links; {} while the Spark is not logged in to Tailscale yet."""
         try:
-            raw = self._ssh("tailscale status --json 2>/dev/null || true", timeout=30)
+            raw = self._ssh_step("tailscale status --json 2>/dev/null || true", timeout=30, what="leyendo Tailscale")
             status = json.loads(raw) if raw.strip() else {}
         except (PlacementError, ValueError):
             return {}
@@ -819,7 +864,8 @@ class Placement:
     def _served_ports(self) -> set[int]:
         """What the Spark already publishes; empty when it cannot be asked, so the caller tries to publish again."""
         try:
-            return self._parse_served(self._ssh("tailscale serve status 2>/dev/null || true", timeout=SERVE_STATUS_TIMEOUT_S))
+            return self._parse_served(self._ssh_step("tailscale serve status 2>/dev/null || true",
+                                                     timeout=SERVE_STATUS_TIMEOUT_S, what="leyendo tailscale serve"))
         except Exception:  # noqa: BLE001 - not knowing is the same as "not served": the serve step decides
             return set()
 
@@ -830,8 +876,8 @@ class Placement:
             self._log(f"tailscale serve: el puerto {https} ya estaba publicado")
             return True
         try:
-            self._ssh(f"sudo -n tailscale serve --bg --https={https} http://127.0.0.1:{port} >/dev/null 2>&1 || true",
-                      timeout=SERVE_TIMEOUT_S)
+            self._ssh_step(f"sudo -n tailscale serve --bg --https={https} http://127.0.0.1:{port} >/dev/null 2>&1 || true",
+                           timeout=SERVE_TIMEOUT_S, what=f"publicando el puerto {https}")
             return True
         except Exception as exc:  # noqa: BLE001 - a port that will not publish is a warning, not a failed move
             self._log(f"aviso: no he podido publicar el puerto {https} en la tailnet ({str(exc)[-200:]}); sigo")

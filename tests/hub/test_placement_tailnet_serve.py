@@ -77,10 +77,10 @@ def test_a_serve_that_hangs_only_leaves_a_warning(tmp_path):
         "tailscale serve --bg": subprocess.TimeoutExpired(cmd="ssh", timeout=pl.SERVE_TIMEOUT_S)})
     urls = placement._tailnet_urls()                       # no exception: the links are still handed out
     assert set(urls) == {"faustus", "hermes", "prometheus"}
-    assert len(_serve_calls(calls)) == 3
+    assert len(_serve_calls(calls)) == 3 * pl.SSH_STEP_ATTEMPTS       # each port is retried before giving up
     assert all(timeout <= 20 for _, timeout in _serve_calls(calls))   # a short timeout, never the old 60 s
     log = " ".join(placement.state()["job"]["log"])
-    assert log.count("aviso: no he podido publicar el puerto") == 3
+    assert log.count("aviso: no he podido publicar el puerto") == 3   # one warning per port, not one per attempt
 
 
 def test_an_unreadable_serve_status_still_tries_to_publish(tmp_path):
@@ -88,7 +88,7 @@ def test_an_unreadable_serve_status_still_tries_to_publish(tmp_path):
                                              "tailscale serve status": pl.PlacementError("ssh Spark3: timeout")})
     assert placement._served_ports() == set()
     placement._tailnet_urls()
-    assert len(_serve_calls(calls)) == 3
+    assert len(_serve_calls(calls)) == 3                    # publishing answers: one call per port
 
 
 def test_a_move_whose_apps_answer_ends_well_even_if_serve_fails(tmp_path):
