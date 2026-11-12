@@ -1237,3 +1237,7 @@ MIT — ver [LICENSE](LICENSE).
 ## Ágora compartida
 
 Ágora permite espacios persistentes por proyecto, conversaciones, deliberaciones, tareas y decisiones. El ágora original ecosystem pasa a llamarse **Faustus y Hoards** conservando historial e identificadores. El Hub guarda la autoridad común y Faustus mantiene la ejecución nativa de modelos y herramientas; recursos físicos y cuotas siguen compartidos. HTTP, MCP y CLI ofrecen espacios y salas con contratos Council/Group compatibles. [Arquitectura y pruebas](docs/agora-council/PLAN.md).
+
+## Correo saliente de la familia
+
+El servicio mail guarda borradores remotos o envía de forma explícita desde la cuenta conectada de Faustus. Python usa fam_mail.send_status / fam_mail.send; Node usa mailStatus / mailSend. MCP expone hub_mail_accounts y hub_mail_compose. Por defecto guarda un borrador; admite destinatarios, asunto, cuerpo, copias y adjuntos con rutas accesibles desde la pasarela. El envío funciona aunque esté apagada la lectura del buzón, sin reintentos ni otro remitente de respaldo. [Contrato de correo](docs/commons/services.md#outbound-mail).
