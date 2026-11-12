@@ -227,8 +227,9 @@ class HubLink:
     @staticmethod
     def _probe_command() -> str:
         """What listens on the link port on the Spark and which sshd session owns it. Read-only: it asks, never kills."""
-        return (f"ss -ltnpH 'sport = :{LINK_PORT}' 2>/dev/null || true; echo --; "
-                f"ps -eo pid=,ppid=,etimes=,args= | grep -F '[sshd: ' | grep -v grep || true")
+        return (f"(sudo -n ss -ltnpH 'sport = :{LINK_PORT}' 2>/dev/null || ss -ltnpH 'sport = :{LINK_PORT}' 2>/dev/null || true); "
+                f"echo --; "
+                f"ps -eo pid=,ppid=,etimes=,args= | grep -F 'sshd: ' | grep -v grep || true")
 
     @staticmethod
     def _parse_probe(text: str) -> dict[str, Any]:
