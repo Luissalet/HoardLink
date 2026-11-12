@@ -6,9 +6,11 @@
   const { el, api, L, fmtWhen } = H.ctx;
   const text = (es, en) => L({ es, en });
   const labels = { web: ["Web", "Web"], media: ["Descargas", "Downloads"], stt: ["Transcripción", "Transcription"],
-    tts: ["Voz", "Voice"], docs: ["Documentos y OCR", "Documents and OCR"], embed: ["Embeddings", "Embeddings"] };
+    tts: ["Voz", "Voice"], docs: ["Documentos y OCR", "Documents and OCR"], embed: ["Embeddings", "Embeddings"],
+    mail: ["Correo saliente", "Outgoing mail"] };
   const states = { ready: ["Responde", "Responding"], down: ["No responde", "Not responding"],
-    missing: ["Sin registrar", "Not registered"], incompatible: ["Pendiente de actualizar", "Update needed"], disabled: ["Apagado", "Disabled"] };
+    missing: ["Sin registrar", "Not registered"], incompatible: ["Pendiente de actualizar", "Update needed"], disabled: ["Apagado", "Disabled"],
+    unavailable: ["No disponible", "Unavailable"] };
   let list, note, button;
   async function load(quiet) {
     if (!list) return;
