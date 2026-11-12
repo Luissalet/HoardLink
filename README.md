@@ -1269,7 +1269,7 @@ resources, structured results and bidirectional JSON-RPC messages pass through.
 Connecting starts the bridge. Starting the app remains an explicit Hub action.
 
 `GET /api/mcp/apps` and `GET /api/mcp/apps/<id>?check=1` describe the available
-relays and optional PC health. MCP `hub_mcp_apps` exposes the same discovery.
+relays and optional health at the app's current location. MCP `hub_mcp_apps` exposes the same discovery.
 Faustus resolves the transport when connecting and checks health through the Hub.
 Saved connector commands, environment, disabled preferences and PC browser URLs
 retain their meaning. Legacy MCP rows whose command exactly matches a family
@@ -1296,3 +1296,12 @@ The durable receipt reports cancellation separately from task completion.
 HTTP `/api/agora/console/worker` and MCP `hub_agora_console_worker` share this
 flow, including `action=stop`. Native Spark workspaces can use the placed
 instance directly with its connected Agora connector.
+
+### Apps placed on a Spark
+
+For apps managed by placement, the relay resolves the declared bridge on the
+current machine. On a Spark it uses placement's existing SSH connection, the
+app's native venv and token file, with bridge autostart disabled. Health is read
+on that Spark and metadata carries the tailnet URL. Reconnecting after a move
+back to the PC resolves the installed local command again. A move in progress
+reports that the connector can reconnect when placement finishes.

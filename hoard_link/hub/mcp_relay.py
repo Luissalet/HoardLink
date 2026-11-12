@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shlex
 import subprocess
 import threading
 import time
@@ -23,8 +24,56 @@ from .facets import Facet, Reply
 
 PREFIX = "/api/mcp/apps/"
 
+REMOTE_HEALTH = '''import json, pathlib, sys, urllib.request, urllib.error
+token = pathlib.Path(sys.argv[2])
+headers = {"Accept": "application/json"}
+if token.is_file():
+    headers["Authorization"] = "Bearer " + token.read_text(encoding="utf-8-sig").strip()
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+try:
+    try:
+        response = opener.open(urllib.request.Request(sys.argv[1], headers=headers), timeout=2)
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        code, raw = response.code, response.read()
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        body = None
+    print(json.dumps([code, body]))
+except OSError:
+    print(json.dumps([None, None]))
+'''
 
-def launch_spec(hub, app):
+
+def placed_app(hub, app):
+    from .placement import APPS
+    placement = getattr(hub, "placement", None)
+    if placement is None or app.id not in APPS:
+        return None
+    state = placement.state()
+    if (state.get("job") or {}).get("running"):
+        raise ValueError("app placement is moving; reconnect after the move finishes")
+    return state if state.get("location") == "sparks" else None
+
+
+def remote_values(app, manifest):
+    from .placement import SPARK_STACK, PORTS
+    folder = SPARK_STACK + "/" + app.id
+    values = {"PYTHON": folder + "/venv/bin/python", "FAUSTUS_DIR": SPARK_STACK + "/faustus",
+              "FAUSTUS_PYTHON": SPARK_STACK + "/faustus/venv/bin/python",
+              "APP_URL": f"http://127.0.0.1:{PORTS[app.id]}"}
+    missing = set()
+    values["TOKEN_FILE"] = registry.resolve_placeholders(
+        str((manifest.get("defaults") or {}).get("TOKEN_FILE") or folder + "/data/mcp-token"),
+        folder=folder, defaults=manifest.get("defaults") or {}, extra=values, missing=missing)
+    if missing:
+        raise ValueError("unresolved MCP placeholders: " + ", ".join(sorted(missing)))
+    return folder, values
+
+
+def launch_spec(hub, app, *, local=False):
     """Resolve the installed manifest on the machine where its files live."""
     with open(app.manifest_path, encoding="utf-8-sig") as source:
         manifest = json.load(source)
@@ -33,19 +82,30 @@ def launch_spec(hub, app):
         raise ValueError("app has no stdio MCP server")
     values = registry._hub_values(app.folder, hub.config.faustus_dir, hub.config.faustus_python)
     values.update(APP_URL=app.url, TOKEN_FILE=app.token_file)
+    placed = None if local else placed_app(hub, app)
+    folder = app.folder
+    if placed:
+        # Placement installs a native venv and carries the app's data with it.
+        # Expand the same declared bridge using paths on its current machine.
+        folder, values = remote_values(app, manifest)
     missing = set()
 
     def fill(value):
         return registry.expand_env(registry.resolve_placeholders(
-            str(value), folder=app.folder, defaults=manifest.get("defaults") or {}, extra=values, missing=missing))
+            str(value), folder=folder, defaults=manifest.get("defaults") or {}, extra=values, missing=missing))
 
     command = fill(bridge["command"])
     args = [fill(arg) for arg in bridge.get("args") or []]
-    env = dict(os.environ)
-    env.update({key: fill(value) for key, value in (bridge.get("env") or {}).items()})
+    declared_env = {key: fill(value) for key, value in (bridge.get("env") or {}).items()}
     if missing:
         raise ValueError("unresolved MCP placeholders: " + ", ".join(sorted(missing)))
-    return [command, *args], env
+    if placed:
+        from .placement import SSH_OPTS
+        declared_env[app.id.upper() + "_BRIDGE_AUTOSTART"] = "0"
+        remote = "cd " + shlex.quote(folder) + " && exec " + shlex.join(
+            ["env", *(key + "=" + value for key, value in declared_env.items()), command, *args])
+        return ["ssh", *SSH_OPTS, "-T", placed["node"]["ssh"], remote], dict(os.environ)
+    return [command, *args], {**os.environ, **declared_env}
 
 
 class Session:
@@ -154,11 +214,25 @@ class McpRelayFacet(Facet):
         if app is None:
             raise KeyError(app_id)
         launch_spec(self.hub, app)
+        placed = placed_app(self.hub, app)
         result = {"id": app.id, "name": app.name, "app_url": app.url,
                   "transport": "http", "mcp_path": PREFIX + app.id + "/mcp"}
+        if placed:
+            result.update(location="sparks", app_url=str((placed.get("urls") or {}).get(app.id) or "").rstrip("/"),
+                          where=placed["node"]["name"])
         if check:
             started = time.monotonic()
-            code, body = contract._get(app.health_url(), contract.read_token(app.token_file), 2)
+            if placed:
+                with open(app.manifest_path, encoding="utf-8-sig") as source:
+                    _, values = remote_values(app, json.load(source))
+                command = shlex.join([values["PYTHON"], "-c", REMOTE_HEALTH,
+                                      values["APP_URL"] + app.health_path, values["TOKEN_FILE"]])
+                try:
+                    code, body = json.loads(self.hub.placement._ssh(command, timeout=12))
+                except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+                    code, body = None, None
+            else:
+                code, body = contract._get(app.health_url(), contract.read_token(app.token_file), 2)
             result["health"] = {"reachable": code is not None, "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                 "latency_ms": int((time.monotonic() - started) * 1000), "status_code": code,
                                 "body": body if isinstance(body, dict) else None,
@@ -199,11 +273,14 @@ class McpRelayFacet(Facet):
         wanted = [os.path.normcase(os.path.normpath(str(arg))) for arg in argv]
         for app in [*self.hub.apps, self._own_app]:
             try:
-                declared, _ = launch_spec(self.hub, app)
-                if wanted == [os.path.normcase(os.path.normpath(arg)) for arg in declared]:
-                    return {"app": self.describe(app.id)}
+                declared, _ = launch_spec(self.hub, app, local=True)
             except (OSError, ValueError):
                 continue
+            if wanted == [os.path.normcase(os.path.normpath(arg)) for arg in declared]:
+                try:
+                    return {"app": self.describe(app.id)}
+                except (OSError, ValueError) as exc:
+                    return Reply({"ok": False, "error": str(exc)}, 422)
         return {"app": None}
 
     @classmethod
