@@ -12,6 +12,7 @@
 //
 // argv: --hoard-url=<url> --hoard-id=<id> [--hoard-name=<name>]
 //       [--hoard-icon=<png>] [--user-data-dir=<dir>] [--hoard-size=WxH]
+//       [--hoard-relaunch=<base64url of the command a taskbar pin runs>]
 
 const { app, BaseWindow, WebContentsView, Menu, nativeImage, ipcMain, shell, nativeTheme, screen } = require('electron');
 const fs = require('node:fs');
@@ -29,6 +30,9 @@ const appUrl = arg('hoard-url');
 const appId = arg('hoard-id', 'app').replace(/[^a-z0-9_.-]/gi, '') || 'app';
 const appName = arg('hoard-name', appId);
 const iconPath = arg('hoard-icon');
+const relaunch = (() => {
+  try { return Buffer.from(arg('hoard-relaunch'), 'base64url').toString('utf8').trim(); } catch { return ''; }
+})();
 const dataDir = arg('user-data-dir') || path.join(app.getPath('appData'), 'hoard-window', appId);
 const [defW, defH] = (arg('hoard-size', '1280x860').split('x').map((n) => parseInt(n, 10)));
 
@@ -171,6 +175,56 @@ function zoom(delta) {
   saveState();
 }
 
+// Windows pins a window by the command that reopens it. Without one the
+// taskbar offers no pin for this window (it only knows the shared shell
+// binary). The hub passes the command; alone, the shell repeats its own
+// command line. The pin's icon has to be an .ico: the app's PNG is wrapped
+// in one (a PNG-in-ICO, 256 px) next to the window's other files.
+function quoteArg(a) {
+  return /[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a;
+}
+
+function taskbarIcon(image) {
+  if (!image || image.isEmpty()) return '';
+  try {
+    const png = image.resize({ width: 256, height: 256, quality: 'best' }).toPNG();
+    const head = Buffer.alloc(22);
+    head.writeUInt16LE(1, 2);            // type: icon
+    head.writeUInt16LE(1, 4);            // one image
+    head.writeUInt16LE(1, 10);           // colour planes (width/height 0 = 256)
+    head.writeUInt16LE(32, 12);          // bits per pixel
+    head.writeUInt32LE(png.length, 14);
+    head.writeUInt32LE(22, 18);          // image offset
+    const file = path.join(dataDir, 'hoard-window.ico');
+    const data = Buffer.concat([head, png]);
+    let same = false;
+    try { same = fs.readFileSync(file).equals(data); } catch { /* not there yet */ }
+    if (!same) fs.writeFileSync(file, data);
+    return file;
+  } catch (err) {
+    log('taskbar-icon', String(err));
+    return '';
+  }
+}
+
+function makePinnable(icon) {
+  if (process.platform !== 'win32' || typeof win.setAppDetails !== 'function') return;
+  const own = [process.execPath, ...process.argv.slice(1).filter((a) => !a.startsWith('--hoard-relaunch='))];
+  const details = {
+    appId: `hoard.${appId}`,
+    relaunchCommand: relaunch || own.map(quoteArg).join(' '),
+    relaunchDisplayName: appName,
+  };
+  const ico = taskbarIcon(icon);
+  if (ico) { details.appIconPath = ico; details.appIconIndex = 0; }
+  try {
+    win.setAppDetails(details);
+    log('pinnable', details.relaunchCommand);
+  } catch (err) {
+    log('pinnable-failed', String(err));
+  }
+}
+
 function create() {
   const st = loadState();
   const bounds = visibleOnSomeDisplay(st.bounds) ? st.bounds : { width: defW || 1280, height: defH || 860 };
@@ -188,6 +242,8 @@ function create() {
       ? { titleBarStyle: 'hidden', titleBarOverlay: { color: colours.bg, symbolColor: colours.fg, height: BAR_H } }
       : { titleBarStyle: 'hiddenInset' }),
   });
+
+  makePinnable(icon);
 
   bar = new WebContentsView({
     webPreferences: { preload: path.join(__dirname, 'preload-bar.cjs'), contextIsolation: true, sandbox: true, backgroundThrottling: false },

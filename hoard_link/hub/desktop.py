@@ -28,6 +28,7 @@ every app at once.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -155,6 +156,22 @@ def open_window(
     return {"ok": True, "mode": "app-window", "pid": proc.pid, "browser": exe, "profile": profile}
 
 
+HUB_WINDOW_ID = "_hub"
+
+
+def relaunch_command(app_id: str, python: Optional[str] = None) -> str:
+    """The command a pinned taskbar button of this window runs (Windows):
+    ``relaunch.py`` under the console-less interpreter, so the pin brings
+    back the Hub or the app and not a bare window shell."""
+    from . import autostart
+
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "relaunch.py")
+    line = f'"{autostart.pythonw(python)}" "{script}"'
+    if app_id and app_id != HUB_WINDOW_ID:
+        line += f' --app "{app_id}"'
+    return line
+
+
 def _open_shell_window(url: str, app_id: str, profiles_root: str, *, size: tuple[int, int], name: str,
                        icon: Optional[str]) -> dict[str, Any]:
     found = find_shell()
@@ -170,6 +187,8 @@ def _open_shell_window(url: str, app_id: str, profiles_root: str, *, size: tuple
     kwargs: dict[str, Any] = {}
     if sys.platform.startswith("win"):
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        # Quotes do not survive a command line inside a command line: the shell decodes this.
+        cmd.append("--hoard-relaunch=" + base64.urlsafe_b64encode(relaunch_command(app_id).encode("utf-8")).decode("ascii"))
     else:
         kwargs["start_new_session"] = True
     env = dict(os.environ)

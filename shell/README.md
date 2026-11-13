@@ -27,6 +27,11 @@ What the window does:
   (`--user-data-dir`, the hub passes `data/profiles/<id>`), its own taskbar
   group and icon; launching it again focuses the open window. Size,
   position, maximised state and zoom are remembered per app.
+- **Taskbar pin** (Windows) — every window can be pinned. The pin keeps the
+  app's name and icon and brings back the right thing: the Hub's pin opens
+  the Hub (starting it when it is not running); an app's pin asks the Hub to
+  open that app, starting both when needed (`hoard_link/hub/relaunch.py`,
+  passed as `--hoard-relaunch`).
 - **Links** — same-origin links stay in the window; anything else opens in
   the default browser.
 - Pages can tell they run inside it: `window.hoardWindow` exists and
