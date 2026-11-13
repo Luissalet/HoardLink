@@ -181,6 +181,23 @@ The class and reasons appear in `console_turns` of `GET /api/agora/console/overv
 (`liveness`, `liveness_reasons`, `root_turn_id`, `continuation_n`, `not_before`), and each classification is also
 recorded as a `liveness` entry in the console activity log.
 
+### Console workers: no wall clock, no silent endings
+
+A worker started from the console (Codex, Claude, Cursor or a Faustus child) runs until it finishes. A Faustus child
+is launched without a total deadline (`--no-timeout`) and without a cap on approval continuations (`--max-legs 0`);
+the only guard is an inactivity watchdog on the turn's real events (keepalives do not count), 3600 s by default and
+set with `HOARD_AGORA_WORKER_IDLE_SECONDS`. Stop cancels the exact active run.
+
+Every managed worker is told to commit its work and `submit` its task. When its process ends, the console checks the
+outcome against the Agora: task status, submission revision and uncommitted changes in the worker's folder. A clean
+exit with no submission, or with pending changes, is recorded as `incomplete` ("Entrega incompleta"), not `completed`,
+and a task still `claimed` is moved to `blocked` keeping its owner and locks. If a worker is cut (inactivity, process
+death, Hub restart, provider error) the card and the task thread state the observed cause and the last state; the Hub
+then tries one automatic continuation on the same Faustus session and folder when that session is still available.
+**Continue** (Hub page, `POST` worker action, `hub_agora_console_worker`) resumes the same worker id manually.
+After a Hub restart, running workers are re-identified from their stored process and runtime, and finished ones are
+reconciled from their run receipts.
+
 ### Resume sync
 
 `hub_agora_sync` / `POST /api/agora/sync` combines a heartbeat with inbox peek,
