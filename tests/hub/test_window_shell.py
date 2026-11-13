@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import sys
 
@@ -79,3 +80,54 @@ def test_open_window_chromium_when_forced(tmp_path, monkeypatch):
     monkeypatch.setattr(desktop.webbrowser, "open", lambda url: True)
     res = desktop.open_window("http://127.0.0.1:1/", "x", str(tmp_path / "p"), engine="chromium")
     assert res["mode"] == "browser-tab"
+
+
+def _relaunch_arg(cmd):
+    hits = [a for a in cmd if a.startswith("--hoard-relaunch=")]
+    return base64.urlsafe_b64decode(hits[0].split("=", 1)[1]).decode("utf-8") if hits else None
+
+
+def test_relaunch_command_reopens_hub_or_app(tmp_path):
+    py = tmp_path / "python.exe"
+    pyw = tmp_path / "pythonw.exe"
+    py.write_text("")
+    pyw.write_text("")
+    script = os.path.join(os.path.dirname(os.path.abspath(desktop.__file__)), "relaunch.py")
+    assert os.path.isfile(script)
+    hub = desktop.relaunch_command(desktop.HUB_WINDOW_ID, python=str(py))
+    assert hub == f'"{pyw}" "{script}"'           # console-less interpreter, no arguments: the Hub
+    app = desktop.relaunch_command("links", python=str(py))
+    assert app == f'"{pyw}" "{script}" --app "links"'
+
+
+def test_shell_window_gets_a_pin_command_on_windows(tmp_path, monkeypatch):
+    folder, exe = _fake_shell(tmp_path)
+    monkeypatch.setattr(desktop, "find_shell", lambda: (str(exe), str(folder)))
+    seen = {}
+
+    class P:
+        pid = 1
+
+    monkeypatch.setattr(desktop.subprocess, "Popen", lambda cmd, **kw: seen.setdefault("cmd", cmd) and P())
+    for platform, expected in (("win32", True), ("linux", False)):
+        seen.clear()
+        monkeypatch.setattr(desktop.sys, "platform", platform)
+        desktop._open_shell_window("http://127.0.0.1:5181/", "links", str(tmp_path / "profiles"),
+                                   size=(1000, 700), name="Links Hoard", icon=None)
+        line = _relaunch_arg(seen["cmd"])
+        assert (line is not None) is expected
+        if expected:
+            assert line.endswith('relaunch.py" --app "links"')
+
+
+def test_relaunch_script_asks_the_hub_to_open_the_app(monkeypatch):
+    from hoard_link.hub import __main__ as hub_main, procs, relaunch
+
+    calls = []
+    monkeypatch.setattr(hub_main, "_already_running", lambda url: True)
+    monkeypatch.setattr(procs, "fetch_json_post", lambda url, body, **kw: calls.append(url) or (200, {"ok": True}))
+    monkeypatch.setattr(relaunch.os, "chdir", lambda p: None)
+    assert relaunch.main(["--app", "links"]) == 0
+    assert calls and calls[0].endswith("/api/apps/links/open")
+    monkeypatch.setattr(hub_main, "main", lambda argv=None: 7)
+    assert relaunch.main([]) == 7                # no app: the Hub's own start-or-open path
