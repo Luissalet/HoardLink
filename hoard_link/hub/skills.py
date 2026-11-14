@@ -297,7 +297,7 @@ def _serves(app: Any) -> bool:
             pass
     text = "\n".join(sources)
     if "CatalogBridge" in text:
-        return _shared_bridge(app.folder)
+        return _shared_bridge(app.folder) or any(mark in text for mark in _HANDS_OUT)
     if "createBridge" in text:
         try:
             with open(os.path.join(app.folder, "server", "hoard-commons", "express.js"), encoding="utf-8") as fh:
