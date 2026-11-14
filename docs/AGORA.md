@@ -130,6 +130,20 @@ Writes: `POST /api/agora/<op>` with `op` one of `checkpoint`, `heartbeat`, `sync
 `POST /api/agora/watch/bind` `{session_key, agent}` assigns an observed session to an agent (`agent: ""` removes it); it needs the
 hub's page or the bearer token.
 
+### Agent-declared model and effort
+
+A session started outside the Agora can report its own model and reasoning effort:
+`agora hb --model <id> --effort <level>` (also supported by `sync`). HTTP heartbeat/sync and the MCP
+tools `hub_agora_heartbeat` / `hub_agora_sync` accept the same optional `model` and `effort` strings.
+Values are trimmed, then truncated to 80 and 20 characters respectively. Omitted, null or blank values preserve
+the previous declaration; a partial report updates only the supplied value.
+
+Declarations belong to the agent's membership in the selected space. Agent lists, board agents, members/guild
+and console overview expose `declared_model`, `declared_effort` and `declared_at` (the reporting heartbeat's
+UTC ISO timestamp), or null before any report. An ordinary heartbeat does not change that timestamp.
+The Hub agent cards show model and effort with “Declared by the agent” for these values. They are self-reports:
+they never replace the verified `model` / `effort` of sessions launched by the Agora or change provider preferences.
+
 ## Tools
 
 `hub_agora_board`, `hub_agora_inbox`, `hub_agora_heartbeat`, `hub_agora_sync`, `hub_agora_task_add`, `hub_agora_task_claim`,

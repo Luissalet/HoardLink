@@ -192,6 +192,13 @@ MIGRATIONS.append(agora_channels.MUTED_MIGRATION)
 MIGRATIONS.append(agora_ranks.RANKS_MIGRATION)
 # a task's threads, found by the task: reading its activity walked every message, once per task of a list
 MIGRATIONS.append("CREATE INDEX IF NOT EXISTS threads_task ON threads(task_id);")
+# A session's own model report belongs to its membership, not its global identity.
+DECLARED_MODEL_MIGRATION = """
+    ALTER TABLE coordination_members ADD COLUMN declared_model TEXT;
+    ALTER TABLE coordination_members ADD COLUMN declared_effort TEXT;
+    ALTER TABLE coordination_members ADD COLUMN declared_at TEXT;
+"""
+MIGRATIONS.append(DECLARED_MODEL_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -1657,6 +1664,14 @@ class Agora:
                 fields["note"] = _txt(a.get("note"), 500, "note")
             sets = ", ".join(f"{k}=?" for k in fields)
             self.db.execute(f"UPDATE agents SET {sets} WHERE id=?", (*fields.values(), agent))
+            declared = {f"declared_{key}": str(a[key]).strip()[:limit]
+                        for key, limit in (("model", 80), ("effort", 20))
+                        if a.get(key) is not None and str(a[key]).strip()}
+            if declared:
+                declared["declared_at"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
+                sets = ", ".join(f"{key}=?" for key in declared)
+                self.db.execute(f"UPDATE coordination_members SET {sets} WHERE space_id=? AND agent=?",
+                                (*declared.values(), self.space_id, agent))
             live = [dict(row) for row in self.db.query(
                 "SELECT resource FROM locks WHERE owner=? AND expires>? ORDER BY resource", (agent, now))]
             renewed = [row["resource"] for row in live if selected is None or row["resource"] in selected]
@@ -1728,6 +1743,9 @@ class Agora:
             heartbeat_args["note"] = a.get("note")
         if "renew_resources" in a:
             heartbeat_args["renew_resources"] = a["renew_resources"]
+        for key in ("model", "effort"):
+            if key in a:
+                heartbeat_args[key] = a[key]
         heartbeat = self.heartbeat(heartbeat_args)
 
         # Peek by design. This preserves the inbox read mark and pending mention acknowledgements.
@@ -1759,7 +1777,11 @@ class Agora:
             post["mentions"] = _l(post.get("mentions"))
             posts.append(post)
         next_since_id = int(posts[-1]["id"]) if posts else since_id
-        agent_row = self.db.one("SELECT id, name, kind, note, state, doing, last_seen FROM agents WHERE id=?", (agent,))
+        agent_row = self.db.one(
+            "SELECT a.id, a.name, a.kind, a.note, a.state, a.doing, a.last_seen, "
+            "m.declared_model, m.declared_effort, m.declared_at "
+            "FROM agents a JOIN coordination_members m ON m.agent=a.id WHERE a.id=? AND m.space_id=?",
+            (agent, self.space_id))
         cursor = {"since_id": since_id, "next_since_id": next_since_id, "thread_ids": thread_ids or None,
                   "has_more": has_more, "limit": limit}
         return {"ok": True, "heartbeat": heartbeat, "agent_state": dict(agent_row) if agent_row else None,
@@ -1772,7 +1794,8 @@ class Agora:
         now = self.clock()
         out = []
         pools = self._quota_pools()
-        for r in self.db.query("SELECT a.* FROM agents a JOIN coordination_members m ON m.agent=a.id "
+        for r in self.db.query("SELECT a.*, m.declared_model, m.declared_effort, m.declared_at "
+                               "FROM agents a JOIN coordination_members m ON m.agent=a.id "
                                "WHERE m.space_id=? ORDER BY a.last_seen DESC", (self.space_id,)):
             d = dict(r)
             d["stale"] = (now - float(d.get("last_seen") or 0)) > STALE_AGENT_S
@@ -3279,15 +3302,21 @@ TOOLS: list[dict[str, Any]] = [
                              "skip_muted": {"type": "boolean", "description": "With all_spaces: only what is worth telling the person. Leaves out the servers they silenced and, in one heard again, what was said meanwhile."}}, ["agent"])},
     {"name": "hub_agora_heartbeat",
      "description": "Tell the Ágora you are here and what you are doing (state working|idle|waiting|away). "
-                    "Renews every owned lock by default. Optional renew_resources selects exact live owned locks; [] reports state without renewal.",
+                    "Renews every owned lock by default. Optional model and effort are agent-declared, stored per space "
+                    "and trimmed to 80/20 characters; omitting them preserves the previous report. "
+                    "Optional renew_resources selects exact live owned locks; [] reports state without renewal.",
       "inputSchema": _schema({"agent": _A, "doing": {"type": "string"}, "state": {"type": "string"},
                               "name": {"type": "string"}, "note": {"type": "string"},
+                              "model": {"type": "string", "description": "Agent-declared model (trimmed to 80 characters), not provider-verified."},
+                              "effort": {"type": "string", "description": "Agent-declared reasoning effort (trimmed to 20 characters)."},
                               "renew_resources": {"type": "array", "items": {"type": "string", "minLength": 1}}}, ["agent"])},
     {"name": "hub_agora_sync",
      "description": "Resume the Ágora session / retomar Ágora: heartbeat, inbox peek, board and posts after since_id.\n"
                     "Does not acknowledge. Store next_since_id and pass it back; thread_ids scopes the cursor.",
      "inputSchema": _schema({"agent": _A, "doing": {"type": "string"}, "state": {"type": "string"},
                              "name": {"type": "string"}, "note": {"type": "string"},
+                             "model": {"type": "string", "description": "Agent-declared model, as in heartbeat."},
+                             "effort": {"type": "string", "description": "Agent-declared reasoning effort, as in heartbeat."},
                              "renew_resources": {"type": "array", "items": {"type": "string", "minLength": 1}},
                              "since_id": {"type": "integer", "minimum": 0},
                              "thread_ids": {"type": "array", "items": {"type": "integer", "minimum": 1},

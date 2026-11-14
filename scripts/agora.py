@@ -608,12 +608,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--data-file", required=True, help="JSON UTF-8 con provider_id, pool_id, pool_label, source y windows")
     s = sub.add_parser("inbox"); s.add_argument("--wait", type=float, default=0); s.add_argument("--peek", action="store_true"); s.add_argument("--mine", action="store_true"); s.add_argument("--meta", action="store_true", help="solo metadatos (quién, dónde, tipo), sin cuerpos ni mover la marca"); s.add_argument('--all-spaces', action='store_true', help='buzón de todos los espacios con cursores independientes')
     s = sub.add_parser("hb"); s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
+    s.add_argument("--model", help="modelo declarado por el agente en este espacio (recortado a 80 caracteres)")
+    s.add_argument("--effort", help="esfuerzo declarado por el agente (recortado a 20 caracteres); omitir conserva lo anterior")
     renewal = s.add_mutually_exclusive_group()
     renewal.add_argument("--renew-resource", action="append", help="renueva solo estos recursos exactos; repetible")
     renewal.add_argument("--no-renew-locks", action="store_true", help="registra estado sin renovar bloqueos")
     s = sub.add_parser("sync", help="un latido y snapshot del Ágora; --since usa el id durable de publicación")
     s.add_argument("doing", nargs="?", default=""); s.add_argument("--state", default="working"); s.add_argument("--name")
     s.add_argument("--note", help="nota breve del agente que se guarda en su heartbeat")
+    s.add_argument("--model", help="modelo declarado por el agente, como en hb")
+    s.add_argument("--effort", help="esfuerzo declarado por el agente, como en hb")
     s.add_argument("--since", dest="since_id", type=int, default=0,
                    help="id de mensaje devuelto en la última consulta del mismo filtro (por defecto: 0)")
     s.add_argument("--thread", action="append", type=int,
@@ -817,10 +821,14 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/sync", {"agent": ag, "doing": a.doing, "state": a.state,
                                                    "name": a.name, "note": a.note, "since_id": a.since_id,
                                                    "thread_ids": a.thread or [], "limit": a.limit,
+                                                   **({"model": a.model} if a.model is not None else {}),
+                                                   **({"effort": a.effort} if a.effort is not None else {}),
                                                    **({"renew_resources": [] if a.no_renew_locks else a.renew_resource}
                                                       if a.no_renew_locks or a.renew_resource is not None else {})})
     elif c == "hb":
         r = call("POST", "/api/agora/heartbeat", {"agent": ag, "doing": a.doing, "state": a.state, **({"name": a.name} if a.name else {}),
+                  **({"model": a.model} if a.model is not None else {}),
+                  **({"effort": a.effort} if a.effort is not None else {}),
                   **({"renew_resources": [] if a.no_renew_locks else a.renew_resource}
                      if a.no_renew_locks or a.renew_resource is not None else {})})
     elif c == "add":

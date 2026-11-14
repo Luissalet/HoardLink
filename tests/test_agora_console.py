@@ -135,6 +135,23 @@ def test_overview_uses_canonical_thread_and_persisted_preferences(tmp_path):
     assert response["messages"]["thread"]["id"] == THREAD_ID
 
 
+def test_overview_exposes_declarations_without_replacing_verified_settings(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    declared = {"declared_model": "external-model", "declared_effort": "high",
+                "declared_at": "2026-11-14T01:00:00+00:00"}
+    monkeypatch.setattr(facet.hub.agora, "agents", lambda: {"agents": [
+        {"id": "claude", **declared}, {"id": "codex-child", **declared}]})
+    monkeypatch.setattr(facet, "_worker_rows", lambda: [
+        {"id": "child", "agent_id": "codex-child", "model": "verified-model", "effort": "low"}])
+    response = facet.overview()
+    leader = next(row for row in response["leaders"] if row["id"] == "claude")
+    assert {key: leader[key] for key in declared} == declared
+    worker = response["workers"][0]
+    assert {key: worker[key] for key in declared} == declared
+    assert worker["model"] == "verified-model" and worker["effort"] == "low"
+    assert all({key: row[key] for key in declared} == declared for row in response["agents"])
+
+
 def test_message_posts_attributed_canonical_message_and_queues_real_provider_turn(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     facet.set_preferences({"leader_id": "codex", "model": "codex-model-from-cli"})

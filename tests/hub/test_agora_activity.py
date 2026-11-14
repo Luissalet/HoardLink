@@ -87,7 +87,8 @@ def test_a_tasks_activity_is_read_through_its_threads_not_by_walking_every_messa
 
 
 def test_an_older_agora_gets_the_index_of_threads_by_task(tmp_path):
-    older = Database(tmp_path / "older.db", migrations=MIGRATIONS[:-1])
+    index_migration = MIGRATIONS.index("CREATE INDEX IF NOT EXISTS threads_task ON threads(task_id);")
+    older = Database(tmp_path / "older.db", migrations=MIGRATIONS[:index_migration])
     assert "threads_task" not in [row["name"] for row in older.query("PRAGMA index_list(threads)")]
     older.close()
     store = Agora(tmp_path / "older.db")

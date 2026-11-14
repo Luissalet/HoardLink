@@ -52,6 +52,7 @@
     view_thread: { es: "Ver conversación", en: "View conversation" },
     agents: { es: "Agentes", en: "Agents" },
     no_agents: { es: "Ningún agente se ha presentado todavía.", en: "No agent has checked in yet." },
+    declared_model: { es: "Declarado por el agente", en: "Declared by the agent" },
     tasks: { es: "Tareas", en: "Tasks" },
     col_open: { es: "Abiertas", en: "Open" }, col_work: { es: "En curso", en: "In progress" },
     col_review: { es: "En revisión", en: "In review" }, col_done: { es: "Hechas", en: "Done" },
@@ -345,6 +346,15 @@
         head.appendChild(chip);
       }
       c.appendChild(head);
+      const verified = !!(a.model || a.effort);
+      const modelEffort = verified ? [a.model, a.effort] : [a.declared_model, a.declared_effort];
+      if (modelEffort.some(Boolean)) {
+        const line = el("div", "ag-doing", modelEffort.filter(Boolean).join(" · ") +
+          (verified ? "" : " · " + t("declared_model")));
+        line.dataset.modelSource = verified ? "verified" : "declared";
+        if (!verified && a.declared_at) line.title = `${t("declared_model")} · ${new Date(a.declared_at).toLocaleString()}`;
+        c.appendChild(line);
+      }
       if (a.doing) c.appendChild(el("div", "ag-doing", a.doing));
       if (o) {
         const line = el("div", `ag-obs ${o.state}`, `${o.engine || ""}${o.title ? " · " + o.title : ""}${o.tool && o.tool.input ? " · " + o.tool.input : ""}`);

@@ -1345,6 +1345,7 @@ class AgoraConsoleFacet(Facet):
                 state = "working"
                 state_source = "faustus_native_session"
             leader = {"id": leader_id, "name": name, "state": state,
+                            **{key: observed.get(key) for key in ("declared_model", "declared_effort", "declared_at")},
                             "detail": provider.get("detail", ""), "model": model, "effort": effort,
                             "state_source": state_source,
                             "agent_last_seen": agent_last_seen,
@@ -1376,8 +1377,12 @@ class AgoraConsoleFacet(Facet):
             recent = agora.thread_recent({"thread_id": self.thread_id, "limit": 40})
             if recent.get("ok"):
                 messages = recent
+        workers = self._worker_rows()
+        for worker in workers:
+            observed = agents.get(worker.get("agent_id")) or {}
+            worker.update({key: observed.get(key) for key in ("declared_model", "declared_effort", "declared_at")})
         return {"ok": True, "thread_id": self.thread_id, "leaders": leaders,
-                "workers": self._worker_rows(), "quota_pools": usage.get("providers", []),
+                "agents": list(agents.values()), "workers": workers, "quota_pools": usage.get("providers", []),
                 "activity": activity, "messages": messages, "console_turns": console_turns,
                 "console_sessions": console_sessions, "native_preferences": native_preferences,
                 "checked_at": time.time()}

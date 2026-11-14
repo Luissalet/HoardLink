@@ -576,7 +576,8 @@ def _members(self: Any, tasks_by_owner: dict[str, list[dict[str, Any]]]) -> list
         "SELECT owner, COUNT(*) AS n FROM locks WHERE expires>? GROUP BY owner", (now,))}
     ranks = agora_ranks.ranks_in(self)
     out = []
-    for r in self.db.query("SELECT a.* FROM agents a JOIN coordination_members m ON m.agent=a.id "
+    for r in self.db.query("SELECT a.*, m.declared_model, m.declared_effort, m.declared_at "
+                           "FROM agents a JOIN coordination_members m ON m.agent=a.id "
                            "WHERE m.space_id=? ORDER BY a.last_seen DESC", (self.space_id,)):
         d = dict(r)
         ident = d["id"]
@@ -602,6 +603,7 @@ def _members(self: Any, tasks_by_owner: dict[str, list[dict[str, Any]]]) -> list
                     "rank": rank, "rank_level": agora_ranks.PERSON_LEVEL if person else agora_ranks.LEVEL[rank],
                     "presence": presence, "state": state, "doing": d.get("doing") or "", "note": d.get("note") or "",
                     "last_seen": d.get("last_seen"), "locks": locks.get(ident, 0),
+                    **{key: d.get(key) for key in ("declared_model", "declared_effort", "declared_at")},
                     "tasks": tasks_by_owner.get(ident, [])[:6],
                     "quota": {k: quota.get(k) for k in ("state", "remaining_percent", "reset_at", "note", "pool_label")}})
     return out
