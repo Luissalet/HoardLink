@@ -357,7 +357,28 @@ class CatalogBridge:
         return bridge_token(self.app, self.data_dir, token_env=self.token_env, token_file=self.token_file, env_prefix=self.prefix)
 
     def autostart_enabled(self) -> bool:
-        return bool(self.autostart) and env_flag(f"{self.prefix}_BRIDGE_AUTOSTART", True)
+        """Whether a call may start the app when it is down. ``<APP>_BRIDGE_AUTOSTART`` decides when set; otherwise the
+        app's own manifest does: an app that declares ``"x-family": {"auto_start": false}`` (one that opens a device, say)
+        is only ever started by the person, so a stray tool call or a catalogue read never wakes it."""
+        return bool(self.autostart) and env_flag(f"{self.prefix}_BRIDGE_AUTOSTART", self._manifest_autostart())
+
+    def _manifest_autostart(self) -> bool:
+        cached = getattr(self, "_manifest_autostart_value", None)
+        if cached is None:
+            cached = True
+            for folder in (self.root, *list(self.root.parents)[:2]):
+                manifest = folder / "faustus-plugin.json"
+                if not manifest.is_file():
+                    continue
+                try:
+                    family = json.loads(manifest.read_text(encoding="utf-8")).get("x-family")
+                except (OSError, ValueError):
+                    family = None
+                if isinstance(family, dict) and family.get("auto_start") is False:
+                    cached = False
+                break
+            self._manifest_autostart_value = cached
+        return cached
 
     def message(self, template: str, **extra: Any) -> str:
         return template.format(title=self.title, package=self.package, prefix=self.prefix, data_dir_env=self.data_dir_env or "the data folder variable",

@@ -990,3 +990,32 @@ def test_run_bridge_refuses_a_non_local_url(data_dir):
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
                           env={**os.environ, "FAKE_URL": "http://example.com:1", "PYTHONPATH": root})
     assert done.returncode != 0 and "only connects to the local server" in done.stderr
+
+
+def test_manifest_can_keep_a_call_from_starting_the_app(tmp_path, monkeypatch):
+    """An app that declares ``auto_start: false`` is started by the person only: the bridge does not wake it,
+    unless ``<APP>_BRIDGE_AUTOSTART`` says otherwise."""
+    monkeypatch.delenv("QUIET_BRIDGE_AUTOSTART", raising=False)
+    quiet = tmp_path / "quiet"
+    quiet.mkdir()
+    (quiet / "faustus-plugin.json").write_text('{"id": "quiet", "x-family": {"auto_start": false}}', encoding="utf-8")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "faustus-plugin.json").write_text('{"id": "plain", "x-family": {"copilot": true}}', encoding="utf-8")
+
+    def make(root):
+        return CatalogBridge(app="quiet", service="quiet-hoard", package="quiet_hoard", default_port=59999, root=root)
+
+    assert make(quiet).autostart_enabled() is False
+    assert make(plain).autostart_enabled() is True
+    assert make(tmp_path / "nowhere").autostart_enabled() is True          # no manifest: as before
+
+    started = []
+    monkeypatch.setattr(bridge, "ensure_running", lambda *a, **k: started.append(a) or True)
+    monkeypatch.setattr(bridge, "_healthy", lambda port, service: False)
+    assert make(quiet).start_app() is False and not started               # a call never launches it
+
+    monkeypatch.setenv("QUIET_BRIDGE_AUTOSTART", "1")
+    assert make(quiet).autostart_enabled() is True                        # the explicit switch still wins
+    monkeypatch.setenv("QUIET_BRIDGE_AUTOSTART", "0")
+    assert make(plain).autostart_enabled() is False
