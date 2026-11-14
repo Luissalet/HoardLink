@@ -245,7 +245,7 @@ def test_a_server_that_attaches_the_shelf_directly_counts_as_serving(tmp_path):
 
     from hoard_link.hub.skills import _serves
 
-    (tmp_path / "mcp_server.py").write_text("from app.hoard_link import skills\nskills.attach(server, 'app', root=__file__)", encoding="utf-8")
+    (tmp_path / "mcp_server.py").write_text("from app.hoard_link.bridge import CatalogBridge\nfrom app.hoard_link import skills\nskills.attach(server, 'app', root=__file__)", encoding="utf-8")
     manifest = tmp_path / "faustus-plugin.json"
     manifest.write_text('{"id": "app", "mcp": {"args": ["-I", "{APP_DIR}/mcp_server.py"]}}', encoding="utf-8")
     app = SimpleNamespace(folder=str(tmp_path), manifest_path=str(manifest))
