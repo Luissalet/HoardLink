@@ -118,3 +118,11 @@ server object exists (`mcp` 1.x `Server` / `FastMCP`, 2.x `Server` / `MCPServer`
 prompts, answered from the copy. A bridge that answers MCP's JSON-RPC itself uses `shelf = skills.raw("myapp",
 root=__file__)`: `shelf.answer(method, params)` before its own dispatch and `shelf.extend(method, result)` on what it
 returns. Both do nothing under pytest, with `HOARD_SKILLS=0` or with an empty shelf, and never raise.
+
+An app that absorbed others keeps their old names as identities (`compatibility/<id>/faustus-plugin.json`, each with its
+own `skills` block and its own data folder). The server an identity starts is the owner's `compat_mcp` module, which calls
+`skills.attach(server, "<id>", root=<the identity's folder>, data_dir=<its data folder>)` for the module it serves, so an
+agent that still connects by the old name receives that identity's skills. The Skills tab reads the program the manifest
+starts in the owner's folder, or the file a placeholder default of the manifest names (Writer's Node adapter), and marks the
+identity as handing its skills out when that program does. Writer's adapter (`electron/aibridge/skills.ts`) reads the same
+copy: `WH_SKILLS_DIR` (the manifests pass `{DATA_DIR}/skills`), else `backups/skills` beside the token's folder.
