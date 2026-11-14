@@ -229,7 +229,7 @@ class SkillsFacet(Facet):
                 "hub_skills_overview": lambda a: self.overview(), "hub_skills_library": library, "hub_skill_read": read, "hub_skills_assign": assign}
 
 
-_HANDS_OUT = ("family_skills", "installSkills", "skillCall", "skills_list")
+_HANDS_OUT = ("family_skills", "installSkills", "skillCall", "skills_list", "skills.attach(", "skills.raw(")
 
 
 def _shared_bridge(folder: str) -> bool:
@@ -252,18 +252,42 @@ def _serves(app: Any) -> bool:
     read, and it either is the shared bridge (Python or Node) in a copy that does it, or does it itself."""
     try:
         with open(app.manifest_path, encoding="utf-8-sig") as fh:
-            args = [str(a) for a in ((json.load(fh).get("mcp") or {}).get("args") or [])]
+            manifest = json.load(fh)
+        args = [str(a) for a in ((manifest.get("mcp") or {}).get("args") or [])]
     except (OSError, ValueError, AttributeError):
         return False
+    folders = [app.folder]
+    holder = os.path.dirname(os.path.normpath(app.folder))
+    if os.path.basename(holder) == "compatibility":
+        folders.append(os.path.dirname(holder))            # a former app that lives on as a module of the app that absorbed it
     entry = ""
-    for i, arg in enumerate(args):
-        if arg == "-m" and i + 1 < len(args):
-            entry = os.path.join(app.folder, *args[i + 1].split(".")) + ".py"
+    for folder in folders:
+        for i, arg in enumerate(args):
+            if arg == "-m" and i + 1 < len(args):
+                entry = os.path.join(folder, *args[i + 1].split(".")) + ".py"
+                break
+            found = re.search(r"\}[/\\]([\w./\\ -]+\.(?:py|mjs|js))$", arg)
+            if found:
+                entry = os.path.join(folder, *re.split(r"[/\\]", found.group(1)))
+                break
+        if entry and os.path.isfile(entry):
             break
-        found = re.search(r"\}[/\\]([\w./\\ -]+\.(?:py|mjs|js))$", arg)
-        if found:
-            entry = os.path.join(app.folder, *re.split(r"[/\\]", found.group(1)))
-            break
+    if not (entry and os.path.isfile(entry)):                # a program named by a placeholder of the manifest's own defaults
+        values = {str(k): str(v) for k, v in (manifest.get("defaults") or {}).items()}
+        values.update(COMPAT_DIR=app.folder)
+        for folder in folders:
+            for arg in args:
+                text = arg
+                for _ in range(6):
+                    for key, value in values.items():
+                        text = text.replace("{" + key + "}", value)
+                    text = text.replace("{" + next((p for p in manifest.get("placeholders") or [] if str(p).endswith("_DIR")), "_") + "}", folder)
+                text = os.path.normpath(os.path.expandvars(text))
+                if "{" not in text and text.lower().endswith((".cjs", ".mjs", ".js", ".py")) and os.path.isfile(text):
+                    entry = text
+                    break
+            if entry and os.path.isfile(entry):
+                break
     sources = []
     for path in (entry, os.path.join(os.path.dirname(entry), "server.mjs")) if entry else ():
         try:

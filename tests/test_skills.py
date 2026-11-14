@@ -206,3 +206,49 @@ def test_a_bridge_that_speaks_json_rpc_by_hand_is_given_the_shelf(tmp_path):
     assert bridge.answer("tools/call", {"name": "ping"}) is None and bridge.answer("tools/list") is None
     assert [p["name"] for p in bridge.answer("prompts/list")["prompts"]] == ["skill-alpha"]
     assert "Do alpha." in bridge.answer("prompts/get", {"name": "skill-alpha"})["messages"][0]["content"]["text"]
+
+def test_a_former_app_that_lives_on_as_a_module_is_covered_by_the_server_its_owner_runs(tmp_path):
+    from types import SimpleNamespace
+
+    from hoard_link.hub.skills import _serves
+
+    owner = tmp_path / "owner"
+    (owner / "owner_pkg").mkdir(parents=True)
+    (owner / "owner_pkg" / "compat_mcp.py").write_text("from owner_pkg.hoard_link import skills as _family_skills\n_family_skills.attach(server, 'old')", encoding="utf-8")
+    folder = owner / "compatibility" / "old"
+    folder.mkdir(parents=True)
+    manifest = folder / "faustus-plugin.json"
+    manifest.write_text('{"id": "old", "mcp": {"args": ["-I", "-m", "owner_pkg.compat_mcp", "--module", "old"]}}', encoding="utf-8")
+    assert _serves(SimpleNamespace(folder=str(folder), manifest_path=str(manifest)))
+    (owner / "owner_pkg" / "compat_mcp.py").write_text("server = Server('old')", encoding="utf-8")
+    assert not _serves(SimpleNamespace(folder=str(folder), manifest_path=str(manifest)))
+
+
+def test_a_program_named_by_a_placeholder_default_is_read_too(tmp_path):
+    from types import SimpleNamespace
+
+    from hoard_link.hub.skills import _serves
+
+    owner = tmp_path / "owner"
+    (owner / "dist").mkdir(parents=True)
+    (owner / "dist" / "adapter.cjs").write_text("function answer() { return 'skills_list'; }", encoding="utf-8")
+    manifest = owner / "faustus-plugin.json"
+    manifest.write_text('{"id": "w", "placeholders": ["OWNER_DIR", "ADAPTER"], "defaults": {"ADAPTER": "{OWNER_DIR}/dist/adapter.cjs"}, '
+                        '"mcp": {"command": "node", "args": ["{ADAPTER}"]}}', encoding="utf-8")
+    app = SimpleNamespace(folder=str(owner), manifest_path=str(manifest))
+    assert _serves(app)
+    (owner / "dist" / "adapter.cjs").write_text("function answer() { return 1; }", encoding="utf-8")
+    assert not _serves(app)
+
+def test_a_server_that_attaches_the_shelf_directly_counts_as_serving(tmp_path):
+    from types import SimpleNamespace
+
+    from hoard_link.hub.skills import _serves
+
+    (tmp_path / "mcp_server.py").write_text("from app.hoard_link import skills\nskills.attach(server, 'app', root=__file__)", encoding="utf-8")
+    manifest = tmp_path / "faustus-plugin.json"
+    manifest.write_text('{"id": "app", "mcp": {"args": ["-I", "{APP_DIR}/mcp_server.py"]}}', encoding="utf-8")
+    app = SimpleNamespace(folder=str(tmp_path), manifest_path=str(manifest))
+    assert _serves(app)
+    (tmp_path / "mcp_server.py").write_text("server = Server('app')", encoding="utf-8")
+    assert not _serves(app)
