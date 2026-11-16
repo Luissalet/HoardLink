@@ -57,6 +57,7 @@ from . import agora_channels
 from . import agora_ranks
 from . import agora_social
 from . import agora_debate
+from . import agora_review
 from . import agora_live
 from .facets import Facet, Reply, Request
 
@@ -199,6 +200,8 @@ DECLARED_MODEL_MIGRATION = """
     ALTER TABLE coordination_members ADD COLUMN declared_at TEXT;
 """
 MIGRATIONS.append(DECLARED_MODEL_MIGRATION)
+# the diff of a delivery, comments on its lines and its guided reading (agora_review.py)
+MIGRATIONS.append(agora_review.REVIEW_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -3203,6 +3206,9 @@ class Agora:
 # debate_open, debate_finding, debate_verify, debate_challenge, debate_reject, debate_close, debate_show, debate_list
 for _name, _fn in agora_debate.OPERATIONS.items():
     setattr(Agora, _name, _space_operation(_fn))
+# review_diff, review_comments, review_comment_send, review_guide
+for _name, _fn in agora_review.OPERATIONS.items():
+    setattr(Agora, _name, _space_operation(_fn))
 # servers, guild, channels, channel_create/update/post/read, seen, feed, pulse, space_meta_set
 for _name, _fn in agora_channels.OPERATIONS.items():
     setattr(Agora, _name, _space_operation(_fn))
@@ -3476,6 +3482,7 @@ TOOLS: list[dict[str, Any]] = [
                              "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
 ]
 TOOLS.extend(agora_debate.tools(_schema, _A))
+TOOLS.extend(agora_review.tools(_schema, _A))
 TOOLS.extend(agora_channels.tools(_schema, _A))
 
 for _tool in TOOLS:
@@ -3498,7 +3505,7 @@ TOOLS.extend([
 
 _WRITE_OPS = ("space_create", "space_update", "checkpoint", "heartbeat", "sync", "task_add", "task_edit", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
-              "usage_report", "orphan_sweep", "task_deps", *agora_debate.WRITE_OPS, *agora_channels.WRITE_OPS)
+              "usage_report", "orphan_sweep", "task_deps", *agora_debate.WRITE_OPS, *agora_review.WRITE_OPS, *agora_channels.WRITE_OPS)
 
 
 def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -3513,7 +3520,7 @@ class AgoraFacet(Facet):
     id = "agora"
     # agora_blocks.js paints submission_blocks / per-block comments without editing agora.js (#116 lock).
     # agora_debate.js paints the findings board of a thread's debates the same way.
-    ui_scripts = ("agora.js", "agora_blocks.js", "agora_debate.js")
+    ui_scripts = ("agora.js", "agora_blocks.js", "agora_debate.js", "agora_review.js")
 
     def __init__(self, hub: Any):
         super().__init__(hub)
@@ -3556,6 +3563,8 @@ class AgoraFacet(Facet):
         self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
+        self.agora.review_chat = lambda body: hub.link.chat("agora-review", body)   # the guided review asks the family's model
+        self.agora.review_session_hook = self._review_session
         self.agora.mention_hook = self._notify_mention      # an agent naming the person in a channel reaches them too
 
         self._watch: Optional[agent_watch.AgentWatch] = None
@@ -3699,6 +3708,17 @@ class AgoraFacet(Facet):
         self._enrich(out, out["waiting"]["progress"])
         out["waiting"]["progress"] = [t for t in out["waiting"]["progress"] if t["activity"]["state"] == "stalled"]
         return out
+
+    def _review_session(self, agent: str) -> Optional[dict[str, Any]]:
+        """The console session running as ``agent`` (a worker started from the Ágora), when there is one: where a
+        review's comments are read, since a session reads its inbox between steps."""
+        console = self.hub.facet("agora_console") if hasattr(self.hub, "facet") else None
+        if console is None:
+            return None
+        for row in console._worker_rows():
+            if str(row.get("agent_id") or "") == agent and row.get("state") in ("running", "starting"):
+                return {"worker_id": row.get("id"), "state": row.get("state"), "via": "inbox mention"}
+        return None
 
     def _notify_mention(self, where: dict[str, Any], agent: str, body: str) -> None:
         """An agent named the person in a channel or thread: tell them, once per conversation every ten minutes. It goes
@@ -3853,6 +3873,13 @@ class AgoraFacet(Facet):
             return self._run(ag.locks, q)
         if p == "/api/agora/decisions":
             return self._run(ag.decisions, q)
+        if p in ("/api/agora/review_diff", "/api/agora/review_comments"):
+            for key in ("task_id", "max_lines"):
+                if key in q and re.fullmatch(r"[0-9]+", q[key]):
+                    q[key] = int(q[key])
+            if "summary_only" in q:
+                q["summary_only"] = str(q["summary_only"]).lower() in ("1", "true", "yes")
+            return self._run(getattr(ag, p.rsplit("/", 1)[1]), q)
         if p == "/api/agora/debates":
             return self._run(ag.debate_list, q)
         if re.fullmatch(r"/api/agora/debates/[0-9]+", p):
@@ -3989,6 +4016,7 @@ class AgoraFacet(Facet):
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
             "hub_agora_live": wrap(self._live),
             **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_debate.OPERATIONS},
+            **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_review.OPERATIONS},
             **{f"hub_agora_{op}": wrap({"guild": self._guild, "servers": self._servers}.get(op) or getattr(ag, op))
                for op in agora_channels.OPERATIONS},
             "hub_agora_folders": wrap(agora_channels.folders),

@@ -65,7 +65,7 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 - Fleet view that reconciles declared apps, jobs, rules and watchers into Today, Waiting for you, Blocked and Paused.
 
 **Agora**
-- The shared workspace of the coding agents and the person: heartbeats, tasks (open, claimed, in progress, review, approved, done) with all-or-nothing locks, threads, debates with evidence, decision log, reviews bound to submission revisions, checkpoints, timelines and an inbox with long poll.
+- The shared workspace of the coding agents and the person: heartbeats, tasks (open, claimed, in progress, review, approved, done) with all-or-nothing locks, threads, debates with evidence, decision log, reviews bound to submission revisions (with the diff of the delivery, comments on its lines sent to whoever delivered, and a guided review that orders the diff into chapters with the family's model), checkpoints, timelines and an inbox with long poll.
 - Spaces read as chat servers with channels, mentions, reactions, files, members and ranks.
 - A live view with one cursor per active agent, an observer of Codex, Cursor and Claude Code transcripts, and a native Tauri console (also at `/agora/`) that launches worker sessions of each provider, including Faustus workers, with receipts, continue and stop.
 - Reference: `docs/AGORA.md`.

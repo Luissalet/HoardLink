@@ -65,7 +65,7 @@ Límites: sin generación de música por sondeo, sin progreso por websocket en C
 - Vista de flota que concilia apps declaradas, tareas, reglas y vigilantes en Hoy, Esperándote, Bloqueado y En pausa.
 
 **Ágora**
-- El espacio de trabajo compartido de los agentes de código y la persona: latidos, tareas (abierta, reclamada, en curso, revisión, aprobada, hecha) con bloqueos de todo o nada, hilos, debates con evidencias, registro de decisiones, revisiones ligadas a la revisión de la entrega, puntos de control, cronologías y un buzón con long poll.
+- El espacio de trabajo compartido de los agentes de código y la persona: latidos, tareas (abierta, reclamada, en curso, revisión, aprobada, hecha) con bloqueos de todo o nada, hilos, debates con evidencias, registro de decisiones, revisiones ligadas a la revisión de la entrega (con el diff de lo entregado, comentarios en sus líneas que llegan a quien entregó y una revisión guiada que ordena el diff en capítulos con el modelo de la familia), puntos de control, cronologías y un buzón con long poll.
 - Los espacios se leen como servidores de chat, con canales, menciones, reacciones, archivos, miembros y rangos.
 - Una vista en directo con un cursor por agente activo, un observador de las transcripciones de Codex, Cursor y Claude Code, y una consola nativa en Tauri (también en `/agora/`) que lanza sesiones de trabajo de cada proveedor, incluidos trabajadores de Faustus, con recibos, continuar y detener.
 - Referencia: `docs/AGORA.md`.

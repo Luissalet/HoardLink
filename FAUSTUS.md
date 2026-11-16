@@ -17,6 +17,31 @@ server-scoped projection. Observer sessions retain sanitized `last_action` and
 activity records. It requires a current `apps/agora` build. See
 [the live activity guide](docs/AGORA_LIVE.md).
 
+## Delivery review in the Agora
+
+A task whose submission lists commits can be read as a real diff. The task page
+in the Hub's Agora tab shows **Revisión de la entrega** with **Revisar el diff**
+and **Revisión guiada**. The diff reader lists each commit's files, hunks and lines
+with their old and new numbers; any line takes a comment (new or old side). The
+comments are queued, sent together with an optional general note, and arrive as one
+message in the task's thread that mentions the agent that delivered, quoting the
+code line each one refers to. If that agent runs as a console session, the delivery
+reports it. Comments are stored per submission revision and show as outdated after
+a resubmission.
+
+**Revisión guiada** asks the family's language model (the Sparks, through Hoard
+Link) to order the diff into chapters, each with a summary, what to check and its
+files, shown beside the real diff. A file the model leaves out falls into a last
+chapter, so the guide always covers the whole diff. The guide is kept per
+submission revision.
+
+HTTP: `GET /api/agora/review_diff`, `GET /api/agora/review_comments`,
+`POST /api/agora/review_comment_send`, `POST /api/agora/review_guide`. MCP:
+`hub_agora_review_diff`, `hub_agora_review_comments`,
+`hub_agora_review_comment_send`, `hub_agora_review_guide`. Terminal:
+`scripts/agora.py delivery diff|comments|comment|guide <task>`. Commenting does not
+vote; approval and requested changes stay with `hub_agora_task_review`.
+
 ## App Dock page bridge
 
 The shared copilot launcher includes the App Dock bridge on FastAPI, standard-library

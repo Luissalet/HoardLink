@@ -529,6 +529,96 @@ def debate_request(a: argparse.Namespace, ag: str | None, p: argparse.ArgumentPa
     return call("GET", "/api/agora/debates?" + urllib.parse.urlencode(q))
 
 
+def review_request(a: argparse.Namespace, ag: str | None, p: argparse.ArgumentParser) -> dict:
+    """``agora review diff|comments|comment|guide`` → the hub's delivery-review routes."""
+    v = a.rcmd
+    if v in ("diff", "comments"):
+        q = {"task_id": a.task}
+        if v == "diff":
+            q.update({k: val for k, val in (("commit", a.commit), ("path", a.path), ("max_lines", a.max_lines)) if val})
+            if a.summary:
+                q["summary_only"] = "1"
+        elif a.revision:
+            q["revision"] = a.revision
+        return call("GET", f"/api/agora/review_{v}?" + urllib.parse.urlencode(q))
+    if v == "guide":
+        return call("POST", "/api/agora/review_guide", {"agent": ag, "task_id": a.task, "refresh": a.refresh,
+                                                         "only_cached": a.cached})
+    comments: list = []
+    if a.comments_file:
+        try:
+            raw = sys.stdin.read() if a.comments_file == "-" else Path(a.comments_file).read_text(encoding="utf-8-sig")
+            loaded = json.loads(raw)
+        except (OSError, ValueError) as exc:
+            p.error(f"--comments-file necesita JSON UTF-8 válido: {exc}")
+        comments.extend(loaded if isinstance(loaded, list) else [loaded])
+    text = text_arg(a, "body")
+    if a.path:
+        if not a.line or not text:
+            p.error("review comment con --path necesita --line y --body")
+        one = {"path": a.path, "line": a.line, "body": text, "side": a.side}
+        if a.commit:
+            one["commit"] = a.commit
+        if a.end_line:
+            one["end_line"] = a.end_line
+        comments.append(one)
+        text = None
+    body = {"agent": ag, "task_id": a.task, "comments": comments}
+    if text:
+        body["body"] = text
+    if a.revision:
+        body["expected_submission_revision"] = a.revision
+    return call("POST", "/api/agora/review_comment_send", body)
+
+
+def print_review(r: dict, cmd: str) -> None:
+    if cmd == "comment":
+        print(f"ok · {r.get('count', 0)} comentario(s) enviados en la entrega r{r.get('submission_revision')} · "
+              f"{(r.get('delivery') or {}).get('detail', '')}")
+        return
+    if cmd == "guide":
+        g = r.get("guide")
+        if not g:
+            print("ok · sin guía todavía (quita --cached para pedirla al modelo)")
+            return
+        print(f"ok · guía de {g.get('model') or 'el modelo'} para la entrega r{g.get('submission_revision')}"
+              f"{' (guardada)' if r.get('cached') else ''}")
+        if g.get("summary"):
+            print("  " + short(g["summary"], 400))
+        for i, c in enumerate(g.get("chapters") or [], 1):
+            print(f"  {i}. {c['title']} — {', '.join(c['files'])}")
+            print(f"     {short(c.get('summary'), 240)}")
+            if c.get("check"):
+                print(f"     comprobar: {short(c['check'], 200)}")
+        return
+    if cmd == "comments":
+        for c in r.get("comments") or []:
+            span = c["line"] if not c.get("end_line") else f"{c['line']}-{c['end_line']}"
+            old = " · de una entrega anterior" if c.get("outdated") else ""
+            print(f"  #{c['id']} {c['author']} · {c['commit'][:10]} {c['path']}:{span} ({c['side']}){old}")
+            print(f"      > {short(c.get('code'), 120)}")
+            print(f"      {short(c['body'], 300)}")
+        print(f"ok · {r.get('count', 0)} comentario(s)")
+        return
+    print(f"ok · tarea #{r['task_id']} {r.get('title', '')} · entrega r{r['submission_revision']} · "
+          f"{len(r.get('comments') or [])} comentario(s)")
+    for c in r.get("commits") or []:
+        if c.get("error"):
+            print(f"  {c['short']}: {c['error']}")
+            continue
+        st = c.get("stats") or {}
+        print(f"  {c['short']} {c.get('subject', '')} · {st.get('files', 0)} fichero(s) +{st.get('additions', 0)} -{st.get('deletions', 0)}")
+        for f in c.get("files") or []:
+            print(f"    [{f['status']}] {f['path']} +{f['additions']} -{f['deletions']}{' (binario)' if f['binary'] else ''}")
+            for h in f.get("hunks") or []:
+                print(f"      {h['header']}")
+                for ln in h["lines"]:
+                    mark = {"add": "+", "del": "-", "ctx": " "}[ln["t"]]
+                    old = ln["old"] if ln["old"] is not None else ""
+                    new = ln["new"] if ln["new"] is not None else ""
+                    print(f"      {old:>5} {new:>5} {mark}{ln['text']}")
+
+
 def print_debate(r: dict) -> None:
     """One debate (or each listed one): findings grouped by status with who verifies, challenges or rejects."""
     if isinstance(r.get("finding"), dict):        # filed, amended, verified, challenged or rejected: one line
@@ -734,6 +824,22 @@ def main(argv: list[str] | None = None) -> int:
     d = dsub.add_parser("show", help="un debate: hallazgos por estado, quién verifica qué, rondas"); d.add_argument("debate", type=int)
     d = dsub.add_parser("list", help="debates (abiertos primero)"); d.add_argument("--thread", type=int); d.add_argument("--task", type=int)
     d.add_argument("--status", choices=["open", "closed"])
+    s = sub.add_parser("delivery", help="la entrega de una tarea en revisión, con comentarios en línea: diff|comments|comment|guide")
+    rsub = s.add_subparsers(dest="rcmd", required=True)
+    d = rsub.add_parser("diff", help="el diff de los commits de la entrega con el número de cada línea")
+    d.add_argument("task", type=int); d.add_argument("--commit"); d.add_argument("--path")
+    d.add_argument("--max-lines", type=int); d.add_argument("--summary", action="store_true", help="solo contadores por fichero")
+    d = rsub.add_parser("comments", help="comentarios en línea dejados en la entrega")
+    d.add_argument("task", type=int); d.add_argument("--revision", help="una revisión de la entrega, o 'all'")
+    d = rsub.add_parser("comment", help="comenta líneas del diff y las envía a quien entregó (un solo mensaje en el hilo)")
+    d.add_argument("task", type=int); d.add_argument("--path"); d.add_argument("--line", type=int)
+    d.add_argument("--end-line", type=int); d.add_argument("--side", choices=["new", "old"], default="new")
+    d.add_argument("--commit"); texts(d, "body")
+    d.add_argument("--comments-file", help="JSON UTF-8: lista de {commit, path, line, side, end_line, body}")
+    d.add_argument("--revision", type=int, help="rechaza el envío si la entrega ya cambió")
+    d = rsub.add_parser("guide", help="revisión guiada: el modelo de la familia ordena el diff en capítulos")
+    d.add_argument("task", type=int); d.add_argument("--refresh", action="store_true")
+    d.add_argument("--cached", action="store_true", help="solo la guardada, sin llamar al modelo")
     a = p.parse_args(argv)
     for key, value in list(vars(a).items()):
         if isinstance(value, str) and not key.endswith("_file"):
@@ -743,7 +849,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _SELECTED_SPACE = a.space
     reads = {"members", "ranks", "file", "servers", "channels", "read", "feed", "search", "spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
-    if a.cmd not in reads and not (a.cmd == "debate" and a.dcmd in ("show", "list")) and not a.agent:
+    if a.cmd not in reads and not (a.cmd == "debate" and a.dcmd in ("show", "list")) and not (a.cmd == "delivery" and a.rcmd in ("diff", "comments")) and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
     c = a.cmd
@@ -1002,6 +1108,8 @@ def main(argv: list[str] | None = None) -> int:
         r = call("GET", "/api/agora/tasks" + ("?" + urllib.parse.urlencode(q) if q else ""))
     elif c == "debate":
         r = debate_request(a, ag, p)
+    elif c == "delivery":
+        r = review_request(a, ag, p)
     else:
         r = call("GET", "/api/agora/decisions")
 
@@ -1144,6 +1252,8 @@ def main(argv: list[str] | None = None) -> int:
         print_conversation(r)
     elif c == "debate":
         print_debate(r)
+    elif c == "delivery":
+        print_review(r, a.rcmd)
     elif c == "tasks":
         print_board({"tasks": r.get("tasks", [])})
     elif c == "orphans":
