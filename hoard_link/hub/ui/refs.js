@@ -39,19 +39,19 @@
       .rf-group { margin-top: 10px; }
       .rf-ghead { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 4px; }
       .rf-ghead img { width: 20px; height: 20px; border-radius: 5px; object-fit: cover; background: var(--hoard-sunken); }
-      .rf-ghead a { color: var(--blue); font-weight: 400; font-size: 12px; text-decoration: none; }
+      .rf-ghead a { color: var(--blue); font-weight: 400; font-size: var(--hub-fs-1, 12px); text-decoration: none; }
       .rf-node { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 5px 9px; margin-bottom: 4px; border: 1px solid var(--line); border-radius: 9px; background: var(--card-2); cursor: pointer; }
       .rf-node:hover { border-color: var(--hoard-border-hover); }
       .rf-node.root { border-color: var(--accent); cursor: default; }
       .rf-node .rf-label { font-weight: 600; }
-      .rf-node .rf-uri { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
-      .rf-rel { color: var(--accent-2); font-size: 11.5px; }
-      .rf-edges { margin-top: 10px; display: grid; gap: 3px; font-size: 12.5px; }
+      .rf-node .rf-uri { color: var(--muted); font-family: var(--mono); font-size: var(--hub-fs-1, 12px); }
+      .rf-rel { color: var(--accent-2); font-size: var(--hub-fs-1, 12px); }
+      .rf-edges { margin-top: 10px; display: grid; gap: 3px; font-size: var(--hub-fs-1, 12px); }
       .rf-edge { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 3px 0; border-top: 1px solid var(--line); }
       .rf-edge .rf-end { color: var(--text); cursor: pointer; } .rf-edge .rf-end:hover { color: var(--accent-2); }
       .rf-edge .rf-arrow { color: var(--muted); font-family: var(--mono); }
-      .rf-edge .rf-meta { color: var(--muted); font-size: 11.5px; margin-left: auto; }
-      .rf-title { margin: 12px 0 4px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+      .rf-edge .rf-meta { color: var(--muted); font-size: var(--hub-fs-1, 12px); margin-left: auto; }
+      .rf-title { margin: 12px 0 4px; color: var(--muted); font-size: var(--hub-fs-1, 12px); text-transform: uppercase; letter-spacing: .4px; }
     `;
     document.head.appendChild(css);
   }

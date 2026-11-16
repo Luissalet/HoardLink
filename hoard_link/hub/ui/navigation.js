@@ -57,7 +57,7 @@
     agora: ['Tareas y debates de este proyecto.', 'Tasks and discussions for this project.'],
   };
   let spaces = [], spacesError = '', workspaceUrl = '', apps = [], ready = false;
-  let route = 'home', selecting = false, appsSignature = '';
+  let route = 'home', selecting = false, appsSignature = '', catalogActions = [];
   const activeView = () => groups.find(g => g.id === route)?.defaultView || route;
   const labels = value => es() ? value[0] : value[1];
   const facetButtons = () => [...document.querySelectorAll('#family-tabs .tab')];
@@ -99,15 +99,31 @@
   function navigation() {
     const nav = $('#hub-navigation'); nav.replaceChildren();
     const activeGroup = route === 'search' ? 'search' : route === 'project' || route === 'agora' ? 'projects' : groups.some(g => g.id === route) ? route : groupFor(route).id;
-    for (const group of groups) {
-      const item = link(labels(group.label), '#hub/' + group.id, 'hub-nav-link');
-      item.prepend(icon(group.id));
-      if (activeGroup === group.id) item.setAttribute('aria-current', 'page');
-      nav.append(item);
+    // Three labelled sections: your own work, the tools you run, the shared environment.
+    const sections = [
+      [tr('Tu espacio', 'Your space'), ['home', 'projects', 'communication', 'search']],
+      [tr('Herramientas', 'Tools'), ['apps', 'automation']],
+      [tr('Entorno', 'Environment'), ['system']],
+    ];
+    for (const [title, ids] of sections) {
+      const section = node('div', 'hub-nav-group'); const label = node('p', 'hub-nav-label', title);
+      label.id = 'hub-nav-' + ids[0]; section.setAttribute('role', 'group'); section.setAttribute('aria-labelledby', label.id); section.append(label);
+      for (const id of ids) {
+        const group = groups.find(g => g.id === id);
+        const item = link(group ? labels(group.label) : tr('Buscar', 'Search'), '#hub/' + id, 'hub-nav-link' + (id === 'search' ? ' hub-nav-search' : ''));
+        item.prepend(icon(id));
+        if (activeGroup === id) item.setAttribute('aria-current', 'page');
+        section.append(item);
+      }
+      nav.append(section);
     }
-    const search = link(tr('Buscar', 'Search'), '#hub/search', 'hub-nav-link hub-nav-search'); search.prepend(icon('search')); if (route === 'search') search.setAttribute('aria-current','page'); nav.append(search);
-    $('#hub-sidebar-note').replaceChildren(link(tr('Ayuda y ajustes','Help and settings'),'#hub/help'));
-    $('#hub-global-search span').textContent = tr('Buscar apps, mensajes y herramientas', 'Search apps, messages and tools');
+    const note = $('#hub-sidebar-note'); note.replaceChildren(link(tr('Ayuda y ajustes','Help and settings'),'#hub/help'));
+    const theme = node('button', 'hub-theme-toggle ghost small'); theme.type = 'button';
+    const dark = document.documentElement.dataset.hubTheme !== 'light';
+    theme.textContent = dark ? tr('Tema claro', 'Light theme') : tr('Tema oscuro', 'Dark theme');
+    theme.setAttribute('aria-pressed', String(!dark)); theme.onclick = () => { window.hubSetTheme?.(dark ? 'light' : 'dark'); navigation(); };
+    note.append(theme);
+    $('#hub-global-search span').textContent = tr('Buscar o ejecutar…', 'Search or run…'); $('#hub-global-search').title = tr('Ir a una página, abrir o arrancar una app, buscar en el contenido', 'Go to a page, open or start an app, search content');
     for (const n of document.querySelectorAll('[data-hub-copy]')) n.textContent = ({state:tr('Estado','State'),catalog_actions:tr('Gestionar catálogo','Manage catalog'),startup_groups:tr('Grupos de arranque','Startup groups')})[n.dataset.hubCopy] || n.textContent;
     $('#hub-connections-heading').textContent = tr('Conexiones y motores','Connections and engines');
     $('#hub-connections-description').textContent = tr('Servicios compartidos por todas las aplicaciones.','Services shared across every application.');
@@ -297,6 +313,7 @@
     const parent = project ? groups[1] : group || ['search','help','today'].includes(route) ? null : groupFor(route);
     breadcrumb.hidden = !parent;
     if (parent) { breadcrumb.append(link(labels(parent.label), '#hub/' + parent.id), document.createTextNode(' / ' + title)); }
+    $('#hub-catalog-actions').append(...catalogActions);   // parked in the document while another page shows
     const actions = $('#hub-page-actions'); actions.replaceChildren();
     const landing = $('#hub-landing'); landing.replaceChildren();
     if (route === 'home') { landing.hidden = false; home(landing); }
@@ -316,7 +333,13 @@
         empty.hidden = found || !query;
       };
       const create = node('button', 'hub-primary-link', tr('Nuevo proyecto', 'New project')); create.onclick = () => {go('agora');window.HubFacets.ctx.bus.dispatchEvent(new Event('create-project-space'));}; actions.append(create);
-    } else if (route === 'apps') $('#hub-apps').hidden = false;
+    } else if (route === 'apps') {
+      $('#hub-apps').hidden = false;
+      // The page's own actions sit next to its title, not under a fold at the bottom of the toolbar.
+      const palette = node('button', 'ghost', tr('Acciones rápidas', 'Quick actions')); palette.type = 'button';
+      palette.append(node('kbd', '', 'Ctrl K')); palette.onclick = () => window.HubPalette?.open('actions');
+      actions.append(...catalogActions, palette);
+    }
     else if (activeView() === 'resources') $('#hub-resources').hidden = false;
     else {
       $('#family-panel').hidden = false; $('#family-body').hidden = false;
@@ -357,11 +380,13 @@
         ...spaces.filter(s=>[s.title,s.description].join(' ').toLocaleLowerCase().includes(q)).map(s=>({title:s.title,description:tr('Proyecto','Project'),href:'?space_id='+encodeURIComponent(s.id)+'#hub/project'})),
         ...[...groups.map(g=>({title:labels(g.label),href:'#hub/'+g.id})),...facetButtons().filter(b=>b.dataset.tab!=='agora').map(b=>({title:facetLabel(b.dataset.tab),href:'#hub/'+b.dataset.tab}))].filter(x=>x.title.toLocaleLowerCase().includes(q))].slice(0,12);
     };
+    window.hubProjects = () => spaces;
+    window.hubFacetLabel = facetLabel;
     window.hubNavigationView = () => ({section: activeView(), ...(route === 'project' || route === 'agora' ? {space_id: spaceId()} : {})});
     $('.hub-skip').onclick = event => { event.preventDefault(); $('#hub-content').focus(); $('#hub-content').scrollIntoView(); };
     const resourcePage = $('#hub-resources');
     for (const selector of ['#strip', '#gpu-panel', '#lane-panel']) resourcePage.append($(selector));
-    const systemIntro=node('div','hub-system-intro');systemIntro.append(node('h2','',tr('Faustus y Hoards','Faustus and Hoards')),node('p','',tr('Una aplicación parada está disponible bajo demanda. Un servicio sin estado confirmado necesita comprobarse; no significa que haya fallado.','A stopped app is available on demand. An unconfirmed service status needs checking; it does not mean failure.')));
+    const systemIntro=node('div','hub-system-intro');const stateHelp=node('details','hub-fold');stateHelp.append(node('summary','',tr('Qué significa cada estado','What each state means')),node('p','',tr('Una aplicación parada está disponible bajo demanda. Un servicio sin estado confirmado necesita comprobarse; no significa que haya fallado.','A stopped app is available on demand. An unconfirmed service status needs checking; it does not mean failure.')));systemIntro.append(node('h2','',tr('Faustus y Hoards','Faustus and Hoards')),stateHelp);
     const statusOverview=node('div','hub-home-status hub-system-overview');const statusTable=node('section','hub-hoards-status');statusTable.id='hub-hoards-status';
     resourcePage.prepend(systemIntro,statusOverview,statusTable);window.HubStatus?.overview(statusOverview);window.HubStatus?.table(statusTable);
     const categories=node('nav','hub-app-categories');categories.setAttribute('aria-label',tr('Aplicaciones por uso','Applications by purpose'));
@@ -374,8 +399,10 @@
     const applyView=()=>{const v=savedView();$('#grid').hidden=v==='table';appTable.hidden=v!=='table';for(const b of viewSeg.children){b.setAttribute('aria-pressed',String(b.dataset.view===v));b.textContent=b.dataset.view==='table'?tr('Tabla','Table'):tr('Mosaico','Tiles');}if(v==='table'&&!appTable.dataset.hubStatus)window.HubStatus?.table(appTable);};
     for(const v of ['tiles','table']){const b=node('button','');b.type='button';b.dataset.view=v;b.onclick=()=>{try{localStorage.setItem('hub.apps.view',v);}catch(_){}applyView();};viewSeg.append(b);}
     toolbar.append(viewSeg);applyView();$('#btn-lang').addEventListener('click',()=>setTimeout(applyView,0));
-    for (const selector of ['#btn-rescan', '#btn-start-all', '#btn-stop-all']) $('#hub-catalog-actions').append($(selector));
-    $('#hub-global-search').onclick = () => { go('search'); if (route === 'search') document.querySelector('.sr-q')?.focus(); };
+    catalogActions = ['#btn-start-all', '#btn-stop-all', '#btn-rescan'].map(selector => $(selector)).filter(Boolean);
+    $('.hub-catalog-actions').hidden = true;
+    // The header field opens the command palette (palette.js); without it, it still goes to the search page.
+    $('#hub-global-search').onclick = () => { if (window.HubPalette) { window.HubPalette.open(); return; } go('search'); if (route === 'search') document.querySelector('.sr-q')?.focus(); };
     const addResourceHeading = (root, title, description) => { const h = node('div', 'hub-section-heading'); const heading = node('h2', '', title); heading.id = 'hub-connections-heading'; h.append(heading); const p = node('p', 'hub-section-description', description); p.id = 'hub-connections-description'; root.prepend(h, p); };
     addResourceHeading($('#strip'), tr('Conexiones y motores', 'Connections and engines'), tr('Servicios compartidos por todas las aplicaciones.', 'Services shared across every application.'));
     $('#family-tabs').setAttribute('aria-label', tr('Herramientas', 'Tools'));

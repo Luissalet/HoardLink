@@ -499,6 +499,15 @@
     $(".act-stop", el).disabled = !a.stoppable && a.state !== "starting";
     $(".act-restart", el).hidden = !running;
     $(".act-restart", el).disabled = !a.launchable;
+    const es = lang === "es", kept = !!a.keep_alive;
+    const keepBtn = $(".act-keepalive", el), keepBadge = $(".keep-badge", el);
+    keepBtn.textContent = kept ? (es ? "Dejar de mantener viva" : "Stop keeping alive") : (es ? "Mantener viva" : "Keep alive");
+    keepBtn.setAttribute("aria-pressed", String(kept));
+    keepBtn.hidden = !kept && (!a.launchable || a.family?.auto_start === false || a.id === "baird");
+    keepBadge.hidden = !kept;
+    keepBadge.textContent = "↻";
+    keepBadge.setAttribute("aria-label", es ? "Siempre viva" : "Kept alive");
+    keepBadge.title = es ? "El Hub la arranca al iniciarse y la vuelve a arrancar si cae." : "The Hub starts it with itself and again if it falls.";
     $(".act-close", el).hidden = !wins;
   }
 
@@ -537,6 +546,18 @@
     await refresh();
   }
   window.hubAppAction = appAction;
+  // The keep-alive list: the Hub starts these apps with itself and again whenever they fall.
+  async function keepAlive(appId, keep) {
+    const es = lang === "es";
+    const name = snapshot?.apps.find((a) => a.id === appId)?.name || appId;
+    try {
+      const res = await api("/api/keep-alive", { app: appId, keep });
+      if (res.ok) toast(`${name}: ${keep ? (es ? "se mantiene viva" : "kept alive") : (es ? "ya no se mantiene viva" : "no longer kept alive")}`, "ok");
+      else toast(`${name}: ${res.error || "error"}`, "err");
+    } catch (e) { toast(String(e), "err"); }
+    await refresh();
+  }
+  window.hubKeepAlive = keepAlive;
   window.hubOpenLog = (appId) => openLog(appId);
   window.hubAppFolder = (appId) => api(`/api/apps/${encodeURIComponent(appId)}/folder`, {}).then((r) => { if (!r.ok) toast(r.error, "err"); });
   window.hubFaustus = (action) => runFaustus(action);
@@ -557,6 +578,7 @@
     $(".act-stop", el).onclick = () => run("stop", {}, t("stopped"));
     $(".act-restart", el).onclick = () => run("restart", {}, t("started"));
     $(".act-close", el).onclick = () => run("close-windows", {}, t("closed"));
+    $(".act-keepalive", el).onclick = () => keepAlive(id(), !app()?.keep_alive);
     $(".act-folder", el).onclick = () => api(`/api/apps/${encodeURIComponent(id())}/folder`, {}).then((r) => { if (!r.ok) toast(r.error, "err"); });
     $(".act-log", el).onclick = () => openLog(id());
     $(".act-detail", el).onclick = () => { const a = app(); $("#detail-title").textContent = a.name; $("#detail-body").textContent = JSON.stringify(a, null, 2); $("#detail-dialog").showModal(); };
@@ -800,10 +822,12 @@
   // ---- top bar --------------------------------------------------------------------
   $("#search").addEventListener("input", (e) => { filter = e.target.value.trim().toLowerCase(); render(); });
   $("#btn-rescan").onclick = async () => { const r = await api("/api/apps/rescan", {}); toast(`${t("rescan")}: ${catalogApps(r.apps || []).length} apps`, "ok"); await refresh(); await refreshBackends(true); };
+  // Captured once: the page heading holds these buttons only while Applications is shown.
+  const startAllButton = $("#btn-start-all"), stopAllButton = $("#btn-stop-all");
   async function runBatch(action) {
     if (batchBusy || (action === "start" && faustusPending.size)) return;
     batchBusy = true;
-    const start = $("#btn-start-all"), stop = $("#btn-stop-all");
+    const start = startAllButton, stop = stopAllButton;
     start.disabled = stop.disabled = true;
     if (action === "stop") stop.textContent = t("stopping");
     render();

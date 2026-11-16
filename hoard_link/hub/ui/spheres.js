@@ -88,7 +88,7 @@
       .sphere-chip { display: inline-flex; align-items: center; gap: 7px; }
       .sphere-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; background: var(--sphere-color, #8a8f98); box-shadow: 0 0 8px var(--sphere-color, #8a8f98); flex: none; }
       .sphere-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 220px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px; box-shadow: 0 10px 28px rgba(0,0,0,.45); display: grid; gap: 2px; }
-      .sphere-menu button { display: flex; align-items: center; gap: 8px; text-align: left; width: 100%; background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 6px 9px; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+      .sphere-menu button { display: flex; align-items: center; gap: 8px; text-align: left; width: 100%; background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 6px 9px; color: var(--text); font: inherit; font-size: var(--hub-fs-2, 14px); cursor: pointer; }
       .sphere-menu button:hover { background: var(--card-2); }
       .sphere-menu button.on { border-color: var(--line); }
       .sphere-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
@@ -99,26 +99,26 @@
       #spheres-dialog .sp-body > .sp-main { overflow: auto; }
       #spheres-dialog .sp-wrap { display: grid; grid-template-columns: 190px 1fr; min-height: 0; overflow: hidden; }
       #spheres-dialog .sp-side { border-right: 1px solid var(--line); padding: 10px; display: grid; gap: 4px; align-content: start; overflow: auto; }
-      #spheres-dialog .sp-side button { display: flex; align-items: center; gap: 8px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 6px 9px; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+      #spheres-dialog .sp-side button { display: flex; align-items: center; gap: 8px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 6px 9px; color: var(--text); font: inherit; font-size: var(--hub-fs-2, 14px); cursor: pointer; }
       #spheres-dialog .sp-side button.on { background: var(--card-2); border-color: var(--line); }
       #spheres-dialog .sp-main { padding: 12px 16px; overflow: auto; display: grid; gap: 12px; align-content: start; }
       #spheres-dialog fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px 10px; margin: 0; min-width: 0; }
-      #spheres-dialog legend { color: var(--muted); font-size: 12px; padding: 0 6px; }
-      #spheres-dialog label.sp-f { display: grid; gap: 3px; font-size: 12.5px; }
-      #spheres-dialog label.sp-f > span { color: var(--muted); font-size: 12px; }
+      #spheres-dialog legend { color: var(--muted); font-size: var(--hub-fs-1, 12px); padding: 0 6px; }
+      #spheres-dialog label.sp-f { display: grid; gap: 3px; font-size: var(--hub-fs-1, 12px); }
+      #spheres-dialog label.sp-f > span { color: var(--muted); font-size: var(--hub-fs-1, 12px); }
       #spheres-dialog .sp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-      #spheres-dialog textarea, #spheres-dialog input[type=text], #spheres-dialog input[type=time], #spheres-dialog select { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; }
-      #spheres-dialog textarea { min-height: 52px; resize: vertical; font-family: var(--mono); font-size: 12px; }
+      #spheres-dialog textarea, #spheres-dialog input[type=text], #spheres-dialog input[type=time], #spheres-dialog select { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: var(--hub-fs-2, 14px); }
+      #spheres-dialog textarea { min-height: 52px; resize: vertical; font-family: var(--mono); font-size: var(--hub-fs-1, 12px); }
       #spheres-dialog textarea.json { min-height: 340px; width: 100%; }
       #spheres-dialog input[type=color] { width: 44px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
-      #spheres-dialog table.sp-route { border-collapse: collapse; font-size: 12.5px; }
+      #spheres-dialog table.sp-route { border-collapse: collapse; font-size: var(--hub-fs-1, 12px); }
       #spheres-dialog table.sp-route th, #spheres-dialog table.sp-route td { padding: 3px 12px 3px 0; text-align: left; font-weight: 500; }
       #spheres-dialog .sp-checks { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-      #spheres-dialog .sp-checks label { display: inline-flex; gap: 5px; align-items: center; font-size: 12.5px; }
+      #spheres-dialog .sp-checks label { display: inline-flex; gap: 5px; align-items: center; font-size: var(--hub-fs-1, 12px); }
       #spheres-dialog .dialog-head, #spheres-dialog .sp-foot { flex: none; }
       #spheres-dialog .sp-foot { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); }
-      #spheres-dialog .sp-err { color: var(--red); font-size: 12px; flex: 1; }
-      #spheres-dialog .sp-hint { color: var(--muted); font-size: 11.5px; }
+      #spheres-dialog .sp-err { color: var(--red); font-size: var(--hub-fs-1, 12px); flex: 1; }
+      #spheres-dialog .sp-hint { color: var(--muted); font-size: var(--hub-fs-1, 12px); }
       @media (max-width: 720px) { #spheres-dialog .sp-wrap { grid-template-columns: 1fr; } #spheres-dialog .sp-side { border-right: 0; border-bottom: 1px solid var(--line); grid-auto-flow: column; overflow-x: auto; } }
     `;
     document.head.appendChild(css);

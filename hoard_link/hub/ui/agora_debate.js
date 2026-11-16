@@ -61,13 +61,13 @@
     css.textContent = `
       .ag-debates { display: grid; gap: 10px; margin: 6px 0 10px; }
       .ag-deb-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      .ag-deb-head h4 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+      .ag-deb-head h4 { margin: 0; font-size: var(--hub-fs-1, 12px); text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
       .ag-deb { border: 1px solid var(--line, #333); border-radius: 10px; padding: 8px 10px; display: grid; gap: 8px; }
       .ag-deb-title { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-      .ag-deb-title b { font-size: 14px; }
-      .ag-deb-pill { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line, #444); color: var(--muted); }
+      .ag-deb-title b { font-size: var(--hub-fs-2, 14px); }
+      .ag-deb-pill { font-size: var(--hub-fs-1, 12px); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line, #444); color: var(--muted); }
       .ag-deb-pill.open { color: var(--green, #3fb950); border-color: currentColor; }
-      .ag-deb-cons { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+      .ag-deb-cons { font-size: var(--hub-fs-1, 12px); color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
       .ag-deb-cons span b { color: var(--text, inherit); }
       .ag-deb-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
       .ag-deb-col { border-radius: 8px; padding: 6px; display: grid; gap: 6px; align-content: start; min-height: 60px;
@@ -75,23 +75,23 @@
       .ag-deb-col.challenged { border-top-color: var(--amber, #d29922); }
       .ag-deb-col.verified { border-top-color: var(--green, #3fb950); }
       .ag-deb-col.rejected { border-top-color: var(--red, #f85149); }
-      .ag-deb-col h5 { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
-      .ag-fnd { border: 1px solid var(--line, #333); border-radius: 7px; padding: 6px 7px; display: grid; gap: 5px; font-size: 13px;
+      .ag-deb-col h5 { margin: 0; font-size: var(--hub-fs-1, 12px); text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+      .ag-fnd { border: 1px solid var(--line, #333); border-radius: 7px; padding: 6px 7px; display: grid; gap: 5px; font-size: var(--hub-fs-2, 14px);
                 background: var(--card, #161616); }
-      .ag-fnd-top { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
-      .ag-fnd-top b { color: var(--text, inherit); font-size: 12px; }
+      .ag-fnd-top { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
+      .ag-fnd-top b { color: var(--text, inherit); font-size: var(--hub-fs-1, 12px); }
       .ag-fnd-claim { white-space: pre-wrap; word-break: break-word; }
-      .ag-fnd ul { margin: 0; padding-left: 16px; font-size: 12px; }
-      .ag-fnd li code { font-size: 11px; word-break: break-all; }
-      .ag-fnd pre, .ag-deb pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11px; max-height: 180px; overflow: auto; }
-      .ag-fnd-who { font-size: 11px; color: var(--muted); }
+      .ag-fnd ul { margin: 0; padding-left: 16px; font-size: var(--hub-fs-1, 12px); }
+      .ag-fnd li code { font-size: var(--hub-fs-1, 12px); word-break: break-all; }
+      .ag-fnd pre, .ag-deb pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--hub-fs-1, 12px); max-height: 180px; overflow: auto; }
+      .ag-fnd-who { font-size: var(--hub-fs-1, 12px); color: var(--muted); }
       .ag-fnd-act { display: grid; gap: 4px; }
       .ag-fnd-act textarea, .ag-deb-form textarea, .ag-deb-form input { width: 100%; box-sizing: border-box; }
-      .ag-fnd-act textarea { min-height: 34px; resize: vertical; font-size: 12px; }
+      .ag-fnd-act textarea { min-height: 34px; resize: vertical; font-size: var(--hub-fs-1, 12px); }
       .ag-fnd-btns { display: flex; gap: 4px; flex-wrap: wrap; }
       .ag-deb-form { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line, #444); border-radius: 8px; }
       .ag-deb-form .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      .ag-deb details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+      .ag-deb details summary { cursor: pointer; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
     `;
     document.head.appendChild(css);
   }

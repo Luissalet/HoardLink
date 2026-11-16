@@ -57,6 +57,27 @@ updated library on their next ordinary restart.
 
 The `skills` block of `faustus-plugin.json` names the procedures of the family's skill library that fit this app's work: `hoard-daily-digest`, `hoard-family-recap`, `hoard-what-happened`, `hoard-meeting-prep`, `team-agent-orchestration`. The hub's Skills tab shows and changes them. This app does not hand them to connecting agents yet.
 
+## Apps kept alive
+
+The Hub keeps a list of apps that live as long as it does (`data/keep-alive.json`,
+by default Darwin, Links, Talos and Kafka). The serving Hub starts them when it
+comes up and checks them every minute, starting again any that fell, with a
+growing wait after failed starts. A stop made by hand holds until the app is
+started again or the Hub restarts. Apps whose manifest says `auto_start: false`
+are refused. `hub_keep_alive_status` lists each app with its state, attempts and
+whether it was stopped by hand; `hub_keep_alive_set` adds (`keep: true`) or
+removes an app. `GET/POST /api/keep-alive` is the same over HTTP, and each start
+is published as a `hub.keepalive.started` event.
+
+## Hub page and command palette
+
+The Hub page groups its sidebar in three sections and puts each page's actions
+next to its title. Ctrl+K (⌘K) opens a command palette that goes to any page,
+tab, app or project, or searches all content; its quick-actions mode opens,
+starts, stops, restarts or keeps alive an app, starts or stops everything,
+starts or stops Faustus, and switches theme (dark by default, light per
+browser) or language. Everything the palette runs is also an MCP tool of the Hub.
+
 ## Outbound mail service
 
 The Hub owns mail through its existing gateway and connected Faustus accounts. hub_mail_accounts checks outgoing configuration; hub_mail_compose saves a remote draft by default or sends only for explicit mode=send. to/cc/bcc, subject/body/html and absolute gateway-local attachment paths are supported. SMTP acceptance, partial delivery and unknown outcomes are distinguished. Python fam_mail.send and Node fam-services.mailSend call the authenticated gateway without retrying or switching senders. Ledger Cobros uses this service; automatic notice sending is off by default. See docs/commons/services.md#outbound-mail.

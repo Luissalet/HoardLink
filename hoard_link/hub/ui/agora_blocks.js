@@ -23,11 +23,11 @@
     css.id = "css-agora-blocks";
     css.textContent = `
       .ag-blocks { display: grid; gap: 8px; margin: 8px 0 12px; padding: 8px; border: 1px solid var(--border, #333); border-radius: 8px; }
-      .ag-blocks h4 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+      .ag-blocks h4 { margin: 0 0 4px; font-size: var(--hub-fs-1, 12px); text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
       .ag-block { border: 1px solid var(--border, #333); border-radius: 6px; padding: 8px; display: grid; gap: 6px; background: color-mix(in srgb, var(--panel, #1a1a1a) 92%, transparent); }
-      .ag-block-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: 13px; }
-      .ag-block-kind { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
-      .ag-block pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; max-height: 220px; overflow: auto; }
+      .ag-block-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: var(--hub-fs-2, 14px); }
+      .ag-block-kind { font-family: ui-monospace, monospace; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
+      .ag-block pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--hub-fs-1, 12px); max-height: 220px; overflow: auto; }
       .ag-block textarea { width: 100%; min-height: 52px; resize: vertical; }
     `;
     document.head.appendChild(css);

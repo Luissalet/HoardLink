@@ -6,12 +6,14 @@
 <title>Hoard Hub</title>
 <link rel="icon" href="/ui/hub-icon.png" type="image/png">
 <meta name="theme-color" content="#1c1a14">
+<script>try{if(localStorage.getItem('hub.theme')==='light'){document.documentElement.dataset.hubTheme='light';document.querySelector('meta[name="theme-color"]').content='#f6f3ec';}}catch(e){}</script>
 <link rel="stylesheet" href="/ui/hoard-theme.css">
 <link rel="stylesheet" href="/ui/style.css">
 <link rel="stylesheet" href="/ui/navigation.css">
   <link rel="stylesheet" href="/ui/interiors.css">
 <link rel="stylesheet" href="/ui/workspace.css">
 <link rel="stylesheet" href="/ui/compact.css">
+<link rel="stylesheet" href="/ui/design-system.css">
 </head>
 <body>
 <a class="hub-skip" href="#hub-content">Saltar al contenido / Skip to content</a>
@@ -208,6 +210,7 @@
     <div class="reason" hidden></div>
     <div class="actions">
       <span class="live-meta"></span>
+      <span class="keep-badge" hidden></span>
       <button class="primary act-window" data-i18n="open_window">Open</button>
       <details class="app-management"><summary data-i18n="manage_app">Manage</summary>
         <div class="app-menu">
@@ -216,6 +219,7 @@
           <button class="act-start" data-i18n="start">Start</button>
           <button class="act-stop danger" data-i18n="stop">Stop</button>
           <button class="act-restart ghost" data-i18n="restart">Restart</button>
+          <button class="act-keepalive ghost" aria-pressed="false">Keep alive</button>
           <button class="act-close ghost" data-i18n="close_windows">Close windows</button>
           <button class="act-folder ghost" data-i18n="folder">Folder</button>
           <button class="act-log ghost" data-i18n="log">Log</button>
@@ -264,6 +268,7 @@
 <script src="/ui/facets.js"></script>
 <script src="/ui/status.js"></script>
 <script src="/ui/navigation.js"></script>
+<script src="/ui/palette.js"></script>
 <script src="/ui/copilot.js"></script>
 <script src="/api/copilot/launcher.js"></script>
 </body>

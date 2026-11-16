@@ -35,7 +35,14 @@ Límites: sin generación de música por sondeo, sin progreso por websocket en C
 - Perfiles: conjuntos con nombre de apps, comandos externos (un ComfyUI por GPU, un llama-server) y ventanas de escritorio que se arrancan o paran a la vez, con exportación e importación en JSON.
 - `launch_overrides` permite que una máquina arranque una app de forma distinta a su manifiesto, por ejemplo una compilación de desarrollo.
 - Arranque al iniciar sesión en Windows sin permisos de administrador.
+- Mantener vivas: las apps de la lista (`data/keep-alive.json`; por defecto Darwin, Links, Talos y Kafka) se arrancan con el Hub y se vuelven a arrancar si caen, con una comprobación por minuto y una espera creciente tras un arranque fallido. Una parada hecha a mano se respeta hasta que la app se arranca de nuevo o el Hub se reinicia; las apps con `auto_start: false` nunca se mantienen vivas. Se activa desde Gestionar en cada app, desde la paleta de comandos o con `hub_keep_alive_set`.
 - Una barra de estado en cada página con Faustus (en marcha, puerto, abrir, arrancar, parar), cuántos Hoards corren y un medidor por GPU.
+
+**La página**
+- Una barra lateral en tres secciones con nombre (tu espacio, herramientas, entorno), una fila de pestañas por sección y las acciones de cada página junto a su título; las explicaciones y los ajustes poco usados van plegados.
+- Una escala tipográfica de seis pasos y un único estilo de tarjeta en todas las vistas.
+- Paleta de comandos (Ctrl+K / ⌘K): ir a cualquier página, pestaña, app o proyecto, o buscar en todo el contenido; en modo de acciones rápidas (Tab o `>`) abrir, arrancar, parar, reiniciar o mantener viva una app, arrancar o parar todo, arrancar o parar Faustus y cambiar de tema o de idioma.
+- Tema oscuro de la familia por defecto, con un tema claro que se guarda en cada navegador.
 
 **Hoard Window y tema común**
 - Cada app se abre como el mismo tipo de ventana de escritorio sin marco (un pequeño shell de Electron en `shell/`, o una ventana de aplicación de Chromium) con su propio perfil, entrada en la barra de tareas y tamaño recordado.
@@ -102,7 +109,7 @@ text = await link.chat([{"role": "user", "content": "..."}], task="code", effort
 - Hoard Link encuentra Faustus en `127.0.0.1:7000` o `:7001`, lee su registro de modelos y habla directamente con los servidores que ya tiene cargados. Si Faustus exige autenticación, pon un token con ámbito `chat` en `backend.json` bajo `faustus.token` o en `HOARD_FAUSTUS_TOKEN`.
 - El repositorio incluye un `faustus-plugin.json`, así que Faustus adopta el Hub como cualquier otra app. Su bloque `skills` nombra los procedimientos de la biblioteca de skills de la familia que encajan con el Hub.
 - Los agentes manejan el Hub por `GET /api/agent/tools` y `POST /api/agent/call` con el token bearer de `data/mcp-token`, o por el puente stdio `python -m hoard_link.hub.mcp`, que arranca un Hub sin ventana si no hay ninguno escuchando.
-- Herramientas MCP por grupos: apps y perfiles (`hub_list_apps`, `hub_start_app`, `hub_stop_all`, `hub_profile_*`), GPU y carriles (`hub_lease_*`, `hub_lane_*`), instancias, capa de familia (`hub_events`, `hub_rule_*`, `hub_job_*`, `hub_backup_*`, `hub_family_audit`, `hub_call_app`), repos (`hub_repos`, `hub_repo_*`), acceso a modelos (`hub_link_status`, `hub_link_chat`), colocación (`hub_placement_*`), flota y búsqueda de capacidades (`hub_fleet_status`, `hub_capability_find`), correo (`hub_mail_accounts`, `hub_mail_compose`), relés MCP (`hub_mcp_apps`) y el Ágora (`hub_agora_*`, unas ochenta herramientas). `scripts/agora.py` ofrece las mismas operaciones del Ágora a agentes que solo tienen terminal.
+- Herramientas MCP por grupos: apps y perfiles (`hub_list_apps`, `hub_start_app`, `hub_stop_all`, `hub_profile_*`, `hub_keep_alive_status`, `hub_keep_alive_set`), GPU y carriles (`hub_lease_*`, `hub_lane_*`), instancias, capa de familia (`hub_events`, `hub_rule_*`, `hub_job_*`, `hub_backup_*`, `hub_family_audit`, `hub_call_app`), repos (`hub_repos`, `hub_repo_*`), acceso a modelos (`hub_link_status`, `hub_link_chat`), colocación (`hub_placement_*`), flota y búsqueda de capacidades (`hub_fleet_status`, `hub_capability_find`), correo (`hub_mail_accounts`, `hub_mail_compose`), relés MCP (`hub_mcp_apps`) y el Ágora (`hub_agora_*`, unas ochenta herramientas). `scripts/agora.py` ofrece las mismas operaciones del Ágora a agentes que solo tienen terminal.
 - La ventana del propio Hub lleva el panel copiloto compartido de Faustus.
 
 ## Estructura

@@ -50,7 +50,8 @@ def test_project_navigation_preserves_scope_and_all_tools(tmp_path, width):
                 for route, view in [('communication', 'notify'), ('system', 'resources')]:
                     page.goto(base + '/#hub/' + route)
                     page.locator('.hub-local-nav').wait_for()
-                    assert page.locator('#hub-navigation > a').count() == 7
+                    assert page.locator('#hub-navigation a.hub-nav-link').count() == 7
+                    assert page.locator('#hub-navigation .hub-nav-group').count() == 3
                     if view == 'resources':
                         assert page.locator('#hub-resources').is_visible()
                     else:
@@ -60,9 +61,22 @@ def test_project_navigation_preserves_scope_and_all_tools(tmp_path, width):
                         page.locator('.hub-local-nav a[href="#hub/' + option + '"]').click()
                         page.wait_for_url('**/#hub/' + option)
                         assert page.locator('#hub-resources' if option == 'resources' else '#tab-' + option).is_visible()
+                # The header field opens the command palette; its last entry runs the content search.
                 page.locator('#hub-global-search').click()
+                page.locator('#hub-palette .hub-palette-input').wait_for()
+                page.keyboard.type('alpha')
+                assert page.locator('#hub-palette .hub-palette-item', has_text='Alpha').count() >= 1
+                page.locator('#hub-palette .hub-palette-item').last.click()
                 page.locator('.sr-q').wait_for()
-                assert page.locator('.sr-q').evaluate('e => document.activeElement === e')
+                page.wait_for_function('document.activeElement === document.querySelector(".sr-q")')
+                assert page.locator('.sr-q').input_value() == 'alpha'
+                # Ctrl+K opens it anywhere; Tab switches to quick actions; Esc closes it.
+                page.keyboard.press('Control+k')
+                page.locator('#hub-palette[open]').wait_for()
+                page.keyboard.press('Tab')
+                assert page.locator('#hub-palette .hub-palette-modes [aria-pressed="true"]').get_attribute('data-mode') == 'actions'
+                page.keyboard.press('Escape')
+                page.locator('#hub-palette').wait_for(state='hidden')
                 page.goto(base + '/#hub/jobs')
                 page.locator('#job-new').click()
                 page.locator('#edit-advanced summary').click()

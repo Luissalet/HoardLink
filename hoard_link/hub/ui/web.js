@@ -64,21 +64,21 @@
     const css = document.createElement("style");
     css.id = "css-web";
     css.textContent = `
-      .wb-head { margin: 14px 0 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+      .wb-head { margin: 14px 0 6px; color: var(--muted); font-size: var(--hub-fs-1, 12px); text-transform: uppercase; letter-spacing: .4px; }
       .wb-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
-      .wb-tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+      .wb-tbl { border-collapse: collapse; width: 100%; font-size: var(--hub-fs-1, 12px); }
       .wb-tbl th, .wb-tbl td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
       .wb-tbl th { color: var(--muted); font-weight: 500; }
       .wb-tbl .ok { color: var(--green); } .wb-tbl .bad { color: var(--red); } .wb-tbl .warn { color: var(--amber); }
-      .wb-meta { color: var(--muted); font-size: 12px; font-family: var(--mono); margin: 6px 0; }
-      .wb-text { white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--card-2); font-size: 12.5px; }
-      .wb-kv { display: grid; grid-template-columns: 130px 1fr; gap: 2px 10px; font-size: 12.5px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--card-2); }
+      .wb-meta { color: var(--muted); font-size: var(--hub-fs-1, 12px); font-family: var(--mono); margin: 6px 0; }
+      .wb-text { white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--card-2); font-size: var(--hub-fs-1, 12px); }
+      .wb-kv { display: grid; grid-template-columns: 130px 1fr; gap: 2px 10px; font-size: var(--hub-fs-1, 12px); padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--card-2); }
       .wb-kv b { color: var(--muted); font-weight: 500; } .wb-kv span { word-break: break-word; }
       .wb-hit { display: grid; gap: 1px; padding: 6px 10px; margin-bottom: 4px; border: 1px solid var(--line); border-radius: 9px; background: var(--card-2); }
       .wb-hit a { color: var(--text); font-weight: 600; text-decoration: none; } .wb-hit a:hover { color: var(--accent-2); }
-      .wb-hit .u { color: var(--blue); font-size: 11.5px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .wb-hit .s { color: var(--muted); font-size: 12.5px; }
-      .wb-err { color: var(--red); font-size: 12px; }
+      .wb-hit .u { color: var(--blue); font-size: var(--hub-fs-1, 12px); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wb-hit .s { color: var(--muted); font-size: var(--hub-fs-1, 12px); }
+      .wb-err { color: var(--red); font-size: var(--hub-fs-1, 12px); }
     `;
     document.head.appendChild(css);
   }

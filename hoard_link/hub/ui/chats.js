@@ -45,20 +45,20 @@
     st.textContent = `
       .ch-sources { display: grid; gap: 6px; margin-bottom: 8px; }
       .ch-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 12px; padding: 10px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card-2); }
-      .ch-form label { display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+      .ch-form label { display: grid; gap: 2px; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
       .ch-form label.check { display: flex; gap: 6px; align-items: center; }
       .ch-form .wide { grid-column: 1 / -1; }
       .ch-form .act { display: flex; gap: 8px; }
       .ch-login { padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--accent); border-radius: 10px; background: var(--card-2); }
-      .ch-code { font-family: var(--mono); font-size: 22px; letter-spacing: .12em; margin: 6px 0; }
+      .ch-code { font-family: var(--mono); font-size: var(--hub-fs-5, 25px); letter-spacing: .12em; margin: 6px 0; }
       .ch-group { margin-bottom: 10px; }
-      .ch-group h4 { margin: 0 0 4px; font-size: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      .ch-msg { display: grid; grid-template-columns: 110px 1fr auto; gap: 8px; padding: 3px 8px; border-radius: 6px; font-size: 13px; }
+      .ch-group h4 { margin: 0 0 4px; font-size: var(--hub-fs-2, 14px); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .ch-msg { display: grid; grid-template-columns: 110px 1fr auto; gap: 8px; padding: 3px 8px; border-radius: 6px; font-size: var(--hub-fs-2, 14px); }
       .ch-msg:nth-child(odd) { background: var(--card-2); }
       .ch-msg.attention { border-left: 3px solid var(--amber); }
       .ch-msg .who { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .ch-msg .txt { white-space: pre-wrap; word-break: break-word; }
-      .ch-msg .when { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+      .ch-msg .when { color: var(--muted); font-size: var(--hub-fs-1, 12px); white-space: nowrap; }
     `;
     document.head.appendChild(st);
   }

@@ -70,24 +70,24 @@
     css.id = "css-agent-sessions";
     css.textContent = `
       .as-apps { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
-      .as-chip { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--card-2); font-size: 11.5px; color: var(--muted); }
+      .as-chip { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--card-2); font-size: var(--hub-fs-1, 12px); color: var(--muted); }
       .as-chip.ok { color: var(--green); }
       .as-agent { margin: 12px 0 4px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
-      .as-agent b { font-size: 14px; }
+      .as-agent b { font-size: var(--hub-fs-2, 14px); }
       .as-sess { border: 1px solid var(--line); border-radius: 10px; background: var(--card-2); padding: 8px 10px; margin-bottom: 6px; display: grid; gap: 4px; min-width: 0; }
       .as-head { display: flex; gap: 8px 12px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
-      .as-id { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
-      .as-meta { color: var(--muted); font-size: 12px; }
+      .as-id { font-family: var(--mono); font-size: var(--hub-fs-1, 12px); overflow-wrap: anywhere; }
+      .as-meta { color: var(--muted); font-size: var(--hub-fs-1, 12px); }
       .as-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
-      .as-reasons { font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
-      .as-entry { display: grid; grid-template-columns: auto auto 1fr; gap: 2px 10px; font-size: 12px; padding: 3px 0; border-top: 1px solid var(--line); min-width: 0; }
-      .as-entry .as-sum { color: var(--muted); font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; grid-column: 1 / -1; }
+      .as-reasons { font-size: var(--hub-fs-1, 12px); color: var(--text); overflow-wrap: anywhere; }
+      .as-entry { display: grid; grid-template-columns: auto auto 1fr; gap: 2px 10px; font-size: var(--hub-fs-1, 12px); padding: 3px 0; border-top: 1px solid var(--line); min-width: 0; }
+      .as-entry .as-sum { color: var(--muted); font-family: var(--mono); font-size: var(--hub-fs-1, 12px); overflow-wrap: anywhere; grid-column: 1 / -1; }
       .as-entry.bad .as-tool { color: var(--red); } .as-entry.undone { opacity: .55; }
       .as-plan { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 10px; display: grid; gap: 6px; background: var(--card); }
-      .as-plan h4 { margin: 4px 0 0; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
-      .as-plan ul { margin: 0; padding-left: 18px; font-size: 12.5px; overflow-wrap: anywhere; }
+      .as-plan h4 { margin: 4px 0 0; font-size: var(--hub-fs-1, 12px); color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+      .as-plan ul { margin: 0; padding-left: 18px; font-size: var(--hub-fs-1, 12px); overflow-wrap: anywhere; }
       .as-plan .conf { color: var(--amber); }
-      .as-tok { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+      .as-tok { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--line); font-size: var(--hub-fs-1, 12px); }
       .as-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
       .as-form input, .as-form select { background: var(--hoard-sunken); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; min-width: 0; }
       .as-token { font-family: var(--mono); width: min(100%, 460px); }

@@ -35,7 +35,14 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 - Profiles: named sets of apps, external commands (a ComfyUI per GPU, a llama-server) and desktop windows started or stopped together, with JSON export and import.
 - `launch_overrides` let a machine start an app differently from its manifest, for example a developer build.
 - Autostart at Windows login without admin rights.
+- Keep alive: the apps on the keep-alive list (`data/keep-alive.json`; Darwin, Links, Talos and Kafka by default) start with the Hub and start again when they fall, checked every minute with a growing wait after failed starts. A stop made by hand holds until the app is started again or the Hub restarts; apps marked `auto_start: false` are never kept alive. Toggled from each app's Manage menu, the command palette or `hub_keep_alive_set`.
 - A status bar on every page with Faustus (running, port, open, start, stop), the number of running Hoards and one meter per GPU.
+
+**The page**
+- A sidebar in three labelled sections (your space, tools, environment), one tab row per section, and each page's actions next to its title; explanations and rarely used settings sit folded.
+- A six-step type scale and one card style shared by every view.
+- Command palette (Ctrl+K / ⌘K): go to any page, tab, app or project, or search all content; in quick-actions mode (Tab or `>`) open, start, stop, restart or keep alive an app, start or stop everything, start or stop Faustus, and switch theme or language.
+- Dark family theme by default, with a light theme kept per browser.
 
 **Hoard Window and shared theme**
 - Every app opens as the same kind of frameless desktop window (a small Electron shell in `shell/`, or a Chromium app window) with its own profile, taskbar entry and remembered size.
@@ -102,7 +109,7 @@ text = await link.chat([{"role": "user", "content": "..."}], task="code", effort
 - Hoard Link finds Faustus on `127.0.0.1:7000` or `:7001`, reads its model registry and talks directly to the servers it already has loaded. When Faustus needs auth, put a token scoped to `chat` in `backend.json` under `faustus.token` or in `HOARD_FAUSTUS_TOKEN`.
 - The repository ships a `faustus-plugin.json`, so Faustus adopts the Hub like any other app. Its `skills` block names the procedures of the family skill library that fit the Hub.
 - Agents drive the Hub over `GET /api/agent/tools` and `POST /api/agent/call` with the bearer token in `data/mcp-token`, or through the stdio bridge `python -m hoard_link.hub.mcp`, which starts a headless Hub if none is listening.
-- MCP tools by group: apps and profiles (`hub_list_apps`, `hub_start_app`, `hub_stop_all`, `hub_profile_*`), GPU and lanes (`hub_lease_*`, `hub_lane_*`), instances, family layer (`hub_events`, `hub_rule_*`, `hub_job_*`, `hub_backup_*`, `hub_family_audit`, `hub_call_app`), repos (`hub_repos`, `hub_repo_*`), model access (`hub_link_status`, `hub_link_chat`), placement (`hub_placement_*`), fleet and capability search (`hub_fleet_status`, `hub_capability_find`), mail (`hub_mail_accounts`, `hub_mail_compose`), MCP relays (`hub_mcp_apps`) and the Agora (`hub_agora_*`, about eighty tools). `scripts/agora.py` gives the same Agora operations to agents that only have a terminal.
+- MCP tools by group: apps and profiles (`hub_list_apps`, `hub_start_app`, `hub_stop_all`, `hub_profile_*`, `hub_keep_alive_status`, `hub_keep_alive_set`), GPU and lanes (`hub_lease_*`, `hub_lane_*`), instances, family layer (`hub_events`, `hub_rule_*`, `hub_job_*`, `hub_backup_*`, `hub_family_audit`, `hub_call_app`), repos (`hub_repos`, `hub_repo_*`), model access (`hub_link_status`, `hub_link_chat`), placement (`hub_placement_*`), fleet and capability search (`hub_fleet_status`, `hub_capability_find`), mail (`hub_mail_accounts`, `hub_mail_compose`), MCP relays (`hub_mcp_apps`) and the Agora (`hub_agora_*`, about eighty tools). `scripts/agora.py` gives the same Agora operations to agents that only have a terminal.
 - The Hub's own window carries Faustus's shared copilot panel.
 
 ## Layout

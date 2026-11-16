@@ -39,14 +39,14 @@
       .wk-row img { width: 22px; height: 22px; border-radius: 6px; object-fit: cover; background: var(--hoard-sunken); grid-row: span 2; align-self: start; }
       .wk-title { font-weight: 600; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
       .wk-title a { color: var(--text); text-decoration: none; } .wk-title a:hover { color: var(--accent-2); }
-      .wk-sub { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      .wk-sub { color: var(--muted); font-size: var(--hub-fs-1, 12px); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
       .wk-bar { height: 8px; width: 160px; border-radius: 999px; background: var(--hoard-elevated); overflow: hidden; }
       .wk-bar i { display: block; height: 100%; background: var(--accent); }
       .wk-bar.idle i { width: 30%; background: var(--blue); opacity: .6; animation: wk-slide 1.6s ease-in-out infinite; }
       @keyframes wk-slide { 0% { margin-left: 0; } 50% { margin-left: 70%; } 100% { margin-left: 0; } }
-      .wk-right { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; color: var(--muted); }
-      .wk-err { color: var(--red); font-size: 12px; grid-column: 2 / 4; }
-      .wk-head { margin: 10px 0 4px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+      .wk-right { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; font-family: var(--mono); font-size: var(--hub-fs-1, 12px); color: var(--muted); }
+      .wk-err { color: var(--red); font-size: var(--hub-fs-1, 12px); grid-column: 2 / 4; }
+      .wk-head { margin: 10px 0 4px; color: var(--muted); font-size: var(--hub-fs-1, 12px); text-transform: uppercase; letter-spacing: .4px; }
     `;
     document.head.appendChild(css);
   }

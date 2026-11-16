@@ -80,24 +80,24 @@
       .nt-row .nt-bar { align-self: stretch; border-radius: 4px; background: var(--hoard-border-hover); min-height: 100%; }
       .nt-row.p-urgent .nt-bar { background: var(--red); } .nt-row.p-high .nt-bar { background: var(--amber); } .nt-row.p-normal .nt-bar { background: var(--blue); }
       .nt-title { font-weight: 600; } .nt-title.unseen::before { content: "● "; color: var(--accent); }
-      .nt-body { color: var(--muted); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
-      .nt-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 3px; font-size: 11.5px; color: var(--muted); }
-      .nt-when { color: var(--muted); font-size: 12px; white-space: nowrap; }
+      .nt-body { color: var(--muted); font-size: var(--hub-fs-1, 12px); white-space: pre-wrap; word-break: break-word; }
+      .nt-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 3px; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
+      .nt-when { color: var(--muted); font-size: var(--hub-fs-1, 12px); white-space: nowrap; }
       .nt-list { display: grid; gap: 6px; }
-      #tab-notify .tab-tools select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; max-width: 200px; }
+      #tab-notify .tab-tools select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: var(--hub-fs-2, 14px); max-width: 200px; }
       .nt-set { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; display: grid; gap: 10px; background: var(--card-2); }
       .nt-set fieldset { border: 1px solid var(--line); border-radius: 9px; margin: 0; padding: 6px 10px 10px; min-width: 0; }
-      .nt-set legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
+      .nt-set legend { font-size: var(--hub-fs-1, 12px); color: var(--muted); padding: 0 6px; }
       .nt-set .nt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; align-items: end; }
-      .nt-set label.nt-f { display: grid; gap: 3px; font-size: 12.5px; }
-      .nt-set label.nt-f > span { color: var(--muted); font-size: 12px; }
-      .nt-set input[type=text], .nt-set input[type=password], .nt-set input[type=number], .nt-set select { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; }
-      .nt-set .nt-inline { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; }
+      .nt-set label.nt-f { display: grid; gap: 3px; font-size: var(--hub-fs-1, 12px); }
+      .nt-set label.nt-f > span { color: var(--muted); font-size: var(--hub-fs-1, 12px); }
+      .nt-set input[type=text], .nt-set input[type=password], .nt-set input[type=number], .nt-set select { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: var(--hub-fs-2, 14px); }
+      .nt-set .nt-inline { display: inline-flex; gap: 6px; align-items: center; font-size: var(--hub-fs-1, 12px); }
       .nt-set .nt-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      .nt-set table { border-collapse: collapse; font-size: 12.5px; }
+      .nt-set table { border-collapse: collapse; font-size: var(--hub-fs-1, 12px); }
       .nt-set th, .nt-set td { padding: 3px 14px 3px 0; text-align: left; font-weight: 400; vertical-align: top; }
       .nt-set th { color: var(--muted); font-weight: 500; }
-      .nt-set tr.hdr th { font-size: 11.5px; }
+      .nt-set tr.hdr th { font-size: var(--hub-fs-1, 12px); }
     `;
     document.head.appendChild(css);
   }

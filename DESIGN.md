@@ -170,7 +170,8 @@ The Hub begins with attention and continuity: pending work, a project to continu
 
 **Key Characteristics:**
 - Official warm charcoal family surfaces, ivory text and gold actions.
-- Six primary destinations, visible contextual links and a Help/settings route.
+- Six primary destinations in three labelled sidebar sections, visible contextual links and a Help/settings route.
+- A command palette (Ctrl+K) for going anywhere and for quick app actions.
 - Attention and project continuity before application launch entries.
 - Original Hub icon reused byte-for-byte for header/favicon; existing app icons and navigation SVG remain.
 
@@ -192,7 +193,7 @@ The surface favors named states, authorship and source details over decoration. 
 
 ### Hub shell
 
-`html[data-hoard-app="hub"]` selects the existing official tokens in `hoard_link/ui/hoard-theme.css`. `style.css` maps the Hub variables to them. `workspace.css`, loaded after `navigation.css` and `interiors.css`, owns final layout and component treatments without a light-palette remap. The shared theme itself was not edited.
+`html[data-hoard-app="hub"]` selects the existing official tokens in `hoard_link/ui/hoard-theme.css`. `style.css` maps the Hub variables to them. `workspace.css`, loaded after `navigation.css` and `interiors.css`, owns final layout and component treatments. `design-system.css`, loaded last, holds the type scale, the single card recipe and an opt-in light theme (`html[data-hub-theme="light"]`, chosen per browser and applied before first paint) that remaps the same token names to warm paper surfaces, dark ink and a deeper gold; dark stays the default. The shared theme itself was not edited.
 
 Gold is the primary action, current context, focus and text-selection signal, with dark accent ink on filled buttons. Canvas, sunken, surface, raised and hover roles form the warm charcoal hierarchy; ivory/muted roles preserve reading hierarchy. Selected navigation and project entries use the family's translucent accent-soft. Green, amber, blue and clay/red state treatments accompany written states. Frontmatter records the reused family values and the scoped semantic state colors from workspace.css/style.css. Sidecar ramps are preview metadata, never contrast certification.
 
@@ -226,9 +227,7 @@ A warm near-black foundation holds soft ivory text; amber marks the primary acti
 
 ### Hub shell
 
-The Hub retains the shared Source Sans 3/system sans stack and adds no font download. The Hoard Hub brand uses the family Cinzel/serif stack at 19px. Font fallback remains supported; this does not certify availability of one concrete face on every machine. The final body is 16px/1.55. Page headings use the frontmatter Hub heading role, becoming 30px at 600px; section headings are 21px, or 20px on mobile. Project names and rule names are 17px; launch and attention titles are 16px. Descriptions generally use 14–15px, metadata 12–13px and form section headings 19px.
-
-Rail links use 15px; primary and local navigation links use 14px. Inherited content controls remain 15px with a 38px minimum, becoming 44px at 760px. Mail reading remains 16px/1.8 with a 72ch measure. Notice detail uses 15px/1.75 and a 75ch measure; source/advanced text uses 13px. Local component sizes remain intentional, not an instruction to shrink the whole workspace.
+The Hub retains the shared Source Sans 3/system sans stack and adds no font download. The Hoard Hub brand uses the family Cinzel/serif stack. Every font size in the Hub's stylesheets and injected facet styles is one of six steps, `--hub-fs-1` to `--hub-fs-6`: 12px (labels, meta, badges, rail section labels), 14px (interface text and controls, the body default), 16px (reading text, card titles), 20px (section titles), 25px (page title) and 31px (display). Each use carries its pixel fallback so a page that loads a facet script without `design-system.css` still renders. Headings use a 1.25 line height; body text 1.5. Mail and notice reading keep their measures (72–75ch).
 
 ### Separate Ágora console (apps/agora)
 
@@ -289,7 +288,8 @@ Controls and containers use gently rounded corners: 6px for buttons, selectors a
 
 ### Hub shell: navigation and controls
 
-- **Navigation:** Inicio, Proyectos, Aplicaciones, Bandeja, Automatización and Sistema remain primary destinations, with Buscar and Ayuda y ajustes. Contextual links are visible, wrap and show the current page with a gold rule. Projects have Resumen and Ágora links. Inbox opens Avisos; System opens Estado y conexiones; Automation opens an intention landing.
+- **Navigation:** Inicio, Proyectos, Aplicaciones, Bandeja, Automatización and Sistema remain primary destinations, with Buscar and Ayuda y ajustes, grouped in the rail under small uppercase labels: Tu espacio (Inicio, Proyectos, Bandeja, Buscar), Herramientas (Aplicaciones, Automatización) and Entorno (Sistema). The theme switch sits under Ayuda y ajustes. Each page's own actions sit right of its title above a hairline (Applications: Start all, Stop all, Rescan, Quick actions); secondary explanations fold into a disclosure.
+- **Command palette:** a modal list opened by Ctrl/⌘+K or the header field. «Ir a» lists pages, tabs, projects and apps (open) and ends with a content search; «Acciones» (Tab or a leading `>`) lists open/start/stop/restart/keep alive/log per app plus start all, stop all, rescan, Faustus, theme and language. Groups never repeat a heading; recent commands lead an empty query; arrows, Enter and Escape drive it; destructive entries are red. Contextual links are visible, wrap and show the current page with a gold rule. Projects have Resumen and Ágora links. Inbox opens Avisos; System opens Estado y conexiones; Automation opens an intention landing.
 - **Status bar:** Faustus pill (state dot, port, Open/Start/Stop), Hoards pill (running/total, warning count) and GPU pill (one 6px meter per GPU); the pills link to System. Drawn by status.js from the existing snapshot and lease polls.
 - **Faustus states:** running (green), busy/not answering (amber, port held, Open and Stop only), starting/stopping (amber), off (red border, Start).
 - **Project cards:** auto-fill 340px grid; icon, title, one-line description, count chips (waiting in amber first) and relative last activity; the card itself opens the project.
@@ -298,7 +298,7 @@ Controls and containers use gently rounded corners: 6px for buttons, selectors a
 - **Home:** status tiles first; attention uses a bordered family surface, project continuity divided rows and every Hoard a compact launcher tile (running first, unavailable dimmed). The first five attention entries are bounded summaries, not a promise of complete global prioritisation.
 - **Quick reply:** Te esperan presents the complete question, Reply here, inline answer and full-thread entry. Send posts through the native API; Reply and close resolves only non-task threads. Task replies reopen their escalation without completing the task. Keep duplicate-send disabling, visible errors and retained drafts through refresh/language/project changes; Cancel preserves text. The textarea is at least 110px with 14px padding, 8px corners, sunken background and inherited text; question measure is 75ch at 15px/1.65.
 - **Project:** the overview makes pending tasks and conversations from the selected board actionable. Full-conversation links use configured workspace_url and preserve space_id. Recent visit ordering is local to this browser.
-- **Applications:** compact tiles (40px icon, ellipsised name and description, state pill, uptime/memory line, Open highlighted only when running) with Manage as a floating menu that closes on outside click or Escape; Tiles/Table toggle remembered per browser. Purpose categories and brief descriptions aid known catalog entries; unknown manifests keep their actual fallback. One opening action, Manage and startup controls remain. Unavailable startup gets a plain explanation with the original reason retained in Details.
+- **Applications:** compact tiles (40px icon, ellipsised name and description, state pill, uptime/memory line, a round ↻ mark when the app is kept alive, Open highlighted only when running) with Manage as a floating menu that closes on outside click or Escape; Tiles/Table toggle remembered per browser. Purpose categories and brief descriptions aid known catalog entries; unknown manifests keep their actual fallback. One opening action, Manage and startup controls remain. Unavailable startup gets a plain explanation with the original reason retained in Details.
 - **Notifications and search:** notice summaries are plain excerpts with the full original body in a native disclosure. Content search retains retry and separates technical source details; local destinations use divided text rows.
 - **Automation:** intention links precede normal forms. Five known events and common backup/application/group actions use human labels. Custom tools/events retain technical fields in advanced disclosures; full JSON remains a mutually exclusive mode. Within the open editor, each action type retains its own draft on type switching. Lifecycle events use Affected application as a Hub-event data.app filter. Preserve unknown fields when kind is unchanged and invalid JSON text on error.
 - **States and accessibility:** loading, empty, no-match and recovery are written. The final visible focus outline uses hub-focus with a 3px offset; reduced-motion behavior is inherited. No detector result is a contrast certification.

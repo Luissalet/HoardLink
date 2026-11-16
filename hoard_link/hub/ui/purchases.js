@@ -37,9 +37,9 @@
       .pc-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card-2); }
       .pc-row.closed { opacity: .6; }
       .pc-title { font-weight: 600; }
-      .pc-sub { color: var(--muted); font-size: 12px; }
+      .pc-sub { color: var(--muted); font-size: var(--hub-fs-1, 12px); }
       .pc-track { display: flex; align-items: center; gap: 0; margin-top: 4px; grid-column: 1 / 3; }
-      .pc-step { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+      .pc-step { display: flex; align-items: center; gap: 6px; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
       .pc-step i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--hoard-border-hover); background: transparent; display: inline-block; }
       .pc-step.done i { background: var(--green); border-color: var(--green); }
       .pc-step.now i { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 8px var(--accent); }

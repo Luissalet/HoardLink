@@ -1,0 +1,156 @@
+/* Hoard Hub design layer, loaded last: the type scale every stylesheet refers to, one card recipe, the grouped
+   sidebar, page actions next to the title, folded secondary content, the command palette and the light theme.
+   The dark family theme (hoard-theme.css) stays the default; light is a per-browser choice (html[data-hub-theme]). */
+
+:root {
+  /* Type scale: six steps, ratio ~1.25 from a 16px base. Every font-size in the Hub's CSS uses one of them. */
+  --hub-fs-1: 12px;   /* labels, meta, badges */
+  --hub-fs-2: 14px;   /* interface text, controls */
+  --hub-fs-3: 16px;   /* reading text, card titles */
+  --hub-fs-4: 20px;   /* section titles */
+  --hub-fs-5: 25px;   /* page title */
+  --hub-fs-6: 31px;   /* display */
+  --hub-lh-tight: 1.25;
+  /* One card */
+  --hub-card-bg: var(--hoard-surface);
+  --hub-card-line: var(--hoard-border);
+  --hub-card-radius: 10px;
+  --hub-card-pad: 16px;
+  --hub-gap: 16px;
+}
+
+/* -- light theme ----------------------------------------------------------------------------------------------------- */
+html[data-hub-theme="light"] {
+  color-scheme: light;
+  --hoard-deep: #f6f3ec;
+  --hoard-sunken: #ece7dc;
+  --hoard-surface: #fffdf8;
+  --hoard-elevated: #f2eee5;
+  --hoard-hover: #ebe5d8;
+  --hoard-border: #dcd4c4;
+  --hoard-border-hover: #b5ab96;
+  --hoard-text: #24211a;
+  --hoard-text-muted: #595346;
+  --hoard-text-dim: #6e675a;
+  --hoard-accent: #8c600c;
+  --hoard-accent-strong: #714d08;
+  --hoard-accent-dim: #a87618;
+  --hoard-accent-ink: #fffdf8;
+  --hoard-accent-rgb: 140, 96, 12;
+  --hoard-accent-soft: rgba(140, 96, 12, 0.11);
+  --hoard-accent-line: rgba(140, 96, 12, 0.34);
+  --hoard-shadow: 0 10px 30px rgba(60, 46, 18, 0.16);
+  --green: #2c7a4f;
+  --amber: #8c600c;
+  --red: #b0433a;
+  --blue: #2e5d9c;
+  --violet: #6a4fb0;
+  --hub-success-bg: #e3f1e8; --hub-success-line: #8bbb9d;
+  --hub-info-line: #87a3c8; --hub-warning-bg: #f5ead0; --hub-warning-line: #cfa955;
+  --hub-danger-bg: #f8e4e0; --hub-danger-line: #d6938a;
+  scrollbar-color: var(--hoard-border-hover) var(--hoard-deep);
+}
+html[data-hub-theme="light"] button.danger { color: var(--red); }
+html[data-hub-theme="light"] .pill, html[data-hub-theme="light"] .badge { color: var(--hoard-text); }
+html[data-hub-theme="light"] img.icon, html[data-hub-theme="light"] .hub-launch img, html[data-hub-theme="light"] .hub-palette-item img { background: #2a271f; border-radius: 8px; }
+html[data-hub-theme="light"] pre, html[data-hub-theme="light"] code { background: var(--hoard-sunken); color: var(--hoard-text); }
+
+/* -- type roles ------------------------------------------------------------------------------------------------------ */
+body { font-size: var(--hub-fs-2); line-height: 1.5; }
+body #hub-page-title { font-size: var(--hub-fs-5); line-height: var(--hub-lh-tight); font-weight: 650; letter-spacing: 0; }
+body #hub-page-description { font-size: var(--hub-fs-2); color: var(--muted); margin-top: 4px; }
+body #hub-breadcrumb { font-size: var(--hub-fs-1); margin: 0 0 4px; }
+body .hub-section-heading h2, body .hub-system-intro h2, body #hub-connections-heading { font-size: var(--hub-fs-4); line-height: var(--hub-lh-tight); font-weight: 650; }
+body .hub-tile-head h2, body #hub-apps .card h2, body .hub-attention-row strong, body .hub-project-name strong { font-size: var(--hub-fs-3); line-height: var(--hub-lh-tight); }
+body .hub-tile-state, body .hub-launch-state, body #hub-apps .card .purpose, body .hub-attention-row small, body .hub-project-name small { font-size: var(--hub-fs-1); }
+
+/* -- one card ------------------------------------------------------------------------------------------------------- */
+body .hub-tile, body .hub-attention, body .hub-resume, body #hub-apps .card, body .hub-launch, body .hub-table-wrap,
+body #hub-resources .strip, body #hub-resources .gpu-panel, body .hub-project-row, body .hub-automation-home,
+body .hub-project-overview, body .hub-help, body #hub-content .tab-body, body #hub-apps .profiles {
+  background: var(--hub-card-bg);
+  border: 1px solid var(--hub-card-line);
+  border-radius: var(--hub-card-radius);
+  box-shadow: none;
+}
+body .hub-tile, body .hub-attention, body .hub-resume, body #hub-resources .strip, body #hub-resources .gpu-panel,
+body .hub-automation-home, body .hub-project-overview, body .hub-help, body #hub-content .tab-body, body #hub-apps .profiles { padding: var(--hub-card-pad); }
+body #hub-apps .card { padding: 12px var(--hub-card-pad); }
+/* State is told by the dot and the label, not by coloured borders or side stripes. */
+body .hub-tile.is-down, body .hub-tile.is-running, body .hub-tile-faustus, body .hub-launch.is-running, body .hub-launch.is-down,
+body #hub-apps .card.running, body #hub-apps .card.down { border-color: var(--hub-card-line); box-shadow: none; }
+body .hub-tile:hover, body .hub-launch:hover, body #hub-apps .card:hover, body .hub-project-row:hover { border-color: var(--hoard-border-hover); }
+body .hub-home-status, body .hub-home-layout, body .hub-launch-grid, body #hub-apps #grid { gap: var(--hub-gap); }
+body .hub-home-layout, body .hub-home-status { margin-bottom: 24px; }
+
+/* Kept-alive mark on an app card */
+.keep-badge { display: inline-grid; place-items: center; width: 22px; height: 22px; flex: none; font-size: var(--hub-fs-2); line-height: 1;
+  color: var(--accent); border: 1px solid var(--hoard-accent-line); background: var(--hoard-accent-soft); border-radius: 50%; cursor: help; }
+.act-keepalive[aria-pressed="true"] { color: var(--accent); border-color: var(--hoard-accent-line); }
+
+/* -- page heading: title on the left, the page's actions on the right ------------------------------------------------- */
+body .hub-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+body #hub-page-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+body #hub-page-actions:empty { display: none; }
+body #hub-page-actions button { min-height: 34px; }
+body #hub-page-actions kbd, .hub-palette kbd { font-family: var(--mono); font-size: var(--hub-fs-1); margin-left: 8px; padding: 0 5px;
+  border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
+
+/* -- grouped sidebar ----------------------------------------------------------------------------------------------- */
+@media (min-width: 901px) { #hub-navigation { display: flex; flex-direction: column; gap: 14px; } }
+.hub-nav-group { display: flex; flex-direction: column; gap: 2px; }
+.hub-nav-label { margin: 0 10px 4px; font-size: var(--hub-fs-1); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--hoard-text-dim); }
+body .hub-nav-link { display: flex; align-items: center; gap: 10px; font-size: var(--hub-fs-2); }
+body .hub-nav-search { margin-top: 0; border-top: 0; }
+.hub-sidebar-note { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.hub-theme-toggle { font-size: var(--hub-fs-1); }
+@media (max-width: 900px) {
+  #hub-navigation.is-open { display: flex; flex-direction: column; gap: 10px; }
+  .hub-nav-label { margin-left: 4px; }
+}
+
+/* -- folded secondary content ----------------------------------------------------------------------------------- */
+.hub-fold > summary { cursor: pointer; color: var(--muted); font-size: var(--hub-fs-2); width: max-content; max-width: 100%; }
+.hub-fold > summary:hover { color: var(--accent); }
+.hub-fold[open] > summary { margin-bottom: 6px; }
+.hub-fold > p { margin: 0; color: var(--muted); max-width: 72ch; }
+body .hub-system-intro { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+
+/* -- command palette ---------------------------------------------------------------------------------------------- */
+.hub-palette { width: min(680px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 96px)); margin: 10vh auto auto; padding: 0;
+  display: none; flex-direction: column; color: var(--text); background: var(--hoard-surface); border: 1px solid var(--hoard-border-hover);
+  border-radius: 12px; box-shadow: var(--hoard-shadow); overflow: hidden; }
+.hub-palette[open] { display: flex; }
+.hub-palette::backdrop { background: rgba(10, 9, 6, .55); }
+html[data-hub-theme="light"] .hub-palette::backdrop { background: rgba(40, 32, 14, .28); }
+.hub-palette-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.hub-palette-input { flex: 1; min-width: 0; font: inherit; font-size: var(--hub-fs-3); color: var(--text); background: transparent; border: 0; outline: 0; padding: 8px 4px; }
+.hub-palette-input::placeholder { color: var(--hoard-text-dim); }
+.hub-palette-modes { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.hub-palette-modes button { border: 0; border-radius: 0; padding: 5px 10px; font-size: var(--hub-fs-1); color: var(--muted); }
+.hub-palette-modes button[aria-pressed="true"] { background: var(--hoard-accent-soft); color: var(--accent); font-weight: 650; }
+.hub-palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
+.hub-palette-group { padding: 10px 10px 4px; font-size: var(--hub-fs-1); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--hoard-text-dim); }
+.hub-palette-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.hub-palette-item[aria-selected="true"] { background: var(--hoard-accent-soft); box-shadow: inset 0 0 0 1px var(--hoard-accent-line); }
+.hub-palette-item img { width: 24px; height: 24px; flex: none; border-radius: 6px; }
+.hub-palette-glyph { width: 24px; flex: none; text-align: center; color: var(--muted); font-size: var(--hub-fs-3); }
+.hub-palette-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.hub-palette-text strong { font-size: var(--hub-fs-2); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-palette-text small { font-size: var(--hub-fs-1); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-palette-item.is-danger strong { color: var(--red); }
+.hub-palette-state { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--hoard-border-hover); }
+.hub-palette-state.is-running { background: var(--green); }
+.hub-palette-state.is-starting { background: var(--amber); }
+.hub-palette-empty { padding: 18px 12px; color: var(--muted); }
+.hub-palette-hint { margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: var(--hub-fs-1); color: var(--hoard-text-dim); }
+@media (max-width: 600px) { .hub-palette { margin-top: 12px; } .hub-palette-hint { display: none; } }
+@media (prefers-reduced-motion: no-preference) { .hub-palette[open] { animation: hub-palette-in .12s ease-out; } }
+@keyframes hub-palette-in { from { opacity: 0; transform: translateY(-6px); } }
+
+/* Header: the palette field stays on one line */
+body .hub-global-search { white-space: nowrap; min-width: 0; }
+body .hub-global-search span { overflow: hidden; text-overflow: ellipsis; }
+body #hub-apps .card .keep-badge { flex: none; }
+@media (max-width: 600px) { body #hub-app-toolbar #search { flex: 1 1 100%; min-width: 0; } }
