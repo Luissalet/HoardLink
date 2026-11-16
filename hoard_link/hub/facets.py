@@ -61,6 +61,7 @@ FACET_MODULES = (
     "aliases",
     "parity",
     "brainbus",
+    "keepalive",
 )
 
 

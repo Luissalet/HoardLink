@@ -294,6 +294,10 @@ class Hub:
                        "remote_url": remote_faustus["url"], "remote_detail": remote_faustus["detail"]}
         profiles = self.profiles_status({a["id"]: a["state"] for a in apps})
         running = sum(1 for a in apps if a["state"] == "running")
+        keepalive = self.facet("keepalive")
+        kept = set(keepalive.apps()) if keepalive is not None else set()
+        for a in apps:
+            a["keep_alive"] = a["id"] in kept
         return {
             "service": SERVICE,
             "version": HUB_VERSION,

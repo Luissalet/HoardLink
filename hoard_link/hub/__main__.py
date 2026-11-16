@@ -165,6 +165,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     thread = threading.Thread(target=server.serve_forever, name="hoard-hub-http", daemon=True)
     thread.start()
     hub.placement.link.start()          # Faustus on a Spark reaches this Hub through a tunnel while it is there
+    keepalive = hub.facet("keepalive")
+    if keepalive is not None and keepalive.serve():   # the apps that live with the Hub come up now and after a fall
+        print("keep-alive: " + ", ".join(keepalive.apps()))
     print(f"hoard-hub {HUB_VERSION} at {cfg.url} — {len(hub.apps)} apps from {', '.join(cfg.roots)}")
     if args.profile:
         threading.Thread(target=_start_profile, args=(hub, args.profile), name="hoard-hub-profile", daemon=True).start()
