@@ -2,8 +2,8 @@
 import time
 
 from hoard_link.hub import tools
-from hoard_link.hub.agent_loop import Loop, judge_practices
-from hoard_link.hub.agora_live import practices_text, project
+from hoard_link.hub.agent_loop import Loop, classify, judge_practices
+from hoard_link.hub.agora_live import board_practices, practices_text, project
 
 from ._hub_fakes import make_hub
 from ._transcripts import (claude_file, cl_asst, cl_result, cl_text, cl_use, cl_user, clock, codex_file,  # noqa: F401
@@ -120,3 +120,55 @@ def test_submit_posts_the_checklist_in_the_task_thread(tmp_path, roots):
         assert not spec["annotations"]["readOnlyHint"]
     finally:
         hub.close()
+
+
+def test_a_web_research_session_gets_research_practices_and_readable_steps(roots, clock):
+    now = clock.t
+    claude_file(roots["claude"], [
+        cl_user(now - 60, "¿Cuál es el precio del bitcoin hoy?"),
+        cl_asst(now - 55, cl_use("u1", "WebSearch", query="precio del bitcoin hoy")),
+        {**cl_result(now - 52, "u1"), "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "u1", "content": "1. https://www.coindesk.com/price/bitcoin"}]}},
+        cl_asst(now - 50, cl_use("u2", "WebFetch", url="https://www.coindesk.com/price/bitcoin", prompt="precio")),
+        cl_result(now - 47, "u2"),
+        cl_asst(now - 40, cl_text("El bitcoin cotiza a 91.000 $ el 17 de noviembre de 2026 según "
+                                  "[CoinDesk](https://www.coindesk.com/price/bitcoin)."), stop="end_turn"),
+    ], now - 40)
+    loop = one(watch(roots, clock))["loop"]
+    assert loop["kind"] == "research" and loop["kind_label"] == "Investigación"
+    assert _marks(loop["practices"]) == {"sources_opened": "ok", "sources_cited": "ok", "dated": "ok",
+                                         "verified": "ok", "language": "ok"}
+    tools_ = [s for s in loop["steps"] if s["kind"] == "tool"]
+    assert tools_[0]["label"] == "Buscar en la web: precio del bitcoin hoy" and "{" not in tools_[0]["label"]
+    assert tools_[1]["title"] == "Abrir URL" and tools_[1]["detail"] == "https://www.coindesk.com/price/bitcoin"
+    result = next(s for s in loop["steps"] if s["kind"] == "result")
+    assert result["ok"] is True and result["ms"] == 3000 and result["label"] == "Buscar en la web: ok · 3.0 s"
+    practices = board_practices(loop, "claude-one", [{"id": 7, "status": "claimed"}],
+                                [{"resource": "path:Hub/a.py", "owner": "claude-one"}])
+    assert "claim" not in {p["id"] for p in practices}       # the board's proofs belong to code work
+
+
+def test_kinds_and_a_plain_conversation():
+    assert classify([]) == "chat"
+    assert classify([{"tool": "Read", "command": "src/a.py", "ok": True, "ended": True}]) == "chat"
+    assert classify([{"tool": "Write", "command": "out/informe.docx", "ok": True, "ended": True}]) == "files"
+    assert classify([{"tool": "Bash", "command": "docker restart web", "ok": True, "ended": True}]) == "ops"
+    assert classify([{"tool": "apply_patch", "command": "*** Begin Patch\n*** Update File: src/a.py\n", "ok": None,
+                      "ended": True}]) == "code"
+    loop = Loop()
+    loop.turn_start(1, "hola, ¿qué tal?")
+    loop.text(2, "¡Hola! Todo bien.")
+    loop.turn_end(3)
+    view = loop.view()
+    assert view["kind"] == "chat" and view["practices"] == [] and view["practices_summary"]["ok"] == 0
+
+
+def test_codex_web_search_counts_as_research():
+    from hoard_link.hub.agent_watch import Session
+    s = Session("codex", "x", "x.jsonl")
+    s.feed({"type": "event_msg", "payload": {"type": "task_started"}}, 100.0)
+    s.feed({"type": "response_item", "payload": {"type": "web_search_call",
+                                                 "action": {"type": "search", "query": "gold price"}}}, 101.0)
+    view = s.loop.view()
+    assert view["kind"] == "research"
+    assert [x["label"] for x in view["steps"] if x["kind"] == "tool"] == ["Buscar en la web: gold price"]

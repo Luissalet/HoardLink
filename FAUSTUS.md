@@ -12,8 +12,10 @@ Session details, task threads, following, reduced motion and connection recovery
 are available from the view.
 
 Each observed member also has an agent loop ring (plan, act, observe, lit by its
-transcript lines), the steps of its turn and a checklist of work practices marked
-from the commands it ran; task cards show the owner's phase and practice count.
+transcript lines), the steps of its turn with each tool's readable name and a short
+summary of its arguments, and the practices of the kind of work the turn did (code,
+research, files, operations; none for a plain conversation); task cards show the
+owner's phase, tool, kind of work and practice count.
 `hub_agora_task_submit` leaves that checklist in the task thread for the review and
 `hub_agora_practices` reads or posts it.
 

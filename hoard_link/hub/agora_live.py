@@ -15,9 +15,14 @@ TOOL = {
                    "one cursor target per active member. Targets carry source timestamps. No inferred movement, "
                    "file reads, model calls or read receipts. Idle after 60 seconds of silence. Each actor carries its "
                    "agent loop when its transcript is observed: phase plan|act|observe|done (model text = plan, tool "
-                   "call = act, tool result = observe), lap, tool in flight, the turn's steps and a practice checklist "
-                   "(tests, browser, docs, commit identity, no evidence files, Agora delivery, task claimed with "
-                   "locks) each ok|fail|unknown|pending with its evidence. Each task carries its owner's loop summary.",
+                   "call = act, tool result = observe), lap, tool in flight (and its readable title), the turn's steps "
+                   "(tools by readable name with a short argument summary, results with ok/error and time), the kind "
+                   "of work the turn did (code|research|files|ops|chat) and that kind's practices each "
+                   "ok|fail|unknown|pending with its evidence: code = tests, browser, docs, commit identity, no "
+                   "evidence files, Agora delivery and task claimed with locks; research = sources opened and cited, "
+                   "dated facts, nothing cited from an unseen source, answer language; files = output checked, "
+                   "requested format, language; ops = commands ok, checked after running, language; chat = none. "
+                   "Each task carries its owner's loop summary.",
     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
         "space_id": {"type": "string"}, "channel": {"type": "string", "default": "general"}}},
 }
@@ -25,8 +30,10 @@ PRACTICES_TOOL = {
     "name": "hub_agora_practices", "read": False,
     "description": "Agent loop and practice checklist / bucle y buenas prácticas de un miembro.\n"
                    "Read the observed loop of a member (phase plan|act|observe|done, lap, tool, steps of the turn) and "
-                   "its practice checklist marked from the commands its session ran: tests, app checked in a browser, "
-                   "docs updated, commit identity, no evidence files committed, Agora delivery. With post=true and "
+                   "the practices of the kind of work its turn did (code, research, files, operations; none for a plain "
+                   "conversation) marked from the commands it ran and what it answered; for code: tests, app checked in "
+                   "a browser, docs updated, commit identity, no evidence files committed, Agora delivery. With "
+                   "post=true and "
                    "task_id, writes the checklist as a comment in that task's thread so the review sees what was met "
                    "and what is missing. hub_agora_task_submit posts it there by itself when the submitter is observed.",
     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
@@ -40,7 +47,8 @@ STATE = {"ok": "cumplida", "fail": "incumplida", "unknown": "sin confirmar", "pe
 def practices_text(member: str, loop: dict[str, Any]) -> str:
     """The checklist as a thread comment: what was met, what failed and what is missing, with the evidence."""
     count = loop.get("practices_summary") or agent_loop.summary(loop["practices"])
-    lines = [f"Buenas prácticas observadas de {member} (vuelta {loop.get('lap') or 0}): "
+    kind = agent_loop.KIND_LABELS.get(loop.get("kind") or "code", "Código").lower()
+    lines = [f"Buenas prácticas observadas de {member} · {kind} (vuelta {loop.get('lap') or 0}): "
              f"{count['ok']} cumplidas · {count['fail']} incumplidas · {count['open']} faltan o sin confirmar"]
     for p in loop["practices"]:
         lines.append(f"- {MARK[p['state']]} {p['label']}: {STATE[p['state']]}"
@@ -54,6 +62,8 @@ def board_practices(loop: dict[str, Any], agent: str, own: list[dict[str, Any]],
     delivery the transcript may not show (a submit from another session or the page)."""
     practices = [dict(p) for p in loop.get("practices", [])]
     task = own[0] if own else None
+    if (loop.get("kind") or "code") != "code":
+        return practices                 # the board's proofs are code-work practices
     if task and task.get("status") in ("review", "approved", "done"):
         for p in practices:
             if p["id"] == "agora" and p["state"] != "ok":
@@ -178,8 +188,9 @@ def project(board: dict[str, Any], watch: dict[str, Any], messages: list[dict[st
     return {"ok": True, "now": now, "space": board.get("space"), "channel": channel,
             "tasks": [{**{k:t.get(k) for k in ("id", "title", "status", "owner", "repo", "thread_id", "updated")},
                        "progress": task_progress(t),
-                       "loop": ({k: loops[t["owner"]].get(k) for k in ("phase", "lap", "tool", "practices_summary", "calls",
-                                                                        "calls_done", "turn_started_at")}
+                       "loop": ({k: loops[t["owner"]].get(k) for k in ("phase", "lap", "tool", "tool_title", "kind",
+                                                                         "kind_label", "practices_summary", "calls",
+                                                                         "calls_done", "turn_started_at")}
                                 if t.get("owner") in loops and t.get("status") not in ("done", "dropped") else None)}
                       for t in tasks],
             "files": list(files.values()), "messages": messages, "actors": actors,

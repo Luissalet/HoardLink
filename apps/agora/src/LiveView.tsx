@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { api, spaceId, type Task, type Message } from "./api";
-import { LoopPanel, LoopRing, TurnSteps, loopFacts, phaseLabel, type Loop } from "./LoopRing";
+import { LoopPanel, LoopRing, TurnSteps, loopBrief, loopFacts, phaseLabel, type Loop } from "./LoopRing";
 import "./live.css";
 
 type Session = {
@@ -548,9 +548,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                             {t.loop && (
                               <span className="agloop-task-loop">
                                 <LoopRing loop={t.loop} size="sm" live={!error} />
-                                {phaseLabel[t.loop.phase]}
-                                {t.loop.tool ? ` · ${t.loop.tool}` : ""} · {t.loop.practices_summary.ok}/
-                                {t.loop.practices_summary.ok + t.loop.practices_summary.fail + t.loop.practices_summary.open} prácticas
+                                {loopBrief(t.loop)}
                               </span>
                             )}
                             {t.loop && <TurnSteps loop={t.loop} now={now} />}
@@ -733,7 +731,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
           {actor.loop && (
             <>
               <h3>Bucle del agente</h3>
-              <LoopRing loop={actor.loop} color={actor.color} live={!error && now - actor.last_signal < 60} />
+              <LoopRing loop={actor.loop} color={actor.color} size="lg" name={actor.name} live={!error && now - actor.last_signal < 60} />
               <p>{loopFacts(actor.loop, now)}</p>
               <LoopPanel loop={actor.loop} />
             </>
@@ -771,6 +769,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
             const owner = data?.actors.find((a) => a.id === taskDetail.task.owner);
             return owner?.loop ? (
               <section aria-label={`Bucle de ${owner.name}`}>
+                <LoopRing loop={owner.loop} color={owner.color} size="lg" name={owner.name} live={!error && now - owner.last_signal < 60} />
                 <p>
                   {owner.name} · {loopFacts(owner.loop, now)}
                 </p>

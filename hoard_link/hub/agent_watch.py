@@ -399,19 +399,19 @@ class Session:
         if cleaned := snippet(text):
             self.last_text = cleaned
             self.last_text_at = ts
-            self.loop.text(ts)
+            self.loop.text(ts, text)
 
-    def _tool_end(self, call_id: str, ts: float = 0.0, ok: Optional[bool] = None) -> None:
-        self.loop.tool_end(call_id, ts, ok)
+    def _tool_end(self, call_id: str, ts: float = 0.0, ok: Optional[bool] = None, output: str = "") -> None:
+        self.loop.tool_end(call_id, ts, ok, output)
         self.work.end(call_id, ts, ok)
         self.open_tools.pop(call_id, None)
         self.pending.pop(call_id, None)
 
-    def _turn_start(self, ts: float) -> None:
+    def _turn_start(self, ts: float, prompt: str = "") -> None:
         self.turn_open = True
         self.turn_started = ts
         self.turn_ended = None
-        self.loop.turn_start(ts)
+        self.loop.turn_start(ts, _title_from(prompt) if prompt else "")
         self.work.turn_start()
         self.open_tools.clear()
         self.pending.clear()
@@ -496,6 +496,8 @@ class Session:
                     self.tokens = last
             elif pt == "agent_message" and isinstance(p.get("message"), str):
                 self._record_text(p["message"], ts)
+            elif pt == "user_message" and isinstance(p.get("message"), str) and self.turn_open:
+                self.loop.prompt = _title_from(p["message"])     # what the loop judges language and format on
             elif any(k in low for k in _QUESTION_KEYS):
                 self._codex_question(pt, p, ts)
         elif t == "response_item":
@@ -510,7 +512,8 @@ class Session:
                 self.loop.text(ts)
                 return
             elif pt.endswith("_call_output") or pt.endswith("_call_result"):
-                self._tool_end(str(p.get("call_id") or p.get("id") or ""), ts)
+                out = p.get("output")
+                self._tool_end(str(p.get("call_id") or p.get("id") or ""), ts, output=out if isinstance(out, str) else "")
                 self._codex_resumed()
             elif pt in ("function_call", "custom_tool_call", "local_shell_call"):
                 name = str(p.get("name") or pt[: -len("_call")] or "tool")
@@ -519,6 +522,9 @@ class Session:
                 self._tool_start(str(p.get("call_id") or p.get("id") or ""), name, args, ts, ns if isinstance(ns, str) else "")
             elif pt.endswith("_call"):
                 self.last_tool = str(p.get("name") or pt[: -len("_call")])    # web search & co.: no result item follows
+                self.seq += 1
+                self.loop.tool_start(f"done-{self.seq}", self.last_tool, p.get("action"), ts)
+                self.loop.tool_end(f"done-{self.seq}", ts)
             elif any(k in pt.lower() for k in _QUESTION_KEYS):
                 self._codex_question(pt, p, ts)
 
@@ -566,7 +572,7 @@ class Session:
             text = _first_text(content)
             if text and not _is_boilerplate(text):
                 self._set_title(text)
-            self._turn_start(ts)
+            self._turn_start(ts, "" if not text or _is_boilerplate(text) else text)
         elif role == "assistant":
             if not self.turn_open:
                 self.turn_open = True
@@ -621,14 +627,16 @@ class Session:
         if t == "user":
             results = [p for p in content if isinstance(p, dict) and p.get("type") == "tool_result"] if isinstance(content, list) else []
             for r in results:
-                self._tool_end(str(r.get("tool_use_id") or ""), ts, not r.get("is_error"))
+                body = r.get("content")
+                self._tool_end(str(r.get("tool_use_id") or ""), ts, not r.get("is_error"),
+                               body if isinstance(body, str) else _first_text(body))
             if obj.get("isMeta"):
                 return
             text = _first_text(content)
             if text.startswith("[Request interrupted by user"):
                 self._turn_end(ts)
             elif text.strip() and not (_is_boilerplate(text) and self.turn_open is not None):
-                self._turn_start(ts)          # a prompt (a tool result alone is part of the running turn)
+                self._turn_start(ts, text)    # a prompt (a tool result alone is part of the running turn)
         elif t == "assistant":
             if not self.turn_open:
                 self.turn_open = True         # a reply with no prompt before it (a slash command, a resumed session)

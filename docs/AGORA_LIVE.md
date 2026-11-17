@@ -32,24 +32,48 @@ Reduced-motion preferences disable cursor travel and text reveal.
 
 ## Agent loop and practices
 
-A strip under the agent buttons holds one ring per member whose session is observed:
-the agent in the centre with its lap number, and plan, act and observe around it. The
-lit segment is the phase the last transcript line set: model text or reasoning is
-plan, a tool call is act (the tool is named), a tool result is observe until the
-model writes again. A light runs along the lit segment while the member is active;
-reduced motion keeps it still. Nothing moves between transcript lines. The agent
-buttons and the task cards carry a small ring; a task card also shows its owner's
-phase, tool and how many practices are met.
+A strip under the agent buttons holds one ring per member whose session is observed,
+with its lap number in the centre and a node for plan, act and observe on the ring. A
+glowing arc with a gradient travels clockwise along the ring to the phase the last
+transcript line set (model text or reasoning is plan, a tool call is act, a tool
+result is observe until the model writes again), with a pulsing halo at its head
+while the member is active; it never turns back, a new lap keeps going forward, and
+reduced motion makes it jump without sliding. Nothing moves between transcript lines.
+The member detail and the task detail show a larger ring: the member's name and lap
+in the centre and Planear, Actuar and Observar as pills outside the ring, the current
+one lit. The agent buttons and the task cards carry a small ring; a task card also
+shows its owner's phase, tool, kind of work and how many of its practices are met.
 
 The member detail and the task detail show the steps of the observed turn (plan,
-tool, result, commit, delivery, end) and the practices to review, each met, failing,
-not settled or missing with the command that decides it: tests run, app checked in a
-browser, docs (FAUSTUS.md / README / AGENTS.md) edited, commit with the right identity
-(an explicit author; a trailer or another author fails it, none leaves it not
-settled), no evidence files committed, Agora delivery (`agora … submit|done <id>`,
-`hub_agora_task_submit|done`, or the task already in review) and the task claimed
-with path locks. Commands are judged on their sanitized text, so a command that only
-mentions a delivery in a string counts as one.
+tool, result, commit, delivery, end): a tool by its readable name («Buscar en la web»,
+«Terminal», «Editar») and the one argument that says what it did (query, URL, path or
+command), never the raw arguments; a result with ok or error and how long it took.
+
+The practices depend on the kind of work the current turn did, read from its calls:
+**code** when it edited code files, used git, ran tests or touched an Agora task;
+**files** when it produced documents, images or data files; **research** when it
+searched or opened the web; **operations** for any other tool; and **conversation**
+when it used no tool or only read, which has no practices. Each practice is met,
+failing, not settled or missing with what decides it.
+
+- Code (judged on the session's commands, since a commit or a delivery often comes
+  turns after the tests): tests run, app checked in a browser, docs (FAUSTUS.md /
+  README / AGENTS.md) edited, commit with the right identity (an explicit author; a
+  trailer or another author fails it, none leaves it not settled), no evidence files
+  committed, Agora delivery (`agora … submit|done <id>`, `hub_agora_task_submit|done`,
+  or the task already in review) and the task claimed with path locks.
+- Research: sources opened and not only searched, sources cited in the answer, facts
+  with a date, nothing cited from a site that neither appeared in the results nor was
+  opened, and the answer in the language of the prompt.
+- Files: the output opened and checked after writing it, the format the prompt asked
+  for (only when it named one) and the language.
+- Operations: commands finished without error, the result checked after running
+  (another call after the last one that changes something) and the language.
+
+What does not apply is left out (the language when the prompt does not say). Commands
+are judged on their sanitized text, so a command that only mentions a delivery in a
+string counts as one; the language is read from common words (Spanish or English) and
+the source check compares sites, not pages.
 
 `hub_agora_task_submit` (and `POST /api/agora/task_submit`) leaves the submitter's
 observed checklist as a comment in the task thread and returns it as `practices`.
@@ -61,8 +85,10 @@ observed checklist as a comment in the task thread and returns it as `practices`
 `GET /api/agora/live?space_id=<server>&channel=general` and the read-only
 `hub_agora_live` MCP tool expose the same projection with `now`, `space`, `channel`,
 `tasks`, `files`, `messages`, `actors` and `watch_error`. Actors with an observed session
-carry `loop` (`phase`, `since`, `lap`, `tool`, `steps`, `practices`, `practices_summary`,
-`tokens`, `turn_started_at`); open tasks carry their owner's `loop` summary.
+carry `loop` (`phase`, `since`, `lap`, `tool`, `tool_title`, `kind`, `kind_label`,
+`steps`, `practices`, `practices_summary`, `tokens`, `turn_started_at`); open tasks carry
+their owner's `loop` summary (`phase`, `lap`, `tool`, `tool_title`, `kind`, `kind_label`,
+`practices_summary`).
 
 Actors carry an attributed `target` with its `kind`, `id` and `at` source timestamp,
 `last_signal`, `resting` and the observer's selected session when available. Only
