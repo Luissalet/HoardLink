@@ -195,8 +195,6 @@ MIGRATIONS.append(agora_social.SOCIAL_MIGRATION)
 MIGRATIONS.append(agora_channels.MUTED_MIGRATION)
 # the rank the person gives each agent on each server (agora_ranks.py)
 MIGRATIONS.append(agora_ranks.RANKS_MIGRATION)
-# who answers what the person writes without naming anyone: settings and routes (agora_router.py)
-MIGRATIONS.append(agora_router.ROUTER_MIGRATION)
 # a task's threads, found by the task: reading its activity walked every message, once per task of a list
 MIGRATIONS.append("CREATE INDEX IF NOT EXISTS threads_task ON threads(task_id);")
 # A session's own model report belongs to its membership, not its global identity.
@@ -208,6 +206,9 @@ DECLARED_MODEL_MIGRATION = """
 MIGRATIONS.append(DECLARED_MODEL_MIGRATION)
 # the diff of a delivery, comments on its lines and its guided reading (agora_review.py)
 MIGRATIONS.append(agora_review.REVIEW_MIGRATION)
+# applied after the review tables: a database already at that version must not run them again
+# who answers what the person writes without naming anyone: settings and routes (agora_router.py)
+MIGRATIONS.append(agora_router.ROUTER_MIGRATION)
 # an agent's page: instructions, proposals to change them, memory and routines (agora_profiles.py)
 MIGRATIONS.append(agora_profiles.PROFILES_MIGRATION)
 # threads started from messages, following, pins and links to the Brain (agora_threads.py)
