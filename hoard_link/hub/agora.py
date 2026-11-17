@@ -58,6 +58,7 @@ from . import agora_ranks
 from . import agora_router
 from . import agora_social
 from . import agora_profiles
+from . import agora_threads
 from . import agora_debate
 from . import agora_review
 from . import agora_live
@@ -208,6 +209,8 @@ MIGRATIONS.append(DECLARED_MODEL_MIGRATION)
 MIGRATIONS.append(agora_review.REVIEW_MIGRATION)
 # an agent's page: instructions, proposals to change them, memory and routines (agora_profiles.py)
 MIGRATIONS.append(agora_profiles.PROFILES_MIGRATION)
+# threads started from messages, following, pins and links to the Brain (agora_threads.py)
+MIGRATIONS.append(agora_threads.THREADS_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -1122,6 +1125,8 @@ class Agora:
         mid = self.db.insert("messages", {"thread_id": thread_id, "author": author, "kind": kind, "body": body,
                                           "mentions": _j(mentions), "created": now})
         self.db.execute("UPDATE threads SET updated=? WHERE id=?", (now, thread_id))
+        agora_threads.on_message(self, thread_id, author, kind, body, mentions or [])
+        agora_threads.index_message(self, mid, thread_id, kind, body)
         return mid
 
     def _system(self, task: dict[str, Any], text: str, actor: str = "system") -> Optional[int]:
@@ -1889,6 +1894,7 @@ class Agora:
         self.db.insert('task_edits', {'task_id': task['id'], 'revision': 0 if latest is None else latest + 1,
             'author': author, 'created': self.clock(), 'kind': kind,
             'before_json': _j(snapshot(before)) if before is not None else None, 'after_json': _j(snapshot(task))})
+        agora_threads.index_task(self, task)
 
     @_space_operation
     def task_edit(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -3590,6 +3596,7 @@ class AgoraFacet(Facet):
         self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
+        self.agora.title_chat = lambda body: hub.link.chat("agora-threads", body)     # suggested titles for threads
         self.agora.review_chat = lambda body: hub.link.chat("agora-review", body)   # the guided review asks the family's model
         self.agora.route_chat = lambda body: hub.link.chat("agora-router", body)    # the router asks it who should answer
         self.agora.review_session_hook = self._review_session

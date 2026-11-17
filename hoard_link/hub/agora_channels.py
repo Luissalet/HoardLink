@@ -36,6 +36,7 @@ from . import agora_ranks
 from . import agora_router
 from . import agora_social
 from . import agora_profiles
+from . import agora_threads
 
 GENERAL = "general"
 BOARD_COLUMNS = ("open", "in_progress", "review", "done")
@@ -421,6 +422,9 @@ def channel_read(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     page.pop("hub_acknowledged", None)
     agora_social.decorate(self, page.get("messages") or [], viewer)   # reactions, the quoted message, files
     agora_router.decorate(self, page.get("messages") or [])          # who the router chose for a message of the person
+    agora_threads.decorate(self, page.get("messages") or [], viewer)  # the thread a message started, pins, Brain links
+    if not before:
+        page.update(agora_threads.page_info(self, thread, viewer))      # the pinned messages and, in a thread, its state
     return page
 
 
@@ -871,11 +875,13 @@ def folders(a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
 OPERATIONS = {"channels": channels, "channel_create": channel_create, "channel_update": channel_update,
               "channel_post": channel_post, "channel_read": channel_read, "seen": seen, "servers": servers,
               "guild": guild, "feed": feed, "search": search, "pulse": pulse, "space_meta_set": space_meta_set,
-              **agora_social.OPERATIONS, **agora_ranks.OPERATIONS, **agora_profiles.OPERATIONS, **agora_router.OPERATIONS}
+              **agora_social.OPERATIONS, **agora_ranks.OPERATIONS, **agora_profiles.OPERATIONS, **agora_router.OPERATIONS,
+              **agora_threads.OPERATIONS}
 WRITE_OPS = ("channel_create", "channel_update", "channel_post", "channel_read", "seen", "space_meta_set",
-             *agora_social.WRITE_OPS, *agora_ranks.WRITE_OPS, *agora_profiles.WRITE_OPS, *agora_router.WRITE_OPS)
+             *agora_social.WRITE_OPS, *agora_ranks.WRITE_OPS, *agora_profiles.WRITE_OPS, *agora_router.WRITE_OPS,
+             *agora_threads.WRITE_OPS)
 READ_ROUTES = ("servers", "guild", "channels", "feed", "search", "pulse", *agora_social.READ_ROUTES,
-               *agora_ranks.READ_ROUTES, *agora_profiles.READ_ROUTES, *agora_router.READ_ROUTES)
+               *agora_ranks.READ_ROUTES, *agora_profiles.READ_ROUTES, *agora_router.READ_ROUTES, *agora_threads.READ_ROUTES)
 
 
 def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
@@ -961,6 +967,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
          "inputSchema": schema({"path": {"type": "string", "maxLength": 1000}}, [])},
         *agora_social.tools(schema, agent_prop),
         *agora_profiles.tools(schema, agent_prop),
+        *agora_threads.tools(schema, agent_prop),
         *agora_ranks.tools(schema, agent_prop),
         *agora_router.tools(schema, agent_prop),
     ]
