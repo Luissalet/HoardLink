@@ -184,5 +184,6 @@ short cache. Faustus addresses that apps configure (`127.0.0.1:7000` by default)
 Hub published for the Spark follows, so a Hoard on the PC reaches the copilot, and can reach the global model through `faustus_origin()`, with Faustus
 switched off on the PC. `LinkConfig.faustus_candidates()` lists the addresses in that order and `faustus_origin()`
 returns the first one whose health check passes, falling back to the configured address. The Hub itself reads its own
-placement state instead of calling its own API. `where.app_url("hermes")` and `appUrl("prometheus")` answer the same
+placement state instead of calling its own API. `Link.resolve` finds Faustus the same way (the placed address is read
+with `where.placed`, the one rule every Hoard shares). `where.app_url("hermes")` and `appUrl("prometheus")` answer the same
 for the other apps that move.
