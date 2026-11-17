@@ -1448,10 +1448,12 @@ def test_claude_child_worker_is_a_headless_session_of_its_own_with_the_chosen_mo
     assert command[command.index("--model") + 1] == "sonnet" and command[command.index("--effort") + 1] == "high"
     assert command[command.index("--session-id") + 1] == worker["session_id"] and re.fullmatch(r"[0-9a-f-]{36}", worker["session_id"])
     assert command[command.index("--name") + 1] == worker["agent_id"]
-    assert f"--worktree=agora-claude-{worker['id'][:8]}" in command
+    assert not any(part.startswith("--worktree") for part in command)        # no worktree of the Hub that nobody uses
     assert command[-2] == "--" and command[-1].endswith("Task: Review the open delivery.")
-    assert f"--as {worker['agent_id']} hb" in command[-1]
-    assert options["cwd"] == str(Path(__file__).resolve().parents[1])
+    assert f"--as {worker['agent_id']} hb" in command[-1] and "folder that is not a repository" in command[-1]
+    start = Path(options["cwd"])
+    assert start != Path(__file__).resolve().parents[1]                      # nor does it start inside the Hub repository
+    assert not (start / ".git").exists()
     assert worker["model"] == "sonnet" and worker["effort"] == "high" and "Claude Code CLI" in worker["model_source"]
 
 
@@ -2154,3 +2156,152 @@ def test_recovery_adopts_only_the_recorded_runtime_process(tmp_path, monkeypatch
     facet._close_worker_runtime("worker")
     assert killed == [(1200, {"created_at": 77.0})]
     assert not facet._faustus_runtimes
+
+
+def _fixture_repo(tmp_path):
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                    "commit", "--allow-empty", "-qm", "Baseline"], check=True)
+    return repo
+
+
+def _commit_in(folder, name):
+    (folder / name).write_text(name, encoding="utf-8")
+    subprocess.run(["git", "-C", str(folder), "add", name], check=True)
+    subprocess.run(["git", "-C", str(folder), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                    "commit", "-qm", f"Add {name}"], check=True)
+    return subprocess.run(["git", "-C", str(folder), "rev-parse", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_delivery_is_found_by_its_commits_when_the_workers_folder_is_not_known(tmp_path):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    repo = _fixture_repo(tmp_path)
+    worktree = tmp_path / "research" / "repo-task"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", "task-branch", str(worktree)], check=True)
+    commit = _commit_in(worktree, "done.txt")
+    store.repo_lookup = lambda name: repo if name == "QA" else None
+    agent = "faustus-qa"
+    task = store.task_add({"agent": agent, "title": "Deliver", "repo": "QA", "paths": ["done.txt"]})["task"]
+    store.task_claim({"agent": agent, "task_id": task["id"]})
+    store.task_submit({"agent": agent, "task_id": task["id"], "summary": "Fixture", "commits": [commit]})
+    worker = {"agent_id": agent, "workspace": "", "created_at": 1}
+
+    assert facet._verify_worker_delivery(worker)["issues"] == []       # no folder recorded, no branch given: found by commit
+    (worktree / "stray.txt").write_text("left over", encoding="utf-8")
+    assert facet._verify_worker_delivery(worker)["issues"] == [f"Hay cambios sin commit en {worktree.as_posix()}."]
+    (worktree / "stray.txt").unlink()
+
+    # the worker moved on: its worktree holds a descendant of the submitted commit
+    later = _commit_in(worktree, "more.txt")
+    assert later != commit and facet._verify_worker_delivery(worker)["issues"] == []
+    (worktree / "stray.txt").write_text("left over", encoding="utf-8")
+    assert len(facet._verify_worker_delivery(worker)["issues"]) == 1
+
+    # a commit the repository does not have is a real problem
+    unknown = store.task_add({"agent": agent, "title": "Lost", "repo": "QA", "paths": ["x"]})["task"]
+    store.task_claim({"agent": agent, "task_id": unknown["id"]})
+    store.task_submit({"agent": agent, "task_id": unknown["id"], "summary": "Fixture", "commits": ["f" * 40]})
+    issues = facet._verify_worker_delivery(worker)["issues"]
+    assert any("no están en el repositorio QA" in issue for issue in issues)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_loose_files_in_the_folder_a_session_started_in_do_not_spoil_a_delivery_made_elsewhere(tmp_path):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    repo = _fixture_repo(tmp_path)
+    worktree = tmp_path / "work" / "repo-task"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", "task-branch", str(worktree)], check=True)
+    commit = _commit_in(worktree, "done.txt")
+    started_in = tmp_path / "hub"                                        # where the session was started: another repository
+    subprocess.run(["git", "init", "-q", str(started_in)], check=True)
+    (started_in / "scratch-test.py").write_text("print(1)", encoding="utf-8")
+    store.repo_lookup = lambda name: repo if name == "QA" else None
+    agent = "claude-worker-aaaaaaaa"
+    task = store.task_add({"agent": agent, "title": "Deliver", "repo": "QA", "paths": ["done.txt"]})["task"]
+    store.task_claim({"agent": agent, "task_id": task["id"]})
+    store.task_submit({"agent": agent, "task_id": task["id"], "summary": "Fixture", "commits": [commit]})
+
+    result = facet._verify_worker_delivery({"agent_id": agent, "workspace": str(started_in), "created_at": 1})
+    assert result["issues"] == [] and result["tasks"] == [task["id"]]
+
+    # but when the task is about the repository the session started in, what it left there still counts
+    store.repo_lookup = lambda name: started_in if name == "QA" else None
+    subprocess.run(["git", "-C", str(started_in), "add", "scratch-test.py"], check=True)
+    subprocess.run(["git", "-C", str(started_in), "-c", "user.name=F", "-c", "user.email=f@example.test",
+                    "commit", "-qm", "Scratch"], check=True)
+    own = subprocess.run(["git", "-C", str(started_in), "rev-parse", "HEAD"], capture_output=True, text=True,
+                         check=True).stdout.strip()
+    second = store.task_add({"agent": agent, "title": "Own", "repo": "QA", "paths": ["a"]})["task"]
+    store.task_claim({"agent": agent, "task_id": second["id"]})
+    store.task_submit({"agent": agent, "task_id": second["id"], "summary": "Fixture", "commits": [own]})
+    (started_in / "loose.txt").write_text("left", encoding="utf-8")
+    issues = facet._verify_worker_delivery({"agent_id": agent, "workspace": str(started_in), "created_at": 1})["issues"]
+    assert [i for i in issues if "sin commit" in i] == [f"Hay cambios sin commit en {started_in.as_posix()}."]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_childs_worktree_of_the_hub_is_retired_with_its_loose_changes_written_into_the_thread(tmp_path):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    hub = _fixture_repo(tmp_path)
+
+    def session(worker_id):
+        name = f"agora-claude-{worker_id[:8]}"
+        folder = hub / ".claude" / "worktrees" / name
+        subprocess.run(["git", "-C", str(hub), "worktree", "add", "-qb", f"worktree-{name}", str(folder)], check=True)
+        return name, folder
+
+    def branches():
+        return subprocess.run(["git", "-C", str(hub), "branch", "--list"], capture_output=True, text=True).stdout
+
+    agent = "claude-worker-bbbbbbbb"
+    task = store.task_add({"agent": agent, "title": "Elsewhere"})["task"]
+    store.task_claim({"agent": agent, "task_id": task["id"]})
+    posted = []
+    facet._post_worker_status = lambda worker, text, verification: posted.append(text)
+    verification = {"issues": [], "tasks": [task["id"]]}
+
+    # loose files and nothing committed: written into the thread, then the folder and its empty branch go
+    name, folder = session("bbbbbbbb-1111")
+    (folder / "scratch-test.py").write_text("print('scratch')", encoding="utf-8")
+    assert facet._retire_claude_worktree({"id": "bbbbbbbb-1111", "agent_id": agent}, verification, hub) is True
+    assert not folder.exists() and name not in branches()
+    assert len(posted) == 1 and "scratch-test.py" in posted[0] and "print('scratch')" in posted[0]
+
+    # commits that are nowhere else: the worktree and its branch stay, nothing is posted
+    name, folder = session("cccccccc-2222")
+    _commit_in(folder, "work.txt")
+    (folder / "loose.txt").write_text("left", encoding="utf-8")
+    assert facet._retire_claude_worktree({"id": "cccccccc-2222", "agent_id": agent}, verification, hub) is False
+    assert (folder / "loose.txt").is_file() and name in branches() and len(posted) == 1
+
+    # changes that do not fit in the thread are not thrown away
+    name, folder = session("dddddddd-3333")
+    (folder / "big.txt").write_text("x" * 20000, encoding="utf-8")
+    assert facet._retire_claude_worktree({"id": "dddddddd-3333", "agent_id": agent}, verification, hub) is False
+    assert (folder / "big.txt").is_file() and len(posted) == 1
+
+    # no task to report to: they stay as well; a worktree left as found simply goes
+    name, folder = session("eeeeeeee-4444")
+    (folder / "loose.txt").write_text("left", encoding="utf-8")
+    assert facet._retire_claude_worktree({"id": "eeeeeeee-4444", "agent_id": agent}, {"issues": [], "tasks": []}, hub) is False
+    name, clean = session("ffffffff-5555")
+    assert facet._retire_claude_worktree({"id": "ffffffff-5555", "agent_id": agent}, verification, hub) is True
+    assert not clean.exists()
+
+
+def test_a_finished_claude_child_has_its_worktree_retired_whatever_the_outcome(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    retired = []
+    monkeypatch.setattr(facet, "_retire_claude_worktree", lambda worker, verification, root=None: retired.append(worker["id"]))
+    for n, code in enumerate((0, 1)):
+        with facet._db() as db:
+            db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,created_at,updated_at) "
+                       "VALUES(?,?,?,?,?,?,'running',1,1)", (f"claude-end-{n}", "claude", f"claude-worker-1234567{n}", "haiku", "low", "task"))
+        facet._monitor_worker(f"claude-end-{n}", SimpleNamespace(wait=lambda code=code: code), tmp_path / "none.txt")
+    assert retired == ["claude-end-0", "claude-end-1"]

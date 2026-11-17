@@ -148,9 +148,17 @@ worker receipt also offers **Continuar** for that same session and workspace
 (`action: continue` over HTTP and MCP).
 
 Managed workers are told to commit changes and submit their Agora task. The
-console checks the submission and the Git status of the recorded worktree.
-Incomplete or interrupted work is reported in the worker receipt and task
-thread. The task keeps its owner and locks so it can be resumed.
+console checks the submission against the commits named in the submit: they are
+located in the task's repository and its worktrees, wherever the worker worked
+and whether or not the console knows the worker's folder, and only the worktrees
+holding those commits are checked for uncommitted files. Claude workers start in
+a folder that is not a repository and make their own worktree in the repository
+of the task, so no worktree of the Hub is created for them. A leftover
+`.claude/worktrees/agora-claude-*` worktree of a finished Claude worker is
+retired: its uncommitted changes are written into the task thread first, and one
+whose branch holds commits found nowhere else stays. Incomplete or interrupted
+work is reported in the worker receipt and task thread. The task keeps its owner
+and locks so it can be resumed.
 
 Worker details show the actual server URL, workspace and observed tool counts.
 **Detener turno** reads that session's current run ID and cancels it through

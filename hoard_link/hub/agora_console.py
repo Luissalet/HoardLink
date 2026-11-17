@@ -2178,19 +2178,23 @@ class AgoraConsoleFacet(Facet):
             session_id = ""
             process_env = self._runner_env()
         elif leader_id == "claude":
-            # A headless session of its own, in its own worktree and under its own session id, so it is found again.
+            # A headless session of its own, under its own session id so it is found again. It starts in a folder that
+            # is no repository (starting in the Hub's own made the program add a worktree of the Hub that nobody used)
+            # and makes its own worktree in whichever repository the task is about.
             # "default" (model or effort) passes no option: what the person's Claude Code is set to.
             session_id = str(uuid.uuid4())
             command = [claude_executable, "--print", "--output-format", "stream-json", "--verbose",
-                       "--permission-mode", "bypassPermissions", "--session-id", session_id, "--name", agent_id,
-                       f"--worktree=agora-claude-{worker_id[:8]}"]
+                       "--permission-mode", "bypassPermissions", "--session-id", session_id, "--name", agent_id]
+            prompt = prompt.replace("Work only in an isolated worktree and follow repository skills.",
+                                    "Your session starts in a folder that is not a repository: before changing a repository, "
+                                    "make a worktree of it and work only there, and follow repository skills.", 1)
             if model != "default":
                 command.extend(["--model", model])
             if effort and effort != "default":
                 command.extend(["--effort", effort])
             command.extend(["--", prompt])
-            model_source = "aliases of the installed Claude Code CLI + independent `claude --print --worktree` session"
-            worker_cwd = work_dir
+            model_source = "aliases of the installed Claude Code CLI + independent `claude --print` session"
+            worker_cwd = self._neutral_worker_dir(work_dir, worker_dir)
             process_env = self._runner_env()
         else:
             setup_failed = False
@@ -2296,6 +2300,17 @@ class AgoraConsoleFacet(Facet):
         return out
 
     @staticmethod
+    def _neutral_worker_dir(work_dir: Path, fallback: Path) -> Path:
+        """Where a child session starts when it must not start inside a repository: the workspace folder that holds
+        the Agora launcher (it is no repository), else a folder of its own under the Hub's data."""
+        for parent in work_dir.parents:
+            if (parent / "agora.cmd").is_file() and not (parent / ".git").exists():
+                return parent
+        folder = fallback / "start-here"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+
+    @staticmethod
     def _worker_idle_seconds() -> float:
         try:
             value = float(os.environ.get("HOARD_AGORA_WORKER_IDLE_SECONDS", "3600"))
@@ -2370,13 +2385,16 @@ class AgoraConsoleFacet(Facet):
             except (OSError, subprocess.SubprocessError):
                 issues.append(f"No se pudo verificar el estado Git de {workspace}.")
 
+        resolved = False
         for task in tasks:
             if not task.get("paths") and not task.get("commits"):
                 continue
             branch = task.get("branch")
             repo_lookup = getattr(agora, "repo_lookup", None)
-            repo = repo_lookup(task["repo"]) if branch and task.get("repo") and repo_lookup else None
+            repo = repo_lookup(task["repo"]) if task.get("repo") and repo_lookup else None
             if repo:
+                resolved = True
+            if repo and branch:
                 branch = branch.removeprefix("refs/heads/")
                 try:
                     entries = self._git_worker_info(str(repo), "worktree", "list", "--porcelain", "-z", check=True)
@@ -2386,17 +2404,28 @@ class AgoraConsoleFacet(Facet):
                             workspaces.add(fields[0].removeprefix("worktree "))
                             break
                     else:
-                        if recorded_root:
+                        if recorded_root and self._same_repository(recorded_root, repo):
                             workspaces.add(recorded_root)
-                        else:
+                        elif not task.get("commits"):
                             issues.append(f"#{task['id']}: no se encontró la carpeta de la rama {branch}.")
                 except (OSError, subprocess.SubprocessError):
                     issues.append(f"#{task['id']}: no se pudo localizar la carpeta de la rama {branch}.")
-            elif recorded_root:
-                workspaces.add(recorded_root)
-            else:
-                issues.append(f"#{task['id']}: no consta la carpeta de trabajo para comprobar los commits.")
-        if not workspaces and recorded_root:
+            if repo and task.get("commits"):
+                # The submit names its commits: they are looked for in the task's repository and its worktrees, wherever
+                # the worker's own folder is (or whether the console knows it at all).
+                found, missing = self._locate_submitted_commits(repo, task["commits"])
+                workspaces.update(found)
+                if missing:
+                    issues.append(f"#{task['id']}: los commits {', '.join(m[:12] for m in missing)} no están en el "
+                                  f"repositorio {task['repo']}.")
+                if recorded_root and self._same_repository(recorded_root, repo):
+                    workspaces.add(recorded_root)
+            elif not repo:
+                if recorded_root:
+                    workspaces.add(recorded_root)
+                else:
+                    issues.append(f"#{task['id']}: no consta la carpeta de trabajo para comprobar los commits.")
+        if not workspaces and recorded_root and not resolved:
             workspaces.add(recorded_root)
         for path in sorted(workspaces):
             try:
@@ -2406,6 +2435,56 @@ class AgoraConsoleFacet(Facet):
             except (OSError, subprocess.SubprocessError):
                 issues.append(f"No se pudo verificar el estado Git de {path}.")
         return {"issues": issues, "tasks": [task["id"] for task in tasks]}
+
+    def _same_repository(self, path: Any, repo: Any) -> bool:
+        """True when both folders belong to one repository (the checkout and its worktrees share a common git dir)."""
+        try:
+            def common(folder: Any) -> str:
+                done = self._git_worker_info(str(folder), "rev-parse", "--path-format=absolute", "--git-common-dir")
+                return os.path.normcase(os.path.realpath(done.stdout.strip())) if done.returncode == 0 else ""
+            mine = common(path)
+            return bool(mine) and mine == common(repo)
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def _locate_submitted_commits(self, repo: Any, commits: list[str]) -> tuple[set[str], list[str]]:
+        """Where the commits of a submit are. Answers (the worktrees of the repository that hold them unintegrated,
+        the commits the repository does not have). Worktrees share the repository's objects, so one look at the
+        repository finds a commit made in any of them. A worktree is the worker's when its HEAD is one of the commits,
+        or a descendant of one that the shared checkout has not taken in yet; the shared checkout itself is never
+        looked at for stray files, because it is everybody's."""
+        repo = str(repo)
+        if self._git_worker_info(repo, "rev-parse", "--git-dir").returncode != 0:
+            return set(), []                       # not a repository: there is nothing to look in
+        full, missing = [], []
+        for commit in commits:
+            done = self._git_worker_info(repo, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}")
+            if done.returncode == 0 and done.stdout.strip():
+                full.append(done.stdout.strip())
+            else:
+                missing.append(commit)
+        found: set[str] = set()
+        if not full:
+            return found, missing
+        primary = os.path.normcase(os.path.realpath(repo))
+        listing = self._git_worker_info(repo, "worktree", "list", "--porcelain", "-z")
+        if listing.returncode != 0:
+            return found, missing
+        for entry in listing.stdout.split("\0\0"):
+            fields = entry.split("\0")
+            if not fields or not fields[0].startswith("worktree "):
+                continue
+            folder = fields[0].removeprefix("worktree ")
+            head = next((f.removeprefix("HEAD ") for f in fields if f.startswith("HEAD ")), "")
+            if not head or os.path.normcase(os.path.realpath(folder)) == primary or not Path(folder).is_dir():
+                continue
+            for commit in full:
+                if head == commit or (
+                        self._git_worker_info(repo, "merge-base", "--is-ancestor", commit, head).returncode == 0
+                        and self._git_worker_info(repo, "merge-base", "--is-ancestor", commit, "HEAD").returncode != 0):
+                    found.add(folder)
+                    break
+        return found, missing
 
     @staticmethod
     def _git_worker_info(path: str, *args: str, check: bool = False) -> subprocess.CompletedProcess:
@@ -2611,8 +2690,8 @@ class AgoraConsoleFacet(Facet):
                     return
             if state == "failed":
                 self._forget_rank_of_absent(worker["agent_id"])
-            if leader == "claude" and (state == "completed" or refused_sign_in):
-                self._tidy_claude_worktree(worker_id)
+            if leader == "claude":
+                self._retire_claude_worktree(worker, verification)
         except Exception:  # noqa: BLE001
             logger.exception("worker monitor failed for %s", worker_id)
             with self._db_lock, self._db() as db:
@@ -2643,24 +2722,9 @@ class AgoraConsoleFacet(Facet):
             return subprocess.run(["git", "-C", str(root), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=60, check=False,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode
-        def own_lock() -> Optional[str]:
-            # The provider's program locks the worktree of its session, saying whose it is («claude session <name> …»),
-            # and leaves the lock there when it ends. That one is lifted; a lock anyone else put stays, and the
-            # worktree with it. Answers the lock's reason when it is the program's own.
-            try:
-                pointer = (path / ".git").read_text(encoding="utf-8", errors="replace").strip()
-                if not pointer.startswith("gitdir:"):
-                    return None
-                kept = Path(pointer[len("gitdir:"):].strip())
-                kept = kept if kept.is_absolute() else path / kept
-                reason = (kept / "locked").read_text(encoding="utf-8", errors="replace").strip()
-            except OSError:
-                return None
-            return reason if re.match(r"claude session " + re.escape(name) + r"(?![\w-])", reason, re.IGNORECASE) else None
-
         try:
             removed = git("worktree", "remove", str(path)) == 0
-            reason = None if removed else own_lock()
+            reason = None if removed else AgoraConsoleFacet._claude_own_lock(path, name)
             if reason:
                 git("worktree", "unlock", str(path))
                 removed = git("worktree", "remove", str(path)) == 0     # still unforced: one with changes stays
@@ -2686,6 +2750,98 @@ class AgoraConsoleFacet(Facet):
             return True
         except (OSError, subprocess.SubprocessError):
             return False
+
+    _REPORT_LIMIT = 16000
+
+    def _retire_claude_worktree(self, worker: dict[str, Any], verification: dict[str, Any],
+                                root: Optional[Path] = None) -> bool:
+        """The worktree of the Hub that a Claude child's program made for it (sessions started before they began in a
+        folder of their own) goes when the child ends. One left as found goes as before. One with changes that were
+        never committed goes after its changes are written into the thread of the task (the files, and what is in
+        them), so they are not lost; if they do not fit there, it stays. One whose branch holds commits that are
+        nowhere else stays, with its branch, for whoever integrates them. True when the folder went."""
+        worker_id = worker["id"]
+        if self._tidy_claude_worktree(worker_id, root):
+            return True
+        root = root or Path(__file__).resolve().parents[2]
+        name = f"agora-claude-{worker_id[:8]}"
+        path = root / ".claude" / "worktrees" / name
+        if not path.is_dir():
+            return False
+
+        def git(*args: str, cwd: Path = root) -> subprocess.CompletedProcess:
+            return subprocess.run(["git", "-C", str(cwd), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=60, check=False,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        try:
+            branch = f"worktree-{name}"
+            own = git("rev-list", "--count", f"refs/heads/{branch}", "--not", f"--exclude=refs/heads/{branch}", "--glob=refs/heads/*")
+            if own.returncode != 0 or own.stdout.strip() != "0":
+                return False                                    # commits that are nowhere else: they stay
+            status = git("status", "--porcelain", "--untracked-files=all", cwd=path)
+            if status.returncode != 0:
+                return False
+            lines = [line for line in status.stdout.splitlines() if line.strip()]
+            if lines:
+                if not verification.get("tasks"):
+                    return False                                # nowhere to put the report: the changes stay
+                report = self._worktree_changes_report(path, lines, git)
+                if report is None:
+                    return False
+                self._post_worker_status(worker, report, verification)
+            reason = self._claude_own_lock(path, name)
+            if reason:
+                git("worktree", "unlock", str(path))
+            if git("worktree", "remove", "--force", str(path)).returncode != 0:
+                if reason:
+                    git("worktree", "lock", "--reason", reason, str(path))
+                return False
+            git("branch", "-D", branch)                          # it holds nothing that is not somewhere else
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    @classmethod
+    def _worktree_changes_report(cls, path: Path, lines: list[str], git: Any) -> Optional[str]:
+        """The uncommitted changes of a worktree as text for a thread: each file with its state, the difference for
+        the tracked ones and the content for the new ones. None when it does not fit (nothing is cut short: a report
+        that lost part of the changes would not be a reason to delete them)."""
+        parts = [f"Cambios sin commit que había en la carpeta de trabajo retirada ({path.name}):"]
+        for line in lines:
+            code, name = line[:2], line[3:].strip().strip('"')
+            parts.append(f"- {code.strip() or '?'} {name}")
+        for line in lines:
+            code, name = line[:2], line[3:].strip().strip('"')
+            if code == "??":
+                target = path / name
+                try:
+                    if not target.is_file() or target.stat().st_size > cls._REPORT_LIMIT:
+                        return None
+                    content = target.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    return None
+                parts.append(f"\n--- {name} (nuevo) ---\n{content}")
+            else:
+                done = git("diff", "HEAD", "--", name, cwd=path)
+                if done.returncode != 0:
+                    return None
+                parts.append(f"\n--- {name} ---\n{done.stdout}")
+        report = "\n".join(parts)
+        return report if len(report) <= cls._REPORT_LIMIT else None
+
+    @staticmethod
+    def _claude_own_lock(path: Path, name: str) -> Optional[str]:
+        """The reason of the lock the provider's program left on the worktree of its session, when it is its own."""
+        try:
+            pointer = (path / ".git").read_text(encoding="utf-8", errors="replace").strip()
+            if not pointer.startswith("gitdir:"):
+                return None
+            kept = Path(pointer[len("gitdir:"):].strip())
+            kept = kept if kept.is_absolute() else path / kept
+            reason = (kept / "locked").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return None
+        return reason if re.match(r"claude session " + re.escape(name) + r"(?![\w-])", reason, re.IGNORECASE) else None
 
     def _worker_log_path(self, worker_id: str) -> Path:
         with self._db_lock, self._db() as db:
