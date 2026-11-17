@@ -115,17 +115,25 @@ def make_copilot_router(app_id, data_dir, *, faustus_urls=None, token=None, app_
     except FileExistsError:
         pass
     space_id = space_file.read_text(encoding="utf-8").strip()
-    selected = {"url": None}
+    selected = {"url": None, "until": 0.0}
 
     async def locate():
-        if selected["url"]:
+        import asyncio
+        import time
+        from . import where
+        if selected["url"] and time.monotonic() < selected["until"]:
             return selected["url"]
+        # Faustus may have been moved to a Spark by the Hub's "Run on": the placed address is tried after the
+        # configured ones (they refuse at once when it is off here). The choice is re-checked every few seconds.
+        candidates = await asyncio.to_thread(where.faustus_urls, urls, None, hub=config.hub_url)
         async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
-            for base in urls:
+            for base in candidates:
                 try:
-                    response = await client.get(base.rstrip("/") + "/api/hoard-copilot/capabilities", headers=headers)
+                    response = await client.get(base.rstrip("/") + "/api/hoard-copilot/capabilities", headers=headers,
+                                                timeout=3 if base.startswith("http://127.") else 8)
                     if response.status_code == 200 and response.json().get("contract_version"):
                         selected["url"] = base.rstrip("/")
+                        selected["until"] = time.monotonic() + 20
                         return selected["url"]
                 except (httpx.HTTPError, ValueError):
                     continue
@@ -140,6 +148,8 @@ def make_copilot_router(app_id, data_dir, *, faustus_urls=None, token=None, app_
         except httpx.HTTPError as exc:
             await client.aclose()
             selected["url"] = None
+            from . import where
+            where.forget()
             raise HTTPException(503, "Faustus copilot connection failed") from exc
         async def chunks():
             try:

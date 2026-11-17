@@ -39,10 +39,20 @@ class CoordinationFacet(Facet):
             return {'ok': False, 'status': 409 if type(error).__name__ in ('RevisionConflict', 'ClaimConflict', 'DuplicateTurn') else 400,
                     'error': error_payload(error)}
 
+    def _workspace_base(self):
+        """Where Faustus answers now: the Spark address when the Hub moved it there, else the configured one."""
+        urls = list(self.hub.config.faustus_urls or [''])
+        try:
+            from .. import where
+            urls = where.faustus_urls(urls, self.hub.placement.state()) or urls
+        except Exception:  # noqa: BLE001 - placement is optional here
+            pass
+        return str(urls[0]).rstrip('/')
+
     def config(self, args=None):
         return {'ok': True, 'authority': 'hub', 'schema_version': 1,
                 'default_space_id': DEFAULT_SPACE_ID, 'room_kinds': ['council', 'groups'],
-                'workspace_url': str((self.hub.config.faustus_urls or [''])[0]).rstrip('/') + '/agora',
+                'workspace_url': self._workspace_base() + '/agora',
                 'execution': 'native-faustus'}
 
     def resources(self, args):

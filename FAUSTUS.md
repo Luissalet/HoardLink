@@ -168,3 +168,13 @@ app's native venv and token file, with bridge autostart disabled. Health is read
 on that Spark and metadata carries the tailnet URL. Reconnecting after a move
 back to the PC resolves the installed local command again. A move in progress
 reports that the connector can reconnect when placement finishes.
+
+### Hoards on the PC while Faustus is on a Spark
+
+The family commons (`hoard_link/where.py`, `js/hoard-commons/placement.js`) read `GET /api/placement` through a
+short cache. Faustus addresses that apps configure (`127.0.0.1:7000` by default) are tried first and the address the
+Hub published for the Spark follows, so a Hoard on the PC reaches the copilot, and can reach the global model through `faustus_origin()`, with Faustus
+switched off on the PC. `LinkConfig.faustus_candidates()` lists the addresses in that order and `faustus_origin()`
+returns the first one whose health check passes, falling back to the configured address. The Hub itself reads its own
+placement state instead of calling its own API. `where.app_url("hermes")` and `appUrl("prometheus")` answer the same
+for the other apps that move.

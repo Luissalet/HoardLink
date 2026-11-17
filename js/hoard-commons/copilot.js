@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { faustusCandidates, forgetPlacement } from "./placement.js";
 
 export const LAUNCHER_PATH = "/api/copilot/launcher.js";
 // What an app's session guard must let through (the page loads the launcher before its cookie exists) and the
@@ -144,13 +145,17 @@ export function buildCopilot({ appId, appName = "", dataDir, faustusUrls = null,
   const space = spaceId(dataDir);
   const origin = { app_id: appId, data_space_id: space };
   let selected = null;
+  let selectedUntil = 0;
 
   async function locate() {
-    if (selected) return selected;
-    for (const base of faustus.urls) {
+    if (selected && Date.now() < selectedUntil) return selected;
+    // Faustus may have been moved to a Spark by the Hub's "Run on": the placed address is tried after the
+    // configured ones (they refuse at once when it is off here). The choice is re-checked every few seconds.
+    const candidates = await faustusCandidates(faustus.urls, { env, configPath });
+    for (const base of candidates) {
       try {
-        const response = await transport(base + "/api/hoard-copilot/capabilities", { headers: auth, signal: AbortSignal.timeout(3000) });
-        if (response.ok && (await response.json())?.contract_version) return (selected = base);
+        const response = await transport(base + "/api/hoard-copilot/capabilities", { headers: auth, signal: AbortSignal.timeout(/^http:\/\/127\./.test(base) ? 3000 : 8000) });
+        if (response.ok && (await response.json())?.contract_version) { selectedUntil = Date.now() + 20_000; return (selected = base); }
       } catch { /* next endpoint */ }
     }
     const error = new Error("Faustus copilot is unavailable on the configured endpoints");
@@ -168,6 +173,7 @@ export function buildCopilot({ appId, appName = "", dataDir, faustusUrls = null,
         headers: { ...auth, ...headers, "Content-Type": contentType } });
     } catch (cause) {
       selected = null;
+      forgetPlacement();
       const error = new Error("Faustus copilot connection failed", { cause });
       error.status = 503;
       throw error;

@@ -4,12 +4,14 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from . import where
 from .config import LinkConfig
 from .copilot import allowed_route, inject_launcher, multipart_context
 
@@ -34,6 +36,8 @@ class CopilotRelay:
         self.token = config.faustus_token if token is None else token
         self.timeout = timeout
         self._selected = None
+        self._until = 0.0
+        self._hub_url = config.hub_url
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         space_file = Path(data_dir) / "copilot-space-id"
         space_file.parent.mkdir(parents=True, exist_ok=True)
@@ -52,19 +56,23 @@ class CopilotRelay:
         return {"Authorization": "Bearer " + self.token} if self.token else {}
 
     def _locate(self):
-        if self._selected:
+        if self._selected and time.monotonic() < self._until:
             return self._selected
-        for base in self.urls:
+        # Faustus may have been moved to a Spark by the Hub's "Run on": the placed address is tried after the configured
+        # ones (they refuse at once when it is off here). The choice is re-checked every few seconds.
+        for base in where.faustus_urls(self.urls, hub=self._hub_url):
             try:
                 request = urllib.request.Request(base + "/api/hoard-copilot/capabilities", headers=self._auth())
-                with self._opener.open(request, timeout=3) as response:
+                with self._opener.open(request, timeout=3 if base.startswith("http://127.") else 8) as response:
                     if response.status == 200 and json.load(response).get("contract_version"):
                         self._selected = base
+                        self._until = time.monotonic() + 20
                         return base
             except urllib.error.HTTPError as error:
                 error.close()
             except (OSError, ValueError, AttributeError):
                 continue
+        self._selected = None
         raise ConnectionError("Faustus copilot is unavailable on the configured endpoints")
 
     @staticmethod
@@ -94,6 +102,7 @@ class CopilotRelay:
             upstream = error  # Preserve Faustus's status and body, including 4xx/5xx.
         except OSError as error:
             self._selected = None
+            where.forget()
             raise ConnectionError("Faustus copilot connection failed") from error
         with upstream:
             handler.send_response(upstream.status)

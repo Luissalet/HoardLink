@@ -117,6 +117,19 @@ class LinkConfig:
     def capability(self, capability: str) -> CapabilityConfig:
         return self.capabilities.get(capability, CapabilityConfig())
 
+    def faustus_candidates(self) -> list[str]:
+        """``faustus_urls`` followed by the address the Hub reports when it moved Faustus to a Spark ("Run on"); the
+        configured addresses come first. Asks the Hub through a short cache (``hoard_link.where``)."""
+        from . import where
+        return where.faustus_urls(self.faustus_urls, hub=self.hub_url)
+
+    def faustus_origin(self) -> str:
+        """The one address Faustus answers on now: the first of ``faustus_candidates()`` whose health check passes, else
+        the first configured address (what apps used before the Hub could move Faustus)."""
+        from . import where
+        return where.reachable(self.faustus_candidates(), token=self.faustus_token or "") or (
+            self.faustus_urls[0].rstrip("/") if self.faustus_urls else "")
+
     @classmethod
     def load(
         cls,

@@ -5,33 +5,48 @@ import base64
 import json
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
 
 class CopilotProxy:
-    def __init__(self, urls, token=None):
+    def __init__(self, urls, token=None, placement=None):
         self.urls = [url.rstrip("/") for url in urls]
         self.token = token
+        self.placement = placement      # callable returning the Hub's own placement state (the Hub does not ask itself over HTTP)
         self._url = None
+        self._until = 0.0
         self._lock = threading.Lock()
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def headers(self):
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
+    def candidates(self):
+        """The configured addresses followed by the one the Hub placed Faustus on (a Spark, "Run on")."""
+        if self.placement is None:
+            return list(self.urls)
+        from .. import where
+        try:
+            document = self.placement()
+        except Exception:  # noqa: BLE001 - a broken placement read falls back to the configured addresses
+            document = {}
+        return where.faustus_urls(self.urls, document if isinstance(document, dict) else {})
+
     def resolve(self):
         with self._lock:
-            if self._url:
+            if self._url and time.monotonic() < self._until:
                 return self._url
-            for url in self.urls:
+            for url in self.candidates():
                 try:
                     request = urllib.request.Request(url + "/api/hoard-copilot/capabilities", headers=self.headers())
-                    with self.opener.open(request, timeout=2) as response:
+                    with self.opener.open(request, timeout=2 if url.startswith("http://127.") else 8) as response:
                         body = json.load(response)
                         if body.get("contract_version"):
                             self._url = url
+                            self._until = time.monotonic() + 20
                             return url
                 except (OSError, ValueError, urllib.error.URLError):
                     continue
@@ -85,7 +100,8 @@ class CopilotProxy:
 def proxy_for(hub):
     if getattr(hub, "copilot", None) is None:
         from hoard_link.config import LinkConfig
-        hub.copilot = CopilotProxy(hub.config.faustus_urls, LinkConfig.load().faustus_token)
+        hub.copilot = CopilotProxy(hub.config.faustus_urls, LinkConfig.load().faustus_token,
+                                   placement=lambda: hub.placement.state())
     return hub.copilot
 
 

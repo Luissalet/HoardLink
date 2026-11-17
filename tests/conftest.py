@@ -118,6 +118,10 @@ def _no_real_hub(monkeypatch):
     nothing or a route on a MockTransport."""
     monkeypatch.setenv("HOARD_HUB_AUTOSTART", "0")
     monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:8810")
+    # The placement lookup (where Faustus lives when the Hub moved it to a Spark) must not read the real Hub either.
+    from hoard_link import where
+    where.forget()
+    monkeypatch.setattr(where, "fetch", lambda *args, **kwargs: {})
 
 
 @pytest.fixture(autouse=True)

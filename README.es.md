@@ -55,6 +55,7 @@ Límites: sin generación de música por sondeo, sin progreso por websocket en C
 **Ejecutar en: este PC o una Spark**
 - Faustus, Hermes y Prometheus pueden pasar a una DGX Spark y volver, con copia incremental de datos, reescritura de ajustes, comprobaciones de salud, negativa a arrancarlos en el PC mientras viven en la Spark y un cambio de un clic en la cabecera. El estado remoto se consulta en segundo plano y un túnel SSH inverso mantiene el Hub accesible desde Faustus.
 - El Hub también retransmite por HTTP el MCP por stdio de cada app instalada, para que un Faustus en una Spark use apps del PC o de una Spark.
+- Las apps del PC siguen a una app trasladada: los comunes de Python y Node (`hoard_link/where.py`, `hoard-commons/placement.js`) preguntan al Hub dónde responde Faustus, guardan la respuesta unos segundos y prueban la dirección de la Spark después de las configuradas. Lo usan los relés del copiloto, y la configuración de Link lo ofrece a las apps (`LinkConfig.faustus_candidates()`, `faustus_origin()`).
 
 **Capa de familia**
 - Bus de eventos, llamadas entre apps, reglas (cuando un evento coincide, ejecuta una acción), tareas programadas, copias deduplicadas de los datos de cada app con verificación y restauración, y auditoría de la familia.
