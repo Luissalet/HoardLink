@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import os
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
 import httpx
+
+from . import where
 
 TIMEOUT_S = 1.5
 REMOTE_TIMEOUT_S = 8.0
@@ -69,21 +70,15 @@ def auth_headers(token: Optional[str]) -> Optional[dict[str, str]]:
     return {"Authorization": f"Bearer {token}"} if token else None
 
 
-DEFAULT_HUB_URL = "http://127.0.0.1:8810"
-
-
 async def placement_urls(client: httpx.AsyncClient, hub_url: Optional[str] = None) -> tuple[str, ...]:
     """Where Faustus answers when the Hub moved it off this PC (its "Run on" control: Faustus, Hermes and Prometheus on a
-    Spark so the PC can be switched off). Asks the Hub's ``/api/placement``; empty when the Hub does not answer or
-    Faustus runs here."""
-    base = (hub_url or os.environ.get("HOARD_HUB_URL") or DEFAULT_HUB_URL).rstrip("/")
-    status, data = await get(client, f"{base}/api/placement")
-    if status != 200 or not isinstance(data, dict) or data.get("location") != "sparks":
+    Spark so the PC can be switched off). Asks the Hub's ``/api/placement`` and reads it with ``where.placed`` (the one
+    rule every Hoard shares); empty when the Hub does not answer or Faustus runs here."""
+    status, data = await get(client, f"{where.hub_url(hub_url)}/api/placement")
+    if status != 200 or not isinstance(data, dict):
         return ()
-    if (data.get("job") or {}).get("running"):
-        return ()
-    url = (data.get("urls") or {}).get("faustus")
-    return (str(url).rstrip("/"),) if isinstance(url, str) and url.startswith(("http://", "https://")) else ()
+    url = where.placed("faustus", data)
+    return (url,) if url else ()
 
 
 async def find_reachable(

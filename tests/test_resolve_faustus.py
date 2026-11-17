@@ -249,3 +249,19 @@ async def test_a_faustus_on_another_machine_gets_a_longer_health_probe(monkeypat
     client = httpx.AsyncClient(transport=httpx.MockTransport(slow))
     assert await _faustus.find_reachable(client, ("https://spark3.example.ts.net",)) == "https://spark3.example.ts.net"
     assert await _faustus.find_reachable(client, ("http://127.0.0.1:7000",)) is None    # a local one is not waited for
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("document", [
+    {"location": "sparks", "job": {"running": False}, "urls": {"faustus": "https://spark3.example.ts.net:7443/"}},
+    {"location": "sparks", "job": {"running": True}, "urls": {"faustus": "https://spark3.example.ts.net:7443"}},
+    {"location": "pc", "urls": {"faustus": "https://spark3.example.ts.net:7443"}},
+    {"location": "sparks", "urls": {"faustus": "spark3"}},
+    {"location": "sparks", "urls": {}},
+])
+async def test_link_reads_the_placement_with_the_rule_every_hoard_shares(document):
+    from hoard_link import _faustus, where
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(Router().get(8810, "/api/placement", httpx.Response(200, json=document))))
+    placed = where.placed("faustus", document)
+    assert await _faustus.placement_urls(client) == ((placed,) if placed else ())
