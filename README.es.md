@@ -23,7 +23,7 @@ El repositorio reúne las dos mitades de una misma idea.
 - Pide al Hub reservas de memoria de GPU (`lease(vram_mb=..., gpu=[2, 3])`) para que dos programas no cuenten los mismos gigas libres, y carriles de navegador (`lane(url)`) para que solo una app a la vez maneje un sitio. Sin Hub, ambos degradan sin ruido a un comportamiento local.
 - Arranca backends por su cuenta cuando Faustus no está (`hoard_link.launch`: ComfyUI, Ollama, comandos propios).
 - Sirve datos públicos en vivo con caché que aguanta los fallos de la fuente (`hoard_link.livefeed`).
-- Incluye las piezas comunes de la familia: clientes de avisos, correo, agenda, referencias y descarga web (`fam_*`), el panel copiloto de Faustus para cada app (`install_spa`), el mapa español/inglés de nombres de Pokémon, un kit de pruebas diferenciales de paridad y el tema común.
+- Incluye las piezas comunes de la familia: clientes de avisos, correo, agenda, referencias y descarga web (`fam_*`), el panel copiloto de Faustus para cada app (`install_spa`), el mapa español/inglés de nombres de Pokémon, un kit de pruebas diferenciales de paridad, un puntuador de fidelidad web (sitio reconstruido frente a su referencia: SSIM normalizado por punto de control y comprobaciones guionizadas) y el tema común.
 
 Límites: sin generación de música por sondeo, sin progreso por websocket en ComfyUI, `tts` necesita Faustus o un comando configurado, y la configuración explícita se da por buena (una dirección obsoleta aparece como `BackendError` en la primera llamada).
 

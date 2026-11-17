@@ -23,7 +23,7 @@ The repository holds two halves of one idea.
 - Takes GPU memory leases from the Hub (`lease(vram_mb=..., gpu=[2, 3])`) so two programs never take the same free gigabytes, and browser lanes (`lane(url)`) so only one app at a time drives a given site. Without a hub both degrade quietly to local behaviour.
 - Starts backends on its own when Faustus is not around (`hoard_link.launch`: ComfyUI, Ollama, custom commands).
 - Serves live public data with a stale-while-failing cache (`hoard_link.livefeed`).
-- Includes the shared building blocks of the family: notification, mail, agenda, references and web-fetch clients (`fam_*`), the Faustus copilot panel for every app (`install_spa`), the shared Spanish/English name map for Pokémon data, a differential parity test kit and the common theme.
+- Includes the shared building blocks of the family: notification, mail, agenda, references and web-fetch clients (`fam_*`), the Faustus copilot panel for every app (`install_spa`), the shared Spanish/English name map for Pokémon data, a differential parity test kit, a web fidelity scorer (rebuilt site against its reference, normalized SSIM per checkpoint and scripted checks) and the common theme.
 
 Limits: no music generation through probing, no websocket progress for ComfyUI, `tts` needs Faustus or a configured command, and an explicit configuration is trusted as given (a stale address shows up as a `BackendError` on the first call).
 

@@ -65,6 +65,7 @@ Each area has its own page with the full API, the copies it replaces (with paths
 | Area | Python | Node (`js/hoard-commons/`) | Page |
 |---|---|---|---|
 | Web | `web.urls`, `web.safety`, `web.blocks`, `web.robots`, `web.htmltext`, `web.meta`, `web.feeds`, `web.watch`, `web.fetch`, `web.browser`, `web.search` | `web.js` | [commons/web.md](commons/web.md) |
+| Web fidelity (rebuilt site against its reference: normalized SSIM per checkpoint, scripted cases with checks, zones that differ) | `webfidelity` | — | [commons/webfidelity.md](commons/webfidelity.md) |
 | Media | `proc`, `media.bins`, `media.ffmpeg`, `media.subs`, `media.stt` | `media.js` | [commons/media.md](commons/media.md) |
 | Documents and search | `docs.textsearch`, `docs.chunking`, `docs.sniff`, `docs.pageranges`, `docs.vecmath`, `docs.citations`, `docs.textclean`, `docs.readers_lite`, `docs.imaging`, `docs.archives` | `docs.js` | [commons/docs.md](commons/docs.md) |
 | Money, dates and personal data | `text`, `money`, `dates`, `idcheck`, `tracking`, `merchants`, `ics`, `bizdays` | `text.js`, `money.js`, `dates.js`, `idcheck.js`, `tracking.js`, `merchants.js`, `ics.js` | [commons/commerce.md](commons/commerce.md) |
