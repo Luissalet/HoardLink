@@ -768,6 +768,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--kind", default="comment"); s.add_argument("--mention", action="append"); s.add_argument("--thread", type=int)
     s.add_argument("--reply", type=int, help="cita ese mensaje (y avisa a quien lo escribió)")
     s.add_argument("--attach", action="append", help="ruta de un fichero que el mensaje lleva adjunto (10 MB como mucho; repetible)")
+    s.add_argument("--routine", help="nombre de la rutina o tarea programada que escribe el mensaje (se muestra junto al autor)")
+    s.add_argument("--work-file", help="JSON {tools:[{name, ok, ms, summary}], started, ended} con lo que hiciste; sin él el Hub cuenta las herramientas de tu sesión observada")
     s = sub.add_parser("react", help="reacciona a un mensaje con un emoji o una palabra corta: react 1234 👍 (--off la quita)")
     s.add_argument("message", type=int); s.add_argument("emoji"); s.add_argument("--off", action="store_true")
     s = sub.add_parser("file", help="descarga un fichero adjunto por su id: file <id> [--out ruta]")
@@ -1059,9 +1061,17 @@ def main(argv: list[str] | None = None) -> int:
                 failed = sent
                 break
             files.append(sent["file"]["id"])
+        work = None
+        if a.work_file:
+            try:
+                with open(os.path.expanduser(a.work_file), "r", encoding="utf-8-sig") as fh:
+                    work = json.load(fh)
+            except (OSError, ValueError) as exc:
+                failed = {"ok": False, "error": f"--work-file no es un JSON legible: {exc}"}
         r = failed or call("POST", "/api/agora/channel_post", {
             "agent": ag, **target, "body": body or "", "kind": a.kind, "mentions": csv(a.mention),
-            **({"reply_to": a.reply} if a.reply else {}), **({"files": files} if files else {})})
+            **({"reply_to": a.reply} if a.reply else {}), **({"files": files} if files else {}),
+            **({"routine": a.routine} if a.routine else {}), **({"work": work} if work else {})})
     elif c == "react":
         r = call("POST", "/api/agora/react", {"agent": ag, "message_id": a.message, "emoji": a.emoji, "on": not a.off})
     elif c == "file":
@@ -1257,7 +1267,14 @@ def main(argv: list[str] | None = None) -> int:
             quoted = m.get("reply")
             if quoted:
                 print(f"  ↪ a {quoted.get('author') or '?'} (#{quoted['id']}): {short(quoted.get('excerpt'), 120)}")
+            if m.get("routine"):
+                print(f"  ⟳ rutina «{m['routine']['name']}»" + (f" ({m['routine']['schedule']})" if m["routine"].get("schedule") else ""))
             print(m.get("body") or "")
+            if m.get("work"):
+                w = m["work"]
+                print(f"  ⚙ usó {w['count']} herramientas · {w['duration_s']:g} s"
+                      + (f" · {w['failed']} con error" if w.get("failed") else "")
+                      + (": " + ", ".join(t["name"] for t in w["tools"][:8]) + (" …" if w["count"] > 8 else "")))
             if m.get("route"):
                 print(f"  ⇢ {m['route']['label']}")
             for f in m.get("files") or []:

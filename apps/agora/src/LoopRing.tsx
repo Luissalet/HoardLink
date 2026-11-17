@@ -24,6 +24,9 @@ export type Loop = {
   practices_summary: { ok: number; fail: number; open: number };
   tokens?: number | null;
   turn_started_at?: number | null;
+  /** Tool calls of the turn so far and how many have finished. */
+  calls?: number;
+  calls_done?: number;
 };
 
 export const phaseLabel: Record<Loop["phase"], string> = {
@@ -163,5 +166,22 @@ export function LoopPanel({ loop }: { loop: Loop }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+/** «5 pasos · 2 min» of a turn in progress, with a bar for the calls that have finished. Nothing before the first call. */
+export function TurnSteps({ loop, now }: { loop: Loop; now: number }) {
+  const calls = loop.calls ?? 0;
+  if (!calls || loop.phase === "done" || loop.phase === "idle") return null;
+  const done = Math.min(loop.calls_done ?? 0, calls);
+  const minutes = loop.turn_started_at ? Math.max(0, Math.round((now - loop.turn_started_at) / 60)) : null;
+  return (
+    <span className="agloop-steps" data-testid="agloop-steps">
+      <span className="agloop-steps__bar" role="progressbar" aria-valuemin={0} aria-valuemax={calls} aria-valuenow={done}>
+        <i style={{ inlineSize: `${Math.round((done / calls) * 100)}%` }} />
+      </span>
+      {calls === 1 ? "1 paso" : `${calls} pasos`}
+      {minutes !== null ? ` · ${minutes < 1 ? "menos de 1 min" : `${minutes} min`}` : ""}
+    </span>
   );
 }

@@ -278,6 +278,53 @@ def agents_in_call(name: str, args: Any) -> list[str]:
 
 # ---- per-session state -----------------------------------------------------------------------------------------
 
+class WorkLog:
+    """The tools a session ran, each with its start, end and result: what an Ágora message says its author did.
+
+    ``take`` hands over the finished calls nobody has claimed yet, so each call is told once, in the first message
+    its author writes after it. The call that is writing the message is still open then: it is never counted.
+    """
+
+    MAX = 300
+
+    def __init__(self) -> None:
+        self.records: list[dict[str, Any]] = []
+        self._open: dict[str, dict[str, Any]] = {}
+        self.seq = 0
+        self.claimed = 0                    # calls up to this one were told in a message already
+        self.turn_base = 0                  # calls after this one belong to the turn that is running
+
+    def turn_start(self) -> None:
+        self.turn_base = self.seq
+
+    def start(self, call_id: str, name: str, args: Any, ts: float) -> None:
+        self.seq += 1
+        rec = {"seq": self.seq, "name": name or "tool", "summary": snippet(_input_summary(args), 160),
+               "started": ts, "ended": None, "ok": None}
+        self.records.append(rec)
+        if call_id:
+            self._open[call_id] = rec
+        if len(self.records) > self.MAX:
+            del self.records[0]
+        while len(self._open) > self.MAX:
+            self._open.pop(next(iter(self._open)))
+
+    def end(self, call_id: str, ts: float, ok: Optional[bool]) -> None:
+        rec = self._open.pop(call_id, None)
+        if rec is not None:
+            rec["ended"], rec["ok"] = ts, ok
+
+    def turn_counts(self) -> tuple[int, int]:
+        """(calls of the running turn, those of them that have finished)."""
+        mine = [r for r in self.records if r["seq"] > self.turn_base]
+        return len(mine), sum(1 for r in mine if r["ended"] is not None)
+
+    def take(self) -> list[dict[str, Any]]:
+        fresh = [dict(r) for r in self.records if r["seq"] > self.claimed and r["ended"] is not None]
+        self.claimed = self.seq
+        return fresh
+
+
 class Session:
     """What is known about one transcript; fed line by line, never holds the file."""
 
@@ -310,6 +357,7 @@ class Session:
         self.lines = 0
         self._real = False                         # does the line being fed carry its own timestamp?
         self.loop = agent_loop.Loop()              # plan -> act -> observe of the current turn
+        self.work = WorkLog()                      # the tools it ran, for the Ágora messages that say what was done
 
     @property
     def key(self) -> str:
@@ -340,6 +388,7 @@ class Session:
             self.open_tools.popitem(last=False)
         self.last_tool = name or self.last_tool
         self.loop.tool_start(call_id, name, args, ts)
+        self.work.start(call_id, name, args, ts)
         self.hint(agents_in_call(f"{ns}{name}", args))
         low = (name or "").lower()
         if any(k in low for k in _QUESTION_KEYS) or low in _ASK_TOOLS:
@@ -354,6 +403,7 @@ class Session:
 
     def _tool_end(self, call_id: str, ts: float = 0.0, ok: Optional[bool] = None) -> None:
         self.loop.tool_end(call_id, ts, ok)
+        self.work.end(call_id, ts, ok)
         self.open_tools.pop(call_id, None)
         self.pending.pop(call_id, None)
 
@@ -362,6 +412,7 @@ class Session:
         self.turn_started = ts
         self.turn_ended = None
         self.loop.turn_start(ts)
+        self.work.turn_start()
         self.open_tools.clear()
         self.pending.clear()
         self.tokens = None
@@ -990,6 +1041,42 @@ class AgentWatch:
             return best[0], "inferred"
         return None, None
 
+    # -- what an agent did, for the Ágora ---------------------------------------------------------------------
+
+    def _sessions_of(self, agent: str) -> list[Session]:
+        found = [f.session for f in self._files.values() if f.session is not None and self._binding(f.session)[0] == agent]
+        found.sort(key=last_activity, reverse=True)
+        return found
+
+    def claim_work(self, agent: Any, since: float = 0.0) -> Optional[dict[str, Any]]:
+        """The finished tool calls of the agent's latest session that no message has told yet and that began after
+        ``since``; they are marked as told. ``None`` when no session of that agent is observed."""
+        agent = str(agent or "").strip().lower()
+        if not agent:
+            return None
+        with self._lock:
+            self.refresh(force=True)
+            sessions = self._sessions_of(agent)
+            if not sessions:
+                return None
+            calls = [c for c in sessions[0].work.take() if (c["started"] or 0) >= since]
+        return {"session_key": sessions[0].key, "calls": calls}
+
+    def turn_progress(self, agents: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Per agent whose latest session has a turn running: calls made in it, how many have finished, since when."""
+        out: dict[str, dict[str, Any]] = {}
+        with self._lock:
+            self.refresh()
+            for agent in agents:
+                sessions = self._sessions_of(agent)
+                s = sessions[0] if sessions else None
+                if s is None or not s.turn_open:
+                    continue
+                steps, done = s.work.turn_counts()
+                out[agent] = {"steps": steps, "done": done, "since": s.turn_started, "phase": s.loop.phase,
+                              "tool": s.loop.tool or None, "lap": s.loop.lap}
+        return out
+
     # -- view -------------------------------------------------------------------------------------------------
 
     def _summary(self, s: Session, now: float) -> dict[str, Any]:
@@ -1004,7 +1091,7 @@ class AgentWatch:
             "tool": d["tool"], "last_tool": s.last_tool, "last_action": s.last_action,
             "last_text": s.last_text, "last_text_at": s.last_text_at, "tokens": s.tokens,
             "agent": agent, "binding": how, "questions": questions, "originator": s.originator or None,
-            "loop": s.loop.view(),
+            "loop": {**s.loop.view(), **dict(zip(("calls", "calls_done"), s.work.turn_counts()))},
         }
 
     def view(self, *, force: bool = False, agent: Optional[str] = None, limit: int = MAX_SESSIONS_OUT) -> dict[str, Any]:

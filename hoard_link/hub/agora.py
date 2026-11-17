@@ -59,6 +59,7 @@ from . import agora_router
 from . import agora_social
 from . import agora_profiles
 from . import agora_threads
+from . import agora_work
 from . import agora_debate
 from . import agora_review
 from . import agora_live
@@ -211,6 +212,8 @@ MIGRATIONS.append(agora_review.REVIEW_MIGRATION)
 MIGRATIONS.append(agora_profiles.PROFILES_MIGRATION)
 # threads started from messages, following, pins and links to the Brain (agora_threads.py)
 MIGRATIONS.append(agora_threads.THREADS_MIGRATION)
+# what an agent's message says it did, and the routine behind it (agora_work.py)
+MIGRATIONS.append(agora_work.WORK_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -2789,6 +2792,7 @@ class Agora:
         routed = None
         if person and agora_router.applies(self, a, _list(a.get("mentions"), "mentions"), kind, agent, body):
             routed = agora_router.plan(self, body, int(self._thread_row(a.get("thread_id"))["id"]), agent)
+        work, routine = agora_work.collect(self, agent, a, person=person)     # the tools used and the routine, checked first
         with self.db.tx():
             self._touch(agent)
             th = self._thread_row(a.get("thread_id"))
@@ -2807,12 +2811,13 @@ class Agora:
             if routed:
                 mentions = [*mentions, *[p["agent"] for p in routed["picks"] if p["agent"] not in mentions]]
             mid = self._msg(th["id"], agent, kind, body, mentions)
+            carried = agora_work.record(self, mid, th["id"], agent, work, routine)
             self._ack(agent, th["id"], mid)
             if ((th["status"] == "resolved" and kind in ("disagree", "proposal")) and not stays) or \
                     (th["status"] == "escalated" and agent == PERSON):
                 self.db.execute("UPDATE threads SET status='open' WHERE id=?", (th["id"],))
         self._bump("agora.thread.message", {"thread_id": th["id"], "message_id": mid, "author": agent, "kind": kind})
-        out = {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"])}
+        out = {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"]), **carried}
         if routed:
             out["route"] = agora_router.record(self, mid, th["id"], routed)
             out["mentions"] = [p["agent"] for p in routed["picks"]]
@@ -2958,6 +2963,7 @@ class Agora:
         out = {"ok": True, "thread": th, "messages": msgs, "stances": stances,
                "task": self._task_row(th["task_id"]) if th.get("task_id") else None}
         agora_router.decorate(self, msgs)           # who the router chose for a message of the person
+        agora_work.decorate(self, msgs)             # the tools an agent used for a message, and its routine
         if seen_before is not None:
             out["seen_upto"] = seen_before
         if out["task"] and out["task"]["thread_id"] == th["id"]:
@@ -3467,9 +3473,12 @@ TOOLS: list[dict[str, Any]] = [
                              "kind": {"type": "string"}, "task_id": _TASK, "mentions": _STRS,
                              "escalate": {"type": "boolean"}}, ["agent", "title", "body"])},
     {"name": "hub_agora_post",
-     "description": "Reply in a thread: kind comment|proposal|agree|disagree (state your position with arguments).",
+     "description": "Reply in a thread: kind comment|proposal|agree|disagree (state your position with arguments). "
+                    "work lists the tools you used for the reply (the Hub fills it in from your observed session "
+                    "when you leave it out) and routine names the routine or scheduled task that writes it.",
      "inputSchema": _schema({"agent": _A, "thread_id": _THREAD, "body": {"type": "string"}, "kind": {"type": "string"},
-                             "mentions": _STRS}, ["agent", "thread_id", "body"])},
+                             "mentions": _STRS, "work": agora_work.WORK_PROP, "routine": agora_work.ROUTINE_PROP},
+                            ["agent", "thread_id", "body"])},
     {"name": "hub_agora_resolve",
      "description": "Close a thread with the agreed resolution in writing (it enters the decision log).",
      "inputSchema": _schema({"agent": _A, "thread_id": _THREAD, "resolution": {"type": "string"}},
@@ -3603,6 +3612,8 @@ class AgoraFacet(Facet):
         self.agora.mention_hook = self._notify_mention      # an agent naming the person in a channel reaches them too
         self.agora.tell_hook = self._tell_wake              # a message to a console leader also gives it a turn
         self.agora.profile_hook = self._profile_extra       # what the console knows of an agent: model, runs, colour
+        self.agora.work_hook = self._work_since             # the tools an observed agent used since its last message
+        self.agora.live_hook = self._turn_live              # how far the owner of a task is in the turn it is working on
 
         self._watch: Optional[agent_watch.AgentWatch] = None
         self._watch_lock = threading.Lock()
@@ -3895,11 +3906,27 @@ class AgoraFacet(Facet):
                 ("faustus" if sid == "faustus" else None)
         return out
 
+    def _work_since(self, agent: str, since: float) -> Optional[dict[str, Any]]:
+        if not self._watch_enabled():
+            return None
+        return self.watch.claim_work(agent, since)
+
+    def _turn_live(self, agents: list[str]) -> dict[str, dict[str, Any]]:
+        if not self._watch_enabled():
+            return {}
+        return self.watch.turn_progress(agents)
+
     def _guild(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-        """The server view plus, per member, what its transcripts say it is doing (``observed``)."""
+        """The server view plus, per member, what its transcripts say it is doing (``observed``), and on the cards of
+        the tasks being worked on how far their owner is in the turn (``live``)."""
         out = self.agora.guild(a or {})
         if not self._watch_enabled():
             return out
+        working = [t for t in (out.get("tasks") or {}).get("in_progress", []) if t.get("owner")]
+        live = agora_work.live(self.agora, [t["owner"] for t in working])
+        for task in working:
+            if task["owner"] in live and task.get("status") in ("claimed", "in_progress"):
+                task["live"] = live[task["owner"]]
         try:
             view = self.watch.view()
         except Exception as exc:  # noqa: BLE001 - the view must not depend on the filesystem being readable

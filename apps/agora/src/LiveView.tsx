@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { api, spaceId, type Task, type Message } from "./api";
-import { LoopPanel, LoopRing, loopFacts, phaseLabel, type Loop } from "./LoopRing";
+import { LoopPanel, LoopRing, TurnSteps, loopFacts, phaseLabel, type Loop } from "./LoopRing";
 import "./live.css";
 
 type Session = {
@@ -553,6 +553,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                                 {t.loop.practices_summary.ok + t.loop.practices_summary.fail + t.loop.practices_summary.open} prácticas
                               </span>
                             )}
+                            {t.loop && <TurnSteps loop={t.loop} now={now} />}
                           </button>
                           {berths("task:" + t.id)}
                         </div>

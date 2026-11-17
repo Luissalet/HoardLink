@@ -37,6 +37,7 @@ from . import agora_router
 from . import agora_social
 from . import agora_profiles
 from . import agora_threads
+from . import agora_work
 
 GENERAL = "general"
 BOARD_COLUMNS = ("open", "in_progress", "review", "done")
@@ -378,7 +379,8 @@ def channel_post(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         if quoted and quoted["kind"] != "system" and quoted["author"] not in (agent, None, "system", *mentions):
             mentions.append(quoted["author"])                 # quoting someone tells them, as naming them does
     out = self.post({"agent": agent, "_person": person, "thread_id": thread, "body": body,
-                     "kind": a.get("kind") or "comment", "mentions": mentions})
+                     "kind": a.get("kind") or "comment", "mentions": mentions,
+                     "work": a.get("work"), "routine": a.get("routine")})
     agora_social.attach(self, out["message_id"], carried)
     out["channel"] = slug
     out["mentions"] = [*mentions, *[m for m in out.get("mentions") or [] if m not in mentions]]   # and those the router chose
@@ -423,6 +425,7 @@ def channel_read(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     agora_social.decorate(self, page.get("messages") or [], viewer)   # reactions, the quoted message, files
     agora_router.decorate(self, page.get("messages") or [])          # who the router chose for a message of the person
     agora_threads.decorate(self, page.get("messages") or [], viewer)  # the thread a message started, pins, Brain links
+    agora_work.decorate(self, page.get("messages") or [])             # the tools an agent used for a message, and its routine
     if not before:
         page.update(agora_threads.page_info(self, thread, viewer))      # the pinned messages and, in a thread, its state
     return page
@@ -732,6 +735,7 @@ def feed(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             d["mentions"] = _ag()._l(d.get("mentions"))
             d["body"] = str(d.get("body") or "")[:4000]
             items.append(d)
+        agora_work.decorate(self, items, light=True)                         # how much was done, without the list
         return {"ok": True, "kind": kind, "items": items,
                 "next_before": items[-1]["id"] if len(rows) > limit and items else None}
     if kind not in ("deliveries", "reviews"):
@@ -876,12 +880,13 @@ OPERATIONS = {"channels": channels, "channel_create": channel_create, "channel_u
               "channel_post": channel_post, "channel_read": channel_read, "seen": seen, "servers": servers,
               "guild": guild, "feed": feed, "search": search, "pulse": pulse, "space_meta_set": space_meta_set,
               **agora_social.OPERATIONS, **agora_ranks.OPERATIONS, **agora_profiles.OPERATIONS, **agora_router.OPERATIONS,
-              **agora_threads.OPERATIONS}
+              **agora_threads.OPERATIONS, **agora_work.OPERATIONS}
 WRITE_OPS = ("channel_create", "channel_update", "channel_post", "channel_read", "seen", "space_meta_set",
              *agora_social.WRITE_OPS, *agora_ranks.WRITE_OPS, *agora_profiles.WRITE_OPS, *agora_router.WRITE_OPS,
-             *agora_threads.WRITE_OPS)
+             *agora_threads.WRITE_OPS, *agora_work.WRITE_OPS)
 READ_ROUTES = ("servers", "guild", "channels", "feed", "search", "pulse", *agora_social.READ_ROUTES,
-               *agora_ranks.READ_ROUTES, *agora_profiles.READ_ROUTES, *agora_router.READ_ROUTES, *agora_threads.READ_ROUTES)
+               *agora_ranks.READ_ROUTES, *agora_profiles.READ_ROUTES, *agora_router.READ_ROUTES, *agora_threads.READ_ROUTES,
+               *agora_work.READ_ROUTES)
 
 
 def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
@@ -918,13 +923,16 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                         "the text mentions that agent, @luis the person, @here whoever has been around lately; "
                         "mentions adds more. kind: comment (default), proposal, agree or disagree. reply_to quotes "
                         "a message of the same conversation (and tells its author); files carries files sent with "
-                        "hub_agora_file_add (then body may be empty).",
+                        "hub_agora_file_add (then body may be empty). work lists the tools you used for it and "
+                        "routine names the routine or scheduled task that writes it: the message then shows "
+                        "«used N tools» and the routine's name.",
          "inputSchema": schema({"agent": agent_prop, "channel": chan, "thread_id": {"type": "integer"},
                                 "body": {"type": "string", "maxLength": 20000},
                                 "kind": {"type": "string", "enum": ["comment", "proposal", "agree", "disagree"]},
                                 "mentions": {"type": "array", "items": {"type": "string"}},
                                 "reply_to": {"type": "integer", "minimum": 1},
-                                "files": {"type": "array", "items": {"type": "string"}, "maxItems": 10}}, ["agent"])},
+                                "files": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+                                "work": agora_work.WORK_PROP, "routine": agora_work.ROUTINE_PROP}, ["agent"])},
         {"name": "hub_agora_channel_read",
          "description": "The latest messages of a channel (channel) or thread (thread_id), oldest first; before_id "
                         "pages back. With agent the thread counts as seen unless peek, and seen_upto says up to where "
@@ -970,4 +978,5 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         *agora_threads.tools(schema, agent_prop),
         *agora_ranks.tools(schema, agent_prop),
         *agora_router.tools(schema, agent_prop),
+        *agora_work.tools(schema, agent_prop),
     ]

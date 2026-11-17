@@ -178,7 +178,8 @@ def project(board: dict[str, Any], watch: dict[str, Any], messages: list[dict[st
     return {"ok": True, "now": now, "space": board.get("space"), "channel": channel,
             "tasks": [{**{k:t.get(k) for k in ("id", "title", "status", "owner", "repo", "thread_id", "updated")},
                        "progress": task_progress(t),
-                       "loop": ({k: loops[t["owner"]][k] for k in ("phase", "lap", "tool", "practices_summary")}
+                       "loop": ({k: loops[t["owner"]].get(k) for k in ("phase", "lap", "tool", "practices_summary", "calls",
+                                                                        "calls_done", "turn_started_at")}
                                 if t.get("owner") in loops and t.get("status") not in ("done", "dropped") else None)}
                       for t in tasks],
             "files": list(files.values()), "messages": messages, "actors": actors,

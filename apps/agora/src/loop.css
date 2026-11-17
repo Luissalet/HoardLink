@@ -86,3 +86,7 @@
 @media (max-width: 760px) {
   .agloop-strip { padding: 8px 14px; }
 }
+.agloop-steps { display: flex; align-items: center; gap: 6px; color: var(--aglive-muted); font-size: 11px; }
+.agloop-steps__bar { display: inline-block; inline-size: 56px; block-size: 4px; overflow: hidden; border-radius: 2px; background: color-mix(in srgb, var(--aglive-muted) 25%, transparent); }
+.agloop-steps__bar > i { display: block; block-size: 100%; background: var(--aglive-accent, currentColor); transition: inline-size 0.4s ease; }
+@media (prefers-reduced-motion: reduce) { .agloop-steps__bar > i { transition: none; } }
