@@ -32,6 +32,15 @@ cannot), and the chosen receive the message as a mention. The message carries `r
 `route_pass` hands it to the next candidate. Per-server settings: `route_settings` / `route_settings_set` (`enabled`,
 `max_agents`, `model`). MCP: `hub_agora_route`, `hub_agora_route_pass`, `hub_agora_routes`,
 `hub_agora_route_settings`, `hub_agora_route_settings_set`. See [the Agora reference](docs/AGORA.md).
+## Threads, pins and Brain links in the Agora
+
+Studio's Agora starts a thread from any message or from a stretch of messages (the title is suggested by the family's
+model and can be changed), shows how many answers each thread has under its origin message, and lists the threads a
+reader follows in **Threads**, with what is new. Threads can be renamed, followed, closed and archived; messages can be
+pinned, and the pins of a conversation are a button in its header. `[[Page]]` in a message opens the Brain page and shows
+a preview when hovered, and a Brain page lists the messages and tasks of the Agora that cite it. The same operations are
+the hub's `hub_agora_thread_from|thread_title|thread_set|thread_follow|thread_list|message_pin|pins|brain_links|
+brain_backlinks` tools, also reachable from Faustus's own `agora_read` and `agora_write`.
 
 ## Delivery review in the Agora
 

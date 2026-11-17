@@ -214,7 +214,11 @@ def _sub(self: Any, thread_id: Any) -> dict[str, Any]:
     return dict(row)
 
 
+_WIKI = re.compile(r"\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|([^\]\n]+))?\]\]")
+
+
 def _clean(text: Any) -> str:
+    text = _WIKI.sub(lambda m: (m.group(2) or m.group(1)).strip(), str(text or ""))
     plain = _MARKUP.sub(lambda m: m.group(1) or "", str(text or ""))
     plain = _MENTION_TEXT.sub(lambda m: m.group(0)[1:], plain)
     return " ".join(plain.split())

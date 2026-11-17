@@ -248,6 +248,7 @@ def test_parse_links_and_titles():
     long = agora_threads.heuristic_title([{"body": "word " * 40}])
     assert long.endswith("…") and len(long) <= 61
     assert agora_threads.heuristic_title([{"body": "   "}]) == "Hilo"
+    assert agora_threads.heuristic_title([{"body": "See [[Notas/Hilos#Pins|the pins]] and [[Plain]] now"}]) == "See the pins and Plain now"
 
 
 def test_the_tools_exist_and_are_reachable_by_route_and_mcp_names(agora):
