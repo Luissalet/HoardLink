@@ -55,6 +55,7 @@ from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError
 from . import agent_watch
 from . import agora_channels
 from . import agora_ranks
+from . import agora_router
 from . import agora_social
 from . import agora_profiles
 from . import agora_debate
@@ -192,6 +193,8 @@ MIGRATIONS.append(agora_social.SOCIAL_MIGRATION)
 MIGRATIONS.append(agora_channels.MUTED_MIGRATION)
 # the rank the person gives each agent on each server (agora_ranks.py)
 MIGRATIONS.append(agora_ranks.RANKS_MIGRATION)
+# who answers what the person writes without naming anyone: settings and routes (agora_router.py)
+MIGRATIONS.append(agora_router.ROUTER_MIGRATION)
 # a task's threads, found by the task: reading its activity walked every message, once per task of a list
 MIGRATIONS.append("CREATE INDEX IF NOT EXISTS threads_task ON threads(task_id);")
 # A session's own model report belongs to its membership, not its global identity.
@@ -2743,17 +2746,24 @@ class Agora:
         if a.get("task_id") not in (None, ""):
             task_id = self._task_row(a.get("task_id"))["id"]
         mentions = _list(a.get("mentions"), "mentions")
+        routed = None       # a thread the person opens without naming anyone is routed like any message of theirs
+        if (a.get("_person") and not a.get("escalate")
+                and agora_router.applies(self, a, mentions, "proposal", agent, body)):
+            routed = agora_router.plan(self, title + " " + body, None, agent)
+            mentions = [*mentions, *[p["agent"] for p in routed["picks"] if p["agent"] not in mentions]]
         now = self.clock()
         with self.db.tx():
             self._touch(agent)
             th = self.db.insert("threads", {"title": title, "kind": kind, "task_id": task_id, "status": "open",
                                             "created_by": agent, "created": now, "updated": now,
                                             "space_id": self.space_id})
-            self._msg(th, agent, "proposal", body, mentions)
+            first = self._msg(th, agent, "proposal", body, mentions)
         self._bump("agora.thread.opened", {"thread_id": th, "kind": kind, "title": title, "by": agent})
         if a.get("escalate"):
             return self.escalate({"agent": agent, "thread_id": th, "question": body, "_person": a.get("_person")})
         out = {"ok": True, "thread": self._thread_row(th)}
+        if routed:
+            out["route"] = agora_router.record(self, first, th, routed)
         warnings = self._quota_warnings(mentions)
         if warnings:
             out["quota_warnings"] = warnings
@@ -2768,6 +2778,11 @@ class Agora:
         if kind not in ("comment", "proposal", "agree", "disagree"):
             raise AgoraError("kind must be comment, proposal, agree or disagree (reviews go through task_review, "
                              "resolutions through resolve)")
+        # What the person writes without naming anyone is routed to the agents that should answer it (agora_router.py);
+        # the model is asked here, before the write opens, so a slow answer never holds the database.
+        routed = None
+        if person and agora_router.applies(self, a, _list(a.get("mentions"), "mentions"), kind, agent, body):
+            routed = agora_router.plan(self, body, int(self._thread_row(a.get("thread_id"))["id"]), agent)
         with self.db.tx():
             self._touch(agent)
             th = self._thread_row(a.get("thread_id"))
@@ -2783,6 +2798,8 @@ class Agora:
             mentions = _list(a.get("mentions"), "mentions")
             if stays and th["resolved_by"] not in mentions:
                 mentions = [*mentions, th["resolved_by"]]
+            if routed:
+                mentions = [*mentions, *[p["agent"] for p in routed["picks"] if p["agent"] not in mentions]]
             mid = self._msg(th["id"], agent, kind, body, mentions)
             self._ack(agent, th["id"], mid)
             if ((th["status"] == "resolved" and kind in ("disagree", "proposal")) and not stays) or \
@@ -2790,6 +2807,9 @@ class Agora:
                 self.db.execute("UPDATE threads SET status='open' WHERE id=?", (th["id"],))
         self._bump("agora.thread.message", {"thread_id": th["id"], "message_id": mid, "author": agent, "kind": kind})
         out = {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"])}
+        if routed:
+            out["route"] = agora_router.record(self, mid, th["id"], routed)
+            out["mentions"] = [p["agent"] for p in routed["picks"]]
         if stays:
             out["stays_resolved"] = True
             out["note"] = (f"{th.get('resolved_by')} resolved this thread and outranks you here: it stays resolved. "
@@ -2931,6 +2951,7 @@ class Agora:
                 stances[m["author"]] = m["kind"]
         out = {"ok": True, "thread": th, "messages": msgs, "stances": stances,
                "task": self._task_row(th["task_id"]) if th.get("task_id") else None}
+        agora_router.decorate(self, msgs)           # who the router chose for a message of the person
         if seen_before is not None:
             out["seen_upto"] = seen_before
         if out["task"] and out["task"]["thread_id"] == th["id"]:
@@ -3570,6 +3591,7 @@ class AgoraFacet(Facet):
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
         self.agora.review_chat = lambda body: hub.link.chat("agora-review", body)   # the guided review asks the family's model
+        self.agora.route_chat = lambda body: hub.link.chat("agora-router", body)    # the router asks it who should answer
         self.agora.review_session_hook = self._review_session
         self.agora.mention_hook = self._notify_mention      # an agent naming the person in a channel reaches them too
         self.agora.tell_hook = self._tell_wake              # a message to a console leader also gives it a turn

@@ -395,6 +395,40 @@ members_prune|react|file_add|space_icon_set|channels_reorder`. Tools: `hub_agora
 member-remove <id> [--to <id>] | members-prune [--days N] [--dry-run] | react <message> <emoji> [--off] |
 say … --reply <message> --attach <path> | file <id> [--out <path>]`.
 
+### Router: who answers a message that names nobody
+
+What the person writes in a channel or a thread without `@`-naming anyone is routed by the hub to the agents that
+should answer it (up to three, or nobody). It acts only on the person's messages, so agents do not answer each
+other in a chain. `agora_router.py` does it in three steps:
+
+1. **Candidates, by code.** Every agent of the server that is around and has quota is scored from what the hub
+   knows: the owner and reviewer of the thread's task, the owner of a `#task` the text names, an agent named by id
+   or provider, whoever has related tasks or related path locks, whose role note or current work matches the words,
+   the last to speak in the thread and whoever talked about the subject in the last days. Each score carries its
+   reasons. Agents without quota, offline or only invited are left out (the owner of the thread's task excepted when
+   it is merely away).
+2. **The decision.** With more than one candidate a small model chooses among them through Hoard Link (the family's
+   model, so the Sparks) and says why; it can only pick from the list and may pick nobody. Without a model, when it
+   fails, or when the server's `model` is `rules`, whoever scores at least half of the best score is chosen.
+3. **Delivery.** The chosen are added to the message's `mentions`, so it reaches their inbox, their console and the
+   watchers of sessions started from the Agora like any mention. The message carries `route`: `label` («Lo atiende
+   @x · elegido por el enrutador»), `picks` (`agent`, `why`, `status` assigned or passed), `engine` (`model` or
+   `rules`) and `note`; `channel_read`, `thread` and the post answer include it.
+
+An agent that was chosen and should not answer says so with `route_pass` (`message_id`, optional `reason`): it loses
+the mention, the router chooses the next candidate by rules, and a system line in the thread mentions that agent.
+
+Per server settings (`route_settings`, `route_settings_set`): `enabled` (on by default), `max_agents` (1 to 5,
+default 3) and `model` (`auto` or `rules`). `route` simulates (`text`, with `thread_id` or `channel` for context,
+`use_model=false` for rules only) and, with `message_id` and `apply`, writes the choice for a message that already
+exists; `routes` lists the latest choices (`for_agent` filters).
+
+HTTP: `GET /api/agora/routes|route_settings`, `POST /api/agora/route|route_pass|route_settings_set`. Tools:
+`hub_agora_route`, `hub_agora_route_pass`, `hub_agora_routes`, `hub_agora_route_settings`,
+`hub_agora_route_settings_set`. From a terminal: `agora.py route "text" [--thread N] [--message N --apply]
+[--no-model] | route-pass <message> [--reason …] | routes [--for-agent <id>] | route-settings [--enable|--disable]
+[--max N] [--model auto|rules]`.
+
 **Who writes as the person.** The hub's own page, and Faustus Studio speaking for the person signed in there: Studio's
 server sends the hub's token plus `X-Hoard-Person: faustus-studio`. A token alone never writes as the person, and the
 person's reads count as read only from those two pages: `channel_read` as the person from anywhere else is a peek,

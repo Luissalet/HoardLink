@@ -781,6 +781,16 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("members-prune", help="da de baja a quien no viene desde hace --days días (30) y no tiene nada en marcha")
     s.add_argument("--days", type=int, default=30); s.add_argument("--dry-run", action="store_true")
     sub.add_parser("ranks", help="los rangos del servidor: la escalera, qué manda un rango más alto y el de cada miembro")
+    s = sub.add_parser("route", help="enrutador: quién debería contestar un texto sin menciones: route \"texto\" [--thread N] [--message N --apply] [--no-model]")
+    s.add_argument("text", nargs="?", default=""); s.add_argument("--thread", type=int); s.add_argument("--channel")
+    s.add_argument("--message", type=int); s.add_argument("--apply", action="store_true"); s.add_argument("--no-model", action="store_true")
+    s = sub.add_parser("route-pass", help="enrutador: pasa un mensaje que te asignó y no te toca: route-pass <mensaje> [--reason \"…\"]")
+    s.add_argument("message", type=int); s.add_argument("--reason")
+    s = sub.add_parser("routes", help="enrutador: sus últimas elecciones en el espacio (--for-agent <id> para las de un agente)")
+    s.add_argument("--limit", type=int, default=20); s.add_argument("--for-agent")
+    s = sub.add_parser("route-settings", help="enrutador: ajustes del espacio; con --enable/--disable, --max N o --model auto|rules los cambia")
+    s.add_argument("--enable", action="store_true"); s.add_argument("--disable", action="store_true")
+    s.add_argument("--max", type=int); s.add_argument("--model", choices=["auto", "rules"])
     s = sub.add_parser("assign", help="asigna una tarea a un agente de menos rango que tú: assign <tarea> <agente> [--note \"…\"]")
     s.add_argument("task", type=int); s.add_argument("to"); s.add_argument("--note")
     s = sub.add_parser("read", help="últimos mensajes de un canal (general por defecto) o de un hilo con --thread")
@@ -848,7 +858,7 @@ def main(argv: list[str] | None = None) -> int:
             setattr(a, key, [fix_text(v) if isinstance(v, str) else v for v in value])
 
     _SELECTED_SPACE = a.space
-    reads = {"members", "ranks", "file", "servers", "channels", "read", "feed", "search", "spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
+    reads = {"members", "ranks", "routes", "route-settings", "file", "servers", "channels", "read", "feed", "search", "spaces", "space", "board", "usage", "task", "thread", "tasks", "decisions", "locks", "digest", "checkpoints", "activity", "timeline", "watch", "watch-bind", "leaders", "orphans"}
     if a.cmd not in reads and not (a.cmd == "debate" and a.dcmd in ("show", "list")) and not (a.cmd == "delivery" and a.rcmd in ("diff", "comments")) and not a.agent:
         p.error("falta --as <agente> (o AGORA_AGENT)")
     ag = a.agent
@@ -1068,6 +1078,22 @@ def main(argv: list[str] | None = None) -> int:
         r = call("POST", "/api/agora/members_prune", {"agent": ag, "older_than_days": a.days, "dry_run": a.dry_run})
     elif c == "ranks":
         r = call("GET", "/api/agora/ranks")
+    elif c == "route":
+        payload = {"agent": ag, "text": a.text, **({"use_model": False} if a.no_model else {})}
+        for key, value in (("thread_id", a.thread), ("channel", a.channel), ("message_id", a.message)):
+            if value:
+                payload[key] = value
+        if a.apply:
+            payload["apply"] = True
+        r = call("POST", "/api/agora/route", payload)
+    elif c == "route-pass":
+        r = call("POST", "/api/agora/route_pass", {"agent": ag, "message_id": a.message, **({"reason": a.reason} if a.reason else {})})
+    elif c == "routes":
+        r = call("GET", "/api/agora/routes?" + urllib.parse.urlencode({"limit": a.limit, **({"for_agent": a.for_agent} if a.for_agent else {})}))
+    elif c == "route-settings":
+        changes = {k: v for k, v in (("enabled", True if a.enable else False if a.disable else None),
+                                     ("max_agents", a.max), ("model", a.model)) if v is not None}
+        r = call("POST", "/api/agora/route_settings_set", {"agent": ag, **changes}) if changes else call("GET", "/api/agora/route_settings")
     elif c == "assign":
         r = call("POST", "/api/agora/task_assign", {"agent": ag, "task_id": a.task, "to_agent": a.to,
                                                     **({"note": a.note} if a.note else {})})
@@ -1179,6 +1205,23 @@ def main(argv: list[str] | None = None) -> int:
         for m in named:
             print(f"{m['id']:<30} {m['rank']}")
         print(f"{len(named)} con rango propio de {len(r.get('members', []))} en el servidor")
+    elif c == "route":
+        print(r.get("label") or "")
+        for p in r.get("picks", []):
+            print(f"  @{p['agent']} · {p.get('why') or ''}")
+        for cand in r.get("candidates", [])[:8]:
+            print(f"  {cand['agent']:<28} {cand['score']:>4} {cand['presence']:<8} " + "; ".join(cand["reasons"]))
+        print(("escrito en el mensaje " + str(r["route"]["message_id"]) if r.get("applied") else "simulado, no se ha escrito nada")
+              + f" · decidió: {'el modelo' if r.get('engine') == 'model' else 'las reglas'}" + (f" ({r['note']})" if r.get("note") else ""))
+    elif c == "route-pass":
+        print(f"ok · {r.get('passed')} pasa" + (f"; ahora lo atiende @{r['next']}" if r.get("next") else "; no queda nadie más"))
+    elif c == "routes":
+        for x in r.get("routes", []):
+            print(f"#{x['message_id']:<7} {x['label']}" + (f" ({x['note']})" if x.get("note") else ""))
+        print(f"{len(r.get('routes', []))} elecciones")
+    elif c == "route-settings":
+        st = r.get("settings") or {}
+        print(f"enrutador: {'activado' if st.get('enabled') else 'desactivado'} · máximo {st.get('max_agents')} agentes · modelo {st.get('model')}")
     elif c == "assign":
         t = r.get("task") or {}
         print(f"ok · tarea #{t.get('id')} [{t.get('status')}] es de {t.get('owner')}"
@@ -1215,6 +1258,8 @@ def main(argv: list[str] | None = None) -> int:
             if quoted:
                 print(f"  ↪ a {quoted.get('author') or '?'} (#{quoted['id']}): {short(quoted.get('excerpt'), 120)}")
             print(m.get("body") or "")
+            if m.get("route"):
+                print(f"  ⇢ {m['route']['label']}")
             for f in m.get("files") or []:
                 print(f"  📎 {f['name']} ({f['size']} bytes) · agora file {f['id']}")
             if m.get("reactions"):

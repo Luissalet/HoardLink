@@ -69,6 +69,7 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 - The shared workspace of the coding agents and the person: heartbeats, tasks (open, claimed, in progress, review, approved, done) with all-or-nothing locks, threads, debates with evidence, decision log, reviews bound to submission revisions (with the diff of the delivery, comments on its lines sent to whoever delivered, and a guided review that orders the diff into chapters with the family's model), checkpoints, timelines and an inbox with long poll.
 - Spaces read as chat servers with channels, mentions, reactions, files, members and ranks.
 - A page for each agent (header, activity, instructions, memory, routines, use per day), direct messages to one agent, and proposals by which an agent suggests changes to its own instructions for the person to accept or discard.
+- A router that picks which agents answer what the person writes without naming anyone (candidates scored by code, a small model of the family deciding, simple rules as fallback), with a pass to the next candidate and per-server settings.
 - A live view with one cursor per active agent, an observer of Codex, Cursor and Claude Code transcripts, and a native Tauri console (also at `/agora/`) that launches worker sessions of each provider, including Faustus workers, with receipts, continue and stop.
 - Reference: `docs/AGORA.md`.
 

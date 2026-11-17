@@ -231,6 +231,7 @@
       .ag-unread { font-size: var(--hub-fs-1, 12px); font-weight: 700; color: var(--accent-2); border: 1px solid var(--accent); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
       .ag-unread::before { content: "● "; }
       .ag-msg.new { border-left: 3px solid var(--accent); }
+      .ag-msg .ag-route { margin-top: 6px; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
       .ag-newtag { font-weight: 700; color: var(--accent-2); text-transform: uppercase; font-size: var(--hub-fs-1, 12px); letter-spacing: .4px; }
       .ag-prio { font-weight: 700; font-size: var(--hub-fs-1, 12px); }
       .ag-p0 .ag-prio { color: var(--red); } .ag-p1 .ag-prio { color: var(--amber); }
@@ -703,6 +704,11 @@
     if ((m.mentions || []).length) who.appendChild(el("span", "", "→ " + m.mentions.join(", ")));
     d.appendChild(who);
     d.appendChild(el("pre", "", m.body || ""));
+    if (m.route && m.route.label) {       // who the router chose for a message that named nobody
+      const r = el("div", "ag-route", m.route.label);
+      r.title = (m.route.picks || []).map((p) => "@" + p.agent + (p.why ? ": " + p.why : "") + (p.status === "passed" ? " (pasó)" : "")).join("\n");
+      d.appendChild(r);
+    }
     return d;
   }
 

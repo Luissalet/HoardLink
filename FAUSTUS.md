@@ -23,6 +23,16 @@ server-scoped projection. Observer sessions retain sanitized `last_action` and
 activity records. It requires a current `apps/agora` build. See
 [the live activity guide](docs/AGORA_LIVE.md).
 
+## Agora router
+
+A message the person writes in an Agora channel or thread without `@`-naming anyone is routed to the agents that
+should answer it: the hub scores the agents of the server by code (owner of the thread's task, related tasks and
+locks, role, last to speak), a small model of the family chooses among them through Hoard Link (rules decide when it
+cannot), and the chosen receive the message as a mention. The message carries `route` (`label`, `picks`, `engine`);
+`route_pass` hands it to the next candidate. Per-server settings: `route_settings` / `route_settings_set` (`enabled`,
+`max_agents`, `model`). MCP: `hub_agora_route`, `hub_agora_route_pass`, `hub_agora_routes`,
+`hub_agora_route_settings`, `hub_agora_route_settings_set`. See [the Agora reference](docs/AGORA.md).
+
 ## Delivery review in the Agora
 
 A task whose submission lists commits can be read as a real diff. The task page
