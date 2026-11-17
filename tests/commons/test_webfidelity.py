@@ -77,6 +77,11 @@ def test_overlay_draws_on_a_copy_of_the_picture():
     assert tuple(arr[10, 30]) == (229, 57, 53)
 
 
+def test_overlay_draws_thin_and_empty_zones_without_failing():
+    img = wf.overlay(REF, [{"x": 0, "y": 150, "w": 200, "h": 4}, {"x": 5, "y": 5, "w": 1, "h": 1}, {"x": 10, "y": 10, "w": 0, "h": 0}])
+    assert tuple(np.asarray(img)[150, 100]) == (229, 57, 53)
+
+
 def test_validate_steps():
     assert wf.validate_case({"id": "a", "steps": [{"goto": "/"}, {"checkpoint": "home"}]})["id"] == "a"
     with pytest.raises(ValueError):

@@ -194,8 +194,10 @@ def overlay(image: Any, regions: Iterable[dict[str, Any]], *, colour: tuple[int,
         img = Image.blend(img, Image.new("RGB", img.size, (255, 255, 255)), min(0.9, float(dim)))
     draw = ImageDraw.Draw(img)
     for n, r in enumerate(regions, 1):
-        x0, y0, x1, y1 = r["x"], r["y"], r["x"] + r["w"] - 1, r["y"] + r["h"] - 1
+        x0, y0, x1, y1 = r["x"], r["y"], r["x"] + max(1, r["w"]) - 1, r["y"] + max(1, r["h"]) - 1
         for t in range(3):
+            if x1 - t < x0 + t or y1 - t < y0 + t:      # a thin zone gets as many strokes as fit
+                break
             draw.rectangle([x0 + t, y0 + t, x1 - t, y1 - t], outline=colour)
         label = str(n)
         lw, lh = 8 * len(label) + 8, 16
