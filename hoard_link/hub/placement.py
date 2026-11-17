@@ -68,7 +68,7 @@ DATA = {
     "hermes": ("data", ["legacy-material", "logs", "cache", "*/cache"]),
     "prometheus": ("data", ["cache", "logs"]),
 }
-EXTRA_UNTRACKED = {"faustus": ["static/studio"]}       # built UI, not in git
+EXTRA_UNTRACKED = {"faustus": ["static/studio", "studio/embed/dist"]}   # built UI and the embeddable panel, not in git
 # Hermes settings rewritten while it runs on the Spark (database, key, value there; "{faustus}" = the Faustus folder there),
 # saved beforehand and restored on the way back. Off Windows the toast and the Hub's bus reach nobody, so the parcel
 # notices of Shipments also go by e-mail there (from "medium": on the way, out for delivery, delivered, problems).
