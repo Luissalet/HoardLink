@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from . import agent_loop
 from .agent_watch import snippet
 
 COLORS = {"claude": "#d97757", "codex": "#10a37f", "cursor": "#7aa2f7", "faustus": "#d0545b"}
@@ -12,10 +13,56 @@ TOOL = {
     "description": "Live server activity / actividad en directo de un servidor.\n"
                    "Read one server live: board, path locks, observed file/command snippets, channel messages and "
                    "one cursor target per active member. Targets carry source timestamps. No inferred movement, "
-                   "file reads, model calls or read receipts. Idle after 60 seconds of silence.",
+                   "file reads, model calls or read receipts. Idle after 60 seconds of silence. Each actor carries its "
+                   "agent loop when its transcript is observed: phase plan|act|observe|done (model text = plan, tool "
+                   "call = act, tool result = observe), lap, tool in flight, the turn's steps and a practice checklist "
+                   "(tests, browser, docs, commit identity, no evidence files, Agora delivery, task claimed with "
+                   "locks) each ok|fail|unknown|pending with its evidence. Each task carries its owner's loop summary.",
     "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
         "space_id": {"type": "string"}, "channel": {"type": "string", "default": "general"}}},
 }
+PRACTICES_TOOL = {
+    "name": "hub_agora_practices", "read": False,
+    "description": "Agent loop and practice checklist / bucle y buenas prácticas de un miembro.\n"
+                   "Read the observed loop of a member (phase plan|act|observe|done, lap, tool, steps of the turn) and "
+                   "its practice checklist marked from the commands its session ran: tests, app checked in a browser, "
+                   "docs updated, commit identity, no evidence files committed, Agora delivery. With post=true and "
+                   "task_id, writes the checklist as a comment in that task's thread so the review sees what was met "
+                   "and what is missing. hub_agora_task_submit posts it there by itself when the submitter is observed.",
+    "inputSchema": {"type": "object", "additionalProperties": False, "properties": {
+        "space_id": {"type": "string"}, "agent": {"type": "string"}, "member": {"type": "string"},
+        "task_id": {"type": "integer"}, "post": {"type": "boolean", "default": False}}, "required": ["agent"]},
+}
+MARK = {"ok": "✓", "fail": "✗", "unknown": "?", "pending": "·"}
+STATE = {"ok": "cumplida", "fail": "incumplida", "unknown": "sin confirmar", "pending": "falta"}
+
+
+def practices_text(member: str, loop: dict[str, Any]) -> str:
+    """The checklist as a thread comment: what was met, what failed and what is missing, with the evidence."""
+    count = loop.get("practices_summary") or agent_loop.summary(loop["practices"])
+    lines = [f"Buenas prácticas observadas de {member} (vuelta {loop.get('lap') or 0}): "
+             f"{count['ok']} cumplidas · {count['fail']} incumplidas · {count['open']} faltan o sin confirmar"]
+    for p in loop["practices"]:
+        lines.append(f"- {MARK[p['state']]} {p['label']}: {STATE[p['state']]}"
+                     + (f" — `{p['evidence']}`" if p.get("evidence") else ""))
+    return "\n".join(lines)
+
+
+def board_practices(loop: dict[str, Any], agent: str, own: list[dict[str, Any]],
+                    locks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The transcript checklist plus what the board itself proves: the task claimed with path locks, and a
+    delivery the transcript may not show (a submit from another session or the page)."""
+    practices = [dict(p) for p in loop.get("practices", [])]
+    task = own[0] if own else None
+    if task and task.get("status") in ("review", "approved", "done"):
+        for p in practices:
+            if p["id"] == "agora" and p["state"] != "ok":
+                p.update(state="ok", evidence=f"tarea #{task['id']} en {task['status']}")
+    held = [lock["resource"] for lock in locks if lock.get("owner") == agent and lock["resource"].startswith("path:")]
+    practices.append({"id": "claim", "label": "Tarea reclamada con bloqueos de ruta",
+                      "state": "ok" if task and held else "pending",
+                      "evidence": (f"#{task['id']} · " + ", ".join(held[:3])) if task and held else ""})
+    return practices
 
 
 def file_path(text: str) -> str:
@@ -112,6 +159,12 @@ def project(board: dict[str, Any], watch: dict[str, Any], messages: list[dict[st
             if message.get("author") == agent and message.get("created", 0) >= target["at"]:
                 target = {"kind": "message", "id": str(message["id"]), "at": message["created"]}
                 note = snippet(message.get("body", ""))
+        loop = None
+        if session.get("loop"):
+            loop = {**session["loop"], "practices": board_practices(session["loop"], agent, own, locks)}
+            loop["practices_summary"] = agent_loop.summary(loop["practices"])
+            loop["tokens"] = session.get("tokens")
+            loop["turn_started_at"] = session.get("turn_started_at")
         last_signal = max(target["at"], observed.get("last_activity", 0), member.get("last_seen", 0))
         provider = next((p for p in COLORS if agent == p or agent.startswith(p + "-")), "")
         actors.append({"id": agent, "name": member.get("name") or agent,
@@ -120,10 +173,13 @@ def project(board: dict[str, Any], watch: dict[str, Any], messages: list[dict[st
                        "last_signal": last_signal, "resting": now - last_signal >= 60,
                        "note": snippet(session.get("last_text") if session.get("last_text")
                                        and session.get("last_text_at", 0) >= target["at"] else note),
-                       "session": session or None})
+                       "session": session or None, "loop": loop})
+    loops = {a["id"]: a["loop"] for a in actors if a["loop"]}
     return {"ok": True, "now": now, "space": board.get("space"), "channel": channel,
             "tasks": [{**{k:t.get(k) for k in ("id", "title", "status", "owner", "repo", "thread_id", "updated")},
-                       "progress": task_progress(t)}
+                       "progress": task_progress(t),
+                       "loop": ({k: loops[t["owner"]][k] for k in ("phase", "lap", "tool", "practices_summary")}
+                                if t.get("owner") in loops and t.get("status") not in ("done", "dropped") else None)}
                       for t in tasks],
             "files": list(files.values()), "messages": messages, "actors": actors,
             "watch_error": watch.get("error") if not watch.get("ok", True) else None}

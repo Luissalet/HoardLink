@@ -36,6 +36,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+from . import agent_loop
+
 ENGINES = ("codex", "cursor", "claude")
 #: Longest piece of a transcript that ever reaches the view (and so the page, the CLI and the tool answers).
 SNIPPET = 200
@@ -307,6 +309,7 @@ class Session:
         self.seq = 0
         self.lines = 0
         self._real = False                         # does the line being fed carry its own timestamp?
+        self.loop = agent_loop.Loop()              # plan -> act -> observe of the current turn
 
     @property
     def key(self) -> str:
@@ -336,6 +339,7 @@ class Session:
         while len(self.open_tools) > MAX_OPEN_TOOLS:
             self.open_tools.popitem(last=False)
         self.last_tool = name or self.last_tool
+        self.loop.tool_start(call_id, name, args, ts)
         self.hint(agents_in_call(f"{ns}{name}", args))
         low = (name or "").lower()
         if any(k in low for k in _QUESTION_KEYS) or low in _ASK_TOOLS:
@@ -346,8 +350,10 @@ class Session:
         if cleaned := snippet(text):
             self.last_text = cleaned
             self.last_text_at = ts
+            self.loop.text(ts)
 
-    def _tool_end(self, call_id: str) -> None:
+    def _tool_end(self, call_id: str, ts: float = 0.0, ok: Optional[bool] = None) -> None:
+        self.loop.tool_end(call_id, ts, ok)
         self.open_tools.pop(call_id, None)
         self.pending.pop(call_id, None)
 
@@ -355,6 +361,7 @@ class Session:
         self.turn_open = True
         self.turn_started = ts
         self.turn_ended = None
+        self.loop.turn_start(ts)
         self.open_tools.clear()
         self.pending.clear()
         self.tokens = None
@@ -363,6 +370,7 @@ class Session:
     def _turn_end(self, ts: float) -> None:
         self.turn_open = False
         self.turn_ended = ts
+        self.loop.turn_end(ts)
         self.open_tools.clear()
         self.pending.clear()
 
@@ -448,9 +456,10 @@ class Session:
             elif pt == "agent_message" and isinstance(p.get("message"), str):
                 self._record_text(p["message"], ts)
             elif pt == "reasoning":
+                self.loop.text(ts)
                 return
             elif pt.endswith("_call_output") or pt.endswith("_call_result"):
-                self._tool_end(str(p.get("call_id") or p.get("id") or ""))
+                self._tool_end(str(p.get("call_id") or p.get("id") or ""), ts)
                 self._codex_resumed()
             elif pt in ("function_call", "custom_tool_call", "local_shell_call"):
                 name = str(p.get("name") or pt[: -len("_call")] or "tool")
@@ -561,7 +570,7 @@ class Session:
         if t == "user":
             results = [p for p in content if isinstance(p, dict) and p.get("type") == "tool_result"] if isinstance(content, list) else []
             for r in results:
-                self._tool_end(str(r.get("tool_use_id") or ""))
+                self._tool_end(str(r.get("tool_use_id") or ""), ts, not r.get("is_error"))
             if obj.get("isMeta"):
                 return
             text = _first_text(content)
@@ -584,6 +593,8 @@ class Session:
                             self._record_text(got, ts)
                     elif part.get("type") == "tool_use":
                         self._tool_start(str(part.get("id") or ""), str(part.get("name") or "tool"), part.get("input"), ts)
+                    elif part.get("type") == "thinking":
+                        self.loop.text(ts)
             if msg.get("stop_reason") in ("end_turn", "stop_sequence", "max_tokens", "refusal"):
                 self._turn_end(ts)
 
@@ -993,6 +1004,7 @@ class AgentWatch:
             "tool": d["tool"], "last_tool": s.last_tool, "last_action": s.last_action,
             "last_text": s.last_text, "last_text_at": s.last_text_at, "tokens": s.tokens,
             "agent": agent, "binding": how, "questions": questions, "originator": s.originator or None,
+            "loop": s.loop.view(),
         }
 
     def view(self, *, force: bool = False, agent: Optional[str] = None, limit: int = MAX_SESSIONS_OUT) -> dict[str, Any]:

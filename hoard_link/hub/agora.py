@@ -3246,6 +3246,7 @@ _CHECKPOINT_SCHEMA = _schema({
 
 TOOLS: list[dict[str, Any]] = [
     agora_live.TOOL,
+    agora_live.PRACTICES_TOOL,
     {"name": "hub_agora_activity", "read": True,
      "description": "Task progress evidence: task notes/checkpoints versus heartbeat and agent observation. Read-only inference; never changes status or wakes agents.",
      "inputSchema": _schema({"task_id": _TASK, "idle_after_s": {"type": "integer", "minimum": 60, "maximum": 604800}}, ["task_id"])},
@@ -3636,6 +3637,43 @@ class AgoraFacet(Facet):
         colors = console._colors() if console is not None else {}
         return agora_live.project(board, watch, messages, now=self.agora.clock(), channel=channel, colors=colors)
 
+    def _practices(self, a: dict[str, Any]) -> dict[str, Any]:
+        """The observed loop and practice checklist of one member; with ``post`` and ``task_id`` the checklist is
+        also written as a comment in that task's thread, for the review."""
+        member = str(a.get("member") or a.get("agent") or "").strip().lower()
+        if not member:
+            raise AgoraError("member is required")
+        try:
+            watch = self._watch_view({})
+        except Exception as exc:
+            watch = {"ok": False, "error": str(exc)[:200]}
+        observed = (watch.get("agents") or {}).get(member) or {}
+        session = next((s for s in watch.get("sessions", []) if s.get("key") == observed.get("session_key")), None)
+        loop = (session or {}).get("loop")
+        out: dict[str, Any] = {"ok": True, "member": member, "observed": bool(loop),
+                               "session_key": observed.get("session_key"), "loop": loop,
+                               "watch_error": watch.get("error") if not watch.get("ok", True) else None}
+        seen = loop and (loop["steps"] or any(p["state"] != "pending" for p in loop["practices"]))
+        if a.get("post") and a.get("task_id") and seen:
+            task = self.agora.task({"task_id": a["task_id"], "space_id": a.get("space_id")})["task"]
+            posted = self.agora.post({"thread_id": task["thread_id"], "agent": a.get("agent") or member,
+                                      "space_id": a.get("space_id"), "kind": "comment",
+                                      "body": agora_live.practices_text(member, loop)})
+            out["posted_message"] = (posted.get("message") or {}).get("id") or posted.get("id")
+        return out
+
+    def _submit(self, a: dict[str, Any]) -> dict[str, Any]:
+        """Submit for review, then leave the submitter's observed practice checklist in the task thread."""
+        out = self.agora.task_submit(a)
+        if out.get("ok", True) and self._watch_enabled():
+            try:
+                done = self._practices({"agent": a.get("agent"), "member": a.get("agent"), "task_id": a.get("task_id"),
+                                        "space_id": a.get("space_id"), "post": True})
+                out["practices"] = (done.get("loop") or {}).get("practices")
+            except Exception as exc:   # the checklist never blocks a submission
+                out["practices_error"] = str(exc)[:200]
+        return out
+
     def _board(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """The Ágora board plus, per agent, what its transcripts say it is doing (``observed``)."""
         out = self._run(self.agora.board, a or {})
@@ -4014,6 +4052,8 @@ class AgoraFacet(Facet):
             return self._run(self._inbox, args)
         if op == "sync":
             return self._run(self._sync, args)
+        if op == "task_submit":
+            return self._run(self._submit, args)
         return self._run(getattr(self.agora, op), args)
 
     @classmethod
@@ -4053,7 +4093,7 @@ class AgoraFacet(Facet):
             "hub_agora_task_edit": wrap(ag.task_edit),
             "hub_agora_task_claim": wrap(ag.task_claim), "hub_agora_task_update": wrap(ag.task_update),
             "hub_agora_task_deps": wrap(ag.task_deps),
-            "hub_agora_task_submit": wrap(ag.task_submit), "hub_agora_task_review": wrap(ag.task_review),
+            "hub_agora_task_submit": wrap(self._submit), "hub_agora_task_review": wrap(ag.task_review),
             "hub_agora_task_done": wrap(ag.task_done), "hub_agora_task_release": wrap(ag.task_release),
             "hub_agora_handover": wrap(ag.handover),
             "hub_agora_tasks": wrap(self._tasks), "hub_agora_task": wrap(self._task), "hub_agora_lock": wrap(ag.lock),
@@ -4064,7 +4104,7 @@ class AgoraFacet(Facet):
             "hub_agora_decisions": wrap(ag.decisions), "hub_agora_threads": wrap(ag.threads),
             "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(self._digest),
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
-            "hub_agora_live": wrap(self._live),
+            "hub_agora_live": wrap(self._live), "hub_agora_practices": wrap(self._practices),
             **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_debate.OPERATIONS},
             **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_review.OPERATIONS},
             **{f"hub_agora_{op}": wrap({"guild": self._guild, "servers": self._servers}.get(op) or getattr(ag, op))

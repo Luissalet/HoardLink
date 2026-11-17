@@ -11,6 +11,12 @@ after sixty seconds without a signal, and observed ended turns leave the view.
 Session details, task threads, following, reduced motion and connection recovery
 are available from the view.
 
+Each observed member also has an agent loop ring (plan, act, observe, lit by its
+transcript lines), the steps of its turn and a checklist of work practices marked
+from the commands it ran; task cards show the owner's phase and practice count.
+`hub_agora_task_submit` leaves that checklist in the task thread for the review and
+`hub_agora_practices` reads or posts it.
+
 `GET /api/agora/live` and read-only MCP tool `hub_agora_live` expose the same
 server-scoped projection. Observer sessions retain sanitized `last_action` and
 `last_text_at` metadata. The view does not read repository files or create new

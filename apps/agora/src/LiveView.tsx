@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { api, spaceId, type Task, type Message } from "./api";
+import { LoopPanel, LoopRing, loopFacts, phaseLabel, type Loop } from "./LoopRing";
 import "./live.css";
 
 type Session = {
@@ -38,6 +39,7 @@ type Actor = {
   note: string;
   target: { kind: string; id: string; at: number };
   session: Session | null;
+  loop?: Loop | null;
 };
 type FileRow = {
   id: string;
@@ -52,7 +54,7 @@ type FileRow = {
 type Snapshot = {
   now: number;
   space: { id: string; title: string };
-  tasks: (Task & { progress?: string })[];
+  tasks: (Task & { progress?: string; loop?: Loop | null })[];
   messages: Message[];
   files: FileRow[];
   actors: Actor[];
@@ -463,7 +465,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
               onClick={() => setSelected(a.id)}
               style={{ "--actor-color": a.color } as CSSProperties}
             >
-              <i />
+              {a.loop ? <LoopRing loop={a.loop} color={a.color} size="sm" live={!error} /> : <i />}
               {a.name}
               <small>
                 {error || now - a.last_signal >= 60
@@ -477,6 +479,25 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
           <p>Ningún agente activo en este servidor.</p>
         )}
       </div>
+      {data?.actors.some((a) => a.loop) && (
+        <div className="agloop-strip" aria-label="Bucle de cada agente">
+          {data.actors
+            .filter((a) => a.loop)
+            .map((a) => (
+              <button
+                key={a.id}
+                className="agloop-card"
+                aria-pressed={selected === a.id}
+                onClick={() => setSelected(a.id)}
+                style={{ "--actor-color": a.color } as CSSProperties}
+              >
+                <LoopRing loop={a.loop!} color={a.color} live={!error && now - a.last_signal < 60} />
+                <strong>{a.name}</strong>
+                <small>{loopFacts(a.loop!, now)}</small>
+              </button>
+            ))}
+        </div>
+      )}
       <div className="aglive-stage" ref={stage}>
         <div className="aglive-content" ref={content}>
           <div className="aglive-resting-area">
@@ -524,6 +545,14 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                               {t.status === "blocked" ? " · Bloqueada" : ""}
                             </small>
                             {t.progress && <small>{t.progress}</small>}
+                            {t.loop && (
+                              <span className="agloop-task-loop">
+                                <LoopRing loop={t.loop} size="sm" live={!error} />
+                                {phaseLabel[t.loop.phase]}
+                                {t.loop.tool ? ` · ${t.loop.tool}` : ""} · {t.loop.practices_summary.ok}/
+                                {t.loop.practices_summary.ok + t.loop.practices_summary.fail + t.loop.practices_summary.open} prácticas
+                              </span>
+                            )}
                           </button>
                           {berths("task:" + t.id)}
                         </div>
@@ -700,6 +729,14 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
           ) : (
             <p>Sin sesión observada. La actividad procede del Ágora.</p>
           )}
+          {actor.loop && (
+            <>
+              <h3>Bucle del agente</h3>
+              <LoopRing loop={actor.loop} color={actor.color} live={!error && now - actor.last_signal < 60} />
+              <p>{loopFacts(actor.loop, now)}</p>
+              <LoopPanel loop={actor.loop} />
+            </>
+          )}
           {data?.tasks
             .filter((t) => t.owner === actor.id)
             .map((t) => (
@@ -729,6 +766,17 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
             </button>
           </header>
           <h3>{taskDetail.task.title}</h3>
+          {(() => {
+            const owner = data?.actors.find((a) => a.id === taskDetail.task.owner);
+            return owner?.loop ? (
+              <section aria-label={`Bucle de ${owner.name}`}>
+                <p>
+                  {owner.name} · {loopFacts(owner.loop, now)}
+                </p>
+                <LoopPanel loop={owner.loop} />
+              </section>
+            ) : null;
+          })()}
           {taskDetail.messages.map((m) => (
             <article key={m.id}>
               <strong>{m.author}</strong>

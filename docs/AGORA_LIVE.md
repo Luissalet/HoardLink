@@ -30,11 +30,39 @@ read keeps the last snapshot visible, marks the connection interrupted and dims
 cursors until a successful read. Switching channels starts a new channel snapshot.
 Reduced-motion preferences disable cursor travel and text reveal.
 
+## Agent loop and practices
+
+A strip under the agent buttons holds one ring per member whose session is observed:
+the agent in the centre with its lap number, and plan, act and observe around it. The
+lit segment is the phase the last transcript line set: model text or reasoning is
+plan, a tool call is act (the tool is named), a tool result is observe until the
+model writes again. A light runs along the lit segment while the member is active;
+reduced motion keeps it still. Nothing moves between transcript lines. The agent
+buttons and the task cards carry a small ring; a task card also shows its owner's
+phase, tool and how many practices are met.
+
+The member detail and the task detail show the steps of the observed turn (plan,
+tool, result, commit, delivery, end) and the practices to review, each met, failing,
+not settled or missing with the command that decides it: tests run, app checked in a
+browser, docs (FAUSTUS.md / README / AGENTS.md) edited, commit with the right identity
+(an explicit author; a trailer or another author fails it, none leaves it not
+settled), no evidence files committed, Agora delivery (`agora … submit|done <id>`,
+`hub_agora_task_submit|done`, or the task already in review) and the task claimed
+with path locks. Commands are judged on their sanitized text, so a command that only
+mentions a delivery in a string counts as one.
+
+`hub_agora_task_submit` (and `POST /api/agora/task_submit`) leaves the submitter's
+observed checklist as a comment in the task thread and returns it as `practices`.
+`hub_agora_practices` reads a member's loop and checklist, and with `post` and
+`task_id` writes it to that task's thread.
+
 ## API and MCP
 
 `GET /api/agora/live?space_id=<server>&channel=general` and the read-only
 `hub_agora_live` MCP tool expose the same projection with `now`, `space`, `channel`,
-`tasks`, `files`, `messages`, `actors` and `watch_error`.
+`tasks`, `files`, `messages`, `actors` and `watch_error`. Actors with an observed session
+carry `loop` (`phase`, `since`, `lap`, `tool`, `steps`, `practices`, `practices_summary`,
+`tokens`, `turn_started_at`); open tasks carry their owner's `loop` summary.
 
 Actors carry an attributed `target` with its `kind`, `id` and `at` source timestamp,
 `last_signal`, `resting` and the observer's selected session when available. Only
