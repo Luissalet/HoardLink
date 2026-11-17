@@ -2160,6 +2160,7 @@ class AgoraConsoleFacet(Facet):
                   "Ending the provider turn without an Agora delivery is incomplete. If blocked, report the exact cause "
                   "in the task thread and preserve the session/worktree. Return concrete evidence.\n\n"
                   f"Task: {task}")
+        prompt += self._saved_instructions(agent_id)
         if leader_id == "codex":
             command = [executable, "exec", "--json", "--model", model, "--config", f'model_reasoning_effort="{effort}"',
                        "--config", 'approval_policy="never"', "--sandbox", "danger-full-access",
@@ -2298,6 +2299,16 @@ class AgoraConsoleFacet(Facet):
         if rank_asked and rank_asked != rank:
             out["rank_asked"] = rank_asked           # lowered to the rank of whoever started it
         return out
+
+    def _saved_instructions(self, agent_id: str) -> str:
+        """The instructions the person saved for this agent on its page, as the closing part of its brief."""
+        agora = self._agora()
+        try:
+            from .agora_profiles import instructions_of
+            body = str(instructions_of(agora.for_space(self.space_id), agent_id)["body"]).strip()
+        except Exception:  # noqa: BLE001 - an agent the Agora does not know yet has none
+            body = ""
+        return ("\n\nYour own instructions (saved by the person on your Agora page):\n" + body) if body else ""
 
     @staticmethod
     def _neutral_worker_dir(work_dir: Path, fallback: Path) -> Path:

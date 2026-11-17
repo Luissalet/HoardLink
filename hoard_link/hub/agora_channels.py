@@ -34,6 +34,7 @@ from typing import Any, Optional
 
 from . import agora_ranks
 from . import agora_social
+from . import agora_profiles
 
 GENERAL = "general"
 BOARD_COLUMNS = ("open", "in_progress", "review", "done")
@@ -868,11 +869,11 @@ def folders(a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
 OPERATIONS = {"channels": channels, "channel_create": channel_create, "channel_update": channel_update,
               "channel_post": channel_post, "channel_read": channel_read, "seen": seen, "servers": servers,
               "guild": guild, "feed": feed, "search": search, "pulse": pulse, "space_meta_set": space_meta_set,
-              **agora_social.OPERATIONS, **agora_ranks.OPERATIONS}
+              **agora_social.OPERATIONS, **agora_ranks.OPERATIONS, **agora_profiles.OPERATIONS}
 WRITE_OPS = ("channel_create", "channel_update", "channel_post", "channel_read", "seen", "space_meta_set",
-             *agora_social.WRITE_OPS, *agora_ranks.WRITE_OPS)
+             *agora_social.WRITE_OPS, *agora_ranks.WRITE_OPS, *agora_profiles.WRITE_OPS)
 READ_ROUTES = ("servers", "guild", "channels", "feed", "search", "pulse", *agora_social.READ_ROUTES,
-               *agora_ranks.READ_ROUTES)
+               *agora_ranks.READ_ROUTES, *agora_profiles.READ_ROUTES)
 
 
 def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
@@ -957,5 +958,6 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                         "choose the working folder or the context folders of a space. parent goes one level up.",
          "inputSchema": schema({"path": {"type": "string", "maxLength": 1000}}, [])},
         *agora_social.tools(schema, agent_prop),
+        *agora_profiles.tools(schema, agent_prop),
         *agora_ranks.tools(schema, agent_prop),
     ]

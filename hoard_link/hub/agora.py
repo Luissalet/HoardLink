@@ -56,6 +56,7 @@ from . import agent_watch
 from . import agora_channels
 from . import agora_ranks
 from . import agora_social
+from . import agora_profiles
 from . import agora_debate
 from . import agora_review
 from . import agora_live
@@ -202,6 +203,8 @@ DECLARED_MODEL_MIGRATION = """
 MIGRATIONS.append(DECLARED_MODEL_MIGRATION)
 # the diff of a delivery, comments on its lines and its guided reading (agora_review.py)
 MIGRATIONS.append(agora_review.REVIEW_MIGRATION)
+# an agent's page: instructions, proposals to change them, memory and routines (agora_profiles.py)
+MIGRATIONS.append(agora_profiles.PROFILES_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -2227,6 +2230,8 @@ class Agora:
                       details + "\n\n" + body, [task["owner"]] if task.get("owner") else [])
             if agent == PERSON:
                 self.db.execute("UPDATE threads SET status='open' WHERE id=? AND status='escalated'", (task["thread_id"],))
+            if verdict == "changes":
+                agora_profiles.note_correction(self, task, agent, body)
         self._bump("agora.task.reviewed", {"task_id": task["id"], "agent": agent, "verdict": verdict,
                                             "submission_revision": expected_revision, "commits": task["commits"]})
         res = {"ok": True, "task": self._task_row(task["id"])}
@@ -3566,6 +3571,8 @@ class AgoraFacet(Facet):
         self.agora.review_chat = lambda body: hub.link.chat("agora-review", body)   # the guided review asks the family's model
         self.agora.review_session_hook = self._review_session
         self.agora.mention_hook = self._notify_mention      # an agent naming the person in a channel reaches them too
+        self.agora.tell_hook = self._tell_wake              # a message to a console leader also gives it a turn
+        self.agora.profile_hook = self._profile_extra       # what the console knows of an agent: model, runs, colour
 
         self._watch: Optional[agent_watch.AgentWatch] = None
         self._watch_lock = threading.Lock()
@@ -3719,6 +3726,49 @@ class AgoraFacet(Facet):
             if str(row.get("agent_id") or "") == agent and row.get("state") in ("running", "starting"):
                 return {"worker_id": row.get("id"), "state": row.get("state"), "via": "inbox mention"}
         return None
+
+    def _console(self) -> Any:
+        return self.hub.facet("agora_console") if hasattr(self.hub, "facet") else None
+
+    def _tell_wake(self, target: str, message_id: int, body: str, space_id: str = DEFAULT_SPACE_ID) -> Optional[dict[str, Any]]:
+        """A direct message to one of the console's leaders also queues a turn for it; any other agent reads it from
+        its inbox (a mention does not wake an idle agent)."""
+        console = self._console()
+        if console is None:
+            return None
+        from .agora_console import LEADERS
+        leader = next((row[0] for row in LEADERS if row[2] == target), None)
+        if leader is None:
+            return None
+        return console.for_space(space_id)._enqueue_leader_turn(leader, message_id, body)
+
+    def _profile_extra(self, agent_id: str, space_id: str = DEFAULT_SPACE_ID) -> dict[str, Any]:
+        """Model, effort, colour and run times the console holds for one agent (its own sessions and leader turns)."""
+        console = self._console()
+        if console is None:
+            return {}
+        console = console.for_space(space_id)
+        from .agora_console import LEADERS
+        out: dict[str, Any] = {}
+        leader = next((row[0] for row in LEADERS if row[2] == agent_id), None)
+        if leader:
+            saved = console._preferences().get(leader, {})
+            out.update(model=saved.get("model") or None, effort=saved.get("effort") or None,
+                       color=console._colors().get(leader))
+        runs = []
+        for w in console._worker_rows():
+            if w.get("agent_id") != agent_id:
+                continue
+            out.setdefault("model", w.get("model"))
+            out.setdefault("effort", w.get("effort"))
+            running = w.get("state") in ("running", "starting")
+            runs.append({"started": w.get("created_at"), "ended": None if running else w.get("updated_at"),
+                         "state": w.get("state"), "task": str(w.get("task") or "")[:120]})
+            if running and not out.get("since"):
+                out["since"] = w.get("created_at")
+        if runs:
+            out["runs"] = runs
+        return out
 
     def _notify_mention(self, where: dict[str, Any], agent: str, body: str) -> None:
         """An agent named the person in a channel or thread: tell them, once per conversation every ten minutes. It goes
