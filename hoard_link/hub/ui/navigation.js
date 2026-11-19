@@ -103,7 +103,7 @@
     const activeGroup = route === 'search' ? 'search' : route === 'project' || route === 'agora' ? 'projects' : groups.some(g => g.id === route) ? route : groupFor(route).id;
     // Three labelled sections: your own work, the tools you run, the shared environment.
     const sections = [
-      [tr('Tu espacio', 'Your space'), ['home', 'projects', 'communication', 'search']],
+      [tr('Tu espacio', 'Your space'), ['home', 'orders', 'projects', 'communication', 'search']],
       [tr('Herramientas', 'Tools'), ['apps', 'automation']],
       [tr('Entorno', 'Environment'), ['system']],
     ];
