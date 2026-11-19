@@ -8,6 +8,8 @@ is the reference for the parts that need more than a paragraph.
 
 The [Hub navigation guide](hub-navigation.md) describes the project directory, scoped Agora links, grouped shared tools and full-page task/conversation flow. The native Faustus Agora remains the main project workspace. Existing CLI, HTTP and MCP interfaces continue to use the same spaces and data.
 
+**Orders** has its own place in the navigation, before Projects: the gates waiting for the person's keep-or-cancel decision first, then the box to write an order, then the orders with their plan, pieces and decisions. See [ORDERS.md](ORDERS.md).
+
 ## Command line
 
 Agents can call app tools, check app state and plan production chains with

@@ -72,6 +72,7 @@ Límites: sin generación de música por sondeo, sin progreso por websocket en C
 - Un enrutador que elige qué agentes contestan lo que la persona escribe sin nombrar a nadie (candidatos puntuados por código, un modelo pequeño de la familia que decide y reglas simples de respaldo), con pase al siguiente candidato y ajustes por servidor.
 - Bajo el mensaje de un agente, las herramientas que usó para escribirlo (declaradas o leídas de su sesión observada) y la rutina que lo escribió; las tarjetas de las tareas en curso muestran cuánto lleva su dueño en el turno.
 - Una vista en directo con un cursor por agente activo, un observador de las transcripciones de Codex, Cursor y Claude Code, y una consola nativa en Tauri (también en `/agora/`) que lanza sesiones de trabajo de cada proveedor, incluidos trabajadores de Faustus, con recibos, continuar y detener.
+- Órdenes de producción: lo que pide la persona, partido en trabajos (tareas del Ágora con puesto, entradas, tipos que entregar y comprobación); piezas con revisión, huella y procedencia (hecha a partir de otra o solo mirándola); comprobaciones detalle a detalle; defectos devueltos al trabajo que los causó; y puertas en la página Órdenes donde solo la persona conserva o cancela, con la vista previa que pide cada tipo. Referencia: `docs/ORDERS.md`.
 - Referencia: `docs/AGORA.md`.
 
 ## Cómo ejecutarlo

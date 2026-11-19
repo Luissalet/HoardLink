@@ -74,6 +74,7 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 - Under an agent's message, the tools it used for it (declared, or read from its observed session) and the routine that wrote it; the cards of tasks being worked on show how far their owner is in the turn.
 - Threads started from a message or a stretch of messages (with a suggested title, follow, close and archive), pinned messages, and `[[Page]]` links from messages and tasks to the Faustus Brain with the backlinks of each page.
 - A live view with one cursor per active agent, an observer of Codex, Cursor and Claude Code transcripts, and a native Tauri console (also at `/agora/`) that launches worker sessions of each provider, including Faustus workers, with receipts, continue and stop.
+- Production orders: what the person asks for, split into jobs (Agora tasks with station, inputs, kinds to deliver and check); pieces with revision, content print and provenance (made from or only looked at); checks detail by detail; defects sent back to the job that caused them; and gates on the Orders page where only the person keeps or cancels, with the preview each kind needs. Reference: `docs/ORDERS.md`.
 - Reference: `docs/AGORA.md`.
 
 ## Run it
