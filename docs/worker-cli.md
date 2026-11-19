@@ -1,0 +1,65 @@
+# Hub commands for agents
+
+Run `hub.cmd` from the Hub checkout, or invoke it by its absolute path from a work folder. Relative
+argument files are opened from the caller's current directory. The equivalent on other platforms is
+`python -m hoard_link.hub.cli` from an environment where Hoard Link is importable.
+
+```text
+hub.cmd state writer
+hub.cmd start writer
+hub.cmd tools writer
+hub.cmd call writer <tool> --args-file arguments.json --json
+hub.cmd stop writer
+hub.cmd stations
+hub.cmd chain <input-type> <output-type> --json
+hub.cmd programs --refresh
+hub.cmd tool hub_programs --json
+```
+
+`--args-file` takes a UTF-8 JSON object containing the tool arguments. `call` accepts `--reason`
+and a 1–900 second `--timeout` (default 120 seconds). It sends the call through the Hub's normal
+app proxy. For Hub tools, use `tool <MCP-name>`. The CLI prints a readable summary or indented
+result by default. With `--json`, it writes one JSON value to stdout, including the original
+result envelope on tool calls. The process exits with 0 on success, 1 on request or tool failure
+and 2 for invalid command-line syntax. A timed-out write is not retried.
+
+The client reads connection settings from the Hub's data directory. Isolated instances can use
+`HOARD_HUB_DATA_DIR`, which supplies the running URL and bearer file automatically after the Hub
+starts. The usual `HOARD_HUB_URL` and `HOARD_HUB_TOKEN_FILE` overrides are also recognised. The
+CLI connects to an existing Hub. App lifecycle changes are explicit commands.
+
+## HTTP and MCP
+
+Each name from the authenticated `GET /api/agent/tools` catalogue has
+`GET /api/agent/tools/<name>` for its schema and `POST /api/agent/tools/<name>` for invocation.
+Send the Hub bearer token and the arguments object as the POST body. The named POST and the
+shared `POST /api/agent/call` return the same `{ok, tool, result}` envelope, using the same
+handler as MCP. Existing app routes still work. `GET /api/apps/<id>/status` is an explicit alias
+for `GET /api/apps/<id>`. Use the named `hub_app_status` tool to include the log tail.
+
+## Local programs
+
+Open **System → Capabilities → Local programs** in the Hub. The page and `hub_programs` show the
+detected path, version when available and a headless usage example. When a command example starts
+with a program name, substitute the reported path if the program is outside `PATH`. The Playwright
+path is its Python interpreter. For ComfyUI the registry shows the entry script and interpreter and
+refers to the Hub's service controls for GPU placement.
+
+The inventory reads standard installation locations, nearby `Tools` directories, the Hub's
+ComfyUI settings, Python interpreters used by app launch specifications and virtual environments
+beside registered apps or under `Tools/engines`. Some version descriptions come from local metadata and others from short
+version commands. Detection starts no service, browser, model or application session. Unknown
+versions and missing paths are shown explicitly. An automatic scan is cached for five minutes.
+Use **Detect again**, `hub.cmd programs --refresh` or `hub_programs {"refresh":true}` to refresh it.
+
+For programs outside discovery, use **Register a program** or call `hub_program_register` with
+`name`, an absolute `path`, `headless` instructions and an optional `version`. This records the
+entry in Hub data. Registering the same values again returns the same entry. To remove it, use
+the page's **Undo registration** action or call the `tool` with the `arguments` returned in
+`undo`. Undo is specific to that registration.
+
+Headless command references.
+[Blender](https://docs.blender.org/manual/en/latest/advanced/command_line/arguments.html),
+[Godot](https://docs.godotengine.org/en/stable/tutorials/editor/command_line_tutorial.html),
+[OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer/wiki/cli_mode) and
+[Playwright](https://playwright.dev/python/docs/browsers).
