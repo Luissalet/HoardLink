@@ -60,6 +60,7 @@ from . import agora_social
 from . import agora_profiles
 from . import agora_threads
 from . import agora_work
+from . import agora_orders
 from . import agora_debate
 from . import agora_review
 from . import agora_live
@@ -215,6 +216,8 @@ MIGRATIONS.append(agora_profiles.PROFILES_MIGRATION)
 MIGRATIONS.append(agora_threads.THREADS_MIGRATION)
 # what an agent's message says it did, and the routine behind it (agora_work.py)
 MIGRATIONS.append(agora_work.WORK_MIGRATION)
+# production orders, their plan, pieces and the person's gates (agora_orders.py)
+MIGRATIONS.append(agora_orders.ORDERS_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -3563,7 +3566,7 @@ class AgoraFacet(Facet):
     id = "agora"
     # agora_blocks.js paints submission_blocks / per-block comments without editing agora.js (#116 lock).
     # agora_debate.js paints the findings board of a thread's debates the same way.
-    ui_scripts = ("agora.js", "agora_blocks.js", "agora_debate.js", "agora_review.js")
+    ui_scripts = ("agora.js", "agora_blocks.js", "agora_debate.js", "agora_review.js", "orders.js")
 
     def __init__(self, hub: Any):
         super().__init__(hub)
@@ -4043,6 +4046,13 @@ class AgoraFacet(Facet):
             if not req.caller():    # the names of this machine's folders are not for whoever reaches the port
                 return {"ok": False, "status": 401, "error": "a family bearer token is required to list folders"}
             return self._run(agora_channels.folders, q)
+        piece = re.fullmatch(r"/api/agora/piece_file/([0-9]+)(?:/(.+))?", p)
+        if piece:
+            if not req.caller():    # the order's files are for the family, not for whoever reaches the port
+                return {"ok": False, "status": 401, "error": "a family bearer token is required"}
+            from urllib.parse import unquote
+            return self._piece_file(int(piece.group(1)), q.get("preview"), unquote(piece.group(2) or ""),
+                                    inline=str(q.get("inline", "")).lower() in ("1", "true"))
         if p == "/api/agora/space_icon" or re.fullmatch(r"/api/agora/file/[0-9a-f]{32}", p):
             if not req.caller():    # what people attach is for the family, not for whoever reaches the port
                 return {"ok": False, "status": 401, "error": "a family bearer token is required"}
@@ -4080,6 +4090,28 @@ class AgoraFacet(Facet):
         return Reply(body=blob, content_type=row["type"] if inline else "application/octet-stream",
                      headers={"Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{name}"',
                               "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
+
+    def _piece_file(self, piece_id: int, preview: Any, rel: str, inline: bool = False) -> Any:
+        """A piece's file, one of its previews or a file beside it, as bytes, for the page's previews."""
+        import mimetypes
+        try:
+            path = agora_orders.piece_file(self.agora, piece_id, preview=preview, rel=rel)
+            if inline and os.path.splitext(path)[1].lower() in (".html", ".htm"):
+                return Reply(body=agora_orders.inline_html(path).encode("utf-8"), content_type="text/plain; charset=utf-8",
+                             headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+            with open(path, "rb") as fh:
+                blob = fh.read()
+        except AgoraError as exc:
+            return {"ok": False, "status": exc.status, "error": str(exc)}
+        except OSError as exc:
+            return {"ok": False, "status": 404, "error": str(exc)}
+        ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype in ("application/json", "application/javascript"):
+            ctype += "; charset=utf-8"
+        if os.path.splitext(path)[1].lower() in agora_orders.TEXT_EXT:
+            ctype = "text/plain; charset=utf-8"
+        return Reply(body=blob, content_type=ctype, headers={"X-Content-Type-Options": "nosniff",
+                                                             "Cache-Control": "private, max-age=60"})
 
     def post(self, req: Request) -> Optional[Any]:
         p = req.path
