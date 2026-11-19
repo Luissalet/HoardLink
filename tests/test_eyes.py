@@ -328,3 +328,36 @@ def test_mesh_views_are_named_after_the_subjects_own_side() -> None:
     for name, direction in eyes_render.MESH_VIEWS.items():
         if direction:
             assert f'"{name}": {direction}' in blender.replace(".0)", ".0)")
+
+
+RIG_SCRIPT = """
+import bpy, sys
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.5))
+body = bpy.context.object
+bpy.ops.object.armature_add(location=(0, 0, 0))
+rig = bpy.context.object
+rig.data.bones[0].name = 'brazo'
+body.parent = rig
+body.modifiers.new('rig', 'ARMATURE').object = rig
+body.vertex_groups.new(name='brazo').add([v.index for v in body.data.vertices], 1.0, 'REPLACE')
+bpy.ops.export_scene.gltf(filepath=sys.argv[-1], export_format='GLB')
+"""
+
+
+@pytest.mark.skipif(not eyes_render.find_program("blender"), reason="Blender not installed")
+def test_rigged_model_poses_without_the_importers_bone_shapes(eyes: EyesFacet, tmp_path: Path) -> None:
+    import subprocess
+    script = tmp_path / "rig.py"
+    script.write_text(RIG_SCRIPT)
+    glb = tmp_path / "rig.glb"
+    subprocess.run([eyes_render.find_program("blender"), "-b", "--factory-startup", "--python", str(script), "--",
+                    str(glb)], check=True, capture_output=True, timeout=300)
+    out = eyes.look({"path": str(glb), "views": ["front"], "material": "neutral", "size": 128, "wait_s": 300,
+                     "pose": {"bones": {"brazo": [0, 0, 45], "nope": [0, 0, 0]}}})
+    assert out["status"] == "done", out
+    assert out["facts"]["bones"] == ["brazo"] and out["facts"]["mesh_names"] == ["Cube"]
+    # The 1 m cube tilted 45 degrees by the pose stands 1.414 m tall; no 2 m bone display sphere in the bounds.
+    assert out["facts"]["dimensions_m"][2] == pytest.approx(2 ** 0.5, abs=0.05)
+    assert out["resolved"]["pose"]["bones"] == {"brazo": [0.0, 0.0, 45.0]}
+    assert any("nope" in w for w in out["warnings"])

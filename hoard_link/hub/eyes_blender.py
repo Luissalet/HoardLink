@@ -61,8 +61,10 @@ def _scene_root(spec, warnings):
         obj.matrix_world = matrix
     rx = math.radians(90.0) if spec.get("up") == "y" else 0.0
     root.rotation_euler = Euler((rx, 0.0, math.radians(float(spec.get("turn") or 0.0))), "XYZ")
+    # The glTF importer adds a mesh (an Icosphere) as the display shape of bones: it is not part of the model.
+    shapes = {pb.custom_shape for o in scene.objects if o.type == "ARMATURE" for pb in o.pose.bones if pb.custom_shape}
     for obj in scene.objects:
-        if obj.type in ("CAMERA", "LIGHT"):
+        if obj.type in ("CAMERA", "LIGHT") or obj in shapes:
             obj.hide_render = True
     return root
 
@@ -123,7 +125,7 @@ def _bounds():
 
 
 def _facts(low, high):
-    meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    meshes = [o for o in bpy.context.scene.objects if o.type == "MESH" and not o.hide_render]
     armatures = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
     images = [i for i in bpy.data.images if i.source in ("FILE", "PACKED") or i.packed_file]
     bones = [b.name for a in armatures for b in a.data.bones]
@@ -209,7 +211,7 @@ def _material_mode(scene, mode, clay):
             shading.single_color = NEUTRAL
         else:
             has_attr = any(getattr(o.data, "color_attributes", None) and len(o.data.color_attributes)
-                           for o in scene.objects if o.type == "MESH")
+                           for o in scene.objects if o.type == "MESH" and not o.hide_render)
             has_tex = any(i.source in ("FILE", "PACKED") or i.packed_file for i in bpy.data.images)
             kinds = {i.identifier for i in shading.bl_rna.properties["color_type"].enum_items}
             by_vertex = "ATTRIBUTE" if "ATTRIBUTE" in kinds else "VERTEX"   # renamed between Blender versions
