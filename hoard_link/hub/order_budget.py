@@ -17,6 +17,10 @@ BUDGET_MIGRATION = """
 """
 
 
+def setup(agora):
+    agora.db.script(BUDGET_MIGRATION)
+
+
 def _nonnegative(args, key):
     value = args.get(key)
     if type(value) is not int or not 0 <= value <= 2**31 - 1:
@@ -29,18 +33,29 @@ def _budget(agora, oid):
     return dict(row) if row else None
 
 
+def hold_reason(agora, oid):
+    # Agora can also be used without loading Hub facets (the CLI's local tests).
+    if not agora.db.scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agora_order_budgets'"):
+        return ""
+    return (_budget(agora, oid) or {}).get("reason", "")
+
+
 def configure(agora, args):
     agent = agora._agent(args.get("agent"))
     retries, gpu_seconds, returns = (_nonnegative(args, key) for key in ("retries", "gpu_seconds", "returns"))
     with agora.db.tx():
         row = orders._order_row(agora, args.get("order_id"))
         oid = row["id"]
+        stopped = hold_reason(agora, oid)
         journal = orders._Journal(agora, agent, "order_budget")
         journal.before("agora_order_budgets", oid)
         agora.db.execute("INSERT INTO agora_order_budgets(order_id,retries,gpu_seconds,returns) VALUES(?,?,?,?) "
                          "ON CONFLICT(order_id) DO UPDATE SET retries=excluded.retries, gpu_seconds=excluded.gpu_seconds, "
                          "returns=excluded.returns, reason=''", (oid, retries, gpu_seconds, returns))
         check_returns(agora, row, journal, agent)
+        if (stopped and not hold_reason(agora, oid)
+                and not agora.db.scalar("SELECT 1 FROM agora_gates WHERE order_id=? AND status='open'", (oid,))):
+            orders._set_status(agora, oid, "producing", journal, only_from=("waiting",))
         token = journal.save()
     return {"ok": True, "budget": _budget(agora, oid), "undo": token}
 
@@ -71,6 +86,8 @@ def _hold(agora, row, reason, journal, agent):
 
 
 def check_returns(agora, row, journal, agent):
+    if not agora.db.scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agora_order_budgets'"):
+        return
     budget = _budget(agora, row["id"])
     if not budget or budget["reason"]:
         return
@@ -159,32 +176,43 @@ def attempt(agora, args):
 def metrics(agora, args):
     where, params = ("", ()) if args.get("all_spaces") in (True, "1") else ("WHERE o.space_id=?", (agora.space_id,))
     chains = agora.db.query(
-        "WITH first_piece AS (SELECT piece_id,min(id) AS decision_id FROM agora_order_decisions GROUP BY piece_id), "
+        "WITH RECURSIVE lineage(id,root) AS (SELECT id,id FROM agora_pieces WHERE supersedes IS NULL "
+        "UNION ALL SELECT p.id,l.root FROM agora_pieces p JOIN lineage l ON p.supersedes=l.id), "
+        "first_piece AS (SELECT min(d.id) AS decision_id FROM agora_order_decisions d "
+        "JOIN lineage l ON l.id=d.piece_id GROUP BY l.root), "
         "first_gate AS (SELECT order_id,min(gate_id) AS gate_id FROM agora_order_decisions GROUP BY order_id), "
         "gate_counts AS (SELECT d.order_id, count(*) AS decided, sum(d.decision='keep') AS kept "
-        "FROM agora_order_decisions d JOIN first_gate g ON d.gate_id=g.gate_id GROUP BY d.order_id), "
+        "FROM agora_order_decisions d JOIN first_gate g ON d.gate_id=g.gate_id "
+        "JOIN agora_gates gate ON gate.id=g.gate_id AND gate.status='decided' GROUP BY d.order_id), "
         "piece_counts AS (SELECT d.order_id,count(*) AS decided,sum(d.decision='keep' AND p.revision=1) AS kept "
-        "FROM first_piece f JOIN agora_order_decisions d ON d.id=f.decision_id JOIN agora_pieces p ON p.id=f.piece_id "
+        "FROM first_piece f JOIN agora_order_decisions d ON d.id=f.decision_id JOIN agora_pieces p ON p.id=d.piece_id "
         "GROUP BY d.order_id) "
         "SELECT o.template AS chain,count(*) AS orders,count(g.order_id) AS orders_decided, "
-        "sum(CASE WHEN g.kept=g.decided AND NOT EXISTS(SELECT 1 FROM agora_gates WHERE id=(SELECT gate_id FROM first_gate "
-        "WHERE order_id=o.id) AND status='open') THEN 1 ELSE 0 END) AS orders_kept_first, "
+        "sum(CASE WHEN g.kept=g.decided THEN 1 ELSE 0 END) AS orders_kept_first, "
         "coalesce(sum(p.decided),0) AS pieces_decided,coalesce(sum(p.kept),0) AS pieces_kept_first "
         f"FROM agora_orders o LEFT JOIN gate_counts g ON g.order_id=o.id LEFT JOIN piece_counts p ON p.order_id=o.id {where} "
         "GROUP BY o.template ORDER BY o.template", params,
     )
-    stations = agora.db.query(
+    attempts = agora.db.query(
         "SELECT a.station,count(*) AS attempts,sum(a.result='pass') AS passed,sum(a.result='fail') AS failed, "
-        "sum(a.gpu_seconds) AS gpu_seconds,sum(CASE WHEN a.result='fail' THEN a.gpu_seconds ELSE 0 END) AS failed_gpu_seconds, "
+        "sum(CASE WHEN a.closed IS NOT NULL THEN a.gpu_seconds ELSE 0 END) AS gpu_seconds, "
+        "sum(CASE WHEN a.result='fail' THEN a.gpu_seconds ELSE 0 END) AS failed_gpu_seconds, "
         "sum(CASE WHEN a.result='pass' THEN a.closed-a.created ELSE 0 END) AS advance_seconds, "
         "sum(CASE WHEN a.result='fail' THEN a.closed-a.created ELSE 0 END) AS failed_seconds "
         f"FROM agora_order_attempts a JOIN agora_orders o ON o.id=a.order_id {where} GROUP BY a.station ORDER BY a.station", params,
     )
+    defects = agora.db.query(
+        "SELECT d.station, count(*) AS returns FROM agora_piece_defects d JOIN agora_orders o ON o.id=d.order_id "
+        f"{where} GROUP BY d.station ORDER BY d.station", params,
+    )
+    stations = {row["station"]: dict(row) for row in attempts}
+    for row in defects:
+        stations.setdefault(row["station"], {"station": row["station"], "attempts": 0})["returns"] = row["returns"]
     holds = agora.db.query(
         "SELECT o.id,o.title,o.space_id,b.reason, "
         "(SELECT count(*) FROM agora_gates g WHERE g.order_id=o.id AND g.status='open') AS gates "
         f"FROM agora_orders o JOIN agora_order_budgets b ON b.order_id=o.id {where} "
         f"{'AND' if where else 'WHERE'} b.reason<>'' AND o.status NOT IN ('delivered','cancelled') ORDER BY o.id", params,
     )
-    return {"ok": True, "chains": [dict(row) for row in chains], "stations": [dict(row) for row in stations],
+    return {"ok": True, "chains": [dict(row) for row in chains], "stations": [stations[key] for key in sorted(stations)],
             "holds": [dict(row) for row in holds]}

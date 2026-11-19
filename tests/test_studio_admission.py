@@ -4,6 +4,7 @@ import pytest
 
 from hoard_link.hub import order_budget
 from hoard_link.hub.agora import Agora, AgoraError
+from hoard_link.hub.agora_console import AgoraConsoleFacet
 from hoard_link.hub.work_admission import WorkQueue, TTL_SECONDS
 from hoard_link.hub.worker_capabilities import candidates
 
@@ -33,9 +34,18 @@ def test_admission_is_atomic_prioritized_global_and_releases():
     assert poll("claude-two", second)["state"] == "running"
 
 
+def test_ticket_retry_reuses_the_same_reservation():
+    queue = WorkQueue()
+    args = {"action": "request", "agent": "worker-one", "key": "tests-1", "resources": {"suite": 1}}
+    first = queue.manage(args)
+    assert queue.manage(args)["ticket"] == first["ticket"]
+    assert queue.manage({**args, "priority": "high"})["status"] == 409
+
+
 @pytest.fixture
 def order(tmp_path):
     agora = Agora(tmp_path / "agora.db")
+    order_budget.setup(agora)
     order = agora.order_create({"agent": "maker", "title": "Cartographer", "words": "Try a draft",
                                 "template": "visual"})["order"]
     key = agora.plan_set({"agent": "maker", "order_id": order["id"], "jobs": [
@@ -82,6 +92,8 @@ def test_gpu_reservation_and_first_pass_counts(order, tmp_path):
     assert over["hold"] == "gpu"
     gate, = agora.orders({})["waiting"]
     agora.gate_decide({"agent": "luis", "_person": True, "gate_id": gate["id"], "decision": "keep"})
+    with pytest.raises(AgoraError, match="has already decided"):
+        agora.order_undo({"agent": "maker", "token": over["undo"]})
     chain, = order_budget.metrics(agora, {})["chains"]
     assert chain["orders_kept_first"] == chain["pieces_kept_first"] == 1
     assert chain["chain"] == "visual" and not order_budget.metrics(agora, {})["stations"]
@@ -116,3 +128,23 @@ def test_capability_ignores_an_exhausted_provider_and_requires_vision():
     )
     assert candidates(console, "vision_strict") == [{"leader_id": "codex", "model": "vision", "effort": "high"}]
     assert candidates(console, "reasoning_high")[0]["leader_id"] == "codex"
+
+
+def test_worker_create_tries_the_next_provider_on_confirmed_unavailability(monkeypatch):
+    from hoard_link.hub import worker_capabilities
+
+    attempts = []
+    monkeypatch.setattr(worker_capabilities, "candidates", lambda *args, **kwargs: [
+        {"leader_id": "claude", "model": "sonnet", "effort": "high"},
+        {"leader_id": "codex", "model": "sol", "effort": "high"},
+    ])
+
+    def create(args, actor, reserved, worker_id):
+        attempts.append((args["leader_id"], worker_id))
+        return {"ok": True, "worker": {"state": "unavailable" if len(attempts) == 1 else "running"}}
+
+    console = SimpleNamespace(_create_worker_now=create)
+    reply = AgoraConsoleFacet._create_worker(console, {"capability": "reasoning_high", "task": "Compile the brief"})
+    assert reply["worker"]["state"] == "running"
+    assert [provider for provider, _ in attempts] == ["claude", "codex"]
+    assert attempts[0][1] != attempts[1][1]

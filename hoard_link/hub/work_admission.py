@@ -6,12 +6,13 @@ import threading
 import time
 from typing import Any
 
-from .facets import Facet, Request
+from .facets import Request
 from .production import _tool
 
 LIMITS = {"cpu": 2, "ram": 2, "suite": 1, "worker": 4}
 PRIORITY = {"low": 0, "normal": 1, "high": 2}
 TTL_SECONDS = 90
+ROUTE = "/api/work-admission/"
 
 
 class WorkQueue:
@@ -51,6 +52,9 @@ class WorkQueue:
             return {"ok": False, "status": 400, "error": "agent is required"}
         if action not in ("request", "poll", "release") or (action != "request" and not isinstance(ticket, str)):
             return {"ok": False, "status": 400, "error": "Use request, poll or release with a ticket"}
+        key = args.get("key")
+        if key is not None and (not isinstance(key, str) or not 1 <= len(key) <= 120):
+            return {"ok": False, "status": 400, "error": "key must be a non-empty string of up to 120 characters"}
         with self._lock:
             now = self._clock()
             self._advance(now)
@@ -61,11 +65,18 @@ class WorkQueue:
                     any(key not in LIMITS or type(units) is not int or not 1 <= units <= LIMITS[key]
                         for key, units in resources.items()) or priority not in tuple(PRIORITY)):
                     return {"ok": False, "status": 400, "error": "Invalid resources or priority", "limits": LIMITS}
-                ticket = secrets.token_urlsafe(18)
-                self._items[ticket] = {
-                    "agent": worker, "resources": dict(resources), "priority": priority,
-                    "state": "queued", "created": now, "expires": now + TTL_SECONDS,
-                }
+                existing = next(((ident, row) for ident, row in self._items.items()
+                                 if key and row["key"] == key and row["agent"] == worker), None)
+                if existing:
+                    ticket, prior = existing
+                    if prior["resources"] != resources or prior["priority"] != priority:
+                        return {"ok": False, "status": 409, "error": "The work key already has a different request"}
+                else:
+                    ticket = secrets.token_urlsafe(18)
+                    self._items[ticket] = {
+                        "agent": worker, "key": key, "resources": dict(resources), "priority": priority,
+                        "state": "queued", "created": now, "expires": now + TTL_SECONDS,
+                    }
                 self._advance(now)
             row = self._items.get(ticket)
             if row is None or row["agent"] != worker:
@@ -79,12 +90,9 @@ class WorkQueue:
                     "undo": {"action": "release", "agent": worker, "ticket": ticket}}
 
 
-class AdmissionFacet(Facet):
-    id = "work_admission"
-    ui_scripts = ("order_metrics.js",)
-
+class WorkAdmission:
     def __init__(self, hub):
-        super().__init__(hub)
+        self.hub = hub
         self.queue = WorkQueue()
 
     def _orders(self, operation, args):
@@ -100,16 +108,15 @@ class AdmissionFacet(Facet):
             return {"ok": False, "status": exc.status, "error": str(exc), **getattr(exc, "extra", {})}
 
     def _route(self, req: Request, actions):
-        prefix = "/api/work-admission/"
-        name = req.path.removeprefix(prefix)
-        if name not in actions or not req.path.startswith(prefix):
+        name = req.path.removeprefix(ROUTE)
+        if name not in actions or not req.path.startswith(ROUTE):
             return None
         if req.caller() is None and not req.agent():
             return {"ok": False, "status": 401, "error": "A family bearer token or the Hub page is required"}
         return actions[name](dict(req.body) if req.method == "POST" else {key: values[0] for key, values in req.query.items()})
 
     def get(self, req):
-        return self._route(req, {"metrics": lambda args: self._orders("metrics", args)})
+        return self._route(req, {"metrics": lambda args: self._orders("metrics", args), "capability": self._capability})
 
     def post(self, req):
         return self._route(req, {
@@ -138,6 +145,7 @@ class AdmissionFacet(Facet):
         return [
             _tool("hub_work_ticket", "Request, renew or release a machine work turn / reserva un turno de carga.",
                   {**agent, "action": {"enum": ["request", "poll", "release"]}, "ticket": {"type": "string"},
+                   "key": {"type": "string"},
                    "priority": {"enum": list(PRIORITY)}, "resources": {"type": "object"}},
                   ("agent", "action"), read=False),
             _tool("hub_order_budget", "Set limits for an order / fija los límites de una orden.",

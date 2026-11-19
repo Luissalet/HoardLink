@@ -8,7 +8,11 @@
     gpu: ["Presupuesto de GPU agotado", "GPU budget reached"],
     returns: ["Límite de devoluciones alcanzado", "Return limit reached"],
   };
-  const minutes = seconds => new Intl.NumberFormat(lang(), { maximumFractionDigits: 1 }).format(seconds / 60);
+  function minutes(seconds) {
+    if (seconds === undefined) return "—";
+    const format = new Intl.NumberFormat(lang(), { maximumFractionDigits: 2 });
+    return seconds > 0 && seconds < 0.6 ? "< " + format.format(0.01) : format.format(seconds / 60);
+  }
 
   function table(headers, rows) {
     const t = el("table", "ord-plan");
@@ -45,9 +49,9 @@
           `${row.orders_kept_first}/${row.orders_decided}`, `${row.pieces_kept_first}/${row.pieces_decided}`]),
       ));
       if (data.stations.length) box.append(table(
-        [tr("Puesto", "Station"), tr("Avance (min)", "Advance (min)"), tr("Fallos (min)", "Failed work (min)"),
+        [tr("Puesto", "Station"), tr("Devoluciones", "Returns"), tr("Avance (min)", "Advance (min)"), tr("Fallos (min)", "Failed work (min)"),
           tr("GPU (min)", "GPU (min)"), tr("GPU en fallos (min)", "Failed GPU (min)")],
-        data.stations.map(row => [row.station || "—", minutes(row.advance_seconds), minutes(row.failed_seconds),
+        data.stations.map(row => [row.station || "—", row.returns || 0, minutes(row.advance_seconds), minutes(row.failed_seconds),
           minutes(row.gpu_seconds), minutes(row.failed_gpu_seconds)]),
       ));
       return box;
