@@ -37,16 +37,17 @@ FILE_RE = re.compile(r"^[A-Za-z0-9_.\-]+\.(png|jpg|jpeg|json)$")
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 #: Parameters each kind keeps from ``same_as`` (what makes two looks comparable).
 REPEATABLE = {
-    "image": ("size",),
-    "video": ("seconds", "size"),
+    "image": ("size", "facing"),
+    "video": ("seconds", "size", "facing"),
     "mesh": ("views", "material", "camera", "turn", "up", "pose", "size", "engine"),
-    "web": ("widths", "interaction", "full_page"),
-    "document": ("pages", "size"),
-    "game": ("inputs", "resolution", "scene"),
-    "app": (),
+    "web": ("widths", "interaction", "full_page", "facing"),
+    "document": ("pages", "size", "facing"),
+    "game": ("inputs", "resolution", "scene", "facing"),
+    "app": ("facing",),
 }
 OPTION_KEYS = ("crops", "size", "seconds", "frames", "views", "material", "camera", "turn", "up", "pose", "engine",
-               "widths", "interaction", "full_page", "settle_ms", "pages", "max_pages", "inputs", "resolution", "scene")
+               "widths", "interaction", "full_page", "settle_ms", "pages", "max_pages", "inputs", "resolution", "scene",
+               "facing")
 
 
 def _tool(name: str, description: str, properties: dict[str, Any], required: tuple[str, ...] = (), *,
@@ -205,7 +206,11 @@ class EyesFacet(Facet):
                         result["views"] += render.crop_views(result["views"], opts["crops"], out)
                 else:
                     result = render.look(piece["kind"], piece["source"], out, opts)
-            views = [{**v, "url": self._url(record["id"], v["path"])} for v in result["views"]]
+            resolved = result.get("resolved") or {}
+            if piece["kind"] != "mesh" and opts.get("facing"):
+                resolved["facing"] = opts["facing"]
+            views = [{**v, "url": self._url(record["id"], v["path"]), "facing": self._facing(piece["kind"], v, opts)}
+                     for v in result["views"]]
             whole = [v for v in views if not v.get("of")]
             columns = None
             if piece["kind"] == "mesh" and (result.get("resolved") or {}).get("material") == "both":
@@ -213,7 +218,7 @@ class EyesFacet(Facet):
             sheet = render.contact_sheet(whole, out / "sheet.png", columns=columns,
                                          title=f"{record.get('label') or Path(piece.get('source') or piece['kind']).name}"
                                                f" · {piece['kind']}")
-            record.update(views=views, facts=result.get("facts") or {}, resolved=result.get("resolved") or {},
+            record.update(views=views, facts=result.get("facts") or {}, resolved=resolved,
                           warnings=result.get("warnings") or [], render_ms=result.get("render_ms"),
                           sheet={"path": sheet, "url": self._url(record["id"], sheet)} if sheet else None)
             if previous:
@@ -233,6 +238,15 @@ class EyesFacet(Facet):
             record.update(status="failed", error=f"{type(exc).__name__}: {exc}")
         record["finished"] = time.time()
         self._save(record)
+
+    @staticmethod
+    def _facing(kind: str, view: dict[str, Any], opts: dict[str, Any]) -> str:
+        """The view's orientation for checking left and right: known from the camera for models (after ``turn``),
+        declared by the caller for everything else, ``unknown`` when not declared."""
+        if kind == "mesh":
+            return render.mesh_facing(view.get("view"))
+        facing = str(opts.get("facing") or "unknown")
+        return facing if facing in vision.FACINGS else "unknown"
 
     def _compare(self, previous: dict[str, Any], record: dict[str, Any], out: Path) -> Optional[dict[str, Any]]:
         before = {v["name"]: v for v in previous.get("views") or [] if not v.get("of")}
@@ -408,6 +422,10 @@ class EyesFacet(Facet):
                    "views": {"type": "array", "items": {"type": "string", "enum": list(render.MESH_VIEWS)}},
                    "material": {"type": "string", "enum": ["neutral", "color", "both"]},
                    "turn": {"type": "number", "description": "Degrees counterclockwise from above, to face the front."},
+                   "facing": {"type": "string", "enum": list(vision.FACINGS),
+                              "description": "Pictures, videos, pages: how the subject faces the viewer (front: its "
+                                             "left is on the image's right), for checking left and right in keep. "
+                                             "Models know it from the camera."},
                    "up": {"type": "string", "enum": ["z", "y"]},
                    "pose": {"type": "object", "description": "{action, frame} or {bones: {name: [x, y, z] degrees}}."},
                    "camera": {"type": "object", "description": "projection, center, ortho_scale, distance, "
@@ -421,7 +439,11 @@ class EyesFacet(Facet):
                               "description": "Game steps: {key|action, wait (ms), shot}."},
                    "size": {"type": "integer", "minimum": 128, "maximum": 4096},
                    "describe": {"type": "boolean", "description": "Ask the vision model for a description."},
-                   "keep": {"type": "array", "items": text, "description": "Details to keep, checked one by one."},
+                   "keep": {"type": "array", "items": text,
+                            "description": "Details to keep, checked one by one: present, absent, mixed, doubtful "
+                                           "(seen, but its left or right side is wrong or cannot be told) or "
+                                           "unclear. Sides are the subject's own unless the detail says the "
+                                           "viewer's."},
                    "language": {"type": "string", "enum": ["es", "en"]},
                    "vision_timeout_s": {"type": "number", "minimum": 5, "maximum": 900},
                    "vision_views": {"type": "integer", "minimum": 1, "maximum": 12},

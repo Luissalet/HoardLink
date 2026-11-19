@@ -130,8 +130,8 @@ def test_same_as_repeats_zones_and_compares_revisions(eyes: EyesFacet, tmp_path:
 
 def test_vision_checks_details_and_merges_views(eyes: EyesFacet, tmp_path: Path) -> None:
     eyes.hub.link.answers = {"image": {"description": "Two colour halves.", "details": [
-        {"detail": "mitad roja a la izquierda", "status": "present", "note": "visible"}]}}
-    out = eyes.look({"path": str(_picture(tmp_path / "p.png")), "keep": ["mitad roja a la izquierda"],
+        {"n": 1, "detail": "mitad roja", "status": "present", "box": [0, 0, 500, 1000], "note": "visible"}]}}
+    out = eyes.look({"path": str(_picture(tmp_path / "p.png")), "keep": ["mitad roja a la izquierda de la imagen"],
                      "vision_timeout_s": 20})
     v = out["vision"]
     assert v["status"] == "complete" and v["model"] == "fake-vision"
@@ -157,7 +157,7 @@ def test_vision_deadline_returns_partial_answer(tmp_path: Path) -> None:
                                keep=["tubo"], deadline_s=5.0)
     assert out["status"] == "partial" and out["pending"] == ["back"]
     assert out["keep"] == [{"detail": "tubo", "status": "present", "views": [
-        {"view": "front", "status": "present", "note": ""}]}]
+        {"view": "front", "status": "present", "seen": "present", "note": ""}]}]
 
 
 def test_vision_failure_is_reported_not_raised(tmp_path: Path) -> None:
@@ -170,6 +170,115 @@ def test_vision_failure_is_reported_not_raised(tmp_path: Path) -> None:
     out = eyes_vision.describe(lambda body: (504, {"ok": False, "error": "timeout"}), views, kind="image",
                                deadline_s=5)
     assert out["status"] == "failed" and out["failed"][0]["error"] == "timeout"
+
+
+# -- left and right: the model says what it sees and where; the side is worked out from the view's orientation ----
+
+TUBE = "tubo de planos a la izquierda del personaje"
+#: What the vision model answers about the concept sheet (lamina-corregida-s4202): the figure fills the middle of
+#: the image and the plan tube hangs to the right of it, as the viewer sees it, on Odila's left hip.
+SHEET_ANSWER = {"description": "Una cartógrafa con un mapa bajo la lluvia.", "subject_box": [280, 30, 640, 960],
+                "details": [{"n": 1, "detail": "tubo de planos", "status": "present", "where": "right",
+                             "box": [545, 410, 585, 600], "note": "Tubo de cuero colgado de la cadera."}]}
+
+
+def test_sides_split_what_to_look_for_from_where() -> None:
+    assert eyes_vision.sides(TUBE) == ("tubo de planos", [{"side": "left", "frame": "subject"}])
+    assert eyes_vision.sides("tubo de planos a la izquierda del personaje (derecha del espectador)") == (
+        "tubo de planos", [{"side": "left", "frame": "subject"}, {"side": "right", "frame": "viewer"}])
+    assert eyes_vision.sides("mitad roja a la izquierda de la imagen") == (
+        "mitad roja", [{"side": "left", "frame": "viewer"}])
+    assert eyes_vision.sides("tube on her left hip") == ("tube on her hip", [{"side": "left", "frame": "subject"}])
+    assert eyes_vision.sides("a button on the viewer's right") == ("a button", [{"side": "right", "frame": "viewer"}])
+    for plain in ("mapa al derecho", "El mapa está del derecho", "capa corta", "mapa al que le falta una esquina"):
+        assert eyes_vision.sides(plain) == (plain, [])
+
+
+def test_side_seen_on_a_picture_of_unknown_orientation_is_doubtful_not_absent(tmp_path: Path) -> None:
+    views = [{"name": "image", "label": "image", "path": str(_picture(tmp_path / "lamina.png"))}]
+    link = FakeLink(answers={"image": SHEET_ANSWER})
+    out = eyes_vision.describe(link.ask, views, kind="image", keep=[TUBE], deadline_s=20)
+    prompt = link.calls[0]["messages"][0]["content"]
+    assert prompt.endswith("\n1. tubo de planos")             # the model is asked about the tube, not its side
+    verdict = out["keep"][0]
+    assert verdict["status"] == "doubtful" and verdict["views"][0]["seen"] == "present"
+    assert "orientation is unknown" in verdict["reason"] and "its left" in verdict["reason"]
+    front = [{**views[0], "facing": "front"}]
+    out = eyes_vision.describe(FakeLink(answers={"image": SHEET_ANSWER}).ask, front, kind="image", keep=[TUBE],
+                               deadline_s=20)
+    assert out["keep"][0]["status"] == "present"
+    assert out["keep"][0]["views"][0] == {
+        "view": "image", "status": "present", "seen": "present", "facing": "front", "where": "right",
+        "wanted": {"side": "left", "of": "subject"}, "side": "left", "side_ok": True,
+        "note": "Tubo de cuero colgado de la cadera."}
+
+
+def test_side_that_does_not_match_or_cannot_be_placed_is_doubtful(tmp_path: Path) -> None:
+    views = [{"name": "front-color", "label": "front · color", "facing": "front",
+              "path": str(_picture(tmp_path / "front.png"))}]
+
+    def answer(**row: Any) -> dict[str, Any]:
+        return {"front": {"description": "Odila.", "subject_box": [330, 60, 670, 950],
+                          "details": [{"n": 1, "detail": "tubo de planos", "status": "present", **row}]}}
+
+    def check(**row: Any) -> dict[str, Any]:
+        return eyes_vision.describe(FakeLink(answers=answer(**row)).ask, views, kind="mesh", keep=[TUBE],
+                                    deadline_s=20)["keep"][0]
+
+    # The model reading the tube on the wrong side (what deepseek-v4.1-flash said in review): doubtful, never absent.
+    wrong = check(where="left", box=[380, 400, 440, 560])
+    assert wrong["status"] == "doubtful" and wrong["views"][0]["side_ok"] is False
+    assert "subject's right" in wrong["reason"] and "asks for the left" in wrong["reason"]
+    clash = check(where="left", box=[545, 400, 600, 560])
+    assert clash["status"] == "doubtful" and "model says left" in clash["reason"]
+    nowhere = check()
+    assert nowhere["status"] == "doubtful" and "no place" in nowhere["reason"]
+    middle = check(box=[480, 400, 520, 560])
+    assert middle["status"] == "doubtful" and "middle" in middle["reason"]
+    gone = check(status="absent")
+    assert gone["status"] == "absent"                       # absent still means the tube itself is not seen
+
+
+def test_one_thing_on_two_sides_is_asked_once(tmp_path: Path) -> None:
+    # Asked as two items, the model looked for a second tube and said «absent» (seen live on odila-trellis.glb).
+    views = [{"name": "image", "label": "image", "facing": "front", "path": str(_picture(tmp_path / "f.png"))}]
+    link = FakeLink(answers={"image": SHEET_ANSWER})
+    out = eyes_vision.describe(link.ask, views, kind="mesh", deadline_s=20,
+                               keep=[TUBE, "tubo de planos a la derecha del personaje", "capa corta"])
+    assert link.calls[0]["messages"][0]["content"].endswith("\n1. tubo de planos\n2. capa corta")
+    assert [k["status"] for k in out["keep"]] == ["present", "doubtful", "unclear"]
+    assert "asks for the right" in out["keep"][1]["reason"]
+
+
+def test_model_views_know_their_orientation_and_profiles_do_not_overrule_the_front(tmp_path: Path) -> None:
+    assert [eyes_render.mesh_facing(v) for v in ("front", "front_left", "front_right", "back", "back_left",
+                                                 "left", "right", "top", None)] == [
+        "front", "front", "front", "back", "back", "profile", "profile", "unknown", "unknown"]
+    both = "tubo de planos a la izquierda del personaje (derecha del espectador)"
+    views = [{"name": n, "label": n, "facing": eyes_render.mesh_facing(n.split("-")[0]),
+              "path": str(_picture(tmp_path / f"{n}.png"))} for n in ("front-color", "left-color", "back-color")]
+    rows = {"front": ([300, 50, 700, 950], [540, 380, 600, 560]),     # tube right of the figure: her left
+            "left": ([350, 50, 650, 950], [450, 380, 520, 560]),
+            "back": ([300, 50, 700, 950], [400, 380, 460, 560])}      # from behind it is on the image's left
+    link = FakeLink(answers={f"({k}-color": {"description": k, "subject_box": figure, "details": [
+        {"n": 1, "detail": "tubo de planos", "status": "present", "box": box}]} for k, (figure, box) in rows.items()})
+    verdict = eyes_vision.describe(link.ask, views, kind="mesh", keep=[both], deadline_s=20)["keep"][0]
+    by_view = {v["view"]: v for v in verdict["views"]}
+    assert verdict["status"] == "present"
+    assert by_view["front-color"]["side"] == "left" and by_view["back-color"]["side"] == "left"
+    assert by_view["left-color"]["status"] == "doubtful" and "profile" in by_view["left-color"]["reason"]
+
+
+def test_facing_is_declared_for_pictures_and_repeated(eyes: EyesFacet, tmp_path: Path) -> None:
+    eyes.hub.link.answers = {"image": SHEET_ANSWER}
+    out = eyes.look({"path": str(_picture(tmp_path / "lamina.png")), "keep": [TUBE], "facing": "front",
+                     "crops": [{"name": "tubo", "box": [0.5, 0.3, 0.2, 0.4]}], "vision_timeout_s": 20})
+    assert out["resolved"]["facing"] == "front" and {v["facing"] for v in out["views"]} == {"front"}
+    assert out["vision"]["keep"][0]["status"] == "present"
+    again = eyes.look({"same_as": out["id"], "keep": [TUBE], "vision_timeout_s": 20})
+    assert again["resolved"]["facing"] == "front" and again["vision"]["keep"][0]["status"] == "present"
+    plain = eyes.look({"path": str(_picture(tmp_path / "otra.png")), "keep": [TUBE], "vision_timeout_s": 20})
+    assert plain["views"][0]["facing"] == "unknown" and plain["vision"]["keep"][0]["status"] == "doubtful"
 
 
 def test_pick_spreads_views_and_keeps_ends() -> None:

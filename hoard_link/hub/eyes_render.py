@@ -44,6 +44,15 @@ MESH_VIEWS = {
     "top": None, "bottom": None,
 }
 DEFAULT_MESH_VIEWS = ("front", "front_right", "right", "back", "left", "front_left")
+
+
+def mesh_facing(view: Optional[str]) -> str:
+    """How a model view faces the camera: ``front`` and the three-quarter fronts show the subject's left on the
+    image's right, ``back`` ones on the image's left; profiles, top and bottom cannot tell left from right."""
+    direction = MESH_VIEWS.get(view or "")
+    if not direction:
+        return "unknown"
+    return "front" if direction[1] < -0.5 else "back" if direction[1] > 0.5 else "profile"
 DEFAULT_WIDTHS = (390, 1024, 1440)
 VIEWPORT_HEIGHTS = {390: 844, 1024: 768, 1440: 900}
 

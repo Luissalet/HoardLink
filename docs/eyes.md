@@ -71,14 +71,33 @@ the look id plus the view name: «e20261119-221528-99bab0, `left-color`, zone `t
 
 `describe: true` or a `keep` list asks the hub's `vision` capability (the Sparks) about the views: one call per
 view, at most `vision_views` (6) spread over the look, or exactly the views in `ask_views`. Each answer has a short
-description and, for each detail to keep, `present`, `absent` or `unclear` with a note. Left and right in a detail
-mean the subject's own side unless it says «del espectador». The look merges them per detail: `present`, `absent`,
-`mixed` (views disagree: lost in some frames or angles) or `unclear`.
+description and, for each detail to keep, whether the view shows it (`present`, `absent` or `unclear`) with a note.
+
+Left and right are not left to the model. A detail such as «tubo de planos a la izquierda del personaje» is split
+into the thing to look for («tubo de planos») and the side it must be on; the model is asked once per distinct thing
+whether it sees it and where it is in the image as the viewer sees it (a box in 0-1000 coordinates, the main
+figure's box and a word). The look then works out the side:
+
+- the box is measured against the centre of the main figure (the image's centre for a side «del espectador»); a
+  box and a word that contradict each other leave the place unknown;
+- the view's orientation (`facing` on each view) turns that place into the subject's side: `front` (and the
+  three-quarter fronts) mirror it, `back` keeps it, `profile` cannot tell. Model views know their orientation from
+  the camera (after `turn`); for pictures, videos, pages and app images the caller declares it with `facing`
+  (`front`, `back`, `profile`), otherwise it is `unknown`. `same_as` repeats it.
+
+Sides in a detail are the subject's own unless it says the viewer's («del espectador», «de la imagen»,
+«viewer's»). Per view, a thing that is seen but whose side does not match, or cannot be told (no orientation, a
+profile, a place in the middle or unknown), is `doubtful` with a `reason`; `absent` only means the thing itself is
+not seen. Each view row keeps the model's answer (`seen`), `where`, `facing`, the derived `side` and `side_ok`.
+
+The look merges the views per detail: `present`, `absent` (no view sees it), `mixed` (seen in some views and missing
+in others: lost in some frames or hidden from some angles), `doubtful` (seen, but its side is wrong or could not be
+told; with the first `reason`) or `unclear`. A front view that confirms the side is not overruled by a profile that
+cannot tell it.
 
 `vision_timeout_s` (90) bounds the whole question. What arrived by then is returned with `status: "partial"`, the
 views still waiting in `pending` and failures in `failed`; the views themselves are never held back by the model.
-The model's reading of left and right in renders is unreliable: open the views named in the notes before acting on
-an `absent`.
+Open the views named in a `doubtful` or `absent` verdict before sending a piece back.
 
 ## Storage and programs
 
