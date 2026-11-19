@@ -71,6 +71,11 @@ What a decision does:
 The expensive pass reads `draft_anchors` and registers its pieces with the `derives_from` it returns: the blocking and
 its parts as `material`, the rest as `reference`. Those pieces then carry the id of the person's decision.
 
+With an edit engine that takes several reference images (Prospero's `qwen21_edit`), the character's canonical image
+goes first and the kept variant's key frame, depth and normals follow as guides, each named in the prompt: given the
+blocking as the first image, the engine keeps the blocking's mannequin instead of the character. A video shot between
+two key frames is Prospero's `wan22_flf2v` (`reference_asset_id` the first frame, `end_asset_id` the last).
+
 Every agent write returns `undo` for `hub_agora_order_undo`; undoing a pass opened with jobs also drops the tasks it
 created.
 
