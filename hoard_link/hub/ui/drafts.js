@@ -73,7 +73,7 @@
     card.append(el("p", "ord-muted", facts.join(" · ")));
     const strip = el("div", "drf-strip");
     for (const p of v.pieces) {
-      const fig = el("figure", "drf-piece");
+      const fig = el("figure", "drf-piece" + (p.anchor === "animatic" ? " drf-wide" : ""));
       fig.append(media(p));
       const cap = el("figcaption");
       cap.append(el("b", "", anchorLabel(p.anchor)), el("small", "ord-muted", p.title));

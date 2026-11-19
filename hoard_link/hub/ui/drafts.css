@@ -11,6 +11,8 @@
 .drf-note { margin: 0; color: var(--muted); font-size: var(--hub-fs-1, 12px); white-space: pre-wrap; }
 .drf-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
 .drf-piece { margin: 0; display: grid; gap: 4px; min-width: 0; }
+.drf-wide { grid-column: 1 / -1; }
+.drf-wide .drf-media { aspect-ratio: 2 / 1; }
 .drf-piece figcaption { display: grid; gap: 1px; font-size: var(--hub-fs-1, 12px); }
 .drf-piece figcaption b { color: var(--text); font-weight: 600; }
 .drf-piece figcaption small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
