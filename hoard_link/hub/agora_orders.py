@@ -1,0 +1,1131 @@
+"""Production orders, pieces and the person's gate: how a request of the person becomes finished work.
+
+* **Order** (``order_create``): what the person asks, in their words, with references to where it comes from (an app,
+  an object and the exact place: a chapter, a card, a file), the deliverables wanted, an optional branch template,
+  the details every piece must keep («the tube on her left») and a folder for its files. States: ``open``,
+  ``producing``, ``waiting`` (for the person), ``delivered``, ``cancelled``. The person writes one from the hub's
+  page; a Hoard or an agent sends it over the same route or tool, with ``refs`` pointing at the selection.
+* **Plan** (``plan_set``): the jobs of the order. Each job is an ordinary Ágora task of the order's space (so claims,
+  locks, dependencies, review and checkpoints work as they do); the order keeps beside it the station (Hoard and
+  skill), the input pieces, the kinds of piece it must deliver, how its output is checked and who it is meant for
+  (agent, model, machine). Parallel branches and sibling derivatives are just jobs that wait on the same one. The
+  plan can be recomposed while the order runs: jobs are added, changed or removed (an open task is dropped).
+* **Piece** (``piece_add``): a file of the order's folder, a web address or an object of an app with its place;
+  who made it (job, station, agent, model); what it derives from (other pieces, and through them the person's
+  decisions that fixed them); the details to keep, inherited from the order, which each check marks; checks
+  (``piece_check``) and defects sent back to the station that caused them (``piece_defect``: view, pose, second,
+  step). States: ``provisional``, ``checked``, ``kept``, ``cancelled``, ``stale``. A cancelled or stale piece makes
+  stale every piece derived from it, without deleting anything.
+* **Gate** (``gate_open``): a set of pieces shown to the person for one decision, keep or cancel, with an optional
+  note (``gate_decide``). A piece can be split off to be decided alone (``gate_split``). Keeping fixes the piece as
+  a reference for what comes next (``job`` hands it to every later job); cancelling sends it back to its station
+  with the note as a defect, moves its task back to ``changes`` and makes its derivatives stale. Only the person's
+  own pages decide a gate: no tool does. Every decision is stored with its situation (the order, its deadline, the
+  other pieces that were on the table).
+
+Every write an agent makes returns ``undo``: ``order_undo`` with it puts back what that call changed (tasks it created
+are dropped). Pages and tools read the same operations (``orders``, ``order``, ``job``, ``order_decisions``).
+``agora_channels`` folds these operations and tools into its own, so ``agora.py`` binds them like the rest.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import secrets
+from typing import Any, Optional
+
+ORDER_STATES = ("open", "producing", "waiting", "delivered", "cancelled")
+PIECE_STATES = ("provisional", "checked", "kept", "cancelled", "stale")
+#: The usual kinds of piece. Any other short slug is accepted: the vocabulary grows with the work.
+PIECE_KINDS = ("brief", "text", "image", "character_sheet", "video", "audio", "mesh", "rigged_model", "set", "render",
+               "playable_scene", "figure", "document", "slides", "web", "code_branch", "feature", "report", "data")
+DECISIONS = ("keep", "cancel")
+MAX_ITEMS = 200
+TEXT_MAX = 20000
+
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"}
+VIDEO_EXT = {".mp4", ".webm", ".mov", ".m4v"}
+AUDIO_EXT = {".wav", ".mp3", ".ogg", ".flac", ".m4a"}
+MESH_EXT = {".glb", ".gltf", ".obj", ".stl", ".3mf", ".blend", ".fbx", ".ply", ".tscn"}
+TEXT_EXT = {".md", ".txt", ".json", ".csv", ".log", ".py", ".js", ".css", ".yaml", ".yml"}
+
+ORDERS_MIGRATION = """
+    CREATE TABLE agora_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, space_id TEXT NOT NULL, title TEXT NOT NULL,
+        words TEXT NOT NULL DEFAULT '', refs TEXT NOT NULL DEFAULT '[]', deliverables TEXT NOT NULL DEFAULT '[]',
+        template TEXT NOT NULL DEFAULT '', keep TEXT NOT NULL DEFAULT '[]', folder TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open', deadline REAL, created_by TEXT NOT NULL, created REAL NOT NULL,
+        updated REAL NOT NULL);
+    CREATE INDEX agora_orders_space ON agora_orders(space_id, status, updated);
+    CREATE TABLE agora_order_jobs (task_id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL, space_id TEXT NOT NULL,
+        station TEXT NOT NULL DEFAULT '', skill TEXT NOT NULL DEFAULT '', inputs TEXT NOT NULL DEFAULT '[]',
+        produces TEXT NOT NULL DEFAULT '[]', check_how TEXT NOT NULL DEFAULT '', assignee TEXT NOT NULL DEFAULT '{}',
+        branch TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL DEFAULT 0, removed INTEGER NOT NULL DEFAULT 0,
+        created REAL NOT NULL);
+    CREATE INDEX agora_order_jobs_order ON agora_order_jobs(order_id, position);
+    CREATE TABLE agora_pieces (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, space_id TEXT NOT NULL,
+        kind TEXT NOT NULL, title TEXT NOT NULL, path TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '',
+        app TEXT NOT NULL DEFAULT '', object TEXT NOT NULL DEFAULT '', place TEXT NOT NULL DEFAULT '',
+        previews TEXT NOT NULL DEFAULT '[]', task_id INTEGER, station TEXT NOT NULL DEFAULT '',
+        agent TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', derives_from TEXT NOT NULL DEFAULT '[]',
+        decisions TEXT NOT NULL DEFAULT '[]', keep TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'provisional', stale_because TEXT NOT NULL DEFAULT '',
+        created REAL NOT NULL, updated REAL NOT NULL);
+    CREATE INDEX agora_pieces_order ON agora_pieces(order_id, id);
+    CREATE INDEX agora_pieces_task ON agora_pieces(task_id);
+    CREATE TABLE agora_piece_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, piece_id INTEGER NOT NULL,
+        space_id TEXT NOT NULL, agent TEXT NOT NULL, ok INTEGER NOT NULL DEFAULT 1, note TEXT NOT NULL DEFAULT '',
+        keep TEXT NOT NULL DEFAULT '[]', created REAL NOT NULL);
+    CREATE INDEX agora_piece_checks_piece ON agora_piece_checks(piece_id, id);
+    CREATE TABLE agora_piece_defects (id INTEGER PRIMARY KEY AUTOINCREMENT, piece_id INTEGER NOT NULL,
+        order_id INTEGER NOT NULL, space_id TEXT NOT NULL, task_id INTEGER, station TEXT NOT NULL DEFAULT '',
+        agent TEXT NOT NULL, note TEXT NOT NULL, view TEXT NOT NULL DEFAULT '', pose TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL DEFAULT '', step TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'check',
+        status TEXT NOT NULL DEFAULT 'open', created REAL NOT NULL);
+    CREATE INDEX agora_piece_defects_piece ON agora_piece_defects(piece_id, id);
+    CREATE INDEX agora_piece_defects_task ON agora_piece_defects(task_id, status);
+    CREATE TABLE agora_gates (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, space_id TEXT NOT NULL,
+        title TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open',
+        parent_gate INTEGER, opened_by TEXT NOT NULL, created REAL NOT NULL, closed REAL);
+    CREATE INDEX agora_gates_order ON agora_gates(order_id, status);
+    CREATE TABLE agora_gate_pieces (gate_id INTEGER NOT NULL, piece_id INTEGER NOT NULL, position INTEGER NOT NULL,
+        PRIMARY KEY(gate_id, piece_id));
+    CREATE TABLE agora_order_decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL,
+        gate_id INTEGER NOT NULL, piece_id INTEGER NOT NULL, space_id TEXT NOT NULL, decision TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '', situation TEXT NOT NULL DEFAULT '{}', created REAL NOT NULL);
+    CREATE INDEX agora_order_decisions_order ON agora_order_decisions(order_id, id);
+    CREATE INDEX agora_order_decisions_piece ON agora_order_decisions(piece_id);
+    CREATE TABLE agora_order_journal (token TEXT PRIMARY KEY, space_id TEXT NOT NULL, agent TEXT NOT NULL,
+        op TEXT NOT NULL, changes TEXT NOT NULL, created REAL NOT NULL, undone REAL);
+"""
+
+_SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+#: Tables a journal entry may restore, with their key column.
+_KEYS = {"agora_orders": "id", "agora_order_jobs": "task_id", "agora_pieces": "id", "agora_piece_checks": "id",
+         "agora_piece_defects": "id", "agora_gates": "id", "agora_gate_pieces": None}
+
+
+def _ag() -> Any:
+    from . import agora
+    return agora
+
+
+def _err(message: str, status: int = 400, **extra: Any) -> Exception:
+    return _ag().AgoraError(message, status, **extra)
+
+
+def _txt(value: Any, limit: int, what: str, *, required: bool = False) -> str:
+    return _ag()._txt(value, limit, what, required=required)
+
+
+def _load(value: Any, default: Any) -> Any:
+    try:
+        out = json.loads(value) if value else default
+    except (TypeError, ValueError):
+        return default
+    return out if isinstance(out, type(default)) else default
+
+
+def _dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _int(value: Any, what: str, *, required: bool = True) -> Optional[int]:
+    if value in (None, ""):
+        if required:
+            raise _err(f"{what} is required")
+        return None
+    if isinstance(value, bool):
+        raise _err(f"{what} must be a number")
+    try:
+        out = int(str(value).lstrip("#"))
+    except (TypeError, ValueError):
+        raise _err(f"{what} must be a number") from None
+    if out < 1:
+        raise _err(f"{what} must be a positive number")
+    return out
+
+
+def _ids(value: Any, what: str) -> list[int]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, (int, str)) and not isinstance(value, bool):
+        value = str(value).replace(",", " ").split()
+    if not isinstance(value, list) or len(value) > MAX_ITEMS:
+        raise _err(f"{what} must be a list of at most {MAX_ITEMS} ids")
+    out: list[int] = []
+    for v in value:
+        n = _int(v, what)
+        if n not in out:
+            out.append(n)
+    return out
+
+
+def _strs(value: Any, what: str, *, limit: int = 300, items: int = 60) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        value = [v for v in value.split("\n")]
+    if not isinstance(value, list) or len(value) > items:
+        raise _err(f"{what} must be a list of at most {items} texts")
+    out = []
+    for v in value:
+        text = _txt(v, limit, what)
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def _kind(value: Any, what: str = "kind") -> str:
+    kind = str(value or "").strip().lower().replace(" ", "_")
+    if not _SLUG.match(kind):
+        raise _err(f"{what} must be a short slug such as {', '.join(PIECE_KINDS[:6])}…")
+    return kind
+
+
+def _refs(value: Any) -> list[dict[str, str]]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list) or len(value) > 50:
+        raise _err("refs must be a list of at most 50 references {app, object, place, path, url, note}")
+    out = []
+    for ref in value:
+        if isinstance(ref, str):
+            ref = {"note": ref}
+        if not isinstance(ref, dict):
+            raise _err("each reference is an object {app, object, place, path, url, note}")
+        clean = {k: _txt(ref.get(k), 1000, f"refs.{k}") for k in ("app", "object", "place", "path", "url", "note")}
+        clean = {k: v for k, v in clean.items() if v}
+        if clean:
+            out.append(clean)
+    return out
+
+
+def _assignee(value: Any) -> dict[str, str]:
+    if value in (None, ""):
+        return {}
+    if isinstance(value, str):
+        value = {"agent": value}
+    if not isinstance(value, dict):
+        raise _err("assignee is an object {agent, model, machine}")
+    return {k: _txt(value.get(k), 120, f"assignee.{k}") for k in ("agent", "model", "machine") if value.get(k)}
+
+
+def _now(self: Any) -> float:
+    return float(self.clock())
+
+
+# ---- journal (undo) ----------------------------------------------------------------------------------------
+
+class _Journal:
+    """What one call changes, so ``order_undo`` can put it back."""
+
+    def __init__(self, self_: Any, agent: str, op: str):
+        self.ag, self.agent, self.op = self_, agent, op
+        self.rows: list[dict[str, Any]] = []
+        self.created_tasks: list[int] = []
+        self.task_status: list[dict[str, Any]] = []
+
+    def before(self, table: str, key: Any, *, where: Optional[dict[str, Any]] = None) -> None:
+        """Remember a row as it is now (or that it does not exist yet)."""
+        cond = where or {_KEYS[table]: key}
+        if any(r["table"] == table and r["where"] == cond for r in self.rows):
+            return
+        sql = " AND ".join(f"{k}=?" for k in cond)
+        row = self.ag.db.one(f"SELECT * FROM {table} WHERE {sql}", tuple(cond.values()))
+        self.rows.append({"table": table, "where": cond, "row": dict(row) if row else None})
+
+    def created(self, table: str, key: Any, *, where: Optional[dict[str, Any]] = None) -> None:
+        self.rows.append({"table": table, "where": where or {_KEYS[table]: key}, "row": None})
+
+    def save(self) -> Optional[str]:
+        if self.agent == _ag().PERSON or not (self.rows or self.created_tasks or self.task_status):
+            return None
+        token = "u" + secrets.token_hex(8)
+        self.ag.db.insert("agora_order_journal", {
+            "token": token, "space_id": self.ag.space_id, "agent": self.agent, "op": self.op, "created": _now(self.ag),
+            "changes": _dump({"rows": self.rows, "created_tasks": self.created_tasks, "task_status": self.task_status})})
+        return token
+
+
+def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Put back what one write changed (``token``: the ``undo`` it returned). Tasks it created are dropped."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    token = _txt(a.get("token") or a.get("undo"), 40, "token", required=True)
+    with self.db.tx():
+        entry = self.db.one("SELECT * FROM agora_order_journal WHERE token=?", (token,))
+        if not entry or entry["space_id"] != self.space_id:
+            raise _err(f"no write with undo token {token} in space {self.space_id}", 404)
+        if entry["undone"]:
+            raise _err(f"that write was already undone", 409)
+        changes = _load(entry["changes"], {})
+        for change in reversed(changes.get("rows") or []):
+            table, cond, row = change["table"], change["where"], change["row"]
+            if table not in _KEYS:
+                continue
+            sql = " AND ".join(f"{k}=?" for k in cond)
+            self.db.execute(f"DELETE FROM {table} WHERE {sql}", tuple(cond.values()))
+            if row:
+                cols = list(row)
+                self.db.execute(f"INSERT INTO {table}({', '.join(cols)}) VALUES({', '.join('?' for _ in cols)})",
+                                tuple(row[c] for c in cols))
+        for item in changes.get("task_status") or []:
+            self.db.execute("UPDATE tasks SET status=?, updated=? WHERE id=?", (item["status"], _now(self), item["task_id"]))
+        for tid in changes.get("created_tasks") or []:
+            task = self.db.one("SELECT * FROM tasks WHERE id=?", (tid,))
+            if task and task["status"] not in ("done", "dropped"):
+                self.db.execute("UPDATE tasks SET status='dropped', updated=? WHERE id=?", (_now(self), tid))
+                self._system(dict(task), f"{agent} deshace «{entry['op']}»: la tarea queda descartada.", agent)
+        self.db.execute("UPDATE agora_order_journal SET undone=? WHERE token=?", (_now(self), token))
+    self._bump("agora.order.undo", {"token": token, "op": entry["op"], "by": agent})
+    return {"ok": True, "undone": entry["op"], "token": token}
+
+
+# ---- reading -----------------------------------------------------------------------------------------------
+
+def _order_row(self: Any, order_id: Any, *, any_space: bool = False) -> dict[str, Any]:
+    oid = _int(order_id, "order_id")
+    row = self.db.one("SELECT * FROM agora_orders WHERE id=?", (oid,))
+    if not row or (not any_space and row["space_id"] != self.space_id):
+        raise _err(f"no order #{oid} in space {self.space_id}", 404)
+    return dict(row)
+
+
+def _piece_row(self: Any, piece_id: Any) -> dict[str, Any]:
+    pid = _int(piece_id, "piece_id")
+    row = self.db.one("SELECT * FROM agora_pieces WHERE id=?", (pid,))
+    if not row or row["space_id"] != self.space_id:
+        raise _err(f"no piece #{pid} in space {self.space_id}", 404)
+    return dict(row)
+
+
+def _order_dict(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    for key, default in (("refs", []), ("deliverables", []), ("keep", [])):
+        out[key] = _load(row.get(key), default)
+    return out
+
+
+def view_of(piece: dict[str, Any]) -> str:
+    """How the page shows a piece: image, turntable, video, audio, web, pdf, text, mesh, file or object."""
+    path, url = piece.get("path") or "", piece.get("url") or ""
+    ext = os.path.splitext(path)[1].lower()
+    previews = piece.get("previews") or []
+    if url and not path:
+        return "web"
+    if ext in IMAGE_EXT:
+        return "image"
+    if ext in VIDEO_EXT:
+        return "video"
+    if ext in AUDIO_EXT:
+        return "audio"
+    if ext in (".html", ".htm"):
+        return "web"
+    if ext == ".pdf":
+        return "pdf"
+    if ext in MESH_EXT:
+        return "turntable" if len(previews) > 1 else "mesh"
+    if ext in TEXT_EXT:
+        return "text"
+    if previews:
+        return "image"
+    return "file" if path else "object"
+
+
+def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[str, Any]:
+    out = dict(row)
+    for key, default in (("previews", []), ("derives_from", []), ("decisions", []), ("keep", [])):
+        out[key] = _load(row.get(key), default)
+    out["exists"] = bool(out["path"]) and os.path.exists(out["path"])
+    out["view"] = view_of(out)
+    out["defects_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_piece_defects WHERE piece_id=? AND status='open'",
+                                             (row["id"],), 0) or 0)
+    if full:
+        out["checks"] = [{**dict(c), "keep": _load(c["keep"], [])} for c in
+                         self.db.query("SELECT * FROM agora_piece_checks WHERE piece_id=? ORDER BY id", (row["id"],))]
+        out["defects"] = [dict(d) for d in
+                          self.db.query("SELECT * FROM agora_piece_defects WHERE piece_id=? ORDER BY id", (row["id"],))]
+        out["derived"] = [int(r["id"]) for r in self.db.query(
+            "SELECT id, derives_from FROM agora_pieces WHERE order_id=?", (row["order_id"],))
+            if row["id"] in _load(r["derives_from"], [])]
+    return out
+
+
+def _job_dict(self: Any, row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    for key, default in (("inputs", []), ("produces", []), ("assignee", {})):
+        out[key] = _load(row.get(key), default)
+    task = self.db.one("SELECT id, title, status, owner, thread_id FROM tasks WHERE id=?", (row["task_id"],))
+    out["task"] = dict(task) if task else None
+    out["after"] = [int(r["blocker_id"]) for r in
+                    self.db.query("SELECT blocker_id FROM agora_task_deps WHERE task_id=? ORDER BY blocker_id", (row["task_id"],))]
+    out["removed"] = bool(row["removed"])
+    return out
+
+
+def _gate_dict(self: Any, row: dict[str, Any], pieces: Optional[dict[int, dict[str, Any]]] = None) -> dict[str, Any]:
+    out = dict(row)
+    ids = [int(r["piece_id"]) for r in
+           self.db.query("SELECT piece_id FROM agora_gate_pieces WHERE gate_id=? ORDER BY position", (row["id"],))]
+    out["piece_ids"] = ids
+    decided = {int(r["piece_id"]): dict(r) for r in
+               self.db.query("SELECT * FROM agora_order_decisions WHERE gate_id=? ORDER BY id", (row["id"],))}
+    out["decisions"] = [{k: d[k] for k in ("id", "piece_id", "decision", "note", "created")} for d in decided.values()]
+    if pieces is not None:
+        out["pieces"] = [pieces[i] for i in ids if i in pieces]
+    return out
+
+
+def _summary(self: Any, row: dict[str, Any]) -> dict[str, Any]:
+    out = _order_dict(row)
+    oid = row["id"]
+    jobs = self.db.query("SELECT j.task_id, t.status FROM agora_order_jobs j LEFT JOIN tasks t ON t.id=j.task_id "
+                         "WHERE j.order_id=? AND j.removed=0", (oid,))
+    out["jobs"] = {"total": len(jobs), "done": sum(1 for j in jobs if j["status"] in ("done", "approved")),
+                   "working": sum(1 for j in jobs if j["status"] in ("claimed", "in_progress", "review", "changes"))}
+    counts = {s: 0 for s in PIECE_STATES}
+    for r in self.db.query("SELECT status, COUNT(*) AS n FROM agora_pieces WHERE order_id=? GROUP BY status", (oid,)):
+        counts[r["status"]] = int(r["n"])
+    out["pieces"] = counts
+    out["gates_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_gates WHERE order_id=? AND status='open'", (oid,), 0) or 0)
+    thumbs = self.db.query("SELECT id, kind, title, path, url, previews FROM agora_pieces WHERE order_id=? "
+                           "AND status NOT IN ('cancelled','stale') ORDER BY (status='kept') DESC, id DESC LIMIT 6", (oid,))
+    out["thumbs"] = [{"id": t["id"], "kind": t["kind"], "title": t["title"],
+                      "view": view_of({"path": t["path"], "url": t["url"], "previews": _load(t["previews"], [])})}
+                     for t in thumbs]
+    return out
+
+
+def orders(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Orders of this space (or every space with all_spaces), newest change first, with what waits for the person."""
+    all_spaces = str(a.get("all_spaces", "")).lower() in ("1", "true", "yes") or a.get("all_spaces") is True
+    status = str(a.get("status") or "").strip().lower()
+    if status and status not in ORDER_STATES:
+        raise _err(f"status must be one of {', '.join(ORDER_STATES)}")
+    where, params = [], []
+    if not all_spaces:
+        where.append("space_id=?")
+        params.append(self.space_id)
+    if status:
+        where.append("status=?")
+        params.append(status)
+    limit = min(_int(a.get("limit"), "limit", required=False) or 100, 500)
+    rows = self.db.query("SELECT * FROM agora_orders" + (" WHERE " + " AND ".join(where) if where else "") +
+                         " ORDER BY updated DESC LIMIT ?", (*params, limit))
+    out = [_summary(self, dict(r)) for r in rows]
+    gate_where = "g.status='open'" + ("" if all_spaces else " AND g.space_id=?")
+    gates = self.db.query("SELECT g.* FROM agora_gates g WHERE " + gate_where + " ORDER BY g.created",
+                          () if all_spaces else (self.space_id,))
+    waiting = []
+    for g in gates:
+        view = self.for_space(g["space_id"])
+        order = dict(self.db.one("SELECT id, title, space_id, deadline FROM agora_orders WHERE id=?", (g["order_id"],)) or {})
+        gate = _gate_dict(view, dict(g))
+        pieces = {}
+        for pid in gate["piece_ids"]:
+            row = self.db.one("SELECT * FROM agora_pieces WHERE id=?", (pid,))
+            if row:
+                pieces[pid] = _piece_dict(view, dict(row))
+        gate["pieces"] = [pieces[i] for i in gate["piece_ids"] if i in pieces]
+        gate["order"] = order
+        waiting.append(gate)
+    return {"ok": True, "orders": out, "waiting": waiting, "kinds": list(PIECE_KINDS), "states": list(ORDER_STATES)}
+
+
+def order(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """One order whole: its words and references, the plan with each job's task state, every piece with its
+    checks and defects, the gates and the person's decisions."""
+    row = _order_row(self, a.get("order_id"))
+    out = _summary(self, row)
+    oid = row["id"]
+    out["plan"] = [_job_dict(self, dict(r)) for r in
+                   self.db.query("SELECT * FROM agora_order_jobs WHERE order_id=? ORDER BY position, task_id", (oid,))]
+    pieces = {int(r["id"]): _piece_dict(self, dict(r), full=True) for r in
+              self.db.query("SELECT * FROM agora_pieces WHERE order_id=? ORDER BY id", (oid,))}
+    out["piece_list"] = list(pieces.values())
+    out["gates"] = [_gate_dict(self, dict(g), pieces) for g in
+                    self.db.query("SELECT * FROM agora_gates WHERE order_id=? ORDER BY (status='open') DESC, id DESC", (oid,))]
+    out["decisions"] = _decisions(self, oid)
+    return {"ok": True, "order": out}
+
+
+def _decisions(self: Any, order_id: Optional[int], limit: int = 200) -> list[dict[str, Any]]:
+    sql = ("SELECT d.*, p.title AS piece_title, p.kind AS piece_kind FROM agora_order_decisions d "
+           "LEFT JOIN agora_pieces p ON p.id=d.piece_id WHERE d.space_id=?")
+    params: list[Any] = [self.space_id]
+    if order_id:
+        sql += " AND d.order_id=?"
+        params.append(order_id)
+    rows = self.db.query(sql + " ORDER BY d.id DESC LIMIT ?", (*params, limit))
+    return [{**dict(r), "situation": _load(r["situation"], {})} for r in rows]
+
+
+def order_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """The person's keep/cancel decisions of this space (or of one order), newest first, each with its situation."""
+    oid = _int(a.get("order_id"), "order_id", required=False)
+    if oid:
+        _order_row(self, oid)
+    limit = min(_int(a.get("limit"), "limit", required=False) or 100, 500)
+    return {"ok": True, "decisions": _decisions(self, oid, limit)}
+
+
+def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """What a worker needs to start a job: the order's words and details to keep, the station and how the output is
+    checked, the input pieces (where they are, what they derive from), the pieces the person kept in this order (they
+    fix the look), the defects sent back to this job, and an earlier kept piece of each kind it must deliver."""
+    tid = _int(a.get("task_id"), "task_id")
+    row = self.db.one("SELECT * FROM agora_order_jobs WHERE task_id=?", (tid,))
+    if not row or row["space_id"] != self.space_id:
+        raise _err(f"task #{tid} is not a job of any order in space {self.space_id}", 404)
+    out = _job_dict(self, dict(row))
+    order_row = _order_row(self, row["order_id"])
+    out["order"] = {k: v for k, v in _order_dict(order_row).items() if k in
+                    ("id", "title", "words", "refs", "deliverables", "keep", "folder", "status", "deadline", "template")}
+    inputs = []
+    for pid in out["inputs"]:
+        p = self.db.one("SELECT * FROM agora_pieces WHERE id=?", (pid,))
+        if p:
+            inputs.append(_piece_dict(self, dict(p)))
+    out["input_pieces"] = inputs
+    kept = [_piece_dict(self, dict(p)) for p in
+            self.db.query("SELECT * FROM agora_pieces WHERE order_id=? AND status='kept' ORDER BY id", (row["order_id"],))]
+    for p in kept:
+        d = self.db.one("SELECT note, created FROM agora_order_decisions WHERE piece_id=? AND decision='keep' "
+                        "ORDER BY id DESC LIMIT 1", (p["id"],))
+        p["kept_note"] = (d["note"] if d else "") or ""
+    out["references"] = kept
+    out["defects"] = [dict(d) for d in self.db.query(
+        "SELECT d.*, p.title AS piece_title FROM agora_piece_defects d LEFT JOIN agora_pieces p ON p.id=d.piece_id "
+        "WHERE d.task_id=? AND d.status='open' ORDER BY d.id", (tid,))]
+    examples = []
+    for kind in out["produces"]:
+        p = self.db.one("SELECT * FROM agora_pieces WHERE kind=? AND status='kept' AND order_id<>? ORDER BY updated DESC LIMIT 1",
+                        (kind, row["order_id"]))
+        if p:
+            examples.append(_piece_dict(self.for_space(p["space_id"]), dict(p)))
+    out["examples"] = examples
+    return {"ok": True, "job": out}
+
+
+# ---- writing: orders and plan ------------------------------------------------------------------------------
+
+def order_create(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """A new order: title, the person's words, refs to where it comes from, deliverables, template, details to keep
+    and a folder for its files."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    words = _txt(a.get("words") or a.get("body"), TEXT_MAX, "words")
+    title = _txt(a.get("title"), 200, "title") or (words.split("\n", 1)[0][:120] if words else "")
+    if not title:
+        raise _err("an order needs a title or the words of the request")
+    folder = _txt(a.get("folder"), 1000, "folder")
+    deadline = a.get("deadline")
+    if deadline not in (None, ""):
+        try:
+            deadline = float(deadline)
+        except (TypeError, ValueError):
+            raise _err("deadline is a Unix time in seconds") from None
+    else:
+        deadline = None
+    now = _now(self)
+    with self.db.tx():
+        self._touch(agent)
+        oid = self.db.insert("agora_orders", {
+            "space_id": self.space_id, "title": title, "words": words, "refs": _dump(_refs(a.get("refs"))),
+            "deliverables": _dump(_strs(a.get("deliverables"), "deliverables")),
+            "template": _txt(a.get("template"), 80, "template"), "keep": _dump(_strs(a.get("keep"), "keep")),
+            "folder": folder, "status": "open", "deadline": deadline, "created_by": agent, "created": now, "updated": now})
+        journal = _Journal(self, agent, "order_create")
+        journal.created("agora_orders", oid)
+        token = journal.save()
+    self._bump("agora.order.created", {"order_id": oid, "title": title, "by": agent})
+    return {"ok": True, "order": _summary(self, _order_row(self, oid)), "undo": token}
+
+
+def order_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Change an order: title, words, refs, deliverables, template, keep, folder, deadline or status."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    with self.db.tx():
+        row = _order_row(self, a.get("order_id"))
+        fields: dict[str, Any] = {}
+        if "title" in a:
+            fields["title"] = _txt(a["title"], 200, "title", required=True)
+        if "words" in a:
+            fields["words"] = _txt(a["words"], TEXT_MAX, "words")
+        if "refs" in a:
+            fields["refs"] = _dump(_refs(a["refs"]))
+        for key in ("deliverables", "keep"):
+            if key in a:
+                fields[key] = _dump(_strs(a[key], key))
+        for key, limit in (("template", 80), ("folder", 1000)):
+            if key in a:
+                fields[key] = _txt(a[key], limit, key)
+        if "deadline" in a:
+            try:
+                fields["deadline"] = float(a["deadline"]) if a["deadline"] not in (None, "") else None
+            except (TypeError, ValueError):
+                raise _err("deadline is a Unix time in seconds") from None
+        if "status" in a:
+            status = str(a["status"] or "").lower()
+            if status not in ORDER_STATES:
+                raise _err(f"status must be one of {', '.join(ORDER_STATES)}")
+            fields["status"] = status
+        if not fields:
+            raise _err("nothing to change: give title, words, refs, deliverables, template, keep, folder, deadline or status")
+        journal = _Journal(self, agent, "order_update")
+        journal.before("agora_orders", row["id"])
+        fields["updated"] = _now(self)
+        self.db.execute(f"UPDATE agora_orders SET {', '.join(f'{k}=?' for k in fields)} WHERE id=?",
+                        (*fields.values(), row["id"]))
+        token = journal.save()
+    self._bump("agora.order.updated", {"order_id": row["id"], "by": agent, "fields": sorted(fields)})
+    return {"ok": True, "order": _summary(self, _order_row(self, row["id"])), "undo": token}
+
+
+def _set_status(self: Any, order_id: int, status: str, journal: _Journal, *, only_from: tuple[str, ...]) -> None:
+    row = self.db.one("SELECT status FROM agora_orders WHERE id=?", (order_id,))
+    if row and row["status"] in only_from and row["status"] != status:
+        journal.before("agora_orders", order_id)
+        self.db.execute("UPDATE agora_orders SET status=?, updated=? WHERE id=?", (status, _now(self), order_id))
+
+
+def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Add, change or remove the jobs of an order. Each job without task_id becomes an Ágora task of this space;
+    ``after`` names the jobs it waits for (their key in this call or a task id)."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    jobs = a.get("jobs") or []
+    remove = _ids(a.get("remove"), "remove")
+    if not isinstance(jobs, list) or len(jobs) > 60:
+        raise _err("jobs must be a list of at most 60 jobs")
+    if not jobs and not remove:
+        raise _err("give jobs to add or change, or remove with task ids")
+    with self.db.tx():
+        order_row = _order_row(self, a.get("order_id"))
+        oid = order_row["id"]
+        journal = _Journal(self, agent, "plan_set")
+        keys: dict[str, int] = {}
+        position = int(self.db.scalar("SELECT COALESCE(MAX(position), 0) FROM agora_order_jobs WHERE order_id=?", (oid,), 0) or 0)
+        touched: list[int] = []
+        pending_after: list[tuple[int, list[Any]]] = []
+        for raw in jobs:
+            if not isinstance(raw, dict):
+                raise _err("each job is an object {title, station, skill, inputs, produces, check, assignee, after}")
+            inputs = _ids(raw.get("inputs"), "inputs")
+            for pid in inputs:
+                p = self.db.one("SELECT order_id FROM agora_pieces WHERE id=?", (pid,))
+                if not p or p["order_id"] != oid:
+                    raise _err(f"input piece #{pid} is not a piece of order #{oid}", 404)
+            fields = {"station": _txt(raw.get("station"), 120, "station"), "skill": _txt(raw.get("skill"), 200, "skill"),
+                      "inputs": _dump(inputs), "produces": _dump([_kind(k, "produces") for k in (raw.get("produces") or [])][:20]),
+                      "check_how": _txt(raw.get("check"), 4000, "check"), "assignee": _dump(_assignee(raw.get("assignee"))),
+                      "branch": _txt(raw.get("branch"), 80, "branch")}
+            tid = _int(raw.get("task_id"), "task_id", required=False)
+            if tid:
+                existing = self.db.one("SELECT * FROM agora_order_jobs WHERE task_id=?", (tid,))
+                if not existing or existing["order_id"] != oid:
+                    raise _err(f"task #{tid} is not a job of order #{oid}", 404)
+                journal.before("agora_order_jobs", tid)
+                given = {k: v for k, v in fields.items() if (k if k != "check_how" else "check") in raw}
+                if given:
+                    self.db.execute(f"UPDATE agora_order_jobs SET {', '.join(f'{k}=?' for k in given)} WHERE task_id=?",
+                                    (*given.values(), tid))
+            else:
+                title = _txt(raw.get("title"), 300, "title", required=True)
+                station = fields["station"]
+                lines = [f"Trabajo de la orden #{oid} «{order_row['title']}»."]
+                if station:
+                    lines.append(f"Puesto: {station}" + (f" · skill {fields['skill']}" if fields["skill"] else ""))
+                if raw.get("produces"):
+                    lines.append("Entrega: " + ", ".join(_load(fields["produces"], [])))
+                if inputs:
+                    lines.append("Piezas de entrada: " + ", ".join(f"#{p}" for p in inputs))
+                lines.append("El encargo entero, con las piezas que conservó Luis: hub_agora_job con este task_id.")
+                body = _txt(raw.get("body"), 20000, "body")
+                assignee = _assignee(raw.get("assignee"))
+                added = self.task_add({"agent": agent, "_person": bool(a.get("_person")), "title": title,
+                                       "body": (body + "\n\n" if body else "") + "\n".join(lines),
+                                       "kind": raw.get("kind") or "task", "acceptance": fields["check_how"],
+                                       "labels": [f"order-{oid}"] + ([fields["branch"]] if fields["branch"] else []),
+                                       **({"mentions": [assignee["agent"]]} if assignee.get("agent") else {})})
+                tid = int(added["task"]["id"])
+                journal.created_tasks.append(tid)
+                position += 1
+                self.db.insert("agora_order_jobs", {"task_id": tid, "order_id": oid, "space_id": self.space_id,
+                                                    "position": position, "created": _now(self), **fields})
+                journal.created("agora_order_jobs", tid)
+            if raw.get("key"):
+                keys[str(raw["key"])] = tid
+            if "after" in raw:
+                pending_after.append((tid, list(raw.get("after") or [])))
+            touched.append(tid)
+        for tid, after in pending_after:
+            blockers = []
+            for ref in after:
+                blockers.append(keys[str(ref)] if str(ref) in keys else _int(ref, "after"))
+            self._apply_deps(agent, self._task_row(tid), add=[], remove=[], replace=blockers)
+        for tid in remove:
+            existing = self.db.one("SELECT * FROM agora_order_jobs WHERE task_id=?", (tid,))
+            if not existing or existing["order_id"] != oid:
+                raise _err(f"task #{tid} is not a job of order #{oid}", 404)
+            journal.before("agora_order_jobs", tid)
+            self.db.execute("UPDATE agora_order_jobs SET removed=1 WHERE task_id=?", (tid,))
+            task = self._task_row(tid)
+            if task["status"] == "open":
+                journal.task_status.append({"task_id": tid, "status": task["status"]})
+                self.db.execute("UPDATE tasks SET status='dropped', updated=? WHERE id=?", (_now(self), tid))
+                self._system(task, f"{agent} quita este trabajo del plan de la orden #{oid}.", agent)
+        if touched:
+            _set_status(self, oid, "producing", journal, only_from=("open",))
+        token = journal.save()
+    self._bump("agora.order.plan", {"order_id": oid, "by": agent, "jobs": touched, "removed": remove})
+    return {"ok": True, "plan": order(self, {"order_id": oid})["order"]["plan"], "keys": keys, "undo": token}
+
+
+# ---- writing: pieces, checks and defects --------------------------------------------------------------------
+
+def _resolve(folder: str, path: str) -> str:
+    if not path:
+        return ""
+    if not os.path.isabs(path) and folder:
+        path = os.path.join(folder, path)
+    return os.path.normpath(path)
+
+
+def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Register a piece of an order: kind, title, where it is (path, url, or app + object + place), previews, the job
+    that made it, the agent and model, the pieces it derives from and the details to keep (the order's by default)."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    with self.db.tx():
+        order_row = _order_row(self, a.get("order_id"))
+        oid = order_row["id"]
+        kind = _kind(a.get("kind"))
+        title = _txt(a.get("title"), 200, "title", required=True)
+        folder = order_row["folder"]
+        path = _resolve(folder, _txt(a.get("path"), 1000, "path"))
+        url = _txt(a.get("url"), 2000, "url")
+        app, obj, place = (_txt(a.get(k), 300, k) for k in ("app", "object", "place"))
+        if not (path or url or app):
+            raise _err("say where the piece is: path (a file), url, or app with object and place")
+        previews = [_resolve(folder, p) for p in _strs(a.get("previews"), "previews", limit=1000, items=24)]
+        task_id = _int(a.get("task_id"), "task_id", required=False)
+        station = _txt(a.get("station"), 120, "station")
+        if task_id:
+            job_row = self.db.one("SELECT * FROM agora_order_jobs WHERE task_id=?", (task_id,))
+            if not job_row or job_row["order_id"] != oid:
+                raise _err(f"task #{task_id} is not a job of order #{oid}", 404)
+            station = station or job_row["station"]
+        derives = _ids(a.get("derives_from"), "derives_from")
+        decisions: list[int] = []
+        for pid in derives:
+            parent = self.db.one("SELECT order_id, decisions FROM agora_pieces WHERE id=?", (pid,))
+            if not parent or parent["order_id"] != oid:
+                raise _err(f"piece #{pid} is not a piece of order #{oid}", 404)
+            decisions += [d for d in _load(parent["decisions"], []) if d not in decisions]
+            kept = self.db.one("SELECT id FROM agora_order_decisions WHERE piece_id=? AND decision='keep' ORDER BY id DESC LIMIT 1", (pid,))
+            if kept and kept["id"] not in decisions:
+                decisions.append(int(kept["id"]))
+        keep_src = _strs(a.get("keep"), "keep") if a.get("keep") is not None else _load(order_row["keep"], [])
+        keep = [{"detail": d, "state": "pending"} for d in keep_src]
+        now = _now(self)
+        pid = self.db.insert("agora_pieces", {
+            "order_id": oid, "space_id": self.space_id, "kind": kind, "title": title, "path": path, "url": url,
+            "app": app, "object": obj, "place": place, "previews": _dump(previews), "task_id": task_id,
+            "station": station, "agent": _txt(a.get("by"), 80, "by") or agent, "model": _txt(a.get("model"), 120, "model"),
+            "derives_from": _dump(derives), "decisions": _dump(decisions), "keep": _dump(keep),
+            "note": _txt(a.get("note"), 4000, "note"), "status": "provisional", "created": now, "updated": now})
+        journal = _Journal(self, agent, "piece_add")
+        journal.created("agora_pieces", pid)
+        stale_parent = self.db.one(f"SELECT id FROM agora_pieces WHERE id IN ({','.join('?' for _ in derives) or 'NULL'}) "
+                                   "AND status IN ('cancelled','stale') LIMIT 1", tuple(derives))
+        if stale_parent:
+            self.db.execute("UPDATE agora_pieces SET status='stale', stale_because=? WHERE id=?",
+                            (f"deriva de la pieza #{stale_parent['id']}, cancelada o caduca", pid))
+        journal.before("agora_orders", oid)
+        self.db.execute("UPDATE agora_orders SET updated=? WHERE id=?", (now, oid))
+        token = journal.save()
+    self._bump("agora.order.piece", {"order_id": oid, "piece_id": pid, "kind": kind, "by": agent})
+    return {"ok": True, "piece": _piece_dict(self, _piece_row(self, pid), full=True), "undo": token}
+
+
+def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Note a check of a piece: what was looked at (note), whether it passed (ok) and, for each detail to keep, whether
+    it is there (keep: [{detail, ok, note}]). A passed check with every detail present marks the piece checked."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    note = _txt(a.get("note"), TEXT_MAX, "note", required=True)
+    ok = a.get("ok", True) not in (False, "false", "0", 0)
+    marks = a.get("keep") or []
+    if not isinstance(marks, list) or len(marks) > 60:
+        raise _err("keep is a list of {detail, ok, note}")
+    with self.db.tx():
+        piece = _piece_row(self, a.get("piece_id"))
+        journal = _Journal(self, agent, "piece_check")
+        journal.before("agora_pieces", piece["id"])
+        keep = _load(piece["keep"], [])
+        clean = []
+        for mark in marks:
+            if not isinstance(mark, dict):
+                raise _err("each keep mark is {detail, ok, note}")
+            detail = _txt(mark.get("detail"), 300, "keep.detail", required=True)
+            present = mark.get("ok", True) not in (False, "false", "0", 0)
+            item = next((k for k in keep if k["detail"] == detail), None)
+            if item is None:
+                item = {"detail": detail}
+                keep.append(item)
+            item.update({"state": "ok" if present else "missing", "by": agent,
+                         **({"note": _txt(mark.get("note"), 1000, "keep.note")} if mark.get("note") else {})})
+            clean.append({"detail": detail, "ok": present, "note": item.get("note", "")})
+        cid = self.db.insert("agora_piece_checks", {"piece_id": piece["id"], "space_id": self.space_id, "agent": agent,
+                                                    "ok": 1 if ok else 0, "note": note, "keep": _dump(clean),
+                                                    "created": _now(self)})
+        journal.created("agora_piece_checks", cid)
+        status = piece["status"]
+        if ok and status == "provisional" and all(k.get("state") == "ok" for k in keep):
+            status = "checked"
+        self.db.execute("UPDATE agora_pieces SET keep=?, status=?, updated=? WHERE id=?",
+                        (_dump(keep), status, _now(self), piece["id"]))
+        token = journal.save()
+    self._bump("agora.order.check", {"piece_id": piece["id"], "ok": ok, "by": agent})
+    return {"ok": True, "piece": _piece_dict(self, _piece_row(self, piece["id"]), full=True), "undo": token}
+
+
+def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, note: str, *, view: str = "",
+               pose: str = "", at: str = "", step: str = "", source: str = "check", task_id: Optional[int] = None) -> int:
+    """Record a defect of a piece and tell the job that made it, in its task's thread."""
+    target = task_id or piece.get("task_id")
+    station = piece.get("station") or ""
+    if task_id and task_id != piece.get("task_id"):
+        job_row = self.db.one("SELECT station, order_id FROM agora_order_jobs WHERE task_id=?", (task_id,))
+        if not job_row or job_row["order_id"] != piece["order_id"]:
+            raise _err(f"task #{task_id} is not a job of order #{piece['order_id']}", 404)
+        station = job_row["station"]
+    did = self.db.insert("agora_piece_defects", {
+        "piece_id": piece["id"], "order_id": piece["order_id"], "space_id": self.space_id, "task_id": target,
+        "station": station, "agent": agent, "note": note, "view": view, "pose": pose, "at": at, "step": step,
+        "source": source, "status": "open", "created": _now(self)})
+    journal.created("agora_piece_defects", did)
+    if target:
+        task = self.db.one("SELECT * FROM tasks WHERE id=?", (target,))
+        if task:
+            task = self._task_row(target)
+            where = ", ".join(f"{k} {v}" for k, v in (("vista", view), ("pose", pose), ("segundo", at), ("paso", step)) if v)
+            who = "Luis cancela" if source == "gate" else f"{agent} devuelve"
+            text = (f"{who} la pieza #{piece['id']} «{piece['title']}»" + (f" ({where})" if where else "") +
+                    f": {note}\nLas piezas que derivan de ella quedan caducas. Detalle: hub_agora_job con task_id {target}.")
+            self._msg(int(task["thread_id"]), agent, "comment", text, [task["owner"]] if task.get("owner") else [])
+            if task["status"] in ("review", "approved", "done"):
+                journal.task_status.append({"task_id": target, "status": task["status"]})
+                self.db.execute("UPDATE tasks SET status='changes', updated=? WHERE id=?", (_now(self), target))
+    return did
+
+
+def _stale_below(self: Any, journal: _Journal, piece_id: int, order_id: int) -> list[int]:
+    """Mark stale every piece derived (directly or not) from piece_id; returns their ids."""
+    rows = [dict(r) for r in self.db.query("SELECT id, derives_from, status FROM agora_pieces WHERE order_id=?", (order_id,))]
+    stale, frontier = [], [piece_id]
+    while frontier:
+        current = frontier.pop()
+        for r in rows:
+            if current in _load(r["derives_from"], []) and r["id"] not in stale and r["id"] != piece_id:
+                stale.append(r["id"])
+                frontier.append(r["id"])
+                if r["status"] not in ("cancelled", "stale"):
+                    journal.before("agora_pieces", r["id"])
+                    self.db.execute("UPDATE agora_pieces SET status='stale', stale_because=?, updated=? WHERE id=?",
+                                    (f"deriva de la pieza #{piece_id}, cancelada", _now(self), r["id"]))
+    return stale
+
+
+def piece_defect(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Send a reproducible defect of a piece back to the job that caused it (task_id, default the job that made the
+    piece): note, and view, pose, at (second) and step where it shows. The job's task hears it in its thread."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    note = _txt(a.get("note"), TEXT_MAX, "note", required=True)
+    with self.db.tx():
+        piece = _piece_row(self, a.get("piece_id"))
+        journal = _Journal(self, agent, "piece_defect")
+        did = _send_back(self, journal, piece, agent, note, **{k: _txt(a.get(k), 300, k) for k in ("view", "pose", "at", "step")},
+                         task_id=_int(a.get("task_id"), "task_id", required=False))
+        token = journal.save()
+    self._bump("agora.order.defect", {"piece_id": piece["id"], "defect_id": did, "by": agent})
+    return {"ok": True, "defect_id": did, "piece": _piece_dict(self, _piece_row(self, piece["id"]), full=True), "undo": token}
+
+
+# ---- gates ------------------------------------------------------------------------------------------------
+
+def gate_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Show a set of pieces of an order to the person for one decision (keep or cancel). The order waits for them."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    ids = _ids(a.get("piece_ids"), "piece_ids")
+    if not ids:
+        raise _err("piece_ids: the pieces to show")
+    with self.db.tx():
+        order_row = _order_row(self, a.get("order_id"))
+        for pid in ids:
+            p = self.db.one("SELECT order_id FROM agora_pieces WHERE id=?", (pid,))
+            if not p or p["order_id"] != order_row["id"]:
+                raise _err(f"piece #{pid} is not a piece of order #{order_row['id']}", 404)
+        title = _txt(a.get("title"), 200, "title") or f"Puerta de «{order_row['title']}»"
+        journal = _Journal(self, agent, "gate_open")
+        gid = self.db.insert("agora_gates", {"order_id": order_row["id"], "space_id": self.space_id, "title": title,
+                                             "note": _txt(a.get("note"), TEXT_MAX, "note"), "status": "open",
+                                             "opened_by": agent, "created": _now(self)})
+        journal.created("agora_gates", gid)
+        for i, pid in enumerate(ids):
+            self.db.insert("agora_gate_pieces", {"gate_id": gid, "piece_id": pid, "position": i})
+            journal.created("agora_gate_pieces", None, where={"gate_id": gid, "piece_id": pid})
+        _set_status(self, order_row["id"], "waiting", journal, only_from=("open", "producing"))
+        token = journal.save()
+    self._bump("agora.order.gate", {"order_id": order_row["id"], "gate_id": gid, "pieces": ids, "by": agent})
+    return {"ok": True, "gate": _gate_dict(self, dict(self.db.one("SELECT * FROM agora_gates WHERE id=?", (gid,)))), "undo": token}
+
+
+def _gate_row(self: Any, gate_id: Any) -> dict[str, Any]:
+    gid = _int(gate_id, "gate_id")
+    row = self.db.one("SELECT * FROM agora_gates WHERE id=?", (gid,))
+    if not row or row["space_id"] != self.space_id:
+        raise _err(f"no gate #{gid} in space {self.space_id}", 404)
+    return dict(row)
+
+
+def gate_split(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Take a piece out of an open gate into a gate of its own, to be decided alone."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    with self.db.tx():
+        gate = _gate_row(self, a.get("gate_id"))
+        pid = _int(a.get("piece_id"), "piece_id")
+        if gate["status"] != "open":
+            raise _err(f"gate #{gate['id']} is already decided", 409)
+        if self.db.one("SELECT 1 AS x FROM agora_order_decisions WHERE gate_id=? AND piece_id=?", (gate["id"], pid)):
+            raise _err(f"piece #{pid} is already decided in gate #{gate['id']}", 409)
+        if not self.db.one("SELECT 1 AS x FROM agora_gate_pieces WHERE gate_id=? AND piece_id=?", (gate["id"], pid)):
+            raise _err(f"piece #{pid} is not in gate #{gate['id']}", 404)
+        title = self.db.scalar("SELECT title FROM agora_pieces WHERE id=?", (pid,), "")
+        journal = _Journal(self, agent, "gate_split")
+        journal.before("agora_gate_pieces", None, where={"gate_id": gate["id"], "piece_id": pid})
+        self.db.execute("DELETE FROM agora_gate_pieces WHERE gate_id=? AND piece_id=?", (gate["id"], pid))
+        gid = self.db.insert("agora_gates", {"order_id": gate["order_id"], "space_id": self.space_id,
+                                             "title": f"{title}" or gate["title"], "note": gate["note"], "status": "open",
+                                             "parent_gate": gate["id"], "opened_by": agent, "created": _now(self)})
+        journal.created("agora_gates", gid)
+        self.db.insert("agora_gate_pieces", {"gate_id": gid, "piece_id": pid, "position": 0})
+        journal.created("agora_gate_pieces", None, where={"gate_id": gid, "piece_id": pid})
+        _close_if_done(self, journal, gate["id"])
+        token = journal.save()
+    self._bump("agora.order.gate", {"order_id": gate["order_id"], "gate_id": gid, "split_from": gate["id"], "by": agent})
+    return {"ok": True, "gate": _gate_dict(self, dict(self.db.one("SELECT * FROM agora_gates WHERE id=?", (gid,)))), "undo": token}
+
+
+def _close_if_done(self: Any, journal: _Journal, gate_id: int) -> None:
+    left = self.db.scalar("SELECT COUNT(*) FROM agora_gate_pieces gp WHERE gp.gate_id=? AND NOT EXISTS "
+                          "(SELECT 1 FROM agora_order_decisions d WHERE d.gate_id=gp.gate_id AND d.piece_id=gp.piece_id)",
+                          (gate_id,), 0)
+    if not left:
+        journal.before("agora_gates", gate_id)
+        self.db.execute("UPDATE agora_gates SET status='decided', closed=? WHERE id=?", (_now(self), gate_id))
+        order_id = self.db.scalar("SELECT order_id FROM agora_gates WHERE id=?", (gate_id,))
+        if not self.db.scalar("SELECT COUNT(*) FROM agora_gates WHERE order_id=? AND status='open'", (order_id,), 0):
+            _set_status(self, order_id, "producing", journal, only_from=("waiting",))
+
+
+def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """The person's decision on a gate: keep or cancel, with an optional note, for every undecided piece of the gate
+    or only for piece_id. Only the person's own pages may call it."""
+    if not a.get("_person"):
+        raise _err("only the person decides a gate, from their own page", 403)
+    agent = self._agent(a.get("agent"), allow_person=True)
+    decision = str(a.get("decision") or "").lower()
+    if decision not in DECISIONS:
+        raise _err("decision is keep or cancel")
+    note = _txt(a.get("note"), TEXT_MAX, "note")
+    with self.db.tx():
+        gate = _gate_row(self, a.get("gate_id"))
+        if gate["status"] != "open":
+            raise _err(f"gate #{gate['id']} is already decided", 409)
+        in_gate = [int(r["piece_id"]) for r in
+                   self.db.query("SELECT piece_id FROM agora_gate_pieces WHERE gate_id=? ORDER BY position", (gate["id"],))]
+        done = {int(r["piece_id"]) for r in self.db.query("SELECT piece_id FROM agora_order_decisions WHERE gate_id=?", (gate["id"],))}
+        only = _int(a.get("piece_id"), "piece_id", required=False)
+        if only and only not in in_gate:
+            raise _err(f"piece #{only} is not in gate #{gate['id']}", 404)
+        targets = [p for p in ([only] if only else in_gate) if p not in done]
+        if not targets:
+            raise _err("every piece of this gate is already decided", 409)
+        order_row = _order_row(self, gate["order_id"])
+        journal = _Journal(self, agent, "gate_decide")
+        alternatives = []
+        for pid in in_gate:
+            p = self.db.one("SELECT id, kind, title, status FROM agora_pieces WHERE id=?", (pid,))
+            if p:
+                alternatives.append(dict(p))
+        situation = {"order": {"id": order_row["id"], "title": order_row["title"], "status": order_row["status"]},
+                     "deadline": order_row["deadline"], "gate": {"id": gate["id"], "title": gate["title"]},
+                     "alternatives": alternatives}
+        result = []
+        for pid in targets:
+            piece = _piece_row(self, pid)
+            did = self.db.insert("agora_order_decisions", {
+                "order_id": order_row["id"], "gate_id": gate["id"], "piece_id": pid, "space_id": self.space_id,
+                "decision": decision, "note": note, "situation": _dump(situation), "created": _now(self)})
+            stale: list[int] = []
+            if decision == "keep":
+                self.db.execute("UPDATE agora_pieces SET status='kept', updated=? WHERE id=?", (_now(self), pid))
+            else:
+                self.db.execute("UPDATE agora_pieces SET status='cancelled', updated=? WHERE id=?", (_now(self), pid))
+                _send_back(self, journal, piece, agent, note or "Cancelada en la puerta, sin nota.", source="gate")
+                stale = _stale_below(self, journal, pid, order_row["id"])
+            result.append({"piece_id": pid, "decision_id": did, "stale": stale})
+        _close_if_done(self, journal, gate["id"])
+    self._bump("agora.order.decided", {"order_id": order_row["id"], "gate_id": gate["id"], "decision": decision,
+                                       "pieces": targets})
+    return {"ok": True, "decided": result, "gate": _gate_dict(self, _gate_row(self, gate["id"]))}
+
+
+# ---- files ------------------------------------------------------------------------------------------------
+
+def piece_file(self: Any, piece_id: Any, *, preview: Any = None, rel: str = "") -> str:
+    """The path on disk of a piece's file, one of its previews, or a file next to it (``rel``, for a web page's own
+    styles and scripts). Only what a piece names, or what sits in its folder, is served."""
+    piece = dict(self.db.one("SELECT * FROM agora_pieces WHERE id=?", (_int(piece_id, "piece_id"),)) or {})
+    if not piece:
+        raise _err("no such piece", 404)
+    if preview not in (None, ""):
+        previews = _load(piece["previews"], [])
+        try:
+            i = int(preview)
+        except (TypeError, ValueError):
+            raise _err("preview is a number") from None
+        if not 0 <= i < len(previews):
+            raise _err("no such preview", 404)
+        path = previews[i]
+    elif rel:
+        base = os.path.dirname(piece["path"]) if piece["path"] else ""
+        if not base:
+            raise _err("this piece has no folder", 404)
+        path = os.path.normpath(os.path.join(base, rel))
+        root = os.path.normcase(os.path.realpath(base))
+        if os.path.commonpath([root, os.path.normcase(os.path.realpath(path))]) != root:
+            raise _err("outside the piece's folder", 403)
+    else:
+        path = piece["path"]
+    if not path or not os.path.isfile(path):
+        raise _err("the file is not there", 404)
+    return path
+
+
+OPERATIONS = {"order_create": order_create, "order_update": order_update, "orders": orders, "order": order,
+              "plan_set": plan_set, "job": job, "piece_add": piece_add, "piece_check": piece_check,
+              "piece_defect": piece_defect, "gate_open": gate_open, "gate_split": gate_split,
+              "gate_decide": gate_decide, "order_decisions": order_decisions, "order_undo": order_undo}
+WRITE_OPS = ("order_create", "order_update", "plan_set", "piece_add", "piece_check", "piece_defect", "gate_open",
+             "gate_split", "gate_decide", "order_undo")
+READ_ROUTES = ("orders", "order", "job", "order_decisions")
+#: The person's decision has no tool: only their pages call it.
+NO_TOOL = ("gate_decide",)
+
+
+def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
+    order_id = {"type": "integer", "minimum": 1, "description": "The order's id (id in hub_agora_orders)."}
+    piece_id = {"type": "integer", "minimum": 1, "description": "The piece's id (in hub_agora_order)."}
+    ids = {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": MAX_ITEMS}
+    texts = {"type": "array", "items": {"type": "string", "maxLength": 300}, "maxItems": 60}
+    ref = {"type": "object", "properties": {k: {"type": "string", "maxLength": 1000} for k in
+                                            ("app", "object", "place", "path", "url", "note")}, "additionalProperties": False}
+    kind = {"type": "string", "maxLength": 40, "description": "Piece kind: " + ", ".join(PIECE_KINDS) + " or another short slug."}
+    undo = " Returns undo: pass it to hub_agora_order_undo to put back what it changed."
+    job_item = {"type": "object", "additionalProperties": False, "properties": {
+        "key": {"type": "string", "maxLength": 40, "description": "A name for this job inside the call, for after."},
+        "task_id": {"type": "integer", "minimum": 1, "description": "Change an existing job instead of adding one."},
+        "title": {"type": "string", "maxLength": 300}, "body": {"type": "string", "maxLength": 20000},
+        "kind": {"type": "string", "maxLength": 20},
+        "station": {"type": "string", "maxLength": 120, "description": "The Hoard (app id) that does it."},
+        "skill": {"type": "string", "maxLength": 200}, "inputs": ids, "produces": {"type": "array", "items": kind, "maxItems": 20},
+        "check": {"type": "string", "maxLength": 4000, "description": "How its output is checked."},
+        "assignee": {"type": "object", "properties": {"agent": {"type": "string"}, "model": {"type": "string"},
+                                                     "machine": {"type": "string"}}, "additionalProperties": False},
+        "after": {"type": "array", "items": {"type": ["string", "integer"]}, "maxItems": 50,
+                  "description": "Jobs it waits for: keys of this call or task ids."},
+        "branch": {"type": "string", "maxLength": 80}}}
+    return [
+        {"name": "hub_agora_orders", "read": True,
+         "description": "Production orders of a space (all_spaces for every one): status, job and piece counts, "
+                        "thumbnails, and the gates waiting for the person's decision.",
+         "inputSchema": schema({"status": {"type": "string", "enum": list(ORDER_STATES)}, "all_spaces": {"type": "boolean"},
+                                "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
+        {"name": "hub_agora_order", "read": True,
+         "description": "One order whole: the person's words and references, the plan with each job's task state, every "
+                        "piece with checks, defects and what derives from it, the gates and the decisions.",
+         "inputSchema": schema({"order_id": order_id}, ["order_id"])},
+        {"name": "hub_agora_order_create",
+         "description": "Create a production order: title, the person's words, refs (app, object, exact place, path), "
+                        "deliverables, template (branch), keep (details every piece must keep) and folder." + undo,
+         "inputSchema": schema({"agent": agent_prop, "title": {"type": "string", "maxLength": 200},
+                                "words": {"type": "string", "maxLength": TEXT_MAX}, "refs": {"type": "array", "items": ref, "maxItems": 50},
+                                "deliverables": texts, "template": {"type": "string", "maxLength": 80}, "keep": texts,
+                                "folder": {"type": "string", "maxLength": 1000}, "deadline": {"type": "number"}}, ["agent"])},
+        {"name": "hub_agora_order_update",
+         "description": "Change an order: title, words, refs, deliverables, template, keep, folder, deadline or status "
+                        "(open, producing, waiting, delivered, cancelled)." + undo,
+         "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "title": {"type": "string", "maxLength": 200},
+                                "words": {"type": "string", "maxLength": TEXT_MAX}, "refs": {"type": "array", "items": ref, "maxItems": 50},
+                                "deliverables": texts, "template": {"type": "string", "maxLength": 80}, "keep": texts,
+                                "folder": {"type": "string", "maxLength": 1000}, "deadline": {"type": ["number", "null"]},
+                                "status": {"type": "string", "enum": list(ORDER_STATES)}}, ["agent", "order_id"])},
+        {"name": "hub_agora_plan_set",
+         "description": "Compose or recompose an order's plan. Each new job becomes an Ágora task of the space with its "
+                        "station, input pieces, kinds to deliver, check and assignee; after sets what it waits for "
+                        "(parallel branches wait on the same job). task_id changes a job; remove drops jobs." + undo,
+         "inputSchema": schema({"agent": agent_prop, "order_id": order_id,
+                                "jobs": {"type": "array", "items": job_item, "maxItems": 60}, "remove": ids}, ["agent", "order_id"])},
+        {"name": "hub_agora_job", "read": True,
+         "description": "Everything to start a job (task_id): the order's words and details to keep, station and check, "
+                        "input pieces, the pieces the person kept (they fix the look), defects sent back to it and an "
+                        "earlier kept piece of each kind it delivers.",
+         "inputSchema": schema({"task_id": {"type": "integer", "minimum": 1}}, ["task_id"])},
+        {"name": "hub_agora_piece_add",
+         "description": "Register a piece of an order: kind, title, path (relative to the order's folder or absolute), "
+                        "url, or app + object + place; previews (images, e.g. turntable frames); task_id of the job "
+                        "that made it, model, derives_from and keep (defaults to the order's details)." + undo,
+         "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "kind": kind,
+                                "title": {"type": "string", "maxLength": 200}, "path": {"type": "string", "maxLength": 1000},
+                                "url": {"type": "string", "maxLength": 2000}, "app": {"type": "string", "maxLength": 300},
+                                "object": {"type": "string", "maxLength": 300}, "place": {"type": "string", "maxLength": 300},
+                                "previews": {"type": "array", "items": {"type": "string", "maxLength": 1000}, "maxItems": 24},
+                                "task_id": {"type": "integer", "minimum": 1}, "station": {"type": "string", "maxLength": 120},
+                                "by": {"type": "string", "maxLength": 80, "description": "Who made it, when not you."},
+                                "model": {"type": "string", "maxLength": 120}, "derives_from": ids, "keep": texts,
+                                "note": {"type": "string", "maxLength": 4000}}, ["agent", "order_id", "kind", "title"])},
+        {"name": "hub_agora_piece_check",
+         "description": "Note a check of a piece: what you looked at (note), ok, and per detail to keep whether it is "
+                        "there (keep: [{detail, ok, note}]). Passing with every detail present marks it checked." + undo,
+         "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
+                                "ok": {"type": "boolean"},
+                                "keep": {"type": "array", "maxItems": 60, "items": {"type": "object", "additionalProperties": False,
+                                         "properties": {"detail": {"type": "string", "maxLength": 300}, "ok": {"type": "boolean"},
+                                                        "note": {"type": "string", "maxLength": 1000}}, "required": ["detail"]}}},
+                               ["agent", "piece_id", "note"])},
+        {"name": "hub_agora_piece_defect",
+         "description": "Send a reproducible defect of a piece back to the job that caused it (task_id, default the "
+                        "job that made it): note plus view, pose, at (second) and step. Its task hears it in its thread." + undo,
+         "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
+                                "view": {"type": "string", "maxLength": 300}, "pose": {"type": "string", "maxLength": 300},
+                                "at": {"type": "string", "maxLength": 300}, "step": {"type": "string", "maxLength": 300},
+                                "task_id": {"type": "integer", "minimum": 1}}, ["agent", "piece_id", "note"])},
+        {"name": "hub_agora_gate_open",
+         "description": "Show pieces of an order to the person for one keep-or-cancel decision, made on their page; the "
+                        "order waits for it. Pieces not yet decided can keep moving as provisional." + undo,
+         "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "piece_ids": ids,
+                                "title": {"type": "string", "maxLength": 200}, "note": {"type": "string", "maxLength": TEXT_MAX}},
+                               ["agent", "order_id", "piece_ids"])},
+        {"name": "hub_agora_gate_split",
+         "description": "Take one piece out of an open gate into its own gate, to be decided alone." + undo,
+         "inputSchema": schema({"agent": agent_prop, "gate_id": {"type": "integer", "minimum": 1}, "piece_id": piece_id},
+                               ["agent", "gate_id", "piece_id"])},
+        {"name": "hub_agora_order_decisions", "read": True,
+         "description": "The person's keep/cancel decisions in a space or one order, newest first, each with its "
+                        "situation (order, deadline, the other pieces on the table).",
+         "inputSchema": schema({"order_id": order_id, "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
+        {"name": "hub_agora_order_undo",
+         "description": "Undo one write of orders, plans, pieces, checks, defects or gates (token: the undo it returned). "
+                        "Tasks it created are dropped.",
+         "inputSchema": schema({"agent": agent_prop, "token": {"type": "string", "maxLength": 40}}, ["agent", "token"])},
+    ]
