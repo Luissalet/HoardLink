@@ -142,7 +142,7 @@ def test_claude_401_in_the_last_turn_is_auth_expired_until_the_login_is_renewed(
     assert claude(tmp_path)["state"] == "idle"
 
 
-def test_claude_expires_at_in_the_past_only_counts_when_the_cli_ran_after_it(tmp_path):
+def test_claude_expires_at_does_not_prove_that_refresh_failed(tmp_path):
     credentials(tmp_path, NOW - 3600)
     claude_session(tmp_path, [c_user(NOW - 7200), c_assistant(NOW - 7100, stop="end_turn")])
     quiet = claude(tmp_path)                                         # idle all night: the token renews on use
@@ -150,8 +150,8 @@ def test_claude_expires_at_in_the_past_only_counts_when_the_cli_ran_after_it(tmp
     assert quiet["auth_expires_at"] == iso(NOW - 3600).replace(".000Z", "Z")
 
     claude_session(tmp_path, [c_user(NOW - 600), c_assistant(NOW - 590, stop="end_turn")], name="s2.jsonl", mtime=NOW)
-    broken = claude(tmp_path)                                        # ran after expiry and still expired
-    assert broken["state"] == "auth_expired" and broken["source"] == "claude_credentials"
+    after_expiry = claude(tmp_path)
+    assert after_expiry["state"] == "idle" and after_expiry["source"] == "claude_session"
 
 
 def test_claude_future_expiry_is_reported_but_harmless(tmp_path):

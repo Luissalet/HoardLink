@@ -281,7 +281,7 @@ def claude_state(projects: Path, credentials: Path, now: float) -> dict[str, Any
     if newest is None:
         detail = "No hay sesiones de Claude Code en este equipo."
         if expires is not None and expires <= now:
-            detail = "No hay sesiones de Claude Code y el acceso caducó; se renueva al abrir el CLI."
+            detail = "No hay sesiones de Claude Code. El CLI comprueba si puede renovar el acceso al usarlo."
         return _result("unknown", "claude_session", detail, None, **extra)
     path, mtime = newest
     info = _reduce_claude(_tail_objects(path))
@@ -297,10 +297,6 @@ def claude_state(projects: Path, credentials: Path, now: float) -> dict[str, Any
     elif err:
         return _result("error", "claude_session", "El último turno terminó con un error de la API.", err_ts or last_ts,
                        **extra)
-    if expires is not None and expires <= now and last_ts > expires:
-        # The CLI ran after the access token expired and it is still expired: the refresh did not work.
-        return _result("auth_expired", "claude_credentials",
-                       "El acceso caducó y el CLI no logró renovarlo; vuelve a iniciar sesión.", last_ts, **extra)
     tools = info["open_tools"]
     pending = any(name in _CLAUDE_ASK_TOOLS for name, _ in tools.values())
     if not pending and tools and info["turn_open"] and silence <= STALE_TURN_S:
