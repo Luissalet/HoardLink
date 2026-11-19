@@ -562,6 +562,19 @@ mentions, acks and waits work as they do) that remembers where it came from.
   server unless `all_spaces=false`; `aliases` adds other names for the page. A message page carries `brain` for each
   message.
 
+## Production orders, pieces and the person's gate
+
+`agora_orders.py` turns a request of the person into finished work: an order (their words, references, deliverables
+and the details no piece may lose), its plan (jobs that are ordinary tasks of the space, with station, inputs, kinds to
+deliver, check and assignee), the pieces the stations deliver (where they are, who made them, revision and content print,
+what they were made from or only looked at), checks detail by detail, defects sent back to the job that caused them, and
+gates where only the person keeps or cancels. Cancelling makes stale what was made from the piece; keeping hands the piece
+to every later job (`hub_agora_job`). Every agent write returns an undo token (`hub_agora_order_undo`). Tools
+`hub_agora_orders`, `hub_agora_order`, `hub_agora_order_create`, `hub_agora_order_update`, `hub_agora_plan_set`,
+`hub_agora_job`, `hub_agora_piece_add`, `hub_agora_piece_check`, `hub_agora_piece_defect`, `hub_agora_defect_close`,
+`hub_agora_gate_open`, `hub_agora_gate_split`, `hub_agora_order_decisions`; the decision itself has no tool. The Hub's
+**Orders** page puts the gates first. Reference: [ORDERS.md](ORDERS.md).
+
 ## Agent pages, direct messages and instructions
 
 Each agent has a page (`hub_agora_agent_profile`, `GET /api/agora/agent_profile?id=<agent>`) in one read: a header
