@@ -74,7 +74,7 @@ class App:
     launch_reason: str = ""
     manifest_path: str = ""
     notes: str = ""
-    kind: str = "app"        # app | window-app (an exe that opens its own window)
+    kind: str = "app"        # app | window-app (opens its own window)
     launch_source: str = "manifest"  # manifest | override (hub.json launch_overrides)
     token_file: str = ""     # where the app keeps its agent bearer token (data/mcp-token)
     data_dir: str = ""       # the app's own data folder (what backups copy)
@@ -437,7 +437,9 @@ def read_manifest(
     port_argument = str(hint.get("port_argument") or "")
     if re.fullmatch(r"--[a-z][a-z0-9-]*", port_argument):
         app.launch.port_argument = port_argument
-    if executable.lower().endswith(".exe") and not argv and "python" not in os.path.basename(executable).lower():
+    if hint.get("opens_window") is True or (
+            executable.lower().endswith(".exe") and not argv
+            and "python" not in os.path.basename(executable).lower()):
         app.kind = "window-app"
 
     if missing:

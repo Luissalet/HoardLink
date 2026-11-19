@@ -47,6 +47,9 @@ python -m hoard_link.hub --autostart-status
 
 ## App windows
 
+A process launch hint may declare `opens_window: true` when a source launcher
+opens the app's native window itself.
+
 `POST /api/apps/<id>/open` (`hub_open_app`, the **Open window** button)
 opens the app's UI as a desktop window through one of two routes, picked by
 `window_engine` in `data/hub.json` (`HOARD_HUB_WINDOW_ENGINE`):
@@ -558,7 +561,8 @@ that accepts `editable-report`.
   Supply the app, module, desired state and a reason. Pass the group if a name
   appears twice. The response from a change includes an `undo` tool request that
   restores the previous state if the enabled flag still matches the change.
-  Automatic settings stay at their current value.
+  The switch passes the current automatic setting to the native app. If the app
+  resets that setting when it stops a module, the undo request restores it.
 
 ## Shared copilot
 

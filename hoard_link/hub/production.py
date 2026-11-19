@@ -58,7 +58,7 @@ class ProductionFacet(Facet):
 
     def __init__(self, hub):
         super().__init__(hub)
-        self._switch_lock = Lock()
+        self._switch_locks = {}
 
     def catalog(self, args):
         app_filter = args.get("app")
@@ -144,12 +144,17 @@ class ProductionFacet(Facet):
         app_id, name, group = (args.get(key) for key in ("app", "module", "group"))
         enabled = args.get("enabled")
         expected = args.get("expected_enabled")
+        automatic = args.get("automatic")
         reason = args.get("reason")
         if (not isinstance(enabled, bool) or (expected is not None and not isinstance(expected, bool))
+                or (automatic is not None and not isinstance(automatic, bool))
                 or not isinstance(reason, str) or not reason.strip()):
             return {"ok": False, "error": "Supply a boolean enabled value and a reason"}
 
-        with self._switch_lock:
+        app = self.hub.get(app_id)
+        if app is None:
+            return {"ok": False, "error": f"Unknown app: {app_id}"}
+        with self._switch_locks.setdefault(app.id, Lock()):
             status = self.modules({"app": app_id, "group": group})
             if not status["ok"]:
                 return status
@@ -164,17 +169,26 @@ class ProductionFacet(Facet):
             if previous == enabled:
                 return {"ok": True, "changed": False, "module": before}
 
-            control = self.hub.get(app_id).family["module_controls"][group]
+            control = app.family["module_controls"][group]
             values = {"module": name, "enabled": enabled}
-            if isinstance(before.get("automatic"), bool) and control.get("automatic", True):
-                values["automatic"] = before["automatic"]
+            previous_automatic = before.get("automatic")
+            if control.get("automatic", True):
+                if automatic is not None:
+                    values["automatic"] = automatic
+                elif isinstance(previous_automatic, bool):
+                    values["automatic"] = previous_automatic
             result = self.hub.call_app(app_id, control["set"], values, reason=reason,
                                        caller="hub-tool")
             if not result["ok"]:
                 return result
+            native = result["result"]
+            if isinstance(native, dict) and native.get("ok") is False:
+                return {"ok": False, "error": native.get("error", "Module switch failed")}
             undo = {"app": app_id, "group": group, "module": name, "enabled": previous,
                     "expected_enabled": enabled, "reason": f"Restore module state: {name}"}
-            return {"ok": True, "changed": True, "result": result["result"],
+            if isinstance(previous_automatic, bool) and control.get("automatic", True):
+                undo["automatic"] = previous_automatic
+            return {"ok": True, "changed": True, "result": native,
                     "undo": {"tool": "hub_module_set", "arguments": undo}}
 
     @classmethod
@@ -189,7 +203,8 @@ class ProductionFacet(Facet):
                   {"app": string, "group": string}, ("app",)),
             _tool("hub_module_set", "Toggle a native module and return undo. Activar o desactivar un módulo y devolver cómo deshacerlo.",
                   {"app": string, "group": string, "module": string, "enabled": boolean,
-                   "expected_enabled": boolean, "reason": string},
+                   "expected_enabled": boolean, "reason": string,
+                   "automatic": {"type": "boolean", "description": "Restore the automatic setting from an undo request."}},
                   ("app", "module", "enabled", "reason"), read=False),
         ]
 
