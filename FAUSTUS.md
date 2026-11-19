@@ -166,7 +166,9 @@ tool-level not-found replies. `hub_proxy_check` reports catalogue reachability
 across the installed Hoards without starting them. `hub_station_catalog` reads
 manifest handoffs and proposes chains of compatible piece types. `hub_modules`
 and `hub_module_set` use declared native module switches and return an undo
-request for a change. See [the Hub reference](docs/HUB.md#production-stations).
+request for a change. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any
+piece (image, video, model, web page, document, Godot scene or an app's object) into views to open, with an
+optional vision check of details to keep, and repeats the same camera on a new revision ([docs/eyes.md](docs/eyes.md)).
 
 ## Faustus workers from Agora
 

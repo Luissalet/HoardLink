@@ -50,6 +50,7 @@ FACET_MODULES = (
     "resources",
     "capabilities",
     "production",
+    "eyes",
     "skills",
     "mcp_relay",
     "instances",
