@@ -137,7 +137,7 @@ def dossier(order, saved):
     """Project the request and immutable source receipts into the worker's brief."""
     return {
         "schema": "hoard.production-dossier.v1",
-        "request": order["words"], "title": order["title"], "audience": saved.get("audience", ""),
+        "request": order["words"] or order["title"], "title": order["title"], "audience": saved.get("audience", ""),
         "deliverables": order["deliverables"], "constraints": saved.get("constraints", []), "keep": order["keep"],
         "materials": saved.get("materials", [{**ref, "state": "unrecorded"} for ref in order["refs"]]),
         **({"native": saved["native"]} if "native" in saved else {}),

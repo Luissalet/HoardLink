@@ -89,6 +89,15 @@ def test_order_tools_accept_dossier_fields():
         assert "sha256" in schemas[name]["refs"]["items"]["properties"]
 
 
+def test_an_order_named_after_its_document_has_a_request(studio, tmp_path):
+    material = tmp_path / "requirements.txt"
+    material.write_text("Review the requirements.", encoding="utf-8")
+    order = studio.order_create({"agent": "planner", "title": "Review the attached requirements",
+                                 "refs": [{"path": str(material)}]})["order"]
+    assert order["dossier"]["request"] == order["title"]
+    assert order["dossier"]["materials"][0]["state"] == "fingerprinted"
+
+
 def test_dossier_migrates_an_existing_order(tmp_path):
     path = tmp_path / "agora.db"
     with Database(path, migrations=MIGRATIONS[:MIGRATIONS.index(MIGRATION)]) as db:
