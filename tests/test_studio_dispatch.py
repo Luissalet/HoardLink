@@ -81,7 +81,7 @@ def test_proxy_reports_a_slow_catalogue_and_a_refused_connection(tmp_path):
     assert result["state"] == "unreachable" and not result["reachable"]
 
 
-def test_json_cancelled_poll_does_not_attempt_a_500(monkeypatch, caplog):
+def test_json_cancelled_poll_does_not_attempt_a_500(caplog):
     class ClosedSocket:
         def write(self, data):
             raise ConnectionAbortedError(10053, "browser disconnected")
@@ -98,6 +98,18 @@ def test_json_cancelled_poll_does_not_attempt_a_500(monkeypatch, caplog):
         request._json({"services": []})
     assert request.close_connection and headers == [200] and not caplog.records
     assert not _client_disconnected(FileNotFoundError())
+
+
+def test_abandoned_keepalive_read_closes_connection():
+    class ClosedSocket:
+        def readline(self, size):
+            raise ConnectionResetError(10054, "client closed the connection")
+
+    request = object.__new__(_HubHandler)
+    request.close_connection = False
+    request.rfile = ClosedSocket()
+    request.handle_one_request()
+    assert request.close_connection
 
 
 def test_app_status_alias_and_native_shelf_proxy(tmp_path):

@@ -73,8 +73,8 @@ import email.utils
 import json
 import logging
 import mimetypes
-import os
 import errno
+import os
 import select
 import socket
 import threading
@@ -134,6 +134,14 @@ class _HubHandler(BaseHTTPRequestHandler):
     # -- plumbing -----------------------------------------------------------
     def log_message(self, fmt: str, *args: Any) -> None:  # quieter than the default
         logger.debug("%s " + fmt, self.address_string(), *args)
+
+    def handle_one_request(self) -> None:
+        try:
+            super().handle_one_request()
+        except OSError as exc:
+            if not _client_disconnected(exc):
+                raise
+            self.close_connection = True
 
     def _json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
