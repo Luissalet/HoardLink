@@ -38,7 +38,7 @@
   const fileUrl = (piece, i) => `/api/agora/piece_file/${piece.id}` + (i === undefined ? "" : `?preview=${i}`);
   const baseName = p => String(p || "").split(/[\\/]/).pop();
 
-  let root = null, data = null, lastSig = "", spaces = [], busy = false, opened = new Set(), details = new Map(), timers = [];
+  let root = null, data = null, measures = null, lastSig = "", spaces = [], busy = false, opened = new Set(), details = new Map(), timers = [];
   const drafts = new Map();   // gate id → note being written
 
   function stopTimers() { for (const t of timers) clearInterval(t); timers = []; }
@@ -185,6 +185,8 @@
     const sub = el("p", "ord-gate-sub", (gate.order?.title || "") + (gate.order?.space_id ? " · " + gate.order.space_id : "") +
       " · " + tr(`${gate.pieces.length} pieza(s)`, `${gate.pieces.length} piece(s)`) + (gate.opened_by ? tr(" · la abre ", " · opened by ") + gate.opened_by : ""));
     head.append(h, sub);
+    const hold = window.HubOrderMetrics?.reason(gate.budget_hold);
+    if (hold) head.append(el("p", "ord-warn", hold));
     if (gate.note) head.append(el("p", "ord-gate-note", gate.note));
     for (const check of gate.technical_advisories || []) {
       const note = check.note || tr(`Comprobación automática pendiente para «${check.title}».`,
@@ -437,6 +439,8 @@
     if (!orders.length) list.append(el("p", "ord-muted", tr("Todavía no hay órdenes.", "There are no orders yet.")));
     for (const o of orders) list.append(orderRow(o));
     page.append(list);
+    const stats = window.HubOrderMetrics?.render(measures);
+    if (stats) page.append(stats);
     root.replaceChildren(page);
     const badge = document.getElementById("orders-badge");
     if (badge) badge.textContent = waiting.length ? String(waiting.length) : "";
@@ -444,13 +448,13 @@
 
   async function load() {
     if (!root) return;
-    const [res, sp] = await Promise.all([ctx.api("/api/agora/orders?all_spaces=1").catch(e => ({ ok: false, error: String(e) })),
-      spaces.length ? null : ctx.api("/api/agora/spaces").catch(() => null)]);
+    const [res, sp, nextMeasures] = await Promise.all([ctx.api("/api/agora/orders?all_spaces=1").catch(e => ({ ok: false, error: String(e) })),
+      spaces.length ? null : ctx.api("/api/agora/spaces").catch(() => null), window.HubOrderMetrics?.load()]);
     if (sp?.ok) spaces = sp.spaces || [];
     if (!res?.ok) { root.replaceChildren(el("p", "ord-warn", tr("No se pueden leer las órdenes: ", "Orders cannot be read: ") + (res?.error || ""))); return; }
-    const sig = JSON.stringify(res);
+    const sig = JSON.stringify([res, nextMeasures, ctx.lang()]);
     if (sig === lastSig && root.childElementCount) return;   // nothing changed: keep players and open rows as they are
-    lastSig = sig; data = res;
+    lastSig = sig; data = res; measures = nextMeasures;
     render();
   }
 

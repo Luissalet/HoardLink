@@ -32,6 +32,7 @@ from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
 from . import agora_auto_review, agora_liveness, agora_ranks, agora_worker_profiles
+from . import work_admission
 from .agora_capacity import codex_executable, codex_observation
 from .agora_leader_state import build_leader_states, resolve_paths
 from .facets import Facet, Reply, Request
@@ -80,9 +81,11 @@ _STARTING_LOCK = threading.Lock()
 
 class AgoraConsoleFacet(Facet):
     id = "agora_console"
+    ui_scripts = ("order_metrics.js",)
 
     def __init__(self, hub: Any):
         super().__init__(hub)
+        self._admission = work_admission.WorkAdmission(hub)
         data_dir = Path(hub.config.data_dir)
         data_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = data_dir / "agora-console.db"
@@ -110,6 +113,9 @@ class AgoraConsoleFacet(Facet):
         """Start the read-only Codex quota reporter bound to this Hub instance."""
         agora = self._agora()
         if agora is not None and hasattr(agora, 'space_store'):
+            from .order_budget import setup
+
+            setup(agora)
             for space in agora.space_store.list():
                 path = Path(self.hub.config.data_dir) / ('agora-console-' + space['id'] + '.db')
                 if space['id'] != 'ecosystem' and path.exists():
@@ -321,6 +327,7 @@ class AgoraConsoleFacet(Facet):
                     continue
                 catalog.append({"id": str(row["slug"]), "name": str(row.get("display_name") or row["slug"]),
                                 "efforts": self._safe_efforts(row.get("supported_reasoning_levels")),
+                                "input_modalities": row.get("input_modalities") if isinstance(row.get("input_modalities"), list) else [],
                                 "default_effort": row.get("default_reasoning_level")})
             current_model, current_effort = self._codex_current_settings()
             return {"state": "available" if catalog else "unavailable",
@@ -2052,9 +2059,27 @@ class AgoraConsoleFacet(Facet):
 
     def _create_worker(self, args: dict[str, Any], actor: str = "codex-console", *,
                        worker_id: Optional[str] = None) -> dict[str, Any]:
+        from .worker_capabilities import PROVIDERS, candidates
+
         reserved: list[str] = []
         try:
-            return self._create_worker_now(args, actor, reserved, worker_id or str(uuid.uuid4()))
+            capability = args.get("capability")
+            if capability is None:
+                return self._create_worker_now(args, actor, reserved, worker_id or str(uuid.uuid4()))
+            if not isinstance(capability, str) or capability not in PROVIDERS or args.get("model") or args.get("effort"):
+                return {"ok": False, "status": 400, "error": "Choose a capability or a specific model and effort"}
+            provider = args.get("leader_id")
+            if args.get("name") and not provider:
+                return {"ok": False, "status": 400, "error": "A named worker needs its provider"}
+            picked = candidates(self, capability, providers=(provider,) if provider else None)
+            if not picked:
+                return {"ok": False, "status": 409, "error": "No available provider for the requested capability"}
+            for candidate in picked:
+                reply = self._create_worker_now({**args, **candidate}, actor, reserved, worker_id or str(uuid.uuid4()))
+                if args.get("name") or (reply.get("worker") or {}).get("state") != "unavailable":
+                    return reply
+                worker_id = None
+            return reply
         finally:
             with _STARTING_LOCK:
                 _STARTING_NAMES.difference_update(reserved)
@@ -3148,6 +3173,8 @@ class AgoraConsoleFacet(Facet):
         return actor, None
 
     def get(self, req: Request) -> Optional[Any]:
+        if req.path.startswith(work_admission.ROUTE):
+            return self._admission.get(req)
         if req.method == "GET" and (req.path == "/agora" or req.path.startswith("/agora/")):
             return self._static(req.path)
         if not req.path.startswith("/api/agora/console/"):
@@ -3171,6 +3198,8 @@ class AgoraConsoleFacet(Facet):
         return None
 
     def post(self, req: Request) -> Optional[Any]:
+        if req.path.startswith(work_admission.ROUTE):
+            return self._admission.post(req)
         if not req.path.startswith("/api/agora/console/"):
             return None
         if not self._operator(req):
@@ -3285,6 +3314,7 @@ class AgoraConsoleFacet(Facet):
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},
+                 "capability": {"enum": ["reasoning_high", "vision_strict", "fast_local"]},
                  "name": {"type": "string", "maxLength": 41, "description": "With create: the session's own name instead of <provider>-worker-<id>. It must start with <provider>- and be free."},
                  "rank": {"type": "string", "enum": ["director", "lead", "agent", "support"], "description": "With create: the session's rank on this server. Never higher than the caller's own, unless the person starts it."},
                  "task": {"type": "string", "maxLength": MAX_TASK_CHARS}, "confirm_idle": {"type": "boolean"},
@@ -3295,11 +3325,12 @@ class AgoraConsoleFacet(Facet):
         ]
         for tool in tools:
             tool['inputSchema']['properties']['space_id'] = {'type': 'string'}
-        return tools
+        return tools + work_admission.WorkAdmission.tools()
 
     def handlers(self) -> dict[str, Any]:
-        return {name: (lambda args, tool=name: self.for_space(args.get('space_id')).handlers_local()[tool](args))
-                for name in self.handlers_local()}
+        return {**self._admission.handlers(),
+                **{name: (lambda args, tool=name: self.for_space(args.get('space_id')).handlers_local()[tool](args))
+                   for name in self.handlers_local()}}
 
     def handlers_local(self):
         # The scoped view's implementation, without a second scope dispatch.

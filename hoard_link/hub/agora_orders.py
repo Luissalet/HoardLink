@@ -38,6 +38,8 @@ import secrets
 import shutil
 from typing import Any, Optional
 
+from . import order_budget
+
 from . import order_destinations
 
 ORDER_STATES = ("open", "producing", "waiting", "delivered", "cancelled")
@@ -121,7 +123,8 @@ ORDERS_MIGRATION = """
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #: Tables a journal entry may restore, with their key column.
 _KEYS = {"agora_orders": "id", "agora_order_jobs": "task_id", "agora_pieces": "id", "agora_piece_checks": "id",
-         "agora_piece_defects": "id", "agora_gates": "id", "agora_gate_pieces": None}
+         "agora_piece_defects": "id", "agora_gates": "id", "agora_gate_pieces": None,
+         "agora_order_budgets": "order_id", "agora_order_attempts": "id"}
 
 
 def _ag() -> Any:
@@ -392,6 +395,12 @@ class _Journal:
     def save(self) -> Optional[str]:
         if self.agent == _ag().PERSON or not (self.rows or self.created_tasks or self.task_status or self.task_deps):
             return None
+        if any(change["table"] in ("agora_order_budgets", "agora_order_attempts") for change in self.rows):
+            for change in self.rows:
+                table, cond = change["table"], change["where"]
+                sql = " AND ".join(f"{key}=?" for key in cond)
+                after = self.ag.db.one(f"SELECT * FROM {table} WHERE {sql}", tuple(cond.values()))
+                change["after"] = dict(after) if after else None
         token = "u" + secrets.token_hex(8)
         self.ag.db.insert("agora_order_journal", {
             "token": token, "space_id": self.ag.space_id, "agent": self.agent, "op": self.op, "created": _now(self.ag),
@@ -411,6 +420,18 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         if entry["undone"]:
             raise _err(f"that write was already undone", 409)
         changes = _load(entry["changes"], {})
+        for change in changes.get("rows") or []:
+            table, cond = change["table"], change["where"]
+            if table != "agora_gates" and "after" not in change:
+                continue
+            if table == "agora_gates" and self.db.one(
+                    "SELECT 1 FROM agora_order_decisions WHERE gate_id=?", (cond["id"],)):
+                raise _err("A person has already decided a piece in this gate", 409)
+            if "after" in change and table in _KEYS:
+                sql = " AND ".join(f"{key}=?" for key in cond)
+                current = self.db.one(f"SELECT * FROM {table} WHERE {sql}", tuple(cond.values()))
+                if (dict(current) if current else None) != change["after"]:
+                    raise _err("The order changed since this write", 409)
         for change in reversed(changes.get("rows") or []):
             table, cond, row = change["table"], change["where"], change["row"]
             if table not in _KEYS:
@@ -543,6 +564,9 @@ def _plan(self: Any, order_id: int) -> list[dict[str, Any]]:
 
 def _gate_dict(self: Any, row: dict[str, Any], pieces: Optional[dict[int, dict[str, Any]]] = None) -> dict[str, Any]:
     out = dict(row)
+    reason = order_budget.hold_reason(self, row["order_id"])
+    if reason:
+        out["budget_hold"] = reason
     ids = [int(r["piece_id"]) for r in
            self.db.query("SELECT piece_id FROM agora_gate_pieces WHERE gate_id=? ORDER BY position", (row["id"],))]
     out["piece_ids"] = ids
@@ -659,6 +683,9 @@ def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     order_row = _order_row(self, row["order_id"])
     out["order"] = {k: v for k, v in _order_dict(order_row).items() if k in
                     ("id", "title", "words", "refs", "deliverables", "keep", "folder", "status", "deadline", "template")}
+    reason = order_budget.hold_reason(self, order_row["id"])
+    if reason:
+        out["order"]["budget_hold"] = reason
     inputs = []
     for pid in out["inputs"]:
         p = self.db.one("SELECT * FROM agora_pieces WHERE id=?", (pid,))
@@ -1086,6 +1113,7 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
         "expected": expected, "observed": observed, "evidence": evidence,
         "source": source, "status": "open", "created": _now(self)})
     journal.created("agora_piece_defects", did)
+    order_budget.check_returns(self, _order_row(self, piece["order_id"]), journal, agent)
     if target:
         task = self.db.one("SELECT * FROM tasks WHERE id=?", (target,))
         if task:
@@ -1238,7 +1266,8 @@ def _close_if_done(self: Any, journal: _Journal, gate_id: int) -> None:
         journal.before("agora_gates", gate_id)
         self.db.execute("UPDATE agora_gates SET status='decided', closed=? WHERE id=?", (_now(self), gate_id))
         order_id = self.db.scalar("SELECT order_id FROM agora_gates WHERE id=?", (gate_id,))
-        if not self.db.scalar("SELECT COUNT(*) FROM agora_gates WHERE order_id=? AND status='open'", (order_id,), 0):
+        if (not order_budget.hold_reason(self, order_id)
+                and not self.db.scalar("SELECT COUNT(*) FROM agora_gates WHERE order_id=? AND status='open'", (order_id,), 0)):
             _set_status(self, order_id, "producing", journal, only_from=("waiting",))
 
 
