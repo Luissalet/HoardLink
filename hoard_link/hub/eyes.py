@@ -222,7 +222,9 @@ class EyesFacet(Facet):
             if vision_opts is not None and views:
                 record["vision"] = {"status": "running"}
                 self._save(record)
-                record["vision"] = vision.describe(lambda body: self.hub.link.chat("hub-eyes", body), views,
+                only = vision_opts.pop("only", None)
+                asked = [v for v in views if v["name"] in only] if only else views
+                record["vision"] = vision.describe(lambda body: self.hub.link.chat("hub-eyes", body), asked or views,
                                                    kind=piece["kind"], **vision_opts)
             record["status"] = "done"
         except render.EyesError as exc:
@@ -268,7 +270,7 @@ class EyesFacet(Facet):
         if args.get("describe") or args.get("keep"):
             vision_opts = {"keep": list(args.get("keep") or []), "language": args.get("language") or "es",
                            "deadline_s": float(args.get("vision_timeout_s") or 90),
-                           "max_views": int(args.get("vision_views") or 6)}
+                           "max_views": int(args.get("vision_views") or 6), "only": args.get("ask_views")}
         look_id = _now_id()
         self._dir(look_id).mkdir(parents=True, exist_ok=False)
         record = {"id": look_id, "status": "running", "created": time.time(), "agent": args.get("agent"),
@@ -423,6 +425,8 @@ class EyesFacet(Facet):
                    "language": {"type": "string", "enum": ["es", "en"]},
                    "vision_timeout_s": {"type": "number", "minimum": 5, "maximum": 900},
                    "vision_views": {"type": "integer", "minimum": 1, "maximum": 12},
+                   "ask_views": {"type": "array", "items": {"type": "string"},
+                                 "description": "Only these view names go to the vision model (e.g. w390-after)."},
                    "wait_s": {"type": "number", "minimum": 0, "maximum": 600,
                               "description": "Return after this long; poll hub_eyes_get if still running."},
                    "agent": {"type": "string"}, "reason": {"type": "string"}},

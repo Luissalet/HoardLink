@@ -235,6 +235,10 @@ def main():
         sun.data.energy = 3.0
         sun.rotation_euler = Euler((math.radians(50), 0, math.radians(30)), "XYZ")
         scene.collection.objects.link(sun)
+    facts = _facts(low, high)
+    if "color" in spec["materials"] and not (facts["textures"] or facts["color_attributes"] or facts["materials"]):
+        warnings.append("The model has no colours of its own (no textures, vertex colours or materials): "
+                        "its colour views look like the neutral ones")
     clay = bpy.data.materials.new("EyesClay")
     clay.diffuse_color = (*NEUTRAL, 1.0)
     views = []
@@ -250,7 +254,7 @@ def main():
     resolved = {"views": spec["views"], "material": "both" if len(spec["materials"]) == 2 else spec["materials"][0],
                 "camera": cam, "turn": float(spec.get("turn") or 0.0), "up": spec.get("up") or "z",
                 "pose": applied_pose, "size": int(spec.get("size") or 640), "engine": spec.get("engine") or "workbench"}
-    return {"ok": True, "views": views, "facts": _facts(low, high), "resolved": resolved, "warnings": warnings}
+    return {"ok": True, "views": views, "facts": facts, "resolved": resolved, "warnings": warnings}
 
 
 try:

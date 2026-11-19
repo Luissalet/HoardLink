@@ -136,6 +136,9 @@ def test_vision_checks_details_and_merges_views(eyes: EyesFacet, tmp_path: Path)
     v = out["vision"]
     assert v["status"] == "complete" and v["model"] == "fake-vision"
     assert v["keep"][0]["status"] == "present" and "Two colour halves." in v["description"]
+    zoned = eyes.look({"path": str(_picture(tmp_path / "q.png")), "crops": [{"box": [0, 0, 0.5, 0.5]}],
+                       "describe": True, "ask_views": ["image--zona-1"]})
+    assert zoned["vision"]["asked"] == ["image--zona-1"]
     call = eyes.hub.link.calls[0]
     assert call["capability"] == "vision" and call["images"] and "mitad roja" in call["messages"][0]["content"]
 
