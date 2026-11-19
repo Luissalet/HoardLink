@@ -540,7 +540,10 @@ def _gate_dict(self: Any, row: dict[str, Any], pieces: Optional[dict[int, dict[s
                self.db.query("SELECT * FROM agora_order_decisions WHERE gate_id=? ORDER BY id", (row["id"],))}
     out["decisions"] = [{k: d[k] for k in ("id", "piece_id", "decision", "note", "created")} for d in decided.values()]
     if pieces is not None:
+        from .piece_checks import gate_advisories
+
         out["pieces"] = [pieces[i] for i in ids if i in pieces]
+        out["technical_advisories"] = gate_advisories(self, out["pieces"], out.get("note") or "")
     return out
 
 
@@ -588,13 +591,10 @@ def orders(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     for g in gates:
         view = self.for_space(g["space_id"])
         order = dict(self.db.one("SELECT id, title, space_id, deadline FROM agora_orders WHERE id=?", (g["order_id"],)) or {})
-        gate = _gate_dict(view, dict(g))
-        pieces = {}
-        for pid in gate["piece_ids"]:
-            row = self.db.one("SELECT * FROM agora_pieces WHERE id=?", (pid,))
-            if row:
-                pieces[pid] = _piece_dict(view, dict(row))
-        gate["pieces"] = [pieces[i] for i in gate["piece_ids"] if i in pieces]
+        piece_rows = self.db.query("SELECT p.* FROM agora_pieces p JOIN agora_gate_pieces gp ON gp.piece_id = p.id "
+                                   "WHERE gp.gate_id = ?", (g["id"],))
+        pieces = {int(piece["id"]): _piece_dict(view, dict(piece)) for piece in piece_rows}
+        gate = _gate_dict(view, dict(g), pieces)
         gate["order"] = order
         waiting.append(gate)
     return {"ok": True, "orders": out, "waiting": waiting, "kinds": list(PIECE_KINDS), "states": list(ORDER_STATES)}

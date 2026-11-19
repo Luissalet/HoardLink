@@ -28,6 +28,8 @@ def _chains(stations, source, target, limit):
             for piece in handoff["produces"]:
                 step = {"app": station["app"], "accepts": handoff["accepts"], "produces": piece,
                         "skill": handoff["skill"], "check": handoff["check"]}
+                if piece in handoff.get("piece_checks", {}):
+                    step["piece_check"] = handoff["piece_checks"][piece]
                 edges[step["accepts"]].append(step)
                 inputs[piece].add(step["accepts"])
 
@@ -61,6 +63,8 @@ class ProductionFacet(Facet):
         self._switch_locks = {}
 
     def catalog(self, args):
+        from .piece_checks import descriptor
+
         app_filter = args.get("app")
         stations = []
         for app in sorted(self.hub.apps, key=lambda app: app.id):
@@ -77,7 +81,10 @@ class ProductionFacet(Facet):
                 and isinstance(row.get("skill"), str) and isinstance(row.get("check"), dict)
             ] if isinstance(raw_handoffs, list) else []
             if handoffs:
-                stations.append({"app": app.id, "name": app.name, "handoffs": handoffs})
+                stations.append({"app": app.id, "name": app.name, "handoffs": [
+                    {**row, "piece_checks": {kind: check for kind in [row["accepts"], *row["produces"]]
+                                              if (check := descriptor(kind)) is not None}}
+                    for row in handoffs]})
 
         result = {"ok": True, "stations": stations}
         source, target = args.get("from_type"), args.get("to_type")
