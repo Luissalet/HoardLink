@@ -131,11 +131,21 @@
       const li = el("li", "ord-keep-" + (k.state || "pending"));
       const mark = { ok: tr("comprobado", "checked"), missing: tr("falta", "missing"), pending: tr("sin comprobar", "not checked"),
         not_visible: tr("no se ve aquí", "not visible here") }[k.state || "pending"];
-      li.append(el("span", "ord-keep-dot"), el("span", "", k.detail), el("small", "", mark));
+      const detail = el("span", "", k.detail);
+      li.append(el("span", "ord-keep-dot"), detail, el("small", "", mark));
       const origin = k.source === "order" ? tr("de la orden", "from the order")
         : k.from ? tr("de la pieza #", "from piece #") + k.from : "";
       const why = [origin, k.how, k.evidence, k.note].filter(Boolean).join(" · ");
       if (why) li.title = why;
+      if (k.anchor) {
+        const a = k.anchor;
+        const reference = el("a", "", tr("Referencia fijada", "Pinned reference") + ` #${a.piece} · r${a.revision}`);
+        reference.href = `/api/agora/piece_file/${a.piece}` + (a.preview === undefined ? "" : `?preview=${a.preview}`);
+        reference.target = "_blank"; reference.rel = "noopener";
+        reference.title = [a.view, a.region?.join(", "), a.palette?.join(", "),
+          a.measure && `${a.measure.value} ${a.measure.unit}`, a.sha256].filter(Boolean).join(" · ");
+        detail.append(el("br"), reference);
+      }
       ul.append(li);
     }
     return ul;
@@ -275,6 +285,19 @@
       const tr_ = el("tr");
       const cell = (t, cls) => { const td = el("td", cls || "", t); tr_.append(td); return td; };
       const name = cell(""); name.append(el("b", "", j.task?.title || "#" + j.task_id), el("small", "ord-muted", " #" + j.task_id));
+      if (j.requirements?.length) {
+        const requirements = el("details");
+        requirements.append(el("summary", "", tr("Exigencias de entrada", "Input requirements")));
+        const items = el("ul");
+        for (const k of j.requirements) {
+          const item = el("li", "", tr(k.es, k.en));
+          const from = k.from;
+          item.append(el("small", "ord-muted", ` · ${from.title || from.station} #${from.task_id}`));
+          items.append(item);
+        }
+        requirements.append(items);
+        name.append(requirements);
+      }
       cell([j.station, j.skill].filter(Boolean).join(" · "));
       cell((j.produces || []).map(k => label(KIND, k)).join(", "));
       cell((j.after || []).map(id => titleOf[id] || "#" + id).join(", "));
