@@ -220,8 +220,11 @@ def contact_sheet(views: list[dict[str, Any]], target: Path, *, cell: int = 420,
     Image, ImageDraw, _ = _image_lib()
     columns = columns or min(4, len(views))
     rows = -(-len(views) // columns)
+    with Image.open(views[0]["path"]) as first:          # cells take the views' shape (wide video, tall page)
+        ratio = min(2.0, max(0.5, first.height / max(1, first.width)))
+    cell_w, cell_h = cell, round(cell * ratio)
     label_h, head = 30, (34 if title else 0)
-    sheet = Image.new("RGB", (columns * cell, head + rows * (cell + label_h)), (28, 30, 34))
+    sheet = Image.new("RGB", (columns * cell_w, head + rows * (cell_h + label_h)), (28, 30, 34))
     draw = ImageDraw.Draw(sheet)
     font = _font(18)
     if title:
@@ -229,12 +232,12 @@ def contact_sheet(views: list[dict[str, Any]], target: Path, *, cell: int = 420,
     for i, view in enumerate(views):
         with Image.open(view["path"]) as img:
             img = img.convert("RGBA")
-            img.thumbnail((cell - 8, cell - 8), Image.LANCZOS)
-            x, y = (i % columns) * cell, head + (i // columns) * (cell + label_h)
+            img.thumbnail((cell_w - 8, cell_h - 8), Image.LANCZOS)
+            x, y = (i % columns) * cell_w, head + (i // columns) * (cell_h + label_h)
             back = Image.new("RGBA", img.size, (60, 62, 68, 255))
             back.alpha_composite(img)
-            sheet.paste(back.convert("RGB"), (x + (cell - img.width) // 2, y + (cell - img.height) // 2))
-        draw.text((x + 8, y + cell + 4), str(view.get("label") or view["name"])[:46], fill=(220, 220, 220), font=font)
+            sheet.paste(back.convert("RGB"), (x + (cell_w - img.width) // 2, y + (cell_h - img.height) // 2))
+        draw.text((x + 8, y + cell_h + 4), str(view.get("label") or view["name"])[:46], fill=(220, 220, 220), font=font)
     sheet.save(target)
     return str(target)
 

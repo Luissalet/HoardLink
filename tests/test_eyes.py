@@ -159,6 +159,11 @@ def test_vision_deadline_returns_partial_answer(tmp_path: Path) -> None:
 
 def test_vision_failure_is_reported_not_raised(tmp_path: Path) -> None:
     views = [{"name": "a", "path": str(_picture(tmp_path / "a.png"))}]
+    lost = eyes_vision.merge_keep(["tubo"], [
+        {"view": "t0", "details": [{"detail": "tubo", "status": "present"}]},
+        {"view": "t8", "details": [{"detail": "tubo", "status": "absent", "note": "otro lado"}]},
+        {"view": "t4", "details": [{"detail": "tubo", "status": "unclear"}]}])
+    assert lost[0]["status"] == "mixed" and [v["view"] for v in lost[0]["views"]] == ["t0", "t8", "t4"]
     out = eyes_vision.describe(lambda body: (504, {"ok": False, "error": "timeout"}), views, kind="image",
                                deadline_s=5)
     assert out["status"] == "failed" and out["failed"][0]["error"] == "timeout"

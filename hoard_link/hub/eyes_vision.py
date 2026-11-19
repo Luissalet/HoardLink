@@ -37,9 +37,12 @@ PROMPTS = {
 }
 KEEP = {
     "es": ("\nComprueba además cada uno de estos detalles a conservar y di si esta vista lo muestra (present), "
-           "muestra que falta o está mal (absent) o no permite saberlo (unclear), con una nota breve:\n{items}"),
+           "muestra que falta o está mal (absent) o no permite saberlo (unclear), con una nota breve. «Izquierda» y "
+           "«derecha» son las del propio personaje u objeto (su mano izquierda), no las del espectador, salvo que el "
+           "detalle diga «del espectador»:\n{items}"),
     "en": ("\nAlso check each of these details to keep and say whether this view shows it (present), shows it missing "
-           "or wrong (absent) or cannot tell (unclear), with a short note:\n{items}"),
+           "or wrong (absent) or cannot tell (unclear), with a short note. Left and right are the subject's own (its "
+           "left hand), not the viewer's, unless the detail says «viewer's»:\n{items}"),
 }
 
 
@@ -64,7 +67,8 @@ def pick(views: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
 
 
 def merge_keep(keep: list[str], answers: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """A detail is present if any view shows it, absent if every view that answered says so, unclear otherwise."""
+    """Per detail: present (some views show it, none say it is wrong), absent (some say it is missing or wrong, none
+    show it), mixed (views disagree: lost in some frames or angles) or unclear (no view could tell)."""
     out = []
     for detail in keep:
         seen = []
@@ -75,9 +79,9 @@ def merge_keep(keep: list[str], answers: list[dict[str, Any]]) -> list[dict[str,
         if not seen and len(keep) == 1:   # a model that rewords the only detail still answered it
             seen = [{"view": a["view"], "status": (a.get("details") or [{}])[0].get("status"),
                      "note": (a.get("details") or [{}])[0].get("note") or ""} for a in answers if a.get("details")]
-        statuses = [s["status"] for s in seen]
-        verdict = ("present" if "present" in statuses else
-                   "absent" if statuses and all(s == "absent" for s in statuses) else "unclear")
+        statuses = {s["status"] for s in seen}
+        verdict = ("mixed" if {"present", "absent"} <= statuses else "present" if "present" in statuses else
+                   "absent" if "absent" in statuses else "unclear")
         out.append({"detail": detail, "status": verdict, "views": seen})
     return out
 
