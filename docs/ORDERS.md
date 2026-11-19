@@ -82,7 +82,7 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
 
 `gate_open` shows pieces of an order to the person for one decision. On the Orders page each piece has the preview its
 kind needs — image, turntable frames (a mesh with previews), video, audio, a web (its screenshots first, and «See it
-working» loads it in a sandboxed frame that cannot act as the page), PDF, text — and its details to keep with their state.
+working» loads it in a sandboxed frame without the page's origin, so it cannot act as the person; a page with its own address is framed from there), PDF, text — and its details to keep with their state.
 The person writes an optional note and presses **Keep** or **Cancel**; **Decide separately** splits a piece into a gate of
 its own (`gate_split`).
 
@@ -105,7 +105,7 @@ changed; tasks it created are dropped and task states it moved are restored. Mes
 
 Reads (`GET`, `space_id` for the space, `all_spaces=1` on `orders`): `/api/agora/orders`, `/api/agora/order?order_id=`,
 `/api/agora/job?task_id=`, `/api/agora/order_decisions[?order_id=]`, and `/api/agora/piece_file/<piece>` (its file),
-`?preview=<n>` (one preview) or `/<relative path>` (a file beside it, for a web page's own files). Files are served only
+`?preview=<n>` (one preview), `?inline=1` (a local web page as one document, its own styles, scripts and images written in, for the sandboxed frame) or `/<relative path>` (a file beside it). Files are served only
 when a piece names them or they sit in the piece's folder, and only to the family (the page or a bearer token).
 
 Writes (`POST /api/agora/<operation>` with a bearer token, or from the page): the operations above.
