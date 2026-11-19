@@ -91,7 +91,7 @@
       fig.append(media(p));
       const cap = el("figcaption");
       cap.append(el("b", "", anchorLabel(p.anchor)), el("small", "ord-muted", p.title));
-      const also = pass.variants.filter(o => o.id !== v.id && o.pieces.some(q => q.id === p.id)).map(o => o.key.toUpperCase());
+      const also = pass.variants.filter(o => o.id !== v.id && o.status !== "discarded" && o.pieces.some(q => q.id === p.id)).map(o => o.key.toUpperCase());
       if (also.length) cap.append(el("small", "drf-shared", tr(`También en ${also.join(", ")}: se conserva si se conserva cualquiera de ellas`, `Also in ${also.join(", ")}: kept if any of them is kept`)));
       fig.append(cap);
       strip.append(fig);
