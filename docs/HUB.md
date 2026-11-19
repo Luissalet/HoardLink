@@ -554,6 +554,8 @@ that accepts `editable-report`.
   for compatible chains, shortest first. Each step includes the Hoard, skill
   and verification instructions. An empty `chains` list means no declared route.
   The planner reads declarations and leaves execution and piece transfer to agents.
+  Handoffs can declare bilingual input requirements. Orders trace those requirements back to upstream jobs and can
+  pin a detail to a region, view, palette or measure of a registered revision. See [Destination requirements](order-destinations.md).
 - `hub_piece_validate` measures supported pieces without inference. The catalogue
   links checks to declared input and output piece types. Checked visual reviews
   and Orders gates show technical verdicts, including defects and pending

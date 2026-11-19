@@ -8,6 +8,7 @@ from threading import Lock
 
 from .contract import app_tools
 from .facets import Facet
+from .order_destinations import declared_requirements
 
 
 def _tool(name, description, properties=None, required=(), *, read=True):
@@ -27,7 +28,7 @@ def _chains(stations, source, target, limit):
         for handoff in station["handoffs"]:
             for piece in handoff["produces"]:
                 step = {"app": station["app"], "accepts": handoff["accepts"], "produces": piece,
-                        "skill": handoff["skill"], "check": handoff["check"]}
+                        "skill": handoff["skill"], "check": handoff["check"], "requires": handoff["requires"]}
                 if piece in handoff.get("piece_checks", {}):
                     step["piece_check"] = handoff["piece_checks"][piece]
                 edges[step["accepts"]].append(step)
@@ -62,6 +63,11 @@ class ProductionFacet(Facet):
         super().__init__(hub)
         self._switch_locks = {}
 
+    def start(self):
+        agora = self.hub.facet("agora")
+        if agora is not None:
+            agora.agora.order_station_catalog = lambda: self.catalog({})["stations"]
+
     def catalog(self, args):
         from .piece_checks import descriptor
 
@@ -82,7 +88,8 @@ class ProductionFacet(Facet):
             ] if isinstance(raw_handoffs, list) else []
             if handoffs:
                 stations.append({"app": app.id, "name": app.name, "handoffs": [
-                    {**row, "piece_checks": {kind: check for kind in [row["accepts"], *row["produces"]]
+                    {**row, "requires": declared_requirements(app.id, row),
+                     "piece_checks": {kind: check for kind in [row["accepts"], *row["produces"]]
                                               if (check := descriptor(kind)) is not None}}
                     for row in handoffs]})
 

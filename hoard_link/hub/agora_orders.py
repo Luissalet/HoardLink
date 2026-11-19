@@ -38,6 +38,8 @@ import secrets
 import shutil
 from typing import Any, Optional
 
+from . import order_destinations
+
 ORDER_STATES = ("open", "producing", "waiting", "delivered", "cancelled")
 PIECE_STATES = ("provisional", "checked", "kept", "cancelled", "stale")
 #: The usual kinds of piece. Any other short slug is accepted: the vocabulary grows with the work.
@@ -531,6 +533,14 @@ def _job_dict(self: Any, row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _plan(self: Any, order_id: int) -> list[dict[str, Any]]:
+    jobs = [_job_dict(self, dict(r)) for r in self.db.query(
+        "SELECT * FROM agora_order_jobs WHERE order_id=? ORDER BY position, task_id", (order_id,))]
+    catalog = getattr(self, "order_station_catalog", None)
+    order_destinations.apply_requirements(jobs, catalog() if catalog else [])
+    return jobs
+
+
 def _gate_dict(self: Any, row: dict[str, Any], pieces: Optional[dict[int, dict[str, Any]]] = None) -> dict[str, Any]:
     out = dict(row)
     ids = [int(r["piece_id"]) for r in
@@ -606,8 +616,7 @@ def order(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     row = _order_row(self, a.get("order_id"))
     out = _summary(self, row)
     oid = row["id"]
-    out["plan"] = [_job_dict(self, dict(r)) for r in
-                   self.db.query("SELECT * FROM agora_order_jobs WHERE order_id=? ORDER BY position, task_id", (oid,))]
+    out["plan"] = _plan(self, oid)
     pieces = {int(r["id"]): _piece_dict(self, dict(r), full=True) for r in
               self.db.query("SELECT * FROM agora_pieces WHERE order_id=? ORDER BY id", (oid,))}
     out["piece_list"] = list(pieces.values())
@@ -643,9 +652,10 @@ def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     fix the look), the defects sent back to this job, and an earlier kept piece of each kind it must deliver."""
     tid = _int(a.get("task_id"), "task_id")
     row = self.db.one("SELECT * FROM agora_order_jobs WHERE task_id=?", (tid,))
-    if not row or row["space_id"] != self.space_id:
+    plan = {entry["task_id"]: entry for entry in _plan(self, row["order_id"])} if row and row["space_id"] == self.space_id else {}
+    if tid not in plan:
         raise _err(f"task #{tid} is not a job of any order in space {self.space_id}", 404)
-    out = _job_dict(self, dict(row))
+    out = plan[tid]
     order_row = _order_row(self, row["order_id"])
     out["order"] = {k: v for k, v in _order_dict(order_row).items() if k in
                     ("id", "title", "words", "refs", "deliverables", "keep", "folder", "status", "deadline", "template")}
@@ -662,6 +672,15 @@ def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                         "ORDER BY id DESC LIMIT 1", (p["id"],))
         p["kept_note"] = (d["note"] if d else "") or ""
     out["references"] = kept
+    active = {task_id: entry for task_id, entry in plan.items() if not entry["removed"] or task_id == tid}
+    upstream = list(order_destinations.predecessors(active, tid))[1:]
+    candidates = []
+    if upstream:
+        placeholders = ",".join("?" for _ in upstream)
+        candidates = [{**dict(p), "keep": _load(p["keep"], [])} for p in self.db.query(
+            f"SELECT id, keep FROM agora_pieces WHERE order_id=? AND task_id IN ({placeholders}) "
+            "AND status NOT IN ('cancelled','stale') ORDER BY id DESC", (row["order_id"], *upstream))]
+    out["anchored_details"] = order_destinations.anchored_details([*inputs, *kept, *candidates])
     out["defects"] = [dict(d) for d in self.db.query(
         "SELECT d.*, p.title AS piece_title FROM agora_piece_defects d LEFT JOIN agora_pieces p ON p.id=d.piece_id "
         "WHERE d.task_id=? AND d.status='open' ORDER BY d.id", (tid,))]
@@ -844,9 +863,11 @@ def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 self._system(task, f"{agent} quita este trabajo del plan de la orden #{oid}.", agent)
         if touched:
             _set_status(self, oid, "producing", journal, only_from=("open",))
+        journal.before("agora_orders", oid)
+        self.db.execute("UPDATE agora_orders SET updated=? WHERE id=?", (_now(self), oid))
         token = journal.save()
     self._bump("agora.order.plan", {"order_id": oid, "by": agent, "jobs": touched, "removed": remove})
-    return {"ok": True, "plan": order(self, {"order_id": oid})["order"]["plan"], "keys": keys, "undo": token}
+    return {"ok": True, "plan": _plan(self, oid), "keys": keys, "undo": token}
 
 
 # ---- writing: pieces, checks and defects --------------------------------------------------------------------
@@ -923,7 +944,7 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             for item in _load(parent["keep"], []):
                 if isinstance(item, dict) and item.get("detail"):
                     inherited.append({"detail": item["detail"], "parent": pid, "source": item.get("source") or "piece",
-                                      "from": item.get("from")})
+                                      "from": item.get("from"), "anchor": item.get("anchor")})
         # The details to keep are a union, never a replacement: the order's, every detail of the pieces this one comes
         # from (material or reference), every detail of the revision it replaces, and then the ones given here. A detail
         # given here that is already inherited keeps the provenance it came with; a new one is this piece's own. Every
@@ -946,6 +967,7 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         for item in inherited:
             set_at_piece = item["source"] != "order"
             _detail(item["detail"], {"source": "piece" if set_at_piece else "order", "via": item["parent"],
+                                     "anchor": item.get("anchor"),
                                      "from": (item["from"] if item["from"] is not None else item["parent"])
                                      if set_at_piece else None})
         if supersedes:
@@ -955,6 +977,7 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                     continue
                 set_at_piece = item.get("source") != "order"
                 _detail(item["detail"], {"source": "piece" if set_at_piece else "order", "via": item.get("via"),
+                                         "anchor": item.get("anchor"),
                                          "from": (item.get("from") if item.get("from") is not None else supersedes)
                                          if set_at_piece else None, "revision_of": supersedes})
         for d in (_strs(a.get("keep"), "keep") if a.get("keep") is not None else []):
@@ -1002,6 +1025,7 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         journal.before("agora_pieces", piece["id"])
         keep = _load(piece["keep"], [])
         clean = []
+        anchor_changed = False
         for mark in marks:
             if not isinstance(mark, dict):
                 raise _err("each keep mark is {detail or id, state or ok, how, evidence, note}")
@@ -1017,10 +1041,17 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 "ok" if mark.get("ok", True) not in (False, "false", "0", 0) else "missing")
             if state not in DETAIL_STATES[1:]:
                 raise _err("keep state is ok, missing or not_visible")
+            if "anchor" in mark:
+                raw = mark["anchor"]
+                target = _piece_row(self, raw.get("piece")) if isinstance(raw, dict) else piece
+                if target["order_id"] != piece["order_id"]:
+                    raise _err("anchor must refer to a piece of the same order", 404)
+                item["anchor"] = order_destinations.pin_anchor(raw, target, _load(target["previews_stored"], []), _err)
+                anchor_changed = True
             item.update({"state": state, "by": agent, "check_rev": int(piece["revision"]),
                          **{k: _txt(mark.get(k), 1000, f"keep.{k}") for k in ("note", "how", "evidence") if mark.get(k)}})
             clean.append({"id": item["id"], "detail": item["detail"], "state": state,
-                          **{k: item[k] for k in ("note", "how", "evidence") if k in item}})
+                          **{k: item[k] for k in ("note", "how", "evidence", "anchor") if k in item}})
         cid = self.db.insert("agora_piece_checks", {"piece_id": piece["id"], "space_id": self.space_id, "agent": agent,
                                                     "ok": 1 if ok else 0, "note": note, "keep": _dump(clean),
                                                     "created": _now(self)})
@@ -1030,6 +1061,9 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             status = "checked"
         self.db.execute("UPDATE agora_pieces SET keep=?, status=?, updated=? WHERE id=?",
                         (_dump(keep), status, _now(self), piece["id"]))
+        if anchor_changed:
+            journal.before("agora_orders", piece["order_id"])
+            self.db.execute("UPDATE agora_orders SET updated=? WHERE id=?", (_now(self), piece["order_id"]))
         token = journal.save()
     self._bump("agora.order.check", {"piece_id": piece["id"], "ok": ok, "by": agent})
     return {"ok": True, "piece": _piece_dict(self, _piece_row(self, piece["id"]), full=True), "undo": token}
@@ -1294,7 +1328,11 @@ def piece_file(self: Any, piece_id: Any, *, preview: Any = None, rel: str = "") 
             raise _err("preview is a number") from None
         if not 0 <= i < len(previews):
             raise _err("no such preview", 404)
-        path = kept[i] if i < len(kept) and kept[i] and os.path.isfile(kept[i]) else previews[i]
+        snapshot = kept[i] if i < len(kept) else ""
+        path = snapshot if snapshot and os.path.isfile(snapshot) else previews[i]
+        digest = os.path.splitext(os.path.basename(snapshot))[0]
+        if path != snapshot and re.fullmatch(r"[a-f0-9]{64}", digest) and _sha256(path) != digest:
+            raise _err("the preview changed since it was registered", 409, error_code="piece_changed")
     elif rel:
         if not stored and not _bytes_ok(self, piece):
             raise _err("the page changed since it was registered", 409, error_code="piece_changed")
@@ -1457,7 +1495,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "jobs": {"type": "array", "items": job_item, "maxItems": 60}, "remove": ids}, ["agent", "order_id"])},
         {"name": "hub_agora_job", "read": True,
          "description": "Everything to start a job (task_id): the order's words and details to keep, station and check, "
-                        "input pieces, the pieces the person kept (they fix the look), defects sent back to it and an "
+                        "input pieces, destination requirements, pinned details, kept references, defects and an "
                         "earlier kept piece of each kind it delivers.",
          "inputSchema": schema({"task_id": {"type": "integer", "minimum": 1}}, ["task_id"])},
         {"name": "hub_agora_piece_add",
@@ -1484,7 +1522,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "note": {"type": "string", "maxLength": 4000}}, ["agent", "order_id", "kind", "title"])},
         {"name": "hub_agora_piece_check",
          "description": "Note a check of a piece: what you looked at (note), ok, and per detail to keep (by id or "
-                        "detail) its state ok, missing or not_visible, how you checked and the evidence. Passing with "
+                        "detail) its state, evidence and an optional anchor to a registered reference. Passing with "
                         "no detail missing or unchecked marks it checked." + undo,
          "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
                                 "ok": {"type": "boolean"},
@@ -1492,6 +1530,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                          "properties": {"id": {"type": "string", "maxLength": 20},
                                                         "detail": {"type": "string", "maxLength": 300}, "ok": {"type": "boolean"},
                                                         "state": {"type": "string", "enum": list(DETAIL_STATES[1:])},
+                                                        "anchor": order_destinations.ANCHOR_SCHEMA,
                                                         "how": {"type": "string", "maxLength": 1000},
                                                         "evidence": {"type": "string", "maxLength": 1000},
                                                         "note": {"type": "string", "maxLength": 1000}}}}},
