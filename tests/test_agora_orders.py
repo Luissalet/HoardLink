@@ -161,7 +161,8 @@ def test_piece_file_serves_only_what_a_piece_names(agora, tmp_path):
                            "path": str(site / "index.html")})["piece"]
     assert web["view"] == "web"
     assert agora_orders.piece_file(agora, web["id"], rel="site.css").endswith("site.css")
-    assert agora_orders.piece_file(agora, pieces["malla"]["id"], preview="1").endswith("giro-1.png")
+    with open(agora_orders.piece_file(agora, pieces["malla"]["id"], preview="1"), "rb") as fh:
+        assert fh.read() == b"giro-1.png"   # the kept copy of that preview
     with pytest.raises(AgoraError):
         agora_orders.piece_file(agora, web["id"], rel="../lamina.png")
     (site / "logo.png").write_bytes(b"PNG")
@@ -199,12 +200,27 @@ def test_reference_use_survives_a_cancel_and_material_use_does_not(agora, tmp_pa
 
 def test_same_output_twice_is_one_piece_and_a_changed_file_is_its_next_revision(agora, tmp_path):
     order, keys, pieces = cartographer(agora, tmp_path)
-    again = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "mesh", "title": "Malla", "path": "malla.glb"})
+    mesh = {"agent": "claude", "order_id": order["id"], "kind": "mesh", "title": "Malla", "path": "malla.glb",
+            "task_id": keys["mesh"], "derives_from": [pieces["hoja"]["id"]]}
+    again = agora.piece_add(dict(mesh))
     assert again["existing"] and again["piece"]["id"] == pieces["malla"]["id"] and again["piece"]["sha256"]
+    # the same bytes from another job are a piece of their own, with their own lineage
+    other = agora.piece_add({**mesh, "task_id": keys["rig"], "kind": "rigged_model"})
+    assert "existing" not in other and other["piece"]["revision"] == 1
+    # overwriting the file makes the next revision; the first still shows its own bytes
     (tmp_path / "malla.glb").write_bytes(b"rebuilt")
-    second = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "mesh", "title": "Malla",
-                              "path": "malla.glb"})["piece"]
+    second = agora.piece_add(dict(mesh))["piece"]
     assert second["id"] != pieces["malla"]["id"] and second["revision"] == 2 and second["supersedes"] == pieces["malla"]["id"]
+    with open(agora_orders.piece_file(agora, pieces["malla"]["id"]), "rb") as fh:
+        assert fh.read() == b"malla.glb"
+    with open(agora_orders.piece_file(agora, second["id"]), "rb") as fh:
+        assert fh.read() == b"rebuilt"
+    # an app object: the same object at the same revision is the same piece; a new revision is the next one
+    native = {"agent": "claude", "order_id": order["id"], "kind": "text", "title": "Capítulo", "app": "writer",
+              "object": "capítulo 1", "place": "párrafo 3", "source_rev": "r7", "task_id": keys["concept"]}
+    first = agora.piece_add(dict(native))["piece"]
+    assert agora.piece_add(dict(native))["piece"]["id"] == first["id"]
+    assert agora.piece_add({**native, "source_rev": "r8"})["piece"]["revision"] == 2
     # inheriting the details never inherits their approval, and a hidden detail is not a failure
     marks = agora.piece_check({"agent": "claude", "piece_id": second["id"], "note": "vista de espalda",
                                "keep": [{"id": "k1", "state": "not_visible", "how": "giro 180"},
@@ -228,3 +244,20 @@ def test_defect_carries_expected_observed_and_closes_on_a_new_revision(agora, tm
     assert agora.job({"task_id": keys["mesh"]})["job"]["defects"] == []
     agora.order_undo({"agent": "codex-volumen", "token": out["undo"]})
     assert agora.job({"task_id": keys["mesh"]})["job"]["defects"][0]["id"] == d["defect_id"]
+
+
+def test_a_piece_whose_file_changed_without_a_copy_is_not_decided(agora, tmp_path, monkeypatch):
+    order, keys, pieces = cartographer(agora, tmp_path)
+    monkeypatch.setattr(agora_orders, "STORE_MAX", 0)     # too big to keep a copy
+    (tmp_path / "big.glb").write_bytes(b"A")
+    big = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "mesh", "title": "Grande", "path": "big.glb"})["piece"]
+    assert big["bytes"] == "unverified"
+    gate = agora.gate_open({"agent": "claude", "order_id": order["id"], "piece_ids": [big["id"]]})["gate"]
+    (tmp_path / "big.glb").write_bytes(b"B")
+    with pytest.raises(AgoraError) as changed:
+        agora.gate_decide(person(gate_id=gate["id"], decision="keep"))
+    assert changed.value.status == 409
+    with pytest.raises(AgoraError):
+        agora_orders.piece_file(agora, big["id"])
+    (tmp_path / "big.glb").write_bytes(b"A")
+    assert agora.gate_decide(person(gate_id=gate["id"], decision="keep"))["ok"]

@@ -63,8 +63,15 @@ back to this job; and an earlier kept piece of each kind it delivers, from anoth
 States: `provisional` → `checked` (a passing check left no detail missing or unchecked) → `kept` by the person, or
 `cancelled` by the person, or `stale` (made from a cancelled or stale piece).
 
-* **Same output, same piece.** A file registered again with the same content returns the piece it already is
-  (`existing`); a changed file at the same path becomes its next revision, superseding the previous one.
+* **Same output, same piece.** The logical output is the job, the kind and the place (file, address or app object). A
+  retry with the same content (the file's print, or the object's `source_rev`) and the same inputs returns the piece it
+  already is (`existing`); other content is its next revision, superseding the previous one. The same bytes from another
+  job or of another kind are a piece of their own, with their own lineage.
+* **Each revision keeps its bytes.** A registered file (and each preview) is copied by content into the Agora's folder
+  (`order_pieces/` beside the database; a local web page with the files of its folder), and that copy is what the page
+  shows and the person decides on, even after the station overwrites the file. A file too big to copy (over 2 GB, or a
+  site over 64 MB) is checked against its print instead: if it changed, it is not shown and the gate refuses the decision
+  (`piece_changed`) until the station registers it again. `bytes` says `kept` or `unverified`.
 * **Material and reference.** Cancelling a piece makes stale every piece made from it, directly or not, and nothing is
   deleted. A piece that only used it as a reference stays valid and carries a warning that its reference was
   cancelled. A piece with no inputs and no job reads as «provenance not given».

@@ -35,6 +35,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 from typing import Any, Optional
 
 ORDER_STATES = ("open", "producing", "waiting", "delivered", "cancelled")
@@ -49,6 +50,11 @@ ROLES = ("material", "reference")
 #: What a check says of a detail to keep. not_visible is not a failure: the detail cannot be seen in this piece.
 DETAIL_STATES = ("pending", "ok", "missing", "not_visible")
 MAX_ITEMS = 200
+#: A registered file is copied, by content, into the Agora's own folder so that each revision keeps its bytes even when
+#: the station overwrites the file. Bigger files are not copied and are checked against their print instead.
+STORE_MAX = 2 * 1024 ** 3
+#: A local web page is kept with its folder (styles, scripts, images) up to this size.
+SITE_MAX = 64 * 1024 ** 2
 TEXT_MAX = 20000
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"}
@@ -78,7 +84,8 @@ ORDERS_MIGRATION = """
         decisions TEXT NOT NULL DEFAULT '[]', keep TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'provisional', stale_because TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL DEFAULT 1, sha256 TEXT NOT NULL DEFAULT '', source_rev TEXT NOT NULL DEFAULT '',
-        supersedes INTEGER, created REAL NOT NULL, updated REAL NOT NULL);
+        supersedes INTEGER, stored TEXT NOT NULL DEFAULT '', previews_stored TEXT NOT NULL DEFAULT '[]',
+        created REAL NOT NULL, updated REAL NOT NULL);
     CREATE INDEX agora_pieces_order ON agora_pieces(order_id, id);
     CREATE INDEX agora_pieces_task ON agora_pieces(task_id);
     CREATE TABLE agora_piece_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, piece_id INTEGER NOT NULL,
@@ -259,6 +266,67 @@ def _sha256(path: str) -> str:
         return ""
 
 
+def _store_dir(self: Any) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(str(self.db.path))), "order_pieces")
+
+
+def _keep_copy(self: Any, path: str, sha: str) -> str:
+    """Copy a file into the content store (once per content); its stored path, or '' when it cannot be kept."""
+    if not sha or not os.path.isfile(path):
+        return ""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".html", ".htm"):
+        return _keep_site(self, path, sha)
+    try:
+        if os.path.getsize(path) > STORE_MAX:
+            return ""
+        dest = os.path.join(_store_dir(self), sha[:2], sha + ext)
+        if not os.path.isfile(dest):
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            tmp = dest + ".part"
+            shutil.copyfile(path, tmp)
+            if _sha256(tmp) != sha:     # changed while copying: do not keep a copy that is not this revision
+                os.remove(tmp)
+                return ""
+            os.replace(tmp, dest)
+        return dest
+    except OSError:
+        return ""
+
+
+def _keep_site(self: Any, path: str, sha: str) -> str:
+    """A local web page with the files of its folder, under the print of the page."""
+    base = os.path.dirname(path)
+    files, total = [], 0
+    for root, dirs, names in os.walk(base):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__")]
+        for name in names:
+            full = os.path.join(root, name)
+            try:
+                total += os.path.getsize(full)
+            except OSError:
+                continue
+            if total > SITE_MAX:
+                return ""
+            files.append(full)
+    dest_root = os.path.join(_store_dir(self), "sites", sha)
+    try:
+        if not os.path.isdir(dest_root):
+            tmp = dest_root + ".part"
+            shutil.rmtree(tmp, ignore_errors=True)
+            for full in files:
+                target = os.path.join(tmp, os.path.relpath(full, base))
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                shutil.copyfile(full, target)
+            if _sha256(os.path.join(tmp, os.path.basename(path))) != sha:
+                shutil.rmtree(tmp, ignore_errors=True)
+                return ""
+            os.replace(tmp, dest_root)
+        return os.path.join(dest_root, os.path.basename(path))
+    except OSError:
+        return ""
+
+
 def _now(self: Any) -> float:
     return float(self.clock())
 
@@ -406,7 +474,10 @@ def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[s
             if parent and parent["status"] in ("cancelled", "stale"):
                 out["warnings"].append(f"su referencia #{d['piece']} «{parent['title']}» está "
                                        + ("cancelada" if parent["status"] == "cancelled" else "caduca"))
-    out["exists"] = bool(out["path"]) and os.path.exists(out["path"])
+    out["previews_stored"] = _load(row.get("previews_stored"), [])
+    out["exists"] = bool(out["path"]) and (os.path.exists(out.get("stored") or "") or os.path.exists(out["path"]))
+    # kept: this revision's bytes are in the store; unverified: only the file on disk, checked against the print
+    out["bytes"] = "" if not out["path"] else "kept" if out.get("stored") and os.path.isfile(out["stored"]) else "unverified"
     out["view"] = view_of(out)
     out["defects_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_piece_defects WHERE piece_id=? AND status='open'",
                                              (row["id"],), 0) or 0)
@@ -767,18 +838,22 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """Register a piece of an order: kind, title, where it is (path, url, or app + object + place), previews, the job
     that made it, the agent and model, the pieces it derives from and the details to keep (the order's by default)."""
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    # Reading and copying the files happens before the transaction, so a large file never holds the Agora.
+    folder = _order_row(self, a.get("order_id"))["folder"]
+    path = _resolve(folder, _txt(a.get("path"), 1000, "path"))
+    previews = [_resolve(folder, p) for p in _strs(a.get("previews"), "previews", limit=1000, items=24)]
+    sha = _sha256(path) if path else ""
+    stored = _keep_copy(self, path, sha) if path else ""
+    previews_stored = [_keep_copy(self, pv, _sha256(pv)) for pv in previews]
     with self.db.tx():
         order_row = _order_row(self, a.get("order_id"))
         oid = order_row["id"]
         kind = _kind(a.get("kind"))
         title = _txt(a.get("title"), 200, "title", required=True)
-        folder = order_row["folder"]
-        path = _resolve(folder, _txt(a.get("path"), 1000, "path"))
         url = _txt(a.get("url"), 2000, "url")
         app, obj, place = (_txt(a.get(k), 300, k) for k in ("app", "object", "place"))
         if not (path or url or app):
             raise _err("say where the piece is: path (a file), url, or app with object and place")
-        previews = [_resolve(folder, p) for p in _strs(a.get("previews"), "previews", limit=1000, items=24)]
         task_id = _int(a.get("task_id"), "task_id", required=False)
         station = _txt(a.get("station"), 120, "station")
         if task_id:
@@ -788,18 +863,23 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             station = station or job_row["station"]
         derivation = _derivation(a.get("derives_from"))
         derives = [d["piece"] for d in derivation]
-        sha = _sha256(path) if path else ""
+        source_rev = _txt(a.get("source_rev"), 200, "source_rev")
         supersedes = _int(a.get("supersedes"), "supersedes", required=False)
         revision = 1
-        if path:
-            same = self.db.query("SELECT id, sha256 FROM agora_pieces WHERE order_id=? AND path=? ORDER BY revision DESC",
-                                 (oid, path))
-            for prev in same:
-                if sha and prev["sha256"] == sha:   # the same output registered again (a retry): the same piece
-                    return {"ok": True, "existing": True, "undo": None,
-                            "piece": _piece_dict(self, _piece_row(self, prev["id"]), full=True)}
-            if same and not supersedes:
-                supersedes = int(same[0]["id"])
+        # The logical output: the same job, kind and place (file, address or app object). A retry of it with the same
+        # content (print, or the app object's revision) and the same inputs is the piece it already is; other content
+        # is its next revision. The same bytes from another job or of another kind are a piece of their own.
+        same = [dict(r) for r in self.db.query(
+            "SELECT id, sha256, source_rev, derives_from FROM agora_pieces WHERE order_id=? AND task_id IS ? AND kind=? "
+            "AND path=? AND url=? AND app=? AND object=? AND place=? ORDER BY revision DESC",
+            (oid, task_id, kind, path, url, app, obj, place))]
+        for prev in same:
+            content_same = (prev["sha256"] == sha) if path else (prev["source_rev"] == source_rev)
+            if content_same and (not path or sha) and _parents(prev["derives_from"]) == derivation:
+                return {"ok": True, "existing": True, "undo": None,
+                        "piece": _piece_dict(self, _piece_row(self, prev["id"]), full=True)}
+        if same and not supersedes:
+            supersedes = int(same[0]["id"])
         if supersedes:
             old = self.db.one("SELECT order_id, revision FROM agora_pieces WHERE id=?", (supersedes,))
             if not old or old["order_id"] != oid:
@@ -825,7 +905,8 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             "station": station, "agent": _txt(a.get("by"), 80, "by") or agent, "model": _txt(a.get("model"), 120, "model"),
             "derives_from": _dump(derivation), "decisions": _dump(decisions), "keep": _dump(keep),
             "note": _txt(a.get("note"), 4000, "note"), "status": "provisional", "revision": revision, "sha256": sha,
-            "source_rev": _txt(a.get("source_rev"), 200, "source_rev"), "supersedes": supersedes,
+            "source_rev": source_rev, "supersedes": supersedes, "stored": stored,
+            "previews_stored": _dump(previews_stored),
             "created": now, "updated": now})
         journal = _Journal(self, agent, "piece_add")
         journal.created("agora_pieces", pid)
@@ -1087,6 +1168,11 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         targets = [p for p in ([only] if only else in_gate) if p not in done]
         if not targets:
             raise _err("every piece of this gate is already decided", 409)
+        for pid in targets:
+            if not _bytes_ok(self, _piece_row(self, pid)):
+                raise _err(f"piece #{pid}: its file changed since it was registered and no copy of that revision is "
+                           "kept; the station has to register it again before it can be decided", 409,
+                           error_code="piece_changed", piece_id=pid)
         order_row = _order_row(self, gate["order_id"])
         journal = _Journal(self, agent, "gate_decide")
         alternatives = []
@@ -1119,23 +1205,37 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 
 # ---- files ------------------------------------------------------------------------------------------------
 
+def _bytes_ok(self: Any, piece: dict[str, Any]) -> bool:
+    """True when what would be shown of a piece is the revision that was registered."""
+    if not piece.get("path"):
+        return True
+    if piece.get("stored") and os.path.isfile(piece["stored"]):
+        return True
+    return bool(piece.get("sha256")) and _sha256(piece["path"]) == piece["sha256"]
+
+
 def piece_file(self: Any, piece_id: Any, *, preview: Any = None, rel: str = "") -> str:
-    """The path on disk of a piece's file, one of its previews, or a file next to it (``rel``, for a web page's own
-    styles and scripts). Only what a piece names, or what sits in its folder, is served."""
+    """The path of a piece's file, one of its previews, or a file next to it (``rel``, for a web page's own styles and
+    scripts): the copy kept for that revision, else the file on disk while it still has the registered print. Only
+    what a piece names, or what sits in its folder, is served."""
     piece = dict(self.db.one("SELECT * FROM agora_pieces WHERE id=?", (_int(piece_id, "piece_id"),)) or {})
     if not piece:
         raise _err("no such piece", 404)
+    stored = piece.get("stored") if piece.get("stored") and os.path.isfile(piece["stored"]) else ""
     if preview not in (None, ""):
         previews = _load(piece["previews"], [])
+        kept = _load(piece.get("previews_stored"), [])
         try:
             i = int(preview)
         except (TypeError, ValueError):
             raise _err("preview is a number") from None
         if not 0 <= i < len(previews):
             raise _err("no such preview", 404)
-        path = previews[i]
+        path = kept[i] if i < len(kept) and kept[i] and os.path.isfile(kept[i]) else previews[i]
     elif rel:
-        base = os.path.dirname(piece["path"]) if piece["path"] else ""
+        if not stored and not _bytes_ok(self, piece):
+            raise _err("the page changed since it was registered", 409, error_code="piece_changed")
+        base = os.path.dirname(stored or piece["path"]) if piece["path"] else ""
         if not base:
             raise _err("this piece has no folder", 404)
         path = os.path.normpath(os.path.join(base, rel))
@@ -1143,7 +1243,10 @@ def piece_file(self: Any, piece_id: Any, *, preview: Any = None, rel: str = "") 
         if os.path.commonpath([root, os.path.normcase(os.path.realpath(path))]) != root:
             raise _err("outside the piece's folder", 403)
     else:
-        path = piece["path"]
+        path = stored or piece["path"]
+        if not stored and path and not _bytes_ok(self, piece):
+            raise _err("the file changed since it was registered and no copy of that revision is kept", 409,
+                       error_code="piece_changed")
     if not path or not os.path.isfile(path):
         raise _err("the file is not there", 404)
     return path

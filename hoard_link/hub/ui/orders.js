@@ -140,6 +140,7 @@
     if (pieceId) body.piece_id = pieceId;
     const res = await ctx.api("/api/agora/gate_decide", body).catch(e => ({ ok: false, error: String(e) }));
     busy = false; buttons.forEach(b => { b.disabled = false; });
+    if (!res?.ok && res?.error_code === "piece_changed") { ctx.toast(tr("No se ha decidido: el fichero de una pieza ha cambiado desde que se registró", "Not decided: a piece's file changed since it was registered"), "err", tr("Su puesto tiene que registrarla de nuevo.", "Its station has to register it again.")); return; }
     if (!res?.ok) { ctx.toast(tr("No se ha guardado la decisión", "The decision was not saved"), "err", res?.error || ""); return; }
     drafts.delete(gate.id);
     const stale = (res.decided || []).reduce((n, d) => n + (d.stale?.length || 0), 0);
@@ -178,6 +179,7 @@
       if (meta) cap.append(el("small", "ord-muted", meta));
       const kl = keepList(piece); if (kl) cap.append(kl);
       if (piece.defects_open) cap.append(el("small", "ord-warn", tr(`${piece.defects_open} defecto(s) abiertos`, `${piece.defects_open} open defect(s)`)));
+      if (piece.bytes === "unverified") cap.append(el("small", "ord-warn", tr("Sin copia de esta revisión: se comprueba su huella al decidir.", "No copy of this revision: its print is checked when you decide.")));
       if (gate.pieces.length > 1) {
         const alone = el("button", "ghost small", tr("Decidir aparte", "Decide separately"));
         alone.type = "button"; alone.onclick = () => split(gate, piece);
