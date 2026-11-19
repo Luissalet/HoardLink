@@ -303,6 +303,70 @@ def test_a_new_revision_by_changed_content_keeps_the_details_too(agora, tmp_path
     _carried(r2, hoja, malla)
 
 
+def test_a_detail_given_on_a_piece_adds_to_the_orders(agora, tmp_path):
+    (tmp_path / "hoja.png").write_bytes(b"h")
+    order = agora.order_create(person(title="Odila", words="w", keep=["Tubo izquierdo"], folder=str(tmp_path)))["order"]
+    hoja = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "character_sheet", "title": "Hoja",
+                            "path": "hoja.png", "keep": ["Hebilla cuadrada"]})["piece"]
+    assert [(k["detail"], k["source"]) for k in hoja["keep"]] == [("Tubo izquierdo", "order"), ("Hebilla cuadrada", "piece")]
+
+
+def test_repeating_an_inherited_detail_keeps_where_it_came_from(agora, tmp_path):
+    for name in ("hoja.png", "malla.glb", "malla-2.glb"):
+        (tmp_path / name).write_bytes(name.encode())
+    order = agora.order_create(person(title="Odila", words="w", keep=["Tubo izquierdo"], folder=str(tmp_path)))["order"]
+    add = lambda **kw: agora.piece_add({"agent": "claude", "order_id": order["id"], **kw})["piece"]
+    hoja = add(kind="character_sheet", title="Hoja", path="hoja.png", keep=["Hebilla cuadrada"])
+    malla = add(kind="mesh", title="Malla", path="malla.glb", derives_from=[hoja["id"]])
+    r2 = add(kind="mesh", title="Malla", path="malla-2.glb", supersedes=malla["id"], keep=["Hebilla cuadrada"])
+    hebilla = next(k for k in r2["keep"] if k["detail"] == "Hebilla cuadrada")
+    assert (hebilla["source"], hebilla["from"], hebilla["via"], hebilla["revision_of"], hebilla["state"]) == \
+           ("piece", hoja["id"], hoja["id"], malla["id"], "pending")
+    assert [k["detail"] for k in r2["keep"]] == ["Tubo izquierdo", "Hebilla cuadrada"]
+
+
+@pytest.mark.parametrize("given", [None, [], ["Hebilla cuadrada"], ["Tubo izquierdo"], ["Asa nueva"]])
+@pytest.mark.parametrize("parents", [False, True])
+@pytest.mark.parametrize("replaces", ["none", "supersedes", "changed_content"])
+def test_keep_is_a_union_in_every_combination(agora, tmp_path, given, parents, replaces):
+    """keep given or not, with or without parents, as a new piece, a superseding one or a changed file: the order's
+    details, the parents', the replaced revision's and the given ones are all there, inherited ones with their origin."""
+    for name in ("hoja.png", "malla.glb", "otra.glb"):
+        (tmp_path / name).write_bytes(name.encode())
+    order = agora.order_create(person(title="Odila", words="w", keep=["Tubo izquierdo"], folder=str(tmp_path)))["order"]
+    add = lambda **kw: agora.piece_add({"agent": "claude", "order_id": order["id"], **kw})["piece"]
+    hoja = add(kind="character_sheet", title="Hoja", path="hoja.png", keep=["Hebilla cuadrada"])
+    malla = add(kind="mesh", title="Malla", path="malla.glb", derives_from=[hoja["id"]])
+    agora.piece_check({"agent": "claude", "piece_id": malla["id"], "note": "ok", "ok": True,
+                       "keep": [{"detail": "Tubo izquierdo", "ok": True}, {"detail": "Hebilla cuadrada", "ok": True}]})
+    kw = {"kind": "mesh", "title": "Malla", "path": "otra.glb"}
+    if replaces == "supersedes":
+        kw["supersedes"] = malla["id"]
+    if replaces == "changed_content":
+        (tmp_path / "malla.glb").write_bytes(b"otro contenido")
+        kw["path"] = "malla.glb"
+    if parents:
+        kw["derives_from"] = [hoja["id"]]
+    if given is not None:
+        kw["keep"] = given
+    piece = add(**kw)
+    keep = {k["detail"]: k for k in piece["keep"]}
+    assert keep["Tubo izquierdo"]["source"] == "order"
+    inherited = parents or replaces != "none"
+    if inherited:
+        assert keep["Hebilla cuadrada"]["source"] == "piece" and keep["Hebilla cuadrada"]["from"] == hoja["id"]
+    if replaces != "none":
+        assert piece["supersedes"] == malla["id"] and keep["Hebilla cuadrada"]["revision_of"] == malla["id"]
+    for d in given or []:
+        assert d in keep
+    if given and "Hebilla cuadrada" in given and not inherited:
+        assert keep["Hebilla cuadrada"]["source"] == "piece" and "from" not in keep["Hebilla cuadrada"]
+    if given == ["Asa nueva"]:
+        assert keep["Asa nueva"]["source"] == "piece" and "from" not in keep["Asa nueva"]
+    assert len(keep) == len(piece["keep"])                   # no detail twice
+    assert all(k["state"] == "pending" and "check_rev" not in k for k in piece["keep"])
+
+
 def test_tools_are_listed_and_the_decision_has_none():
     names = {t["name"] for t in TOOLS}
     for op in ("orders", "order", "order_create", "order_update", "plan_set", "job", "piece_add", "piece_check",

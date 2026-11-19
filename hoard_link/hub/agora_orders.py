@@ -924,49 +924,43 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(item, dict) and item.get("detail"):
                     inherited.append({"detail": item["detail"], "parent": pid, "source": item.get("source") or "piece",
                                       "from": item.get("from")})
-        own = a.get("keep") is not None
-        keep_src = _strs(a.get("keep"), "keep") if own else _load(order_row["keep"], [])
-        # every detail starts unchecked: inheriting a detail never inherits its approval. The relay carries every
-        # detail of the pieces this one comes from, with where it was first set, so a detail added at one station
-        # (not in the order) still reaches the next one to be checked there.
-        order_keep = {d.casefold() for d in _load(order_row["keep"], []) if isinstance(d, str)}
-        keep: list[dict[str, Any]] = [{"id": f"k{i + 1}", "detail": d,
-                                       "source": "order" if d.casefold() in order_keep else "piece",
-                                       "state": "pending"} for i, d in enumerate(keep_src)]
-        seen = {k["detail"].casefold() for k in keep}
+        # The details to keep are a union, never a replacement: the order's, every detail of the pieces this one comes
+        # from (material or reference), every detail of the revision it replaces, and then the ones given here. A detail
+        # given here that is already inherited keeps the provenance it came with; a new one is this piece's own. Every
+        # detail starts unchecked: inheriting a detail never inherits its approval, and a new revision carries neither the
+        # checks of the one it replaces nor the person's decision on it.
+        details: dict[str, dict[str, Any]] = {}
+
+        def _detail(text: str, prov: dict[str, Any]) -> None:
+            key = text.casefold()
+            if key in details:
+                for k, v in prov.items():           # more of where it came through; what it already says stays
+                    if v is not None and k not in details[key]:
+                        details[key][k] = v
+                return
+            details[key] = {"detail": text, **{k: v for k, v in prov.items() if v is not None}}
+
+        for d in _load(order_row["keep"], []):
+            if isinstance(d, str) and d.strip():
+                _detail(d, {"source": "order"})
         for item in inherited:
-            if item["detail"].casefold() in seen:
-                continue
-            seen.add(item["detail"].casefold())
-            origin = item["from"] if item["from"] is not None else (
-                None if item["source"] == "order" else item["parent"])
-            keep.append({"id": f"k{len(keep) + 1}", "detail": item["detail"],
-                         "source": "order" if item["source"] == "order" else "piece", "from": origin,
-                         "via": item["parent"], "state": "pending"})
-        # a new revision of the same piece keeps the details of the one it replaces (its own and inherited), with where
-        # each was set, but unchecked again: neither that revision's checks nor the person's decision on it carry over
+            set_at_piece = item["source"] != "order"
+            _detail(item["detail"], {"source": "piece" if set_at_piece else "order", "via": item["parent"],
+                                     "from": (item["from"] if item["from"] is not None else item["parent"])
+                                     if set_at_piece else None})
         if supersedes:
             old_keep = self.db.one("SELECT keep FROM agora_pieces WHERE id=?", (supersedes,))
             for item in _load(old_keep["keep"] if old_keep else "[]", []):
-                if not isinstance(item, dict) or not item.get("detail") or item["detail"].casefold() in seen:
+                if not isinstance(item, dict) or not item.get("detail"):
                     continue
-                seen.add(item["detail"].casefold())
-                carried = {"id": f"k{len(keep) + 1}", "detail": item["detail"],
-                           "source": "order" if item.get("source") == "order" else "piece", "state": "pending",
-                           "revision_of": supersedes}
-                if carried["source"] == "piece":
-                    carried["from"] = item.get("from") if item.get("from") is not None else supersedes
-                if item.get("via") is not None:
-                    carried["via"] = item["via"]
-                keep.append(carried)
-        # a detail of this piece's own list that was set at a parent keeps that parent as its source
-        by_detail = {i["detail"].casefold(): i for i in inherited}
-        for k in keep:
-            src = by_detail.get(k["detail"].casefold())
-            if src and "via" not in k:
-                k["via"] = src["parent"]
-                if src["source"] != "order":
-                    k["source"], k["from"] = "piece", src["from"] if src["from"] is not None else src["parent"]
+                set_at_piece = item.get("source") != "order"
+                _detail(item["detail"], {"source": "piece" if set_at_piece else "order", "via": item.get("via"),
+                                         "from": (item.get("from") if item.get("from") is not None else supersedes)
+                                         if set_at_piece else None, "revision_of": supersedes})
+        for d in (_strs(a.get("keep"), "keep") if a.get("keep") is not None else []):
+            _detail(d, {"source": "piece"})
+        keep: list[dict[str, Any]] = [{"id": f"k{i + 1}", **item, "state": "pending"}
+                                      for i, item in enumerate(details.values())]
         now = _now(self)
         pid = self.db.insert("agora_pieces", {
             "order_id": oid, "space_id": self.space_id, "kind": kind, "title": title, "path": path, "url": url,

@@ -57,7 +57,7 @@ back to this job; and an earlier kept piece of each kind it delivers, from anoth
 | `previews` | Images that show it (turntable frames of a mesh, screenshots of a web, slides) |
 | `task_id`, `station`, `by`, `model` | Who made it |
 | `derives_from` | `[{piece, role, note}]`: `material` (made from it) or `reference` (only looked at it) |
-| `keep` | Details to keep: the order's unless given, plus every detail of the pieces it derives from; each starts unchecked |
+| `keep` | Details to keep: a union of the order's, every detail of the pieces it derives from, every detail of the revision it replaces and the ones given here (given ones add, never replace; one already inherited keeps its origin); each starts unchecked |
 | `revision`, `sha256`, `supersedes` | Its revision, content print and the piece it replaces |
 
 States: `provisional` → `checked` (a passing check left no detail missing or unchecked) → `kept` by the person, or
