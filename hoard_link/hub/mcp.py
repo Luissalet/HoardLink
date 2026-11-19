@@ -20,6 +20,7 @@ import urllib.request
 from typing import Any, Optional
 
 from . import DEFAULT_PORT, HUB_VERSION, SERVICE
+from .order_receipts import CALL, CONTEXT, request_context
 from .tools import all_tools as catalogue
 
 PROTOCOL = "2024-11-05"
@@ -104,6 +105,9 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
     if method == "tools/call":
         name = str(params.get("name") or "")
         args = dict(params.get("arguments") or {})
+        context = request_context()
+        if context is not None:
+            args.setdefault(CONTEXT, context)
         default_space = os.environ.get('AGORA_SPACE')
         if default_space and 'space_id' not in args:
             spec = next((tool for tool in catalogue() if tool['name'] == name), {})
@@ -117,7 +121,7 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
                 wait = min(1830.0, max(90.0, float((args or {}).get("timeout_s") or 300.0) + 15.0))
             except (TypeError, ValueError):
                 wait = 315.0
-        elif name == "hub_call_app":
+        elif name == "hub_call_app" or (name == CALL and args.get("app")):
             # Match the app-call contract's existing 1..900s budget, plus
             # transport grace; losing observation must not cause a re-POST.
             try:
@@ -132,6 +136,9 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
         if status is None:
             return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text({"ok": False, "error": "hub did not answer"}), "isError": True}}
         result = body.get("result") if isinstance(body, dict) else body
+        if isinstance(body, dict) and any(key in body for key in ("receipt_id", "receipt_error")):
+            result = {"reply": result, **{key: body[key] for key in ("receipt_id", "receipt_undo", "receipt_error")
+                                         if key in body}}
         is_error = status >= 400
         if status == 401:
             result = {"ok": False, "error": "hub refused the token: check HOARD_HUB_TOKEN_FILE / data/mcp-token"}

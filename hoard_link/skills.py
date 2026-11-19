@@ -86,7 +86,7 @@ def find_library(setting: Any = None) -> Optional[Path]:
 
 
 def library_rows(library: Path) -> list[dict[str, Any]]:
-    """Every published skill of the library: ``{slug, name, description, version, category, tags, apps, text}``."""
+    """Published library skills, including their declared production inputs and outputs."""
     rows = []
     for path in sorted(Path(library).glob("*/SKILL.md")):
         slug = path.parent.name
@@ -103,7 +103,8 @@ def library_rows(library: Path) -> list[dict[str, Any]]:
             continue
         rows.append({"slug": slug, "name": str(meta.get("name") or slug), "description": str(meta.get("description") or ""),
                      "version": str(meta.get("version") or ""), "category": str(meta.get("category") or ""),
-                     "tags": _words(meta.get("tags")), "apps": _words(meta.get("apps")), "text": text})
+                     "tags": _words(meta.get("tags")), "apps": _words(meta.get("apps")),
+                     "accepts": _words(meta.get("accepts")), "produces": _words(meta.get("produces")), "text": text})
     return rows
 
 
