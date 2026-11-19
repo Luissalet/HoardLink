@@ -222,3 +222,34 @@ def test_the_emitter_is_never_blocked(hub):
     settle(hub)
     w.handle_event = real
     assert w.active()[0]["progress"] > 0.9
+
+
+def test_failure_posts_once_in_linked_task_thread_and_link_can_be_undone(hub):
+    facet = hub.facet("agora")
+    agora = facet.agora
+    task = agora.task_add({"agent": "fixture-agent", "title": "Review the render"})["task"]
+    arguments = {"app": "pygmalion", "job_id": "render-17", "task_id": task["id"]}
+    handler = work(hub).handlers()["hub_work_link_task"]
+    link = handler(arguments)
+    assert link["ok"] and link["link"]["thread_id"] == task["thread_id"]
+    failure = {"job_id": "render-17", "error": "Worker did not return an image"}
+    emit(hub, "pygmalion.job.failed", failure, source="other")
+    settle(hub)
+    assert not any("render-17" in row["body"] for row in agora._messages(task["thread_id"]))
+    emit(hub, "pygmalion.job.failed", failure)
+    emit(hub, "pygmalion.job.failed", failure)
+    settle(hub)
+    notice, = [row for row in agora._messages(task["thread_id"]) if "render-17" in row["body"]]
+    assert notice["author"] == "system" and failure["error"] in notice["body"]
+    assert handler({**arguments, "task_id": None})["previous"]["message_id"] == notice["id"]
+    assert "agora_task" not in work(hub).recent()[0]
+
+
+def test_two_jobs_of_one_app_show_their_own_card(hub):
+    for job_id, gpu in (("render-1", 1), ("render-2", 2)):
+        emit(hub, "pygmalion.job.started", {"job_id": job_id})
+        emit(hub, "hub.lease.granted", {
+            "lease_id": f"L{gpu}", "owner": "pygmalion", "purpose": f"render {job_id}", "gpu": gpu, "vram_mb": 8000,
+        }, source="hub")
+    settle(hub)
+    assert {job["job_id"]: job["lease"]["gpu"] for job in work(hub).active()} == {"render-1": 1, "render-2": 2}
