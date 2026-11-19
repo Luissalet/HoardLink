@@ -1,0 +1,25 @@
+#tab-integration details {
+  display: block;
+  padding: 0;
+  border: 0;
+}
+
+#tab-integration details + details {
+  border-top: 1px solid var(--line);
+}
+
+#tab-integration summary {
+  padding: 12px 8px;
+  font-weight: 600;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+#tab-integration details > div {
+  padding: 0 8px 8px;
+  overflow-wrap: anywhere;
+}
+
+#tab-integration details p:first-child {
+  margin-top: 0;
+}

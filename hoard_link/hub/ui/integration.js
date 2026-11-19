@@ -2,6 +2,10 @@
   "use strict";
 
   const api = "/api/integration";
+  const stylesheet = document.createElement("link");
+  stylesheet.rel = "stylesheet";
+  stylesheet.href = "/ui/integration.css";
+  document.head.append(stylesheet);
   const labels = {
     queued: ["En cola", "Queued"],
     waiting_for_suite_slot: ["Esperando turno de pruebas", "Waiting for test slot"],
@@ -54,11 +58,17 @@
       commit.append(el("code", "", receipt.merge_commit.slice(0, 12)));
       content.push(commit);
     }
+    if (receipt.events.some(event => event.state === "restored_checkout" && event.parked?.length)) {
+      content.push(el("p", "", t(ctx, "Cambios locales restaurados", "Local changes restored")));
+    }
     if (receipt.cleanup) {
       if (receipt.cleanup.retained) content.push(el("p", "",
         t(ctx, "Árbol de entrega conservado porque contiene cambios", "Delivery worktree kept because it contains changes")));
-      if (receipt.cleanup.removed_branch && receipt.state !== "undone") content.push(el("p", "",
-        t(ctx, "Rama de entrega retirada", "Delivery branch removed")));
+      if (receipt.cleanup.removed_branch && receipt.state !== "undone") {
+        content.push(el("p", "", receipt.cleanup.removed_worktree
+          ? t(ctx, "Rama y árbol de entrega retirados", "Delivery branch and worktree removed")
+          : t(ctx, "Rama de entrega retirada", "Delivery branch removed")));
+      }
     }
     if (receipt.error) {
       const error = el("p", "muted", receipt.error);
@@ -95,7 +105,6 @@
       const list = el("div", "hub-project-list");
       for (const row of result.receipts) {
         const details = el("details", "hub-project-row");
-        details.style.display = "block";
         details.dataset.id = row.id;
         details.open = open.has(row.id);
         const summary = el("summary", "", `#${row.task_id} · ${row.repo} · ${state(ctx, row.state)}`);

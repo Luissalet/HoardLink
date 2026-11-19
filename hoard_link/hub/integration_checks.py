@@ -125,7 +125,7 @@ REMOTE_RUNNER = """
 import base64, json, os, pathlib, subprocess, sys, tempfile
 p = json.load(sys.stdin)
 repo = pathlib.Path(p["repo"]).expanduser().resolve()
-env = {k: v for k, v in os.environ.items() if not k.upper().startswith(p["excluded"])}
+env = {k: v for k, v in os.environ.items() if not k.upper().startswith(tuple(p["excluded"]))}
 env.update(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1", HOARD_HUB_AUTOSTART="0")
 with tempfile.TemporaryDirectory(prefix="hoard-tests-") as temp:
     work = pathlib.Path(temp) / "checkout"
@@ -133,7 +133,8 @@ with tempfile.TemporaryDirectory(prefix="hoard-tests-") as temp:
     data = pathlib.Path(temp) / "data"
     env.update(HOARD_HUB_DATA_DIR=str(data), HOARD_HUB_TOKEN_FILE=str(data / "mcp-token"),
                HOARD_HUB_URL="http://127.0.0.1:1")
-    subprocess.run(["git", "-C", str(repo), "worktree", "add", "--detach", str(work), p["base"]],
+    subprocess.run(["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null",
+                    "worktree", "add", "--detach", str(work), p["base"]],
                    check=True, capture_output=True, env=env, timeout=60)
     try:
         patch = base64.b64decode(p["patch"])

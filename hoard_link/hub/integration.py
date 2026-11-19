@@ -196,6 +196,10 @@ class IntegrationFacet(Facet):
                 "nearby_deliveries": [dict(row) for row in nearby]}
 
     def run(self, args):
+        if any(type(args.get(flag, False)) is not bool for flag in ("merge", "inference")):
+            raise repo_git.IntegrationError("merge and inference must be booleans")
+        if any(key in args and not isinstance(args[key], str) for key in ("spark_repo", "live_test")):
+            raise repo_git.IntegrationError("spark_repo and live_test must be strings")
         merge = args.get("merge", False)
         agora, agent, task = self._snapshot(args, merge=merge)
         repo, plan = self._delivery(agora, task, args)
@@ -241,7 +245,6 @@ class IntegrationFacet(Facet):
         plan = receipt["plan"]
         base, head = plan["base"], plan["head"]
         remote = args.get("spark_repo")
-        agora = self._agora(args)
         agent = receipt["agent"]
         merge_resource = normalize_resource(f"merge:{repo.name}")
         took_lock = False
@@ -255,6 +258,7 @@ class IntegrationFacet(Facet):
             return run in self.cancelled
 
         try:
+            agora = self._agora(args)
             slot = test_slot(checks.SUITE_LOCK, update, cancelled) if not remote else test_slot(
                 folder.parent / "remote-slot.json", update, cancelled)
             with slot, repo_git.worktree(repo, folder / "candidate", base) as candidate:
@@ -307,7 +311,7 @@ class IntegrationFacet(Facet):
                                                            base=base, ref=merged, lane="live", remote=remote)
                     if receipt["live"]["failures"] or not receipt["live"]["counts"]["passed"]:
                         raise repo_git.IntegrationError("The post-merge case failed")
-                except (repo_git.IntegrationError, OSError, ValueError) as exc:
+                except Exception as exc:
                     self._undo_merge(path, receipt, agora, repo, agent)
                     receipt["error"] = f"{exc}. The previous checkout was restored."
                     update("rolled_back")
