@@ -20,7 +20,7 @@ def person(**kw):
 def cartographer(ag, folder):
     """The scene's order, a plan of four jobs (two in parallel after the sheet) and its pieces."""
     for name in ("lamina.png", "hoja.png", "malla.glb", "giro-0.png", "giro-1.png", "modelo.blend", "render.png"):
-        (folder / name).write_bytes(b"x")
+        (folder / name).write_bytes(name.encode())
     order = ag.order_create(person(title="La cartógrafa", words="Sube tres escalones bajo la lluvia.",
                                    refs=[{"app": "writer", "object": "capítulo 1", "place": "párrafo 3"}],
                                    deliverables=["lámina", "hoja", "modelo articulado"],
@@ -115,8 +115,9 @@ def test_gate_keep_fixes_reference_and_cancel_returns_and_stales(agora, tmp_path
     assert [r["title"] for r in brief["references"]] == ["Lámina"] and brief["references"][0]["kept_note"] == "esta es Odila"
     assert agora.job({"task_id": keys["mesh"]})["job"]["defects"][0]["source"] == "gate"
     # a piece derived from a kept one carries that decision
+    (tmp_path / "variante.png").write_bytes(b"v")
     child = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "image", "title": "Variante",
-                             "path": "lamina.png", "derives_from": [pieces["lamina"]["id"]]})["piece"]
+                             "path": "variante.png", "derives_from": [pieces["lamina"]["id"]]})["piece"]
     assert child["decisions"] == [decisions[1]["id"]]
     # deciding the last gate puts the order back in production
     agora.gate_decide(person(gate_id=gate["id"], decision="keep"))
@@ -163,6 +164,54 @@ def test_piece_file_serves_only_what_a_piece_names(agora, tmp_path):
 def test_tools_are_listed_and_the_decision_has_none():
     names = {t["name"] for t in TOOLS}
     for op in ("orders", "order", "order_create", "order_update", "plan_set", "job", "piece_add", "piece_check",
-               "piece_defect", "gate_open", "gate_split", "order_decisions", "order_undo"):
+               "piece_defect", "defect_close", "gate_open", "gate_split", "order_decisions", "order_undo"):
         assert f"hub_agora_{op}" in names
     assert "hub_agora_gate_decide" not in names
+
+
+def test_reference_use_survives_a_cancel_and_material_use_does_not(agora, tmp_path):
+    order, keys, pieces = cartographer(agora, tmp_path)
+    (tmp_path / "rig.blend").write_bytes(b"hand-built")
+    rig = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "rigged_model", "title": "Bloqueo",
+                           "path": "rig.blend", "derives_from": [{"piece": pieces["malla"]["id"], "role": "reference"},
+                                                                 {"piece": pieces["hoja"]["id"], "role": "reference"}]})["piece"]
+    assert rig["provenance"] == "known" and {d["role"] for d in rig["derivation"]} == {"reference"}
+    gate = agora.gate_open({"agent": "claude", "order_id": order["id"], "piece_ids": [pieces["malla"]["id"]]})["gate"]
+    out = agora.gate_decide(person(gate_id=gate["id"], decision="cancel", note="bulto"))
+    stale = out["decided"][0]["stale"]
+    assert rig["id"] not in stale and pieces["modelo"]["id"] in stale    # the material child goes stale, the reference one does not
+    full = {p["id"]: p for p in agora.order({"order_id": order["id"]})["order"]["piece_list"]}
+    assert full[rig["id"]]["status"] == "provisional" and "cancelada" in full[rig["id"]]["warnings"][0]
+
+
+def test_same_output_twice_is_one_piece_and_a_changed_file_is_its_next_revision(agora, tmp_path):
+    order, keys, pieces = cartographer(agora, tmp_path)
+    again = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "mesh", "title": "Malla", "path": "malla.glb"})
+    assert again["existing"] and again["piece"]["id"] == pieces["malla"]["id"] and again["piece"]["sha256"]
+    (tmp_path / "malla.glb").write_bytes(b"rebuilt")
+    second = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "mesh", "title": "Malla",
+                              "path": "malla.glb"})["piece"]
+    assert second["id"] != pieces["malla"]["id"] and second["revision"] == 2 and second["supersedes"] == pieces["malla"]["id"]
+    # inheriting the details never inherits their approval, and a hidden detail is not a failure
+    marks = agora.piece_check({"agent": "claude", "piece_id": second["id"], "note": "vista de espalda",
+                               "keep": [{"id": "k1", "state": "not_visible", "how": "giro 180"},
+                                        {"detail": "al mapa le falta una esquina", "state": "ok", "evidence": "giro-1.png"}]})
+    assert marks["piece"]["status"] == "checked"
+    assert [k["state"] for k in marks["piece"]["keep"]] == ["not_visible", "ok"] and marks["piece"]["keep"][1]["evidence"] == "giro-1.png"
+
+
+def test_defect_carries_expected_observed_and_closes_on_a_new_revision(agora, tmp_path):
+    order, keys, pieces = cartographer(agora, tmp_path)
+    d = agora.piece_defect({"agent": "codex-volumen", "piece_id": pieces["malla"]["id"], "note": "mapa fundido",
+                            "expected": "mapa separado", "observed": "una sola malla", "evidence": "giro-1.png", "view": "frente"})
+    (tmp_path / "malla2.glb").write_bytes(b"new")
+    fixed = agora.piece_add({"agent": "codex-volumen", "order_id": order["id"], "kind": "mesh", "title": "Malla 2",
+                             "path": "malla2.glb", "supersedes": pieces["malla"]["id"]})["piece"]
+    assert fixed["revision"] == 2
+    out = agora.defect_close({"agent": "codex-volumen", "defect_id": d["defect_id"], "fixed_in": fixed["id"],
+                              "note": "mismo giro: el mapa llega separado"})
+    closed = out["defect"]
+    assert closed["status"] == "closed" and closed["closed_in"] == fixed["id"] and closed["expected"] == "mapa separado"
+    assert agora.job({"task_id": keys["mesh"]})["job"]["defects"] == []
+    agora.order_undo({"agent": "codex-volumen", "token": out["undo"]})
+    assert agora.job({"task_id": keys["mesh"]})["job"]["defects"][0]["id"] == d["defect_id"]

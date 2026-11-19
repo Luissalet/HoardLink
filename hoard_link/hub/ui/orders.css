@@ -48,6 +48,7 @@
 .ord-keep small { color: var(--muted); }
 .ord-keep-dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--muted); }
 .ord-keep-ok .ord-keep-dot { background: var(--green, #83b49a); border-color: var(--green, #83b49a); }
+.ord-keep-not_visible .ord-keep-dot { border-style: dashed; }
 .ord-keep-missing .ord-keep-dot { background: var(--red, #e07a6e); border-color: var(--red, #e07a6e); }
 .ord-defect { color: #e8b38a; font-size: var(--hub-fs-1, 12px); }
 .ord-path { color: var(--muted); font-size: var(--hub-fs-1, 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

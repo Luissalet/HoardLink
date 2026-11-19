@@ -30,6 +30,7 @@ are dropped). Pages and tools read the same operations (``orders``, ``order``, `
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -42,6 +43,11 @@ PIECE_STATES = ("provisional", "checked", "kept", "cancelled", "stale")
 PIECE_KINDS = ("brief", "text", "image", "character_sheet", "video", "audio", "mesh", "rigged_model", "set", "render",
                "playable_scene", "figure", "document", "slides", "web", "code_branch", "feature", "report", "data")
 DECISIONS = ("keep", "cancel")
+#: How a piece used another: transformed it (material: cancelling the parent makes it stale) or only looked at it
+#: (reference: it stays valid and says that its reference was cancelled).
+ROLES = ("material", "reference")
+#: What a check says of a detail to keep. not_visible is not a failure: the detail cannot be seen in this piece.
+DETAIL_STATES = ("pending", "ok", "missing", "not_visible")
 MAX_ITEMS = 200
 TEXT_MAX = 20000
 
@@ -71,7 +77,8 @@ ORDERS_MIGRATION = """
         agent TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', derives_from TEXT NOT NULL DEFAULT '[]',
         decisions TEXT NOT NULL DEFAULT '[]', keep TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'provisional', stale_because TEXT NOT NULL DEFAULT '',
-        created REAL NOT NULL, updated REAL NOT NULL);
+        revision INTEGER NOT NULL DEFAULT 1, sha256 TEXT NOT NULL DEFAULT '', source_rev TEXT NOT NULL DEFAULT '',
+        supersedes INTEGER, created REAL NOT NULL, updated REAL NOT NULL);
     CREATE INDEX agora_pieces_order ON agora_pieces(order_id, id);
     CREATE INDEX agora_pieces_task ON agora_pieces(task_id);
     CREATE TABLE agora_piece_checks (id INTEGER PRIMARY KEY AUTOINCREMENT, piece_id INTEGER NOT NULL,
@@ -82,7 +89,9 @@ ORDERS_MIGRATION = """
         order_id INTEGER NOT NULL, space_id TEXT NOT NULL, task_id INTEGER, station TEXT NOT NULL DEFAULT '',
         agent TEXT NOT NULL, note TEXT NOT NULL, view TEXT NOT NULL DEFAULT '', pose TEXT NOT NULL DEFAULT '',
         at TEXT NOT NULL DEFAULT '', step TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'check',
-        status TEXT NOT NULL DEFAULT 'open', created REAL NOT NULL);
+        expected TEXT NOT NULL DEFAULT '', observed TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open', closed_by TEXT, closed_in INTEGER, closed_note TEXT NOT NULL DEFAULT '',
+        closed REAL, created REAL NOT NULL);
     CREATE INDEX agora_piece_defects_piece ON agora_piece_defects(piece_id, id);
     CREATE INDEX agora_piece_defects_task ON agora_piece_defects(task_id, status);
     CREATE TABLE agora_gates (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, space_id TEXT NOT NULL,
@@ -212,6 +221,44 @@ def _assignee(value: Any) -> dict[str, str]:
     return {k: _txt(value.get(k), 120, f"assignee.{k}") for k in ("agent", "model", "machine") if value.get(k)}
 
 
+def _derivation(value: Any) -> list[dict[str, Any]]:
+    """``derives_from`` as given: ids (material) or ``{piece, role, note}`` with role material or reference."""
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        value = [{"piece": i} for i in _ids(value, "derives_from")]
+    if len(value) > MAX_ITEMS:
+        raise _err(f"derives_from holds at most {MAX_ITEMS} pieces")
+    out: list[dict[str, Any]] = []
+    for item in value:
+        item = item if isinstance(item, dict) else {"piece": item}
+        role = str(item.get("role") or "material").lower()
+        if role not in ROLES:
+            raise _err(f"derives_from role must be one of {', '.join(ROLES)}")
+        pid = _int(item.get("piece") or item.get("piece_id"), "derives_from.piece")
+        if all(d["piece"] != pid for d in out):
+            out.append({"piece": pid, "role": role,
+                        **({"note": _txt(item["note"], 300, "derives_from.note")} if item.get("note") else {})})
+    return out
+
+
+def _parents(raw: Any) -> list[dict[str, Any]]:
+    """Stored derivation; a bare id is material."""
+    return [d if isinstance(d, dict) else {"piece": int(d), "role": "material"} for d in _load(raw, [])]
+
+
+def _sha256(path: str) -> str:
+    """The content print of a file (empty when it is not there)."""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                h.update(block)
+        return h.hexdigest()
+    except OSError:
+        return ""
+
+
 def _now(self: Any) -> float:
     return float(self.clock())
 
@@ -335,8 +382,18 @@ def view_of(piece: dict[str, Any]) -> str:
 
 def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[str, Any]:
     out = dict(row)
-    for key, default in (("previews", []), ("derives_from", []), ("decisions", []), ("keep", [])):
+    for key, default in (("previews", []), ("decisions", []), ("keep", [])):
         out[key] = _load(row.get(key), default)
+    out["derivation"] = _parents(row.get("derives_from"))
+    out["derives_from"] = [d["piece"] for d in out["derivation"]]
+    out["provenance"] = "known" if (out["derivation"] or row.get("task_id")) else "unspecified"
+    out["warnings"] = []
+    for d in out["derivation"]:
+        if d["role"] == "reference":
+            parent = self.db.one("SELECT title, status FROM agora_pieces WHERE id=?", (d["piece"],))
+            if parent and parent["status"] in ("cancelled", "stale"):
+                out["warnings"].append(f"su referencia #{d['piece']} «{parent['title']}» está "
+                                       + ("cancelada" if parent["status"] == "cancelled" else "caduca"))
     out["exists"] = bool(out["path"]) and os.path.exists(out["path"])
     out["view"] = view_of(out)
     out["defects_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_piece_defects WHERE piece_id=? AND status='open'",
@@ -346,9 +403,9 @@ def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[s
                          self.db.query("SELECT * FROM agora_piece_checks WHERE piece_id=? ORDER BY id", (row["id"],))]
         out["defects"] = [dict(d) for d in
                           self.db.query("SELECT * FROM agora_piece_defects WHERE piece_id=? ORDER BY id", (row["id"],))]
-        out["derived"] = [int(r["id"]) for r in self.db.query(
+        out["derived"] = [{"piece": int(r["id"]), "role": d["role"]} for r in self.db.query(
             "SELECT id, derives_from FROM agora_pieces WHERE order_id=?", (row["order_id"],))
-            if row["id"] in _load(r["derives_from"], [])]
+            for d in _parents(r["derives_from"]) if d["piece"] == row["id"]]
     return out
 
 
@@ -716,7 +773,25 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if not job_row or job_row["order_id"] != oid:
                 raise _err(f"task #{task_id} is not a job of order #{oid}", 404)
             station = station or job_row["station"]
-        derives = _ids(a.get("derives_from"), "derives_from")
+        derivation = _derivation(a.get("derives_from"))
+        derives = [d["piece"] for d in derivation]
+        sha = _sha256(path) if path else ""
+        supersedes = _int(a.get("supersedes"), "supersedes", required=False)
+        revision = 1
+        if path:
+            same = self.db.query("SELECT id, sha256 FROM agora_pieces WHERE order_id=? AND path=? ORDER BY revision DESC",
+                                 (oid, path))
+            for prev in same:
+                if sha and prev["sha256"] == sha:   # the same output registered again (a retry): the same piece
+                    return {"ok": True, "existing": True, "undo": None,
+                            "piece": _piece_dict(self, _piece_row(self, prev["id"]), full=True)}
+            if same and not supersedes:
+                supersedes = int(same[0]["id"])
+        if supersedes:
+            old = self.db.one("SELECT order_id, revision FROM agora_pieces WHERE id=?", (supersedes,))
+            if not old or old["order_id"] != oid:
+                raise _err(f"piece #{supersedes} is not a piece of order #{oid}", 404)
+            revision = int(old["revision"]) + 1
         decisions: list[int] = []
         for pid in derives:
             parent = self.db.one("SELECT order_id, decisions FROM agora_pieces WHERE id=?", (pid,))
@@ -727,18 +802,23 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if kept and kept["id"] not in decisions:
                 decisions.append(int(kept["id"]))
         keep_src = _strs(a.get("keep"), "keep") if a.get("keep") is not None else _load(order_row["keep"], [])
-        keep = [{"detail": d, "state": "pending"} for d in keep_src]
+        # every detail starts unchecked: inheriting a detail never inherits its approval
+        keep = [{"id": f"k{i + 1}", "detail": d, "source": "order" if a.get("keep") is None else "piece", "state": "pending"}
+                for i, d in enumerate(keep_src)]
         now = _now(self)
         pid = self.db.insert("agora_pieces", {
             "order_id": oid, "space_id": self.space_id, "kind": kind, "title": title, "path": path, "url": url,
             "app": app, "object": obj, "place": place, "previews": _dump(previews), "task_id": task_id,
             "station": station, "agent": _txt(a.get("by"), 80, "by") or agent, "model": _txt(a.get("model"), 120, "model"),
-            "derives_from": _dump(derives), "decisions": _dump(decisions), "keep": _dump(keep),
-            "note": _txt(a.get("note"), 4000, "note"), "status": "provisional", "created": now, "updated": now})
+            "derives_from": _dump(derivation), "decisions": _dump(decisions), "keep": _dump(keep),
+            "note": _txt(a.get("note"), 4000, "note"), "status": "provisional", "revision": revision, "sha256": sha,
+            "source_rev": _txt(a.get("source_rev"), 200, "source_rev"), "supersedes": supersedes,
+            "created": now, "updated": now})
         journal = _Journal(self, agent, "piece_add")
         journal.created("agora_pieces", pid)
-        stale_parent = self.db.one(f"SELECT id FROM agora_pieces WHERE id IN ({','.join('?' for _ in derives) or 'NULL'}) "
-                                   "AND status IN ('cancelled','stale') LIMIT 1", tuple(derives))
+        material = [d["piece"] for d in derivation if d["role"] == "material"]
+        stale_parent = self.db.one(f"SELECT id FROM agora_pieces WHERE id IN ({','.join('?' for _ in material) or 'NULL'}) "
+                                   "AND status IN ('cancelled','stale') LIMIT 1", tuple(material))
         if stale_parent:
             self.db.execute("UPDATE agora_pieces SET status='stale', stale_because=? WHERE id=?",
                             (f"deriva de la pieza #{stale_parent['id']}, cancelada o caduca", pid))
@@ -751,7 +831,8 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 
 def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """Note a check of a piece: what was looked at (note), whether it passed (ok) and, for each detail to keep, whether
-    it is there (keep: [{detail, ok, note}]). A passed check with every detail present marks the piece checked."""
+    it is there (keep: [{id or detail, state ok|missing|not_visible, how, evidence, note}]). A passed check with no
+    detail missing or unchecked marks the piece checked."""
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     note = _txt(a.get("note"), TEXT_MAX, "note", required=True)
     ok = a.get("ok", True) not in (False, "false", "0", 0)
@@ -766,22 +847,29 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         clean = []
         for mark in marks:
             if not isinstance(mark, dict):
-                raise _err("each keep mark is {detail, ok, note}")
-            detail = _txt(mark.get("detail"), 300, "keep.detail", required=True)
-            present = mark.get("ok", True) not in (False, "false", "0", 0)
-            item = next((k for k in keep if k["detail"] == detail), None)
+                raise _err("each keep mark is {detail or id, state or ok, how, evidence, note}")
+            key = _txt(mark.get("id"), 20, "keep.id")
+            detail = _txt(mark.get("detail"), 300, "keep.detail", required=not key)
+            item = next((k for k in keep if (key and k.get("id") == key) or (detail and k["detail"] == detail)), None)
             if item is None:
-                item = {"detail": detail}
+                if not detail:
+                    raise _err(f"no detail {key} on piece #{piece['id']}", 404)
+                item = {"id": f"k{len(keep) + 1}", "detail": detail, "source": "check"}
                 keep.append(item)
-            item.update({"state": "ok" if present else "missing", "by": agent,
-                         **({"note": _txt(mark.get("note"), 1000, "keep.note")} if mark.get("note") else {})})
-            clean.append({"detail": detail, "ok": present, "note": item.get("note", "")})
+            state = str(mark.get("state") or "").lower() or (
+                "ok" if mark.get("ok", True) not in (False, "false", "0", 0) else "missing")
+            if state not in DETAIL_STATES[1:]:
+                raise _err("keep state is ok, missing or not_visible")
+            item.update({"state": state, "by": agent, "check_rev": int(piece["revision"]),
+                         **{k: _txt(mark.get(k), 1000, f"keep.{k}") for k in ("note", "how", "evidence") if mark.get(k)}})
+            clean.append({"id": item["id"], "detail": item["detail"], "state": state,
+                          **{k: item[k] for k in ("note", "how", "evidence") if k in item}})
         cid = self.db.insert("agora_piece_checks", {"piece_id": piece["id"], "space_id": self.space_id, "agent": agent,
                                                     "ok": 1 if ok else 0, "note": note, "keep": _dump(clean),
                                                     "created": _now(self)})
         journal.created("agora_piece_checks", cid)
         status = piece["status"]
-        if ok and status == "provisional" and all(k.get("state") == "ok" for k in keep):
+        if ok and status == "provisional" and all(k.get("state") in ("ok", "not_visible") for k in keep):
             status = "checked"
         self.db.execute("UPDATE agora_pieces SET keep=?, status=?, updated=? WHERE id=?",
                         (_dump(keep), status, _now(self), piece["id"]))
@@ -791,7 +879,8 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 
 
 def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, note: str, *, view: str = "",
-               pose: str = "", at: str = "", step: str = "", source: str = "check", task_id: Optional[int] = None) -> int:
+               pose: str = "", at: str = "", step: str = "", expected: str = "", observed: str = "", evidence: str = "",
+               source: str = "check", task_id: Optional[int] = None) -> int:
     """Record a defect of a piece and tell the job that made it, in its task's thread."""
     target = task_id or piece.get("task_id")
     station = piece.get("station") or ""
@@ -803,6 +892,7 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
     did = self.db.insert("agora_piece_defects", {
         "piece_id": piece["id"], "order_id": piece["order_id"], "space_id": self.space_id, "task_id": target,
         "station": station, "agent": agent, "note": note, "view": view, "pose": pose, "at": at, "step": step,
+        "expected": expected, "observed": observed, "evidence": evidence,
         "source": source, "status": "open", "created": _now(self)})
     journal.created("agora_piece_defects", did)
     if target:
@@ -811,8 +901,11 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
             task = self._task_row(target)
             where = ", ".join(f"{k} {v}" for k, v in (("vista", view), ("pose", pose), ("segundo", at), ("paso", step)) if v)
             who = "Luis cancela" if source == "gate" else f"{agent} devuelve"
-            text = (f"{who} la pieza #{piece['id']} «{piece['title']}»" + (f" ({where})" if where else "") +
-                    f": {note}\nLas piezas que derivan de ella quedan caducas. Detalle: hub_agora_job con task_id {target}.")
+            text = (f"{who} la pieza #{piece['id']} «{piece['title']}» (revisión {piece.get('revision', 1)})"
+                    + (f" ({where})" if where else "") + f": {note}"
+                    + (f"\nEsperado: {expected}" if expected else "") + (f"\nObservado: {observed}" if observed else "")
+                    + (f"\nPrueba: {evidence}" if evidence else "")
+                    + f"\nDetalle: hub_agora_job con task_id {target}.")
             self._msg(int(task["thread_id"]), agent, "comment", text, [task["owner"]] if task.get("owner") else [])
             if task["status"] in ("review", "approved", "done"):
                 journal.task_status.append({"task_id": target, "status": task["status"]})
@@ -827,7 +920,8 @@ def _stale_below(self: Any, journal: _Journal, piece_id: int, order_id: int) -> 
     while frontier:
         current = frontier.pop()
         for r in rows:
-            if current in _load(r["derives_from"], []) and r["id"] not in stale and r["id"] != piece_id:
+            uses = any(d["piece"] == current and d["role"] == "material" for d in _parents(r["derives_from"]))
+            if uses and r["id"] not in stale and r["id"] != piece_id:
                 stale.append(r["id"])
                 frontier.append(r["id"])
                 if r["status"] not in ("cancelled", "stale"):
@@ -845,11 +939,39 @@ def piece_defect(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     with self.db.tx():
         piece = _piece_row(self, a.get("piece_id"))
         journal = _Journal(self, agent, "piece_defect")
-        did = _send_back(self, journal, piece, agent, note, **{k: _txt(a.get(k), 300, k) for k in ("view", "pose", "at", "step")},
+        did = _send_back(self, journal, piece, agent, note,
+                         **{k: _txt(a.get(k), 300, k) for k in ("view", "pose", "at", "step")},
+                         **{k: _txt(a.get(k), 4000, k) for k in ("expected", "observed", "evidence")},
                          task_id=_int(a.get("task_id"), "task_id", required=False))
         token = journal.save()
     self._bump("agora.order.defect", {"piece_id": piece["id"], "defect_id": did, "by": agent})
     return {"ok": True, "defect_id": did, "piece": _piece_dict(self, _piece_row(self, piece["id"]), full=True), "undo": token}
+
+
+def defect_close(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Close a defect once the same check passes again: fixed_in is the piece (the new revision) where it was
+    repeated, note says what was checked."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    note = _txt(a.get("note"), TEXT_MAX, "note", required=True)
+    did = _int(a.get("defect_id"), "defect_id")
+    with self.db.tx():
+        row = self.db.one("SELECT * FROM agora_piece_defects WHERE id=?", (did,))
+        if not row or row["space_id"] != self.space_id:
+            raise _err(f"no defect #{did} in space {self.space_id}", 404)
+        if row["status"] != "open":
+            raise _err(f"defect #{did} is already closed", 409)
+        fixed_in = _int(a.get("fixed_in"), "fixed_in", required=False)
+        if fixed_in:
+            p = self.db.one("SELECT order_id FROM agora_pieces WHERE id=?", (fixed_in,))
+            if not p or p["order_id"] != row["order_id"]:
+                raise _err(f"piece #{fixed_in} is not a piece of order #{row['order_id']}", 404)
+        journal = _Journal(self, agent, "defect_close")
+        journal.before("agora_piece_defects", did)
+        self.db.execute("UPDATE agora_piece_defects SET status='closed', closed_by=?, closed_in=?, closed_note=?, closed=? "
+                        "WHERE id=?", (agent, fixed_in, note, _now(self), did))
+        token = journal.save()
+    self._bump("agora.order.defect_closed", {"defect_id": did, "by": agent})
+    return {"ok": True, "defect": dict(self.db.one("SELECT * FROM agora_piece_defects WHERE id=?", (did,))), "undo": token}
 
 
 # ---- gates ------------------------------------------------------------------------------------------------
@@ -1017,9 +1139,10 @@ def piece_file(self: Any, piece_id: Any, *, preview: Any = None, rel: str = "") 
 OPERATIONS = {"order_create": order_create, "order_update": order_update, "orders": orders, "order": order,
               "plan_set": plan_set, "job": job, "piece_add": piece_add, "piece_check": piece_check,
               "piece_defect": piece_defect, "gate_open": gate_open, "gate_split": gate_split,
-              "gate_decide": gate_decide, "order_decisions": order_decisions, "order_undo": order_undo}
-WRITE_OPS = ("order_create", "order_update", "plan_set", "piece_add", "piece_check", "piece_defect", "gate_open",
-             "gate_split", "gate_decide", "order_undo")
+              "gate_decide": gate_decide, "order_decisions": order_decisions, "order_undo": order_undo,
+              "defect_close": defect_close}
+WRITE_OPS = ("order_create", "order_update", "plan_set", "piece_add", "piece_check", "piece_defect", "defect_close",
+             "gate_open", "gate_split", "gate_decide", "order_undo")
 READ_ROUTES = ("orders", "order", "job", "order_decisions")
 #: The person's decision has no tool: only their pages call it.
 NO_TOOL = ("gate_decide",)
@@ -1085,8 +1208,10 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
          "inputSchema": schema({"task_id": {"type": "integer", "minimum": 1}}, ["task_id"])},
         {"name": "hub_agora_piece_add",
          "description": "Register a piece of an order: kind, title, path (relative to the order's folder or absolute), "
-                        "url, or app + object + place; previews (images, e.g. turntable frames); task_id of the job "
-                        "that made it, model, derives_from and keep (defaults to the order's details)." + undo,
+                        "url, or app + object + place (+ source_rev); previews (e.g. turntable frames); task_id of the "
+                        "job that made it, model, derives_from ({piece, role: material|reference}) and keep (the "
+                        "order's details by default). Files get a content print: the same output again returns the "
+                        "same piece; a changed file at the same path is its next revision." + undo,
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "kind": kind,
                                 "title": {"type": "string", "maxLength": 200}, "path": {"type": "string", "maxLength": 1000},
                                 "url": {"type": "string", "maxLength": 2000}, "app": {"type": "string", "maxLength": 300},
@@ -1094,24 +1219,45 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "previews": {"type": "array", "items": {"type": "string", "maxLength": 1000}, "maxItems": 24},
                                 "task_id": {"type": "integer", "minimum": 1}, "station": {"type": "string", "maxLength": 120},
                                 "by": {"type": "string", "maxLength": 80, "description": "Who made it, when not you."},
-                                "model": {"type": "string", "maxLength": 120}, "derives_from": ids, "keep": texts,
+                                "model": {"type": "string", "maxLength": 120}, "keep": texts,
+                                "derives_from": {"type": "array", "maxItems": MAX_ITEMS, "items": {"anyOf": [
+                                    {"type": "integer", "minimum": 1},
+                                    {"type": "object", "additionalProperties": False, "required": ["piece"], "properties": {
+                                        "piece": {"type": "integer", "minimum": 1}, "role": {"type": "string", "enum": list(ROLES)},
+                                        "note": {"type": "string", "maxLength": 300}}}]}},
+                                "supersedes": {"type": "integer", "minimum": 1, "description": "The piece this one replaces."},
+                                "source_rev": {"type": "string", "maxLength": 200, "description": "Revision of an app object."},
                                 "note": {"type": "string", "maxLength": 4000}}, ["agent", "order_id", "kind", "title"])},
         {"name": "hub_agora_piece_check",
-         "description": "Note a check of a piece: what you looked at (note), ok, and per detail to keep whether it is "
-                        "there (keep: [{detail, ok, note}]). Passing with every detail present marks it checked." + undo,
+         "description": "Note a check of a piece: what you looked at (note), ok, and per detail to keep (by id or "
+                        "detail) its state ok, missing or not_visible, how you checked and the evidence. Passing with "
+                        "no detail missing or unchecked marks it checked." + undo,
          "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
                                 "ok": {"type": "boolean"},
                                 "keep": {"type": "array", "maxItems": 60, "items": {"type": "object", "additionalProperties": False,
-                                         "properties": {"detail": {"type": "string", "maxLength": 300}, "ok": {"type": "boolean"},
-                                                        "note": {"type": "string", "maxLength": 1000}}, "required": ["detail"]}}},
+                                         "properties": {"id": {"type": "string", "maxLength": 20},
+                                                        "detail": {"type": "string", "maxLength": 300}, "ok": {"type": "boolean"},
+                                                        "state": {"type": "string", "enum": list(DETAIL_STATES[1:])},
+                                                        "how": {"type": "string", "maxLength": 1000},
+                                                        "evidence": {"type": "string", "maxLength": 1000},
+                                                        "note": {"type": "string", "maxLength": 1000}}}}},
                                ["agent", "piece_id", "note"])},
         {"name": "hub_agora_piece_defect",
          "description": "Send a reproducible defect of a piece back to the job that caused it (task_id, default the "
-                        "job that made it): note plus view, pose, at (second) and step. Its task hears it in its thread." + undo,
+                        "job that made it): note, expected, observed, evidence, and view, pose, at (second) or step "
+                        "(slide, block, size). Its task hears it in its thread." + undo,
          "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
                                 "view": {"type": "string", "maxLength": 300}, "pose": {"type": "string", "maxLength": 300},
                                 "at": {"type": "string", "maxLength": 300}, "step": {"type": "string", "maxLength": 300},
+                                "expected": {"type": "string", "maxLength": 4000}, "observed": {"type": "string", "maxLength": 4000},
+                                "evidence": {"type": "string", "maxLength": 4000},
                                 "task_id": {"type": "integer", "minimum": 1}}, ["agent", "piece_id", "note"])},
+        {"name": "hub_agora_defect_close",
+         "description": "Close a defect when the same check passes again: fixed_in is the piece (new revision) where "
+                        "it was repeated, note what was checked." + undo,
+         "inputSchema": schema({"agent": agent_prop, "defect_id": {"type": "integer", "minimum": 1},
+                                "fixed_in": {"type": "integer", "minimum": 1}, "note": {"type": "string", "maxLength": TEXT_MAX}},
+                               ["agent", "defect_id", "note"])},
         {"name": "hub_agora_gate_open",
          "description": "Show pieces of an order to the person for one keep-or-cancel decision, made on their page; the "
                         "order waits for it. Pieces not yet decided can keep moving as provisional." + undo,

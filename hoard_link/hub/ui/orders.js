@@ -89,7 +89,7 @@
         break;
       }
       case "mesh":
-        box.append(el("p", "ord-media-note", tr("Modelo sin vistas de giro: ", "Model without turntable views: ") + baseName(piece.path)));
+        box.append(el("p", "ord-media-note", tr("Sin vista previa: ", "No preview: ") + baseName(piece.path)));
         break;
       case "object":
         box.append(el("p", "ord-media-note", [piece.app, piece.object, piece.place].filter(Boolean).join(" · ")));
@@ -113,9 +113,11 @@
     ul.setAttribute("aria-label", tr("Detalles a conservar", "Details to keep"));
     for (const k of piece.keep) {
       const li = el("li", "ord-keep-" + (k.state || "pending"));
-      const mark = { ok: tr("comprobado", "checked"), missing: tr("falta", "missing"), pending: tr("sin comprobar", "not checked") }[k.state || "pending"];
+      const mark = { ok: tr("comprobado", "checked"), missing: tr("falta", "missing"), pending: tr("sin comprobar", "not checked"),
+        not_visible: tr("no se ve aquí", "not visible here") }[k.state || "pending"];
       li.append(el("span", "ord-keep-dot"), el("span", "", k.detail), el("small", "", mark));
-      if (k.note) li.title = k.note;
+      const why = [k.how, k.evidence, k.note].filter(Boolean).join(" · ");
+      if (why) li.title = why;
       ul.append(li);
     }
     return ul;
@@ -272,13 +274,21 @@
       const cap = el("figcaption");
       const line = el("div", "ord-piece-line");
       line.append(el("b", "", p.title), pill(label(PIECE_STATE, p.status), "state-" + p.status));
-      cap.append(line, el("small", "ord-muted", label(KIND, p.kind) + (p.station ? " · " + p.station : "") + (p.model ? " · " + p.model : "")));
-      if (p.derives_from?.length) cap.append(el("small", "ord-muted", tr("Deriva de ", "Derives from ") + p.derives_from.map(id => byId[id]?.title || "#" + id).join(", ")));
+      cap.append(line, el("small", "ord-muted", label(KIND, p.kind) + (p.revision > 1 ? tr(` · revisión ${p.revision}`, ` · revision ${p.revision}`) : "") +
+        (p.station ? " · " + p.station : "") + (p.model ? " · " + p.model : "")));
+      const named = role => (p.derivation || []).filter(d => d.role === role).map(d => byId[d.piece]?.title || "#" + d.piece).join(", ");
+      if (named("material")) cap.append(el("small", "ord-muted", tr("Hecha a partir de ", "Made from ") + named("material")));
+      if (named("reference")) cap.append(el("small", "ord-muted", tr("Mirando ", "Looking at ") + named("reference")));
+      if (p.provenance === "unspecified") cap.append(el("small", "ord-muted", tr("Procedencia sin precisar", "Provenance not given")));
       if (p.stale_because) cap.append(el("small", "ord-warn", p.stale_because));
+      for (const w of p.warnings || []) cap.append(el("small", "ord-warn", w));
       const kl = keepList(p); if (kl) cap.append(kl);
       for (const d of (p.defects || []).filter(d => d.status === "open")) {
         const pos = [d.view && tr("vista ", "view ") + d.view, d.pose && "pose " + d.pose, d.at && tr("segundo ", "second ") + d.at, d.step && tr("paso ", "step ") + d.step].filter(Boolean).join(", ");
-        cap.append(el("small", "ord-defect", (d.source === "gate" ? tr("Cancelada: ", "Cancelled: ") : tr("Defecto: ", "Defect: ")) + d.note + (pos ? ` (${pos})` : "")));
+        const line = el("small", "ord-defect", (d.source === "gate" ? tr("Cancelada por ti: ", "Cancelled by you: ") : tr("Defecto: ", "Defect: ")) + d.note + (pos ? ` (${pos})` : ""));
+        const more = [d.expected && tr("esperado: ", "expected: ") + d.expected, d.observed && tr("observado: ", "observed: ") + d.observed, d.evidence && tr("prueba: ", "evidence: ") + d.evidence].filter(Boolean).join(" · ");
+        if (more) line.title = more;
+        cap.append(line);
       }
       const loc = where(p); if (loc) { const s = el("small", "ord-path", baseName(loc) || loc); s.title = loc; cap.append(s); }
       card.append(cap);
