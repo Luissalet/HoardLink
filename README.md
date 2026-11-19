@@ -64,6 +64,7 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 - Models for every app over HTTP (`/api/link/chat`, `/api/link/status`) so Node apps share the same resolution, leases and reasoning effort.
 - Instances: a second copy of an app on another data folder can speak as the app.
 - Fleet view that reconciles declared apps, jobs, rules and watchers into Today, Waiting for you, Blocked and Paused.
+- Production station catalogue and chain planning from manifest-declared piece types, skills and checks. Agents can check the app proxy and list or switch native modules with undo.
 
 **Agora**
 - The shared workspace of the coding agents and the person: heartbeats, tasks (open, claimed, in progress, review, approved, done) with all-or-nothing locks, threads, debates with evidence, decision log, reviews bound to submission revisions (with the diff of the delivery, comments on its lines sent to whoever delivered, and a guided review that orders the diff into chapters with the family's model), checkpoints, timelines and an inbox with long poll.

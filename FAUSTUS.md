@@ -161,6 +161,13 @@ Saved connector commands, environment, disabled preferences and PC browser URLs
 retain their meaning. Legacy MCP rows whose command exactly matches a family
 manifest can use the relay through `/api/mcp/resolve`.
 
+The separate HTTP tool proxy supports array and envelope catalogues and preserves
+tool-level not-found replies. `hub_proxy_check` reports catalogue reachability
+across the installed Hoards without starting them. `hub_station_catalog` reads
+manifest handoffs and proposes chains of compatible piece types. `hub_modules`
+and `hub_module_set` use declared native module switches and return an undo
+request for a change. See [the Hub reference](docs/HUB.md#production-stations).
+
 ## Faustus workers from Agora
 
 The console discovers Faustus through the same placement state published by

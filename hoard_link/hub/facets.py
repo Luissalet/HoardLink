@@ -49,6 +49,7 @@ FACET_MODULES = (
     "workspace",
     "resources",
     "capabilities",
+    "production",
     "skills",
     "mcp_relay",
     "instances",

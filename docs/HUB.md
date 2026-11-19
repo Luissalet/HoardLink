@@ -47,6 +47,9 @@ python -m hoard_link.hub --autostart-status
 
 ## App windows
 
+A process launch hint may declare `opens_window: true` when a source launcher
+opens the app's native window itself.
+
 `POST /api/apps/<id>/open` (`hub_open_app`, the **Open window** button)
 opens the app's UI as a desktop window through one of two routes, picked by
 `window_engine` in `data/hub.json` (`HOARD_HUB_WINDOW_ENGINE`):
@@ -530,6 +533,36 @@ Their settings live next to the others in the hub's data folder:
 `mail.db` holds mail text for `retention_days` (60): add `mail.db` to `backup.exclude` if mail should not be
 copied by backups. The references for every route and tool are in [docs/facets/](facets/). The **Sesiones de agente** facet
 ([agent-sessions.md](facets/agent-sessions.md)) has no file of its own: it reads the write journals of the apps.
+
+## Production stations
+
+A Hoard records its production handoffs in `x-family.production.handoffs` in
+`faustus-plugin.json`. Each handoff has one input type (`accepts`), one or more
+output types (`produces`), a skill slug (`skill`), and a verification instruction
+in `check.en` and `check.es`. Piece types are stable identifiers shared between
+manifests. For example, a station that produces `editable-report` can feed one
+that accepts `editable-report`.
+
+- `hub_station_catalog` lists declared handoffs. Pass `from_type` and `to_type`
+  for compatible chains, shortest first. Each step includes the Hoard, skill
+  and verification instructions. An empty `chains` list means no declared route.
+  The planner reads declarations and leaves execution and piece transfer to agents.
+- `hub_proxy_check` checks catalogue reachability for the installed Hoards through
+  the same adapter as `GET /api/apps/<id>/tools`. It reports the HTTP status,
+  tool count and any failure per Hoard. The check leaves stopped apps stopped
+  and does not invoke their tools.
+- `hub_modules` reads native module state. A Hoard declares its module groups in
+  `x-family.module_controls` with native `list` and `set` tool names and an
+  optional `name_field` (the default is `module`). A list tool returns a
+  `modules` array. A switch tool takes `module`, `enabled` and, when supported,
+  `automatic`. Set `automatic: false` on the **declaration** if the native
+  switch has no such argument.
+- `hub_module_set` changes one declared module using its native switch.
+  Supply the app, module, desired state and a reason. Pass the group if a name
+  appears twice. The response from a change includes an `undo` tool request that
+  restores the previous state if the enabled flag still matches the change.
+  The switch passes the current automatic setting to the native app. If the app
+  resets that setting when it stops a module, the undo request restores it.
 
 ## Shared copilot
 

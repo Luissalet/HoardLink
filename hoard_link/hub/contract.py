@@ -159,6 +159,11 @@ def app_tools(app: App, timeout: float = 5.0) -> dict[str, Any]:
     if status == 200 and isinstance(body, dict) and isinstance(body.get("tools"), list):
         return {"ok": True, "app": app.id, "contract": "shared", "tools": body["tools"],
                 "instructions": body.get("instructions", "")}
+    if status == 200 and isinstance(body, list):
+        return {"ok": True, "app": app.id, "contract": "shared", "tools": body, "instructions": ""}
+    if status == 200:
+        return {"ok": False, "app": app.id, "contract": "unknown", "status": status,
+                "error": "/api/agent/tools returned an invalid catalogue"}
     return {"ok": False, "app": app.id, "contract": "per-tool" if status == 404 else "unknown",
             "status": status, "error": f"/api/agent/tools answered {status}"}
 
@@ -198,7 +203,7 @@ def call_app(app: App, tool: str, arguments: Optional[dict[str, Any]] = None, *,
         headers["X-Agent-Session"] = session_id
     status, body = _post(app.url + "/api/agent/call", payload, token, timeout, headers)
     contract = "shared"
-    if status == 404 and not (isinstance(body, dict) and _is_unknown_tool(body)):
+    if status == 404 and _missing_route(body):
         # No shared route: the per-tool shape of the first six apps.
         contract = "per-tool"
         status, body = _post(app.url + f"/api/agent/{tool}", args, token, timeout)
@@ -224,9 +229,11 @@ def call_app(app: App, tool: str, arguments: Optional[dict[str, Any]] = None, *,
     return out
 
 
-def _is_unknown_tool(body: dict[str, Any]) -> bool:
-    text = _error_text(body).lower()
-    return "tool" in text and ("unknown" in text or "no existe" in text or "not found" in text or "desconoc" in text)
+def _missing_route(body: Any) -> bool:
+    if body is None or body == {"detail": "Not Found"}:
+        return True
+    error = _error_text(body).strip().lower()
+    return error == "not found" or error.startswith(("<!doctype html", "<html"))
 
 
 def _error_text(body: Any) -> str:
