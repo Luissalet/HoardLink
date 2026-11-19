@@ -73,6 +73,7 @@ import email.utils
 import json
 import logging
 import mimetypes
+import errno
 import os
 import select
 import socket
@@ -107,6 +108,12 @@ class _BodyTooLarge(ValueError):
     pass
 
 
+def _client_disconnected(exc: BaseException) -> bool:
+    return (isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError))
+            or getattr(exc, "winerror", None) in (10053, 10054)
+            or getattr(exc, "errno", None) in (errno.EPIPE, errno.ECONNRESET, errno.ECONNABORTED))
+
+
 def make_server(hub: Hub, host: str = "127.0.0.1", port: Optional[int] = None) -> ThreadingHTTPServer:
     port = hub.config.port if port is None else port
 
@@ -128,15 +135,28 @@ class _HubHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:  # quieter than the default
         logger.debug("%s " + fmt, self.address_string(), *args)
 
+    def handle_one_request(self) -> None:
+        try:
+            super().handle_one_request()
+        except OSError as exc:
+            if not _client_disconnected(exc):
+                raise
+            self.close_connection = True
+
     def _json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+        except OSError as exc:
+            if not _client_disconnected(exc):
+                raise
+            self.close_connection = True
 
     def _file(self, path: str, cache: bool = False) -> None:
         if not os.path.isfile(path):
@@ -586,6 +606,9 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return self._json(res, 200 if res.get("ok") else 502)
             return self._json({"ok": False, "error": "not found"}, 404)
         except Exception as exc:  # noqa: BLE001
+            if _client_disconnected(exc):
+                self.close_connection = True
+                return None
             logger.exception("GET %s failed", path)
             return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
 
@@ -814,6 +837,9 @@ class _HubHandler(BaseHTTPRequestHandler):
         except _BodyTooLarge:
             return self._json({"ok": False, "error": "body too large"}, 413)
         except Exception as exc:  # noqa: BLE001
+            if _client_disconnected(exc):
+                self.close_connection = True
+                return None
             logger.exception("POST %s failed", path)
             return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
 

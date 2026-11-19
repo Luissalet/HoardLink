@@ -726,6 +726,9 @@ class Hub:
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}", "apps": [a.id for a in self.apps]}
         args = arguments if isinstance(arguments, dict) else {}
+        shelf = self.facet("skills")
+        if shelf is not None and tool in ("skills_list", "skill_read"):
+            return shelf.proxy_read(app, tool, args)
         given = reason if isinstance(reason, str) and reason.strip() else args.get("reason")
         if not (isinstance(given, str) and given.strip()) and caller != "hub-tool":
             given = default_call_reason(agent if agent and agent != caller else caller)

@@ -96,14 +96,19 @@ def build_usage_report(account: Mapping[str, Any], rate_limits: Mapping[str, Any
     if not isinstance(account, Mapping):
         raise CodexCapacityError("account_unavailable")
     pool_id = _pool_id(account)
-    buckets = rate_limits.get("rateLimitsByLimitId")
-    if not isinstance(buckets, Mapping) or not buckets:
-        legacy = rate_limits.get("rateLimits")
-        if isinstance(legacy, Mapping):
-            fallback_id = legacy.get("limitId") or "codex"
-            buckets = {_limit_id(fallback_id): legacy}
-        else:
-            raise CodexCapacityError("rate_limits_unavailable")
+    scoped = rate_limits.get("rateLimitsByLimitId")
+    buckets = {_limit_id(value.get("limitId") or key): dict(value)
+               for key, value in scoped.items() if isinstance(value, Mapping)} if isinstance(scoped, Mapping) else {}
+    legacy = rate_limits.get("rateLimits")
+    if isinstance(legacy, Mapping):
+        key = _limit_id(legacy.get("limitId"))
+        current = buckets.setdefault(key, {})
+        # Some app-server versions omit a period or the account bucket in the scoped map.
+        for period in ("primary", "secondary"):
+            if not isinstance(current.get(period), Mapping) and isinstance(legacy.get(period), Mapping):
+                current[period] = legacy[period]
+    if not buckets:
+        raise CodexCapacityError("rate_limits_unavailable")
 
     observed_at = time.time() if now is None else float(now)
     windows: list[dict[str, Any]] = []

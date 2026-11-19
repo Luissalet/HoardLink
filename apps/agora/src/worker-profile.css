@@ -29,7 +29,9 @@
 .worker-profile-content h2 { font-size: 19px; font-weight: 650; }
 .worker-profile-content fieldset { border: 0; padding: 0; margin: 16px 0 0; min-inline-size: 0; }
 .worker-profile-content label { display: grid; gap: 6px; font-weight: 600; }
-.worker-profile-content textarea {
+.worker-profile-content textarea,
+.worker-profile-auto select,
+.worker-profile-auto input[type='text'] {
   width: 100%;
   min-width: 0;
   padding: 9px 10px;
@@ -39,6 +41,9 @@
   color: inherit;
   font-weight: 400;
   line-height: 1.45;
+}
+
+.worker-profile-content textarea {
   resize: vertical;
 }
 
@@ -48,7 +53,7 @@
 .worker-profile-content p { margin-top: 6px; color: var(--muted); overflow-wrap: anywhere; }
 .worker-profile-content [role='alert'] { color: #edb6a6; }
 .worker-profile-auto { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 18px; }
-.worker-profile-auto label { display: flex; gap: 9px; align-items: center; margin-top: 9px; }
+.worker-profile-auto > label:has(input[type='checkbox']) { display: flex; gap: 9px; align-items: center; margin-top: 9px; }
 .worker-profile-auto input { accent-color: var(--accent); }
 .worker-profile-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 20px 0 8px; }
 .worker-profile-jobs ul { list-style: none; padding: 0; }
@@ -59,7 +64,7 @@
 
 @media (max-width: 680px) {
   .worker-profile-content { grid-template-columns: minmax(0, 1fr); }
-  .worker-profile-content textarea { font-size: 16px; }
+  .worker-profile-content textarea, .worker-profile-auto select, .worker-profile-auto input[type='text'] { font-size: 16px; }
   .worker-profile-paths { grid-template-columns: minmax(0, 1fr); }
   .topbar .worker-profile-trigger { padding-inline: 5px; }
 }

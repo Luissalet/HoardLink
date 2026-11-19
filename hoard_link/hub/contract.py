@@ -52,7 +52,10 @@ def read_token(path: str) -> str:
     except OSError:
         tok = ""
     with _lock:
-        _token_cache[path] = (now, tok)
+        if tok:
+            _token_cache[path] = (now, tok)
+        else:
+            _token_cache.pop(path, None)
     return tok
 
 
@@ -113,8 +116,13 @@ def _get(url: str, token: str, timeout: float) -> tuple[Optional[int], Any]:
         except Exception:  # noqa: BLE001
             raw = b""
         status = exc.code
-    except Exception:  # noqa: BLE001
-        return None, None
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        return None, {"transport": "timeout" if isinstance(reason, TimeoutError) else "connection_failed"}
+    except TimeoutError:
+        return None, {"transport": "timeout"}
+    except OSError:
+        return None, {"transport": "connection_failed"}
     try:
         return status, json.loads(raw.decode("utf-8", "replace")) if raw else None
     except ValueError:
@@ -155,7 +163,9 @@ def app_tools(app: App, timeout: float = 5.0) -> dict[str, Any]:
     token = read_token(app.token_file)
     status, body = _get(app.url + "/api/agent/tools", token, timeout)
     if status is None:
-        return {"ok": False, "app": app.id, "error": "not reachable", "contract": "unknown"}
+        transport = body.get("transport", "connection_failed") if isinstance(body, dict) else "connection_failed"
+        return {"ok": False, "app": app.id, "error": "probe timed out" if transport == "timeout" else "not reachable",
+                "contract": "unknown", "transport": transport}
     if status == 200 and isinstance(body, dict) and isinstance(body.get("tools"), list):
         return {"ok": True, "app": app.id, "contract": "shared", "tools": body["tools"],
                 "instructions": body.get("instructions", "")}

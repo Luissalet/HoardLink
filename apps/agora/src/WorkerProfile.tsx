@@ -17,6 +17,7 @@ type Profile = {
   folders: string[];
   repositories: string[];
   auto_review: boolean;
+  review_runner?: Partial<{provider: string; model: string; effort: string}>;
 };
 type ProfileReply = {profile: Profile; templates: WorkerTemplates};
 type Job = {
@@ -41,6 +42,10 @@ const copy = {
     lengthError: 'Acorta el perfil hasta un máximo de 8000 caracteres.',
     loading: 'Cargando perfil…', review: 'Revisión automática', enable: 'Revisar automáticamente las nuevas entregas',
     automationHelp: 'El Ágora busca un revisor de otro proveedor con cuota medida. Si pide cambios y el autor no está, arranca un relevo.',
+    reviewProvider: 'Proveedor de revisión', reviewModel: 'Identificador del modelo de revisión',
+    reviewEffort: 'Esfuerzo de revisión', reviewEconomical: 'Automático (bajo coste)',
+    reviewRunnerError: 'Indica un modelo y un esfuerzo compatibles con el proveedor de revisión.',
+    effortLabels: {minimal: 'Mínimo', low: 'Bajo', medium: 'Medio', high: 'Alto', xhigh: 'Muy alto', max: 'Máximo', default: 'Predeterminado'},
     reviews: 'Revisiones y relevos', empty: 'Aún no hay revisiones automáticas.', jobsLoading: 'Cargando revisiones…',
     reviewJob: 'Revisión', fixJob: 'Relevo', cancel: 'Cancelar turno', cancelling: 'Cancelando…',
     jobsError: 'No se pudieron cargar las revisiones.', cancelError: 'No se pudo cancelar el turno.',
@@ -69,6 +74,10 @@ const copy = {
     lengthError: 'Shorten the profile to 8000 characters or fewer.',
     loading: 'Loading profile…', review: 'Automatic review', enable: 'Automatically review new submissions',
     automationHelp: 'Agora looks for a reviewer from another provider with measured quota. If the reviewer requests changes and the author is away, Agora starts a replacement.',
+    reviewProvider: 'Review provider', reviewModel: 'Review model ID',
+    reviewEffort: 'Review effort', reviewEconomical: 'Automatic (low cost)',
+    reviewRunnerError: 'Enter a model and effort supported by the review provider.',
+    effortLabels: {minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Very high', max: 'Maximum', default: 'Default'},
     reviews: 'Reviews and handovers', empty: 'No automatic reviews yet.', jobsLoading: 'Loading reviews…',
     reviewJob: 'Review', fixJob: 'Handover', cancel: 'Cancel turn', cancelling: 'Cancelling…',
     jobsError: 'Could not load the reviews.', cancelError: 'Could not cancel the turn.',
@@ -98,6 +107,7 @@ function saveError(cause: unknown) {
   if (message.includes('profile changed')) return words.revisionError;
   if (message.includes('single-line paths')) return words.pathsError;
   if (message.includes('8000 characters')) return words.lengthError;
+  if (message.includes('Review runner')) return words.reviewRunnerError;
   return words.saveError;
 }
 
@@ -226,6 +236,28 @@ export function WorkerProfile({onClose}: {onClose: () => void}) {
               <label><input type="checkbox" checked={profile.auto_review} aria-describedby="worker-profile-auto-help"
                 onChange={event => update({auto_review: event.target.checked})}/>{words.enable}</label>
               <p id="worker-profile-auto-help">{words.automationHelp}</p>
+              <label>{words.reviewProvider}
+                <select value={profile.review_runner?.provider || ''} onChange={event => update({
+                  review_runner: event.target.value ? {provider: event.target.value, model: '', effort: 'low'} : {},
+                })}>
+                  <option value="">{words.reviewEconomical}</option>
+                  <option value="claude">Claude</option>
+                  <option value="codex">Codex</option>
+                  <option value="cursor">Cursor</option>
+                  <option value="faustus">Faustus</option>
+                </select>
+              </label>
+              {profile.review_runner?.provider && <div className="worker-profile-paths">
+                <label>{words.reviewModel}<input type="text" required maxLength={120} value={profile.review_runner.model || ''}
+                  onChange={event => update({review_runner: {...profile.review_runner, model: event.target.value}})}/></label>
+                <label>{words.reviewEffort}
+                  <select value={profile.review_runner.effort || 'low'}
+                    onChange={event => update({review_runner: {...profile.review_runner, effort: event.target.value}})}>
+                    {Object.entries(words.effortLabels).map(([effort, label]) =>
+                      <option key={effort} value={effort}>{label}</option>)}
+                  </select>
+                </label>
+              </div>}
             </div>
           </fieldset>
           <div className="worker-profile-actions">
