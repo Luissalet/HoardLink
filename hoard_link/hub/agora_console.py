@@ -31,8 +31,8 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
-from . import agora_liveness
-from . import agora_ranks
+from . import agora_auto_review, agora_liveness, agora_ranks, agora_worker_profiles
+from .agora_capacity import codex_executable, codex_observation
 from .agora_leader_state import build_leader_states, resolve_paths
 from .facets import Facet, Reply, Request
 
@@ -101,6 +101,7 @@ class AgoraConsoleFacet(Facet):
         self._leader_threads: dict[str, threading.Thread] = {}
         self._wakeups: dict[str, threading.Timer] = {}
         self._init_db()
+        self._auto_review = agora_auto_review.AutoReview(self)
         self._reconcile_workers()
         self._start_queued_leaders()
         self._capacity_reporter_started = False
@@ -115,11 +116,12 @@ class AgoraConsoleFacet(Facet):
                     self.for_space(space['id'])
         for view in (self, *self._space_views.values()):
             view._start_worker_recovery()
+        self._auto_review.start()
         config = getattr(self.hub, "config", None)
         hub_url = str(getattr(config, "url", "") or "").rstrip("/")
         data_dir = str(getattr(config, "data_dir", "") or "")
         token_file = str(getattr(config, "token_file", "") or "")
-        if not (hub_url and data_dir and token_file):
+        if not (hub_url and data_dir and token_file) or "PYTEST_CURRENT_TEST" in os.environ:
             return
         try:
             from .agora_capacity import start_codex_capacity_reporter
@@ -136,8 +138,7 @@ class AgoraConsoleFacet(Facet):
             self._capacity_reporter_started = True
         except Exception:
             logger.info("Codex quota reporter could not start", exc_info=False)
-        if (os.environ.get("HOARD_AGORA_ACCOUNT_USAGE", "1").strip().lower() in ("0", "false", "off", "no")
-                or "PYTEST_CURRENT_TEST" in os.environ):  # tests never read real accounts
+        if os.environ.get("HOARD_AGORA_ACCOUNT_USAGE", "1").strip().lower() in ("0", "false", "off", "no"):
             return
         try:
             # Claude and Cursor quotas, read like unified usage trackers do (agora_capacity_accounts).
@@ -150,6 +151,8 @@ class AgoraConsoleFacet(Facet):
 
     def close(self) -> None:
         self._recovery_stop.set()
+        if self.space_id == 'ecosystem':
+            self._auto_review.close()
         for view in list(self._space_views.values()):
             view.close()
         self._space_views.clear()
@@ -179,18 +182,7 @@ class AgoraConsoleFacet(Facet):
 
     @staticmethod
     def _codex_executable() -> Optional[str]:
-        found = shutil.which("codex")
-        if found:
-            return found
-        local_app_data = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
-        install_root = local_app_data / "OpenAI" / "Codex" / "bin"
-        try:
-            installed = list(install_root.glob("*/codex.exe"))
-        except OSError:
-            installed = []
-        if not installed:
-            return None
-        return str(max(installed, key=lambda path: path.stat().st_mtime))
+        return codex_executable()
 
     @contextmanager
     def _db(self):
@@ -256,6 +248,7 @@ class AgoraConsoleFacet(Facet):
             for name, declaration in (("launch_command", "TEXT NOT NULL DEFAULT ''"), ("launch_cwd", "TEXT NOT NULL DEFAULT ''"),
                                       ("retry_count", "INTEGER NOT NULL DEFAULT 0"), ("runtime_endpoint", "TEXT NOT NULL DEFAULT ''"),
                                       ("runtime_pid", "INTEGER"), ("runtime_started_at", "REAL"),
+                                      ("template", "TEXT NOT NULL DEFAULT ''"),
                                       ("verification", "TEXT NOT NULL DEFAULT ''")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE workers ADD COLUMN {name} {declaration}")
@@ -289,6 +282,8 @@ class AgoraConsoleFacet(Facet):
             session_columns = {row[1] for row in db.execute("PRAGMA table_info(leader_sessions)")}
             if "workspace" not in session_columns:
                 db.execute("ALTER TABLE leader_sessions ADD COLUMN workspace TEXT NOT NULL DEFAULT ''")
+            agora_worker_profiles.init(db)
+            agora_auto_review.init(db)
 
     def _record(self, kind: str, subject: str, state: str, detail: str = "") -> None:
         with self._db_lock, self._db() as db:
@@ -793,7 +788,10 @@ class AgoraConsoleFacet(Facet):
         if worker["outcome"] == "hub_restart_stopping" or summary.get("stop") == "cancelled":
             state, outcome, detail = "stopped", "cancelled", "Turno detenido antes de recuperar el Hub."
         elif not verification["issues"]:
-            state, outcome, detail = "completed", "submitted", "Entrega comprobada en el Ágora tras recuperar el Hub."
+            if verification.get("verdict"):
+                state, outcome, detail = "completed", "reviewed", "Voto de revisión comprobado tras recuperar el Hub."
+            else:
+                state, outcome, detail = "completed", "submitted", "Entrega comprobada en el Ágora tras recuperar el Hub."
         elif summary.get("stop") == "answered":
             state, outcome, detail = "incomplete", "incomplete", "El turno terminó durante el reinicio del Hub. Entrega incompleta."
         elif summary.get("stop") == "inactivity":
@@ -933,6 +931,9 @@ class AgoraConsoleFacet(Facet):
         with self._db_lock, self._db() as db:
             prior = db.execute("SELECT session_id,workspace FROM leader_sessions WHERE leader_id=?", (leader_id,)).fetchone()
         session_id = str(prior["session_id"] or "") if prior else ""
+        prompt = turn["prompt"]
+        if not session_id:
+            prompt += agora_worker_profiles.briefing(agora_worker_profiles.read(self), "")
         use_saved_cwd = False
         cursor_workspace = work_dir
         if leader_id == "codex":
@@ -948,12 +949,12 @@ class AgoraConsoleFacet(Facet):
                            "--config", f'model_reasoning_effort="{turn["effort"]}"',
                            "--config", 'approval_policy="never"',
                            "--config", 'sandbox_mode="danger-full-access"',
-                           session_id, "--output-last-message", str(result_path), turn["prompt"]]
+                           session_id, "--output-last-message", str(result_path), prompt]
             else:
                 command = [executable, "exec", "--json", "--model", turn["model"], "--config",
                            f'model_reasoning_effort="{turn["effort"]}"', "--config", 'approval_policy="never"',
                            "--sandbox", "danger-full-access", "--worktree",
-                           "--cd", str(work_dir), "--output-last-message", str(result_path), turn["prompt"]]
+                           "--cd", str(work_dir), "--output-last-message", str(result_path), prompt]
                 use_saved_cwd = True
         else:
             runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
@@ -981,7 +982,7 @@ class AgoraConsoleFacet(Facet):
                 command.extend(["--resume", session_id, "--trust", "--force", "--"])
             else:
                 command.extend([f"--worktree={self._cursor_worktree_name(turn_id)}", "--trust", "--force", "--"])
-            command.append(turn["prompt"])
+            command.append(prompt)
         observer_done = threading.Event()
         observer = threading.Thread(target=self._observe_leader_session, args=(turn_id, leader_id, log_path, observer_done),
                                     daemon=True, name=f"agora-session-observer-{leader_id}")
@@ -1383,6 +1384,7 @@ class AgoraConsoleFacet(Facet):
             worker.update({key: observed.get(key) for key in ("declared_model", "declared_effort", "declared_at")})
         return {"ok": True, "thread_id": self.thread_id, "leaders": leaders,
                 "agents": list(agents.values()), "workers": workers, "quota_pools": usage.get("providers", []),
+                "capacity_observations": {"codex": codex_observation()},
                 "activity": activity, "messages": messages, "console_turns": console_turns,
                 "console_sessions": console_sessions, "native_preferences": native_preferences,
                 "checked_at": time.time()}
@@ -2048,22 +2050,25 @@ class AgoraConsoleFacet(Facet):
         return {"ok": True, "thread_id": self.thread_id, "message_id": message_id, "author": actor,
                 "dispatch": dispatch, "delivery_semantics": "queued; a mention does not wake an idle agent immediately"}
 
-    def _create_worker(self, args: dict[str, Any], actor: str = "codex-console") -> dict[str, Any]:
+    def _create_worker(self, args: dict[str, Any], actor: str = "codex-console", *,
+                       worker_id: Optional[str] = None) -> dict[str, Any]:
         reserved: list[str] = []
         try:
-            return self._create_worker_now(args, actor, reserved)
+            return self._create_worker_now(args, actor, reserved, worker_id or str(uuid.uuid4()))
         finally:
             with _STARTING_LOCK:
                 _STARTING_NAMES.difference_update(reserved)
 
-    def _create_worker_now(self, args: dict[str, Any], actor: str, reserved: list[str]) -> dict[str, Any]:
+    def _create_worker_now(self, args: dict[str, Any], actor: str, reserved: list[str], worker_id: str) -> dict[str, Any]:
         leader_id = str(args.get("leader_id") or "").strip().lower()
         model = str(args.get("model") or "").strip()
         effort = str(args.get("effort") or "").strip().lower()
         task = str(args.get("task") or "").strip()
+        template = str(args.get("template") or "").strip()
+        if template and template not in agora_worker_profiles.TEMPLATES:
+            return {"ok": False, "status": 400, "error": "template must be build, probe, review or integrate"}
         if leader_id not in {row[0] for row in LEADERS} or not task or len(task) > MAX_TASK_CHARS:
             return {"ok": False, "status": 400, "error": f"leader_id and task (1-{MAX_TASK_CHARS} characters) are required"}
-        worker_id = str(uuid.uuid4())
         agent_id = f"{leader_id}-worker-{worker_id[:8]}"
         # The session may come in under a name of its own choosing (the page proposes one and the person may change
         # it) and with a rank on this server. A rank is the person's to give: started by anyone else, the session
@@ -2151,15 +2156,28 @@ class AgoraConsoleFacet(Facet):
                   f"{self.space_id} ranks` says what a rank decides and who holds which). "
                   "At the start, use `E:\\Development\\IA\\agora.cmd "
                   f"--space {self.space_id} --as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Read `E:\\Development\\IA\\CRITERIOS.md` "
-                  "before `E:\\Development\\IA\\MEMORY.md`, then read the repository's AGENTS.md. Before changing a repository, "
-                  "create or claim an Agora task under your identity and take the required path locks. Work only in an "
-                  "isolated worktree and follow repository skills. Do not claim results that are not supported by your work; "
-                  "Before ending, commit all work you made (English messages as Luissalet, no trailers, no push) and submit "
-                  "each claimed task with `agora.cmd --space "
-                  f"{self.space_id} --as {agent_id} submit TASK_ID --commits HASHES --summary-file FILE`. "
-                  "Ending the provider turn without an Agora delivery is incomplete. If blocked, report the exact cause "
-                  "in the task thread and preserve the session/worktree. Return concrete evidence.\n\n"
-                  f"Task: {task}")
+                  "before `E:\\Development\\IA\\MEMORY.md`, then read the repository's AGENTS.md. ")
+        if leader_id == "claude":
+            prompt += "Your session starts in a folder that is not a repository; make an isolated worktree of the task repository. "
+        prompt += "Work only in an isolated worktree and follow repository skills. "
+        if template == "review":
+            prompt += (
+                "Never edit the author's worktree. "
+                "Read the submitted revision, verify the result and leave your own revision-bound vote in Agora. "
+            )
+        elif template == "integrate":
+            prompt += "Take the merge lock and record the integration in Agora using the observed review and final hashes. "
+        else:
+            prompt += (
+                "Before changing a repository, create or claim an Agora task under your identity and take the required path locks. "
+                "Do not claim results that are not supported by your work. Before ending, commit all work you made (English "
+                "messages as Luissalet, no trailers, no push) and submit each claimed task with `agora.cmd --space "
+                f"{self.space_id} --as {agent_id} submit TASK_ID --commits HASHES --summary-file FILE`. "
+                "Ending the provider turn without an Agora delivery is incomplete. "
+            )
+        prompt += "If blocked, report the exact cause in the task thread and preserve the session/worktree. Return concrete evidence."
+        prompt += agora_worker_profiles.briefing(agora_worker_profiles.read(self), template)
+        prompt += f"\n\nTask: {task}"
         prompt += self._saved_instructions(agent_id)
         if leader_id == "codex":
             command = [executable, "exec", "--json", "--model", model, "--config", f'model_reasoning_effort="{effort}"',
@@ -2186,9 +2204,6 @@ class AgoraConsoleFacet(Facet):
             session_id = str(uuid.uuid4())
             command = [claude_executable, "--print", "--output-format", "stream-json", "--verbose",
                        "--permission-mode", "bypassPermissions", "--session-id", session_id, "--name", agent_id]
-            prompt = prompt.replace("Work only in an isolated worktree and follow repository skills.",
-                                    "Your session starts in a folder that is not a repository: before changing a repository, "
-                                    "make a worktree of it and work only there, and follow repository skills.", 1)
             if model != "default":
                 command.extend(["--model", model])
             if effort and effort != "default":
@@ -2278,6 +2293,8 @@ class AgoraConsoleFacet(Facet):
         with self._db_lock, self._db() as db:
             db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?)",
                        (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id, model_source, now, now))
+            if template:
+                db.execute("UPDATE workers SET template=? WHERE id=?", (template, worker_id))
             if leader_id == "faustus":
                 runtime = faustus_session.get("runtime") or {}
                 resume_command = command.copy()
@@ -2295,7 +2312,9 @@ class AgoraConsoleFacet(Facet):
             self._keep_claude_model(model)
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
                          name=f"agora-worker-{worker_id[:8]}").start()
-        out = {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id), "rank": rank}
+        out = {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id), "rank": rank,
+               "undo": {"tool": "hub_agora_console_worker", "arguments": {"action": "stop", "worker_id": worker_id,
+                                                                              "space_id": self.space_id}}}
         if rank_asked and rank_asked != rank:
             out["rank_asked"] = rank_asked           # lowered to the rank of whoever started it
         return out
@@ -2361,6 +2380,9 @@ class AgoraConsoleFacet(Facet):
         return ""
 
     def _verify_worker_delivery(self, worker: dict[str, Any]) -> dict[str, Any]:
+        reviewed = agora_auto_review.review_receipt(self, worker)
+        if reviewed is not None:
+            return reviewed
         agora = self._agora()
         issues = []
         tasks = []
@@ -2683,6 +2705,9 @@ class AgoraConsoleFacet(Facet):
                 elif verification["issues"]:
                     state, outcome = "incomplete", "incomplete"
                     detail = "Trabajo incompleto: " + " ".join(verification["issues"])
+                elif verification.get("verdict"):
+                    state, outcome = "completed", "reviewed"
+                    detail = "Voto de revisión comprobado en el Ágora."
                 else:
                     state, outcome = "completed", "submitted"
                     detail = "Entrega comprobada en el Ágora."
@@ -3138,6 +3163,10 @@ class AgoraConsoleFacet(Facet):
             return self.leader_states(req.q_bool("refresh"))
         if req.path == "/api/agora/console/name":
             return self.suggest_worker_name(req.q("leader_id", ""), req.q("model", ""))
+        if req.path == agora_worker_profiles.ROUTE:
+            return agora_worker_profiles.view(self)
+        if req.path == agora_auto_review.ROUTE:
+            return agora_auto_review.status(self)
         # Let AgoraFacet serve its existing /api/agora/console/usage endpoint.
         return None
 
@@ -3151,6 +3180,14 @@ class AgoraConsoleFacet(Facet):
         sid = args.get('space_id') or 'ecosystem'
         if sid != self.space_id:
             return self.for_space(sid).post(req)
+        if req.path in (agora_worker_profiles.ROUTE, agora_auto_review.ROUTE):
+            if not self._person_page(req):
+                return {"ok": False, "status": 403, "error": "Only the person's page can manage automatic review and worker profiles"}
+            if req.path == agora_worker_profiles.ROUTE:
+                result = agora_worker_profiles.save(self, args)
+                self._auto_review.wake.set()
+                return result
+            return agora_auto_review.cancel(self, args.get("job_id"))
         # Browser requests represent the signed-in operator. Agent/API callers
         # receive only their authenticated caller identity; body fields cannot
         # forge another author.
@@ -3236,6 +3273,12 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_color", "description": "Set the colour that outlines one leader's messages and avatar in the Agora console (#rrggbb; empty restores the default). Shared by the browser and the desktop app.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "color": {"type": "string", "maxLength": 7}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
+            {"name": agora_worker_profiles.TOOL, "description": "Read the space's worker rules, project context, paths and assignment templates.",
+             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+             "annotations": {"readOnlyHint": True}},
+            {"name": agora_auto_review.TOOL, "description": "Read automatic reviews and corrections with their task revisions, worker states and reasons for waiting.",
+             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+             "annotations": {"readOnlyHint": True}},
             {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex, Claude or managed Cursor child in an isolated worktree, or a Faustus child in the space's workspace, with a model and effort level from the provider catalog. Faustus follows placement. A PC workspace with Faustus on a Spark starts a dedicated headless PC runtime using that Sparks model. Worker receipts report the actual Faustus URL, workspace and observed tool counts. Stop cancels that worker's exact active run through the native API. Continue resumes the original idle Faustus session and workspace. Models without effort levels start without one. Also register external workers or reconcile an ambiguous console session.",
              "inputSchema": {"type": "object", "properties": {
                  "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile", "continue"]},
@@ -3245,6 +3288,7 @@ class AgoraConsoleFacet(Facet):
                  "name": {"type": "string", "maxLength": 41, "description": "With create: the session's own name instead of <provider>-worker-<id>. It must start with <provider>- and be free."},
                  "rank": {"type": "string", "enum": ["director", "lead", "agent", "support"], "description": "With create: the session's rank on this server. Never higher than the caller's own, unless the person starts it."},
                  "task": {"type": "string", "maxLength": MAX_TASK_CHARS}, "confirm_idle": {"type": "boolean"},
+                 "template": {"type": "string", "enum": list(agora_worker_profiles.TEMPLATES)},
                  "session_id": {"type": "string"}, "model_source": {"type": "string"},
                  "result": {"type": "string", "maxLength": 20000}, "actor": {"type": "string", "maxLength": 64}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
@@ -3271,4 +3315,6 @@ class AgoraConsoleFacet(Facet):
             'hub_agora_console_preferences': lambda a: write(self.set_preferences, a),
             'hub_agora_console_color': lambda a: write(self.set_color, a),
             'hub_agora_console_worker': lambda a: write(self.worker, a),
+            agora_worker_profiles.TOOL: lambda a: agora_worker_profiles.view(self),
+            agora_auto_review.TOOL: lambda a: agora_auto_review.status(self),
         }
