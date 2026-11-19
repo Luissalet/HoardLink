@@ -564,6 +564,9 @@ that accepts `editable-report`.
   The switch passes the current automatic setting to the native app. If the app
   resets that setting when it stops a module, the undo request restores it.
 
+Websites published by Mercator's publication station come back with the Hub
+through Mercator's keep-alive setting: see [website-publisher.md](website-publisher.md).
+
 ## Shared copilot
 
 The Hub serves the shared Faustus launcher at `/api/copilot/launcher.js`, its panel
