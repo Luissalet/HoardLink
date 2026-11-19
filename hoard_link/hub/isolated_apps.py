@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import secrets
 import socket
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import RLock
@@ -18,14 +19,16 @@ class RunningInstance:
     app: App
     folder: Path
     launcher: App
-    renderer_port: int
+    extra_ports: tuple[int, ...]
     process: object = None
 
 
-def _free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+def _free_ports(count):
+    with ExitStack() as stack:
+        sockets = [stack.enter_context(socket.socket()) for _ in range(count)]
+        for sock in sockets:
+            sock.bind(("127.0.0.1", 0))
+        return tuple(sock.getsockname()[1] for sock in sockets)
 
 
 def _failure(message, status=400):
@@ -50,7 +53,7 @@ class IsolatedApps:
                 config.write_text('{"enabled":true,"writesEnabled":true}', encoding="utf-8")
             changes = {key: None for key in os.environ if key.startswith("WH_")}
             changes.update(WH_HEADLESS=1, WH_USER_DATA_DIR=folder, WH_AIBRIDGE_PORT=app.port,
-                           WH_RENDERER_PORT=row.renderer_port)
+                           WH_RENDERER_PORT=row.extra_ports[0], MEDIA_DOWNLOADER_PORT=row.extra_ports[1])
         else:
             descriptor = row.launcher.family["isolated_instance"]
             changes = {descriptor["data_env"]: folder, descriptor["port_env"]: app.port}
@@ -108,17 +111,15 @@ class IsolatedApps:
                 return _failure("The app does not declare a headless isolated launcher", 409)
             token = folder / "mcp-token"
         folder.mkdir(parents=True)
-        port = _free_port()
-        renderer_port = _free_port() if app_id == "writer" else 0
-        while renderer_port and renderer_port == port:
-            renderer_port = _free_port()
+        port, *extra_ports = _free_ports(3 if app_id == "writer" else 1)
         app = replace(launcher, url=f"http://127.0.0.1:{port}", data_dir=str(folder), token_file=str(token))
-        return self._launch(ident, RunningInstance(app, folder, launcher, renderer_port))
+        return self._launch(ident, RunningInstance(app, folder, launcher, tuple(extra_ports)))
 
     @staticmethod
     def _describe(ident, row):
         return {"id": ident, "app": row.app.id, "data_dir": str(row.folder), "url": row.app.url,
-                "log": str(row.folder / "process.log"), "renderer_port": row.renderer_port or None,
+                "log": str(row.folder / "process.log"), "renderer_port": row.extra_ports[0] if row.extra_ports else None,
+                "media_port": row.extra_ports[1] if row.extra_ports else None,
                 "state": "running" if row.process and row.process.poll() is None else "stopped"}
 
     def manage(self, args):
