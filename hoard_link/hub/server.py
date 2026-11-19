@@ -86,6 +86,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools, autostart, profile_editor, portable_profiles
+from . import agent_routes
 from .browser_lanes import LaneError
 from .lease import LeaseError
 from .rules import example_rules
@@ -447,6 +448,8 @@ class _HubHandler(BaseHTTPRequestHandler):
         try:
             if path == "/":
                 return self._file(os.path.join(UI_DIR, "index.html"))
+            if path == "/programs":
+                return self._file(os.path.join(UI_DIR, "programs.html"))
             if path == "/api/copilot/info":
                 from .copilot import host_info
                 try:
@@ -557,13 +560,18 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if not self._agent_ok():
                     return None
                 return self._json({"tools": tools.all_tools()})
+            if path.startswith(agent_routes.PREFIX):
+                if not self._agent_ok():
+                    return None
+                tool = agent_routes.describe(path)
+                return self._json(tool if tool else {"ok": False, "error": "unknown tool"}, 200 if tool else 404)
             parts = path.split("/")
             if len(parts) >= 4 and parts[1] == "api" and parts[2] == "apps":
                 app = hub.get(parts[3])
                 if app is None:
                     return self._json({"ok": False, "error": "unknown app"}, 404)
                 sub = parts[4] if len(parts) > 4 else ""
-                if sub == "":
+                if sub == "" or (sub == "status" and len(parts) == 5):
                     return self._json(hub.app_status(app))
                 if sub == "icon":
                     icon_path = app.icon_path      # read once: a snapshot on another thread may reset it meanwhile
@@ -604,7 +612,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
         try:
             limit = MAX_BODY
-            if path == "/api/agent/call":
+            if path == "/api/agent/call" or path.startswith(agent_routes.PREFIX):
                 if not self._agent_ok():
                     self.close_connection = True
                     return None
@@ -623,6 +631,12 @@ class _HubHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._json({"ok": False, "error": str(exc)}, 413)
         try:
+            if path.startswith(agent_routes.PREFIX):
+                tool = agent_routes.describe(path)
+                if tool is None:
+                    return self._json({"ok": False, "error": "unknown tool"}, 404)
+                result, status = agent_routes.invoke(hub, tool["name"], body)
+                return self._json(result, status)
             if self._facet("POST", path, parse_qs(urlsplit(self.path).query), body):
                 return None
             if path == "/api/agent/call":
@@ -630,9 +644,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return None
                 name = str(body.get("tool") or body.get("name") or "")
                 args = body.get("arguments") or body.get("args") or {}
-                result = tools.call(hub, name, args if isinstance(args, dict) else {})
-                ok = not (isinstance(result, dict) and result.get("ok") is False)
-                return self._json({"ok": ok, "tool": name, "result": result}, 200 if ok else 400)
+                result, status = agent_routes.invoke(hub, name, args if isinstance(args, dict) else {})
+                return self._json(result, status)
             if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release"):
                 return self._lease_post(path.rsplit("/", 1)[1], body)
             if path in ("/api/lane/acquire", "/api/lane/renew", "/api/lane/release"):

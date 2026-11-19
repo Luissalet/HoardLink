@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-hoard-app="hub">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local programs · Hoard Hub</title>
+  <link rel="icon" href="/ui/hub-icon.png">
+  <link rel="stylesheet" href="/ui/hoard-theme.css">
+  <link rel="stylesheet" href="/ui/design-system.css">
+  <link rel="stylesheet" href="/ui/programs.css">
+  <script defer src="/ui/programs.js"></script>
+</head>
+<body>
+  <main class="programs">
+    <nav aria-label="Hoard Hub">
+      <a href="/#hub/capabilities" data-es="Capacidades">Capabilities</a>
+    </nav>
+    <h1 data-es="Programas locales">Local programs</h1>
+    <div class="program-controls">
+      <label>
+        <span data-es="Buscar programas">Find programs</span>
+        <input type="search" id="search">
+      </label>
+      <button type="button" id="refresh" data-es="Volver a detectar">Detect again</button>
+    </div>
+    <details id="add">
+      <summary data-es="Registrar un programa">Register a program</summary>
+      <form id="register">
+        <label><span data-es="Nombre">Name</span><input name="name" required></label>
+        <label><span data-es="Versión (opcional)">Version (optional)</span><input name="version"></label>
+        <label class="full"><span data-es="Ruta absoluta">Absolute path</span><input name="path" required></label>
+        <label class="full"><span data-es="Uso sin ventana">Headless usage</span><textarea name="headless" rows="2" required></textarea></label>
+        <div class="full"><button type="submit" data-es="Guardar programa">Save program</button></div>
+      </form>
+    </details>
+    <p id="status" role="status"></p>
+    <div class="program-inventory" id="inventory" hidden>
+      <div class="program-head" aria-hidden="true">
+        <span data-es="Programa">Program</span>
+        <span data-es="Ruta y uso sin ventana">Path and headless usage</span>
+      </div>
+      <ul id="results" role="list"></ul>
+    </div>
+  </main>
+</body>
+</html>
