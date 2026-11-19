@@ -2155,7 +2155,7 @@ class AgoraConsoleFacet(Facet):
                   f"Your rank on this server is {rank} (the ladder is director > lead > agent > support; `agora.cmd --space "
                   f"{self.space_id} ranks` says what a rank decides and who holds which). "
                   "At the start, use `E:\\Development\\IA\\agora.cmd "
-                  f"--space {self.space_id} --as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Read `E:\\Development\\IA\\CRITERIOS.md` "
+                  f"--space {self.space_id} --as {agent_id} hb \"child task {worker_id}\"`, then read inbox and board. Without MCP, call Hub tools with `E:\\Development\\IA\\Hoards\\Faustusables\\Hoard Hub\\hub.cmd` by its absolute path from any folder. Read `E:\\Development\\IA\\CRITERIOS.md` "
                   "before `E:\\Development\\IA\\MEMORY.md`, then read the repository's AGENTS.md. ")
         if leader_id == "claude":
             prompt += "Your session starts in a folder that is not a repository; make an isolated worktree of the task repository. "
