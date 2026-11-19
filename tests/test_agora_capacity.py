@@ -11,6 +11,15 @@ from hoard_link.hub import agora_capacity
 from hoard_link.hub.agora import Agora
 
 
+def test_capacity_finds_desktop_codex_without_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(agora_capacity.shutil, "which", lambda _: None)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    executable = tmp_path / "OpenAI" / "Codex" / "bin" / "current" / "codex.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    assert agora_capacity.codex_executable() == str(executable)
+
+
 def test_rate_limit_windows_are_independent_unknown_and_expire_at_reset():
     account = {"type": "chatgpt", "email": "private@example.invalid"}
     report = agora_capacity.build_usage_report(account, {

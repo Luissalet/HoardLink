@@ -6,8 +6,8 @@ same place the provider's own client does:
 * **Claude** -- ``GET https://api.anthropic.com/api/oauth/usage`` with the OAuth access token Claude
   Code keeps in ``~/.claude/.credentials.json`` (``CLAUDE_CONFIG_DIR`` when set). It answers the
   session (5 h) and weekly windows as ``utilization`` percentages with ``resets_at``. The token
-  needs the ``user:profile`` scope. This module only *reads* the file: it never refreshes or rewrites
-  Claude Code's credentials. An expired token is reported as an unknown window that says why.
+  needs the ``user:profile`` scope. The installed CLI owns credential refresh and persistence.
+  When quota reads hit expired credentials, the reporter can ask that CLI to validate its sign-in.
 * **Cursor** -- ``GET https://cursor.com/api/usage-summary`` authenticated with the Cursor app's
   own session (``cursorAuth/accessToken`` in its ``state.vscdb``, opened read-only), sent as the
   ``WorkosCursorSessionToken`` cookie. The plan has two included quotas, the same two the Cursor
@@ -24,8 +24,12 @@ import hashlib
 import json
 import logging
 import os
+import re
+import shutil
 import sqlite3
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -44,6 +48,10 @@ CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 CURSOR_SUMMARY_URL = "https://cursor.com/api/usage-summary"
 _HTTP_TIMEOUT_S = 15.0
 _EXPIRY_MARGIN_S = 60.0
+_CLAUDE_PROBE_COOLDOWN_S = 30 * 60
+_CLAUDE_PROBE_LOCK = threading.Lock()
+_CLAUDE_PROBES: dict[Path, tuple[float, Optional[int], str]] = {}
+_CLAUDE_AUTH_ERROR = re.compile(r"\b401\b.*authentication_error|not logged in.*(?:/login|claude auth login)", re.I | re.S)
 
 _REPORTER_LOCK = threading.Lock()
 _REPORTER_THREAD: Optional[threading.Thread] = None
@@ -171,8 +179,7 @@ def read_claude_session(*, config_dir: Optional[Path] = None, home: Optional[Pat
     expires = oauth.get("expiresAt")
     if isinstance(expires, (int, float)) and not isinstance(expires, bool):
         if float(expires) / 1000.0 - _EXPIRY_MARGIN_S <= now:
-            raise AccountCapacityError("claude_token_expired",
-                                       "Sesión de Claude Code caducada: ejecuta «claude /login» en el PC")
+            raise AccountCapacityError("claude_access_expired", "Hay que comprobar si Claude Code puede renovar el acceso")
     identity = ""
     profile = (home or Path.home()) / ".claude.json"
     try:
@@ -255,23 +262,78 @@ def build_claude_report(usage: Mapping[str, Any], session: Mapping[str, Any], *,
             "source": CLAUDE_SOURCE, "windows": windows}
 
 
+def probe_claude_sign_in(directory: Path) -> str:
+    """Let the native CLI refresh its own sign-in once per stale credentials file and cooldown."""
+    executable = shutil.which("claude")
+    if not executable:
+        return "unknown"
+    directory = directory.resolve()
+    try:
+        stamp = (directory / ".credentials.json").stat().st_mtime_ns
+    except OSError:
+        stamp = None
+    with _CLAUDE_PROBE_LOCK:
+        now = time.monotonic()
+        prior = _CLAUDE_PROBES.get(directory)
+        if prior and prior[1] == stamp and now - prior[0] < _CLAUDE_PROBE_COOLDOWN_S:
+            return prior[2]
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=str(directory))
+        env.pop("CLAUDECODE", None)
+        state = "unknown"
+        try:
+            # `auth status` reports stored account metadata. An authenticated CLI turn exercises
+            # refresh. No tools, plugins, project settings, or conversation persistence are needed.
+            with tempfile.TemporaryDirectory(prefix="agora-claude-auth-") as cwd:
+                result = subprocess.run(
+                    [executable, "--print", "--output-format", "json", "--model", "haiku", "--tools=",
+                     "--strict-mcp-config", "--setting-sources=", "--no-session-persistence", "--max-turns", "1",
+                     "--max-budget-usd", "0.01", "--", "Reply with OK."],
+                    cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    text=True, encoding="utf-8", errors="replace", timeout=35, check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            payload = json.loads(result.stdout)
+            if isinstance(payload, dict) and payload.get("type") == "result":
+                if result.returncode == 0 and payload.get("is_error") is False:
+                    state = "available"
+                elif payload.get("is_error") is True and not payload.get("total_cost_usd") and _CLAUDE_AUTH_ERROR.search(
+                        str(payload.get("result") or "")):
+                    state = "refused"
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        _CLAUDE_PROBES[directory] = (now, stamp, state)
+        return state
+
+
 def collect_claude_usage_report(*, config_dir: Optional[Path] = None, home: Optional[Path] = None,
                                 now: Optional[float] = None,
-                                opener: Callable[..., Any] = urllib.request.urlopen) -> dict[str, Any]:
-    session = read_claude_session(config_dir=config_dir, home=home, now=now)
-    try:
+                                opener: Callable[..., Any] = urllib.request.urlopen,
+                                refresh: Optional[Callable[[Path], str]] = None) -> dict[str, Any]:
+    def read() -> dict[str, Any]:
+        session = read_claude_session(config_dir=config_dir, home=home, now=now)
         usage = _http_json(CLAUDE_USAGE_URL, {
             "Authorization": f"Bearer {session['token']}",
             "anthropic-beta": "oauth-2025-04-20",
             "Accept": "application/json",
             "User-Agent": "hoardlink-agora-capacity/0.1",
         }, opener=opener)
+        return build_claude_report(usage, session, now=now)
+
+    try:
+        return read()
     except AccountCapacityError as exc:
-        if exc.code == "unauthorized":
-            raise AccountCapacityError("claude_token_expired",
-                                       "Sesión de Claude Code caducada: ejecuta «claude /login» en el PC") from None
-        raise AccountCapacityError(exc.code, "No se pudo leer la cuota de Claude ahora") from None
-    return build_claude_report(usage, session, now=now)
+        if exc.code not in ("claude_access_expired", "unauthorized"):
+            raise
+    state = refresh(config_dir or claude_config_dir()) if refresh else "unknown"
+    if state == "refused":
+        raise AccountCapacityError("claude_token_expired", "Claude Code intentó renovar el acceso y recibió un rechazo")
+    if refresh:
+        try:
+            return read()
+        except AccountCapacityError as exc:
+            if exc.code not in ("claude_access_expired", "unauthorized"):
+                raise
+    raise AccountCapacityError("claude_refresh_unverified", "No se pudo verificar la renovación del acceso a la cuota de Claude")
 
 
 def claude_unavailable_report(error: AccountCapacityError, *, config_dir: Optional[Path] = None,
@@ -469,7 +531,8 @@ def start_account_capacity_reporter(*, interval_seconds: int = 120,
         def run() -> None:
             while not stop.is_set():
                 for provider in providers:
-                    result = collect_and_report_account_usage(provider, reporter_kwargs=publication)
+                    kwargs = {"refresh": probe_claude_sign_in} if provider == "claude" else None
+                    result = collect_and_report_account_usage(provider, reporter_kwargs=publication, collector_kwargs=kwargs)
                     if not result.get("ok") or result.get("reason"):
                         LOGGER.info("%s quota observation: %s", provider, result.get("reason", "unknown"))
                 stop.wait(interval_seconds)

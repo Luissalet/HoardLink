@@ -94,13 +94,13 @@ def test_claude_expired_token_is_reported_as_unknown_with_the_reason(tmp_path):
     result = acc.collect_and_report_account_usage(
         "claude", reporter=lambda report, **kw: calls.append((report, kw)) or {"ok": True},
         collector_kwargs={"config_dir": config, "home": home, "now": NOW})
-    assert result["reason"] == "claude_token_expired" and result["measured"] is False
+    assert result["reason"] == "claude_refresh_unverified" and result["measured"] is False
     report, kwargs = calls[0]
     assert kwargs["agent_id"] == "claude-capacity"
     assert report["windows"] == [{"window_id": "claude.session", "label": report["windows"][0]["label"],
                                   "measurement": "unknown", "used_percent": None, "remaining_percent": None,
                                   "reset_at": None, "source": acc.CLAUDE_SOURCE}]
-    assert "claude /login" in report["windows"][0]["label"]
+    assert "renovación" in report["windows"][0]["label"]
     assert CLAUDE_TOKEN not in json.dumps(report)
 
 
@@ -110,8 +110,31 @@ def test_claude_never_rewrites_credentials(tmp_path):
     acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW, opener=_opener(CLAUDE_USAGE, []))
     with pytest.raises(acc.AccountCapacityError) as err:
         acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW, opener=_opener({}, [], status=401))
-    assert err.value.code == "claude_token_expired"
+    assert err.value.code == "claude_refresh_unverified"
     assert (config / ".credentials.json").read_bytes() == before
+
+
+def test_claude_reads_quota_after_native_refresh_and_reports_a_refusal(tmp_path):
+    config, home = _claude_files(tmp_path, expires_ms=(NOW - 10) * 1000)
+    calls = []
+
+    def refresh(directory):
+        assert directory == config
+        calls.append(directory)
+        path = directory / ".credentials.json"
+        creds = json.loads(path.read_text(encoding="utf-8"))
+        creds["claudeAiOauth"]["expiresAt"] = (NOW + 3600) * 1000
+        path.write_text(json.dumps(creds), encoding="utf-8")
+        return "available"
+
+    result = acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW,
+                                            opener=_opener(CLAUDE_USAGE, []), refresh=refresh)
+    assert calls == [config]
+    assert any(row["measurement"] == "measured" for row in result["windows"])
+    with pytest.raises(acc.AccountCapacityError) as refused:
+        acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW,
+                                        opener=_opener({}, [], status=401), refresh=lambda directory: "refused")
+    assert refused.value.code == "claude_token_expired"
 
 
 def test_claude_without_profile_scope_says_so(tmp_path):
@@ -231,8 +254,8 @@ def test_reporter_thread_polls_both_providers(monkeypatch):
     done = threading.Event()
     seen = []
 
-    def fake(provider, *, reporter_kwargs):
-        seen.append(provider)
+    def fake(provider, *, reporter_kwargs, collector_kwargs):
+        seen.append((provider, collector_kwargs))
         if len(seen) >= 2:
             done.set()
         return {"ok": True}
@@ -241,4 +264,4 @@ def test_reporter_thread_polls_both_providers(monkeypatch):
     acc.start_account_capacity_reporter(interval_seconds=60, reporter_kwargs={"env": {}})
     assert done.wait(2)
     acc.stop_account_capacity_reporter()
-    assert seen[:2] == ["claude", "cursor"]
+    assert seen[:2] == [("claude", {"refresh": acc.probe_claude_sign_in}), ("cursor", None)]

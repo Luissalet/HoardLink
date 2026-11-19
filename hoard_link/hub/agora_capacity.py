@@ -34,6 +34,7 @@ _PROCESS_CLOSE_TIMEOUT_S = 2.0
 _REPORTER_LOCK = threading.Lock()
 _REPORTER_THREAD: Optional[threading.Thread] = None
 _REPORTER_STOP: Optional[threading.Event] = None
+_OBSERVATION: dict[str, Any] = {}
 
 
 class CodexCapacityError(RuntimeError):
@@ -42,6 +43,25 @@ class CodexCapacityError(RuntimeError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+def codex_executable() -> Optional[str]:
+    """Find the CLI the console can actually run, including desktop-managed installs."""
+    found = shutil.which("codex")
+    if found:
+        return found
+    local = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    try:
+        newest = max((local / "OpenAI" / "Codex" / "bin").glob("*/codex.exe"),
+                     key=lambda path: path.stat().st_mtime, default=None)
+    except OSError:
+        return None
+    return str(newest) if newest else None
+
+
+def codex_observation() -> dict[str, Any]:
+    """Latest local reporter outcome without account identity or provider output."""
+    return dict(_OBSERVATION)
 
 
 def _utc_iso(timestamp: Any) -> Optional[str]:
@@ -163,13 +183,14 @@ def _read_codex_account_and_limits(*, executable: Optional[str] = None,
                                    popen: Callable[..., Any] = subprocess.Popen
                                    ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Read account identity and rate limits using only app-server read methods."""
-    command = executable or shutil.which("codex")
+    command = executable or codex_executable()
     if not command:
         raise CodexCapacityError("codex_cli_unavailable")
     try:
         process = popen([command, "app-server", "--stdio"], stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-                        encoding="utf-8", errors="replace", bufsize=1)
+                        encoding="utf-8", errors="replace", bufsize=1,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except OSError:
         raise CodexCapacityError("app_server_start_failed") from None
 
@@ -239,7 +260,7 @@ def _report_via_agora_cli(report: Mapping[str, Any], *, repo_root: Optional[Path
     cli = root / "scripts" / "agora.py"
     if not cli.is_file():
         return {"ok": False, "reason": "agora_cli_unavailable"}
-    command = [sys.executable, str(cli), "--json", "--as", agent_id,
+    command = [sys.executable, str(cli), "--json", "--as", agent_id, "--space", "ecosystem",
                "usage-report", "--data-file", "-"]
     # Preserve the installed CLI/Python environment while allowing a Hub
     # instance to bind its own URL and data directory for isolated QA.
@@ -299,6 +320,8 @@ def start_codex_capacity_reporter(*, interval_seconds: int = 90,
         def run() -> None:
             while not stop.is_set():
                 result = collect_and_report_codex_usage(reporter_kwargs=publication)
+                _OBSERVATION.update(checked_at=time.time(), ok=bool(result.get("ok")),
+                                    reason=result.get("reason"))
                 if not result.get("ok"):
                     LOGGER.info("Codex quota observation unavailable (%s)", result.get("reason", "unknown"))
                 stop.wait(interval_seconds)
