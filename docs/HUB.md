@@ -572,6 +572,9 @@ that accepts `editable-report`.
 Websites published by Mercator's publication station come back with the Hub
 through Mercator's keep-alive setting: see [website-publisher.md](website-publisher.md).
 
+Stations look at what they produce with the eyes facet (`hub_eyes_look`): views of any image, video, model,
+web page, document or playable scene, repeatable on the next revision; see [eyes.md](eyes.md).
+
 ## Shared copilot
 
 The Hub serves the shared Faustus launcher at `/api/copilot/launcher.js`, its panel
