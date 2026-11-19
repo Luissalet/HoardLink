@@ -73,7 +73,11 @@ class ProductionFacet(Facet):
 
         app_filter = args.get("app")
         stations = []
-        for app in sorted(self.hub.apps, key=lambda app: app.id):
+        apps = list(self.hub.apps)
+        integration = self.hub.facet("integration")
+        if integration is not None:
+            apps.append(integration.station())
+        for app in sorted(apps, key=lambda app: app.id):
             declaration = app.family.get("production")
             if (not isinstance(declaration, dict) or
                     (app_filter and app_filter != app.id)):

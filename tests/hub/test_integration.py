@@ -1,3 +1,6 @@
+import shlex
+import subprocess
+import sys
 import time
 from types import SimpleNamespace
 
@@ -5,8 +8,10 @@ import pytest
 
 from hoard_link.hub import integration_checks as checks
 from hoard_link.hub import integration_git as git
-from hoard_link.hub.agora import Agora
-from hoard_link.hub.integration import IntegrationFacet, delivery_contract, submission_tests
+from hoard_link.hub.agora import Agora, AgoraError
+from hoard_link.hub.agora_ranks import set_rank
+from hoard_link.hub.integration import INTEGRATION_TOKEN, IntegrationFacet, delivery_contract, submission_tests
+from hoard_link.hub.production import ProductionFacet
 
 
 LINES = "\n".join(f"line {i}" for i in range(60)) + "\n"
@@ -142,6 +147,78 @@ def test_compare_requires_the_same_failure_and_signature():
     data = checks.compare({"failures": {"a": known, "b": known}}, {"failures": {"a": known, "b": updated, "c": known}})
     assert data["known"] == {"a": known}
     assert data["new"] == {"b": updated, "c": known}
+
+
+def test_spark_request_executed_with_json_environment_and_git_diff(delivery, tmp_path):
+    repo, base, head, worktree = delivery
+
+    def ssh(command, *, input, timeout):
+        _, *arguments = shlex.split(command)
+        completed = subprocess.run([sys.executable, *arguments], input=input, encoding="utf-8",
+                                   capture_output=True, timeout=timeout)
+        assert completed.returncode == 0, completed.stderr
+        return completed.stdout
+
+    hub = SimpleNamespace(placement=SimpleNamespace(_ssh=ssh))
+    result = checks.suite(hub, repo, worktree, ["tests/test_feature.py"], tmp_path / "report.xml",
+                          "contract", remote=str(repo), base=base, ref=head)
+    assert result["counts"]["passed"] == 1
+    assert list(result["failures"]) == ["tests.test_feature::test_known"]
+
+
+def test_catalogue_plans_the_hub_integration_handoff(tmp_path):
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)), apps=[])
+    integration = IntegrationFacet(hub)
+    hub.facet = lambda name: integration if name == "integration" else None
+    try:
+        result = ProductionFacet(hub).catalog({"from_type": "code_branch", "to_type": "integrated_code"})
+        assert result["chains"][0][0]["app"] == "hoardhub"
+        assert set(result["chains"][0][0]["check"]) == {"en", "es"}
+    finally:
+        integration.close()
+
+
+def test_code_delivery_returns_incomplete_submission_before_review(delivery, tmp_path):
+    repo, _, head, _ = delivery
+    agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
+    try:
+        task = agora.task_add({"agent": "worker", "title": "Code delivery", "labels": ["integration"]})["task"]
+        args = {"agent": "worker", "task_id": task["id"]}
+        agora.task_claim(args)
+        summary = f"Repository: {repo.name}\nTest-Paths: tests/test_feature.py"
+        with pytest.raises(AgoraError, match="branch"):
+            agora.task_submit({**args, "summary": summary, "commits": [head]})
+        assert agora._task_row(task["id"])["submission_revision"] == 0
+        result = agora.task_submit({**args, "summary": summary, "commits": [head], "branch": "delivery"})
+        assert result["task"]["repo"] == repo.name
+        assert result["task"]["status"] == "review"
+    finally:
+        agora.close()
+
+
+def test_integration_finishes_approved_task_without_handover(delivery, tmp_path):
+    _, _, head, _ = delivery
+    agora = Agora(tmp_path / "agora.db")
+    try:
+        task = agora.task_add({"agent": "worker", "title": "Code delivery"})["task"]
+        args = {"task_id": task["id"]}
+        agora.task_claim({**args, "agent": "worker"})
+        agora.task_submit({**args, "agent": "worker", "summary": "Delivery", "commits": [head]})
+        agora.task_review({**args, "agent": "reviewer", "verdict": "approve",
+                           "expected_submission_revision": 1, "body": "Verified."})
+        with agora.db.tx():
+            set_rank(agora, "worker", "support", "fixture")
+            set_rank(agora, "integrator", "lead", "fixture")
+        with pytest.raises(AgoraError, match="belongs"):
+            agora.task_done({**args, "agent": "integrator", "_integration": "forged"})
+        verified = {**args, "agent": "integrator", "_integration": INTEGRATION_TOKEN}
+        with pytest.raises(AgoraError, match="current approved revision"):
+            agora.task_done({**verified, "_integration_revision": 2})
+        result = agora.task_done({**verified, "_integration_revision": 1})
+        assert result["task"]["owner"] == "worker"
+        assert result["task"]["status"] == "done"
+    finally:
+        agora.close()
 
 
 def test_integrate_and_undo_exact_approved_delivery(delivery, tmp_path, monkeypatch):

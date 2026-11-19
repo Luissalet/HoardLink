@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
+from types import SimpleNamespace
 from uuid import uuid4
 
 from ..atomic import read_json, write_json_atomic
@@ -174,7 +175,7 @@ class IntegrationFacet(Facet):
         live = args.get("live_test")
         if live and repo_git.test_path(live.split("::", 1)[0]) not in files["contract"]:
             raise repo_git.IntegrationError("The live case needs a test file in the contract selection")
-        return repo, {"repo": repo.name, "base": base, "head": head, "target": target,
+        return repo, {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
                       "branch": task["branch"], "delta": sorted(delta), "tests": files, "live_test": live}
 
     def _path(self, run):
@@ -228,9 +229,8 @@ class IntegrationFacet(Facet):
 
     def station(self):
         manifest = read_json(Path(__file__).resolve().parents[2] / "faustus-plugin.json", {})
-        handoffs = manifest.get("x-family", {}).get("production", {}).get("handoffs", [])
-        return {"app": manifest.get("id", "hoardhub"), "name": manifest.get("name", "Hoard Hub"),
-                "handoffs": handoffs}
+        return SimpleNamespace(id=manifest.get("id", "hoardhub"), name=manifest.get("name", "Hoard Hub"),
+                               family=manifest.get("x-family", {}))
 
     def _run_checks(self, repo, work, test_files, receipt, *, base, ref, lane="contract", remote=None, empty_ok=False):
         files = [item for item in test_files if (work / item.split("::", 1)[0]).is_file()]
@@ -414,7 +414,11 @@ class IntegrationFacet(Facet):
                 raise repo_git.IntegrationError(f"Inspect the checkout and parked patches in {path.parent}")
         moved = any(row["state"] == "moved_checkout" for row in receipt["events"])
         if moved:
-            repo = Path(agora.repo_lookup(receipt["plan"]["repo"])).resolve()
+            plan = receipt["plan"]
+            location = agora.repo_lookup(plan.get("repo_ref", plan["repo"]))
+            if location is None:
+                raise repo_git.IntegrationError("Register the original repository in the Hub before undoing")
+            repo = Path(location).resolve()
             resource = normalize_resource(f"merge:{repo.name}")
             with agora.db.tx():
                 existing = next((row for row in agora._live_locks() if row["resource"] == resource), None)

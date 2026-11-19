@@ -347,15 +347,15 @@ uncommitted work, which vendored copies drifted, which branches should not be
 there. It exists because those things pile up quietly across thirty-odd
 repositories, and the repositories are what gets looked at from outside.
 
-**The hub never changes a repository.** It does not push, commit, reset,
-clean, delete, check out or merge. Every git call is a read, run as
+**Repository monitoring is read-only.** Every scan command is run as
 `git --no-optional-locks -c core.quotepath=off -C <repo> …` with
 `GIT_OPTIONAL_LOCKS=0`, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`, a 10 s timeout
 and no console window on Windows, so a scan never takes `index.lock` (a
 test watches the `.git` folder during scans) and never rewrites the index.
 The one network call is `fetch` (`git fetch --quiet --prune`, 60 s), only
 when asked for by name, and it only updates remote-tracking refs. Pushing is
-text: the hub gives the command and you run it.
+text: the hub gives the command and you run it. The separate
+[integration station](INTEGRATION.md) checks and merges approved deliveries.
 
 ### What is scanned
 
