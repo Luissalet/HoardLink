@@ -88,7 +88,16 @@
         } else live();
         break;
       }
-      case "pdf": { const f = el("iframe"); f.title = piece.title; f.loading = "lazy"; f.src = fileUrl(piece); box.append(f); break; }
+      case "pdf": {
+        // A browser without a PDF viewer (headless Chromium builds, some embedded views) leaves the frame blank: say so
+        // and give the file to open, instead of an empty box.
+        if (navigator.pdfViewerEnabled === false) {
+          const a = el("a", "ghost small", tr("Abrir el PDF", "Open the PDF")); a.href = fileUrl(piece); a.target = "_blank"; a.rel = "noopener";
+          box.append(el("p", "ord-media-note", tr("Este navegador no muestra PDF dentro de la página.", "This browser does not show PDFs inside the page.")), a);
+          break;
+        }
+        const f = el("iframe"); f.title = piece.title; f.loading = "lazy"; f.src = fileUrl(piece); box.append(f); break;
+      }
       case "text": {
         const pre = el("pre", "ord-text", tr("Cargando…", "Loading…")); box.append(pre);
         fetch(fileUrl(piece)).then(r => r.ok ? r.text() : Promise.reject(r.status)).then(t => { pre.textContent = t.length > 6000 ? t.slice(0, 6000) + "\n…" : t; })
@@ -123,7 +132,9 @@
       const mark = { ok: tr("comprobado", "checked"), missing: tr("falta", "missing"), pending: tr("sin comprobar", "not checked"),
         not_visible: tr("no se ve aquí", "not visible here") }[k.state || "pending"];
       li.append(el("span", "ord-keep-dot"), el("span", "", k.detail), el("small", "", mark));
-      const why = [k.how, k.evidence, k.note].filter(Boolean).join(" · ");
+      const origin = k.source === "order" ? tr("de la orden", "from the order")
+        : k.from ? tr("de la pieza #", "from piece #") + k.from : "";
+      const why = [origin, k.how, k.evidence, k.note].filter(Boolean).join(" · ");
       if (why) li.title = why;
       ul.append(li);
     }

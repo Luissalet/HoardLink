@@ -57,7 +57,7 @@ back to this job; and an earlier kept piece of each kind it delivers, from anoth
 | `previews` | Images that show it (turntable frames of a mesh, screenshots of a web, slides) |
 | `task_id`, `station`, `by`, `model` | Who made it |
 | `derives_from` | `[{piece, role, note}]`: `material` (made from it) or `reference` (only looked at it) |
-| `keep` | Details to keep, inherited from the order unless given; each starts unchecked |
+| `keep` | Details to keep: the order's unless given, plus every detail of the pieces it derives from; each starts unchecked |
 | `revision`, `sha256`, `supersedes` | Its revision, content print and the piece it replaces |
 
 States: `provisional` → `checked` (a passing check left no detail missing or unchecked) → `kept` by the person, or
@@ -80,6 +80,10 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
 * **Checks** (`piece_check`): `note`, `ok`, and per detail (`id` or text) a `state` — `ok`, `missing` or `not_visible`
   (the detail cannot be seen in this piece, which is not a failure) — with `how` and `evidence`. Inheriting a detail never
   inherits its approval: every piece is checked on its own.
+* **Details travel with the relay.** A piece receives the details of every piece it derives from (material or
+  reference), so a detail first set at one station («square buckle» on the sheet, not in the order) reaches the next
+  station to be checked there. Each detail says where it was set: `source` `order`, or `piece` with `from` (the piece
+  that set it) and `via` (the parent it came through).
 * **Defects** (`piece_defect`): `note`, `expected`, `observed`, `evidence`, and where it shows: `view`, `pose`, `at`
   (second), `step` (slide, block, size, steps). It goes to the job that made the piece (or `task_id`): its task hears it
   in its thread, mentioning the owner. `defect_close` closes it with the piece (`fixed_in`, usually the next revision)
@@ -89,7 +93,10 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
 
 `gate_open` shows pieces of an order to the person for one decision. On the Orders page each piece has the preview its
 kind needs — image, turntable frames (a mesh with previews), video, audio, a web (its screenshots first, and «See it
-working» loads it in a sandboxed frame without the page's origin, so it cannot act as the person; a page with its own address is framed from there), PDF, text — and its details to keep with their state.
+working» loads it in a sandboxed frame without the page's origin, so it cannot act as the person; a page with its own address is framed from there; its scripts are written in as
+`data:` addresses, so `defer`, `async` and modules keep their timing), PDF (a browser without a PDF viewer, such as a
+headless Chromium build, gets a note and a link to open the file instead of a blank frame), text — and its details to
+keep with their state and where each was set.
 The person writes an optional note and presses **Keep** or **Cancel**; **Decide separately** splits a piece into a gate of
 its own (`gate_split`).
 
