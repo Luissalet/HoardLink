@@ -66,6 +66,8 @@ STUDIO = {
 }
 
 FIELDS = ("rules", "context", "folders", "repositories", "auto_review")
+REVIEW_RUNNER = "review_runner"
+REVIEW_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max", "default")
 
 
 def init(db: Any) -> None:
@@ -76,7 +78,8 @@ def init(db: Any) -> None:
 def read(console: Any) -> dict[str, Any]:
     with console._db_lock, console._db() as db:
         row = db.execute("SELECT profile, revision FROM worker_profile WHERE id=1").fetchone()
-    profile = {"rules": "", "context": "", "folders": [], "repositories": [], "auto_review": False}
+    profile = {"rules": "", "context": "", "folders": [], "repositories": [], "auto_review": False,
+               REVIEW_RUNNER: {}}
     if row is not None:
         profile.update(json.loads(row["profile"]))
     elif console.space_id == "estudio":
@@ -93,7 +96,7 @@ def save(console: Any, args: dict[str, Any]) -> dict[str, Any]:
     if type(revision) is not int or revision < 0:
         return {"ok": False, "status": 400, "error": "expected_revision must be a non-negative integer"}
     profile = args.get("profile")
-    if not isinstance(profile, dict) or set(profile) != set(FIELDS):
+    if not isinstance(profile, dict) or not set(FIELDS) <= set(profile) <= {*FIELDS, REVIEW_RUNNER}:
         return {"ok": False, "status": 400, "error": "Supply rules, context, folders, repositories and auto_review"}
     for key, limit in (("rules", 3500), ("context", 2500)):
         if not isinstance(profile[key], str) or len(profile[key]) > limit:
@@ -105,8 +108,18 @@ def save(console: Any, args: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "status": 400, "error": f"{key} must be a list of up to 12 single-line paths"}
     if type(profile["auto_review"]) is not bool:
         return {"ok": False, "status": 400, "error": "auto_review must be a boolean"}
+    runner = profile.get(REVIEW_RUNNER)
+    if runner:
+        if (not isinstance(runner, dict) or set(runner) != {"provider", "model", "effort"} or
+                runner["provider"] not in ("claude", "codex", "cursor", "faustus") or
+                not isinstance(runner["model"], str) or not 0 < len(runner["model"].strip()) <= 120 or
+                not runner["model"].isprintable() or runner["effort"] not in REVIEW_EFFORTS):
+            return {"ok": False, "status": 400, "error": "Review runner requires a provider, model and effort"}
+        runner = {**runner, "model": runner["model"].strip()}
+    elif runner is not None and runner != {}:
+        return {"ok": False, "status": 400, "error": "Review runner must be an object"}
     clean = {**profile, **{k: list(dict.fromkeys(s.strip() for s in profile[k] if s.strip()))
-                          for k in ("folders", "repositories")}}
+                          for k in ("folders", "repositories")}, REVIEW_RUNNER: runner or {}}
     body = json.dumps(clean, ensure_ascii=False)
     if len(briefing(clean, "")) > 8000:
         return {"ok": False, "status": 400, "error": "The profile briefing must fit within 8000 characters"}

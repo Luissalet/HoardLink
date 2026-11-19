@@ -24,12 +24,10 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -51,7 +49,6 @@ _EXPIRY_MARGIN_S = 60.0
 _CLAUDE_PROBE_COOLDOWN_S = 30 * 60
 _CLAUDE_PROBE_LOCK = threading.Lock()
 _CLAUDE_PROBES: dict[Path, tuple[float, Optional[int], str]] = {}
-_CLAUDE_AUTH_ERROR = re.compile(r"\b401\b.*authentication_error|not logged in.*(?:/login|claude auth login)", re.I | re.S)
 
 _REPORTER_LOCK = threading.Lock()
 _REPORTER_THREAD: Optional[threading.Thread] = None
@@ -263,7 +260,7 @@ def build_claude_report(usage: Mapping[str, Any], session: Mapping[str, Any], *,
 
 
 def probe_claude_sign_in(directory: Path) -> str:
-    """Let the native CLI refresh its own sign-in once per stale credentials file and cooldown."""
+    """Check explicit logout via the native CLI without running inference."""
     executable = shutil.which("claude")
     if not executable:
         return "unknown"
@@ -281,24 +278,14 @@ def probe_claude_sign_in(directory: Path) -> str:
         env.pop("CLAUDECODE", None)
         state = "unknown"
         try:
-            # `auth status` reports stored account metadata. An authenticated CLI turn exercises
-            # refresh. No tools, plugins, project settings, or conversation persistence are needed.
-            with tempfile.TemporaryDirectory(prefix="agora-claude-auth-") as cwd:
-                result = subprocess.run(
-                    [executable, "--print", "--output-format", "json", "--model", "haiku", "--tools=",
-                     "--strict-mcp-config", "--setting-sources=", "--no-session-persistence", "--max-turns", "1",
-                     "--max-budget-usd", "0.01", "--", "Reply with OK."],
-                    cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    text=True, encoding="utf-8", errors="replace", timeout=35, check=False,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
+            result = subprocess.run(
+                [executable, "auth", "status"], env=env, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                errors="replace", timeout=8, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
             payload = json.loads(result.stdout)
-            if isinstance(payload, dict) and payload.get("type") == "result":
-                if result.returncode == 0 and payload.get("is_error") is False:
-                    state = "available"
-                elif payload.get("is_error") is True and not payload.get("total_cost_usd") and _CLAUDE_AUTH_ERROR.search(
-                        str(payload.get("result") or "")):
-                    state = "refused"
+            if isinstance(payload, dict) and payload.get("loggedIn") is False and result.returncode in (0, 1):
+                state = "logged_out"
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         _CLAUDE_PROBES[directory] = (now, stamp, state)
@@ -325,6 +312,8 @@ def collect_claude_usage_report(*, config_dir: Optional[Path] = None, home: Opti
         if exc.code not in ("claude_access_expired", "unauthorized"):
             raise
     state = refresh(config_dir or claude_config_dir()) if refresh else "unknown"
+    if state == "logged_out":
+        raise AccountCapacityError("claude_not_logged_in", "Claude Code indica que no hay una sesión iniciada")
     if state == "refused":
         raise AccountCapacityError("claude_token_expired", "Claude Code intentó renovar el acceso y recibió un rechazo")
     if refresh:

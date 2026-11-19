@@ -267,6 +267,7 @@ def _reduce_claude(events: list[dict[str, Any]]) -> dict[str, Any]:
                 open_tools.clear()
             elif message.get("stop_reason") in _CLAUDE_TURN_END and not open_tools:
                 turn_open, ended_ts = False, ts
+                error_kind, error_ts = "", None
         elif kind == "system" and obj.get("subtype") == "turn_duration" and not open_tools:
             turn_open, ended_ts = False, ts
     return {"last_ts": last_ts, "turn_open": turn_open, "ended_ts": ended_ts, "open_tools": open_tools,
@@ -306,8 +307,9 @@ def claude_state(projects: Path, credentials: Path, now: float) -> dict[str, Any
                       last_ts=last_ts, source="claude_session", ended="El último turno terminó.",
                       stale="Turno abierto sin actividad; el proceso probablemente ya no existe.")
     result.update(extra)
-    if result["state"] == "idle" and expires is not None and expires <= now:
-        result["detail"] += " El acceso caducó pero se renueva al usarlo."
+    if result["state"] == "idle" and expires is not None and expires <= now and last_ts <= expires:
+        result["auth_refresh"] = "pending"
+        result["detail"] += " Claude Code comprueba si el acceso se renueva al usarlo."
     return result
 
 

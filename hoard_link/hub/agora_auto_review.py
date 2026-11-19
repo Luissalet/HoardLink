@@ -94,7 +94,7 @@ def _quota_available(provider: str, pools: list[dict[str, Any]]) -> bool:
     return False
 
 
-def _choose(console: Any, order: list[str]) -> tuple[str, str] | None:
+def _choose(console: Any, order: list[str], *, review: bool = False) -> tuple[str, str, str] | None:
     pools = {p["provider_id"]: p.get("pools", []) for p in console._agora().usage().get("providers", [])}
     quota = [provider for provider in order if _quota_available(provider, pools.get(provider, []))]
     codex = codex_observation()
@@ -103,6 +103,31 @@ def _choose(console: Any, order: list[str]) -> tuple[str, str] | None:
     if not quota:
         return None
     vendors = console._provider_data()
+    if review:
+        runner = agora_worker_profiles.read(console).get(agora_worker_profiles.REVIEW_RUNNER) or {}
+        if runner.get("provider") in quota:
+            provider = runner["provider"]
+            vendor = vendors.get(provider, {})
+            if vendor.get("state") == "available":
+                for model in vendor.get("catalog") or []:
+                    if model["id"] == runner["model"] and runner["effort"] in (model.get("efforts") or []):
+                        return provider, model["id"], runner["effort"]
+        # The interactive session's model and effort describe somebody else's work.
+        for provider in quota:
+            vendor = vendors.get(provider, {})
+            if vendor.get("state") != "available":
+                continue
+            for model in vendor.get("catalog") or []:
+                words = model["id"].lower().replace(".", "-").split("-")
+                if not {"haiku", "sol", "mini", "flash", "composer"}.intersection(words):
+                    continue
+                efforts = model.get("efforts") or []
+                effort = next((level for level in ("minimal", "low", "default") if level in efforts), None)
+                if not efforts and provider == "claude" and model["id"] == "haiku":
+                    effort = "default"
+                if effort or (not efforts and provider in ("faustus", "cursor")):
+                    return provider, model["id"], effort or ""
+        return None
     preferences = console._preferences()
     for provider in quota:
         vendor = vendors.get(provider, {})
@@ -112,11 +137,11 @@ def _choose(console: Any, order: list[str]) -> tuple[str, str] | None:
         ids = {model["id"] for model in catalog}
         preferred = preferences.get(provider, {}).get("model")
         if preferred in ids:
-            return provider, preferred
+            return provider, preferred, ""
         if provider == "claude" and "haiku" in ids:
-            return provider, "haiku"
+            return provider, "haiku", ""
         current = vendor.get("current_model")
-        return provider, current if current in ids else catalog[0]["id"]
+        return provider, current if current in ids else catalog[0]["id"], ""
     return None
 
 
@@ -291,7 +316,7 @@ class AutoReview:
         order = [p for p in PROVIDERS if p != provider]
         if not review and provider in PROVIDERS:
             order.insert(0, provider)
-        chosen = _choose(console, order)
+        chosen = _choose(console, order, review=review)
         if not chosen:
             self._update(console, job, "waiting_quota", "no_provider_with_quota")
             return
@@ -300,7 +325,7 @@ class AutoReview:
             return
         current = {**dict(job), "state": "starting", "owner": owner, "worker_id": worker_id}
         try:
-            args = {"leader_id": chosen[0], "model": chosen[1], "rank": "support",
+            args = {"leader_id": chosen[0], "model": chosen[1], "effort": chosen[2], "rank": "support",
                     "task": _assignment(agora, task, job["kind"]), "template": "review" if review else "build"}
             if self.stop.is_set() or not agora_worker_profiles.read(console)["auto_review"]:
                 self._update(console, current, "cancelled", "profile_disabled")
