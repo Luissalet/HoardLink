@@ -102,6 +102,30 @@ def test_skin_reads_all_weight_sets_and_flags_bad_joint(tmp_path):
         {"node": "mesh", "primitive": 0, "vertices": 3, "unweighted": 1, "invalid_weights": 1}]
 
 
+def _game_doc(skinned):
+    nodes = [{"name": "Escalera", "mesh": 0}]
+    if skinned:
+        nodes.append({"name": "root"})
+    return {"nodes": nodes, "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+            "skins": [{"joints": [1]}] if skinned else []}
+
+
+@pytest.mark.parametrize("requirements, verdict", [
+    ({"max_triangles": 20000}, "pass"),
+    ({"max_triangles": 20000, "skinned": True}, "fail"),
+    ({"max_triangles": 20000, "bones": ["mapa"]}, "fail"),
+])
+def test_rigid_set_piece_needs_no_skin_unless_requested(tmp_path, monkeypatch, requirements, verdict):
+    native = SimpleNamespace(gltf_facts=lambda path: {"triangles": 120, "image_sizes": []},
+                             read_gltf=lambda path: (_game_doc(False), b""))
+    monkeypatch.setitem(sys.modules, "vulcan.asset_inspection", native)
+    result = checks.run_checks(tmp_path / "escalera.glb", "game-mesh", requirements)
+    by_id = _checks(result)
+    assert result["verdict"] == verdict
+    assert by_id["bones"]["applies"] is (verdict == "fail")
+    assert by_id["vertex-weights"]["verdict"] == verdict
+
+
 def test_slide_diagnostics_name_the_affected_shape(tmp_path, monkeypatch):
     pptx = pytest.importorskip("pptx")
     deck = pptx.Presentation()

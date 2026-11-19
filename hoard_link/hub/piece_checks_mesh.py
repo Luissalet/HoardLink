@@ -132,16 +132,20 @@ def check_game(path, requirements, report):
                "Check that both axes of each texture are powers of two.",
                "Comprueba que ambos ejes de cada textura son potencias de dos.", details=bad_sizes)
     required_bones = requirements.get("bones", [])
+    # Rigid props and set dressing carry no skin; skin checks apply only when one is present or requested.
+    deformable = bool(bones or required_bones or requirements.get("skinned"))
     missing = sorted(set(required_bones) - set(bones))
-    report.add("bones", bool(bones) and not missing, "Check skin joints and required bone names.",
-               "Comprueba la presencia de huesos y los nombres requeridos.", details=missing)
+    report.add("bones", (bool(bones) and not missing) if deformable else True,
+               "Check skin joints and required bone names.",
+               "Comprueba la presencia de huesos y los nombres requeridos.", details=missing, applies=deformable)
     required_pivots = requirements.get("pivots", [])
     missing = sorted(set(required_pivots) - pivots.keys())
-    report.add("pivots", not missing if required_pivots else None,
-               "Find the nodes declared as pivots.", "Localiza los nodos declarados como pivotes.", details=missing)
+    report.add("pivots", not missing, "Find the nodes declared as pivots.",
+               "Localiza los nodos declarados como pivotes.", details=missing, applies=bool(required_pivots))
     rows = _weights(document, binary, path.parent)
     report.measures["skin_primitives"] = rows
     problems = [row for row in rows if row["unweighted"] or row["invalid_weights"]]
-    report.add("vertex-weights", bool(rows) and not problems,
+    report.add("vertex-weights", (bool(rows) and not problems) if deformable else True,
                "Count vertices without valid influences in skinned primitives.",
-               "Cuenta los vértices sin influencias válidas en las primitivas con piel.", details=problems)
+               "Cuenta los vértices sin influencias válidas en las primitivas con piel.", details=problems,
+               applies=deformable)
