@@ -16,9 +16,10 @@ import traceback
 import bpy
 from mathutils import Euler, Vector
 
+# Named after the subject's own side: facing -Y, its right hand is at -X.
 DIRECTIONS = {
-    "front": (0.0, -1.0), "front_right": (0.7071, -0.7071), "right": (1.0, 0.0), "back_right": (0.7071, 0.7071),
-    "back": (0.0, 1.0), "back_left": (-0.7071, 0.7071), "left": (-1.0, 0.0), "front_left": (-0.7071, -0.7071),
+    "front": (0.0, -1.0), "front_right": (-0.7071, -0.7071), "right": (-1.0, 0.0), "back_right": (-0.7071, 0.7071),
+    "back": (0.0, 1.0), "back_left": (0.7071, 0.7071), "left": (1.0, 0.0), "front_left": (0.7071, -0.7071),
 }
 NEUTRAL = (0.78, 0.76, 0.72)
 BACKGROUND = (0.20, 0.22, 0.25)

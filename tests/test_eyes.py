@@ -316,3 +316,12 @@ def test_tools_are_short_and_writes_carry_undo() -> None:
     assert tools["hub_eyes_get"]["annotations"]["readOnlyHint"]
     assert set(EyesFacet.tools()[0]["inputSchema"]["properties"]) >= {"path", "url", "app", "same_as", "keep"}
     json.dumps(EyesFacet.tools())
+
+
+def test_mesh_views_are_named_after_the_subjects_own_side() -> None:
+    # Facing the front camera (-Y), the subject's right hand is at -X: the "right" view looks from there.
+    assert eyes_render.MESH_VIEWS["right"] == (-1.0, 0.0) and eyes_render.MESH_VIEWS["front_left"][0] > 0
+    blender = (Path(eyes_render.__file__).with_name("eyes_blender.py")).read_text(encoding="utf-8")
+    for name, direction in eyes_render.MESH_VIEWS.items():
+        if direction:
+            assert f'"{name}": {direction}' in blender.replace(".0)", ".0)")

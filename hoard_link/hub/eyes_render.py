@@ -35,11 +35,12 @@ WEB_EXT = {".html", ".htm"}
 OFFICE_EXT = {".pptx", ".ppt", ".odp", ".docx", ".doc", ".odt", ".rtf", ".xlsx", ".xls", ".ods", ".key"}
 DOC_EXT = {".pdf"} | OFFICE_EXT
 
-#: Anatomical views of a model: camera direction from the model centre, in the model's own frame where the
-#: front faces -Y and Z is up (what Blender's glTF importer gives for a glTF model facing +Z).
+#: Anatomical views of a model, named after the subject's own side ("right" shows its right profile): camera
+#: direction from the model centre in the frame where the front faces -Y and Z is up (what Blender's glTF importer
+#: gives for a glTF model facing +Z), so the subject's right is -X.
 MESH_VIEWS = {
-    "front": (0.0, -1.0), "front_right": (0.7071, -0.7071), "right": (1.0, 0.0), "back_right": (0.7071, 0.7071),
-    "back": (0.0, 1.0), "back_left": (-0.7071, 0.7071), "left": (-1.0, 0.0), "front_left": (-0.7071, -0.7071),
+    "front": (0.0, -1.0), "front_right": (-0.7071, -0.7071), "right": (-1.0, 0.0), "back_right": (-0.7071, 0.7071),
+    "back": (0.0, 1.0), "back_left": (0.7071, 0.7071), "left": (1.0, 0.0), "front_left": (0.7071, -0.7071),
     "top": None, "bottom": None,
 }
 DEFAULT_MESH_VIEWS = ("front", "front_right", "right", "back", "left", "front_left")
