@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
-from .contract import app_tools
+from .dispatch_proxy import probe_catalog
 from .facets import Facet
 
 
@@ -99,22 +99,27 @@ class ProductionFacet(Facet):
     def proxy_check(self, args):
         inventory = self.hub.facet("capabilities")
         apps = sorted(inventory.inventory() if inventory else self.hub.apps, key=lambda app: app.id)
+        if args.get("app"):
+            apps = [app for app in apps if app.id == args["app"]]
+            if not apps:
+                return {"ok": False, "status": 404, "error": "Unknown app"}
+        timeout = args.get("timeout_s", 8)
+        if type(timeout) not in (int, float) or not 2 <= timeout <= 30:
+            return {"ok": False, "status": 400, "error": "timeout_s must be between 2 and 30"}
 
         def probe(app):
             if self.hub.get(app.id) is None:
                 return {"app": app.id, "reachable": False, "status": None,
+                        "state": "no_proxy", "responding": False,
                         "contract": "stdio" if app.kind == "mcp-only" else "unknown",
                         "error": "No HTTP app proxy route"}
-            result = app_tools(app, timeout=2.0)
-            return {"app": app.id, "reachable": result["ok"],
-                    "status": result.get("status", 200 if result["ok"] else None),
-                    "contract": result["contract"], "tool_count": len(result.get("tools", [])),
-                    "error": result.get("error")}
+            return probe_catalog(app, timeout_s=timeout)
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             results = list(pool.map(probe, apps))
         return {"ok": True, "apps": results,
-                "unreachable": [row["app"] for row in results if not row["reachable"]]}
+                "slow": [row["app"] for row in results if row["state"] == "slow"],
+                "unreachable": [row["app"] for row in results if not row["reachable"] and row["state"] != "slow"]}
 
     def modules(self, args):
         app_id = args.get("app")
@@ -205,7 +210,8 @@ class ProductionFacet(Facet):
             _tool("hub_station_catalog", "List production handoffs and plan chains. Ver puestos y proponer cadenas.",
                   {"app": string, "from_type": string, "to_type": string,
                    "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5}}),
-            _tool("hub_proxy_check", "Probe all Hoard catalogues without starting apps. Comprobar catálogos sin arrancar aplicaciones."),
+            _tool("hub_proxy_check", "Check which app catalogues respond and how fast / comprueba qué catálogos responden.",
+                  {"app": {"type": "string"}, "timeout_s": {"type": "number", "minimum": 2, "maximum": 30}}),
             _tool("hub_modules", "List native module switches. Consultar módulos.",
                   {"app": string, "group": string}, ("app",)),
             _tool("hub_module_set", "Toggle a native module and return undo. Activar o desactivar un módulo y devolver cómo deshacerlo.",

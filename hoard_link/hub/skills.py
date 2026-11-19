@@ -57,6 +57,15 @@ class SkillsFacet(Facet):
         data = app.data_dir or os.path.join(app.folder, "data")
         return skills.Shelf(app.id, data, skills.wants_of(app.manifest_path), library=self.hub.config.faustus_dir, max_age_s=0)
 
+    def proxy_read(self, app: Any, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Use the agent shelf contract for reads supplied by an app's stdio bridge."""
+        try:
+            return {"ok": True, "status": 200, "app": app.id, "tool": tool, "contract": "shelf",
+                    "result": self._shelf(app).call(tool, args)}
+        except (KeyError, ValueError) as exc:
+            return {"ok": False, "status": 404, "app": app.id, "tool": tool, "contract": "shelf",
+                    "error": str(exc.args[0]) if exc.args else str(exc)}
+
     def _poke(self, app: Any) -> None:
         """Tell a running app its shelf changed (it would notice by itself in a few minutes)."""
         def go() -> None:

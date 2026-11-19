@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional
 
 from .contract import read_token
 from .facets import Facet, Request
+from .isolated_apps import IsolatedApps
 
 FILE_NAME = "instance-tokens.json"
 TOKEN_NAME = "mcp-token"
@@ -40,6 +41,10 @@ class InstancesFacet(Facet):
     def __init__(self, hub: Any):
         super().__init__(hub)
         self._lock = threading.Lock()
+        self.isolated = IsolatedApps(self)
+
+    def close(self) -> None:
+        self.isolated.close()
 
     # -- storage ------------------------------------------------------------
     @property
@@ -135,11 +140,13 @@ class InstancesFacet(Facet):
         return self.list()
 
     def post(self, req: Request) -> Optional[Any]:
-        if req.path not in ("/api/instances/add", "/api/instances/remove"):
+        if req.path not in ("/api/instances/add", "/api/instances/remove", "/api/instances/isolated"):
             return None
         if req.caller() not in ("ui", "hub") and not req.agent():
             return {"ok": False, "status": 403, "error": "the hub page or the hub's token"}
         b = req.body or {}
+        if req.path.endswith("/isolated"):
+            return self.isolated.manage(b)
         if req.path.endswith("/add"):
             return self.add(b.get("app"), token_file=b.get("token_file"), data_dir=b.get("data_dir"),
                             label=b.get("label"))
@@ -152,6 +159,14 @@ class InstancesFacet(Facet):
                  "data_dir": {"type": "string", "description": "The instance's data folder (its mcp-token is used)."},
                  "token_file": {"type": "string", "description": "Or the token file itself."}}
         return [
+            {"name": "hub_isolated_app",
+             "description": "Start, call or stop an isolated app profile / inicia, llama o para un perfil aislado.",
+             "inputSchema": {"type": "object", "required": ["action"], "properties": {
+                 "action": {"enum": ["start", "status", "list", "call", "stop", "resume"]},
+                 "app": {"type": "string"}, "worktree": {"type": "string"}, "instance_id": {"type": "string"},
+                 "tool": {"type": "string"}, "arguments": {"type": "object"}, "reason": {"type": "string"},
+                 "agent": {"type": "string"},
+             }, "additionalProperties": False}},
             {"name": "hub_instance_list",
              "description": "Other running copies of apps (QA, demo) whose tokens the hub accepts as the app / "
                             "instancias de prueba cuyos tokens cuentan como la app.",
@@ -169,6 +184,7 @@ class InstancesFacet(Facet):
 
     def handlers(self) -> dict[str, Callable[[dict[str, Any]], Any]]:
         return {
+            "hub_isolated_app": self.isolated.manage,
             "hub_instance_list": lambda a: self.list(),
             "hub_instance_add": lambda a: self.add(a.get("app"), token_file=a.get("token_file"),
                                                    data_dir=a.get("data_dir"), label=a.get("label")),
