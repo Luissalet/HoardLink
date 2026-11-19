@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
+from . import website_handoff
 from .browser_lanes import LaneError
 
 LANE_TOOL_OWNER = "mcp"            # lanes taken through the tools belong to this owner
@@ -39,6 +40,7 @@ def _copilot_request(hub, arguments):
 
 def catalogue() -> list[dict[str, Any]]:
     return [
+        website_handoff.TOOL,
         {
             "name": "hub_copilot_request",
             "description": "Use the shared Faustus copilot: conversations, context, imports and turns. Keywords: copilot, chat Hoard.",
@@ -714,6 +716,7 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_event_emit": event_emit,
         "hub_event_stats": lambda a: {"ok": True, **hub.events.stats(a.get("since"))},
         "hub_call_app": call_app,
+        website_handoff.NAME: lambda a: website_handoff.publish_piece(hub, a),
         "hub_app_tools": lambda a: hub.app_tools(str(a.get("app") or "")),
         "hub_rules": lambda _: {"ok": True, "rules": hub.rules.list(), "history": hub.rules.history[-20:]},
         "hub_rule_add": lambda a: hub.rules.add(a),
