@@ -100,6 +100,7 @@ class _Gpu:
     index: int
     total_mb: int
     used_mb: int
+    uuid: str = ""
 
 
 def _default_gpu_fn() -> Any:
@@ -269,7 +270,8 @@ class LeaseArbiter:
             else:
                 rows = result
             for g in rows:
-                out.append(_Gpu(int(getattr(g, "index")), int(getattr(g, "total_mb")), int(getattr(g, "used_mb"))))
+                out.append(_Gpu(int(getattr(g, "index")), int(getattr(g, "total_mb")), int(getattr(g, "used_mb")),
+                                str(getattr(g, "uuid", "") or "")))
         except Exception as exc:  # noqa: BLE001
             out = []
             error, error_type = f"GPU inventory query failed: {str(exc)[:300]}", "provider_error"
@@ -425,7 +427,8 @@ class LeaseArbiter:
         return 0
 
     def _reply(self, lease: Lease) -> dict[str, Any]:
-        return {"ok": True, "lease_id": lease.id, "state": lease.state, "gpu": lease.gpu,
+        gpu_uuid = next((g.uuid for g in self._inv[1] if g.index == lease.gpu and g.uuid), None)
+        return {"ok": True, "lease_id": lease.id, "state": lease.state, "gpu": lease.gpu, "gpu_uuid": gpu_uuid,
                 "expires_at": lease.expires_at, "position": self._position(lease),
                 "lease": lease.to_dict(self._now())}
 
@@ -561,7 +564,7 @@ class LeaseArbiter:
                 reserved = self._reserved(g.index)
                 per_gpu.append({
                     "index": g.index, "total_mb": g.total_mb, "used_mb": g.used_mb, "free_mb": g.total_mb - g.used_mb,
-                    "protected": g.index in self.protected_gpus,
+                    "protected": g.index in self.protected_gpus, "uuid": g.uuid or None,
                     "reserved_mb": reserved, "base_used_mb": self._base_used.get(g.index, g.used_mb),
                     "available_mb": max(0, self._available(g)),
                     "leases": sum(1 for l in self._leases.values() if l.state == "granted" and l.gpu == g.index),

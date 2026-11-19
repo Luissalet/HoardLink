@@ -10,7 +10,7 @@ The facet subscribes to the event log (never blocking ``emit``: events go throug
 worker thread), keeps the active jobs and the last 500 finished in ``<data>/work.json``, and joins
 ``hub.lease.granted|released`` by ``owner`` to show which GPU a job holds. A job still ``queued``/``running``
 without news for 6 hours is marked ``stale`` (the app probably died). When a job fails the facet emits
-``work.failed {app, job_id, title, error}`` and tells the person through the ``notify`` facet.
+``work.failed {app, job_id, title, error}``, posts to a linked Agora task and tells the person through the ``notify`` facet.
 
 HTTP: ``GET /api/work?active=1&app=&limit=&failed=1``, ``GET /api/work/stats``. Tool ``hub_work``.
 Python: :meth:`WorkFacet.active` (the Today facet uses it), :meth:`~WorkFacet.recent`, :meth:`~WorkFacet.stats`.
@@ -24,8 +24,12 @@ import queue
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
+from hoard_link.atomic import write_text_atomic
+
+from .agora import AgoraError
 from .events import SOFT_ALIASES, canonicalize, normalize_type
 from .facets import Facet, Request
 
@@ -75,6 +79,7 @@ class WorkFacet(Facet):
         self._lock = threading.RLock()
         self._active: dict[str, dict[str, Any]] = {}
         self._finished: list[dict[str, Any]] = []
+        self._task_links: dict[str, dict[str, Any]] = {}
         self._leases: dict[str, dict[str, Any]] = {}          # lease_id -> {owner, gpu, vram_mb, purpose}
         self._queue: "queue.Queue[Optional[dict[str, Any]]]" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
@@ -96,19 +101,18 @@ class WorkFacet(Facet):
         with self._lock:
             self._active = {j["key"]: j for j in raw.get("active", []) if isinstance(j, dict) and j.get("key")}
             self._finished = [j for j in raw.get("finished", []) if isinstance(j, dict)][-KEEP_FINISHED:]
+            self._task_links = dict(raw.get("task_links") or {})
 
     def _save(self) -> None:
         with self._lock:
-            payload = {"active": list(self._active.values()), "finished": self._finished[-KEEP_FINISHED:]}
+            payload = {"active": list(self._active.values()), "finished": self._finished[-KEEP_FINISHED:],
+                       "task_links": dict(self._task_links)}
+            try:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                write_text_atomic(Path(self.path), json.dumps(payload, ensure_ascii=False, default=str))
+            except OSError:
+                return
             self._dirty = False
-        try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, ensure_ascii=False, default=str)
-            os.replace(tmp, self.path)
-        except OSError:
-            pass
 
     # -- lifecycle ---------------------------------------------------------------------------
     def start(self) -> None:
@@ -150,9 +154,9 @@ class WorkFacet(Facet):
             except Exception:  # noqa: BLE001
                 pass
             finally:
+                if self._queue.empty() and self._dirty:
+                    self._save()
                 self._queue.task_done()
-            if self._queue.empty() and self._dirty:
-                self._save()
 
     def wait_idle(self, timeout: float = 5.0) -> bool:
         """Block until the worker has processed everything queued so far (tests, tools)."""
@@ -222,6 +226,7 @@ class WorkFacet(Facet):
                 if state == "done":
                     job["progress"] = 1.0
                 if state == "failed":
+                    job["source"] = event.get("source") or app
                     job["error"] = str(data.get("error") or job.get("error") or "")[:300]
                     failed_job = dict(job)
                 self._active.pop(key, None)
@@ -231,6 +236,7 @@ class WorkFacet(Facet):
             out = dict(job)
         if failed_job is not None:
             self._on_failed(failed_job)
+            self._post_task_failure(failed_job)
         return out
 
     def _lease(self, what: str, data: dict[str, Any]) -> None:
@@ -244,13 +250,83 @@ class WorkFacet(Facet):
             elif what == "released":
                 self._leases.pop(lid, None)
 
-    def _lease_of(self, app: str) -> Optional[dict[str, Any]]:
+    def _lease_of(self, app: str, job_id: str) -> list[dict[str, Any]]:
         a = app.lower()
-        for lease in self._leases.values():
-            owner = lease["owner"].lower()
-            if owner == a or owner.startswith(a + ":") or owner.startswith(a + "-") or owner.startswith(a + "/"):
-                return lease
-        return None
+        matching = [lease for lease in self._leases.values()
+                    if lease["owner"].lower() == a or lease["owner"].lower().startswith((a + ":", a + "-", a + "/"))]
+        exact = [lease for lease in matching if job_id in str(lease.get("purpose") or "").split()]
+        if exact:
+            return exact
+        jobs = sum(job["app"] == app and job["status"] == "running" for job in self._active.values())
+        return matching if len(matching) == 1 and jobs == 1 else []
+
+    def link_task(self, args: dict[str, Any]) -> dict[str, Any]:
+        app = str(args.get("app") or "").strip().lower()
+        job_id = str(args.get("job_id") or "").strip()
+        if "task_id" not in args:
+            return {"ok": False, "status": 400, "error": "Provide a task ID or null to undo a link."}
+        task_id = args["task_id"]
+        if not re.fullmatch(r"[a-z0-9_-]+", app) or not job_id or len(job_id) > 160:
+            return {"ok": False, "status": 400, "error": "Provide an app ID and a job ID."}
+        key = f"{app}:{job_id}"
+        with self._lock:
+            before = self._task_links.get(key)
+            link = None
+            if task_id is not None:
+                facet = self.hub.facet("agora")
+                if facet is None:
+                    return {"ok": False, "status": 503, "error": "Agora is unavailable."}
+                try:
+                    agora = facet.agora.for_space(args.get("space_id"))
+                    task = agora._task_row(task_id)
+                except (AgoraError, ValueError) as exc:
+                    return {"ok": False, "status": getattr(exc, "status", 404), "error": str(exc)}
+                link = {"task_id": task["id"], "space_id": agora.space_id, "thread_id": task["thread_id"]}
+                if before and before.get("task_id") == task["id"]:
+                    link = before
+                self._task_links[key] = link
+            else:
+                self._task_links.pop(key, None)
+            self._dirty = True
+            last = next((row for row in reversed(self._finished) if row["key"] == key), None)
+            if link and last and last["status"] == "failed":
+                self._post_task_failure(last)
+            self._save()
+            return {"ok": True, "app": app, "job_id": job_id, "link": link, "previous": before}
+
+    def _post_task_failure(self, job: dict[str, Any]) -> None:
+        with self._lock:
+            key = job["key"]
+            link = self._task_links.get(key)
+            if not link or link.get("message_id") or not link.get("thread_id"):
+                return
+            if job.get("source") != job["app"]:
+                return
+            facet = self.hub.facet("agora")
+            if facet is None:
+                return
+            agora = facet.agora.for_space(link["space_id"])
+            text = (f"Trabajo fallido en {job['app']} ({job['job_id']})"
+                    if _lang(self.hub) == "es" else f"Job failed in {job['app']} ({job['job_id']})")
+            body = "\n".join(part for part in (text, job.get("error"), job.get("url")) if part)
+            with agora.db.tx():
+                try:
+                    task = agora._task_row(link["task_id"])
+                except AgoraError:
+                    return
+                thread_id = task["thread_id"]
+                previous = agora.db.one(
+                    "SELECT id FROM messages WHERE thread_id=? AND author='system' AND kind='system' AND body=?",
+                    (thread_id, body),
+                )
+                message_id = (previous["id"] if previous else
+                              agora._msg(thread_id, "system", "system", body,
+                                         [task["owner"]] if task.get("owner") else []))
+            link["message_id"] = message_id
+            self._dirty = True
+            if not previous:
+                agora._bump("agora.thread.message", {"thread_id": thread_id, "message_id": message_id,
+                                                     "author": "system", "kind": "system"})
 
     def _on_failed(self, job: dict[str, Any]) -> None:
         app, title, error = job["app"], job["title"], job.get("error") or ""
@@ -272,13 +348,19 @@ class WorkFacet(Facet):
     # -- reading ---------------------------------------------------------------------------------
     def _decorate(self, job: dict[str, Any], now: float) -> dict[str, Any]:
         j = dict(job)
+        link = self._task_links.get(j["key"])
+        if link:
+            j["agora_task"] = dict(link)
         end = j.get("finished_ts") or now
         begin = j.get("started_ts") or j.get("queued_ts") or end
         j["elapsed_s"] = max(0, int(end - begin))
         j["stale"] = j["status"] in ("queued", "running") and now - float(j.get("updated_ts") or 0) > STALE_AFTER_S
         if j["status"] == "running":            # a queued job holds nothing yet
-            lease = self._lease_of(j["app"])
-            if lease:
+            leases = self._lease_of(j["app"], j["job_id"])
+            if len(leases) > 1:
+                j["leases"] = [{k: lease.get(k) for k in ("gpu", "vram_mb", "purpose")} for lease in leases]
+            if leases:
+                lease = next((entry for entry in leases if j.get("gpu") == entry.get("gpu")), leases[0])
                 if j.get("gpu") in (None, ""):
                     j["gpu"] = lease.get("gpu")
                 j["lease"] = {"gpu": lease.get("gpu"), "vram_mb": lease.get("vram_mb"), "purpose": lease.get("purpose")}
@@ -367,6 +449,15 @@ class WorkFacet(Facet):
                 "limit": {"type": "integer", "default": 20, "description": "Finished jobs to list when active=false."}},
                 "additionalProperties": False},
             "annotations": {"readOnlyHint": True},
+        }, {
+            "name": "hub_work_link_task",
+            "description": "Link a job to an Agora task for failure notices. Pass null task_id to undo the link.",
+            "inputSchema": {"type": "object", "properties": {
+                "app": {"type": "string", "description": "App ID from hub_work."},
+                "job_id": {"type": "string", "description": "Job ID returned by the app."},
+                "task_id": {"type": ["integer", "null"], "description": "Task ID, or null to remove the link."},
+                "space_id": {"type": "string", "description": "Agora space containing the task."}},
+                "required": ["app", "job_id", "task_id"], "additionalProperties": False},
         }]
 
     def handlers(self) -> dict[str, Any]:
@@ -377,7 +468,7 @@ class WorkFacet(Facet):
             if not only_active:
                 out["finished"] = self.recent(int(a.get("limit") or 20), app)
             return out
-        return {"hub_work": hub_work}
+        return {"hub_work": hub_work, "hub_work_link_task": self.link_task}
 
 
 __all__ = ["WorkFacet"]
