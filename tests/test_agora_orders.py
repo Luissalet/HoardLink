@@ -261,3 +261,24 @@ def test_a_piece_whose_file_changed_without_a_copy_is_not_decided(agora, tmp_pat
         agora_orders.piece_file(agora, big["id"])
     (tmp_path / "big.glb").write_bytes(b"A")
     assert agora.gate_decide(person(gate_id=gate["id"], decision="keep"))["ok"]
+
+
+def test_a_web_page_is_a_new_revision_when_only_its_image_changes(agora, tmp_path):
+    order, keys, pieces = cartographer(agora, tmp_path)
+    for name in ("a", "b"):
+        site = tmp_path / f"site-{name}"
+        site.mkdir()
+        (site / "index.html").write_text('<img src="foto.png">', encoding="utf-8")
+    (tmp_path / "site-a" / "foto.png").write_bytes(b"A")
+    (tmp_path / "site-b" / "foto.png").write_bytes(b"other site")
+    web = {"agent": "claude", "order_id": order["id"], "kind": "web", "title": "Web", "path": "site-a/index.html"}
+    r1 = agora.piece_add(dict(web))["piece"]
+    (tmp_path / "site-a" / "foto.png").write_bytes(b"B")       # same entry page, another image
+    r2 = agora.piece_add(dict(web))["piece"]
+    assert r2["id"] != r1["id"] and r2["revision"] == 2 and r2["sha256"] != r1["sha256"]
+    show = lambda pid: open(agora_orders.piece_file(agora, pid, rel="foto.png"), "rb").read()
+    assert show(r1["id"]) == b"A" and show(r2["id"]) == b"B"
+    assert "QQ==" in agora_orders.inline_html(agora_orders.piece_file(agora, r1["id"]))   # base64 of A
+    # another folder with the same entry page is another site
+    other = agora.piece_add({**web, "path": "site-b/index.html"})["piece"]
+    assert other["sha256"] not in (r1["sha256"], r2["sha256"]) and show(other["id"]) == b"other site"

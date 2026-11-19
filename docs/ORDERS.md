@@ -68,7 +68,7 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
   already is (`existing`); other content is its next revision, superseding the previous one. The same bytes from another
   job or of another kind are a piece of their own, with their own lineage.
 * **Each revision keeps its bytes.** A registered file (and each preview) is copied by content into the Agora's folder
-  (`order_pieces/` beside the database; a local web page with the files of its folder), and that copy is what the page
+  (`order_pieces/` beside the database; a local web page with the files of its folder, printed as a whole: changing only a style or an image makes another revision), and that copy is what the page
   shows and the person decides on, even after the station overwrites the file. A file too big to copy (over 2 GB, or a
   site over 64 MB) is checked against its print instead: if it changed, it is not shown and the gate refuses the decision
   (`piece_changed`) until the station registers it again. `bytes` says `kept` or `unverified`.

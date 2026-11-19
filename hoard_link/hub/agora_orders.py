@@ -294,21 +294,46 @@ def _keep_copy(self: Any, path: str, sha: str) -> str:
         return ""
 
 
-def _keep_site(self: Any, path: str, sha: str) -> str:
-    """A local web page with the files of its folder, under the print of the page."""
-    base = os.path.dirname(path)
+def _site_files(base: str) -> Optional[list[str]]:
+    """The files of a web page's folder, or None when the folder is over SITE_MAX."""
     files, total = [], 0
     for root, dirs, names in os.walk(base):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__")]
-        for name in names:
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__"))
+        for name in sorted(names):
             full = os.path.join(root, name)
             try:
                 total += os.path.getsize(full)
             except OSError:
                 continue
             if total > SITE_MAX:
-                return ""
+                return None
             files.append(full)
+    return files
+
+
+def _print(path: str) -> str:
+    """The content print of a piece's file. A local web page is printed with its folder (the entry's name, and each
+    file's relative path and content), so a changed style or image makes another revision; a folder too big to keep
+    is printed by its entry page alone."""
+    if os.path.splitext(path)[1].lower() not in (".html", ".htm") or not os.path.isfile(path):
+        return _sha256(path)
+    base = os.path.dirname(path)
+    files = _site_files(base)
+    if files is None:
+        return _sha256(path)
+    h = hashlib.sha256(f"site:{os.path.basename(path)}|".encode("utf-8"))
+    for full in files:
+        rel = os.path.relpath(full, base).replace(os.sep, "/")
+        h.update(f"{rel}|{_sha256(full)};".encode("utf-8"))
+    return h.hexdigest()
+
+
+def _keep_site(self: Any, path: str, sha: str) -> str:
+    """A local web page with the files of its folder, under the print of the whole site."""
+    base = os.path.dirname(path)
+    files = _site_files(base)
+    if files is None:
+        return ""
     dest_root = os.path.join(_store_dir(self), "sites", sha)
     try:
         if not os.path.isdir(dest_root):
@@ -318,7 +343,7 @@ def _keep_site(self: Any, path: str, sha: str) -> str:
                 target = os.path.join(tmp, os.path.relpath(full, base))
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 shutil.copyfile(full, target)
-            if _sha256(os.path.join(tmp, os.path.basename(path))) != sha:
+            if _print(os.path.join(tmp, os.path.basename(path))) != sha:   # changed while copying
                 shutil.rmtree(tmp, ignore_errors=True)
                 return ""
             os.replace(tmp, dest_root)
@@ -842,7 +867,7 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     folder = _order_row(self, a.get("order_id"))["folder"]
     path = _resolve(folder, _txt(a.get("path"), 1000, "path"))
     previews = [_resolve(folder, p) for p in _strs(a.get("previews"), "previews", limit=1000, items=24)]
-    sha = _sha256(path) if path else ""
+    sha = _print(path) if path else ""
     stored = _keep_copy(self, path, sha) if path else ""
     previews_stored = [_keep_copy(self, pv, _sha256(pv)) for pv in previews]
     with self.db.tx():
@@ -1211,7 +1236,7 @@ def _bytes_ok(self: Any, piece: dict[str, Any]) -> bool:
         return True
     if piece.get("stored") and os.path.isfile(piece["stored"]):
         return True
-    return bool(piece.get("sha256")) and _sha256(piece["path"]) == piece["sha256"]
+    return bool(piece.get("sha256")) and _print(piece["path"]) == piece["sha256"]
 
 
 def piece_file(self: Any, piece_id: Any, *, preview: Any = None, rel: str = "") -> str:
