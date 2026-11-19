@@ -911,18 +911,46 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 raise _err(f"piece #{supersedes} is not a piece of order #{oid}", 404)
             revision = int(old["revision"]) + 1
         decisions: list[int] = []
+        inherited: list[dict[str, Any]] = []
         for pid in derives:
-            parent = self.db.one("SELECT order_id, decisions FROM agora_pieces WHERE id=?", (pid,))
+            parent = self.db.one("SELECT order_id, decisions, keep FROM agora_pieces WHERE id=?", (pid,))
             if not parent or parent["order_id"] != oid:
                 raise _err(f"piece #{pid} is not a piece of order #{oid}", 404)
             decisions += [d for d in _load(parent["decisions"], []) if d not in decisions]
             kept = self.db.one("SELECT id FROM agora_order_decisions WHERE piece_id=? AND decision='keep' ORDER BY id DESC LIMIT 1", (pid,))
             if kept and kept["id"] not in decisions:
                 decisions.append(int(kept["id"]))
-        keep_src = _strs(a.get("keep"), "keep") if a.get("keep") is not None else _load(order_row["keep"], [])
-        # every detail starts unchecked: inheriting a detail never inherits its approval
-        keep = [{"id": f"k{i + 1}", "detail": d, "source": "order" if a.get("keep") is None else "piece", "state": "pending"}
-                for i, d in enumerate(keep_src)]
+            for item in _load(parent["keep"], []):
+                if isinstance(item, dict) and item.get("detail"):
+                    inherited.append({"detail": item["detail"], "parent": pid, "source": item.get("source") or "piece",
+                                      "from": item.get("from")})
+        own = a.get("keep") is not None
+        keep_src = _strs(a.get("keep"), "keep") if own else _load(order_row["keep"], [])
+        # every detail starts unchecked: inheriting a detail never inherits its approval. The relay carries every
+        # detail of the pieces this one comes from, with where it was first set, so a detail added at one station
+        # (not in the order) still reaches the next one to be checked there.
+        order_keep = {d.casefold() for d in _load(order_row["keep"], []) if isinstance(d, str)}
+        keep: list[dict[str, Any]] = [{"id": f"k{i + 1}", "detail": d,
+                                       "source": "order" if d.casefold() in order_keep else "piece",
+                                       "state": "pending"} for i, d in enumerate(keep_src)]
+        seen = {k["detail"].casefold() for k in keep}
+        for item in inherited:
+            if item["detail"].casefold() in seen:
+                continue
+            seen.add(item["detail"].casefold())
+            origin = item["from"] if item["from"] is not None else (
+                None if item["source"] == "order" else item["parent"])
+            keep.append({"id": f"k{len(keep) + 1}", "detail": item["detail"],
+                         "source": "order" if item["source"] == "order" else "piece", "from": origin,
+                         "via": item["parent"], "state": "pending"})
+        # a detail of this piece's own list that was set at a parent keeps that parent as its source
+        by_detail = {i["detail"].casefold(): i for i in inherited}
+        for k in keep:
+            src = by_detail.get(k["detail"].casefold())
+            if src and "via" not in k:
+                k["via"] = src["parent"]
+                if src["source"] != "order":
+                    k["source"], k["from"] = "piece", src["from"] if src["from"] is not None else src["parent"]
         now = _now(self)
         pid = self.db.insert("agora_pieces", {
             "order_id": oid, "space_id": self.space_id, "kind": kind, "title": title, "path": path, "url": url,
@@ -1331,10 +1359,15 @@ def inline_html(path: str) -> str:
         return f"<style>{css(text(target), os.path.dirname(target))}</style>" if target else tag
 
     def script(m: "re.Match[str]") -> str:
+        # The script stays an external script (a data: address), so defer, async and type=module keep their timing:
+        # an inline script would run at once, before the elements a deferred script expects exist.
         target = local(base, m.group(3))
         if not target:
             return m.group(0)
-        return f"<script{m.group(1)}{m.group(4)}>" + text(target).replace("</script", r"<\/script") + "</script>"
+        with open(target, "rb") as fh:
+            code = base64.b64encode(fh.read()).decode("ascii")
+        return (f"<script{m.group(1)}src={m.group(2)}data:text/javascript;charset=utf-8;base64,{code}{m.group(2)}"
+                f"{m.group(4)}></script>")
 
     def src(m: "re.Match[str]") -> str:
         target = local(base, m.group(3))

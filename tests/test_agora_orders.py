@@ -172,7 +172,94 @@ def test_piece_file_serves_only_what_a_piece_names(agora, tmp_path):
                                      encoding="utf-8")
     doc = agora_orders.inline_html(str(site / "index.html"))
     assert "<style>body{}</style>" in doc and "data:image/png;base64," in doc and 'src="../lamina.png"' in doc
-    assert r"console.log('<\/script>')" in doc and 'src="app.js"' not in doc and "https://example.org" in doc
+    import base64
+    code = base64.b64encode("console.log('</script>')".encode()).decode()
+    assert f'src="data:text/javascript;charset=utf-8;base64,{code}"' in doc and 'src="app.js"' not in doc
+    assert "https://example.org" in doc
+
+
+SHOP = """<!doctype html><html><head><meta charset="utf-8"><script src="site.js" defer></script></head><body>
+<div class="filters"><button data-filter="all" aria-pressed="true">Todas</button>
+<button data-filter="creature" aria-pressed="false">Criaturas</button></div>
+<p id="gallery-count">4 piezas</p>
+<article class="piece" data-category="creature">a</article><article class="piece" data-category="figure">b</article>
+<article class="piece" data-category="creature">c</article><article class="piece" data-category="diorama">d</article>
+</body></html>"""
+
+SHOP_JS = """const filters = document.querySelector(".filters");
+const pieces = document.querySelectorAll(".piece");
+filters.addEventListener("click", (event) => {
+  const choice = event.target.closest("button[data-filter]");
+  if (!choice) return;
+  let visible = 0;
+  for (const piece of pieces) {
+    piece.hidden = choice.dataset.filter !== "all" && piece.dataset.category !== choice.dataset.filter;
+    if (!piece.hidden) visible += 1;
+  }
+  for (const b of filters.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === choice));
+  document.querySelector("#gallery-count").textContent = `${visible} piezas`;
+});"""
+
+
+def test_a_deferred_script_of_a_local_page_runs_after_the_page_inside_the_sandboxed_frame(tmp_path):
+    """The shop's filter is a deferred script in the head: written into the page it must still wait for the body."""
+    site = tmp_path / "shop"
+    site.mkdir()
+    (site / "index.html").write_text(SHOP, encoding="utf-8")
+    (site / "site.js").write_text(SHOP_JS, encoding="utf-8")
+    doc = agora_orders.inline_html(str(site / "index.html"))
+    assert " defer" in doc and "site.js" not in doc
+    browser_api = pytest.importorskip("playwright.sync_api")
+    with browser_api.sync_playwright() as p:
+        from pathlib import Path
+        if not Path(p.chromium.executable_path).exists():
+            pytest.skip("Headless Chromium is not installed")
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.set_content("<iframe sandbox='allow-scripts allow-forms'></iframe>")
+            # the same frame the Orders page builds: sandboxed, no same-origin, the page given as srcdoc
+            page.eval_on_selector("iframe", "(f, doc) => { f.srcdoc = doc; }", doc)
+            page.wait_for_function("document.querySelector('iframe').contentDocument === null")
+            frame = page.frames[1]
+            frame.wait_for_selector("#gallery-count")
+            frame.wait_for_load_state("load")
+            assert frame.evaluate("self.origin") == "null"          # still isolated from the hub
+            frame.click("button[data-filter=creature]")
+            assert frame.evaluate("[...document.querySelectorAll('.piece')].filter(p => !p.hidden).length") == 2
+            assert frame.inner_text("#gallery-count") == "2 piezas"
+            assert frame.get_attribute("button[data-filter=creature]", "aria-pressed") == "true"
+            assert not errors
+        finally:
+            browser.close()
+
+
+def test_a_detail_set_on_a_piece_reaches_what_derives_from_it_with_its_source(agora, tmp_path):
+    for name in ("hoja.png", "malla.glb", "bloqueo.blend"):
+        (tmp_path / name).write_bytes(name.encode())
+    order = agora.order_create(person(title="Odila", words="Odila con su tubo.", keep=["Tubo izquierdo"],
+                                      folder=str(tmp_path)))["order"]
+    add = lambda **kw: agora.piece_add({"agent": "claude", "order_id": order["id"], **kw})["piece"]
+    hoja = add(kind="character_sheet", title="Hoja", path="hoja.png", keep=["Tubo izquierdo", "Hebilla cuadrada"])
+    assert {k["detail"]: k["source"] for k in hoja["keep"]} == {"Tubo izquierdo": "order", "Hebilla cuadrada": "piece"}
+    agora.piece_check({"agent": "claude", "piece_id": hoja["id"], "note": "miré la hoja", "ok": True,
+                       "keep": [{"detail": "Tubo izquierdo", "ok": True}, {"detail": "Hebilla cuadrada", "ok": True}]})
+    malla = add(kind="mesh", title="Malla", path="malla.glb", derives_from=[hoja["id"]])
+    keep = {k["detail"]: k for k in malla["keep"]}
+    assert list(keep) == ["Tubo izquierdo", "Hebilla cuadrada"]
+    assert keep["Tubo izquierdo"]["source"] == "order"
+    assert keep["Hebilla cuadrada"]["source"] == "piece" and keep["Hebilla cuadrada"]["from"] == hoja["id"]
+    assert all(k["state"] == "pending" for k in malla["keep"])     # approval is not inherited: checked here again
+    # two steps down (by reference, as the hand-built model), the detail still names the sheet where it was set
+    bloqueo = add(kind="rigged_model", title="Bloqueo", path="bloqueo.blend",
+                  derives_from=[{"piece": malla["id"], "role": "reference"}])
+    hebilla = next(k for k in bloqueo["keep"] if k["detail"] == "Hebilla cuadrada")
+    assert hebilla["from"] == hoja["id"] and hebilla["via"] == malla["id"] and hebilla["state"] == "pending"
+    checked = agora.piece_check({"agent": "claude", "piece_id": bloqueo["id"], "note": "giro completo",
+                                 "keep": [{"id": hebilla["id"], "state": "not_visible"}]})["piece"]
+    assert next(k for k in checked["keep"] if k["detail"] == "Hebilla cuadrada")["state"] == "not_visible"
 
 
 def test_tools_are_listed_and_the_decision_has_none():
