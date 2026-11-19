@@ -248,7 +248,7 @@ export function WorkerProfile({onClose}: {onClose: () => void}) {
                 </select>
               </label>
               {profile.review_runner?.provider && <div className="worker-profile-paths">
-                <label>{words.reviewModel}<input required maxLength={120} value={profile.review_runner.model || ''}
+                <label>{words.reviewModel}<input type="text" required maxLength={120} value={profile.review_runner.model || ''}
                   onChange={event => update({review_runner: {...profile.review_runner, model: event.target.value}})}/></label>
                 <label>{words.reviewEffort}
                   <select value={profile.review_runner.effort || 'low'}
