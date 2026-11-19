@@ -50,6 +50,7 @@ FACET_MODULES = (
     "resources",
     "capabilities",
     "production",
+    "station_drafts",
     "eyes",
     "piece_checks",
     "skills",

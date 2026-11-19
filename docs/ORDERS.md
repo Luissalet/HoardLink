@@ -111,6 +111,9 @@ its own (`gate_split`).
 * Every decision is stored with its situation: the order and its state, the deadline, the gate and the pieces that were
   on the table (`order_decisions`).
 
+Before the expensive work, an order can go through a draft pass: its whole chain in draft, in variants, shown to the
+person at an early gate on the same page. See `docs/DRAFT-PASS.md`.
+
 ## Undo
 
 Every write an agent makes (`order_create`, `order_update`, `plan_set`, `piece_add`, `piece_check`, `piece_defect`,
