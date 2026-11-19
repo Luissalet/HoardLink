@@ -50,7 +50,7 @@ def test_project_navigation_preserves_scope_and_all_tools(tmp_path, width):
                 for route, view in [('communication', 'notify'), ('system', 'resources')]:
                     page.goto(base + '/#hub/' + route)
                     page.locator('.hub-local-nav').wait_for()
-                    assert page.locator('#hub-navigation a.hub-nav-link').count() == 7
+                    assert page.locator('#hub-navigation a.hub-nav-link').count() == 8
                     assert page.locator('#hub-navigation .hub-nav-group').count() == 3
                     if view == 'resources':
                         assert page.locator('#hub-resources').is_visible()
