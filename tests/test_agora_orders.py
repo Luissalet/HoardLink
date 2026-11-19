@@ -132,6 +132,11 @@ def test_undo_puts_back_each_write(agora, tmp_path):
     agora.order_undo({"agent": "claude", "token": plan["undo"]})
     assert agora._task_row(new_task)["status"] == "dropped"
     assert all(j["task_id"] != new_task for j in agora.order({"order_id": order["id"]})["order"]["plan"])
+    # changing what an existing job waits for is undone too
+    moved = agora.plan_set({"agent": "claude", "order_id": order["id"], "jobs": [{"task_id": keys["video"], "after": [keys["concept"]]}]})
+    assert agora.order({"order_id": order["id"]})["order"]["plan"][3]["after"] == [keys["concept"]]
+    agora.order_undo({"agent": "claude", "token": moved["undo"]})
+    assert agora.order({"order_id": order["id"]})["order"]["plan"][3]["after"] == [keys["sheet"]]
     check = agora.piece_check({"agent": "claude", "piece_id": pieces["lamina"]["id"], "note": "ok",
                                "keep": [{"detail": "tubo a la izquierda", "ok": False}]})
     agora.order_undo({"agent": "claude", "token": check["undo"]})
@@ -159,6 +164,14 @@ def test_piece_file_serves_only_what_a_piece_names(agora, tmp_path):
     assert agora_orders.piece_file(agora, pieces["malla"]["id"], preview="1").endswith("giro-1.png")
     with pytest.raises(AgoraError):
         agora_orders.piece_file(agora, web["id"], rel="../lamina.png")
+    (site / "logo.png").write_bytes(b"PNG")
+    (site / "app.js").write_text("console.log('</script>')", encoding="utf-8")
+    (site / "index.html").write_text('<link rel="stylesheet" href="site.css"><script src="app.js"></script>'
+                                     '<img src="logo.png"><img src="../lamina.png"><a href="https://example.org">x</a>',
+                                     encoding="utf-8")
+    doc = agora_orders.inline_html(str(site / "index.html"))
+    assert "<style>body{}</style>" in doc and "data:image/png;base64," in doc and 'src="../lamina.png"' in doc
+    assert r"console.log('<\/script>')" in doc and 'src="app.js"' not in doc and "https://example.org" in doc
 
 
 def test_tools_are_listed_and_the_decision_has_none():

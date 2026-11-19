@@ -4050,7 +4050,9 @@ class AgoraFacet(Facet):
         if piece:
             if not req.caller():    # the order's files are for the family, not for whoever reaches the port
                 return {"ok": False, "status": 401, "error": "a family bearer token is required"}
-            return self._piece_file(int(piece.group(1)), q.get("preview"), piece.group(2) or "")
+            from urllib.parse import unquote
+            return self._piece_file(int(piece.group(1)), q.get("preview"), unquote(piece.group(2) or ""),
+                                    inline=str(q.get("inline", "")).lower() in ("1", "true"))
         if p == "/api/agora/space_icon" or re.fullmatch(r"/api/agora/file/[0-9a-f]{32}", p):
             if not req.caller():    # what people attach is for the family, not for whoever reaches the port
                 return {"ok": False, "status": 401, "error": "a family bearer token is required"}
@@ -4089,11 +4091,14 @@ class AgoraFacet(Facet):
                      headers={"Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{name}"',
                               "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
 
-    def _piece_file(self, piece_id: int, preview: Any, rel: str) -> Any:
+    def _piece_file(self, piece_id: int, preview: Any, rel: str, inline: bool = False) -> Any:
         """A piece's file, one of its previews or a file beside it, as bytes, for the page's previews."""
         import mimetypes
         try:
             path = agora_orders.piece_file(self.agora, piece_id, preview=preview, rel=rel)
+            if inline and os.path.splitext(path)[1].lower() in (".html", ".htm"):
+                return Reply(body=agora_orders.inline_html(path).encode("utf-8"), content_type="text/plain; charset=utf-8",
+                             headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
             with open(path, "rb") as fh:
                 blob = fh.read()
         except AgoraError as exc:

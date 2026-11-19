@@ -68,10 +68,17 @@
       case "audio": { const a = el("audio"); a.src = fileUrl(piece); a.controls = true; a.preload = "none"; box.append(a); break; }
       case "web": {
         // The page runs in a sandboxed frame (it never acts as this page); with screenshots, they show first.
-        const live = () => {
+        // A local page arrives as one document (its styles, scripts and images written in) and runs in a frame
+        // without this page's origin; a page with its own address is framed from there.
+        const live = async () => {
           const f = el("iframe"); f.title = piece.title;
           f.setAttribute("sandbox", "allow-scripts allow-forms");
-          f.src = piece.url || fileUrl(piece) + "/" + encodeURIComponent(baseName(piece.path));
+          if (piece.url) f.src = piece.url;
+          else {
+            const r = await fetch(fileUrl(piece) + "?inline=1").catch(() => null);
+            if (!r || !r.ok) { box.replaceChildren(el("p", "ord-media-note", tr("No se puede abrir la página.", "The page cannot be opened."))); return; }
+            f.srcdoc = await r.text();
+          }
           box.replaceChildren(f);
         };
         if (piece.previews?.length) {

@@ -273,6 +273,14 @@ class _Journal:
         self.rows: list[dict[str, Any]] = []
         self.created_tasks: list[int] = []
         self.task_status: list[dict[str, Any]] = []
+        self.task_deps: list[dict[str, Any]] = []
+
+    def deps(self, task_id: int) -> None:
+        """Remember what a task waits for now."""
+        if any(d["task_id"] == task_id for d in self.task_deps):
+            return
+        rows = self.ag.db.query("SELECT blocker_id FROM agora_task_deps WHERE task_id=?", (task_id,))
+        self.task_deps.append({"task_id": task_id, "blockers": [int(r["blocker_id"]) for r in rows]})
 
     def before(self, table: str, key: Any, *, where: Optional[dict[str, Any]] = None) -> None:
         """Remember a row as it is now (or that it does not exist yet)."""
@@ -287,12 +295,13 @@ class _Journal:
         self.rows.append({"table": table, "where": where or {_KEYS[table]: key}, "row": None})
 
     def save(self) -> Optional[str]:
-        if self.agent == _ag().PERSON or not (self.rows or self.created_tasks or self.task_status):
+        if self.agent == _ag().PERSON or not (self.rows or self.created_tasks or self.task_status or self.task_deps):
             return None
         token = "u" + secrets.token_hex(8)
         self.ag.db.insert("agora_order_journal", {
             "token": token, "space_id": self.ag.space_id, "agent": self.agent, "op": self.op, "created": _now(self.ag),
-            "changes": _dump({"rows": self.rows, "created_tasks": self.created_tasks, "task_status": self.task_status})})
+            "changes": _dump({"rows": self.rows, "created_tasks": self.created_tasks, "task_status": self.task_status,
+                              "task_deps": self.task_deps})})
         return token
 
 
@@ -317,6 +326,9 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 cols = list(row)
                 self.db.execute(f"INSERT INTO {table}({', '.join(cols)}) VALUES({', '.join('?' for _ in cols)})",
                                 tuple(row[c] for c in cols))
+        for item in changes.get("task_deps") or []:
+            if item["task_id"] not in (changes.get("created_tasks") or []):
+                self._apply_deps(agent, self._task_row(item["task_id"]), add=[], remove=[], replace=item["blockers"])
         for item in changes.get("task_status") or []:
             self.db.execute("UPDATE tasks SET status=?, updated=? WHERE id=?", (item["status"], _now(self), item["task_id"]))
         for tid in changes.get("created_tasks") or []:
@@ -718,6 +730,7 @@ def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 pending_after.append((tid, list(raw.get("after") or [])))
             touched.append(tid)
         for tid, after in pending_after:
+            journal.deps(tid)
             blockers = []
             for ref in after:
                 blockers.append(keys[str(ref)] if str(ref) in keys else _int(ref, "after"))
@@ -1134,6 +1147,76 @@ def piece_file(self: Any, piece_id: Any, *, preview: Any = None, rel: str = "") 
     if not path or not os.path.isfile(path):
         raise _err("the file is not there", 404)
     return path
+
+
+_LINK = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
+_SCRIPT = re.compile(r"<script\b([^>]*?)\bsrc=([\"'])([^\"']+)\2([^>]*)>\s*</script>", re.IGNORECASE)
+_SRC = re.compile(r"(<(?:img|source|video|audio)\b[^>]*?\bsrc=)([\"'])([^\"']+)\2", re.IGNORECASE)
+_HREF = re.compile(r"\bhref=([\"'])([^\"']+)\1", re.IGNORECASE)
+_CSS_URL = re.compile(r"url\(\s*([\"']?)([^\"')]+)\1\s*\)", re.IGNORECASE)
+INLINE_MAX = 16 * 1024 * 1024
+
+
+def inline_html(path: str) -> str:
+    """A local web page as one document: its own styles, scripts and images (relative paths inside its folder) are
+    written into it, so the page can be shown in a sandboxed frame that never reaches the hub."""
+    import base64
+    import mimetypes
+    root = os.path.normcase(os.path.realpath(os.path.dirname(path)))
+    budget = [INLINE_MAX]
+
+    def local(base: str, rel: str) -> Optional[str]:
+        rel = rel.split("#", 1)[0].split("?", 1)[0]
+        if not rel or re.match(r"^[a-z][a-z0-9+.-]*:|^//|^/", rel, re.IGNORECASE):
+            return None
+        target = os.path.normpath(os.path.join(base, rel))
+        real = os.path.normcase(os.path.realpath(target))
+        if os.path.commonpath([root, real]) != root or not os.path.isfile(target) or os.path.getsize(target) > budget[0]:
+            return None
+        budget[0] -= os.path.getsize(target)
+        return target
+
+    def text(target: str) -> str:
+        with open(target, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+
+    def data_uri(target: str) -> str:
+        with open(target, "rb") as fh:
+            return f"data:{mimetypes.guess_type(target)[0] or 'application/octet-stream'};base64," + \
+                   base64.b64encode(fh.read()).decode("ascii")
+
+    def css(code: str, base: str) -> str:
+        def url(m: "re.Match[str]") -> str:
+            target = local(base, m.group(2))
+            return f'url("{data_uri(target)}")' if target else m.group(0)
+        return _CSS_URL.sub(url, code)
+
+    base = os.path.dirname(path)
+    html = text(path)
+
+    def link(m: "re.Match[str]") -> str:
+        tag = m.group(0)
+        href = _HREF.search(tag)
+        if "stylesheet" not in tag.lower() or not href:
+            return tag
+        target = local(base, href.group(2))
+        return f"<style>{css(text(target), os.path.dirname(target))}</style>" if target else tag
+
+    def script(m: "re.Match[str]") -> str:
+        target = local(base, m.group(3))
+        if not target:
+            return m.group(0)
+        return f"<script{m.group(1)}{m.group(4)}>" + text(target).replace("</script", r"<\/script") + "</script>"
+
+    def src(m: "re.Match[str]") -> str:
+        target = local(base, m.group(3))
+        return f"{m.group(1)}{m.group(2)}{data_uri(target)}{m.group(2)}" if target else m.group(0)
+
+    html = _LINK.sub(link, html)
+    html = _SCRIPT.sub(script, html)
+    html = _SRC.sub(src, html)
+    return re.sub(r"(<style\b[^>]*>)(.*?)(</style>)", lambda m: m.group(1) + css(m.group(2), base) + m.group(3), html,
+                  flags=re.IGNORECASE | re.DOTALL)
 
 
 OPERATIONS = {"order_create": order_create, "order_update": order_update, "orders": orders, "order": order,
