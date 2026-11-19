@@ -39,7 +39,7 @@ shot's camera), Phidias (closing of the posed blocking without repair), Cicero (
 | `draft_pass_open` | an agent | Opens a pass on an order: `variants` [{`key`, `title`, `idea`, `jobs`}], `baseline` (time and GPU of a full pass, to compare), `note`. A variant's `jobs` are plan jobs (as in `plan_set`): they become Ágora tasks of the order on branch `pasada0-<key>`, titled «[Pasada 0 · key] …», with `after` naming jobs of the same variant. |
 | `draft_variant_set` | an agent | Attaches pieces of the order to a variant with their `anchor`, notes `measures` (`seconds`, `gpu_seconds`, `gpu`, `engine`, `steps`, `resolution`, `device`, `note`) and sets `status` `drafting` or `ready` (ready needs at least one piece). `remove` takes pieces out. |
 | `draft_gate_open` | an agent | Shows the pass to the person once every variant is ready. The order waits. |
-| `draft_decide` | only the person's pages | `variant_id`, `decision` `keep` or `cancel`, `note`. Keeping one discards the others still undecided, with a note that says which one was kept. |
+| `draft_decide` | only the person's pages | `variant_id`, `decision` `keep` or `cancel`, `note` and `signature` (the variant's signature as the page showed it). Keeping one discards the others still undecided, with a note that says which one was kept. |
 | `draft_passes` | read | The passes of an order, or (no `order_id`) those waiting for the person (`all_spaces`). Each variant with its pieces by anchor, measures and decision note; totals against the baseline. |
 | `draft_anchors` | read | For `order_id` or the `task_id` of one of its jobs: the kept variant, its pieces by anchor, the guides and the `derives_from` to pass to `piece_add`. |
 
@@ -54,6 +54,16 @@ What a decision does:
 * **Cancel** (discard): the variant becomes `discarded` with the person's note; its pieces are marked cancelled
   («variante descartada en la pasada 0») and whatever was made from them becomes stale. Nothing is deleted and nothing
   is sent back to a station: a discarded draft is not a defect.
+* **A piece shared by several variants** (the same blocking of the staircase in B and C, say) follows the variant that
+  keeps it: discarding C leaves it alone while B is kept or still undecided, whatever the order of the decisions, and
+  only C's own pieces are cancelled. It is cancelled when the last variant using it is discarded. The decision lists
+  those pieces under `shared`, and the page marks them «also in B».
+* **What the person saw is what is decided.** Each variant carries a `signature` of what the person judges: its title
+  and idea and, for each piece, its id, anchor, revision and bytes (not measures, notes or checks). An agent may still
+  change a variant while the gate is open (`draft_variant_set` then answers `shown_again: true`), but a decision sent
+  with the signature of what the page showed before is refused with 409 `variant_changed`; the page then shows the
+  variant as it is now, marked «it changed while you were looking at it», and the person decides again. A piece whose
+  file changed after it was registered, with no kept copy, is refused with `piece_changed`, as at any gate.
 * Each decision is stored per piece in the order's decisions with its situation (the pass, the variant and the
   alternatives that were on the table). When every variant is decided the pass is `decided` and the order goes back to
   production.

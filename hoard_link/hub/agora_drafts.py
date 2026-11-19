@@ -27,6 +27,7 @@ Writes return ``undo`` for ``order_undo``: these tables join the orders' journal
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any, Optional
@@ -106,6 +107,16 @@ def _variant_row(self: Any, variant_id: Any) -> dict[str, Any]:
     return dict(row)
 
 
+def _signature(row: dict[str, Any], pieces: list[dict[str, Any]]) -> str:
+    """What the person judges in a variant: its title and idea and, for each piece, its id, anchor and the revision
+    and bytes it shows. The page sends it back with the decision, so a variant changed while the person looked at it
+    has to be shown again before it can be kept. Measures, notes and checks are not part of it."""
+    shown = [row.get("title") or "", row.get("idea") or "",
+             sorted([int(p["id"]), p.get("anchor") or "", int(p.get("revision") or 1), p.get("sha256") or "",
+                     p.get("path") or "", p.get("url") or ""] for p in pieces)]
+    return hashlib.sha256(json.dumps(shown, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
+
 def _variant_dict(self: Any, row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out["jobs"] = orders._load(row.get("jobs"), [])
@@ -116,6 +127,7 @@ def _variant_dict(self: Any, row: dict[str, Any]) -> dict[str, Any]:
         if p:
             pieces.append({**orders._piece_dict(self, dict(p)), "anchor": link["anchor"]})
     out["pieces"] = pieces
+    out["signature"] = _signature(row, pieces)
     out["tasks"] = [dict(t) for t in self.db.query(
         "SELECT id, title, status, owner FROM tasks WHERE id IN (%s) ORDER BY id" % ",".join("?" * len(out["jobs"])),
         tuple(out["jobs"]))] if out["jobs"] else []
@@ -223,6 +235,7 @@ def draft_variant_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         if variant["status"] in ("kept", "discarded"):
             raise _err(f"variant #{variant['id']} is already decided ({variant['status']})", 409)
         draft = _pass_row(self, variant["pass_id"])
+        before = _variant_dict(self, variant)["signature"]
         journal = orders._Journal(self, agent, "draft_variant_set")
         pieces = a.get("pieces") or []
         if not isinstance(pieces, list):
@@ -272,7 +285,14 @@ def draft_variant_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                             (*changes.values(), variant["id"]))
         token = journal.save()
     self._bump("agora.order.draft", {"order_id": variant["order_id"], "pass_id": draft["id"], "variant": variant["id"], "by": agent})
-    return {"ok": True, "variant": _variant_dict(self, _variant_row(self, variant["id"])), "undo": token}
+    out = _variant_dict(self, _variant_row(self, variant["id"]))
+    result = {"ok": True, "variant": out, "undo": token}
+    if draft["status"] == "shown":
+        result["shown_again"] = out["signature"] != before
+        if result["shown_again"]:
+            result["note"] = ("The early gate is open: the person's page shows this variant again, and a decision taken "
+                              "on what it showed before is refused until they have seen it.")
+    return result
 
 
 def draft_gate_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
@@ -301,9 +321,11 @@ def draft_gate_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 # ---- the person's decision ------------------------------------------------------------------------------------
 
 def _settle(self: Any, journal: Any, variant: dict[str, Any], status: str, note: str, situation: dict[str, Any],
-            decision: str) -> list[int]:
+            decision: str, shared: list[int]) -> list[int]:
     """Keep or discard one variant: its state, its note, its pieces and the decision record. Nothing is deleted and
-    nothing is sent back to a station."""
+    nothing is sent back to a station. A piece that another variant still uses (kept, or not decided yet) is not
+    discarded with this one: it follows the variant that keeps it, whatever the order of the decisions (listed in
+    ``shared``). It is cancelled when the last variant using it is discarded."""
     now = orders._now(self)
     journal.before("agora_draft_variants", variant["id"])
     self.db.execute("UPDATE agora_draft_variants SET status=?, decision_note=?, updated=? WHERE id=?",
@@ -313,6 +335,12 @@ def _settle(self: Any, journal: Any, variant: dict[str, Any], status: str, note:
         pid = int(link["piece_id"])
         piece = self.db.one("SELECT status FROM agora_pieces WHERE id=?", (pid,))
         if not piece:
+            continue
+        if status == "discarded" and self.db.scalar(
+                "SELECT COUNT(*) FROM agora_draft_pieces l JOIN agora_draft_variants v ON v.id=l.variant_id "
+                "WHERE l.piece_id=? AND v.id<>? AND v.status<>'discarded'", (pid, variant["id"]), 0):
+            if pid not in shared:
+                shared.append(pid)
             continue
         journal.before("agora_pieces", pid)
         if status == "kept" and piece["status"] in ("provisional", "checked"):
@@ -337,6 +365,7 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     if decision not in orders.DECISIONS:
         raise _err("decision is keep or cancel")
     note = orders._txt(a.get("note"), orders.TEXT_MAX, "note")
+    seen = str(a.get("signature") or "").strip()
     with self.db.tx():
         variant = _variant_row(self, a.get("variant_id"))
         draft = _pass_row(self, variant["pass_id"])
@@ -344,6 +373,16 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             raise _err(f"draft pass #{draft['id']} is not waiting for a decision ({draft['status']})", 409)
         if variant["status"] in ("kept", "discarded"):
             raise _err(f"variant «{variant['key']}» is already {variant['status']}", 409)
+        current = _variant_dict(self, variant)
+        if not seen:
+            raise _err("signature: the variant's signature as the page showed it")
+        if seen != current["signature"]:
+            raise _err(f"variant «{variant['key']}» changed after it was shown: show it again before deciding", 409,
+                       error_code="variant_changed", variant_id=variant["id"], signature=current["signature"])
+        for p in current["pieces"]:
+            if not orders._bytes_ok(self, orders._piece_row(self, p["id"])):
+                raise _err(f"piece #{p['id']}: its file changed since it was registered and no copy of that revision is "
+                           "kept; the station has to register it again", 409, error_code="piece_changed", piece_id=p["id"])
         rows = [dict(v) for v in self.db.query("SELECT * FROM agora_draft_variants WHERE pass_id=? ORDER BY position", (draft["id"],))]
         order_row = orders._order_row(self, draft["order_id"])
         situation = {"order": {"id": order_row["id"], "title": order_row["title"], "status": order_row["status"]},
@@ -351,18 +390,20 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                      "variant": {"id": variant["id"], "key": variant["key"], "title": variant["title"]},
                      "alternatives": [{"id": v["id"], "key": v["key"], "title": v["title"], "status": v["status"]} for v in rows]}
         journal = orders._Journal(self, agent, "draft_decide")
-        result = {"kept": None, "discarded": [], "stale": []}
+        result: dict[str, Any] = {"kept": None, "discarded": [], "stale": [], "shared": []}
         if decision == "keep":
-            result["stale"] += _settle(self, journal, variant, "kept", note, situation, "keep")
+            result["stale"] += _settle(self, journal, variant, "kept", note, situation, "keep", result["shared"])
             result["kept"] = variant["id"]
             for other in rows:
                 if other["id"] != variant["id"] and other["status"] not in ("kept", "discarded"):
                     why = f"Descartada al conservar «{variant['title']}»." + (f" {note}" if note else "")
-                    result["stale"] += _settle(self, journal, other, "discarded", why, situation, "cancel")
+                    result["stale"] += _settle(self, journal, other, "discarded", why, situation, "cancel", result["shared"])
                     result["discarded"].append(other["id"])
         else:
-            result["stale"] += _settle(self, journal, variant, "discarded", note, situation, "cancel")
+            result["stale"] += _settle(self, journal, variant, "discarded", note, situation, "cancel", result["shared"])
             result["discarded"].append(variant["id"])
+        result["shared"] = [p for p in result["shared"]
+                            if self.db.scalar("SELECT status FROM agora_pieces WHERE id=?", (p,), "") != "cancelled"]
         left = self.db.scalar("SELECT COUNT(*) FROM agora_draft_variants WHERE pass_id=? AND status NOT IN ('kept','discarded')",
                               (draft["id"],), 0)
         if not left:

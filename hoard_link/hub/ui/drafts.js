@@ -24,8 +24,9 @@
   const fileUrl = (piece, i) => `/api/agora/piece_file/${piece.id}` + (i === undefined ? "" : `?preview=${i}`);
   const secs = s => (s === null || s === undefined ? "–" : s >= 90 ? `${(s / 60).toFixed(1)} min` : `${Math.round(s)} s`);
 
-  let passes = [], lastSig = "", busy = false;
+  let passes = [], lastSig = "", busy = false, force = false;
   const notes = new Map();   // variant id → note being written
+  const changed = new Set(); // variants that changed while the person was looking at them
 
   function media(piece) {
     const box = el("div", "drf-media");
@@ -49,11 +50,23 @@
   async function decide(pass, variant, decision, note, buttons) {
     if (busy) return;
     busy = true; buttons.forEach(b => { b.disabled = true; });
-    const res = await ctx.api("/api/agora/draft_decide", { space_id: pass.space_id, variant_id: variant.id, decision, note })
+    // the signature says what this page showed: a variant changed since then has to be seen again before deciding
+    const res = await ctx.api("/api/agora/draft_decide", { space_id: pass.space_id, variant_id: variant.id, decision, note,
+                                                           signature: variant.signature })
       .catch(e => ({ ok: false, error: String(e) }));
     busy = false; buttons.forEach(b => { b.disabled = false; });
+    if (!res?.ok && res?.error_code === "variant_changed") {
+      changed.add(variant.id);
+      ctx.toast(tr(`No se ha decidido: «${variant.title}» ha cambiado mientras la mirabas`, `Not decided: «${variant.title}» changed while you were looking at it`),
+        "err", tr("Ya se muestra como está ahora. Mírala y vuelve a decidir.", "It now shows as it is. Look at it and decide again."));
+      lastSig = ""; force = true; await load(); return;
+    }
+    if (!res?.ok && res?.error_code === "piece_changed") {
+      ctx.toast(tr("No se ha decidido: el fichero de una pieza ha cambiado desde que se registró", "Not decided: a piece's file changed since it was registered"), "err",
+        tr("Su puesto tiene que registrarla de nuevo.", "Its station has to register it again.")); return;
+    }
     if (!res?.ok) { ctx.toast(tr("No se ha guardado la decisión", "The decision was not saved"), "err", res?.error || ""); return; }
-    notes.delete(variant.id);
+    notes.delete(variant.id); changed.delete(variant.id);
     ctx.toast(decision === "keep" ? tr(`Conservada «${variant.title}»: la pasada cara partirá de ella`, `Kept «${variant.title}»: the full pass starts from it`)
       : tr(`Descartada «${variant.title}»: queda guardada con tu nota`, `Discarded «${variant.title}»: it stays, with your note`), "ok");
     lastSig = ""; await load();
@@ -65,6 +78,7 @@
     const head = el("header", "drf-variant-head");
     head.append(el("span", "drf-key", v.key.toUpperCase()), el("h4", "", v.title));
     card.append(head);
+    if (changed.has(v.id)) card.append(el("p", "drf-changed", tr("Ha cambiado mientras la mirabas: esto es lo que hay ahora.", "It changed while you were looking at it: this is what it is now.")));
     if (v.idea) card.append(el("p", "drf-idea", v.idea));
     const m = v.measures || {};
     const facts = [tr("Tiempo ", "Time ") + secs(m.seconds), "GPU " + secs(m.gpu_seconds)];
@@ -77,6 +91,8 @@
       fig.append(media(p));
       const cap = el("figcaption");
       cap.append(el("b", "", anchorLabel(p.anchor)), el("small", "ord-muted", p.title));
+      const also = pass.variants.filter(o => o.id !== v.id && o.pieces.some(q => q.id === p.id)).map(o => o.key.toUpperCase());
+      if (also.length) cap.append(el("small", "drf-shared", tr(`También en ${also.join(", ")}: se conserva si se conserva cualquiera de ellas`, `Also in ${also.join(", ")}: kept if any of them is kept`)));
       fig.append(cap);
       strip.append(fig);
     }
@@ -139,7 +155,8 @@
       "Each variant is the whole chain in draft. Keeping one fixes its framing, parts and key frames for the full pass; the others stay as discarded, with your note.")));
     for (const p of passes) fresh.append(passCard(p));
     const focus = document.activeElement && section?.contains(document.activeElement);
-    if (focus) return;   // never repaint under the person's hands
+    if (focus && !force) return;   // never repaint under the person's hands, unless what they see is out of date
+    force = false;
     recount(section ? +section.dataset.count || 0 : 0, passes.length);
     if (section) section.replaceWith(fresh); else page.prepend(fresh);
   }

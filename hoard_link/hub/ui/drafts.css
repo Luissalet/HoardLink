@@ -22,3 +22,6 @@
 .drf-decide { display: grid; grid-template-columns: 1fr; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; }
 .drf-decide textarea { width: 100%; resize: vertical; min-height: 40px; }
 .drf-decide .ord-gate-buttons { justify-content: flex-end; }
+.drf-changed { margin: 0; padding: 6px 8px; border-radius: 6px; color: var(--text); font-size: var(--hub-fs-1, 12px);
+  background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.drf-piece figcaption small.drf-shared { white-space: normal; color: var(--muted); font-style: italic; }
