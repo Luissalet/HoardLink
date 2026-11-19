@@ -1,5 +1,15 @@
 {
   "x-family": {
+    "production": {
+      "handoffs": [
+        {
+          "accepts": "code_branch",
+          "produces": ["integrated_code"],
+          "skill": "team-agent-orchestration",
+          "check": {"en": "Compare focused contract tests and repeat the original case after merging.", "es": "Compara las pruebas de contrato afectadas y repite el caso de origen tras fusionar."}
+        }
+      ]
+    },
     "copilot": {
       "contract_version": "1.0",
       "info": "/api/copilot/info",
@@ -35,7 +45,8 @@
     "family-mcp-relay",
     "live-tool-schema-discovery",
     "cross-hoard-recipes",
-    "agora-debates-with-findings"
+    "agora-debates-with-findings",
+    "software-integration"
   ],
   "placeholders": [
     "HOARDLINK_DIR",

@@ -34,7 +34,7 @@
     {id: 'apps', label: ['Aplicaciones', 'Applications'], description: ['Abre una aplicación o gestiona sus grupos de arranque.', 'Open an app or manage startup groups.']},
     {id: 'communication', label: ['Bandeja', 'Inbox'], defaultView: 'notify', facets: ['notify', 'mailgate', 'chats', 'refs', 'search'], description: ['Avisos, correo, chats y enlaces de la familia.', 'Family notifications, mail, chats and links.']},
     {id: 'automation', label: ['Automatización', 'Automation'], facets: ['jobs', 'rules', 'work', 'purchases'], description: ['Trabajos, reglas, tareas programadas y compras.', 'Work, rules, scheduled jobs and purchases.']},
-    {id: 'system', label: ['Sistema', 'System'], defaultView: 'resources', facets: ['resources', 'services', 'capabilities', 'skills', 'agent_sessions', 'repos', 'events', 'backups', 'audit', 'web'], description: ['Recursos, servidores y mantenimiento del entorno compartido.', 'Resources, servers and shared environment maintenance.']},
+    {id: 'system', label: ['Sistema', 'System'], defaultView: 'resources', facets: ['resources', 'services', 'capabilities', 'skills', 'agent_sessions', 'repos', 'integration', 'events', 'backups', 'audit', 'web'], description: ['Recursos, servidores y mantenimiento del entorno compartido.', 'Resources, servers and shared environment maintenance.']},
   ];
   const descriptions = {
     notify: ['Avisos de tus aplicaciones, con filtros de estado y esfera.', 'Notifications from your apps, filtered by state and sphere.'],
@@ -55,6 +55,7 @@
     jobs: ['Acciones con una programación horaria.', 'Actions on a schedule.'],
     backups: ['Crear, verificar y restaurar copias.', 'Create, verify and restore backups.'],
     repos: ['Repositorios, cambios y publicación.', 'Repositories, changes and publishing.'],
+    integration: ['Entregas de código, pruebas comparadas y fusiones.', 'Code deliveries, compared tests and merges.'],
     audit: ['Revisar el estado de las aplicaciones.', 'Inspect application health.'],
     agora: ['Tareas y debates de este proyecto.', 'Tasks and discussions for this project.'],
   };

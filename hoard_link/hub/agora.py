@@ -2137,6 +2137,9 @@ class Agora:
                 "commits": commits, "branch": a.get("branch"), "reviewer": reviewer,
             }
         # Phase 2: verify peeks without holding the database write lock.
+        from .integration import enforce_submission
+
+        enforce_submission(self, task, snap, summary)
         blocks = normalize_submission_blocks(
             a.get("blocks"), repo_name=snap["repo"], commits=snap["commits"],
             repo_lookup=self.repo_lookup, repo_roots=self.repo_roots)
@@ -2159,9 +2162,10 @@ class Agora:
             # A new submission asks for a new verdict: an approval given to earlier commits does not carry over.
             self.db.execute(
                 "UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
+                "repo=COALESCE(NULLIF(?, ''), repo), "
                 "submission_blocks=?, submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL, "
                 "reviewed_submission_revision=NULL, submission_revision=submission_revision+1 WHERE id=?",
-                (snap["reviewer"], snap["branch"], _j(snap["commits"] or task["commits"]),
+                (snap["reviewer"], snap["branch"], _j(snap["commits"] or task["commits"]), snap["repo"],
                  json.dumps(blocks, ensure_ascii=False) if blocks is not None else None,
                  now, now, task["id"]))
             task = self._task_row(task["id"])
@@ -2261,8 +2265,15 @@ class Agora:
     def task_done(self, a: dict[str, Any]) -> dict[str, Any]:
         """Integrated: commits and result. Releases the task's locks. Refused while a review is younger than 2 h
         unless ``force`` with a ``reason``; finishing without any review is recorded as such."""
+        from .integration import INTEGRATION_TOKEN
+
+        integration = a.get("_integration") is INTEGRATION_TOKEN
         with self.db.tx():
-            agent, task = self._owned(a)
+            agent, task = self._owned(a, superior=integration)
+            if integration and (task["status"] != "approved" or
+                                task["reviewed_submission_revision"] != a.get("_integration_revision") or
+                                task["submission_revision"] != a.get("_integration_revision")):
+                raise AgoraError("Integration needs the current approved revision", 409)
             self._touch(agent)
             if task["status"] in FINAL:
                 raise AgoraError(f"task {task['id']} is already {task['status']}", 409)
@@ -3578,9 +3589,13 @@ class AgoraFacet(Facet):
                 return None
             try:
                 detail = repos.detail(name)
+                if not detail.get("ok"):
+                    # A cold Hub may not have scanned its repositories yet.
+                    discover = getattr(repos, "discover", lambda: [])
+                    matches = [rec for rec in discover() if name.casefold() in
+                               (rec["name"].casefold(), rec["path"].casefold())]
+                    return Path(matches[0]["path"]) if len(matches) == 1 else None
             except Exception:
-                return None
-            if not detail.get("ok"):
                 return None
             rec = detail.get("repo") or {}
             path = rec.get("path")
