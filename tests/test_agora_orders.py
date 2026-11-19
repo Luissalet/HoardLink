@@ -262,6 +262,47 @@ def test_a_detail_set_on_a_piece_reaches_what_derives_from_it_with_its_source(ag
     assert next(k for k in checked["keep"] if k["detail"] == "Hebilla cuadrada")["state"] == "not_visible"
 
 
+def _sheet_and_mesh(agora, tmp_path):
+    for name in ("hoja.png", "malla.glb", "malla-suelo.glb"):
+        (tmp_path / name).write_bytes(name.encode())
+    order = agora.order_create(person(title="Odila", words="Odila con su tubo.", keep=["Tubo izquierdo"],
+                                      folder=str(tmp_path)))["order"]
+    add = lambda **kw: agora.piece_add({"agent": "claude", "order_id": order["id"], **kw})["piece"]
+    hoja = add(kind="character_sheet", title="Hoja", path="hoja.png", keep=["Tubo izquierdo", "Hebilla cuadrada"])
+    malla = add(kind="mesh", title="Malla", path="malla.glb", derives_from=[hoja["id"]])
+    checked = agora.piece_check({"agent": "claude", "piece_id": malla["id"], "note": "giro completo", "ok": True,
+                                 "keep": [{"detail": "Tubo izquierdo", "ok": True}, {"detail": "Hebilla cuadrada", "ok": True}]})
+    assert checked["piece"]["status"] == "checked"
+    return order, add, hoja, malla
+
+
+def _carried(piece, hoja, malla):
+    keep = {k["detail"]: k for k in piece["keep"]}
+    assert list(keep) == ["Tubo izquierdo", "Hebilla cuadrada"]
+    assert keep["Tubo izquierdo"]["source"] == "order"
+    assert keep["Hebilla cuadrada"]["source"] == "piece" and keep["Hebilla cuadrada"]["from"] == hoja["id"]
+    for k in keep.values():     # the earlier revision's approval does not carry over
+        assert k["state"] == "pending" and "by" not in k and "check_rev" not in k
+    assert piece["status"] == "provisional" and piece["supersedes"] == malla["id"] and piece["revision"] == 2
+
+
+def test_a_correction_of_the_same_piece_keeps_its_details_unchecked(agora, tmp_path):
+    """The workshop fixes only the floor and delivers the mesh again with supersedes, without repeating keep or parents."""
+    order, add, hoja, malla = _sheet_and_mesh(agora, tmp_path)
+    gate = agora.gate_open({"agent": "claude", "order_id": order["id"], "piece_ids": [malla["id"]]})["gate"]
+    agora.gate_decide(person(gate_id=gate["id"], decision="keep", note="vale"))
+    r2 = add(kind="mesh", title="Malla sin suelo", path="malla-suelo.glb", supersedes=malla["id"])
+    _carried(r2, hoja, malla)
+    assert r2["decisions"] == []    # the person's decision on r1 is not a decision on r2
+
+
+def test_a_new_revision_by_changed_content_keeps_the_details_too(agora, tmp_path):
+    order, add, hoja, malla = _sheet_and_mesh(agora, tmp_path)
+    (tmp_path / "malla.glb").write_bytes(b"sin suelo")        # same name, other content: the next revision by itself
+    r2 = add(kind="mesh", title="Malla", path="malla.glb")
+    _carried(r2, hoja, malla)
+
+
 def test_tools_are_listed_and_the_decision_has_none():
     names = {t["name"] for t in TOOLS}
     for op in ("orders", "order", "order_create", "order_update", "plan_set", "job", "piece_add", "piece_check",

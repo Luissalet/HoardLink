@@ -83,7 +83,9 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
 * **Details travel with the relay.** A piece receives the details of every piece it derives from (material or
   reference), so a detail first set at one station («square buckle» on the sheet, not in the order) reaches the next
   station to be checked there. Each detail says where it was set: `source` `order`, or `piece` with `from` (the piece
-  that set it) and `via` (the parent it came through).
+  that set it) and `via` (the parent it came through). A new revision of the same piece (`supersedes`, or other
+  content under the same name) keeps every detail of the revision it replaces, with its origin and unchecked again;
+  neither that revision's checks nor the person's decision on it carry over.
 * **Defects** (`piece_defect`): `note`, `expected`, `observed`, `evidence`, and where it shows: `view`, `pose`, `at`
   (second), `step` (slide, block, size, steps). It goes to the job that made the piece (or `task_id`): its task hears it
   in its thread, mentioning the owner. `defect_close` closes it with the piece (`fixed_in`, usually the next revision)

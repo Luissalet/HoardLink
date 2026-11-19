@@ -943,6 +943,22 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             keep.append({"id": f"k{len(keep) + 1}", "detail": item["detail"],
                          "source": "order" if item["source"] == "order" else "piece", "from": origin,
                          "via": item["parent"], "state": "pending"})
+        # a new revision of the same piece keeps the details of the one it replaces (its own and inherited), with where
+        # each was set, but unchecked again: neither that revision's checks nor the person's decision on it carry over
+        if supersedes:
+            old_keep = self.db.one("SELECT keep FROM agora_pieces WHERE id=?", (supersedes,))
+            for item in _load(old_keep["keep"] if old_keep else "[]", []):
+                if not isinstance(item, dict) or not item.get("detail") or item["detail"].casefold() in seen:
+                    continue
+                seen.add(item["detail"].casefold())
+                carried = {"id": f"k{len(keep) + 1}", "detail": item["detail"],
+                           "source": "order" if item.get("source") == "order" else "piece", "state": "pending",
+                           "revision_of": supersedes}
+                if carried["source"] == "piece":
+                    carried["from"] = item.get("from") if item.get("from") is not None else supersedes
+                if item.get("via") is not None:
+                    carried["via"] = item["via"]
+                keep.append(carried)
         # a detail of this piece's own list that was set at a parent keeps that parent as its source
         by_detail = {i["detail"].casefold(): i for i in inherited}
         for k in keep:
