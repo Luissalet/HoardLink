@@ -164,7 +164,11 @@ manifest can use the relay through `/api/mcp/resolve`.
 The separate HTTP tool proxy supports array and envelope catalogues and preserves
 tool-level not-found replies. `hub_proxy_check` reports catalogue reachability
 across the installed Hoards without starting them. `hub_station_catalog` reads
-manifest handoffs and proposes chains of compatible piece types. `hub_modules`
+manifest handoffs, links supported piece types to their technical checks, and
+proposes compatible chains. `hub_piece_validate` reports measurements from the
+file or registered revision. Checked looks and Orders gates display the
+technical verdict alongside the piece. See [production piece checks](docs/piece-checks.md).
+`hub_modules`
 and `hub_module_set` use declared native module switches and return an undo
 request for a change. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any
 piece (image, video, model, web page, document, Godot scene or an app's object) into views to open, with an

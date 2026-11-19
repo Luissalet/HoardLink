@@ -554,6 +554,10 @@ that accepts `editable-report`.
   for compatible chains, shortest first. Each step includes the Hoard, skill
   and verification instructions. An empty `chains` list means no declared route.
   The planner reads declarations and leaves execution and piece transfer to agents.
+- `hub_piece_validate` measures supported pieces without inference. The catalogue
+  links checks to declared input and output piece types. Checked visual reviews
+  and Orders gates show technical verdicts, including defects and pending
+  measurements. See [production piece checks](piece-checks.md).
 - `hub_proxy_check` checks catalogue reachability for the installed Hoards through
   the same adapter as `GET /api/apps/<id>/tools`. It reports the HTTP status,
   tool count and any failure per Hoard. The check leaves stopped apps stopped

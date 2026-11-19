@@ -176,6 +176,11 @@
       " · " + tr(`${gate.pieces.length} pieza(s)`, `${gate.pieces.length} piece(s)`) + (gate.opened_by ? tr(" · la abre ", " · opened by ") + gate.opened_by : ""));
     head.append(h, sub);
     if (gate.note) head.append(el("p", "ord-gate-note", gate.note));
+    for (const check of gate.technical_advisories || []) {
+      const note = check.note || tr(`Comprobación automática pendiente para «${check.title}».`,
+        `Technical check pending for “${check.title}”.`);
+      head.append(el("p", "ord-gate-note", note));
+    }
     card.append(head);
     const strip = el("div", "ord-gate-pieces");
     for (const piece of gate.pieces) {
