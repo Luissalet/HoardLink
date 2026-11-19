@@ -297,3 +297,11 @@ async def test_async_local_fallback_with_a_list(monkeypatch):
     monkeypatch.setattr(lease_mod, "gpu_free_mb", _fake4)
     async with lease(vram_mb=3000, gpu=[2, 3], hub_url=f"http://127.0.0.1:{free_port()}") as l:
         assert l.via == "local" and l.gpu == 3
+
+
+def test_gpu_uuid_identifies_the_granted_physical_card():
+    cards = [GpuMemory(0, 12282, 200, "GPU-first"), GpuMemory(2, 16311, 50, "GPU-second")]
+    arb = make(lambda: cards)
+    reply = arb.request(owner="render", vram_mb=8000, gpu=2)
+    assert reply["gpu"] == 2 and reply["gpu_uuid"] == "GPU-second"
+    assert [row["uuid"] for row in arb.status()["gpus"]] == ["GPU-first", "GPU-second"]

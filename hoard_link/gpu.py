@@ -32,6 +32,7 @@ class GpuMemory:
     index: int
     total_mb: int
     used_mb: int
+    uuid: str = ""
 
     @property
     def free_mb(self) -> int:
@@ -67,7 +68,7 @@ def probe_gpu_memory(timeout_s: float = 10.0) -> GpuProbe:
         proc = subprocess.run(
             [
                 _nvidia_smi(),
-                "--query-gpu=index,memory.total,memory.used",
+                "--query-gpu=index,memory.total,memory.used,uuid",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -91,11 +92,12 @@ def probe_gpu_memory(timeout_s: float = 10.0) -> GpuProbe:
     invalid = 0
     for line in (proc.stdout or "").strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) != 3:
+        if len(parts) not in (3, 4):
             invalid += 1
             continue
         try:
-            g = GpuMemory(index=int(parts[0]), total_mb=int(parts[1]), used_mb=int(parts[2]))
+            g = GpuMemory(index=int(parts[0]), total_mb=int(parts[1]), used_mb=int(parts[2]),
+                          uuid=parts[3] if len(parts) == 4 else "")
             if g.index < 0 or g.total_mb <= 0 or g.used_mb < 0 or g.used_mb > g.total_mb or any(p.index == g.index for p in out):
                 invalid += 1
                 continue
