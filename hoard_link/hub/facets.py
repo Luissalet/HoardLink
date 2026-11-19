@@ -53,6 +53,7 @@ FACET_MODULES = (
     "skills",
     "mcp_relay",
     "instances",
+    "local_programs",
     # Must precede AgoraFacet, whose historical /api/agora prefix catches all
     # console routes that it does not recognize.
     "agora_console",

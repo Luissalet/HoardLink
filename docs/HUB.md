@@ -10,6 +10,11 @@ The [Hub navigation guide](hub-navigation.md) describes the project directory, s
 
 ## Command line
 
+Agents can call app tools, check app state and plan production chains with
+[`hub.cmd`](worker-cli.md). The guide covers the named HTTP tool routes,
+`GET /api/apps/<id>/status` and the **Local programs** registry under
+**System → Capabilities**.
+
 ```
 python -m hoard_link.hub [--port N] [--roots "A;B"] [--data-dir DIR]
                          [--no-window | --browser | --native] [--stay] [--profile NAME] [-v]
