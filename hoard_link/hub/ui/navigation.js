@@ -12,6 +12,7 @@
   const tr = (spanish, english) => es() ? spanish : english;
   const icons = {
     home: '<path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/>',
+    orders: '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M9 12h7M9 16h4"/>',
     projects: '<path d="M3 6h7l2 3h9v11H3Z"/><path d="M3 9V4h7l2 2h7v3"/>',
     apps: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
     communication: '<path d="M21 4H3v13h5v4l5-4h8Z"/><path d="M7 8h10M7 12h6"/>',
@@ -28,6 +29,7 @@
   }
   const groups = [
     {id: 'home', label: ['Inicio', 'Home'], description: ['Tus pendientes y el trabajo que quieres continuar.', 'Open an app, continue a project or check shared work.']},
+    {id: 'orders', label: ['Órdenes', 'Orders'], defaultView: 'orders', facets: ['orders'], description: ['Lo que has encargado, su plan y sus piezas; arriba, lo que espera tu decisión.', 'What you ordered, its plan and its pieces; on top, what waits for your decision.']},
     {id: 'projects', label: ['Proyectos', 'Projects'], description: ['Cada proyecto tiene su propia ágora, sus tareas y sus conversaciones.', 'Each project has its own Agora, tasks and conversations.']},
     {id: 'apps', label: ['Aplicaciones', 'Applications'], description: ['Abre una aplicación o gestiona sus grupos de arranque.', 'Open an app or manage startup groups.']},
     {id: 'communication', label: ['Bandeja', 'Inbox'], defaultView: 'notify', facets: ['notify', 'mailgate', 'chats', 'refs', 'search'], description: ['Avisos, correo, chats y enlaces de la familia.', 'Family notifications, mail, chats and links.']},
@@ -66,7 +68,7 @@
     if (plain[id]) return labels(plain[id]);
     return id === 'resources' ? tr('Recursos', 'Resources') : $('#family-tabs .tab[data-tab="' + id + '"] b')?.textContent || id;
   }
-  function groupFor(id) { return groups.find(group => group.facets?.includes(id)) || groups[5]; }
+  function groupFor(id) { return groups.find(group => group.facets?.includes(id)) || groups.find(group => group.id === 'system'); }
   function spaceId() { return new URLSearchParams(location.search).get('space_id') || 'ecosystem'; }
   function activeSpace() { return spaces.find(space => space.id === spaceId()); }
   function projectUrl(space) {
@@ -310,7 +312,7 @@
     $('#hub-page-title').textContent = title;
     $('#hub-page-description').textContent = group ? labels(group.description) : project ? tr('Tu trabajo, conversaciones y decisiones en un mismo proyecto.', 'Project Agora · tasks, discussions and decisions in this space.') : descriptions[route] ? labels(descriptions[route]) : '';
     const breadcrumb = $('#hub-breadcrumb'); breadcrumb.replaceChildren();
-    const parent = project ? groups[1] : group || ['search','help','today'].includes(route) ? null : groupFor(route);
+    const parent = project ? groups.find(g => g.id === 'projects') : group || ['search','help','today'].includes(route) ? null : groupFor(route);
     breadcrumb.hidden = !parent;
     if (parent) { breadcrumb.append(link(labels(parent.label), '#hub/' + parent.id), document.createTextNode(' / ' + title)); }
     $('#hub-catalog-actions').append(...catalogActions);   // parked in the document while another page shows

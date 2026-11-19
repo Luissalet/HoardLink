@@ -361,6 +361,8 @@ def _job_dict(self: Any, row: dict[str, Any]) -> dict[str, Any]:
     out["after"] = [int(r["blocker_id"]) for r in
                     self.db.query("SELECT blocker_id FROM agora_task_deps WHERE task_id=? ORDER BY blocker_id", (row["task_id"],))]
     out["removed"] = bool(row["removed"])
+    out["defects_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_piece_defects WHERE task_id=? AND status='open'",
+                                             (row["task_id"],), 0) or 0)
     return out
 
 
