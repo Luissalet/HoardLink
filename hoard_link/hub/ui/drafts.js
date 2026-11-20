@@ -1,7 +1,7 @@
 /* Hoard Hub UI — Pasada 0 (draft pass): the early gate on the Orders page.
    Reads /api/agora/draft_passes?all_spaces=1 and, while a draft pass waits for the person, shows its variants side by
-   side at the top of the Orders page, each end to end (blocking, depth, normals, key frames, draft image…) with its
-   time and GPU. The person keeps one variant or discards one, with a note, through /api/agora/draft_decide (only this
+   side at the top of the Orders page, with decision media first and production details on demand.
+   The person keeps one variant or discards one, with a note, through /api/agora/draft_decide (only this
    page may). It does not change orders.js: it adds its own section into the Orders page whenever that page renders. */
 (() => {
   "use strict";
@@ -18,33 +18,59 @@
     blocking: ["Bloqueo", "Blocking"], blocking_color: ["Color del bloqueo", "Blocking colour"], parts: ["Partes", "Parts"],
     depth: ["Profundidad", "Depth"], normals: ["Normales", "Normals"], composition: ["Imagen de borrador", "Draft image"],
     keyframe_start: ["Fotograma inicial", "First key frame"], keyframe: ["Fotograma clave", "Key frame"],
-    keyframe_end: ["Fotograma final", "Last key frame"], animatic: ["Animática", "Animatic"], outline: ["Esquema", "Outline"],
+    keyframe_end: ["Fotograma final", "Last key frame"], animatic: ["Toma corta", "Short take"], outline: ["Esquema", "Outline"],
   };
+  const decisionAnchors = ["keyframe_start", "keyframe_end", "animatic", "keyframe", "composition"];
   const anchorLabel = a => (ANCHOR[a] ? tr(ANCHOR[a][0], ANCHOR[a][1]) : (a || tr("Pieza", "Piece")));
   const fileUrl = (piece, i) => `/api/agora/piece_file/${piece.id}` + (i === undefined ? "" : `?preview=${i}`);
+  const isVideo = piece => /\.(mp4|webm|mov|m4v)$/i.test(piece.path || "");
   const secs = s => (s === null || s === undefined ? "–" : s >= 90 ? `${(s / 60).toFixed(1)} min` : `${Math.round(s)} s`);
 
   let passes = [], lastSig = "", busy = false, force = false;
   const notes = new Map();   // variant id → note being written
   const changed = new Set(); // variants that changed while the person was looking at them
+  const expandedDetails = new Set();
 
   function media(piece) {
     const box = el("div", "drf-media");
     const isImage = /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(piece.path || "");
-    const src = isImage ? fileUrl(piece) : (piece.previews?.length ? fileUrl(piece, 0) : null);
-    if (src) {
+    const preview = piece.previews?.length ? fileUrl(piece, 0) : null;
+    const src = isImage ? fileUrl(piece) : preview;
+    if (isVideo(piece)) {
+      const v = el("video"); v.src = fileUrl(piece); v.controls = true; v.muted = true; v.playsInline = true; v.preload = "metadata";
+      if (preview) v.poster = preview;
+      box.append(v);
+    } else if (src) {
       const img = el("img"); img.src = src; img.alt = piece.title; img.loading = "lazy";
       img.onerror = () => box.replaceChildren(el("p", "ord-media-note", tr("No se puede mostrar.", "It cannot be shown.")));
-      const a = el("a"); a.href = src; a.target = "_blank"; a.rel = "noopener"; a.title = tr("Abrir a tamaño completo", "Open full size");
+      const a = el("a", "drf-image-link"); a.href = src; a.target = "_blank"; a.rel = "noopener"; a.title = tr("Abrir a tamaño completo", "Open full size");
       a.append(img); box.append(a);
-    } else if (/\.(mp4|webm|mov|m4v)$/i.test(piece.path || "")) {
-      const v = el("video"); v.src = fileUrl(piece); v.controls = true; v.muted = true; v.preload = "metadata"; box.append(v);
     } else {
       const a = el("a", "ghost small", tr("Abrir ", "Open ") + String(piece.path || piece.url || piece.title).split(/[\\/]/).pop());
       a.href = piece.url || fileUrl(piece); a.target = "_blank"; a.rel = "noopener";
       box.append(a);
     }
     return box;
+  }
+
+  function pieceStrip(pass, variant, pieces, cls) {
+    const strip = el("div", cls);
+    for (const p of pieces) {
+      const fig = el("figure", "drf-piece" + (p.anchor === "animatic" ? " drf-wide" : ""));
+      fig.append(media(p));
+      const cap = el("figcaption");
+      cap.append(el("b", "", anchorLabel(p.anchor)), el("small", "ord-muted", p.title));
+      if (isVideo(p) && p.previews?.length) {
+        const preview = el("a", "", tr("Abrir imagen de vista previa", "Open preview image"));
+        preview.href = fileUrl(p, 0); preview.target = "_blank"; preview.rel = "noopener";
+        cap.append(preview);
+      }
+      const also = pass.variants.filter(o => o.id !== variant.id && o.status !== "discarded" && o.pieces.some(q => q.id === p.id)).map(o => o.key.toUpperCase());
+      if (also.length) cap.append(el("small", "drf-shared", tr(`También en ${also.join(", ")}: se conserva si se conserva cualquiera de ellas`, `Also in ${also.join(", ")}: kept if any of them is kept`)));
+      fig.append(cap);
+      strip.append(fig);
+    }
+    return strip;
   }
 
   async function decide(pass, variant, decision, note, buttons) {
@@ -66,7 +92,7 @@
         tr("Su puesto tiene que registrarla de nuevo.", "Its station has to register it again.")); return;
     }
     if (!res?.ok) { ctx.toast(tr("No se ha guardado la decisión", "The decision was not saved"), "err", res?.error || ""); return; }
-    notes.delete(variant.id); changed.delete(variant.id);
+    notes.delete(variant.id); changed.delete(variant.id); expandedDetails.delete(variant.id);
     ctx.toast(decision === "keep" ? tr(`Conservada «${variant.title}»: la pasada cara partirá de ella`, `Kept «${variant.title}»: the full pass starts from it`)
       : tr(`Descartada «${variant.title}»: queda guardada con tu nota`, `Discarded «${variant.title}»: it stays, with your note`), "ok");
     lastSig = ""; await load();
@@ -79,25 +105,27 @@
     head.append(el("span", "drf-key", v.key.toUpperCase()), el("h4", "", v.title));
     card.append(head);
     if (changed.has(v.id)) card.append(el("p", "drf-changed", tr("Ha cambiado mientras la mirabas: esto es lo que hay ahora.", "It changed while you were looking at it: this is what it is now.")));
+    const decisionPieces = decisionAnchors.flatMap(anchor => v.pieces.filter(p => p.anchor === anchor));
+    const technicalPieces = v.pieces.filter(p => !decisionAnchors.includes(p.anchor));
+    if (decisionPieces.length) card.append(pieceStrip(pass, v, decisionPieces, "drf-decision-media"));
     if (v.idea) card.append(el("p", "drf-idea", v.idea));
+    if (v.note) card.append(el("p", "drf-note", v.note));
+
+    const details = el("details", "drf-technical");
+    details.open = expandedDetails.has(v.id);
+    details.ontoggle = () => {
+      if (details.open) expandedDetails.add(v.id);
+      else expandedDetails.delete(v.id);
+    };
+    details.append(el("summary", "", tr("Ver cómo se hizo", "See how it was made")));
     const m = v.measures || {};
     const facts = [tr("Tiempo ", "Time ") + secs(m.seconds), "GPU " + secs(m.gpu_seconds)];
     if (m.gpu) facts.push(m.gpu);
     if (m.engine) facts.push(m.engine);
-    card.append(el("p", "ord-muted", facts.join(" · ")));
-    const strip = el("div", "drf-strip");
-    for (const p of v.pieces) {
-      const fig = el("figure", "drf-piece" + (p.anchor === "animatic" ? " drf-wide" : ""));
-      fig.append(media(p));
-      const cap = el("figcaption");
-      cap.append(el("b", "", anchorLabel(p.anchor)), el("small", "ord-muted", p.title));
-      const also = pass.variants.filter(o => o.id !== v.id && o.status !== "discarded" && o.pieces.some(q => q.id === p.id)).map(o => o.key.toUpperCase());
-      if (also.length) cap.append(el("small", "drf-shared", tr(`También en ${also.join(", ")}: se conserva si se conserva cualquiera de ellas`, `Also in ${also.join(", ")}: kept if any of them is kept`)));
-      fig.append(cap);
-      strip.append(fig);
-    }
-    card.append(strip);
-    if (v.note) card.append(el("p", "drf-note", v.note));
+    details.append(el("p", "ord-muted", facts.join(" · ")));
+    if (technicalPieces.length) details.append(pieceStrip(pass, v, technicalPieces, "drf-strip"));
+    card.append(details);
+
     const foot = el("div", "drf-decide");
     const note = el("textarea"); note.rows = 2;
     note.placeholder = tr("Nota opcional: qué te gusta o qué cambiar…", "Optional note: what you like or what to change…");
