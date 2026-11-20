@@ -36,8 +36,8 @@ Machine-wide and shared by the whole family:
   saying how it may be stopped).
 
 ComfyUI instances are addressed by port (``comfyui@8188``). The default
-port uses ComfyUI's own output/user folders; any other port gets its own
-output, temp, user and database folders under ``~/.hoard/backends/`` so two
+port uses ComfyUI's own input/output/user folders; any other port gets its own
+input, output, temp, user and database folders under ``~/.hoard/backends/`` so two
 instances on two GPUs never race on file names or the asset database.
 
 Stdlib only.
@@ -71,6 +71,12 @@ OLLAMA_URL = "http://127.0.0.1:11434"
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 IS_WIN = sys.platform.startswith("win")
 COMFY_CAPABILITIES = ["image", "video", "music"]
+COMFY_DIRECTORIES = (
+    ("--input-directory", "input"),
+    ("--output-directory", "output"),
+    ("--temp-directory", "temp"),
+    ("--user-directory", "user"),
+)
 OLLAMA_CAPABILITIES = ["llm", "vision", "embeddings"]
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,40}$")
 
@@ -297,9 +303,11 @@ def _kill_tree(pid: int, grace_s: float = 6.0) -> None:
 class Launcher:
     """Finds, starts, watches and stops the shared local backends."""
 
-    def __init__(self, home: Path | str | None = None, *, app: str = "hoard"):
+    def __init__(self, home: Path | str | None = None, *, app: str = "hoard",
+                 tool_dirs: tuple[Path, ...] = ()):
         self.home = Path(home) if home else hoard_home()
         self.app = app
+        self.tool_dirs = tool_dirs
         self._lock = threading.RLock()
 
     # -- files ---------------------------------------------------------
@@ -396,6 +404,7 @@ class Launcher:
                         root / "ComfyUI_windows_portable" / "ComfyUI"]
         else:
             out += [Path("/opt/ComfyUI"), Path("/srv/ComfyUI")]
+        out.extend(directory / "ComfyUI" for directory in self.tool_dirs)
         seen, uniq = set(), []
         for p in out:
             key = str(p).lower() if IS_WIN else str(p)
@@ -472,7 +481,7 @@ class Launcher:
             argv += ["--cuda-device", str(gpu)]
         if port != DEFAULT_COMFY_PORT:
             own = self.home / "backends" / f"comfyui-{port}"
-            for flag, sub in (("--output-directory", "output"), ("--temp-directory", "temp"), ("--user-directory", "user")):
+            for flag, sub in COMFY_DIRECTORIES:
                 if flag in flags:
                     argv += [flag, str(own / sub)]
             if "--database-url" in flags:
@@ -657,7 +666,7 @@ class Launcher:
             log_path = self.log_path(svc.id)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             if svc.kind == "comfyui" and svc.port != DEFAULT_COMFY_PORT:
-                for sub in ("output", "temp", "user"):
+                for _, sub in COMFY_DIRECTORIES:
                     (self.home / "backends" / f"comfyui-{svc.port}" / sub).mkdir(parents=True, exist_ok=True)
             env = dict(os.environ)
             env.update(svc.env)

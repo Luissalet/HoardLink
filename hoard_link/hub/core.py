@@ -90,8 +90,9 @@ class Hub:
         # the shared backends (ComfyUI, Ollama, configured servers) any app of
         # the family can start without Faustus: same files as the apps use
         from ..launch import Launcher
+        from .local_programs import portable_tool_dirs
 
-        self.launcher = Launcher(app="hub")
+        self.launcher = Launcher(app="hub", tool_dirs=portable_tool_dirs(self.config.roots))
         self.commands = CommandRunner(os.path.join(self.config.data_dir, "commands.json"), self.config.logs_dir)
         # The family's nervous system: the event log every app writes to,
         # rules that react to it, jobs on a clock, and the backup store.

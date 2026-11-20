@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from hoard_link.hub import local_programs as programs
+from hoard_link.hub.config import HubConfig
+from hoard_link.hub.core import Hub
 
 from .test_hub_and_server import _http, served  # noqa: F401
 
@@ -18,16 +20,18 @@ def test_inventory_reads_portable_installs_and_environment_metadata(tmp_path, mo
     app = tmp_path / "Development" / "IA" / "Hoards" / "Family" / "Render App"
     venv = app / ".render"
     python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    for path in (early, latest, comfy, python):
+    comfy_python = comfy.parent / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    for path in (early, latest, comfy, python, comfy_python):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
+    (comfy.parent / "comfy").mkdir()
     (comfy.parent / "comfyui_version.py").write_text('__version__ = "12.34"\n', encoding="utf-8")
     (venv / "pyvenv.cfg").write_text("version = 3.12.3\n", encoding="utf-8")
-    hub = SimpleNamespace(
-        apps=[SimpleNamespace(id="render", name="Render App", folder=str(app), launch=None)],
-        config=SimpleNamespace(roots=[str(app.parent)], faustus_python=None, faustus_dir=None),
-        launcher=SimpleNamespace(comfy_install=lambda: (None, None, None)),
-    )
+    monkeypatch.setenv("HOARD_HOME", str(tmp_path / "hoard-home"))
+    monkeypatch.delenv("COMFYUI_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    hub = Hub(HubConfig(roots=[str(app.parent)], data_dir=str(tmp_path / "data"), jobs_enabled=False))
+    hub._apps = {"render": SimpleNamespace(id="render", name="Render App", folder=str(app), launch=None)}
     monkeypatch.setattr(programs.shutil, "which", lambda _: None)
     monkeypatch.setattr(programs, "_version", lambda path: "fixture version" if path else None)
     monkeypatch.setattr(programs.bins, "find", lambda *_, **__: SimpleNamespace(path=None, version=""))
@@ -36,6 +40,11 @@ def test_inventory_reads_portable_installs_and_environment_metadata(tmp_path, mo
     assert "--headless" in by_name["Godot"]["headless"]
     assert by_name["ComfyUI"]["path"] == str(comfy)
     assert by_name["ComfyUI"]["version"] == "12.34"
+    assert by_name["ComfyUI"]["interpreter"] == str(comfy_python)
+    service = hub.launcher.comfy_service(port=64111)
+    assert service.problem is None
+    assert service.cwd == str(comfy.parent)
+    assert service.argv[0] == str(comfy_python)
     assert by_name["Python · Render App · .render"]["path"] == str(python)
     assert by_name["Python · Render App · .render"]["version"] == "3.12.3"
 

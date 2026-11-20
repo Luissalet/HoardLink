@@ -178,12 +178,15 @@ def _playwright(pythons):
     return None, None
 
 
-def discover(hub, *, refresh=False):
-    roots = {Path(root) for root in hub.config.roots}
-    roots.add(REPO_DIR)
+def portable_tool_dirs(roots):
+    roots = {REPO_DIR, *(Path(root) for root in roots)}
     # A family checkout may be at <workspace>/IA/Hoards/Faustusables.
     # Look beside the workspace for portable installs without crawling disks.
-    tool_dirs = sorted({parent / "Tools" for root in roots for parent in (root, *list(root.parents)[:4])})
+    return tuple(sorted({parent / "Tools" for root in roots for parent in (root, *root.parents[:4])}))
+
+
+def discover(hub, *, refresh=False):
+    tool_dirs = hub.launcher.tool_dirs
     program_files = sorted({Path(os.environ[key]) for key in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")
                             if os.environ.get(key)})
     blender = _first_file([
