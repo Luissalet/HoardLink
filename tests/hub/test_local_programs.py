@@ -83,3 +83,40 @@ def test_http_registry_uses_the_same_manual_entries_as_named_tools(served, tmp_p
     assert status == 200 and listed["result"]["programs"] == [added["program"]]
     assert _http(url + "/api/programs/undo", added["undo"]["arguments"], page_headers)[1]["changed"]
     assert not _http(url + "/api/programs", None)[1]["programs"]
+
+
+def test_vulcan_blender_selection_persists_and_has_conditional_undo(served, tmp_path, monkeypatch):
+    monkeypatch.setattr(programs, "discover", lambda *_, **__: [])
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    monkeypatch.delenv("ProgramW6432", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    hub, url = served
+    headers = {"Authorization": f"Bearer {hub.token}"}
+
+    def set_renderer(arguments):
+        return _http(url + "/api/agent/tools/hub_vulcan_blender_set", arguments, headers)[1]["result"]
+
+    executables = {}
+    for version in ("4.3", "4.5"):
+        path = tmp_path / "Blender Foundation" / f"Blender {version}" / "blender.exe"
+        path.parent.mkdir(parents=True)
+        path.touch()
+        executables[version] = str(path)
+    assert not set_renderer({"version": "../4.3"})["ok"]
+    assert not set_renderer({"version": "3.6"})["ok"]
+    first = set_renderer({"version": "4.3"})
+    assert first["ok"] and first["path"] == executables["4.3"]
+    restored_facet = programs.LocalPrograms(hub)
+    assert restored_facet.vulcan_blender_env() == {
+        "VULCAN_BLENDER": executables["4.3"], "VULCAN_BLENDER_VERSION": "4.3",
+    }
+    row = _http(url + "/api/programs", None)[1]["programs"][0]
+    assert (row["id"], row["source"], row["version"], row["path"]) == (
+        "vulcan-blender", "configured", "4.3", executables["4.3"],
+    )
+    second = set_renderer({"version": "4.5"})
+    assert not set_renderer(first["undo"]["arguments"])["ok"]
+    assert set_renderer(second["undo"]["arguments"])["version"] == "4.3"
+    assert set_renderer(first["undo"]["arguments"])["version"] is None
+    assert restored_facet.vulcan_blender_env() == {}
+    assert not _http(url + "/api/programs", None)[1]["programs"]

@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import secrets
 import threading
 from urllib.parse import urlsplit
@@ -357,7 +358,12 @@ class Hub:
                 allocation = self.ports.prepare(app, self.apps, self.config.port)
                 if not allocation.get("ok"):
                     return dict(allocation, app=app_id)
-                res = procs.start_app(app, self.config.logs_dir, wait=wait)
+                launch_app = app
+                if app_id == "vulcan" and app.launch and (programs := self.facet("local_programs")):
+                    renderer = programs.vulcan_blender_env()
+                    if renderer:
+                        launch_app = replace(app, launch=replace(app.launch, env={**app.launch.env, **renderer}))
+                res = procs.start_app(launch_app, self.config.logs_dir, wait=wait)
                 if allocation.get("previous_port"):
                     res.update(previous_port=allocation["previous_port"], port=allocation["port"])
                 if res.get("ok") and res.get("pid"):
