@@ -1207,8 +1207,9 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
     return did
 
 
-def _stale_below(self: Any, journal: _Journal, piece_id: int) -> list[int]:
+def _stale_below(self: Any, journal: _Journal, piece_id: int, order_id: int | None = None) -> list[int]:
     """Mark stale every piece derived (directly or not) from piece_id; returns their ids."""
+    # order_id is accepted for older callers; derivations are followed across the whole space.
     rows = [dict(r) for r in self.db.query("SELECT id, derives_from, status FROM agora_pieces WHERE space_id=?", (self.space_id,))]
     stale, frontier = [], [piece_id]
     while frontier:
