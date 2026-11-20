@@ -720,7 +720,9 @@
       $(".what", row).textContent = l.purpose || "";
       $(".amount", row).textContent = gb(l.vram_mb);
       $(".where", row).textContent = l.gpu != null ? `GPU ${l.gpu}` : (l.gpu_request === "any" ? t("any_gpu") : `GPU ${[].concat(l.gpu_request).join(" / ")}`);
-      $(".ttl", row).textContent = `${t("expires")} ${fmtUptime(l.expires_in_s)}`;
+      $(".ttl", row).textContent = l.process_bound
+        ? (lang === "es" ? "hasta que termine el servicio" : "until the service exits")
+        : `${t("expires")} ${fmtUptime(l.expires_in_s)}`;
       row.title = `${l.lease_id}${l.pid ? " · pid " + l.pid : ""}${l.note ? " · " + l.note : ""}`;
       const btn = $("button", row);
       btn.textContent = t("release");

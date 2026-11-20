@@ -709,7 +709,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if path.endswith("start"):
                     res = hub.service_start(sid, gpu=body.get("gpu"), wait_s=float(body.get("wait_s") or 0))
                 else:
-                    res = hub.service_stop(sid)
+                    res = hub.service_stop(sid, expected_pid=body.get("expected_pid"))
                 return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/rules":
                 res = hub.rules.add(body)

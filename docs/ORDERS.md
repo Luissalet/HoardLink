@@ -34,6 +34,11 @@ repositories, and opening the page against an isolated test catalogue.
 
 See [Studio work admission](STUDIO-ADMISSION.md) for machine turns, retry and GPU budgets, capability routing, and
 first-pass and station measures. Orders shows a budget hold alongside the gate and includes its reason in the worker's job.
+Construction tasks can declare a station with `context.station` in Agora. Station measures also use a task's
+repository or, for closed historical tasks, the registered repositories identified by their submitted commits.
+A task spanning several repositories is counted once against the combined set of stations and repositories.
+The configured ComfyUI checkout participates when it is a Git repository. Tasks without enough evidence stay
+unattributed.
 
 ## Plan
 

@@ -1,8 +1,12 @@
 """Limits and receipts for work on a production order."""
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
 from statistics import median
 
+from ..atomic import read_json
 from . import agora_orders as orders
 
 BUDGET_MIGRATION = """
@@ -200,7 +204,7 @@ def _task_measures(tasks):
 
 def _task_metrics(agora, oid, space):
     sql = (
-        "SELECT t.repo,t.status,t.submission_revision,t.created,t.claimed_at,t.submitted_at,t.closed_at,"
+        "SELECT t.repo,t.context,t.commits,t.status,t.submission_revision,t.created,t.claimed_at,t.submitted_at,t.closed_at,"
         "coalesce(j.station,'') AS station FROM tasks t LEFT JOIN agora_order_jobs j ON j.task_id=t.id "
         "WHERE t.status<>'dropped' AND (j.task_id IS NULL OR j.removed=0)"
     )
@@ -210,16 +214,54 @@ def _task_metrics(agora, oid, space):
         sql, params = sql + " AND t.space_id=?", (space,)
     else:
         params = ()
+    rows = agora.db.query(sql, params)
+    repositories = getattr(agora, "registered_repositories", lambda: [])()
+    refs = {ref for row in rows if row["status"] == "done" and not row["repo"]
+            for ref in _commit_refs(row)}
+    from .integration_git import repository_commit_index
+
+    service_repo = getattr(agora, "order_service_repository", lambda: None)() if refs else None
+    if service_repo and not any(Path(row["path"]).resolve() == Path(service_repo["path"]).resolve()
+                                for row in repositories):
+        repositories = [*repositories, service_repo]
+    commit_index = repository_commit_index(repositories, sorted(refs))
+    stations = {repo["name"].casefold(): _repository_station(repo) for repo in repositories}
+    stations["hoard hub"] = "hoardhub"
     groups = {}
-    repos = {}
-    for row in agora.db.query(sql, params):
-        station = row["station"]
-        if station not in repos:
-            repos[station] = orders._station_repo(agora, station)
-        key = (station, row["repo"] or repos[station])
+    station_repos = {}
+    for row in rows:
+        declared = json.loads(row["context"] or "{}").get("station")
+        station = row["station"] or (declared.strip() if isinstance(declared, str) else "")
+        if station not in station_repos:
+            station_repos[station] = orders._station_repo(agora, station)
+        repo = row["repo"] or station_repos[station]
+        if not repo and row["status"] == "done":
+            candidates = [set(commit_index[ref]) for ref in _commit_refs(row)]
+            if candidates:
+                common = set.intersection(*candidates)
+                if len(common) == 1:
+                    repo = common.pop()
+                elif all(len(group) == 1 for group in candidates):
+                    names = sorted(set.union(*candidates))
+                    repo = ", ".join(names)
+                    station = station or ", ".join(dict.fromkeys(
+                        stations[name.casefold()] for name in names if stations.get(name.casefold())))
+        key = (station or stations.get(repo.casefold(), ""), repo)
         groups.setdefault(key, []).append(row)
     return [{"station": station, "repo": repo, **_task_measures(rows)}
             for (station, repo), rows in sorted(groups.items(), key=lambda item: (not any(item[0]), item[0]))]
+
+
+def _commit_refs(row):
+    return [ref for ref in json.loads(row["commits"] or "[]")
+            if isinstance(ref, str) and re.fullmatch(r"[0-9a-fA-F]{7,64}", ref)]
+
+
+def _repository_station(repo):
+    if repo.get("app"):
+        return repo["app"]
+    manifest = read_json(Path(repo["path"]) / "faustus-plugin.json", {})
+    return manifest.get("id", "") if isinstance(manifest, dict) and isinstance(manifest.get("id"), str) else ""
 
 
 def metrics(agora, args):

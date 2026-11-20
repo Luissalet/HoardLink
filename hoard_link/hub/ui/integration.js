@@ -14,6 +14,8 @@
     testing_inference: ["Probando inferencia", "Testing inference"],
     integrating: ["Fusionando", "Integrating"],
     checking_live_case: ["Comprobando el caso de origen", "Checking the original case"],
+    cleaning_delivery: ["Limpiando la entrega", "Cleaning the delivery"],
+    delivery_retained: ["Árbol de entrega conservado", "Delivery worktree kept"],
     integrated: ["Integrada", "Integrated"],
     checked: ["Comprobada", "Checked"],
     failed: ["Fallida", "Failed"],
@@ -63,7 +65,8 @@
     }
     if (receipt.cleanup) {
       if (receipt.cleanup.retained) content.push(el("p", "",
-        t(ctx, "Árbol de entrega conservado porque contiene cambios", "Delivery worktree kept because it contains changes")));
+        t(ctx, "Árbol de entrega conservado porque contiene cambios o archivos ignorados",
+          "Delivery worktree kept because it contains changes or ignored files")));
       if (receipt.cleanup.removed_branch && receipt.state !== "undone") {
         content.push(el("p", "", receipt.cleanup.removed_worktree
           ? t(ctx, "Rama y árbol de entrega retirados", "Delivery branch and worktree removed")
@@ -107,7 +110,9 @@
         const details = el("details", "hub-project-row");
         details.dataset.id = row.id;
         details.open = open.has(row.id);
-        const summary = el("summary", "", `#${row.task_id} · ${row.repo} · ${state(ctx, row.state)}`);
+        const retained = row.cleanup?.retained && row.state !== "delivery_retained"
+          ? ` · ${state(ctx, "delivery_retained")}` : "";
+        const summary = el("summary", "", `#${row.task_id} · ${row.repo} · ${state(ctx, row.state)}${retained}`);
         const body = el("div");
         details.append(summary, body);
         const show = async () => {

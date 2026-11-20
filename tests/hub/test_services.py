@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from types import SimpleNamespace
 
 import pytest
 
@@ -77,3 +78,41 @@ def test_unknown_service_is_a_409(served):
     _, url = served
     code, res = _req(url + "/api/services/start", {"id": "nope"})
     assert code == 409 and res["ok"] is False
+
+
+def test_comfy_start_reserves_one_gpu_until_the_owned_process_exits(served, tmp_path, monkeypatch):
+    hub, url = served
+    monkeypatch.setattr(hub.leases, "_gpu_fn", lambda: [SimpleNamespace(index=1, total_mb=4096, used_mb=0)])
+    install = tmp_path / "ComfyUI"
+    (install / "comfy").mkdir(parents=True)
+    (install / "comfy" / "cli_args.py").write_text('parser.add_argument("--cuda-device")', encoding="utf-8")
+    (install / "main.py").write_text(
+        "import argparse\nfrom http.server import HTTPServer, SimpleHTTPRequestHandler\n"
+        "p = argparse.ArgumentParser()\np.add_argument('--port', type=int)\n"
+        "p.add_argument('--cuda-device', type=int)\na, _ = p.parse_known_args()\n"
+        "assert a.cuda_device == 1\nHTTPServer(('127.0.0.1', a.port), SimpleHTTPRequestHandler).serve_forever()\n",
+        encoding="utf-8")
+    hub.launcher.set_config({"comfyui": {"dir": str(install), "python": sys.executable, "startup_vram_mb": 512}})
+    port = free_port()
+    args = {"id": f"comfyui@{port}", "gpu": 1, "wait_s": 20}
+    full = hub.leases.request(owner="job", vram_mb=3800, gpu=1)
+    try:
+        code, denied = _req(url + "/api/services/start", args)
+        assert code == 409 and "GPU" in denied["error"]
+        assert not hub.leases.status()["queue"]
+        hub.leases.release(full["lease_id"])
+        code, result = _req(url + "/api/services/start", args)
+        assert code == 200 and result["ready"], result
+        assert result["undo"]["tool"] == "hub_service_stop"
+        status = tools.call(hub, "hub_lease_status", {})
+        lease, = status["leases"]
+        assert (lease["lease_id"], lease["pid"], lease["gpu"], lease["vram_mb"], lease["process_bound"]) == (
+            result["lease_id"], result["pid"], 1, 512, True)
+        assert _req(url + "/api/services/start", args)[1]["already"]
+        assert len(hub.leases.status()["leases"]) == 1
+        assert tools.call(hub, "hub_service_stop", {"id": args["id"], "expected_pid": result["pid"] + 1})["ok"] is False
+        assert tools.call(hub, result["undo"]["tool"], result["undo"]["arguments"])["ok"]
+        assert hub.leases.status()["leases"] == []
+    finally:
+        hub.leases.release(full["lease_id"])
+        hub.service_stop(args["id"])

@@ -3630,6 +3630,11 @@ class AgoraFacet(Facet):
         self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
+        self.agora.registered_repositories = lambda: getattr(getattr(hub, "repos", None), "discover", lambda: [])()
+        if launcher := getattr(hub, "launcher", None):
+            from .service_leases import comfy_repository
+
+            self.agora.order_service_repository = lambda: comfy_repository(launcher)
         self.agora.title_chat = lambda body: hub.link.chat("agora-threads", body)     # suggested titles for threads
         self.agora.review_chat = lambda body: hub.link.chat("agora-review", body)   # the guided review asks the family's model
         self.agora.route_chat = lambda body: hub.link.chat("agora-router", body)    # the router asks it who should answer

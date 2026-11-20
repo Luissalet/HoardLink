@@ -86,12 +86,13 @@ class Lease:
     pid: Optional[int] = None
     pid_created: Optional[float] = None
     note: str = ""
+    process_bound: bool = False
 
     def to_dict(self, now: Optional[float] = None) -> dict[str, Any]:
         d = asdict(self)
         d["lease_id"] = self.id
         if now is not None:
-            d["expires_in_s"] = max(0, int(self.expires_at - now))
+            d["expires_in_s"] = None if self.process_bound else max(0, int(self.expires_at - now))
         return d
 
 
@@ -355,7 +356,7 @@ class LeaseArbiter:
         now = self._now()
         gone: list[tuple[Lease, str]] = []
         for lease in list(self._leases.values()):
-            if lease.expires_at <= now:
+            if not lease.process_bound and lease.expires_at <= now:
                 gone.append((lease, "expired" if lease.state == "granted" else "abandoned in queue"))
             elif lease.pid and not self._alive(lease.pid, lease.pid_created):
                 gone.append((lease, f"owner process {lease.pid} is gone"))
@@ -429,7 +430,7 @@ class LeaseArbiter:
     def _reply(self, lease: Lease) -> dict[str, Any]:
         gpu_uuid = next((g.uuid for g in self._inv[1] if g.index == lease.gpu and g.uuid), None)
         return {"ok": True, "lease_id": lease.id, "state": lease.state, "gpu": lease.gpu, "gpu_uuid": gpu_uuid,
-                "expires_at": lease.expires_at, "position": self._position(lease),
+                "expires_at": None if lease.process_bound else lease.expires_at, "position": self._position(lease),
                 "lease": lease.to_dict(self._now())}
 
     # -- public API ----------------------------------------------------------
@@ -532,6 +533,20 @@ class LeaseArbiter:
                 lease.expires_at = now + lease.ttl_s
             else:
                 lease.expires_at = now + QUEUE_KEEPALIVE_S
+            self._save()
+            return self._reply(lease)
+
+    def bind_process(self, lease_id: str, pid: int) -> dict[str, Any]:
+        """Keep an internal service reservation until its exact process exits."""
+        with self._cond:
+            lease = self._leases.get(lease_id)
+            if lease is None or lease.state != "granted":
+                raise LeaseError("A service needs a granted lease before binding its process")
+            created = pid_create_time(pid)
+            if not self._alive(pid, created):
+                raise LeaseError("The service process exited before its GPU reservation was bound")
+            lease.pid, lease.pid_created = pid, created
+            lease.process_bound = True
             self._save()
             return self._reply(lease)
 

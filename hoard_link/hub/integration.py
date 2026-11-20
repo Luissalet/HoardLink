@@ -28,11 +28,12 @@ INTEGRATION_TOKEN = object()
 
 def submission_tests(summary):
     matches = re.findall(r"^Test-Paths:[ \t]*([^\r\n]+)", summary or "", flags=re.MULTILINE)
-    return list(dict.fromkeys(repo_git.test_path(item.strip())
-                              for line in matches for item in line.split(",") if item.strip()))
+    # A space after a .py path is a separator, while spaces within a path are preserved.
+    paths = (item.strip() for line in matches for item in re.split(r",|(?<=\.py)[ \t]+", line))
+    return list(dict.fromkeys(repo_git.test_path(path) for path in paths if path))
 
 
-def delivery_tests(agora, task, args):
+def submission_summary(agora, task):
     revision = task["submission_revision"]
     commits = ", ".join(task["commits"]) or "(none)"
     marker = f"\n\nSubmission revision: {revision}\nCommits: {commits}"
@@ -42,10 +43,14 @@ def delivery_tests(agora, task, args):
     for row in proposals:
         body = row["body"]
         if marker + "\n" in body or body.endswith(marker):
-            declared = submission_tests(body.rsplit(marker, 1)[0])
-            if declared:
-                return declared, True
-            break
+            return body.rsplit(marker, 1)[0]
+    return ""
+
+
+def delivery_tests(args, summary):
+    declared = submission_tests(summary)
+    if declared:
+        return declared, True
     provided = args.get("test_paths", [])
     if not isinstance(provided, list):
         raise repo_git.IntegrationError("test_paths must be a list of tracked pytest files")
@@ -70,8 +75,7 @@ def enforce_submission(agora, task, snap, summary):
     job = agora.db.one("SELECT produces FROM agora_order_jobs WHERE task_id=?", (task["id"],))
     if "integration" not in task.get("labels", []) and not (job and "code_branch" in json.loads(job["produces"])):
         return
-    from_summary = re.search(r"^Repository:[ \t]*(.+)$", summary, flags=re.MULTILINE)
-    name = snap["repo"] or (from_summary.group(1).strip() if from_summary else "")
+    name = snap["repo"] or repo_git.delivery_repository(agora, snap, summary=summary)
     repo = agora.repo_lookup(name) if agora.repo_lookup and name else None
     try:
         if repo is None:
@@ -135,7 +139,7 @@ class IntegrationFacet(Facet):
     def start(self):
         running = {"queued", "waiting_for_suite_slot", "testing_main", "testing_candidate", "testing_inference",
                    "integrating", "prepared_checkout", "moved_checkout", "restored_checkout", "checking_live_case",
-                   "saving_baseline", "cleaning_delivery", "worktree_removed", "branch_removed"}
+                   "saving_baseline", "cleaning_delivery", "delivery_retained", "worktree_removed", "branch_removed"}
         for path in self.root.glob("*/receipt.json"):
             receipt = read_json(path, {})
             if receipt.get("state") in running:
@@ -169,7 +173,9 @@ class IntegrationFacet(Facet):
         return agora, agent, task
 
     def _delivery(self, agora, task, args):
-        repo_name = task["repo"] or args.get("repo")
+        summary = submission_summary(agora, task)
+        repo_name = (task["repo"] or args.get("repo") or
+                     repo_git.delivery_repository(agora, task, summary=summary))
         if not repo_name or not (repo_path := agora.repo_lookup(repo_name)):
             raise repo_git.IntegrationError("The delivery needs a repository registered in the Hub")
         repo = Path(repo_path).resolve()
@@ -177,7 +183,7 @@ class IntegrationFacet(Facet):
         if target not in ("main", "master"):
             raise repo_git.IntegrationError("The registered repository must have its main or master branch checked out")
         base = repo_git.git_text(repo, "rev-parse", "HEAD")
-        declared, from_submission = delivery_tests(agora, task, args)
+        declared, from_submission = delivery_tests(args, summary)
         if not declared:
             raise repo_git.IntegrationError("The submission has no Test-Paths; provide tracked pytest files in test_paths")
         head = delivery_contract(repo, task["branch"], task["commits"], declared)
@@ -213,7 +219,7 @@ class IntegrationFacet(Facet):
         repo, plan = self._delivery(agora, task, args)
         nearby = agora.db.query("SELECT id, title, status, submission_revision FROM tasks "
                                 "WHERE repo=? AND space_id=? AND id<>? AND status IN ('review', 'approved') "
-                                "ORDER BY updated DESC LIMIT 10", (task["repo"] or plan["repo"], agora.space_id, task["id"]))
+                                "ORDER BY updated DESC LIMIT 10", (plan["repo_ref"], agora.space_id, task["id"]))
         return {"ok": True, "plan": plan, "baseline": read_json(self._baseline(repo), {}),
                 "nearby_deliveries": [dict(row) for row in nearby]}
 
@@ -258,13 +264,17 @@ class IntegrationFacet(Facet):
         for item in test_files:
             file = item.split("::", 1)[0]
             group = groups.setdefault(receipt["plan"]["test_roots"][file], [])
-            if (work / file).is_file():
-                group.append(item)
+            group.append(item)
         results = {}
-        for index, (root, files) in enumerate(sorted(groups.items())):
-            report = self._path(receipt["id"]).parent / f"{lane}-{ref}-{index}.xml"
-            results[root] = checks.suite(self.hub, repo, work, files, report, lane, base=base, ref=ref,
-                                         remote=remote, empty_ok=empty_ok or len(groups) > 1)
+        for root_index, (root, files) in enumerate(sorted(groups.items())):
+            for start in range(0, len(files), checks.BATCH_SIZE):
+                batch_index = start // checks.BATCH_SIZE
+                batch = [item for item in files[start:start + checks.BATCH_SIZE]
+                         if (work / item.split("::", 1)[0]).is_file()]
+                report = self._path(receipt["id"]).parent / f"{lane}-{ref}-{root_index}-{batch_index}.xml"
+                key = f"{root} [{batch_index + 1}]" if len(files) > checks.BATCH_SIZE else root
+                results[key] = checks.suite(self.hub, repo, work, batch, report, lane, base=base, ref=ref,
+                                            remote=remote, empty_ok=empty_ok or len(groups) > 1 or not batch)
         return checks.combine(results)
 
     def _work(self, args, repo, task, receipt):
@@ -393,6 +403,7 @@ class IntegrationFacet(Facet):
             raise repo_git.IntegrationError("The delivery branch moved before cleanup")
         if source and repo_git.git(source, "status", "--porcelain", "--untracked-files=all", "--ignored").stdout:
             cleanup["retained"] = "The delivery worktree contains uncommitted or ignored files"
+            update("delivery_retained", {"worktree": str(source), "reason": cleanup["retained"]})
         else:
             if source:
                 repo_git.git(repo, "worktree", "remove", str(source))
@@ -524,7 +535,8 @@ class IntegrationFacet(Facet):
     @staticmethod
     def _summary(row):
         return {**{key: row[key] for key in ("id", "task_id", "space_id", "revision", "state", "machine", "created")},
-                "repo": row["plan"]["repo"], "branch": row["plan"]["branch"]}
+                "repo": row["plan"]["repo"], "branch": row["plan"]["branch"],
+                "cleanup": row.get("cleanup")}
 
     @staticmethod
     def _safe(method):

@@ -915,7 +915,14 @@ class Hub:
         if self._stopping_all.is_set() or (automatic and self.automation_blocked("service:" + service_id)):
             return {"ok": False, "error": "stop all is still in progress"}
         self._manual_stop(["service:" + service_id], False)
-        res = self.launcher.start(str(service_id or ""), gpu=gpu, wait_s=max(0.0, min(float(wait_s or 0), 300.0)))
+        service_id = str(service_id or "")
+        wait_s = max(0.0, min(float(wait_s or 0), 300.0))
+        if service_id == "comfyui" or service_id.startswith("comfyui@"):
+            from .service_leases import start_comfy
+
+            res = start_comfy(self.launcher, self.leases, service_id, gpu, wait_s)
+        else:
+            res = self.launcher.start(service_id, gpu=gpu, wait_s=wait_s)
         if res.get("ok"):
             self._backends_cache = (0.0, None)
             try:
@@ -925,10 +932,21 @@ class Hub:
                 pass
         return res
 
-    def service_stop(self, service_id: str) -> dict[str, Any]:
-        self._manual_stop(["service:" + service_id])
-        res = self.launcher.stop(str(service_id or ""))
+    def service_stop(self, service_id: str, *, expected_pid: int | None = None) -> dict[str, Any]:
+        with self.launcher._lock:
+            if expected_pid is not None:
+                try:
+                    owned = self.launcher._owned(self.launcher.get(service_id).id)
+                except KeyError:
+                    owned = None
+                if not owned or owned["pid"] != expected_pid:
+                    return {"ok": False, "service": service_id,
+                            "error": "The original service process has changed / El proceso original del servicio ha cambiado"}
+            self._manual_stop(["service:" + service_id])
+            res = self.launcher.stop(str(service_id or ""))
         if res.get("ok"):
+            if service_id == "comfyui" or service_id.startswith("comfyui@"):
+                self.leases.status()  # release the reservation for the exited process
             self._backends_cache = (0.0, None)
             try:
                 self.events.emit("hub.service.stopped", {"service": res.get("service")}, source="hub")

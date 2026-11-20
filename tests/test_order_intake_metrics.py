@@ -1,8 +1,11 @@
+import json
+
 import pytest
 
 from hoard_link.hub import order_budget
 from hoard_link.hub.agora import Agora, AgoraError
 from hoard_link.hub.config import HubConfig
+from hoard_link.hub.integration_git import git, git_text
 
 
 def test_catalog_isolation_ignores_the_configured_faustus_urls(tmp_path):
@@ -73,5 +76,36 @@ def test_plan_keeps_repository_and_station_in_sync_with_undo(tmp_path):
         task = agora._task_row(tid)
         assert task["repo"] == "Writing" and task["context"] == original["context"]
         assert agora.job({"task_id": tid})["job"]["station"] == "writer"
+    finally:
+        agora.close()
+
+
+def test_construction_returns_use_declared_station_or_unique_commit_repository(tmp_path):
+    def repo_with_commit(name, app):
+        repo = tmp_path / name
+        repo.mkdir()
+        git(repo, "init", "-b", "main")
+        git(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+            "commit", "--allow-empty", "-m", f"Studio construction in {name}")
+        return {"name": name, "path": str(repo), "app": app}, git_text(repo, "rev-parse", "HEAD")
+
+    repo, head = repo_with_commit("Hoard Hub", None)
+    service, service_head = repo_with_commit("Runtime", "comfyui")
+    agora = Agora(tmp_path / "agora.db")
+    try:
+        order_budget.setup(agora)
+        agora.registered_repositories = lambda: [repo]
+        agora.order_service_repository = lambda: service
+        agora.order_station_repo = {"writer": "Writing"}.get
+        historical = agora.task_add({"agent": "maker", "title": "Previous delivery"})["task"]
+        declared = agora.task_add({"agent": "maker", "title": "Construction", "context": {"station": "writer"}})["task"]
+        multi = agora.task_add({"agent": "maker", "title": "Cross-repository delivery"})["task"]
+        for tid, refs in ((historical["id"], [head[:10]]), (declared["id"], []), (multi["id"], [head, service_head])):
+            agora.db.execute("UPDATE tasks SET status='done', submission_revision=3, commits=? WHERE id=?",
+                             (json.dumps(refs), tid))
+        groups = order_budget.metrics(agora, {})["task_stations"]
+        assert {(row["station"], row["repo"], row["returned_tasks"], row["resubmissions"]) for row in groups} == {
+            ("hoardhub", "Hoard Hub", 1, 2), ("writer", "Writing", 1, 2),
+            ("hoardhub, comfyui", "Hoard Hub, Runtime", 1, 2)}
     finally:
         agora.close()

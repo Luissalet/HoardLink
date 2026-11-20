@@ -315,6 +315,12 @@ class EyesFacet(Facet):
                     opts.update({key: declaration["piece"][key] for key in ("front_axis", "up")})
                     piece.update(front_axis=opts["front_axis"], up=opts["up"],
                                  front_axis_source="saved", front_axis_look=declaration["id"])
+                elif Path(piece["source"]).suffix.lower() == ".3mf" and opts.get("up", "z") == "z":
+                    from .eyes_3mf import declared_front
+
+                    if embedded := declared_front(piece["source"]):
+                        opts.update(front_axis=embedded, up="z")
+                        piece.update(front_axis=embedded, front_axis_source="embedded", up="z")
         vision_opts = None
         if args.get("describe") or args.get("keep"):
             vision_opts = {"keep": list(args.get("keep") or []), "language": args.get("language") or "es",
