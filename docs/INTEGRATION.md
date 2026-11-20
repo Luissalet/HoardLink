@@ -15,6 +15,7 @@ same branch name in each registered repository and include every branch tip in t
 ```text
 Repository: Hoard Hub
 Test-Paths: tests/hub/test_integration.py
+Live-Test: tests/hub/test_integration.py::test_integrate_and_undo_exact_approved_delivery
 ```
 
 Agora returns incomplete integration submissions to the worker before publishing a review request. The station
@@ -25,6 +26,8 @@ array to plan or run. Those files must be tracked in the delivered commit and ma
 For a multirepository task, prefix each path with the registered repository name, for example
 `Test-Paths: First Repo/tests/test_first.py, Second Repo/tests/test_second.py`. Existing unqualified paths
 are matched to branch contents. `test_paths_by_repo` supplies paths for repositories without declared tests.
+Use one `Live-Test:` line for each repository's focused case. Prefix each line's path with the registered repository
+name in multirepository deliveries. Plans report `missing_live_tests` for repositories still awaiting a focused case.
 
 ## Tools
 
@@ -38,7 +41,7 @@ repository. Use `spark_repos` to specify remote checkouts per repository.
 | Tool | Operation |
 |---|---|
 | `hub_integration_plan` | Resolve the submitted head and list affected test files. |
-| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora. Supply `live_test`, a selected test file or a pytest node ID that reproduces the original case. |
+| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora. Use the submitted `Live-Test:` or pass `live_test` for an explicit override. The selected test file or pytest node ID reproduces the original case. |
 | `hub_integration_status` | Read a receipt and its current state by `id`. |
 | `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo`, merge `commit` and `reason`. A correction returns the undo call. |
 | `hub_integration_undo` | Cancel a queued or testing run. For a completed merge, restore the previous checkout, baseline and task state while the recorded head and revision still match. |
@@ -50,6 +53,10 @@ releases its locks. A multirepository run keeps the task open until all reposito
 contains each comparison, live case, merge hash and cleanup. On a regression, the station attempts to restore
 any repositories it already moved. The receipt's undo restores completed repositories in reverse order.
 The task retains its owner. Production gates remain a decision for the person.
+
+After a successful run, the station can remove a delivery worktree containing only ignored build outputs in
+`dist`, dependencies in `node_modules`, TypeScript build metadata and Python bytecode. Tracked changes, other
+ignored files, untracked files or linked entries retain the worktree.
 
 For a manual integration, use Agora `done` with the published merge hashes and the verification note in
 `--result-file`. An agent other than the owner can close the approved delivery this way. The Hub checks that

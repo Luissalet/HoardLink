@@ -38,6 +38,26 @@ def submission_tests(summary, *, scoped=False):
     return list(dict.fromkeys((path if scoped else repo_git.test_path(path)) for path in paths if path))
 
 
+def submission_live_test(summary, name, repositories):
+    matches = re.findall(r"^Live-Test:[ \t]*([^\r\n]+)", summary or "", flags=re.MULTILINE)
+    cases = set()
+    names = sorted(repositories or [name], key=len, reverse=True)
+    for case in map(str.strip, matches):
+        if not case:
+            continue
+        prefix = next((repo for repo in names if case.casefold().startswith(repo.casefold() + "/")), None)
+        if prefix:
+            if prefix.casefold() != name.casefold():
+                continue
+            case = case[len(prefix) + 1:]
+        elif repositories:
+            raise repo_git.IntegrationError("Prefix each submitted live test with its registered repository name")
+        cases.add(case)
+    if len(cases) > 1:
+        raise repo_git.IntegrationError(f"{name}: declare one focused live test")
+    return next(iter(cases), None)
+
+
 def repository_tests(paths, name, repositories):
     prefixes = sorted((repo + "/" for repo in repositories), key=len, reverse=True)
     files = []
@@ -239,7 +259,7 @@ class IntegrationFacet(Facet):
         # A submission cannot disable main's configured contract files or silently move them into inference.
         tracked = repo_git.tracked(repo, head) | repo_git.tracked(repo, base)
         files = checks.tests_for(delta, tracked, declared, config)
-        live = args.get("live_test")
+        live = args.get("live_test") or submission_live_test(summary, repo_name, repositories)
         if live and repo_git.test_path(live.split("::", 1)[0]) not in files["contract"]:
             raise repo_git.IntegrationError("The live case needs a test file in the contract selection")
         return repo, {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
@@ -302,6 +322,7 @@ class IntegrationFacet(Facet):
                                 "ORDER BY updated DESC LIMIT 10", (plan["repo_ref"], agora.space_id, task["id"]))
         return {"ok": True, "plan": plan, "baseline": read_json(self._baseline(repo), {}),
                 "plans": [plan for _, plan, _ in deliveries], "repositories": names,
+                "missing_live_tests": [plan["repo_ref"] for _, plan, _ in deliveries if not plan["live_test"]],
                 "nearby_deliveries": [dict(row) for row in nearby],
                 "runtime": self.runtime.status() if self.runtime else None}
 
@@ -317,8 +338,9 @@ class IntegrationFacet(Facet):
             if existing := self.active.get(key):
                 return self.status({"id": existing})
         deliveries, _ = self._deliveries(agora, task, args)
-        if merge and any(not plan["live_test"] for _, plan, _ in deliveries):
-            raise repo_git.IntegrationError("Supply the focused live_test that reproduces the original case")
+        if merge and (missing := [plan["repo_ref"] for _, plan, _ in deliveries if not plan["live_test"]]):
+            raise repo_git.IntegrationError("Supply the focused live_test that reproduces the original case for: "
+                                            + ", ".join(missing))
         repo, plan, _ = deliveries[0]
         with self.lock:
             if existing := self.active.get(key):
