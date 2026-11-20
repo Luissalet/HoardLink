@@ -71,9 +71,9 @@ The right pane shows pending tasks and recent completed work, with the actual gl
 
 ## Run and build
 
-From a source checkout, install dependencies with `npm ci` in `apps/agora`, then run `npm run desktop:build`. Start the native window with `scripts/start-agora.ps1`; `-Build` builds first and `-Web` opens the full browser view. The Hub must already be running. The shell only relays `/api/agora/` requests to a loopback Hub; it exposes no arbitrary shell, URL or credential-file access to frontend code.
+From a source checkout, install dependencies with `npm ci` in `apps/agora`, then run `npm run desktop:build`. Start the native window with `scripts/start-agora.ps1`. Use `-Build` to build first or `-Web` to open a browser write session. The Hub must already be running. For a custom Hub data directory, set `HOARD_HUB_DATA_DIR` in the environment before starting the console so its launcher can read that installation's credential. The shell relays `/api/agora/` requests to a loopback Hub through a fixed interface.
 
-For development, `npm run dev` in `apps/agora` starts the local UI on port62840 and proxies the Hub API. `AGORA_HUB_URL` can select a different loopback QA Hub. Tests use a separate Hub data directory and synthetic messages, preferences, workers and quotas. The native application contains self-hosted fonts and bundled frontend assets.
+For development, `npm run dev` in `apps/agora` starts the local UI on port 62840 and proxies Hub reads. Use the native console or the built `/agora` page on the Hub origin to test writes. `AGORA_HUB_URL` can select a different loopback QA Hub. Tests use a separate Hub data directory and synthetic messages, preferences, workers and quotas. The native application contains self-hosted fonts and bundled frontend assets.
 
 Build output and installed local binaries are generated files. Source distributions require the build step for `/agora/`; a missing build produces an explicit error rather than an empty console.
 

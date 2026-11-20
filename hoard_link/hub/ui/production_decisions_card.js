@@ -131,10 +131,12 @@ function card(row, options, previousNote) {
         status.textContent = tr('Decisión guardada.', 'Decision saved.');
         options.refresh();
       } catch (error) {
-        const message = tr('No se ha guardado la decisión. Actualiza la lista e inténtalo de nuevo.', 'The decision was not saved. Refresh the list and try again.');
-        status.textContent = message;
+        const sessionRequired = error?.code === 'hub_ui_session_required';
+        status.textContent = sessionRequired
+          ? tr('Abre el Hub desde su lanzador para hacer cambios.', 'Open the Hub from its launcher to make changes.')
+          : tr('No se ha guardado la decisión. Actualiza la lista e inténtalo de nuevo.', 'The decision was not saved. Refresh the list and try again.');
         status.title = error instanceof Error ? error.message : '';
-        options.refresh();
+        if (!sessionRequired) options.refresh();
       } finally {
         note.readOnly = false;
         buttons.forEach(button => { button.disabled = false; });

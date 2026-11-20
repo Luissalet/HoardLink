@@ -6,8 +6,8 @@ Standard library only (``http.server``), bound to loopback. Two guards:
   ``Sec-Fetch-Site`` says ``cross-site`` is refused, and every mutating
   route is POST, so a plain link cannot stop an app;
 * the agent routes (``/api/agent/*``) need the bearer token from
-  ``<data>/mcp-token``, which is what the MCP bridge reads. The UI routes
-  do not, because the person at the keyboard is the authority here.
+  ``<data>/mcp-token``, which is what the MCP bridge reads. The Hub page
+  uses a separate browser session to write.
 
 Routes
 ------
@@ -88,7 +88,7 @@ from ..agent_journal import clean_identity
 from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools, autostart, profile_editor, portable_profiles
-from . import agent_routes
+from . import agent_routes, ui_session
 from .browser_lanes import LaneError
 from .lease import LeaseError
 from .rules import example_rules
@@ -122,6 +122,7 @@ def make_server(hub: Hub, host: str = "127.0.0.1", port: Optional[int] = None) -
         pass
 
     Handler.hub = hub
+    Handler.ui_sessions = ui_session.BrowserSessions(hub.config.data_dir, hub.config.url)
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     return server
@@ -129,6 +130,7 @@ def make_server(hub: Hub, host: str = "127.0.0.1", port: Optional[int] = None) -
 
 class _HubHandler(BaseHTTPRequestHandler):
     hub: Hub
+    ui_sessions: ui_session.BrowserSessions
     server_version = f"hoard-hub/{HUB_VERSION}"
     protocol_version = "HTTP/1.1"
 
@@ -224,12 +226,35 @@ class _HubHandler(BaseHTTPRequestHandler):
         token = self._bearer()
         if token:
             return self.hub.token_owner(token)
-        site = (self.headers.get("Sec-Fetch-Site") or "").lower()
-        if site in ("same-origin", "none") and (self.headers.get("Origin") or "").rstrip("/") in ("", self.hub.config.url):
+        if self.command == "POST":
+            return "ui" if self._ui_proof() else None
+        if self._browser_metadata():
             return "ui"
-        if not site and not self.headers.get("Origin") and self.headers.get("User-Agent", "").startswith("hoard-"):
-            return None
         return None
+
+    def _browser_origin(self) -> bool:
+        return (self.headers.get("Origin") or "").rstrip("/") in ("", self.hub.config.url)
+
+    def _browser_metadata(self) -> bool:
+        site = (self.headers.get("Sec-Fetch-Site") or "").lower()
+        return site in ("same-origin", "none") and self._browser_origin()
+
+    def _ui_proof(self) -> bool:
+        return self._browser_origin() and self.ui_sessions.accepts(self.headers.get(ui_session.SESSION_HEADER, ""))
+
+    def _ui_denied(self) -> None:
+        spanish = self.headers.get("Accept-Language", "").lower().startswith("es")
+        error = ("Abre el Hub desde su lanzador para hacer cambios." if spanish
+                 else "Open the Hub from its launcher to make changes.")
+        return self._json({"ok": False, "code": "hub_ui_session_required", "error": error}, 403)
+
+    def _ui_session_post(self, path: str) -> None:
+        body = self._read_body()
+        if path == ui_session.LAUNCH_PATH:
+            ticket = self.ui_sessions.issue(self.headers.get("Authorization", ""))
+            return self._json({"ok": True, "ticket": ticket}) if ticket else self._ui_denied()
+        proof = self.ui_sessions.exchange(body.get("ticket")) if self._browser_origin() else ""
+        return self._json({"ok": True, "session": proof}) if proof else self._ui_denied()
 
     def _family_ok(self) -> Optional[str]:
         who = self._family_caller()
@@ -653,6 +678,15 @@ class _HubHandler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path.rstrip("/")
         hub = self.hub
+        if path in (ui_session.LAUNCH_PATH, ui_session.SESSION_PATH):
+            try:
+                return self._ui_session_post(path)
+            except ValueError:
+                return self._json({"ok": False, "error": "Invalid session request"}, 400)
+        if not self._bearer() and (
+                self._browser_metadata() or ui_session.SESSION_HEADER in self.headers) and not self._ui_proof():
+            self.close_connection = True
+            return self._ui_denied()
         if path == "/api/link/copilot":
             return self._copilot()
         if path == "/api/copilot/proxy":

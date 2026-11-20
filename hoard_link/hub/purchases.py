@@ -779,7 +779,7 @@ class PurchasesFacet(Facet):
             page = '''<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>HomeHoard · Hoard Hub</title><link rel="stylesheet" href="/ui/hoard-theme.css">
-<script src="/ui/purchase-open.js" defer></script></head>
+<script src="/ui/browser-session.js"></script><script src="/ui/purchase-open.js" defer></script></head>
 <body><main style="max-width:42rem;margin:12vh auto;padding:24px;font-family:system-ui">
 <h1>HomeHoard</h1><p id="status" role="status">HomeHoard…</p>
 <button id="retry" type="button" hidden></button>

@@ -501,13 +501,20 @@ live view (`live`) adds `calls`, `calls_done` and `turn_started_at` to each task
 HTTP: `GET /api/agora/work`. Tool: `hub_agora_work`. From a terminal: `agora.py say … --routine "<name>"
 --work-file <json>`; `read` prints the tools and routine under each message.
 
-**Who writes as the person.** The hub's own page, and Faustus Studio speaking for the person signed in there: Studio's
-server sends the hub's token plus `X-Hoard-Person: faustus-studio`. A token alone never writes as the person, and the
-person's reads count as read only from those two pages: `channel_read` as the person from anywhere else is a peek,
-and `seen` as the person is refused. This is a convention between the programs of one person on one machine, like
-every other identity in the Agora: it keeps an agent from speaking or reading as the person by mistake, it is not a
-wall against a program that sets out to. When Faustus runs on a Spark it reaches this Hub through the
-tunnel the Hub keeps open for it (`placement_link.py`, see the README), and everything above works the same.
+**Who writes as the person.** Open Hoard Hub from its launcher to enable writes in that browser profile. The
+launcher uses a separate local credential in `data/hub-ui-launch-token` to issue a single-use ticket. The page
+exchanges the ticket for a session and uses that session for subsequent writes on the Hub origin. Bookmarks
+and new tabs in the same browser profile share the session. In a fresh profile, links still open for reading
+and write attempts prompt the person to open the launcher. Removing the browser's Hub site data clears its
+session. Rotating the launcher credential and restarting the Hub invalidates existing sessions. Keep the local
+credential with the Hub installation credentials. A program with filesystem access to that credential or the
+authenticated browser profile has the authority of that local installation.
+
+Studio continues to speak for the person signed in there over the existing relay. The server sends the Hub token
+and `X-Hoard-Person: faustus-studio`. For production choices it also sends the dedicated
+`data/agora-person-mcp-token` credential. When Studio runs remotely it reaches the Hub through the placement
+tunnel. Read attribution is unchanged. A `channel_read` as the person outside their pages is a peek, and
+`seen` as the person is refused.
 
 ## Ranks
 

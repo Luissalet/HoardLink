@@ -59,7 +59,7 @@ export function mount(root, space, {archive = false, count, hideEmpty = false, d
         lang: lang(), source: (path, media) => media === 'web' ? null : path, orderHref: decisionUrl, orderInPlace: true,
         post: async (operation, body) => {
           const answer = await api('/api/agora/' + operation, body);
-          if (!answer?.ok) throw new Error(answer?.error);
+          if (!answer?.ok) throw Object.assign(new Error(answer?.error), {code: answer?.code});
         },
         refresh: () => {
           pending.clear();
