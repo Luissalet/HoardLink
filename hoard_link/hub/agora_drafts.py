@@ -12,6 +12,7 @@ pass: ``blocking``, ``depth``, ``normals``, ``parts``, ``keyframe_start``, ``key
   ``pasada0-<key>``, made through ``plan_set``). A baseline (the time and GPU of a full pass) can be noted to compare.
 * ``draft_variant_set``: attach pieces with their anchor, note the measures (seconds, GPU seconds, GPU, engine, steps)
   and mark the variant ready.
+* ``draft_pass_note_set``: replace or clear the note for the whole pass.
 * ``draft_gate_open``: the early gate. The person's page shows every variant end to end, side by side; the order waits.
 * ``draft_decide``: only the person's own pages. Keep one variant (the others are discarded) or discard a variant.
   Nothing is deleted: a discarded variant stays with its note and its pieces as cancelled, without being sent back
@@ -254,6 +255,23 @@ def draft_pass_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         token = journal.save()
     self._bump("agora.order.draft", {"order_id": oid, "pass_id": pid, "variants": made, "by": agent})
     return {"ok": True, "draft_pass": _pass_dict(self, _pass_row(self, pid)), "undo": token}
+
+
+def draft_pass_note_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Replace or clear the note for a whole draft pass."""
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    if "note" not in a or not isinstance(a["note"], str):
+        raise _err("note must be text; send an empty string to clear it")
+    note = orders._txt(a["note"], orders.TEXT_MAX, "note")
+    with self.db.tx():
+        draft = _pass_row(self, a.get("pass_id"))
+        journal = orders._Journal(self, agent, "draft_pass_note_set")
+        journal.before("agora_draft_passes", draft["id"])
+        self.db.execute("UPDATE agora_draft_passes SET note=? WHERE id=?", (note, draft["id"]))
+        journal.rows[0]["after"] = {**draft, "note": note}
+        token = journal.save()
+    self._bump("agora.order.draft", {"order_id": draft["order_id"], "pass_id": draft["id"], "by": agent})
+    return {"ok": True, "draft_pass": _pass_dict(self, _pass_row(self, draft["id"])), "undo": token}
 
 
 def draft_variant_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
@@ -502,10 +520,11 @@ def draft_anchors(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             "anchors": anchors, "guides": {k: v for k, v in guides.items() if v}, "derives_from": derives}
 
 
-OPERATIONS = {"draft_pass_open": draft_pass_open, "draft_variant_set": draft_variant_set,
+OPERATIONS = {"draft_pass_open": draft_pass_open, "draft_pass_note_set": draft_pass_note_set,
+              "draft_variant_set": draft_variant_set,
               "draft_gate_open": draft_gate_open, "draft_decide": draft_decide,
               "draft_passes": draft_passes, "draft_anchors": draft_anchors}
-WRITE_OPS = ("draft_pass_open", "draft_variant_set", "draft_gate_open", "draft_decide")
+WRITE_OPS = ("draft_pass_open", "draft_pass_note_set", "draft_variant_set", "draft_gate_open", "draft_decide")
 READ_ROUTES = ("draft_passes", "draft_anchors")
 #: The person's early decision has no tool: only their pages call it.
 NO_TOOL = ("draft_decide",)
@@ -536,6 +555,11 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "template": {"type": "string", "enum": ["visual"]},
                                 "variants": {"type": "array", "items": variant, "minItems": 1, "maxItems": MAX_VARIANTS}},
                                ["agent", "order_id", "variants"])},
+        {"name": "hub_agora_draft_pass_note_set",
+         "description": "Replace the note for a draft pass, including when it is shown. Send an empty string to clear it. "
+                        "Cambia la nota de la pasada, incluso si ya está mostrada. Envía texto vacío para borrarla." + undo,
+         "inputSchema": schema({"agent": agent_prop, "pass_id": {"type": "integer", "minimum": 1},
+                                "note": {"type": "string", "maxLength": orders.TEXT_MAX}}, ["agent", "pass_id", "note"])},
         {"name": "hub_agora_draft_variant_set",
          "description": "Attach pieces to a draft variant with their anchor (blocking, depth, normals, parts, "
                         "keyframe_start, keyframe_end, composition, outline…), note measures and mark it ready." + undo,
