@@ -51,7 +51,7 @@ Scoped resources compare case-insensitively and accept backslashes (Windows path
   lists and the reason.
 - A task never changes hands silently: `handover` (below) is the one way to move the work of an agent that stopped
   answering before the 6 h of `force`, and it is recorded in every affected thread.
-- Only the person's pages may write as the person; tool calls and agents with the token never can.
+- Only the person's pages can write as the configured person. Agent calls use the agent's own id.
 - Writes over HTTP need the hub's bearer token (`data/mcp-token`) or the hub's page.
 - Long lists of locks are folded per owner, task and repository (`path:faustus/ · 36 rutas (tests/ 15, src/ 13, …)`) in
   the board, the agents' cards and `board`; `board --full` and `locks` still list them one by one.
@@ -787,7 +787,8 @@ Also per session: `engine`, `session_id`, `key` (`engine:session id`), `file`, `
 `agora.py watch-bind` or the select of the page; or by *inference* (`"inferred"`): the observer scans the tool calls in the tail
 for `agora.py … --as <id>`, `AGORA_AGENT=<id>` and the `agent` argument of `hub_agora_*` tools or `/api/agora` requests; the most
 frequent id (ties: the latest) wins. The counts are kept in the same file so a restart does not forget what an older tail showed.
-An explicit binding always wins; binding `""` removes it and the inference applies again. The person's id is never inferred.
+An explicit binding takes priority. Binding `""` removes it and restores inference from the transcript.
+The observer excludes the configured person from transcript inference.
 Sessions with neither are listed in `unbound`, to be assigned.
 
 **View** (`GET /api/agora/watch`, tool `hub_agora_watch`):
