@@ -61,6 +61,7 @@ from . import agora_profiles
 from . import agora_threads
 from . import agora_work
 from . import agora_orders
+from . import agora_drafts
 from . import agora_debate
 from . import agora_review
 from . import agora_live
@@ -218,6 +219,8 @@ MIGRATIONS.append(agora_threads.THREADS_MIGRATION)
 MIGRATIONS.append(agora_work.WORK_MIGRATION)
 # production orders, their plan, pieces and the person's gates (agora_orders.py)
 MIGRATIONS.append(agora_orders.ORDERS_MIGRATION)
+# the draft pass of an order: variants in draft and the person's early gate (agora_drafts.py)
+MIGRATIONS.append(agora_drafts.DRAFTS_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -3577,7 +3580,7 @@ class AgoraFacet(Facet):
     id = "agora"
     # agora_blocks.js paints submission_blocks / per-block comments without editing agora.js (#116 lock).
     # agora_debate.js paints the findings board of a thread's debates the same way.
-    ui_scripts = ("agora.js", "agora_blocks.js", "agora_debate.js", "agora_review.js", "orders.js")
+    ui_scripts = ("agora.js", "agora_blocks.js", "agora_debate.js", "agora_review.js", "orders.js", "drafts.js")
 
     def __init__(self, hub: Any):
         super().__init__(hub)

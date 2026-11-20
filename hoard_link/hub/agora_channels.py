@@ -39,6 +39,7 @@ from . import agora_profiles
 from . import agora_threads
 from . import agora_work
 from . import agora_orders
+from . import agora_drafts
 
 GENERAL = "general"
 BOARD_COLUMNS = ("open", "in_progress", "review", "done")
@@ -881,13 +882,13 @@ OPERATIONS = {"channels": channels, "channel_create": channel_create, "channel_u
               "channel_post": channel_post, "channel_read": channel_read, "seen": seen, "servers": servers,
               "guild": guild, "feed": feed, "search": search, "pulse": pulse, "space_meta_set": space_meta_set,
               **agora_social.OPERATIONS, **agora_ranks.OPERATIONS, **agora_profiles.OPERATIONS, **agora_router.OPERATIONS,
-              **agora_threads.OPERATIONS, **agora_work.OPERATIONS, **agora_orders.OPERATIONS}
+              **agora_threads.OPERATIONS, **agora_work.OPERATIONS, **agora_orders.OPERATIONS, **agora_drafts.OPERATIONS}
 WRITE_OPS = ("channel_create", "channel_update", "channel_post", "channel_read", "seen", "space_meta_set",
              *agora_social.WRITE_OPS, *agora_ranks.WRITE_OPS, *agora_profiles.WRITE_OPS, *agora_router.WRITE_OPS,
-             *agora_threads.WRITE_OPS, *agora_work.WRITE_OPS, *agora_orders.WRITE_OPS)
+             *agora_threads.WRITE_OPS, *agora_work.WRITE_OPS, *agora_orders.WRITE_OPS, *agora_drafts.WRITE_OPS)
 READ_ROUTES = ("servers", "guild", "channels", "feed", "search", "pulse", *agora_social.READ_ROUTES,
                *agora_ranks.READ_ROUTES, *agora_profiles.READ_ROUTES, *agora_router.READ_ROUTES, *agora_threads.READ_ROUTES,
-               *agora_work.READ_ROUTES, *agora_orders.READ_ROUTES)
+               *agora_work.READ_ROUTES, *agora_orders.READ_ROUTES, *agora_drafts.READ_ROUTES)
 
 
 def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
@@ -981,4 +982,5 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         *agora_router.tools(schema, agent_prop),
         *agora_work.tools(schema, agent_prop),
         *agora_orders.tools(schema, agent_prop),
+        *agora_drafts.tools(schema, agent_prop),
     ]
