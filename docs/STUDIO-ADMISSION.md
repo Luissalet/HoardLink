@@ -63,5 +63,9 @@ remain their own measure. Space-wide totals include standalone tasks. Older task
 repository stay in the corresponding unassigned group. Pass `order_id` to measure just the selected order and its
 current plan. Without it the tool measures the selected space, or every space with `all_spaces: true`.
 
+Orders and draft passes open as their own data arrives. The global measures load separately at the bottom of
+Orders, and refreshing them preserves the open decision and its controls. Historical commit attribution checks
+registered repositories in batches, with up to four Git reads in parallel.
+
 HTTP uses `/api/work-admission/metrics` and `/api/work-admission/capability` for reads, and
 `POST /api/work-admission/ticket`, `/api/work-admission/budget` and `/api/work-admission/attempt` for work.

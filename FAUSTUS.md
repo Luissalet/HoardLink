@@ -1,5 +1,10 @@
 # Hoard Hub and Hoard Link
 
+## Production decisions
+
+Home links directly to each decision awaiting the person. Orders and draft passes load independently of the
+global production measures, which appear at the foot of Orders. See [studio admission](docs/STUDIO-ADMISSION.md).
+
 ## Live Agora activity
 
 The Agora console and Studio's server navigation provide **En directo**, sharing
