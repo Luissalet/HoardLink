@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 
-from hoard_link.hub import desktop
+import pytest
+
+from hoard_link.hub import __main__ as hub_main, desktop, ui_session
+from hoard_link.hub.config import HubConfig
+
+from ._hub_fakes import free_port, http, make_hub, serve, wait_for
 
 
 def _fake_shell(tmp_path):
@@ -80,6 +88,183 @@ def test_open_window_chromium_when_forced(tmp_path, monkeypatch):
     monkeypatch.setattr(desktop.webbrowser, "open", lambda url: True)
     res = desktop.open_window("http://127.0.0.1:1/", "x", str(tmp_path / "p"), engine="chromium")
     assert res["mode"] == "browser-tab"
+
+
+def test_hub_launcher_only_fetches_a_ticket_for_the_browser_fallback(tmp_path, monkeypatch):
+    cfg = HubConfig(data_dir=str(tmp_path))
+    monkeypatch.setattr(desktop, "window_engine", lambda _: "shell")
+    shell_urls, fallback_urls, issued = [], [], []
+    shell_result = {"ok": True, "mode": "app-window", "pid": 42}
+    monkeypatch.setattr(desktop, "_open_shell_window", lambda url, *a, **kw: shell_urls.append(url) or shell_result)
+    monkeypatch.setattr(desktop, "find_browser", lambda _: None)
+    monkeypatch.setattr(desktop.webbrowser, "open", lambda url: fallback_urls.append(url) or True)
+    ticketed = cfg.url + "/#hub-session=test"
+    monkeypatch.setattr(ui_session, "launch_url", lambda *args: issued.append(args) or ticketed)
+
+    assert hub_main._open_own_window(cfg, "window") == 42
+    assert shell_urls == [cfg.url] and not issued
+    shell_result["ok"] = False
+    assert hub_main._open_own_window(cfg, "window") is None
+    assert fallback_urls == [ticketed] and issued == [(cfg.url, cfg.data_dir)]
+
+
+@pytest.mark.parametrize(("lang", "keep_label", "restore_label"), [
+    ("en", "Keep", "Restore session"),
+    ("es", "Conservar", "Recuperar sesión"),
+])
+def test_hub_shell_without_ticket_can_reload_and_recover_a_write_session(
+    tmp_path, monkeypatch, lang, keep_label, restore_label,
+):
+    if sys.platform.startswith("linux") and not (os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY")):
+        pytest.skip("Electron needs a window system even for a hidden native window")
+    exe = os.environ.get("HOARD_WINDOW_TEST_ELECTRON")
+    if not exe:
+        installed = desktop.find_shell()
+        if not installed:
+            pytest.skip("Install the window shell or set HOARD_WINDOW_TEST_ELECTRON to run the native test")
+        exe = installed[0]
+    playwright = pytest.importorskip("playwright.sync_api")
+    monkeypatch.setenv("AGORA_SPACE", "ecosystem")
+    hub = make_hub(tmp_path)
+    hub.config.language = "en"
+    ag = hub.facet("agora").agora
+    ag.mention_hook = None
+    ag.escalate_hook = None
+    agent = {"agent": "shell-qa"}
+    thread = ag.thread_open({**agent, "title": "Shell conversation", "body": "Ready for QA"})["thread"]
+    order = ag.order_create({**agent, "title": "Shell order", "folder": str(tmp_path)})["order"]
+
+    def open_gate(filename, title):
+        (tmp_path / filename).write_text(title, encoding="utf-8")
+        piece = ag.piece_add({**agent, "order_id": order["id"], "title": title, "kind": "text",
+                              "path": filename})["piece"]
+        return ag.gate_open({**agent, "order_id": order["id"], "title": title,
+                             "piece_ids": [piece["id"]]})["gate"]
+
+    first_gate = open_gate("first.txt", "Review after reload")
+    gate = open_gate("second.txt", "Review the QA document")
+
+    debug_port = free_port()
+    shell_main = Path(__file__).resolve().parents[2] / "shell" / "main.cjs"
+    bootstrap = tmp_path / "hidden-shell"
+    bootstrap.mkdir()
+    (bootstrap / "package.json").write_text('{"main":"start.cjs"}', encoding="utf-8")
+    (bootstrap / "start.cjs").write_text(f"""
+const {{ app, BaseWindow }} = require('electron');
+app.commandLine.appendSwitch('remote-debugging-port', '{debug_port}');
+app.commandLine.appendSwitch('lang', 'en-GB');
+app.on('second-instance', () => console.log('Second launch reached the existing process'));
+BaseWindow.prototype.show = function () {{}};
+BaseWindow.prototype.focus = function () {{}};
+require({json.dumps(str(shell_main))});
+""", encoding="utf-8")
+    url = hub.config.url
+    thread_url = url + f"/#agora-{thread['id']}"
+    profile = Path(hub.config.profiles_dir) / "_hub"
+    env = {k: v for k, v in os.environ.items() if k != "ELECTRON_RUN_AS_NODE"}
+    cmd = [exe, str(bootstrap), f"--hoard-url={thread_url}", "--hoard-id=_hub",
+           f"--user-data-dir={profile}"]
+    server = serve(hub)
+    process = None
+    try:
+        token_path = Path(hub.config.data_dir) / ui_session.LAUNCH_FILE
+        token = token_path.read_bytes()
+        token_path.unlink()
+        with (tmp_path / "shell.log").open("wb") as log:
+            process = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)
+
+        debug_url = f"http://127.0.0.1:{debug_port}"
+
+        def shell_listening():
+            try:
+                return http(debug_url + "/json/version")[0] == 200
+            except OSError:
+                return False
+
+        assert wait_for(shell_listening, timeout=15), (tmp_path / "shell.log").read_text(errors="replace")
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(debug_url)
+            context = browser.contexts[0]
+            page = next((tab for tab in context.pages if tab.url.startswith(url)), None)
+            if page is None:
+                page = context.wait_for_event("page", predicate=lambda tab: not tab.url.startswith("file:"))
+            page.set_default_timeout(10_000)
+            page.add_init_script("if (location.protocol === 'http:' && !localStorage.getItem('hub.lang')) { "
+                                 "localStorage.setItem('hub.lang', 'en'); }")
+            page.goto(thread_url)
+            form = page.locator(".ag-detail .ag-compose")
+            form.locator("textarea").fill("Reply from the shell")
+            send = form.get_by_role("button", name="Send", exact=True)
+            with page.expect_response(lambda result: result.url.endswith("/api/agora/post")) as refused:
+                send.click()
+            assert refused.value.status == 403
+
+            token_path.write_bytes(token)
+            bar = next(tab for tab in context.pages if tab.url.startswith("file:"))
+            with page.expect_response(lambda result: result.url.endswith(ui_session.SESSION_PATH)) as session:
+                bar.evaluate("hoardBar.reload()")
+            assert session.value.status == 200
+            form.locator("textarea").fill("Reply after reload")
+            with page.expect_response(lambda result: result.url.endswith("/api/agora/post")) as posted:
+                send.click()
+            assert posted.value.status == 200
+            messages = http(url + f"/api/agora/threads/{thread['id']}")[1]["messages"]
+            assert [message["body"] for message in messages] == ["Ready for QA", "Reply after reload"]
+            assert messages[-1]["author"] == ag.person_id
+
+            page.get_by_role("link", name="Your pending decisions").click()
+            first_row = page.locator(".hub-decision-row").filter(has_text=first_gate["title"])
+            with page.expect_response(lambda result: result.url.endswith("/api/agora/production_decide")) as decided:
+                first_row.get_by_role("button", name="Keep", exact=True).click()
+            assert decided.value.status == 200
+            assert decided.value.json()["gate"]["status"] == "decided"
+
+            token_path.unlink()
+            page.evaluate("lang => { localStorage.setItem('hub.lang', lang); "
+                          "localStorage.setItem('hub.ui.session', 'stale'); }", lang)
+            page.goto(url + "/?space_id=ecosystem#hub/pending_decisions")
+            page.reload()
+            row = page.locator(".hub-decision-row").filter(has_text=gate["title"])
+            note = row.locator("textarea")
+            note.fill("Keep this note")
+            keep = row.get_by_role("button", name=keep_label, exact=True)
+            with page.expect_response(lambda result: result.url.endswith("/api/agora/production_decide")) as refused:
+                keep.click()
+            assert refused.value.status == 403
+            restore = page.get_by_role("button", name=restore_label, exact=True)
+            playwright.expect(restore).to_be_visible()
+            page.screenshot(path=str(tmp_path / "restore-session.png"))
+            token_path.write_bytes(token)
+            restore.click()
+            playwright.expect(restore).to_have_count(0)
+            playwright.expect(note).to_have_value("Keep this note")
+            assert http(url + "/api/agora/pending_decisions")[1]["rows"][0]["key"] == f"gate-{gate['id']}"
+            with page.expect_response(lambda result: result.url.endswith("/api/agora/production_decide")) as decided:
+                keep.click()
+            assert decided.value.status == 200
+            recorded = http(url + "/api/agora/decisions")[1]["production_decisions"]
+            assert len(recorded) == 2 and all(row["decided_by"]["id"] == ag.person_id for row in recorded)
+            assert any(row["note"] == "Keep this note" for row in recorded)
+
+            # The next local launch reuses this window and renews the session in place.
+            page.evaluate("localStorage.setItem('hub.ui.session', 'stale')")
+            subprocess.run(cmd, env=env, capture_output=True, timeout=10, check=True)
+            assert wait_for(lambda: "Second launch reached" in (tmp_path / "shell.log").read_text(errors="replace"))
+            page.wait_for_function("localStorage.getItem('hub.ui.session') && "
+                                   "localStorage.getItem('hub.ui.session') !== 'stale'")
+            assert page.url.endswith("#hub/pending_decisions")
+
+            with page.expect_response(lambda result: result.url.endswith(ui_session.SESSION_PATH)) as session:
+                bar.evaluate("hoardBar.home()")
+            assert session.value.status == 200 and page.url == thread_url
+            browser.close()
+    finally:
+        if process is not None and process.poll() is None:
+            process.terminate()
+            process.wait(timeout=10)
+        server.shutdown()
+        server.server_close()
+        hub.close()
 
 
 def _relaunch_arg(cmd):
