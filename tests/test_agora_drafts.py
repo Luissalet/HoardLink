@@ -181,6 +181,31 @@ def test_variant_jobs_are_order_tasks_on_their_branch_and_one_undo_puts_everythi
     assert {agora._task_row(t)["status"] for t in a["jobs"]} == {"dropped"}
 
 
+def test_visual_draft_plan_builds_guides_before_keys_and_keeps_variants_independent(agora):
+    order_id = agora.order_create(person(title="El gesto del mapa"))["order"]["id"]
+    opened = agora.draft_pass_open({"agent": "producer", "order_id": order_id, "template": "visual", "variants": [
+        {"key": "pass", "title": "Pasar el mapa", "idea": "De la mano izquierda a la derecha."},
+        {"key": "flip", "title": "Voltear el mapa"},
+        {"key": "manual", "title": "Otro gesto", "jobs": [{"title": "Mi propio esquema", "station": "writer"}]},
+        {"key": "pieces", "title": "Piezas existentes", "jobs": []},
+    ]})
+    plan = {job["task_id"]: job for job in agora.order({"order_id": order_id})["order"]["plan"]}
+    pass_variant, flip_variant, manual, pieces = opened["draft_pass"]["variants"]
+    for variant in (pass_variant, flip_variant):
+        outline, blocking, keys, shot, figure = variant["jobs"]
+        assert [plan[j]["station"] for j in variant["jobs"]] == ["writer", "vulcan", "prospero", "prospero", "phidias"]
+        assert [set(plan[j]["after"]) for j in variant["jobs"]] == [
+            set(), {outline}, {blocking}, {keys}, {blocking, keys}
+        ]
+        assert {plan[j]["branch"] for j in variant["jobs"]} == {f"pasada0-{variant['key']}"}
+    assert "De la mano izquierda a la derecha." in agora._task_row(pass_variant["jobs"][0])["body"]
+    assert len(manual["jobs"]) == 1 and pieces["jobs"] == []
+    assert opened["draft_pass"]["status"] == "drafting"
+    agora.order_undo({"agent": "producer", "token": opened["undo"]})
+    assert agora.order({"order_id": order_id})["order"]["plan"] == []
+    assert all(agora._task_row(task_id)["status"] == "dropped" for task_id in plan)
+
+
 def test_variant_set_undo_restores_pieces_and_state(agora, tmp_path):
     order, opened, pieces = draft_pass(agora, tmp_path)
     v = opened["draft_pass"]["variants"][0]

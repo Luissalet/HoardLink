@@ -34,9 +34,27 @@ Cicero (slide outline in text) and Vitruvius (page outline in text).
 
 ## Draft pass
 
+For a visual pass, call `hub_agora_draft_pass_open` with `template: "visual"` and each variant's `key`, `title`
+and `idea`. The Hub creates a separate plan for each variant in this order:
+
+1. **Writer** outlines the gesture, camera and details to keep.
+2. **Vulcan** builds the rigged blocking from that outline. Keep the GLB and the colour, depth and normals for
+   each key pose from the same camera. `blocking_build` with `gesture: "pass"` moves the map from the character's
+   left hand to the right by default. Set `pass_direction: "right_to_left"` for the opposite gesture.
+3. **Prospero** makes draft image keys guided by the corresponding blocking images and depth maps. Check the
+   contact with the map, the silhouette and the props at each key, including the two-handed pose of a pass.
+4. **Prospero** assembles the keys into a draft shot. In the editing module, import the stills with `media_import`,
+   place them in order with `timeline_edit` and export with `render_start`. **Phidias** can work in parallel
+   from the posed blocking. Freeze the selected frame to a static GLB before `print_import`, run `sculpt_start`
+   then `close_start`, and check the exported 3MF for contacts, dimensions and topology.
+
+Attach the pieces to the corresponding variant after each job. The next job can locate them with
+`hub_agora_draft_passes` by order and variant. A variant can override the template with its own `jobs`, including
+an empty list when it only needs to register existing pieces. Omitting `template` keeps the optional custom plan.
+
 | Operation | Who | Does |
 |---|---|---|
-| `draft_pass_open` | an agent | Opens a pass on an order: `variants` [{`key`, `title`, `idea`, `jobs`}], `baseline` (time and GPU of a full pass, to compare), `note`. A variant's `jobs` are plan jobs (as in `plan_set`): they become Ágora tasks of the order on branch `pasada0-<key>`, titled «[Pasada 0 · key] …», with `after` naming jobs of the same variant. |
+| `draft_pass_open` | an agent | Opens a pass on an order: `variants` [{`key`, `title`, `idea`, `jobs`}], optional `template: "visual"`, `baseline` (time and GPU of a full pass, to compare), `note`. A variant's `jobs` are plan jobs (as in `plan_set`): they become Ágora tasks of the order on branch `pasada0-<key>`, titled «[Pasada 0 · key] …», with `after` naming jobs of the same variant. |
 | `draft_variant_set` | an agent | Attaches pieces of the order to a variant with their `anchor`, notes `measures` (`seconds`, `gpu_seconds`, `gpu`, `engine`, `steps`, `resolution`, `device`, `note`) and sets `status` `drafting` or `ready` (ready needs at least one piece). `remove` takes pieces out. |
 | `draft_gate_open` | an agent | Shows the pass to the person once every variant is ready. The order waits. |
 | `draft_decide` | only the person's pages | `variant_id`, `decision` `keep` or `cancel`, `note` and `signature` (the variant's signature as the page showed it). Keeping one discards the others still undecided, with a note that says which one was kept. |
@@ -71,10 +89,11 @@ What a decision does:
 The expensive pass reads `draft_anchors` and registers its pieces with the `derives_from` it returns: the blocking and
 its parts as `material`, the rest as `reference`. Those pieces then carry the id of the person's decision.
 
-With an edit engine that takes several reference images (Prospero's `qwen21_edit`), the character's canonical image
-goes first and the kept variant's key frame, depth and normals follow as guides, each named in the prompt: given the
-blocking as the first image, the engine keeps the blocking's mannequin instead of the character. A video shot between
-two key frames is Prospero's `wan22_flf2v` (`reference_asset_id` the first frame, `end_asset_id` the last).
+For draft keys with Prospero's `qwen21_edit`, try the matching blocking colour first, the canonical character image
+second and the matching depth third. Name the references in the prompt. Image references can carry mannequin parts
+or duplicate props, so inspect the generated key before using it. Use the accepted draft keys to make the animatic.
+For a generated shot between two key frames, Prospero's `wan22_flf2v` uses `reference_asset_id` for the first frame
+and `end_asset_id` for the last.
 
 Every agent write returns `undo` for `hub_agora_order_undo`; undoing a pass opened with jobs also drops the tasks it
 created.
