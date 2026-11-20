@@ -46,7 +46,7 @@ MODEL_TIMEOUT_S = 15.0
 RECENT_MESSAGES = 250
 RECENT_WINDOW_S = 3 * 24 * 3600.0
 _SKIP_PRESENCE = ("offline", "invited", "no_quota", "person")
-_SKIP_IDS = ("hub", "ui", "system", "luis")
+_SKIP_IDS = ("hub", "ui", "system")
 
 ROUTER_MIGRATION = """
     CREATE TABLE agora_router_settings (space_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1,
@@ -160,7 +160,6 @@ def _task_of(self: Any, task_id: Any) -> Optional[dict[str, Any]]:
 def candidates(self: Any, text: str, thread_id: Optional[int] = None, author: str = "", exclude: tuple[str, ...] = ()) -> list[dict[str, Any]]:
     """The agents that could answer ``text`` said in ``thread_id``, best first, each with its score and reasons.
     Only those around with quota are listed (the owner of the thread's task also when it is away)."""
-    ag = _ag()
     from . import agora_channels, agora_social
     now = self.clock()
     members = agora_channels._members(self, agora_social._in_hand(self))
@@ -181,19 +180,19 @@ def candidates(self: Any, text: str, thread_id: Optional[int] = None, author: st
     if thread:
         for r in self.db.query("SELECT author FROM messages WHERE thread_id=? AND kind<>'system' ORDER BY id DESC LIMIT 12",
                                (int(thread["id"]),)):
-            if r["author"] not in (None, "system", ag.PERSON) and last_in_thread is None:
+            if r["author"] not in (None, "system", self.person_id) and last_in_thread is None:
                 last_in_thread = r["author"]
     spoke: dict[str, set[str]] = {}
     if words:
         for r in self.db.query(
                 "SELECT m.author, m.body FROM messages m JOIN threads t ON t.id=m.thread_id WHERE t.space_id=? AND "
                 "m.created>? AND m.kind<>'system' ORDER BY m.id DESC LIMIT ?", (self.space_id, now - RECENT_WINDOW_S, RECENT_MESSAGES)):
-            if r["author"] in (None, "system", ag.PERSON):
+            if r["author"] in (None, "system", self.person_id):
                 continue
             hit = words & tokens(r["body"])
             if hit:
                 spoke.setdefault(r["author"], set()).update(hit)
-    pool = [m for m in members if m["id"] not in _SKIP_IDS and m["id"] != author and m["id"] not in exclude
+    pool = [m for m in members if m["id"] not in (*_SKIP_IDS, self.person_id, author) and m["id"] not in exclude
             and m.get("kind") != "human"]
     out: list[dict[str, Any]] = []
     for m in pool:
@@ -345,8 +344,7 @@ def plan(self: Any, text: str, thread_id: Optional[int] = None, author: str = ""
 
 def applies(self: Any, a: dict[str, Any], mentions: list[str], kind: str, author: str, body: str) -> bool:
     """Whether a message just written is the router's to route."""
-    ag = _ag()
-    return (author == ag.PERSON and not mentions and kind in ("comment", "proposal") and bool(str(body).strip())
+    return (author == self.person_id and not mentions and kind in ("comment", "proposal") and bool(str(body).strip())
             and settings_of(self)["enabled"])
 
 
@@ -439,7 +437,7 @@ def route(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         raise _err("text is required (or a message_id)")
     if thread_id and _thread(self, thread_id) is None:
         raise _err(f"no thread {thread_id} in {self.space_id}", 404)
-    planned = plan(self, text, int(thread_id) if thread_id else None, author or ag.PERSON,
+    planned = plan(self, text, int(thread_id) if thread_id else None, author or self.person_id,
                    use_model=a.get("use_model") is not False, limit=a.get("max_agents"))
     out = {"ok": True, "settings": settings_of(self), "picks": planned["picks"], "candidates": planned["ranking"],
            "engine": planned["engine"], "note": planned["note"], "applied": False,

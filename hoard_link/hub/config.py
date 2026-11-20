@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import copy
+import re
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -26,6 +27,8 @@ from ..atomic import write_json_atomic
 REPO_DIR = Path(__file__).resolve().parents[2]
 
 _config_lock = threading.RLock()
+PERSON_ALIAS = "person"
+AGENT_ID_RE = re.compile(r"^[a-z][a-z0-9_.\-]{1,40}$")
 
 
 @contextmanager
@@ -124,6 +127,7 @@ class HubConfig:
     # The Ágora: {"freshness": "warn" | "off"} — whether an answer says that the agent acted on a task without
     # having read what others wrote there since (never a block; docs/AGORA.md). Default warn.
     agora: dict[str, Any] = field(default_factory=dict)
+    person: dict[str, str] = field(default_factory=dict)  # stable id and editable display name
 
     def __post_init__(self):
         self._saved_payload = self._payload()
@@ -133,6 +137,32 @@ class HubConfig:
         value = asdict(self)
         value.pop('data_dir', None)
         return value
+
+    @property
+    def person_profile(self) -> dict[str, str]:
+        profile = self.person or {}
+        ident = str(profile.get("id") or PERSON_ALIAS).strip().lower()
+        if not AGENT_ID_RE.fullmatch(ident) or ident in ("hub", "ui", "system"):
+            raise ValueError("person.id must be a valid Ágora id")
+        default_name = "Persona" if self.language == "es" else "Person"
+        return {"id": ident, "name": str(profile.get("name") or default_name).strip() or default_name}
+
+    def update_person(self, *, historical: Optional[dict[str, str]] = None, name: Optional[str] = None) -> None:
+        """Adopt a historical identity or change its display name without changing the id."""
+        path = Path(self.data_dir) / "hub.json"
+        with _locked_config(path):
+            raw = _read_config(path, self._payload())
+            profile = raw.get("person")
+            if not isinstance(profile, dict):
+                profile = self.person.copy()
+            if historical and not profile.get("id"):
+                profile = {"id": historical["id"], "name": profile.get("name") or historical["name"]}
+            if name is not None:
+                profile = {**self.person_profile, **profile, "name": name}
+            if profile != raw.get("person"):
+                write_json_atomic(path, {**raw, "person": profile})
+            self.person = profile
+            self._saved_payload["person"] = copy.deepcopy(profile)
 
     def read_profiles(self):
         with _config_lock:
@@ -296,6 +326,8 @@ class HubConfig:
             cfg.agent_watch = {}
         if not isinstance(cfg.agora, dict):
             cfg.agora = {}
+        if not isinstance(cfg.person, dict):
+            cfg.person = {}
         cfg.roots = [os.path.abspath(os.path.expanduser(r)) for r in cfg.roots]
         cfg.icon_dirs = [os.path.abspath(os.path.expanduser(r)) for r in cfg.icon_dirs]
         if not isinstance(cfg.window_size, list) or len(cfg.window_size) != 2:

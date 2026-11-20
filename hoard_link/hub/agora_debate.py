@@ -7,10 +7,10 @@ pinned to the repository's HEAD) and invites chosen agents. Each participant fil
 **challenge** or **reject** a finding with a short note; every act is an ordered event, so the rounds are simply
 the event sequence. A finding's status follows the latest stance of each participant other than its author:
 
-* ``rejected`` when the author withdraws it, when Luis rejects it, or when rejections outnumber verifications;
+* ``rejected`` when the author withdraws it, when the person rejects it, or when rejections outnumber verifications;
 * ``challenged`` while any participant's latest stance is a challenge or an unresolved rejection;
 * ``verified`` when at least one other participant verified it and nobody objects;
-* ``proposed`` otherwise. Luis's stance, when he gives one, decides.
+* ``proposed`` otherwise. The person's stance, when they give one, decides.
 
 The consensus view groups the findings by status and says who agrees with what. Closing the debate writes the
 outcome into the decision log (it resolves the host thread, or opens and resolves a ``decision`` thread when the
@@ -29,8 +29,12 @@ import os
 import re
 from typing import Any, Optional
 
+from .config import PERSON_ALIAS
+
 FINDING_STATUSES = ("proposed", "challenged", "verified", "rejected")
-DISPOSITIONS = ("adopt", "adapt", "drop", "needs_luis")
+DISPOSITIONS = ("adopt", "adapt", "drop", "needs_person")
+# API and SQLite values written before dispositions became independent of the person.
+_LEGACY_PERSON_DISPOSITIONS = ("luis", "needs_luis", "ask_luis")
 STANCES = ("verify", "challenge", "reject")
 EVIDENCE_KINDS = ("file", "commit", "url", "command", "note")
 DEBATE_STATUSES = ("open", "closed")
@@ -45,7 +49,7 @@ DEBATE_MIGRATION = """
     CREATE INDEX agora_debates_thread ON agora_debates(space_id, thread_id);
     CREATE TABLE agora_debate_findings (id INTEGER PRIMARY KEY AUTOINCREMENT, debate_id INTEGER NOT NULL,
         author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL DEFAULT '[]',
-        status TEXT NOT NULL DEFAULT 'proposed', disposition TEXT NOT NULL DEFAULT 'needs_luis',
+        status TEXT NOT NULL DEFAULT 'proposed', disposition TEXT NOT NULL DEFAULT 'needs_person',
         message_id INTEGER, task_id INTEGER, created REAL NOT NULL, updated REAL NOT NULL);
     CREATE INDEX agora_debate_findings_debate ON agora_debate_findings(debate_id, id);
     CREATE TABLE agora_debate_events (id INTEGER PRIMARY KEY AUTOINCREMENT, debate_id INTEGER NOT NULL,
@@ -131,14 +135,14 @@ def normalize_evidence(value: Any) -> list[dict[str, str]]:
     return out
 
 
-def normalize_disposition(value: Any, default: str = "needs_luis") -> str:
+def normalize_disposition(value: Any, default: str = "needs_person") -> str:
     text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     if not text:
         return default
-    if text in ("needs", "luis", "needs_luis", "ask_luis", "person"):
-        return "needs_luis"
+    if text in ("needs", "person", *_LEGACY_PERSON_DISPOSITIONS):
+        return "needs_person"
     if text not in DISPOSITIONS:
-        raise _err("disposition must be adopt, adapt, drop or needs_luis")
+        raise _err("disposition must be adopt, adapt, drop or needs_person")
     return text
 
 
@@ -167,7 +171,7 @@ def finding_stances(author: str, events: list[dict[str, Any]]) -> dict[str, str]
     return stances
 
 
-def finding_status(author: str, stances: dict[str, str], person: str = "luis",
+def finding_status(author: str, stances: dict[str, str], person: str = PERSON_ALIAS,
                    levels: Optional[dict[str, int]] = None) -> str:
     """Where a finding stands. The person's stance decides it. Otherwise, with ``levels`` ({participant: rank
     level}), the stances of the highest rank that took one count alone: those below are heard and do not outvote
@@ -334,6 +338,7 @@ def _finding_row(ag: Any, finding_id: Any) -> dict[str, Any]:
         raise _err(f"no finding {fid}", 404)
     d = dict(row)
     d["evidence"] = _ag()._l(d.get("evidence"))
+    d["disposition"] = normalize_disposition(d["disposition"])
     return d
 
 
@@ -345,15 +350,18 @@ def debate_view(ag: Any, debate_id: Any) -> dict[str, Any]:
                                            (debate["id"],))]
     for seq, ev in enumerate(events, 1):
         ev["seq"] = seq
+        if ev.get("disposition"):
+            ev["disposition"] = normalize_disposition(ev["disposition"])
     findings = []
     for r in ag.db.query("SELECT * FROM agora_debate_findings WHERE debate_id=? ORDER BY id", (debate["id"],)):
         f = dict(r)
         f["evidence"] = _ag()._l(f.get("evidence"))
+        f["disposition"] = normalize_disposition(f["disposition"])
         own = [ev for ev in events if ev["finding_id"] == f["id"]]
         stances = finding_stances(f["author"], own)
         f["stances"] = stances
         # As the ranks stand now: the person may have given or taken one since the last stance was written down.
-        f["status"] = finding_status(f["author"], stances, _ag().PERSON, _levels(ag, stances))
+        f["status"] = finding_status(f["author"], stances, ag.person_id, _levels(ag, stances))
         f["verified_by"] = sorted(k for k, v in stances.items() if v == "verify")
         f["challenged_by"] = sorted(k for k, v in stances.items() if v == "challenge")
         f["rejected_by"] = sorted(k for k, v in stances.items() if v == "reject")
@@ -376,7 +384,7 @@ def debate_view(ag: Any, debate_id: Any) -> dict[str, Any]:
                  and set(p for p in others if p != f["author"]) <= set(f["verified_by"])]
     summary = ", ".join(f"{counts[s]} {s}" for s in FINDING_STATUSES if counts.get(s)) or "no findings yet"
     consensus = {"by_status": by_status, "counts": counts, "participants": tally, "adopted": adopted,
-                 "unanimous": unanimous, "needs_luis": [f["id"] for f in findings if f["disposition"] == "needs_luis"
+                 "unanimous": unanimous, "needs_person": [f["id"] for f in findings if f["disposition"] == "needs_person"
                                                         and f["status"] != "rejected"],
                  "summary": summary}
     return {"debate": debate, "findings": findings, "events": events, "consensus": consensus}
@@ -472,7 +480,7 @@ def _open_debate(ag: Any, debate_id: Any) -> dict[str, Any]:
 
 
 def debate_finding(self: Any, a: dict[str, Any]) -> dict[str, Any]:
-    """File a finding (claim + evidence + disposition), or amend one with ``finding_id`` (its author or Luis):
+    """File a finding (claim + evidence + disposition), or amend one with ``finding_id`` (its author or the person):
     a new claim, more evidence (appended) or another disposition. Anyone who files joins the debate."""
     A = _ag()
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
@@ -480,15 +488,15 @@ def debate_finding(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     if amend:
         finding = _finding_row(self, a.get("finding_id"))
         debate = _open_debate(self, finding["debate_id"])
-        if agent not in (finding["author"], A.PERSON):
-            raise _err(f"only {finding['author']} (or {A.PERSON}) amends finding F{finding['id']}; "
+        if agent not in (finding["author"], self.person_id):
+            raise _err(f"only {finding['author']} (or the person) amends finding F{finding['id']}; "
                        "answer it with challenge / verify instead", 403)
     else:
         debate = _open_debate(self, a.get("debate_id"))
         finding = None
     claim = A._txt(a.get("claim"), 4000, "claim", required=not amend)
     evidence = normalize_evidence(a.get("evidence"))
-    disposition = normalize_disposition(a.get("disposition"), default=finding["disposition"] if finding else "needs_luis")
+    disposition = normalize_disposition(a.get("disposition"), default=finding["disposition"] if finding else "needs_person")
     now = self.clock()
     status = "proposed"
     with self.db.tx():
@@ -499,8 +507,8 @@ def debate_finding(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         self._touch(agent)
         people = _join(self, debate, agent)
         mentions = [p for p in people if p != agent]
-        if disposition == "needs_luis" and A.PERSON not in mentions and agent != A.PERSON:
-            mentions.append(A.PERSON)
+        if disposition == "needs_person" and self.person_id not in mentions and agent != self.person_id:
+            mentions.append(self.person_id)
         if finding is None:
             fid = self.db.insert("agora_debate_findings", {
                 "debate_id": debate["id"], "author": agent, "claim": claim, "evidence": json.dumps(evidence, ensure_ascii=False),
@@ -531,7 +539,7 @@ def debate_finding(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             own = [dict(r) for r in self.db.query("SELECT * FROM agora_debate_events WHERE finding_id=? ORDER BY id",
                                                   (fid,))]
             stances = finding_stances(finding["author"], own)
-            status = finding_status(finding["author"], stances, A.PERSON, _levels(self, stances))
+            status = finding_status(finding["author"], stances, self.person_id, _levels(self, stances))
             self.db.execute("UPDATE agora_debate_findings SET status=? WHERE id=?", (status, fid))
         self.db.execute("UPDATE agora_debates SET updated=? WHERE id=?", (now, debate["id"]))
     self._bump("agora.debate.finding", {"debate_id": debate["id"], "thread_id": debate["thread_id"], "finding_id": fid,
@@ -568,7 +576,7 @@ def _stance(self: Any, a: dict[str, Any], kind: str) -> dict[str, Any]:
         own = [dict(r) for r in self.db.query("SELECT * FROM agora_debate_events WHERE finding_id=? ORDER BY id",
                                               (finding["id"],))]
         stances = finding_stances(finding["author"], own)
-        status = finding_status(finding["author"], stances, A.PERSON, _levels(self, stances))
+        status = finding_status(finding["author"], stances, self.person_id, _levels(self, stances))
         self.db.execute("UPDATE agora_debate_findings SET status=?, updated=? WHERE id=?", (status, now, finding["id"]))
         self.db.execute("UPDATE agora_debates SET updated=? WHERE id=?", (now, debate["id"]))
     self._bump("agora.debate.stance", {"debate_id": debate["id"], "thread_id": debate["thread_id"],
@@ -648,7 +656,7 @@ def debate_close(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     outcome = A._txt(a.get("outcome"), 20000, "outcome", required=True)
     disp = a.get("dispositions") or {}
     if not isinstance(disp, dict):
-        raise _err("dispositions must be an object {finding id: adopt|adapt|drop|needs_luis}")
+        raise _err("dispositions must be an object {finding id: adopt|adapt|drop|needs_person}")
     picked = {_int(x, "spawn_findings") for x in A._list(a.get("spawn_findings"), "spawn_findings", 50)}
     # One write transaction from the open-check to the closed status: two closes at once record one decision, and
     # no finding or stance lands between the view the decision is written from and the close (they get a 409).
@@ -762,8 +770,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "participants": strs, "files": strs, "commits": strs, "repo": {"type": "string"}},
                                ["agent"])},
         {"name": "hub_agora_debate_finding",
-         "description": "File a finding in a debate: claim, evidence[] and disposition adopt|adapt|drop|needs_luis "
-                        "(needs_luis also mentions Luis). With finding_id the author amends it (new claim, more "
+         "description": "File a finding in a debate: claim, evidence[] and disposition adopt|adapt|drop|needs_person "
+                        "(needs_person also mentions the person). With finding_id the author amends it (new claim, more "
                         "evidence, another disposition): that is how a challenge is answered. A changed claim drops "
                         "the earlier verifications, so it must be verified again.",
          "inputSchema": schema({"agent": agent_prop, "debate_id": {"type": "integer"},
@@ -782,7 +790,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                ["agent", "finding_id", "note"])},
         {"name": "hub_agora_debate_reject",
          "description": "Reject a finding with the reason (the author rejecting its own finding withdraws it). "
-                        "Rejected when rejections outnumber verifications; Luis's stance decides.",
+                        "Rejected when rejections outnumber verifications; the person's stance decides.",
          "inputSchema": schema({"agent": agent_prop, "finding_id": {"type": ["integer", "string"]},
                                 "debate_id": {"type": "integer"}, "note": {"type": "string"}},
                                ["agent", "finding_id", "note"])},

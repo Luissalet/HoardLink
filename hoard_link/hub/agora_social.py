@@ -126,7 +126,7 @@ def member_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     ag = _ag()
     actor = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     ident = _member_id(a, "the agent to add")
-    if ident == ag.PERSON:
+    if ident == self.person_id:
         raise _err("the person is on every server already", 409)
     note = ag._txt(a.get("note"), 500, "note")
     with self.db.tx():
@@ -172,7 +172,7 @@ def member_remove(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     person = bool(a.get("_person"))
     actor = self._agent(a.get("agent"), allow_person=person)
     ident = _member_id(a, "the agent to take off this server")
-    if ident == ag.PERSON:
+    if ident == self.person_id:
         raise _err("the person is not a member that can be removed", 409)
     to = str(a.get("to_agent") or "").strip().lower()
     reason = ag._txt(a.get("reason"), 2000, "reason")
@@ -182,7 +182,7 @@ def member_remove(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             raise _err(f"{ident} is not on {self.space_id}", 404)
         row = self.db.one("SELECT last_seen FROM agents WHERE id=?", (ident,))
         quiet = self.clock() - float((row["last_seen"] if row else 0) or 0)
-        if actor not in (ag.PERSON, ident) and not force and quiet < self.handover_idle_s:
+        if actor not in (self.person_id, ident) and not force and quiet < self.handover_idle_s:
             raise _err(f"{ident} gave signs of life {int(quiet // 60)} min ago: before "
                        f"{int(self.handover_idle_s // 60)} min of silence only the person, {ident} itself or "
                        "force may take it off", 409, error_code="member_active")
@@ -227,7 +227,7 @@ def members_prune(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, An
     """Take off this server every agent that has given no sign of life for ``older_than_days`` (30) and holds
     neither work nor leases here. ``dry_run`` only says who would go. Whoever holds something is kept and named."""
     a = a or {}
-    ag, ch = _ag(), _ch()
+    ch = _ch()
     actor = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     days = ch._int(a.get("older_than_days"), PRUNE_DEFAULT_DAYS, 1, 3650)
     dry = ch._bool(a.get("dry_run", False), "dry_run")
@@ -247,7 +247,7 @@ def members_prune(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, An
                                "FROM agents a JOIN coordination_members m ON m.agent=a.id WHERE m.space_id=? "
                                "ORDER BY a.id", (self.space_id,)):
             ident = r["id"]
-            if ident in (ag.PERSON, actor) or r["kind"] == "human":
+            if ident in (self.person_id, actor) or r["kind"] == "human":
                 continue
             if float(r["last_seen"] or r["created"] or 0) >= cutoff:
                 continue

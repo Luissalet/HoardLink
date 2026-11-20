@@ -1,6 +1,6 @@
 """The Repos facet: the state of every git repository of the family, at a glance.
 
-Luis keeps a few dozen repositories next to each other (one per Hoard app,
+A workspace can keep several repositories next to each other (one per Hoard app,
 this one, the portfolio, Faustus...). What goes wrong with them is quiet:
 commits never pushed, a vendored copy of ``hoard_link`` that drifted, a
 theme copy out of sync, a plugin manifest that differs from the one Faustus
@@ -114,7 +114,7 @@ _SLUG_RE = re.compile(r"^/?([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
 
 
 def parse_github(url: str) -> Optional[str]:
-    """``owner/repo`` of a GitHub remote, in every spelling Luis uses: https, ``ssh://git@github.com/…`` and the
+    """``owner/repo`` of a GitHub remote, in every supported spelling: https, ``ssh://git@github.com/…`` and the
     scp style with an ssh alias for the host (``git@Luissalet:Luissalet/X.git``). A host with a dot that is not
     github.com (gitlab.com, a company server) is not GitHub; an alias has no dot."""
     url = sanitize_url(url)
@@ -1031,7 +1031,7 @@ class RepoMonitor:
         return out
 
     def push_command(self, name: str) -> dict[str, Any]:
-        """The exact command Luis would run to push this repository — text only, never executed."""
+        """The exact command the person would run to push this repository — text only, never executed."""
         rec, candidates = self.find(name)
         if rec is None:
             return {"ok": False, "error": f"unknown repo: {name}", "candidates": candidates}

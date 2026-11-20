@@ -36,6 +36,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+from .config import PERSON_ALIAS
+
 from . import agent_loop
 
 ENGINES = ("codex", "cursor", "claude")
@@ -68,7 +70,6 @@ STATES = ("working", "tool", "waiting", "idle", "stale")
 _RANK = {"waiting": 5, "tool": 4, "working": 3, "stale": 2, "idle": 1}
 
 _AGENT_RE = re.compile(r"^[a-z][a-z0-9_.\-]{1,40}$")
-_PERSON = "luis"
 _UUID_RE = re.compile(r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$")
 
 # ---- privacy ---------------------------------------------------------------------------------------------------
@@ -255,7 +256,7 @@ _ENV_RE = re.compile(r"AGORA_AGENT\s*[=:]\s*[\"']?" + _ID + r"(?![A-Za-z0-9_.\-]
 _JSON_AGENT_RE = re.compile(r"(?<![A-Za-z0-9_])[\"']?agent[\"']?\s*[:=]\s*[\"']" + _ID + r"[\"']")
 
 
-def agents_in_call(name: str, args: Any) -> list[str]:
+def agents_in_call(name: str, args: Any, person_id: str = PERSON_ALIAS) -> list[str]:
     """Ágora agent ids a tool call speaks as: ``--as <id>`` / ``AGORA_AGENT=<id>`` of an ``agora`` CLI call, or the
     ``agent`` argument of a ``hub_agora_*`` tool / ``/api/agora/`` request."""
     if not isinstance(args, str):
@@ -273,7 +274,7 @@ def agents_in_call(name: str, args: Any) -> list[str]:
     if "hub_agora_" in low or "/api/agora" in low:
         # arguments may be a JSON string inside a JSON string: {\"agent\": \"codex-sparks\"}
         found += _JSON_AGENT_RE.findall(text.replace('\\"', '"'))
-    return [a for a in found if _AGENT_RE.match(a) and a != _PERSON]
+    return [a for a in found if _AGENT_RE.match(a) and a != person_id]
 
 
 # ---- per-session state -----------------------------------------------------------------------------------------
@@ -328,7 +329,8 @@ class WorkLog:
 class Session:
     """What is known about one transcript; fed line by line, never holds the file."""
 
-    def __init__(self, engine: str, session_id: str, path: str):
+    def __init__(self, engine: str, session_id: str, path: str, person_id: str = PERSON_ALIAS):
+        self.person_id = person_id
         self.engine = engine
         self.session_id = session_id
         self.path = path
@@ -389,7 +391,7 @@ class Session:
         self.last_tool = name or self.last_tool
         self.loop.tool_start(call_id, name, args, ts)
         self.work.start(call_id, name, args, ts)
-        self.hint(agents_in_call(f"{ns}{name}", args))
+        self.hint(agents_in_call(f"{ns}{name}", args, self.person_id))
         low = (name or "").lower()
         if any(k in low for k in _QUESTION_KEYS) or low in _ASK_TOOLS:
             self.pending[call_id] = {"kind": "question", "what": _input_summary(args) or name, "since": ts,
@@ -801,7 +803,8 @@ class AgentWatch:
 
     def __init__(self, roots: Optional[dict[str, Any]] = None, clock: Callable[[], float] = time.time,
                  store_path: Any = None, hours: float = DEFAULT_HOURS, max_files: int = DEFAULT_MAX_FILES,
-                 refresh_s: float = REFRESH_S, discover_s: float = DISCOVER_S):
+                 refresh_s: float = REFRESH_S, discover_s: float = DISCOVER_S, person_id: str = PERSON_ALIAS):
+        self.person_id = person_id
         base = default_roots()
         if roots:
             for engine, value in roots.items():
@@ -910,7 +913,7 @@ class AgentWatch:
     # -- reading ----------------------------------------------------------------------------------------------
 
     def _new_session(self, f: _File) -> Session:
-        s = Session(f.engine, _session_id(f.engine, f.path), f.path)
+        s = Session(f.engine, _session_id(f.engine, f.path), f.path, self.person_id)
         s.hints = {a: list(v) for a, v in self._hints.get(s.key, {}).items()}
         if f.engine in ("cursor", "claude"):
             slug = Path(f.path).parent.name if f.engine == "claude" else Path(f.path).parents[2].name
@@ -1030,7 +1033,7 @@ class AgentWatch:
             if not known:
                 raise WatchError(f"unknown session {key}", 404)
             if agent:
-                if not _AGENT_RE.match(agent) or agent == _PERSON:
+                if not _AGENT_RE.match(agent) or agent == self.person_id:
                     raise WatchError("agent must be an Ágora agent id (lowercase letters, digits, - _ .), not the person's")
                 self.bindings[key] = agent
             else:
@@ -1041,9 +1044,10 @@ class AgentWatch:
 
     def _binding(self, s: Session) -> tuple[Optional[str], Optional[str]]:
         agent = self.bindings.get(s.key)
-        if agent:
+        if agent and agent != self.person_id:
             return agent, "explicit"
-        hints = s.hints or self._hints.get(s.key) or {}
+        hints = {ident: weight for ident, weight in (s.hints or self._hints.get(s.key) or {}).items()
+                 if ident != self.person_id}
         if hints:
             best = max(hints.items(), key=lambda kv: (kv[1][0], kv[1][1]))
             return best[0], "inferred"

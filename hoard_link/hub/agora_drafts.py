@@ -434,7 +434,7 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                            "kept; the station has to register it again", 409, error_code="piece_changed", piece_id=p["id"])
         rows = [dict(v) for v in self.db.query("SELECT * FROM agora_draft_variants WHERE pass_id=? ORDER BY position", (draft["id"],))]
         order_row = orders._order_row(self, draft["order_id"])
-        situation = {"order": {"id": order_row["id"], "title": order_row["title"], "status": order_row["status"]},
+        situation = {"decided_by": agent, "order": {"id": order_row["id"], "title": order_row["title"], "status": order_row["status"]},
                      "deadline": order_row["deadline"], "draft_pass": {"id": draft["id"], "title": draft["title"]},
                      "variant": {"id": variant["id"], "key": variant["key"], "title": variant["title"]},
                      "alternatives": [{"id": v["id"], "key": v["key"], "title": v["title"], "status": v["status"]} for v in rows]}
@@ -504,7 +504,7 @@ def draft_anchors(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         waiting = self.db.scalar("SELECT COUNT(*) FROM agora_draft_passes WHERE order_id=? AND status='shown'", (oid,), 0)
         return {"ok": True, "order_id": oid, "variant": None,
                 "waiting": bool(waiting),
-                "note": "La pasada 0 espera la decisión de Luis en la puerta temprana." if waiting else
+                "note": "La pasada 0 espera la decisión de la persona en la puerta temprana." if waiting else
                         "Esta orden no tiene ninguna variante conservada."}
     variant = _variant_dict(self, dict(kept))
     anchors: dict[str, list[dict[str, Any]]] = {}

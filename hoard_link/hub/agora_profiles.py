@@ -72,7 +72,7 @@ def _ident(value: Any, what: str) -> str:
 
 
 def _known(self: Any, ident: str) -> bool:
-    return ident == _ag().PERSON or self.db.one("SELECT 1 AS x FROM agents WHERE id=?", (ident,)) is not None
+    return ident == self.person_id or self.db.one("SELECT 1 AS x FROM agents WHERE id=?", (ident,)) is not None
 
 
 def _list(raw: Any) -> list[Any]:
@@ -99,10 +99,10 @@ def dm_slug(first: str, second: str) -> str:
     return DM + "-" + hashlib.sha1("|".join(pair).encode()).hexdigest()[:10]
 
 
-def _dm_title(first: str, second: str) -> str:
-    person = _ag().PERSON
+def _dm_title(self: Any, first: str, second: str) -> str:
+    person = self.person_id
     pair = sorted((first, second), key=lambda x: (x != person, x))
-    return f"{pair[0]} · {pair[1]}"
+    return " · ".join(self.person_name if ident == person else ident for ident in pair)
 
 
 def _dm_thread(self: Any, first: str, second: str, actor: str) -> tuple[int, str]:
@@ -114,7 +114,7 @@ def _dm_thread(self: Any, first: str, second: str, actor: str) -> tuple[int, str
         if row.get("archived"):
             self.db.execute("UPDATE agora_channels SET archived=0, updated=? WHERE id=?", (self.clock(), row["id"]))
         return int(row["thread_id"]), slug
-    title = _dm_title(first, second)
+    title = _dm_title(self, first, second)
     thread = ch._new_thread(self, slug, title, actor)
     now = self.clock()
     if row is None:
@@ -161,7 +161,7 @@ def agent_tell(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                                                   "created_by": sender, "created": self.clock()})
             self._msg(thread, "system", "comment",
                       f"{target}: si esta corrección cambia cómo debes trabajar, propón un cambio de tus "
-                      f"instrucciones (hub_agora_agent_instruction_propose) y Luis lo acepta o lo descarta.",
+                      f"instrucciones (hub_agora_agent_instruction_propose) y la persona lo acepta o lo descarta.",
                       [target])
     self._bump("agora.agent.tell", {"to": target, "by": sender, "message_id": mid})
     delivery: dict[str, Any] = {"status": "queued",
@@ -184,7 +184,7 @@ def dm_list(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     the last thing said and what the reader has not seen."""
     a = a or {}
     ch = _ch()
-    viewer = ch._viewer(self, a) or _ag().PERSON
+    viewer = ch._viewer(self, a) or self.person_id
     unread = ch._unread(self, viewer)
     out = []
     for row in ch._rows(self):
@@ -219,9 +219,9 @@ def agent_instructions_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     with self.db.tx():
         self.db.execute("INSERT INTO agora_agent_instructions(agent, body, updated_by, updated) VALUES(?,?,?,?) "
                         "ON CONFLICT(agent) DO UPDATE SET body=excluded.body, updated_by=excluded.updated_by, "
-                        "updated=excluded.updated", (target, body, ag.PERSON, now))
-        if _known(self, target) and target != ag.PERSON:
-            dm_note(self, ag.PERSON, target, "system", f"Luis ha cambiado tus instrucciones ({len(body)} caracteres).",
+                        "updated=excluded.updated", (target, body, self.person_id, now))
+        if _known(self, target) and target != self.person_id:
+            dm_note(self, self.person_id, target, "system", f"La persona ha cambiado tus instrucciones ({len(body)} caracteres).",
                     "system")
     self._bump("agora.agent.instructions", {"agent": target})
     return {"ok": True, "id": target, "instructions": instructions_of(self, target)}
@@ -299,8 +299,8 @@ def agent_instruction_propose(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         pid = self.db.insert("agora_instruction_proposals", {
             "agent": agent, "space_id": self.space_id, "body": body, "base_body": current, "reason": reason,
             "trigger": trigger or "other", "source": source, "status": "pending", "created": self.clock()})
-        dm_note(self, agent, ag.PERSON, agent,
-                f"Propongo un cambio de mis instrucciones (propuesta {pid}): {reason}", "comment", [ag.PERSON])
+        dm_note(self, agent, self.person_id, agent,
+                f"Propongo un cambio de mis instrucciones (propuesta {pid}): {reason}", "comment", [self.person_id])
     self._bump("agora.agent.proposal", {"agent": agent, "proposal_id": pid})
     return {"ok": True, "proposal": _proposal_view(self.db.one("SELECT * FROM agora_instruction_proposals WHERE id=?",
                                                                (pid,)), current)}
@@ -330,16 +330,16 @@ def agent_instruction_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             body = ag._txt(a.get("body"), MAX_INSTRUCTIONS, "body") if a.get("body") not in (None, "") else row["body"]
             self.db.execute("INSERT INTO agora_agent_instructions(agent, body, updated_by, updated) VALUES(?,?,?,?) "
                             "ON CONFLICT(agent) DO UPDATE SET body=excluded.body, updated_by=excluded.updated_by, "
-                            "updated=excluded.updated", (row["agent"], body, ag.PERSON, now))
+                            "updated=excluded.updated", (row["agent"], body, self.person_id, now))
             self.db.insert("agora_agent_memory", {"agent": row["agent"], "space_id": row["space_id"],
                                                   "kind": "correction", "text": row["reason"][:MAX_MEMORY_TEXT],
                                                   "source": f"instructions, proposal {pid}",
-                                                  "created_by": ag.PERSON, "created": now})
+                                                  "created_by": self.person_id, "created": now})
         self.db.execute("UPDATE agora_instruction_proposals SET status=?, decided_by=?, decided_at=?, decision_note=? "
-                        "WHERE id=?", ("accepted" if decision == "accept" else "discarded", ag.PERSON, now, note, pid))
+                        "WHERE id=?", ("accepted" if decision == "accept" else "discarded", self.person_id, now, note, pid))
         verb = "ha aceptado" if decision == "accept" else "ha descartado"
-        dm_note(self, ag.PERSON, row["agent"], ag.PERSON,
-                f"Luis {verb} tu propuesta {pid} de cambio de instrucciones." + (f" {note}" if note else ""),
+        dm_note(self, self.person_id, row["agent"], self.person_id,
+                f"La persona {verb} tu propuesta {pid} de cambio de instrucciones." + (f" {note}" if note else ""),
                 "comment", [row["agent"]])
     self._bump("agora.agent.proposal", {"agent": row["agent"], "proposal_id": pid, "decision": decision})
     fresh = self.db.one("SELECT * FROM agora_instruction_proposals WHERE id=?", (pid,))
@@ -350,17 +350,16 @@ def agent_instruction_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 def note_correction(self: Any, task: dict[str, Any], reviewer: str, body: str) -> None:
     """The person sent a delivery back (``task_review`` with changes): the owner learns it in its conversation with
     the person, with the way to propose a change of instructions, and it is kept in its memory. Inside a tx."""
-    ag = _ag()
     owner = task.get("owner")
-    if reviewer != ag.PERSON or not owner or owner == ag.PERSON:
+    if reviewer != self.person_id or not owner or owner == self.person_id:
         return
     summary = " ".join(str(body or "").split())[:600]
     self.db.insert("agora_agent_memory", {"agent": owner, "space_id": self.space_id, "kind": "correction",
                                           "text": f"Entrega de la tarea {task['id']} devuelta: {summary}"[:MAX_MEMORY_TEXT],
-                                          "source": f"task {task['id']}", "created_by": ag.PERSON,
+                                          "source": f"task {task['id']}", "created_by": self.person_id,
                                           "created": self.clock()})
-    dm_note(self, ag.PERSON, owner, "system",
-            f"Luis ha pedido cambios en la tarea {task['id']}. Si te corrige cómo debes trabajar, propón un cambio de "
+    dm_note(self, self.person_id, owner, "system",
+            f"La persona ha pedido cambios en la tarea {task['id']}. Si te corrige cómo debes trabajar, propón un cambio de "
             f"tus instrucciones (hub_agora_agent_instruction_propose, source «task {task['id']}»).", "comment", [owner])
 
 
@@ -542,7 +541,6 @@ def _usage(self: Any, ident: str, extra: dict[str, Any]) -> dict[str, Any]:
 def agent_profile(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """Everything one agent's page draws, in one read (see the module's note). ``id`` is the agent; ``limit`` caps
     each list (30)."""
-    ag = _ag()
     ch = _ch()
     ident = _ident(a.get("id") or a.get("target"), "id")
     limit = ch._int(a.get("limit"), 30, 1, 100)
@@ -550,7 +548,7 @@ def agent_profile(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         raise _err(f"unknown agent {ident!r} (it has not been seen in any server)", 404)
     member = next((m for m in ch._members(self, ch.agora_social._in_hand(self)) if m["id"] == ident), None)
     row = self.db.one("SELECT * FROM agents WHERE id=?", (ident,))
-    person = ident == ag.PERSON
+    person = ident == self.person_id
     extra: dict[str, Any] = {}
     hook = getattr(self, "profile_hook", None)
     if hook and not person:
@@ -558,7 +556,7 @@ def agent_profile(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             extra = hook(ident, self.space_id) or {}
         except Exception:  # noqa: BLE001 - the console's side is optional
             extra = {}
-    base = member or {"id": ident, "name": (row["name"] if row else ident) or ident, "kind": "human" if person else "agent",
+    base = member or {"id": ident, "name": self.person_name if person else (row["name"] if row else ident) or ident, "kind": "human" if person else "agent",
                       "role": "person" if person else "other", "rank": "person" if person else "agent",
                       "presence": "person" if person else "offline", "state": "idle",
                       "doing": "", "note": "", "last_seen": row["last_seen"] if row else None,
@@ -587,8 +585,8 @@ def agent_profile(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     proposals = agent_instruction_proposals(self, {"id": ident, "limit": 20})
     pairs = None
     if not person:
-        dm = ch._row(self, dm_slug(ident, ag.PERSON))
-        pairs = {"channel": dm["slug"], "thread_id": dm.get("thread_id")} if dm else {"channel": dm_slug(ident, ag.PERSON),
+        dm = ch._row(self, dm_slug(ident, self.person_id))
+        pairs = {"channel": dm["slug"], "thread_id": dm.get("thread_id")} if dm else {"channel": dm_slug(ident, self.person_id),
                                                                                       "thread_id": None}
     return {"ok": True, "profile": header, "activity": _activity(self, ident, limit), "instructions": instructions,
             "memory": _memory(self, ident, limit), "routines": routines, "usage": _usage(self, ident, extra),

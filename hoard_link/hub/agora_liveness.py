@@ -17,7 +17,7 @@ Classification rules, applied in this order (first match wins):
                       handed to review), whatever the answer says.
 * ``blocked``         the answer says the agent is blocked or waits for the
                       owner ("I'm blocked", "estoy bloqueado", "bloqueado por
-                      Luis", "waiting for Luis", "necesito que Luis", "no puedo
+                      the person replies", "waiting for the person", "necesito que la persona", "no puedo
                       seguir", ...). A bare "bloqueo"/"lock" is not a block: in
                       the Agora it names a path lock.
 * ``advanced``        any other concrete evidence: claims, task status
@@ -54,6 +54,7 @@ Continuation rules (``decide_continuation``):
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any, Mapping, Optional
 
 LIVENESS_CLASSES = ("completed", "advanced", "plan_only", "empty_response", "blocked", "failed", "needs_followup")
@@ -69,19 +70,28 @@ STRONG_EVIDENCE = ("messages_posted", "task_status_changes", "submits", "done", 
 WEAK_EVIDENCE = ("heartbeats_with_doing",)
 
 # "bloqueo"/"lock" alone is Agora vocabulary for path locks, so a block needs a first-person or "blocked by/on" phrase.
-_BLOCKED_RE = re.compile(
+_BLOCKED_PATTERN = (
     r"\b(?:i'?m|i\s+am|we'?re|we\s+are|i'?ve\s+been|stays?|remains?)\s+blocked\b"
-    r"|\bblocked\s+(?:on|by|until)\s+(?:luis|the\s+owner|the\s+user|you|a\s+decision|an?\s+answer|your)"
+    r"|\bblocked\s+(?:on|by|until)\s+(?:{person}|the\s+owner|the\s+user|you|a\s+decision|an?\s+answer|your)"
     r"|\b(?:estoy|estamos|quedo|me\s+quedo|sigo|seguimos)\s+bloquead[oa]s?\b"
-    r"|\bbloquead[oa]s?\s+(?:por|hasta)\s+(?:luis|el\s+due[ñn]o|(?:una|la)\s+(?:decisi[oó]n|revisi[oó]n|respuesta)|falta|tu|su|que)"
+    r"|\bbloquead[oa]s?\s+(?:por|hasta)\s+(?:{person}|el\s+due[ñn]o|(?:una|la)\s+(?:decisi[oó]n|revisi[oó]n|respuesta)|falta|tu|su|que)"
     r"|\bno\s+puedo\s+(?:seguir|continuar|avanzar)\b"
     r"|\bcan(?:no|'t)\s+(?:continue|proceed|go\s+on)\b"
-    r"|waiting\s+(?:for|on)\s+(?:luis|the\s+owner|the\s+user|your\s+(?:decision|answer|input))"
-    r"|esperando\s+(?:a\s+|que\s+)?(?:luis|el\s+due[ñn]o|tu\s+(?:respuesta|decisi[oó]n))"
-    r"|necesito\s+que\s+(?:luis|el\s+due[ñn]o|me\s+(?:confirm|aclar|respond|diga|des))"
-    r"|need(?:s)?\s+(?:the\s+owner|luis|your\s+(?:decision|answer|input|confirmation))"
-    r"|(?:i|we)\s+need\s+(?:a\s+)?(?:decision|answer)\s+from",
-    re.IGNORECASE)
+    r"|waiting\s+(?:for|on)\s+(?:{person}|the\s+owner|the\s+user|your\s+(?:decision|answer|input))"
+    r"|esperando\s+(?:a\s+|que\s+)?(?:{person}|el\s+due[ñn]o|tu\s+(?:respuesta|decisi[oó]n))"
+    r"|necesito\s+que\s+(?:{person}|el\s+due[ñn]o|me\s+(?:confirm|aclar|respond|diga|des))"
+    r"|need(?:s)?\s+(?:the\s+owner|{person}|your\s+(?:decision|answer|input|confirmation))"
+    r"|(?:i|we)\s+need\s+(?:a\s+)?(?:decision|answer)\s+from")
+
+@lru_cache(maxsize=16)
+def _blocked_pattern(person_id: str, person_name: str) -> re.Pattern[str]:
+    names = [r"the\s+person", r"la\s+persona", r"@person"]
+    for name in (person_id, person_name):
+        if name:
+            names.append("@?" + r"\s+".join(re.escape(part) for part in name.split()))
+    person = "(?:" + "|".join(names) + r")(?!\w)"
+    return re.compile(_BLOCKED_PATTERN.replace("{person}", person), re.IGNORECASE)
+
 
 _PLAN_RE = re.compile(
     r"\bnext,?\s+i(?:'ll|\s+will|\s+am\s+going\s+to)\b"
@@ -114,7 +124,7 @@ def _count(evidence: Optional[Mapping[str, Any]], key: str) -> int:
 
 
 def classify_turn(*, state: str, exit_code: Optional[int], answer: str, evidence: Optional[Mapping[str, Any]],
-                  provider_error: str = "") -> dict[str, Any]:
+                  provider_error: str = "", person: Optional[Mapping[str, str]] = None) -> dict[str, Any]:
     """Classify one finished console turn. See the module docstring for the rules."""
     text = (answer or "").strip()
     strong = {key: _count(evidence, key) for key in STRONG_EVIDENCE}
@@ -141,7 +151,8 @@ def classify_turn(*, state: str, exit_code: Optional[int], answer: str, evidence
         reasons = [f"{key}={strong[key]}" for key in ("done", "submits") if strong[key]]
         return {"liveness": "completed", "reasons": reasons}
 
-    match = _BLOCKED_RE.search(text)
+    profile = person or {}
+    match = _blocked_pattern(profile.get("id", ""), profile.get("name", "")).search(text)
     if match:
         return {"liveness": "blocked", "reasons": [f"answer states a block: '{match.group(0)[:60]}'"]}
 

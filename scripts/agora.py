@@ -311,7 +311,7 @@ def print_watch(board: dict, w: dict) -> None:
     now = time.time()
     seen = set()
     print("AGENTES (latido del Ágora · estado observado en su transcripción)")
-    rows = [a for a in board.get("agents", []) if a.get("id") != "luis"]
+    rows = [a for a in board.get("agents", []) if a.get("id") != (board.get("person") or {}).get("id") and a.get("kind") != "human"]
     for a in rows:
         seen.add(a["id"])
         o = (w.get("agents") or {}).get(a["id"])
@@ -395,7 +395,7 @@ def print_digest(r: dict) -> None:
         print(f"  decisión {d['id']}: {short(d['title'], 50)} → {short(d['resolution'], 70)}")
     w = r.get("waiting") or {}
     print(f"Esperando: {len(w.get('reviews') or [])} revisiones, {len(w.get('changes') or [])} con cambios pedidos, "
-          f"{len(w.get('escalated') or [])} escaladas a Luis")
+          f"{len(w.get('escalated') or [])} escaladas a la persona")
     print_progress(w.get("progress", []))
 
 
@@ -757,7 +757,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--tasks", action="append", help="solo estas tareas (ids separados por comas; repetible)")
     s.add_argument("--no-reviews", action="store_true", help="no traspasa el papel de revisor")
     s.add_argument("--force", action="store_true",
-                   help="traspasa ya aunque el origen siga mandando latidos (orden de Luis: sin cuota, trabajo urgente)")
+                   help="traspasa ya aunque el origen siga mandando latidos (orden de la persona: sin cuota, trabajo urgente)")
     sub.add_parser("servers", help="cada espacio como servidor: tareas, quién anda por ahí y qué hay nuevo para ti")
     sub.add_parser("channels", help="canales del espacio (general siempre existe) con lo que no has leído")
     s = sub.add_parser("channel", help="crea un canal en el espacio, o lo cambia si ya existe (--archive lo archiva)")
@@ -824,7 +824,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("debate", type=int, nargs="?"); texts(d, "claim")
     d.add_argument("--evidence", action="append", help="ruta#L1-L9, commit, URL o '$ comando' (repetible)")
     d.add_argument("--evidence-file", help="JSON UTF-8: lista de {kind, ref, output, note}")
-    d.add_argument("--disposition", choices=["adopt", "adapt", "drop", "needs_luis"]); d.add_argument("--amend", type=int)
+    d.add_argument("--disposition", metavar="adopt|adapt|drop|needs_person"); d.add_argument("--amend", type=int)
     for verb in ("challenge", "verify", "reject"):
         d = dsub.add_parser(verb, help={"challenge": "cuestiona un hallazgo con una nota", "verify": "verifica un hallazgo ajeno",
                                         "reject": "rechaza un hallazgo (el autor lo retira)"}[verb])
