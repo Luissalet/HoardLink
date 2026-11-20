@@ -16,7 +16,7 @@ import time
 import tomllib
 from uuid import uuid4
 
-from ..atomic import write_json_atomic
+from ..atomic import read_json, write_json_atomic
 from ..media import bins
 from .config import REPO_DIR, _locked_config
 from .facets import Facet, Reply
@@ -35,6 +35,11 @@ USAGE = {
 
 def _first_file(paths):
     return next((path for path in paths if path and Path(path).is_file()), None)
+
+
+def _blender_installation(version):
+    return _first_file(Path(os.environ[key]) / "Blender Foundation" / f"Blender {version}" / "blender.exe"
+                       for key in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)") if os.environ.get(key))
 
 
 def _newest(paths):
@@ -241,6 +246,7 @@ class LocalPrograms(Facet):
     def __init__(self, hub):
         super().__init__(hub)
         self.path = Path(hub.config.data_dir) / "local-programs.json"
+        self.blender_path = Path(hub.config.data_dir) / "vulcan-blender.json"
         self._scan_lock = Lock()
         self._detected = []
         self._expires_at = 0
@@ -258,7 +264,41 @@ class LocalPrograms(Facet):
                 self._expires_at = time.monotonic() + 300
             rows = self._detected
         manual = [{"id": id_, **row} for id_, row in self._manual().items()]
-        return {"ok": True, "programs": [*rows, *manual]}
+        renderer = self.vulcan_blender_env()
+        configured = []
+        if renderer:
+            configured.append(_row("blender", "Blender · Vulcan", renderer["VULCAN_BLENDER"],
+                                   renderer["VULCAN_BLENDER_VERSION"], source="configured") | {"id": "vulcan-blender"})
+        return {"ok": True, "programs": [*rows, *configured, *manual]}
+
+    def _vulcan_blender_version(self):
+        version = read_json(self.blender_path)
+        return version if isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+", version) else None
+
+    def vulcan_blender_env(self):
+        version = self._vulcan_blender_version()
+        if not version:
+            return {}
+        path = _blender_installation(version)
+        return {"VULCAN_BLENDER_VERSION": version, "VULCAN_BLENDER": str(path) if path else ""}
+
+    def set_vulcan_blender(self, args):
+        version = args.get("version")
+        if "version" not in args or (version is not None and
+                                    (not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+", version))):
+            return {"ok": False, "error": "Use a Blender major.minor version or null / Indica una versión mayor.menor o null"}
+        path = _blender_installation(version) if version else None
+        if version and not path:
+            return {"ok": False, "error": f"Blender {version} is not installed / Blender {version} no está instalado"}
+        with _locked_config(self.blender_path):
+            previous = self._vulcan_blender_version()
+            if "expected_version" in args and previous != args["expected_version"]:
+                return {"ok": False, "error": "The Blender selection has changed / La selección de Blender ha cambiado"}
+            if previous == version:
+                return {"ok": True, "changed": False, "version": version, "path": str(path) if path else None}
+            write_json_atomic(self.blender_path, version)
+        return {"ok": True, "changed": True, "version": version, "path": str(path) if path else None,
+                "undo": {"tool": "hub_vulcan_blender_set", "arguments": {"version": previous, "expected_version": version}}}
 
     def register(self, args):
         row = {key: str(args[key]).strip() if isinstance(args.get(key), str) else ""
@@ -316,6 +356,11 @@ class LocalPrograms(Facet):
              ["name", "path", "headless"], False),
             ("hub_program_undo", "Undo a manual program registration. Deshacer el alta de un programa.",
              {"id": text}, ["id"], False),
+            ("hub_vulcan_blender_set", "Pin Blender for the next Vulcan launch / Fija Blender para el próximo arranque de Vulcan.\n"
+             "Set null for automatic selection. Usa null para volver a la selección automática. "
+             "Returns undo / Devuelve cómo deshacer.",
+             {"version": {"type": ["string", "null"]}, "expected_version": {"type": ["string", "null"]}},
+             ["version"], False),
         ]
         return [{"name": name, "description": description, "annotations": {"readOnlyHint": read},
                  "inputSchema": {"type": "object", "properties": props, "required": required,
@@ -324,4 +369,4 @@ class LocalPrograms(Facet):
 
     def handlers(self):
         return {"hub_programs": self.list_programs, "hub_program_register": self.register,
-                "hub_program_undo": self.undo}
+                "hub_program_undo": self.undo, "hub_vulcan_blender_set": self.set_vulcan_blender}

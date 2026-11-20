@@ -60,6 +60,11 @@ version commands. Detection starts no service, browser, model or application ses
 versions and missing paths are shown explicitly. An automatic scan is cached for five minutes.
 Use **Detect again**, `hub.cmd programs --refresh` or `hub_programs {"refresh":true}` to refresh it.
 
+Use `hub_vulcan_blender_set {"version":"4.3"}` to select an installed Blender release by major and minor version
+for Vulcan. The Hub keeps the setting in its data folder and lists it as **Blender · Vulcan** in Local programs.
+The setting takes effect the next time the Hub launches Vulcan. Pass `null` for automatic selection, or use the
+returned undo call to restore the previous selection if it is still current.
+
 For programs outside discovery, use **Register a program** or call `hub_program_register` with
 `name`, an absolute `path`, `headless` instructions and an optional `version`. This records the
 entry in Hub data. Registering the same values again returns the same entry. To remove it, use

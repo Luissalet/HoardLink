@@ -31,8 +31,15 @@
     const item = element('li', '', 'program-row');
     const about = element('div', '');
     const version = row.version || tr('Versión desconocida', 'Unknown version');
-    const source = row.source === 'manual' ? tr('Manual', 'Manual') : tr('Detección automática', 'Auto-detected');
-    about.append(element('h2', row.name), element('p', row.path ? `${version} · ${source}` : tr('Sin detectar', 'Not detected')));
+    const sources = {
+      manual: tr('Manual', 'Manual'),
+      configured: tr('Versión fijada', 'Pinned version'),
+    };
+    const source = sources[row.source] || tr('Detección automática', 'Auto-detected');
+    const missing = tr('Sin detectar', 'Not detected');
+    const description = row.path ? `${version} · ${source}`
+      : row.source === 'configured' ? `${version} · ${missing}` : missing;
+    about.append(element('h2', row.name), element('p', description));
 
     if (row.source === 'manual') {
       const undo = element('button', tr('Deshacer alta', 'Undo registration'));
