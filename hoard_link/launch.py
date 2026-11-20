@@ -58,6 +58,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -111,12 +112,14 @@ class Service:
     problem: Optional[str] = None    # why it cannot be started on this machine
     install: Optional[str] = None    # where it was found
     port: Optional[int] = None
+    profile: Optional[dict[str, Any]] = None
     stop_argv: Optional[list[str]] = None  # a command's own stop script (stops it even when started elsewhere)
 
     def public(self) -> dict[str, Any]:
         return {"id": self.id, "kind": self.kind, "label": self.label, "capabilities": list(self.capabilities),
                 "url": self.url, "install": self.install, "problem": self.problem,
-                "command": " ".join(self.argv) if self.argv else None}
+                "command": " ".join(self.argv) if self.argv else None,
+                **({"profile": self.profile} if self.profile is not None else {})}
 
 
 # ---------------------------------------------------------------- probes --
@@ -380,6 +383,74 @@ class Launcher:
             self._write_json(self.config_path, cfg)
             return cfg
 
+    def comfy_profiles(self) -> dict[str, Any]:
+        return self.config().get("comfy_profiles") or {}
+
+    def comfy_config(self, service_id: str) -> dict[str, Any]:
+        if service_id.startswith("comfyui:"):
+            return self.comfy_profiles().get(service_id.partition(":")[2], {})
+        return self.config().get("comfyui") or {}
+
+    def register_comfy(self, *, name: str, directory: str, python: str, port: int,
+                       templates: list[str], models: list[str], model_paths_config: str = "",
+                       disable_custom_nodes: bool = False, startup_vram_mb: int = 512) -> dict[str, Any]:
+        if not _ID_RE.fullmatch(name):
+            raise ValueError("Invalid profile name / Nombre de perfil no válido")
+        if isinstance(port, bool) or not 1024 <= port <= 65535 or port == DEFAULT_COMFY_PORT:
+            raise ValueError("Choose a dedicated port above 1023 / Elige un puerto propio mayor que 1023")
+        if isinstance(startup_vram_mb, bool) or not 1 <= startup_vram_mb <= 100_000:
+            raise ValueError("Invalid startup VRAM / Memoria de arranque no válida")
+        if not templates or not all(_ID_RE.fullmatch(t) for t in templates):
+            raise ValueError("Provide template IDs / Indica los identificadores de las plantillas")
+        folder = Path(directory).expanduser().resolve()
+        executable = Path(python).expanduser().resolve()
+        if not (folder / "main.py").is_file() or not (folder / "comfy").is_dir() or not executable.is_file():
+            raise ValueError("ComfyUI folder or Python unavailable / Falta la carpeta de ComfyUI o su Python")
+        extra = str(Path(model_paths_config).expanduser().resolve()) if model_paths_config else ""
+        if extra and not Path(extra).is_file():
+            raise ValueError("Model paths file unavailable / Falta el archivo de rutas de modelos")
+        for model in models:
+            path = Path(model)
+            if not model.strip() or not path.name or (not path.is_absolute() and ".." in path.parts):
+                raise ValueError("Invalid model path / Ruta de modelo no válida")
+        registration = uuid.uuid4().hex
+        sid = f"comfyui:{name}"
+        profile = {"directory": str(folder), "python": str(executable), "port": port,
+                   "templates": list(dict.fromkeys(templates)), "models": list(dict.fromkeys(models)),
+                   "model_paths_config": extra, "disable_custom_nodes": disable_custom_nodes,
+                   "startup_vram_mb": startup_vram_mb}
+        with self._lock:
+            cfg = self.config()
+            profiles = cfg.setdefault("comfy_profiles", {})
+            current = profiles.get(name)
+            if current:
+                if {key: current[key] for key in profile} == profile:
+                    return {"ok": True, "id": sid, "existing": True, "undo": None}
+                raise ValueError("Profile name already registered / El nombre del perfil ya está registrado")
+            if (any(p["port"] == port for p in profiles.values())
+                    or self._owned(f"comfyui@{port}") or _port_open(f"http://127.0.0.1:{port}")):
+                raise ValueError("Profile port is in use / El puerto del perfil está en uso")
+            profiles[name] = {**profile, "registration": registration}
+            self._write_json(self.config_path, cfg)
+        return {"ok": True, "id": sid, "undo": {"tool": "hub_comfy_profile_unregister",
+                "arguments": {"name": name, "expected_registration": registration}}}
+
+    def unregister_comfy(self, name: str, expected_registration: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            cfg = self.config()
+            profiles = cfg.get("comfy_profiles") or {}
+            current = profiles.get(name)
+            if current is None or (expected_registration and current["registration"] != expected_registration):
+                raise ValueError("Profile registration has changed / El registro del perfil ha cambiado")
+            svc = self.get(f"comfyui:{name}")
+            if self._owned(svc.id) or _port_open(svc.health):
+                raise ValueError("Stop the profile before removing it / Para el perfil antes de retirarlo")
+            del profiles[name]
+            self._write_json(self.config_path, cfg)
+            undo = {key: value for key, value in current.items() if key != "registration"}
+        return {"ok": True, "id": svc.id, "undo": {"tool": "hub_comfy_profile_register",
+                "arguments": {"name": name, **undo}}}
+
     def _state(self) -> dict[str, dict[str, Any]]:
         raw = self._read_json(self.state_path)
         return {k: v for k, v in raw.items() if isinstance(v, dict)}
@@ -461,16 +532,40 @@ class Launcher:
         except OSError:
             return ""
 
-    def comfy_service(self, port: int = DEFAULT_COMFY_PORT, gpu: Any = None) -> Service:
+    def comfy_service(self, port: int = DEFAULT_COMFY_PORT, gpu: Any = None,
+                      *, profile: tuple[str, dict[str, Any]] | None = None) -> Service:
         url = f"http://127.0.0.1:{port}"
         svc = Service(id=f"comfyui@{port}", kind="comfyui", label=f"ComfyUI :{port}",
                       capabilities=list(COMFY_CAPABILITIES), url=url, health=url + "/system_stats", port=port)
-        folder, python, problem = self.comfy_install()
+        if profile is not None:
+            profile_name, cfg = profile
+            folder, python = Path(cfg["directory"]), Path(cfg["python"])
+            svc.id = f"comfyui:{profile_name}"
+            svc.label = f"ComfyUI · {profile_name}"
+            svc.capabilities = ["image"]
+            version_path = folder / "comfyui_version.py"
+            version = None
+            try:
+                match = re.search(r"(?m)^__version__\s*=\s*['\x22]([^'\x22]+)", version_path.read_text(encoding="utf-8"))
+                version = match[1] if match else None
+            except (OSError, UnicodeError):
+                pass
+            models = [{"name": Path(model).name, "available": (folder / model).is_file()} for model in cfg["models"]]
+            svc.profile = {"name": profile_name, "version": version, "templates": cfg["templates"], "models": models}
+            problem = None
+            if not ((folder / "main.py").is_file() and (folder / "comfy").is_dir() and python.is_file()):
+                problem = "ComfyUI folder or Python unavailable / Falta la carpeta de ComfyUI o su Python"
+            elif cfg["model_paths_config"] and not Path(cfg["model_paths_config"]).is_file():
+                problem = "Model paths file unavailable / Falta el archivo de rutas de modelos"
+            elif missing := [model["name"] for model in models if not model["available"]]:
+                problem = "Missing models / Faltan modelos: " + ", ".join(missing)
+        else:
+            cfg = self.comfy_config(svc.id)
+            folder, python, problem = self.comfy_install()
         svc.problem = problem
         if folder is None or python is None:
             svc.install = str(folder) if folder else None
             return svc
-        cfg = self.config().get("comfyui") or {}
         flags = self._comfy_flags(folder)
         argv = [str(python), "main.py", "--listen", "127.0.0.1", "--port", str(port)]
         if "--disable-auto-launch" in flags:
@@ -487,6 +582,11 @@ class Launcher:
             if "--database-url" in flags:
                 argv += ["--database-url", "sqlite:///" + (own / "comfyui.db").as_posix()]
         extra = cfg.get("args") or []
+        if profile is not None:
+            if cfg["model_paths_config"]:
+                extra += ["--extra-model-paths-config", cfg["model_paths_config"]]
+            if cfg["disable_custom_nodes"]:
+                extra.append("--disable-all-custom-nodes")
         if isinstance(extra, str):
             extra = shlex.split(extra, posix=not IS_WIN)
         # With "fast disk" a model bigger than the free VRAM is read back from
@@ -538,6 +638,10 @@ class Launcher:
             out.append(svc)
         return out
 
+    def comfy_profile_services(self) -> list[Service]:
+        return [self.comfy_service(profile["port"], profile=(name, profile))
+                for name, profile in self.comfy_profiles().items()]
+
     def services(self, comfy_ports: Optional[list[int]] = None) -> list[Service]:
         ports = [DEFAULT_COMFY_PORT] if comfy_ports is None else list(dict.fromkeys(comfy_ports))
         for sid in self._state():  # anything the family started stays visible
@@ -548,9 +652,18 @@ class Launcher:
                     continue
                 if p not in ports:
                     ports.append(p)
-        return [*(self.comfy_service(p) for p in ports), self.ollama_service(), *self.command_services()]
+        profiles = self.comfy_profile_services()
+        named_ports = {service.port for service in profiles}
+        return [*(self.comfy_service(p) for p in ports if p not in named_ports), *profiles,
+                self.ollama_service(), *self.command_services()]
 
     def get(self, service_id: str, gpu: Any = None) -> Service:
+        if service_id.startswith("comfyui:"):
+            name = service_id.partition(":")[2]
+            profile = self.comfy_profiles().get(name)
+            if profile is None:
+                raise KeyError(service_id)
+            return self.comfy_service(profile["port"], gpu=gpu, profile=(name, profile))
         if service_id.startswith("comfyui@"):
             try:
                 port = int(service_id.split("@", 1)[1])
@@ -558,7 +671,8 @@ class Launcher:
                 raise KeyError(service_id) from None
             if not 1 <= port <= 65535:
                 raise KeyError(service_id)
-            return self.comfy_service(port, gpu=gpu)
+            profile = next(((name, p) for name, p in self.comfy_profiles().items() if p["port"] == port), None)
+            return self.comfy_service(port, gpu=gpu, profile=profile)
         if service_id == "comfyui":
             return self.comfy_service(DEFAULT_COMFY_PORT, gpu=gpu)
         if service_id == "ollama":
@@ -599,8 +713,8 @@ class Launcher:
                   "startable": state in ("down",) and svc.argv is not None})
         return d
 
-    def statuses(self, comfy_ports: Optional[list[int]] = None) -> list[dict[str, Any]]:
-        services = self.services(comfy_ports)
+    def statuses(self, comfy_ports: Optional[list[int]] = None, *, named_only: bool = False) -> list[dict[str, Any]]:
+        services = (self.comfy_profile_services() if named_only else self.services(comfy_ports))
         results: list[Optional[dict[str, Any]]] = [None] * len(services)
 
         def one(i: int, s: Service) -> None:
@@ -625,7 +739,7 @@ class Launcher:
 
     def comfy_gpus(self) -> set[int]:
         return {int(st["gpu"]) for sid, st in self._state().items()
-                if sid.startswith("comfyui@") and st.get("gpu") is not None
+                if sid.startswith(("comfyui@", "comfyui:")) and st.get("gpu") is not None
                 and process_alive(int(st.get("pid") or 0), st.get("created"))}
 
     def pick_gpu(self, exclude: Optional[set[int]] = None) -> Optional[int]:
@@ -645,7 +759,7 @@ class Launcher:
         with self._lock:
             chosen_gpu: Optional[int] = None
             if service_id.startswith("comfyui"):
-                want = gpu if gpu is not None else (self.config().get("comfyui") or {}).get("gpu", "auto")
+                want = gpu if gpu is not None else self.comfy_config(service_id).get("gpu", "auto")
                 if want in (None, "auto", ""):
                     chosen_gpu = self.pick_gpu()
                 else:
@@ -734,14 +848,16 @@ class Launcher:
         with self._lock:
             if service_id == "comfyui":
                 service_id = f"comfyui@{DEFAULT_COMFY_PORT}"
-            if service_id != "ollama" and not service_id.startswith(("comfyui@", "cmd:")):
+            if service_id != "ollama" and not service_id.startswith(("comfyui@", "comfyui:", "cmd:")):
                 service_id = f"cmd:{service_id}"
-            own = self._owned(service_id)
-            state = self._state()
             try:
                 svc = self.get(service_id)
             except KeyError:
                 svc = None
+            if svc is not None:
+                service_id = svc.id
+            own = self._owned(service_id)
+            state = self._state()
             # A configured stop command owns the supervisor as well as the listener.
             # Killing only the listener (or only our recorded launcher) can respawn it.
             if svc is not None and svc.stop_argv:

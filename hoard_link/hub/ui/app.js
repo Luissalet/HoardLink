@@ -650,8 +650,12 @@
         on ? (s.started_by ? `${t("started_by")} ${s.started_by}` : t("started_elsewhere")) : "",
         s.state !== "running" && s.problem ? s.problem : "", s.gpu != null ? `GPU ${s.gpu}` : "", s.log || ""].filter(Boolean).join("\n");
       chip.innerHTML = `<span class="dot"></span><b></b><span class="pcount"></span>`;
-      $("b", chip).textContent = s.label;
+      $("b", chip).textContent = [s.label, s.profile?.version].filter(Boolean).join(" ");
       $(".pcount", chip).textContent = t("sstate")[s.state] || s.state;
+      if (s.profile) {
+        const models = s.profile.models.map(model => model.name);
+        chip.title += ["", s.install, s.profile.templates.join(", "), models.join("\n")].join("\n");
+      }
       const start = document.createElement("button"); start.className = "ghost small pbtn"; start.textContent = t("start"); start.title = t("start_service");
       const stop = document.createElement("button"); stop.className = "ghost small pbtn danger"; stop.textContent = t("stop"); stop.title = t("stop_service");
       start.hidden = !s.startable; stop.hidden = !s.stoppable;

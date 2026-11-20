@@ -509,6 +509,9 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if hub.config.isolated_catalog:
                     return self._json({"ok": True, "isolated": True, "capabilities": {}, "gpus": []})
                 return self._json(hub.backends(force=query.get("force", ["0"])[0] in ("1", "true")))
+            if path == "/api/services/comfy-profiles":
+                items = [] if hub.config.isolated_catalog else hub.launcher.statuses(named_only=True)
+                return self._json({"ok": True, "items": items})
             if path == "/api/services":
                 if hub.config.isolated_catalog:
                     return self._json({"ok": True, "isolated": True, "items": [], "gpus": [], "config_path": ""})

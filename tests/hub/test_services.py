@@ -80,7 +80,8 @@ def test_unknown_service_is_a_409(served):
     assert code == 409 and res["ok"] is False
 
 
-def test_comfy_start_reserves_one_gpu_until_the_owned_process_exits(served, tmp_path, monkeypatch):
+@pytest.mark.parametrize("named", [False, True])
+def test_comfy_start_reserves_one_gpu_until_the_owned_process_exits(served, tmp_path, monkeypatch, named):
     hub, url = served
     monkeypatch.setattr(hub.leases, "_gpu_fn", lambda: [SimpleNamespace(index=1, total_mb=4096, used_mb=0)])
     install = tmp_path / "ComfyUI"
@@ -92,9 +93,27 @@ def test_comfy_start_reserves_one_gpu_until_the_owned_process_exits(served, tmp_
         "p.add_argument('--cuda-device', type=int)\na, _ = p.parse_known_args()\n"
         "assert a.cuda_device == 1\nHTTPServer(('127.0.0.1', a.port), SimpleHTTPRequestHandler).serve_forever()\n",
         encoding="utf-8")
-    hub.launcher.set_config({"comfyui": {"dir": str(install), "python": sys.executable, "startup_vram_mb": 512}})
     port = free_port()
-    args = {"id": f"comfyui@{port}", "gpu": 1, "wait_s": 20}
+    alias = f"comfyui@{port}"
+    if named:
+        (install / "comfyui_version.py").write_text('__version__ = "0.46.0"', encoding="utf-8")
+        profile_file = install / "depth.safetensors"
+        register_args = {"name": "depth", "directory": str(install), "python": sys.executable, "port": port,
+                         "templates": ["qwen21_depth"], "models": [profile_file.name], "startup_vram_mb": 768}
+        registration = tools.call(hub, "hub_comfy_profile_register", register_args)
+        assert registration["ok"]
+        assert tools.call(hub, "hub_comfy_profile_register", register_args)["existing"]
+        assert not tools.call(hub, "hub_comfy_profile_register", {**register_args, "name": "other"})["ok"]
+        assert not hub.service_start(alias, gpu=1)["ok"]
+        _, profiles = _req(url + "/api/services/comfy-profiles")
+        item, = profiles["items"]
+        assert item["state"] == "unavailable"
+        assert item["profile"] == {"name": "depth", "version": "0.46.0", "templates": ["qwen21_depth"],
+                                   "models": [{"name": profile_file.name, "available": False}]}
+        profile_file.touch()
+    else:
+        hub.launcher.set_config({"comfyui": {"dir": str(install), "python": sys.executable, "startup_vram_mb": 512}})
+    args = {"id": alias, "gpu": 1, "wait_s": 20}
     full = hub.leases.request(owner="job", vram_mb=3800, gpu=1)
     try:
         code, denied = _req(url + "/api/services/start", args)
@@ -107,12 +126,22 @@ def test_comfy_start_reserves_one_gpu_until_the_owned_process_exits(served, tmp_
         status = tools.call(hub, "hub_lease_status", {})
         lease, = status["leases"]
         assert (lease["lease_id"], lease["pid"], lease["gpu"], lease["vram_mb"], lease["process_bound"]) == (
-            result["lease_id"], result["pid"], 1, 512, True)
+            result["lease_id"], result["pid"], 1, 768 if named else 512, True)
+        assert lease["purpose"] == ("comfyui:depth" if named else alias)
+        if named:
+            undo = registration["undo"]
+            assert not tools.call(hub, undo["tool"], undo["arguments"])["ok"]
         assert _req(url + "/api/services/start", args)[1]["already"]
         assert len(hub.leases.status()["leases"]) == 1
         assert tools.call(hub, "hub_service_stop", {"id": args["id"], "expected_pid": result["pid"] + 1})["ok"] is False
         assert tools.call(hub, result["undo"]["tool"], result["undo"]["arguments"])["ok"]
         assert hub.leases.status()["leases"] == []
+        if named:
+            restore = tools.call(hub, undo["tool"], undo["arguments"])["undo"]
+            assert tools.call(hub, restore["tool"], restore["arguments"])["ok"]
+            assert not tools.call(hub, undo["tool"], undo["arguments"])["ok"]
+            assert hub.launcher.get(alias).id == "comfyui:depth"
+            assert hub.launcher.get("comfyui").id == "comfyui@8188"
     finally:
         hub.leases.release(full["lease_id"])
         hub.service_stop(args["id"])

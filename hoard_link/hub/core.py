@@ -919,7 +919,7 @@ class Hub:
         self._manual_stop(["service:" + service_id], False)
         service_id = str(service_id or "")
         wait_s = max(0.0, min(float(wait_s or 0), 300.0))
-        if service_id == "comfyui" or service_id.startswith("comfyui@"):
+        if service_id == "comfyui" or service_id.startswith(("comfyui@", "comfyui:")):
             from .service_leases import start_comfy
 
             res = start_comfy(self.launcher, self.leases, service_id, gpu, wait_s,
@@ -951,7 +951,7 @@ class Hub:
             self._manual_stop(["service:" + service_id])
             res = self.launcher.stop(str(service_id or ""))
         if res.get("ok"):
-            if service_id == "comfyui" or service_id.startswith("comfyui@"):
+            if service_id == "comfyui" or service_id.startswith(("comfyui@", "comfyui:")):
                 self.leases.status()  # release the reservation for the exited process
             self._backends_cache = (0.0, None)
             try:

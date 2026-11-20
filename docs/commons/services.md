@@ -351,6 +351,26 @@ keeps (or falls back to) its own code, so a caller can adopt its client first an
 
 Tests: `tests/commons/test_fam_media.py` (48), `test_fam_docs.py` (23), `test_fam_embed.py` (17), `test_fam_services_js.py` (10); the fake hub is `tests/commons/fam_hub.py`.
 
+## Named image engines
+
+`hub_comfy_profile_register` adds an installed ComfyUI profile without starting
+it. Give it a short `name`, `directory`, `python`, a dedicated `port`,
+`templates` it serves and its `models` (paths relative to the installation or
+absolute paths for shared files). Use `model_paths_config` for an existing
+extra-model-paths YAML. `hub_services` shows the installation, version and
+declared model availability alongside the default engine.
+
+Start `comfyui:<name>` with `hub_service_start` to reserve its startup VRAM.
+The process uses separate input, output, temp, user and database locations.
+`hub_service_stop` releases its process-bound lease. Apply the undo from
+registration to remove a stopped profile. Removing one returns the arguments
+needed to register it again.
+
+`hub_comfy_profile_register` registra un motor instalado sin arrancarlo.
+`hub_services` muestra su versión y los modelos declarados. Arranca el
+perfil por nombre con `hub_service_start` y páralo con `hub_service_stop`
+para soltar su reserva. El registro y la retirada devuelven cómo deshacerlos.
+
 ## 11. Hub service discovery and media imports
 
 HoardLink 0.8.1 adds the Services tab and `hub_services_status` (also
