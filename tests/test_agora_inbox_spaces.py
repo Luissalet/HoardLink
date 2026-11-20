@@ -43,7 +43,11 @@ def test_console_scopes_http_mcp_threads_and_worker_context(tmp_path, monkeypatc
         assert environments[-1]['AGORA_SPACE'] == 'project-a'
         assert environments[-1]['HOARD_HUB_URL'] == hub.config.url
         assert not b._worker_rows()
-        assert all('space_id' in tool['inputSchema']['properties'] for tool in facet.tools())
+        schemas = {tool['name']: tool['inputSchema']['properties'] for tool in facet.tools()}
+        for name in facet.handlers_local():
+            assert 'space_id' in schemas[name], name
+        # Machine work tickets use a shared queue, independent of the caller's space.
+        assert 'space_id' not in schemas['hub_work_ticket']
     finally:
         facet.close()
         agora.close()

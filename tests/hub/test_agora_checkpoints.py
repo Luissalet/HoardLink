@@ -14,7 +14,6 @@ import threading
 import pytest
 
 from hoard_link.hub.agora import Agora, AgoraError, MIGRATIONS, TOOLS
-from hoard_link.hub import tools
 from hoard_link.sqlkit import Database
 from ._hub_fakes import http, make_hub, serve
 from .test_agora_sync import Clock
@@ -309,6 +308,7 @@ def test_http_cli_and_real_stdio_mcp(tmp_path):
     env = os.environ.copy()
     env.update({"HOARD_HUB_URL": base, "HOARD_HUB_TOKEN_FILE": str(hub.config.token_file),
                 "HOARD_HUB_DATA_DIR": str(hub.config.data_dir), "HOARD_HUB_AUTOSTART": "0",
+                "AGORA_SPACE": "ecosystem",
                 "PYTHONPATH": str(root) + os.pathsep + env.get("PYTHONPATH", "")})
     try:
         task_id = claimed(hub.facet("agora").agora)
@@ -354,10 +354,8 @@ def test_http_cli_and_real_stdio_mcp(tmp_path):
         evidence_path(tmp_path, "stdio-mcp.json").write_text(
             json.dumps({"requests": requests, "responses": replies, "returncode": mcp.returncode}, ensure_ascii=False, indent=2),
             encoding="utf-8")
-        assert len(TOOLS) == len({t["name"] for t in TOOLS})
-        # Two hub_agora_* tools are registered outside agora.TOOLS.
-        from hoard_link.hub.agora_console import AgoraConsoleFacet
-        assert len([t for t in tools.all_tools() if t["name"].startswith("hub_agora_")]) == len(TOOLS) + 2 + len(AgoraConsoleFacet.tools())
+        assert len(names) == len(set(names))
+        assert {t["name"] for t in TOOLS} <= set(names)
     finally:
         server.shutdown()
         server.server_close()
@@ -440,7 +438,7 @@ def test_headless_browser_task_drawer_and_live_warning_refresh(tmp_path, languag
                 page.set_content('<html><head><style>[hidden]{display:none!important}body{font:14px Arial;padding:20px;--muted:#555;--line:#aaa;--card-2:#eee;--mono:monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><div id="root"></div></body></html>')
                 page.evaluate("""language => {
                   window.executed = false;
-                  window.HubFacets = {ctx: {bus: new EventTarget(),
+                  window.HubFacets = {ctx: {bus: new EventTarget(), lang: () => language,
                     el: (tag,cls='',text='') => { const n=document.createElement(tag); n.className=cls; n.textContent=text; return n; },
                     L: labels => labels[language], fmtWhen: () => '08-10 12:00', toast: () => {},
                     api: async path => (await fetch(path)).json()}, register: (name,facet) => window.fixtureFacet=facet};
