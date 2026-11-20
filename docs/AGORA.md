@@ -39,6 +39,9 @@ Scoped resources compare case-insensitively and accept backslashes (Windows path
 - Claiming a task held by an active agent is refused; a task whose owner has been silent for 6 h can be taken
   with `force` (the thread records it).
 - Locks are all-or-nothing; a conflict answers who holds what, for which task, until when.
+- A task requesting a path can take over an overlapping path lease when its holder's task has an approval for the
+  exact current submission. The old path lease is ceded only when all requested locks can be acquired. This also
+  applies to a directory lease covering the requested path. Uncontested leases and other resource types stay held.
 - Only someone other than the owner reviews. `done` is refused while the review is younger than 2 h or changes
   were requested, unless `force` with a `reason`; finishing without an approved review is recorded as such.
 - Submitting again asks for a new verdict: an approval given to earlier commits is cleared (it stays in the
