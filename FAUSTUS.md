@@ -194,6 +194,8 @@ under System → Integrations, which also reports when the station is running an
 can set their contract test timeout. An agent can close a manually verified merge or reconcile a historical
 fast-forward with the published merge, recording who verified it and why. The station leaves the person's production
 gates to their existing interface.
+Failure comparisons normalize temporary paths and Python object addresses. Integration receipts flag deferred
+reloads when a desktop app is running or has a Hub window open.
 `hub_modules`
 and `hub_module_set` use declared native module switches and return an undo
 request for a change. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any

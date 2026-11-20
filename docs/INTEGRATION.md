@@ -56,9 +56,11 @@ The task retains its owner. Production gates remain a decision for the person.
 
 Runs that share a target checkout wait in submission order and recompute their plans against the current mainline
 when their turn starts. After moving a checkout, the station reloads running local apps launched from that checkout
-before checking the original case. `app_reload` records readiness or the reason the restart was deferred, including
-app leases and work in progress. A reload failure triggers checkout rollback. Undo records `undo_app_reload` for
-apps using the restored checkout. Apps stopped before integration retain their on-demand startup behavior.
+before checking the original case. Running apps that open their own desktop window and apps with an open Hub
+window are left running. The receipt records `desktop_in_use` and System → Integrations shows the deferral.
+`app_reload` also records readiness and other deferral reasons, including app leases and work in progress.
+A reload failure triggers checkout rollback. Undo applies the same rules and records `undo_app_reload`.
+Apps stopped before integration retain their on-demand startup behavior.
 
 After a successful run, the station can remove a delivery worktree containing only ignored build outputs in
 `dist`, dependencies in `node_modules`, TypeScript build metadata and Python bytecode. Tracked changes, other
@@ -100,8 +102,9 @@ Use tests registered on main to define the shared map. Each comparison runs the 
 revision. The closest tracked `conftest.py` below the repository root determines a test's group. Files without
 one are grouped by their top-level directory. Groups larger than 40 files run in sequential batches of up to
 40 files, with the same batches on main and the candidate. Each pytest process can use its own `conftest`
-imports. Matching test identities and assertion signatures within a group
-are known failures. A changed signature is a new failure. Each repository and runner retains its own baseline
+imports. Matching test identities and assertion signatures within a group are known failures. The signature
+normalizes Python object addresses and the checkout, pytest and isolated Hub data paths for that run.
+A changed signature is a new failure. Each repository and runner retains its own baseline
 after integration. A receipt carries group and aggregate results, the baseline commit and the original case result.
 
 The default lane excludes `inference`, `live_model` and `gpu` markers and any inference file in the map.

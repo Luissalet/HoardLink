@@ -79,6 +79,13 @@
         ? t(ctx, "Caso de origen comprobado tras la fusión", "Original case passed after integration")
         : t(ctx, "Falló el caso de origen", "Original case failed")));
     }
+    const reloads = receipt.undo_app_reload ?? receipt.app_reload ?? [];
+    for (const app of reloads) {
+      if (app.reason_code !== "desktop_in_use") continue;
+      content.push(el("p", "", t(ctx,
+        `Se ha aplazado la recarga de ${app.app} mientras está en uso en el escritorio.`,
+        `Reloading ${app.app} was deferred while it is in use on the desktop.`)));
+    }
     if (receipt.merge_commit) {
       const commit = el("p", "", t(ctx, "Commit de fusión ", "Merge commit "));
       commit.append(el("code", "", receipt.merge_commit.slice(0, 12)));
