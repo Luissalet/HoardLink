@@ -37,7 +37,8 @@
     outcome_label: { es: "Resultado", en: "Outcome" }, decision: { es: "Decisión en el hilo", en: "Decision in thread" },
     tasks: { es: "Tareas", en: "Tasks" }, none: { es: "Sin hallazgos todavía.", en: "No findings yet." },
     d_adopt: { es: "adoptar", en: "adopt" }, d_adapt: { es: "adaptar", en: "adapt" }, d_drop: { es: "descartar", en: "drop" },
-    d_needs_luis: { es: "decide Luis", en: "needs Luis" }, round: { es: "ronda", en: "round" },
+    d_needs_luis: { es: "Pendiente de ti", en: "Waiting for you" },
+    d_needs_person: { es: "Pendiente de ti", en: "Waiting for you" }, round: { es: "ronda", en: "round" },
     filed: { es: "archivados", en: "filed" }, done: { es: "Hecho", en: "Done" },
     files_n: { es: "fichero(s)", en: "file(s)" }, commits_n: { es: "commit(s)", en: "commit(s)" },
     notes_n: { es: "nota(s)", en: "note(s)" },
@@ -48,7 +49,7 @@
   };
   const t = (k) => L(S[k] || { es: k, en: k });
   const STATUSES = ["proposed", "challenged", "verified", "rejected"];
-  const DISPOSITIONS = ["adopt", "adapt", "drop", "needs_luis"];
+  const DISPOSITIONS = ["adopt", "adapt", "drop", "needs_person"];
   const cache = new Map();      // detail key -> last debates payload (repaint without flicker)
   const drafts = new Map();     // draft id -> text typed by the person (survives detail rebuilds)
   const inflight = new Set();
@@ -105,7 +106,7 @@
   }
 
   async function post(detail, op, body) {
-    const r = await H.ctx.api("/api/agora/" + op, { agent: "luis", space_id: spaceOf(detail), ...body });
+    const r = await H.ctx.api("/api/agora/" + op, { space_id: spaceOf(detail), ...body });
     if (!r || !r.ok) { toast((r && r.error) || "error", "err"); return null; }
     return r;
   }
@@ -152,7 +153,7 @@
     const id = `deb-${debate.id}-f${f.id}`;
     const ta = draft(id, "textarea", t("note"));
     const row = el("div", "ag-fnd-btns");
-    const own = f.author === "luis";   // the person's own finding: only withdrawing it makes sense
+    const own = f.author === H.ctx.agoraPerson?.id;   // the person's own finding: only withdrawing it makes sense
     for (const op of own ? ["reject"] : ["verify", "challenge", "reject"]) {
       const b = el("button", op === "verify" ? "small primary" : "small", own ? t("withdraw") : t(op));
       b.dataset.op = op; b.dataset.finding = String(f.id);
@@ -197,7 +198,7 @@
     }
     if (debate.status === "open") {
       // stances on others' findings; on the person's own, withdrawing it (once withdrawn there is nothing left to do)
-      if (f.author !== "luis" || f.status !== "rejected") card.appendChild(stanceBox(detail, debate, f, rerender));
+      if (f.author !== H.ctx.agoraPerson?.id || f.status !== "rejected") card.appendChild(stanceBox(detail, debate, f, rerender));
       card.appendChild(toggle(t("amend"), `deb-${debate.id}-f${f.id}-amend`, () => amendForm(detail, debate, f, rerender)));
     }
     return card;
@@ -213,7 +214,7 @@
     const ev = draft(base + "-ev", "textarea", t("more_evidence"));
     const disp = el("select");
     for (const d of DISPOSITIONS) { const o = el("option", "", t("d_" + d)); o.value = d; disp.appendChild(o); }
-    disp.value = drafts.get(base + "-disp") || f.disposition;
+    disp.value = drafts.get(base + "-disp") || (f.disposition === "needs_luis" ? "needs_person" : f.disposition);
     disp.onchange = () => drafts.set(base + "-disp", disp.value);
     const go = el("button", "small primary", t("save_amend"));
     go.onclick = async () => {

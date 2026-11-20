@@ -1,6 +1,6 @@
 import {ArrowUpRight, Scale} from 'lucide-react';
 import {useEffect,useState} from 'react';
-import {decisionUrl,loadHistory,loadPending,type DecisionRecord,type PendingDecision} from '../../../hoard_link/hub/ui/production_decisions_data.js';
+import {decisionHeading,decisionUrl,loadHistory,loadPending,type DecisionRecord,type PendingDecision} from '../../../hoard_link/hub/ui/production_decisions_data.js';
 import {api,openHub,previewSource} from './api';
 
 const es = (localStorage.getItem('hub.lang') || navigator.language).startsWith('es');
@@ -33,7 +33,7 @@ export function useProductionDecisions(open: boolean) {
 
 export function DecisionButton({count, open, toggle}: {count?: number; open: boolean; toggle: () => void}) {
   return <button type="button" className="console-decisions-toggle" aria-pressed={open} onClick={toggle}>
-    <Scale size={15} aria-hidden="true" /><span>{tr('Decisiones pendientes', 'Pending decisions')}</span>
+    <Scale size={15} aria-hidden="true" /><span>{tr('Tus decisiones pendientes', 'Your pending decisions')}</span>
     {!!count && <strong aria-label={tr(`${count} decisiones pendientes`, `${count} pending decisions`)}>{count}</strong>}
   </button>;
 }
@@ -53,7 +53,7 @@ export function ProductionDecisions({data, open}: {data: ReturnType<typeof usePr
   const [openingError,setOpeningError] = useState('');
   if (!open && !state?.rows.length && !state?.incomplete) return null;
   return <section className="console-decisions" data-expanded={open || undefined} aria-labelledby="console-pending-title">
-    <h2 id="console-pending-title">{tr('Decisiones pendientes', 'Pending decisions')}</h2>
+    <h2 id="console-pending-title">{tr('Tus decisiones pendientes', 'Your pending decisions')}</h2>
     {state?.rows.map(row => (
       <a key={row.key} className="console-decision-link" href={decisionUrl(row)} target="_blank" rel="noopener"
         onClick={event => void openHub(event, row.key).catch(error => setOpeningError(error.message))}>
@@ -75,7 +75,7 @@ export function ProductionDecisions({data, open}: {data: ReturnType<typeof usePr
       <h2>{tr('Decisiones de producción registradas', 'Production decision history')}</h2>
       {historyError && <p role="status">{tr('No se ha podido consultar el registro de producción.', 'Production decision history could not be loaded.')}</p>}
       {history?.map(row => <article key={row.id}>
-        <strong>{tr('Decisión de Luis', 'Luis’s decision')} ({new Date(row.created * 1000).toLocaleDateString(es ? 'es-ES' : 'en-GB')})</strong>
+        <strong>{decisionHeading(row, es ? 'es' : 'en')}</strong>
         <p>{row.title}</p>
         <small>{[row.order, row.variant, row.decision === 'keep' ? tr('Conservado','Kept') : row.draft ? tr('Descartado','Discarded') : tr('Cancelado','Cancelled')].filter(Boolean).join(' · ')}</small>
         {row.note && <p>{row.note}</p>}

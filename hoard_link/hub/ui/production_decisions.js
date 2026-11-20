@@ -1,4 +1,4 @@
-import {decisionUrl, loadHistory, loadPending} from './production_decisions_data.js';
+import {decisionHeading, decisionUrl, loadHistory, loadPending} from './production_decisions_data.js';
 
 const {api, el, lang, bus} = window.HubFacets.ctx;
 const tr = (es, en) => lang() === 'es' ? es : en;
@@ -78,7 +78,7 @@ export function mount(root, space, {archive = false, count, hideEmpty = false, d
       pendingSignature = signature;
       waiting.hidden = hideEmpty && !state.rows.length && !state.incomplete;
       waiting.replaceChildren();
-      if (!dedicated) waiting.append(heading(tr('Decisiones pendientes', 'Pending decisions')));
+      if (!dedicated) waiting.append(heading(tr('Tus decisiones pendientes', 'Your pending decisions')));
       for (const row of state.rows) waiting.append(pendingRow(row));
       if (state.incomplete) waiting.append(el('p', 'hint', tr('No se han podido consultar todas las decisiones pendientes.', 'Some pending decisions could not be loaded.')));
       else if (!state.rows.length) waiting.append(el('p', 'hint', tr('No tienes decisiones pendientes.', 'You have no pending decisions.')));
@@ -95,8 +95,7 @@ export function mount(root, space, {archive = false, count, hideEmpty = false, d
       for (const row of rows || []) {
         const card = el('article', 'hub-decision-record');
         const verdict = row.decision === 'keep' ? tr('Conservado', 'Kept') : row.draft ? tr('Descartado', 'Discarded') : tr('Cancelado', 'Cancelled');
-        const date = new Date(row.created * 1000).toLocaleDateString(lang() === 'es' ? 'es-ES' : 'en-GB');
-        card.append(el('strong', '', tr(`Decisión de Luis (${date})`, `Luis’s decision (${date})`)),
+        card.append(el('strong', '', decisionHeading(row, lang())),
           el('span', '', row.title), el('small', '', [row.order, row.variant, verdict].filter(Boolean).join(' · ')));
         if (row.note) card.append(el('p', '', row.note));
         records.append(card);

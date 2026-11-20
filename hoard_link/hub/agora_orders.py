@@ -414,7 +414,7 @@ class _Journal:
         self.rows.append({"table": table, "where": where or {_KEYS[table]: key}, "row": None})
 
     def save(self) -> Optional[str]:
-        if self.agent == _ag().PERSON or not (self.rows or self.created_tasks or self.task_status or self.task_deps or self.task_metadata):
+        if self.agent == _person_id(self.ag) or not (self.rows or self.created_tasks or self.task_status or self.task_deps or self.task_metadata):
             return None
         if any(change["table"] in ("agora_order_budgets", "agora_order_attempts") for change in self.rows):
             for change in self.rows:
@@ -698,6 +698,16 @@ def order(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "order": out}
 
 
+def _person_id(self: Any) -> str:
+    return getattr(self, "person_id", None) or _ag().PERSON
+
+
+def _member_name(self: Any, agent: str) -> str:
+    if agent == _person_id(self) and (name := getattr(self, "person_name", "")):
+        return name
+    return str(self.db.scalar("SELECT name FROM agents WHERE id=?", (agent,), "") or "").strip()
+
+
 def _decisions(self: Any, order_id: Optional[int], limit: int = 200) -> list[dict[str, Any]]:
     sql = ("SELECT d.*, p.title AS piece_title, p.kind AS piece_kind FROM agora_order_decisions d "
            "LEFT JOIN agora_pieces p ON p.id=d.piece_id WHERE d.space_id=?")
@@ -706,7 +716,16 @@ def _decisions(self: Any, order_id: Optional[int], limit: int = 200) -> list[dic
         sql += " AND d.order_id=?"
         params.append(order_id)
     rows = self.db.query(sql + " ORDER BY d.id DESC LIMIT ?", (*params, limit))
-    return [{**dict(r), "situation": _load(r["situation"], {})} for r in rows]
+    decisions = []
+    names: dict[str, str] = {}
+    for row in rows:
+        situation = _load(row["situation"], {})
+        # Before receipts stored the actor, only the person's pages could write them.
+        actor = situation.get("decided_by") or _person_id(self)
+        if actor not in names:
+            names[actor] = _member_name(self, actor)
+        decisions.append({**dict(row), "situation": situation, "decided_by": {"id": actor, "name": names[actor]}})
+    return decisions
 
 
 def order_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:
@@ -927,7 +946,7 @@ def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                     lines.append("Entrega: " + ", ".join(_load(fields["produces"], [])))
                 if inputs:
                     lines.append("Piezas de entrada: " + ", ".join(f"#{p}" for p in inputs))
-                lines.append("El encargo entero, con las piezas que conservó Luis: hub_agora_job con este task_id.")
+                lines.append("El encargo entero, con las piezas que conservó la persona: hub_agora_job con este task_id.")
                 body = _txt(raw.get("body"), 20000, "body")
                 assignee = _assignee(raw.get("assignee"))
                 added = self.task_add({"agent": agent, "_person": bool(a.get("_person")), "title": title,
@@ -1194,7 +1213,7 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
         if task:
             task = self._task_row(target)
             where = ", ".join(f"{k} {v}" for k, v in (("vista", view), ("pose", pose), ("segundo", at), ("paso", step)) if v)
-            who = "Luis cancela" if source == "gate" else f"{agent} devuelve"
+            who = f"{_member_name(self, agent) or agent} cancela" if source == "gate" else f"{agent} devuelve"
             text = (f"{who} la pieza #{piece['id']} «{piece['title']}» (revisión {piece.get('revision', 1)})"
                     + (f" ({where})" if where else "") + f": {note}"
                     + (f"\nEsperado: {expected}" if expected else "") + (f"\nObservado: {observed}" if observed else "")
@@ -1384,7 +1403,7 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 alternatives.append(dict(p))
         situation = {"order": {"id": order_row["id"], "title": order_row["title"], "status": order_row["status"]},
                      "deadline": order_row["deadline"], "gate": {"id": gate["id"], "title": gate["title"]},
-                     "alternatives": alternatives}
+                     "alternatives": alternatives, "decided_by": agent}
         result = []
         for pid in targets:
             piece = _piece_row(self, pid)
