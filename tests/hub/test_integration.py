@@ -454,6 +454,78 @@ def test_integrate_and_undo_exact_approved_delivery(delivery, tmp_path, monkeypa
         agora.close()
 
 
+def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tmp_path, monkeypatch):
+    from threading import Event
+
+    repo, base, first_head, _ = delivery
+    second = tmp_path / "next"
+    git.git(repo, "worktree", "add", "-b", "next", str(second), base)
+    write(second, "second.py", "VALUE = 2\n")
+    second_head = commit(second, "Add second feature", "second.py")
+    agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
+    app = SimpleNamespace(id="fixture", launch=SimpleNamespace(cwd=str(repo)))
+    reloaded = []
+
+    def restart(app_id, *, automatic):
+        assert app_id == app.id and automatic
+        reloaded.append(git.git_text(repo, "rev-parse", "HEAD"))
+        return {"ok": True, "ready": True, "pid": len(reloaded)}
+
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)), apps=[app],
+                          app_status=lambda app, **kwargs: {"state": "running", "stoppable": True}, restart=restart,
+                          automation_blocked=lambda app_id: False, facet=lambda name: SimpleNamespace(agora=agora))
+    facet = IntegrationFacet(hub)
+    monkeypatch.setattr(checks, "SUITE_LOCK", tmp_path / "local-slot")
+    first_started, release = Event(), Event()
+    original = facet._run_checks
+
+    def checks_with_pause(*args, **kwargs):
+        if not first_started.is_set():
+            first_started.set()
+            assert release.wait(10)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(facet, "_run_checks", checks_with_pause)
+
+    def submit(branch, head):
+        task = agora.task_add({"agent": "owner", "title": branch, "repo": repo.name})["task"]
+        agora.task_claim({"agent": "owner", "task_id": task["id"]})
+        args = {"agent": "owner", "task_id": task["id"]}
+        agora.task_submit({**args, "branch": branch, "commits": [head], "summary": "Test-Paths: tests/test_station.py"})
+        agora.task_review({"agent": "reviewer", "task_id": task["id"], "verdict": "approve",
+                           "expected_submission_revision": 1, "body": "Reviewed exact branch."})
+        return {**args, "revision": 1, "merge": True}
+
+    try:
+        first = submit("delivery", first_head)
+        next_args = submit("next", second_head)
+        case = "tests/test_station.py::test_station"
+        assert facet.inspect(next_args)["missing_live_tests"] == [repo.name]
+        next_args["live_tests"] = {repo.name: case}
+        assert facet.inspect(next_args)["plan"]["live_test"] == case
+        first_id = facet.run({**first, "live_test": case})["receipt"]["id"]
+        assert first_started.wait(10)
+        second_id = facet.run(next_args)["receipt"]["id"]
+        assert facet.status({"id": second_id})["receipt"]["state"] == "queued"
+        release.set()
+        deadline = time.monotonic() + 45
+        while facet.active and time.monotonic() < deadline:
+            time.sleep(0.05)
+        one, two = (facet.status({"id": run})["receipt"] for run in (first_id, second_id))
+        assert one["state"] == "integrated", one
+        assert two["state"] == "integrated", two
+        assert two["plan"]["base"] == one["merge_commit"]
+        assert two["app_reload"][0]["state"] == "reloaded"
+        assert reloaded == [one["merge_commit"], two["merge_commit"]]
+        undo = facet.undo({"id": second_id, "agent": "owner"})["receipt"]
+        assert undo["undo_app_reload"][0]["state"] == "reloaded"
+        assert reloaded[-1] == one["merge_commit"]
+    finally:
+        release.set()
+        facet.close()
+        agora.close()
+
+
 @pytest.mark.parametrize("regression", [False, True])
 def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, monkeypatch, regression):
     first, base, head, tree = delivery
