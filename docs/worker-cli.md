@@ -42,8 +42,16 @@ for `GET /api/apps/<id>`. Use the named `hub_app_status` tool to include the log
 Open **System → Capabilities → Local programs** in the Hub. The page and `hub_programs` show the
 detected path, version when available and a headless usage example. When a command example starts
 with a program name, substitute the reported path if the program is outside `PATH`. The Playwright
-path is its Python interpreter. For ComfyUI the registry shows the entry script and interpreter and
-refers to the Hub's service controls for GPU placement.
+path is its Python interpreter. For ComfyUI, discovery and the Hub's service controls look in the same
+locations, including portable installs under nearby `Tools` directories. An explicit `backends.json`
+or `COMFYUI_DIR` location takes precedence.
+
+Use `hub_service_start` with `id: "comfyui@<port>"` and the physical `gpu` index, and
+`hub_service_stop` with the same ID when done. To coordinate physical GPU use, request the GPU
+through `hub_lease_request` before starting and release the reservation with `hub_lease_release`
+after stopping. Apps that already acquire a lease for each render need enough unreserved memory to
+obtain their own lease when they use the same arbiter. A non-default port uses separate input,
+output, temp, user and database paths on versions supporting the corresponding flags.
 
 The inventory reads standard installation locations, nearby `Tools` directories, the Hub's
 ComfyUI settings, Python interpreters used by app launch specifications and virtual environments

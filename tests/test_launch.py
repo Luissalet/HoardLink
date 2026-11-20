@@ -31,7 +31,7 @@ def home(tmp_path: Path, monkeypatch) -> Path:
 
 
 def _fake_comfy(root: Path, flags=("--disable-auto-launch", "--preview-method", "--cuda-device", "--output-directory",
-                                    "--temp-directory", "--user-directory", "--database-url")) -> Path:
+                                    "--temp-directory", "--input-directory", "--user-directory", "--database-url")) -> Path:
     folder = root / "ComfyUI"
     (folder / "comfy").mkdir(parents=True)
     (folder / "main.py").write_text("print('hi')\n", encoding="utf-8")
@@ -63,12 +63,16 @@ def test_comfy_found_from_config_with_isolated_extra_port(home, tmp_path):
     assert main.argv[1:6] == ["main.py", "--listen", "127.0.0.1", "--port", "8188"]
     assert "--cuda-device" in main.argv and main.argv[main.argv.index("--cuda-device") + 1] == "2"
     assert "--output-directory" not in main.argv  # the default instance keeps ComfyUI's own folders
+    assert "--input-directory" not in main.argv
     assert main.argv[-1] == "--lowvram"
     assert main.env["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
     extra = ln.comfy_service(8191)
     assert "--cuda-device" not in extra.argv
     out = extra.argv[extra.argv.index("--output-directory") + 1]
     assert Path(out) == home / "backends" / "comfyui-8191" / "output"
+    assert Path(extra.argv[extra.argv.index("--input-directory") + 1]) == (
+        home / "backends" / "comfyui-8191" / "input"
+    )
     assert any(a.startswith("sqlite:///") and a.endswith("comfyui-8191/comfyui.db") for a in extra.argv)
 
 
@@ -78,6 +82,7 @@ def test_comfy_flags_only_when_the_install_knows_them(home, tmp_path):
     ln.set_config({"comfyui": {"dir": str(folder)}})
     svc = ln.comfy_service(8189)
     assert "--database-url" not in svc.argv and "--preview-method" not in svc.argv
+    assert "--input-directory" not in svc.argv
 
 
 def test_comfy_offloads_over_ram_not_disk(home, tmp_path):
