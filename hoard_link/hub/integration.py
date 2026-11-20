@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from subprocess import TimeoutExpired
 from threading import Lock
 from types import SimpleNamespace
 from uuid import uuid4
@@ -20,7 +21,10 @@ from . import integration_checks as checks
 from . import integration_git as repo_git
 from . import integration_receipt
 from .agora import AgoraError, SpaceError, normalize_resource
+from .config import REPO_DIR
 from .facets import Facet
+from .integration_closure import closure_snapshot, restore_closure
+from .integration_runtime import IntegrationRuntime
 
 
 API = "/api/integration"
@@ -160,8 +164,10 @@ class IntegrationFacet(Facet):
         self.lock = Lock()
         self.active = {}
         self.cancelled = set()
+        self.runtime = None
 
     def start(self):
+        self.runtime = IntegrationRuntime(REPO_DIR)
         running = {"queued", "waiting_for_suite_slot", "testing_main", "testing_candidate", "testing_inference",
                    "integrating", "prepared_checkout", "moved_checkout", "restored_checkout", "checking_live_case",
                    "saving_baseline", "cleaning_delivery", "delivery_retained", "worktree_removed", "branch_removed",
@@ -239,6 +245,7 @@ class IntegrationFacet(Facet):
         return repo, {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
                       "branch": task["branch"], "commits": commits, "delta": sorted(delta), "tests": files, "live_test": live,
                       "test_paths": declared, "test_paths_source": "submission" if from_submission else "integrator",
+                      "contract_timeout_seconds": checks.contract_timeout(config),
                       "test_roots": checks.test_roots(files["contract"] + files["inference"], tracked)}
 
     def _deliveries(self, agora, task, args, *, inspect=False):
@@ -295,7 +302,8 @@ class IntegrationFacet(Facet):
                                 "ORDER BY updated DESC LIMIT 10", (plan["repo_ref"], agora.space_id, task["id"]))
         return {"ok": True, "plan": plan, "baseline": read_json(self._baseline(repo), {}),
                 "plans": [plan for _, plan, _ in deliveries], "repositories": names,
-                "nearby_deliveries": [dict(row) for row in nearby]}
+                "nearby_deliveries": [dict(row) for row in nearby],
+                "runtime": self.runtime.status() if self.runtime else None}
 
     def run(self, args):
         if any(type(args.get(flag, False)) is not bool for flag in ("merge", "inference")):
@@ -322,6 +330,8 @@ class IntegrationFacet(Facet):
                        "space_id": agora.space_id, "agent": agent, "plan": plan, "merge": merge,
                        "state": "queued", "machine": "spark" if args.get("spark_repo") else "local",
                        "created": time.time(), "events": []}
+            if self.runtime:
+                receipt["runtime"] = self.runtime.status()
             receipt["undo"] = self._undo_request(receipt)
             if len(deliveries) > 1:
                 receipt["repositories"] = [
@@ -345,6 +355,8 @@ class IntegrationFacet(Facet):
                                family=manifest.get("x-family", {}))
 
     def _run_checks(self, repo, work, test_files, receipt, *, base, ref, lane="contract", remote=None, empty_ok=False):
+        timeout = (receipt["plan"]["contract_timeout_seconds"] if lane in ("contract", "live")
+                   else checks.TIMEOUT)
         groups = {}
         for item in test_files:
             file = item.split("::", 1)[0]
@@ -358,8 +370,13 @@ class IntegrationFacet(Facet):
                          if (work / item.split("::", 1)[0]).is_file()]
                 report = self._record_path(receipt).parent / f"{lane}-{ref}-{root_index}-{batch_index}.xml"
                 key = f"{root} [{batch_index + 1}]" if len(files) > checks.BATCH_SIZE else root
-                results[key] = checks.suite(self.hub, repo, work, batch, report, lane, base=base, ref=ref,
-                                            remote=remote, empty_ok=empty_ok or len(groups) > 1 or not batch)
+                try:
+                    results[key] = checks.suite(self.hub, repo, work, batch, report, lane, base=base, ref=ref,
+                                                remote=remote, empty_ok=empty_ok or len(groups) > 1 or not batch,
+                                                timeout=timeout)
+                except TimeoutExpired as exc:
+                    receipt["test_timeout"] = {"group": key, "commit": ref[:12], "seconds": timeout}
+                    raise repo_git.IntegrationError(f"{lane} tests in {key} at {ref[:12]} exceeded {timeout} s") from exc
         return checks.combine(results)
 
     def _work(self, args, deliveries, task, receipt):
@@ -550,13 +567,7 @@ class IntegrationFacet(Facet):
             cleanup["removed_branch"] = True
             update("branch_removed")
     def _close_delivery(self, agora, task, receipt, rows):
-        receipt["before_close"] = {"task": {key: task[key] for key in
-                                   ("status", "commits", "result", "review_state", "closed_at")},
-                                   "thread": dict(agora.db.one(
-                                       "SELECT status,resolution,resolved_by FROM threads WHERE id=?",
-                                       (task["thread_id"],))),
-                                   "locks": [dict(row) for row in agora.db.query(
-                                       "SELECT * FROM locks WHERE task_id=?", (task["id"],))]}
+        receipt["before_close"] = closure_snapshot(agora, task)
         note = f"Integración {receipt['id']} · entrega r{receipt['revision']}.\n"
         note += "\n".join(f"{row['plan']['repo']} · {row['merge_commit']} · {row['plan']['live_test']}. "
                             f"{row['cleanup'].get('retained') or 'Rama de entrega retirada.'}" for row in rows)
@@ -576,7 +587,8 @@ class IntegrationFacet(Facet):
 
     def status(self, args):
         receipt = self._read_receipt(self._path(args.get("id")))
-        return {"ok": receipt is not None, "receipt": receipt}
+        return {"ok": receipt is not None, "receipt": receipt,
+                "runtime": self.runtime.status() if self.runtime else None}
 
     def reconcile(self, args):
         path = self._path(args.get("id"))
@@ -587,11 +599,13 @@ class IntegrationFacet(Facet):
                 raise repo_git.IntegrationError("Unknown integration receipt in this space")
             if receipt["id"] in self.active.values():
                 raise repo_git.IntegrationError("Wait for the integration to finish")
-            agent, _ = agora._owned({**args, "task_id": receipt["task_id"]}, superior=True)
+            agent = agora._agent(args.get("agent"))
             receipt, inverse = integration_receipt.reconcile(agora, agent, receipt, args)
-        return {"ok": True, "receipt": receipt,
-                "undo": {"tool": "hub_integration_reconcile", "arguments": {
-                    "id": receipt["id"], "agent": agent, "space_id": agora.space_id, **inverse}}}
+        result = {"ok": True, "receipt": receipt}
+        if inverse:
+            result["undo"] = {"tool": "hub_integration_reconcile", "arguments": {
+                "id": receipt["id"], "agent": agent, "space_id": agora.space_id, **inverse}}
+        return result
 
     def undo(self, args):
         path = self._path(args.get("id"))
@@ -714,13 +728,7 @@ class IntegrationFacet(Facet):
                 self._check_undo_task(agora, receipt)
                 task = agora._task_row(receipt["task_id"])
                 previous = receipt["before_close"]
-                values = previous["task"]
-                agora.db.execute("UPDATE tasks SET status=?, commits=?, result=?, review_state=?, closed_at=?, updated=? "
-                                 "WHERE id=?", (values["status"], json.dumps(values["commits"]),
-                                 values["result"], values["review_state"], values["closed_at"], agora.clock(), task["id"]))
-                thread = previous["thread"]
-                agora.db.execute("UPDATE threads SET status=?, resolution=?, resolved_by=? WHERE id=?",
-                                 (thread["status"], thread["resolution"], thread["resolved_by"], task["thread_id"]))
+                restore_closure(agora, task, previous)
                 for lock in previous["locks"]:
                     agora._acquire(lock["owner"], [lock["resource"]], task["id"], lock["ttl_s"], lock["note"])
                 agora._system(task, f"Se ha deshecho la integración {receipt['id']}.", agent)
@@ -741,7 +749,8 @@ class IntegrationFacet(Facet):
             return {"ok": bool(repo), "baseline": baseline}
         receipts = [read_json(path, {}) for path in self.root.glob("*/receipt.json")]
         receipts.sort(key=lambda row: row.get("created", 0), reverse=True)
-        return {"ok": True, "receipts": [self._summary(row) for row in receipts[:30] if row]}
+        return {"ok": True, "receipts": [self._summary(row) for row in receipts[:30] if row],
+                "runtime": self.runtime.status() if self.runtime else None}
 
     @staticmethod
     def _summary(row):
@@ -782,8 +791,8 @@ class IntegrationFacet(Facet):
                     ("run", "Check or integrate a delivery. Comprobar o fusionar una entrega.", write,
                      ["task_id", "revision", "agent"], False),
                     ("status", "Read an integration receipt. Ver un recibo de integración.", {"id": text}, ["id"], True),
-                    ("reconcile", "Record a verified merge after an old fast-forward. Corregir el recibo de un avance rápido.",
-                     {"id": text, "agent": text, "space_id": text, "repo": text, "commit": text,
+                    ("reconcile", "Record a verified merge and reason. Corregir un recibo con la fusión verificada y el motivo.",
+                     {"id": text, "agent": text, "space_id": text, "repo": text, "commit": text, "reason": text,
                       "restore": {"type": "boolean"}}, ["id", "agent"], False),
                     ("undo", "Undo an integration. Deshacer una integración.",
                      {"id": text, "agent": text, "space_id": text}, ["id", "agent"], False),

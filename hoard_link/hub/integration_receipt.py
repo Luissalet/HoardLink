@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from .agora import _txt
 from .integration_closure import published_merge
 from .integration_git import IntegrationError
 
@@ -51,7 +52,10 @@ def reconcile(agora, agent, receipt, args):
         raise IntegrationError("The receipt has no correction to undo")
     if restoring:
         patch = stored
+        if patch.get("agent") != agent:
+            agora._owned({**args, "agent": agent, "task_id": task["id"]}, superior=True)
     else:
+        reason = _txt(args.get("reason"), 2000, "reason", required=True)
         selected = [(i, row) for i, row in enumerate(rows) if row["plan"]["repo_ref"] == args.get("repo")]
         if len(selected) != 1:
             raise IntegrationError("Choose the registered repository from the receipt")
@@ -66,10 +70,11 @@ def reconcile(agora, agent, receipt, args):
                  if path and isinstance(ref, str) else None)
         if not proof:
             raise IntegrationError("The replacement must be the exact merge of the recorded base and delivery on main")
-        patch = {"index": index, "repo": plan["repo_ref"], "before": old, "after": proof[0],
-                 "original_review_state": stored["original_review_state"] if stored else task["review_state"]}
-        if stored and stored != patch:
+        change = {"index": index, "repo": plan["repo_ref"], "before": old, "after": proof[0]}
+        if stored and any(stored[key] != value for key, value in change.items()):
             raise IntegrationError("Undo the existing correction before choosing a different one")
+        patch = stored or {**change, "agent": agent, "reason": reason, "at": agora.clock(),
+                           "original_review_state": task["review_state"]}
     revised = corrected_close(close, patch)
     expected = revised if stored else close
     desired = close if restoring else revised
@@ -82,11 +87,10 @@ def reconcile(agora, agent, receipt, args):
             or any(task[key] != value for key, value in expected.items())):
         raise IntegrationError("The Agora task no longer matches the receipt")
     thread = agora._thread_row(task["thread_id"])
-    agora._may_close(thread, agent, "correct the integration receipt")
     if thread["status"] != "resolved" or thread["resolution"] != expected["result"]:
         raise IntegrationError("The task thread no longer matches the receipt")
     if stored and not restoring:
-        return apply_correction(receipt, stored), {"restore": True}
+        return apply_correction(receipt, stored), None
     if restoring:
         agora.db.execute("DELETE FROM integration_receipt_corrections WHERE receipt_id=?", (receipt["id"],))
     else:
@@ -98,7 +102,12 @@ def reconcile(agora, agent, receipt, args):
     agora.db.execute("UPDATE threads SET resolution=?, updated=? WHERE id=?",
                      (desired["result"], now, task["thread_id"]))
     before, after = (patch["after"], patch["before"]) if restoring else (patch["before"], patch["after"])
-    agora._system(task, f"Recibo {receipt['id']} · {patch['repo']} · {before} → {after}.", agent)
+    action = "Corrección deshecha" if restoring else "Corrección verificada"
+    note = f"{action} · recibo {receipt['id']} · {patch['repo']} · {before} → {after}."
+    if patch.get("reason"):
+        note += f"\n\n{patch['reason']}"
+    agora._system(task, note, agent)
     if restoring:
-        return receipt, {"repo": patch["repo"], "commit": patch["after"]}
+        return receipt, {"repo": patch["repo"], "commit": patch["after"],
+                         "reason": patch.get("reason") or "Restauración de una corrección verificada."}
     return apply_correction(receipt, patch), {"restore": True}

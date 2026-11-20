@@ -33,6 +33,12 @@
     return t(ctx, ...(labels[value] || labels.integrating));
   }
 
+  function correctionNote(ctx, correction) {
+    return ctx.el("p", "", t(ctx,
+      `Corrección verificada por ${correction.agent} (${correction.repo}). ${correction.reason}`,
+      `Correction verified by ${correction.agent} (${correction.repo}). ${correction.reason}`));
+  }
+
   function renderReceipt(ctx, target, receipt) {
     if (receipt.repositories?.length) {
       const sections = receipt.repositories.map(row => {
@@ -42,12 +48,17 @@
         renderReceipt(ctx, body, row);
         return section;
       });
-      if (receipt.error) sections.push(ctx.el("p", "muted", receipt.error));
+      if (receipt.correction?.agent) sections.push(correctionNote(ctx, receipt.correction));
+      if (receipt.error && !receipt.repositories.some(row => row.test_timeout &&
+        receipt.error === `${row.plan.repo}: ${row.error}`)) {
+        sections.push(ctx.el("p", "muted", receipt.error));
+      }
       target.replaceChildren(...sections);
       return;
     }
     const {el} = ctx;
     const content = [];
+    if (receipt.correction?.agent) content.push(correctionNote(ctx, receipt.correction));
     if (receipt.comparison) {
       const {main, candidate, known, new: regressions} = receipt.comparison;
       content.push(el("p", "", t(ctx,
@@ -87,7 +98,11 @@
       }
     }
     if (receipt.error) {
-      const error = el("p", "muted", receipt.error);
+      const timeout = receipt.test_timeout;
+      const message = timeout ? t(ctx,
+        `Las pruebas de ${timeout.group} en ${timeout.commit} superaron el límite de ${timeout.seconds} s.`,
+        `Tests in ${timeout.group} at ${timeout.commit} exceeded the ${timeout.seconds} s limit.`) : receipt.error;
+      const error = el("p", "muted", message);
       error.style.overflowWrap = "anywhere";
       content.push(error);
     }
@@ -110,12 +125,22 @@
       const result = await ctx.api(api);
       if (id !== generation) return;
       if (!result.ok) throw new Error();
-      const rows = JSON.stringify(result.receipts);
+      const rows = JSON.stringify([result.receipts, result.runtime]);
       if (rows === lastRows) return;
       lastRows = rows;
       const open = new Set([...root.querySelectorAll("details[open]")].map(row => row.dataset.id));
+      const messages = [];
+      if (result.runtime?.stale) {
+        const loaded = result.runtime.loaded_commit.slice(0, 12);
+        const main = result.runtime.main_commit.slice(0, 12);
+        const warning = el("p", "", t(ctx,
+          `El puesto de fusión ejecuta ${loaded} y la rama principal ya está en ${main}.`,
+          `The integration station is running ${loaded} and the main branch has advanced to ${main}.`));
+        warning.setAttribute("role", "status");
+        messages.push(warning);
+      }
       if (!result.receipts.length) {
-        root.replaceChildren(el("p", "muted", t(ctx, "Todavía no hay integraciones.", "No integrations yet.")));
+        root.replaceChildren(...messages, el("p", "muted", t(ctx, "Todavía no hay integraciones.", "No integrations yet.")));
         return;
       }
       const list = el("div", "hub-project-list");
@@ -144,7 +169,7 @@
         if (details.open) show();
         list.append(details);
       }
-      root.replaceChildren(list);
+      root.replaceChildren(...messages, list);
     } catch {
       if (id !== generation) return;
       lastRows = undefined;

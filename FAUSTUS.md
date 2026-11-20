@@ -177,7 +177,10 @@ The [integration station](docs/INTEGRATION.md) compares focused tests against th
 overlapping Git changes, creates a merge commit for each repository, verifies the merged case and closes the
 approved delivery in the Agora.
 A delivery across multiple repositories has one receipt with the results for each repository. The receipts appear
-under System → Integrations. The station leaves the person's production gates to their existing interface.
+under System → Integrations, which also reports when the station is running an earlier Hub revision. Repositories
+can set their contract test timeout. An agent can close a manually verified merge or reconcile a historical
+fast-forward with the published merge, recording who verified it and why. The station leaves the person's production
+gates to their existing interface.
 `hub_modules`
 and `hub_module_set` use declared native module switches and return an undo
 request for a change. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any

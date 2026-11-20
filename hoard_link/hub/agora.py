@@ -229,6 +229,12 @@ CREATE TABLE integration_receipt_corrections (
     receipt_id TEXT PRIMARY KEY, correction TEXT NOT NULL
 );
 """)
+MIGRATIONS.append("""
+CREATE TABLE integration_closure_undo (
+    task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE, snapshot TEXT NOT NULL
+);
+""")
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -2277,14 +2283,22 @@ class Agora:
         """Integrated: commits and result. Releases the task's locks. Refused while a review is younger than 2 h
         unless ``force`` with a ``reason``; finishing without any review is recorded as such."""
         from .integration import INTEGRATION_TOKEN
-        from .integration_closure import verified_closure
+        from .integration_closure import record_closure_undo, undo_closure, verified_closure
         from .integration_git import IntegrationError
 
         integration = a.get("_integration") is INTEGRATION_TOKEN
+        undo = None
         with self.db.tx():
-            agent, task = self._owned(a, superior=integration or bool(a.get("commits")))
-            if agent not in (PERSON, task["owner"]) and not integration and task["status"] != "approved":
-                self._owned(a)
+            agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+            task = self._task_row(a.get("task_id"))
+            if a.get("undo_token") is not None:
+                try:
+                    return undo_closure(self, task, agent, a["undo_token"])
+                except IntegrationError as exc:
+                    raise AgoraError(str(exc), 409) from exc
+            delegated = agent not in (PERSON, task["owner"]) and not integration
+            if integration or (delegated and task["status"] != "approved"):
+                self._owned(a, superior=integration)
             if integration and (task["status"] != "approved" or
                                 task["reviewed_submission_revision"] != a.get("_integration_revision") or
                                 task["submission_revision"] != a.get("_integration_revision")):
@@ -2319,11 +2333,13 @@ class Agora:
             verified = integration
             if task["status"] == "approved" and unreviewed_commits and not integration:
                 try:
-                    verified = verified_closure(self, task, commits)
+                    verified = verified_closure(self, task, commits, require_merges=delegated)
                 except (IntegrationError, OSError):
                     verified = False
-            if agent not in (PERSON, task["owner"]) and not (integration or verified and unreviewed_commits):
-                self._owned(a)
+            if delegated:
+                if not verified:
+                    self._owned(a)
+                result = result or _txt(a.get("reason"), 5000, "reason", required=True)
             if task["status"] == "approved" and unreviewed_commits:
                 # Closing with commits the reviewer never saw (an integration that rewrote hashes, or new work): say
                 # how they relate to the approved ones, or submit them again.
@@ -2343,6 +2359,8 @@ class Agora:
                 review_state = "exempt"
             else:
                 review_state = "unreviewed"
+            if delegated:
+                undo = record_closure_undo(self, task, agent, now, commits, result)
             self.db.execute("UPDATE tasks SET status='done', commits=?, result=?, closed_at=?, updated=?, review_state=? "
                             "WHERE id=?", (_j(commits), result, now, now, review_state, task["id"]))
             self.db.execute("DELETE FROM locks WHERE task_id=?", (task["id"],))
@@ -2365,8 +2383,10 @@ class Agora:
         self._bump("agora.task.done", {"task_id": task["id"], "agent": agent, "commits": commits,
                                        "reviewed": review_state in ("approved", "equivalent"), "review_state": review_state,
                                        "reviewed_commits": seen if review_state in ("approved", "equivalent") else []})
-        return self._with_unseen(a, {"ok": True, "task": self._task_row(task["id"]),
-                                     "unblocked": self._wake_dependents(task["id"])})
+        response = {"ok": True, "task": self._task_row(task["id"]), "unblocked": self._wake_dependents(task["id"])}
+        if undo:
+            response["undo"] = undo
+        return self._with_unseen(a, response)
 
     @_space_operation
     def task_release(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -2568,8 +2588,8 @@ class Agora:
 
         Moves the ownership of every task of ``from_agent`` that is not done (status, review state, submission
         revision, reviewed commits, checkpoints and history stay as they are), the ``from_agent`` locks attached to
-        those tasks (same resources, TTL renewed) and, with ``include_reviews`` (default), the reviewer role of the
-        tasks waiting for it (``review`` / ``changes``). ``tasks`` limits the operation to those ids.
+        those tasks (same resources, TTL renewed) and, with ``include_reviews`` (default), the reviewer role of
+        other tasks waiting for it (``review`` / ``changes``). ``tasks`` limits the operation to those ids.
 
         Allowed for the person (the hub's page), for ``from_agent`` itself, and for any registered agent once
         ``from_agent`` has sent no heartbeat for ``handover_idle_s`` (30 min). ``force`` skips that wait for any
@@ -2649,9 +2669,10 @@ class Agora:
                     continue
                 new_owner = target if task.get("owner") == source else task.get("owner")
                 new_reviewer = task.get("reviewer")
-                if include_reviews and new_reviewer == source and task["status"] in ("review", "changes"):
+                if (include_reviews and new_owner == task.get("owner") and new_reviewer == source
+                        and task["status"] in ("review", "changes")):
                     new_reviewer = target
-                if task["status"] in ("review", "changes") and new_reviewer and new_reviewer == new_owner \
+                if task["status"] == "review" and new_reviewer and new_reviewer == new_owner \
                         and (new_owner != task.get("owner") or new_reviewer != task.get("reviewer")):
                     new_reviewer = None                      # an owner can not review its own task: any other agent can
                 if new_owner == task.get("owner") and new_reviewer == task.get("reviewer"):
@@ -3464,9 +3485,12 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_task_done",
      "description": "Your task is integrated: commits and result. Releases its locks. Refused while a review is "
                     "younger than 2 h or changes were requested, unless force with a reason. docs, eval, research and "
-                    "chore tasks may close without review (exempt, with the reason); code may not.",
+                    "chore tasks may close without review (exempt, with the reason); code may not. "
+                    "To close another agent's approved task, give all verified mainline merges and a note (result or reason). "
+                    "That closure returns an undo_token for the task and thread record.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "result": {"type": "string"}, "commits": _STRS,
-                             "force": {"type": "boolean"}, "reason": {"type": "string"}, "exempt": {"type": "string"}},
+                             "force": {"type": "boolean"}, "reason": {"type": "string"}, "exempt": {"type": "string"},
+                             "undo_token": {"type": "string"}},
                             ["agent", "task_id"])},
     {"name": "hub_agora_task_release",
      "description": "Give your task back (open again) or drop it (drop=true), with the reason. Releases its locks.",
@@ -3475,7 +3499,7 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "hub_agora_handover",
      "description": "Move the unfinished work of an agent that died (its context ran out, its chat closed) to its successor: "
                     "tasks it owns that are not done (status, review state, submission revision and history stay), their live "
-                    "locks (renewed) and, with include_reviews (default), the reviewer role of tasks in review/changes. "
+                    "locks (renewed) and, with include_reviews (default), the reviewer role of other tasks in review/changes. "
                     "tasks limits it to those ids; reason is required. Allowed for from_agent itself, and for any registered "
                     "agent once from_agent sent no heartbeat for 30 min, or right away with force=true (Luis's order: "
                     "an agent out of quota that keeps sending heartbeats, work that must move now); to_agent must have a "

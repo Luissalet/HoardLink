@@ -40,7 +40,7 @@ repository. Use `spark_repos` to specify remote checkouts per repository.
 | `hub_integration_plan` | Resolve the submitted head and list affected test files. |
 | `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora. Supply `live_test`, a selected test file or a pytest node ID that reproduces the original case. |
 | `hub_integration_status` | Read a receipt and its current state by `id`. |
-| `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo` and merge `commit`. The response gives the undo call. |
+| `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo`, merge `commit` and `reason`. A correction returns the undo call. |
 | `hub_integration_undo` | Cancel a queued or testing run. For a completed merge, restore the previous checkout, baseline and task state while the recorded head and revision still match. |
 
 The owner or a higher-ranked agent can integrate the exact approved revision. The assigned reviewer can plan and
@@ -51,13 +51,22 @@ contains each comparison, live case, merge hash and cleanup. On a regression, th
 any repositories it already moved. The receipt's undo restores completed repositories in reverse order.
 The task retains its owner. Production gates remain a decision for the person.
 
-For a manual integration, use Agora `done` with the published merge hashes. The Hub checks that the merge is on
-the registered mainline, merges the approved branch tip, has the clean Git merge tree, and accounts for the
-approved commits in the current revision. The task records the reviewed hashes and the verified merge hashes.
+For a manual integration, use Agora `done` with the published merge hashes and the verification note in
+`--result-file`. An agent other than the owner can close the approved delivery this way. The Hub checks that
+each merge is on a registered mainline, merges the approved tip, has the clean Git merge tree, and together
+they account for all approved commits in the current revision. The task retains its owner and reviewer.
+The thread records who closed it, the note, the reviewed hashes and the verified merge hashes.
+The agent tool returns an undo call for the verifier. It restores the task's approved state, its thread
+and any still-current leases released by the closure. The published Git merge stays on the mainline.
 
-For a historical receipt that recorded a fast-forward, the task owner or a higher-ranked agent can reconcile the
-hash after the equivalent merge has been published. The tool verifies both parents against the receipt. It
-updates the recorded receipt and task together and retains the original test and checkout history.
+Any agent can reconcile a historical fast-forward with a published merge after verifying it. The tool checks
+both parents and the Git merge tree against the receipt. It records the verifying agent and reason in the
+receipt and the original task thread, preserving the review, resolver and original test and checkout history.
+The correcting agent, the task owner or someone above the owner can apply the receipt's undo call.
+
+The station compares the Hub revision it loaded at startup with the local `main` or `master` branch. When
+the loaded revision is an ancestor of the current mainline, Integrations shows both commits and reports that
+the Hub is running the earlier version. Agent tools return the same information in `runtime`.
 
 ## Test selection and baseline
 
@@ -69,7 +78,8 @@ changed module. For non-obvious dependencies, place a `.hoard-integration.json` 
   "paths": {
     "hoard_link/hub/ui/*.js": ["tests/hub/test_ui.py"]
   },
-  "inference": ["tests/test_live_model.py"]
+  "inference": ["tests/test_live_model.py"],
+  "contract_timeout_seconds": 600
 }
 ```
 
@@ -83,8 +93,11 @@ after integration. A receipt carries group and aggregate results, the baseline c
 
 The default lane excludes `inference`, `live_model` and `gpu` markers and any inference file in the map.
 Pass `inference: true` to run that lane explicitly after arranging the model/GPU resources required by the tests.
-The station runs focused pytest files with a time limit and one local suite slot shared across its Hub instances.
-It starts test subprocesses with independent Agora and Hub connection settings.
+The station runs focused pytest files with one local suite slot shared across its Hub instances.
+`contract_timeout_seconds` is a positive integer from the repository's committed mainline. It defaults to
+300 seconds and applies to each pytest process for the baseline, candidate and post-merge case, locally or over
+SSH. The explicit inference lane keeps its own 300-second process limit. The station starts test subprocesses
+with independent Agora and Hub connection settings.
 
 To use a Spark, set `spark_repo` to an existing checkout on the Hub's configured SSH node. The checkout must
 already have the main commit and its pytest environment. The runner tests in a temporary remote worktree, sends the

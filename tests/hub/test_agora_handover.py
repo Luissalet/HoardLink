@@ -281,6 +281,16 @@ def test_without_reviews(ag):
     assert ag.handover(_args(include_reviews=True))["reviewer_moved"]
 
 
+def test_owner_handover_preserves_the_agent_that_requested_changes(ag):
+    ids = _world(ag)
+    r = ag.handover(_args(to_agent="claude", tasks=[ids["changes"], ids["approved"]]))
+    assert r["owner_moved"] == [ids["changes"], ids["approved"]]
+    assert r["reviewer_moved"] == []
+    for key in ("changes", "approved"):
+        task = _task(ag, ids[key])["task"]
+        assert task["reviewer"] == "claude" and task["reviewed_submission_revision"] == 1
+
+
 def test_a_new_owner_never_reviews_its_own_task(ag):
     ids = _world(ag)
     # codex-bucle owns a task under review by the successor, and reviews a task that the successor owns
