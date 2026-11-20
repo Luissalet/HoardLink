@@ -130,7 +130,10 @@ its own (`gate_split`).
   on the table (`order_decisions`).
 
 Before the expensive work, an order can go through a draft pass: its whole chain in draft, in variants, shown to the
-person at an early gate on the same page. See `docs/DRAFT-PASS.md`.
+person at an early gate on the same page. An agent can correct the pass note with
+`hub_agora_draft_pass_note_set` (`agent`, `pass_id`, `note`), including while the gate is shown. Pass an empty
+string to clear the note. The decision and variant signatures stay the same, and the result supplies an undo token
+for `hub_agora_order_undo`. See `docs/DRAFT-PASS.md`.
 
 ## Undo
 
