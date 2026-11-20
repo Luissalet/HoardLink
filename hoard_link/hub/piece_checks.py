@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -82,10 +83,18 @@ def run_checks(path, profile, requirements):
 
 
 def _runtime(app):
-    root = Path(app.manifest_path).resolve().parent
-    candidates = [root / folder / executable for folder in ("venv", ".venv")
-                  for executable in ("Scripts/python.exe", "bin/python")]
-    return root, next((str(path) for path in candidates if path.is_file()), sys.executable)
+    manifest_root = Path(app.manifest_path).resolve().parent
+    launch = getattr(app, "launch", None)
+    roots = [manifest_root]
+    candidates = []
+    if launch and Path(launch.cwd).is_dir():
+        roots = list(dict.fromkeys((Path(launch.cwd).resolve(), manifest_root)))
+        executable = roots[0] / launch.executable
+        if re.fullmatch(r"python(?:[0-9.]+)?(?:\.exe)?", executable.name, re.IGNORECASE):
+            candidates.append(executable)
+    candidates.extend(root / folder / executable for root in roots for folder in ("venv", ".venv")
+                      for executable in ("Scripts/python.exe", "bin/python"))
+    return roots, next((str(path) for path in candidates if path.is_file()), sys.executable)
 
 
 def _engine(hub, engine, path, profile, requirements):
@@ -95,14 +104,14 @@ def _engine(hub, engine, path, profile, requirements):
         report.add("engine", None, f"The {engine} inspection engine is unavailable.",
                    f"El motor de comprobación {engine} no está disponible.")
         return report.payload()
-    root, python = _runtime(app)
+    roots, python = _runtime(app)
     hub_root = Path(__file__).resolve().parents[2]
-    env = proc.build_env(PYTHONPATH=os.pathsep.join(map(str, (hub_root, root))),
+    env = proc.build_env(PYTHONPATH=os.pathsep.join(map(str, (hub_root, *roots))),
                          PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1")
     command = [python, "-m", "hoard_link.hub.piece_checks", profile, str(path),
                json.dumps(requirements, ensure_ascii=True)]
     try:
-        process = proc.run(command, cwd=hub_root, env=env, timeout=35)
+        process = proc.run(command, cwd=hub_root, env=env, timeout=60)
         if process.returncode:
             raise RuntimeError(proc.tail_lines(process.stderr or process.stdout))
         return json.loads(process.stdout)

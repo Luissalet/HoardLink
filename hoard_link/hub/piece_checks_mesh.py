@@ -8,6 +8,10 @@ import math
 
 def check_print(path, requirements, report):
     from vulcan.asset_inspection import UNIT_TO_MM, _edge_counts, _wall_records, load_geometry, sha256_of
+    try:
+        from vulcan.asset_inspection import load_print_geometry, measure_mesh_edges
+    except ImportError:  # Older installed inspectors still serve their existing measurements.
+        load_print_geometry, measure_mesh_edges = load_geometry, None
 
     wall = requirements.get("min_wall_mm")
     volume = requirements.get("build_volume_mm")
@@ -15,16 +19,22 @@ def check_print(path, requirements, report):
         raise ValueError("min_wall_mm must be positive")
     if volume is not None and (len(volume) != 3 or any(not math.isfinite(float(axis)) or float(axis) <= 0 for axis in volume)):
         raise ValueError("build_volume_mm needs positive X, Y and Z dimensions")
-    _, mesh, unit, _ = load_geometry(path)
+    _, mesh, unit, _ = load_print_geometry(path)
     to_mm = UNIT_TO_MM[unit or "mm"]
     dimensions = [round(float(axis * to_mm), 4) for axis in mesh.extents]
-    open_edges, nonmanifold = _edge_counts(mesh.faces)
+    if measure_mesh_edges:
+        open_edges, nonmanifold, winding, locations = measure_mesh_edges(mesh, to_mm)
+        inverted = [int(body[1:]) for body in locations["inverted_bodies"]]
+        degenerate = locations["degenerate_triangles"]
+        report.measures["degenerate_triangles"] = degenerate
+        report.add("degenerate-triangles", degenerate == 0, "Count degenerate triangles.",
+                   "Cuenta los triángulos degenerados.", measured=degenerate, expected=0)
+    else:
+        open_edges, nonmanifold = _edge_counts(mesh.faces)
+        winding = bool(mesh.is_winding_consistent)
+        inverted = ([index for index, body in enumerate(mesh.split(only_watertight=False), 1) if body.volume < 0]
+                    if open_edges == nonmanifold == 0 and winding else [])
     watertight = open_edges == nonmanifold == 0
-    winding = bool(mesh.is_winding_consistent)
-    # A non-manifold file has no reliable inside/outside. Avoid the native
-    # report's per-body overlays for these files, which can have thousands of bodies.
-    inverted = [index for index, body in enumerate(mesh.split(only_watertight=False), 1)
-                if body.volume < 0] if watertight and winding else []
     report.measures.update(engine="vulcan.asset_inspection", sha256=sha256_of(path),
                            triangles=len(mesh.faces), watertight=watertight, open_edges=open_edges,
                            nonmanifold_edges=nonmanifold, winding_consistent=winding, bbox_mm=dimensions,
@@ -37,17 +47,17 @@ def check_print(path, requirements, report):
     normals = False if inverted or not winding else True if watertight else None
     report.add("normals", normals, "Check face winding and inverted closed bodies.",
                "Comprueba la orientación de las caras y los cuerpos cerrados invertidos.", details=inverted)
-    report.add("build-volume", None if volume is None else all(float(a) <= float(b) for a, b in zip(dimensions, volume)),
+    report.add("build-volume", volume is None or all(float(a) <= float(b) for a, b in zip(dimensions, volume)),
                "Compare X, Y and Z extents with the print volume in file orientation.",
                "Coteja las dimensiones X, Y y Z con el volumen de impresión en la orientación del fichero.",
-               measured=dimensions, expected=volume)
+               measured=dimensions, expected=volume, applies=volume is not None)
     _, _, sample = _wall_records(mesh, to_mm, open_edges, nonmanifold) if wall is not None else ({}, {}, None)
     report.measures["wall_sample"] = sample
     measured = (sample or {}).get("min_mm")
-    report.add("wall-thickness", None if measured is None else measured >= float(wall),
+    report.add("wall-thickness", True if wall is None else None if measured is None else measured >= float(wall),
                "Compare the smallest sampled wall thickness with the target.",
                "Coteja el menor grosor de pared muestreado con el objetivo.",
-               measured=measured, expected=wall, detail=(sample or {}).get("status"))
+               measured=measured, expected=wall, detail=(sample or {}).get("status"), applies=wall is not None)
 
 
 def _buffer(document, index, binary, folder):
