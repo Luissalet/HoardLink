@@ -11,30 +11,42 @@ def comfy_repository(launcher):
     return None
 
 
-def start_comfy(launcher, leases, service_id, gpu, wait_s):
+def start_comfy(launcher, leases, service_id, gpu, wait_s, *, lease_id=None, work_lease_id=None):
     with launcher._lock:
         try:
             service = launcher.get(service_id)
         except KeyError:
             return launcher.start(service_id, gpu=gpu, wait_s=wait_s)
         current = launcher.status(service)
+        if lease_id and (current["state"] in ("running", "starting") or not service.argv or "--cpu" in service.argv):
+            return {"ok": False, "service": service.id,
+                    "error": "A lease can only be attached to a new CUDA service / La reserva requiere un servicio CUDA nuevo"}
         if current["state"] in ("running", "starting") or not service.argv or "--cpu" in service.argv:
             return launcher.start(service_id, gpu=gpu, wait_s=wait_s)
 
         config = launcher.config().get("comfyui") or {}
-        wanted = gpu if gpu is not None else config.get("gpu", "auto")
-        lease_id = None
+        wanted = gpu if gpu is not None else ("auto" if lease_id or work_lease_id else config.get("gpu", "auto"))
+        supplied_lease = lease_id
         bound = False
         try:
             wanted = "any" if wanted in (None, "", "auto") else parse_gpu_request(wanted)
             if isinstance(wanted, list):
                 raise LeaseError("ComfyUI needs 'auto' or a single GPU index")
-            if wanted == "any":
-                preferred = launcher.pick_gpu(set(leases.protected_gpus))
-                if preferred is not None and preferred not in leases.protected_gpus:
-                    wanted = preferred
-            reserved = leases.request(owner="hub-service", purpose=service.id,
-                                      vram_mb=config.get("startup_vram_mb", 512), gpu=wanted, ttl_s=300)
+            footprint = config.get("startup_vram_mb", 512)
+            if work_lease_id and supplied_lease:
+                raise LeaseError("Supply either a service lease or a job lease")
+            if work_lease_id:
+                reserved = leases.reserve_service_for_work(work_lease_id, service.id, footprint, wanted)
+            elif supplied_lease:
+                reserved = leases.get(supplied_lease)
+                if (reserved.get("state") != "granted" or reserved.get("gpu") is None
+                        or reserved["lease"]["process_bound"] or reserved["lease"]["service_lease"]
+                        or wanted not in ("any", reserved["gpu"])):
+                    raise LeaseError("Use a granted, unattached lease on the service GPU / Usa una reserva libre en la GPU del servicio")
+            else:
+                reserved = leases.request(owner="hub-service", purpose=service.id, gpu=wanted, ttl_s=300,
+                                          vram_mb=footprint,
+                                          avoid_gpus=tuple(launcher.comfy_gpus()) if wanted == "any" else ())
             lease_id = reserved.get("lease_id")
             if reserved.get("state") != "granted":
                 return {"ok": False, "service": service.id, "error": reserved.get("error") or
@@ -50,7 +62,7 @@ def start_comfy(launcher, leases, service_id, gpu, wait_s):
             if result.get("ok") and not result.get("already"):
                 if chosen is not None:
                     try:
-                        lease = leases.bind_process(lease_id, result["pid"])
+                        lease = leases.bind_process(lease_id, result["pid"], service=service.id)
                     except LeaseError:
                         launcher.stop(service_id)
                         raise
@@ -61,7 +73,7 @@ def start_comfy(launcher, leases, service_id, gpu, wait_s):
         except LeaseError as exc:
             return {"ok": False, "service": service.id, "error": str(exc)}
         finally:
-            if lease_id and not bound:
+            if lease_id and not bound and not supplied_lease:
                 leases.release(lease_id)
     if wait_s > 0 and result.get("ok") and result.get("state") != "running":
         result.update(launcher._wait(service, wait_s))

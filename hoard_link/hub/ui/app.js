@@ -717,7 +717,7 @@
       $(".pill", row).textContent = l.state === "queued" ? `${t("queued")} #${l.position}` : t("granted");
       $(".pill", row).className = `pill ${l.state === "queued" ? "starting" : "running"}`;
       $(".who", row).textContent = l.owner;
-      $(".what", row).textContent = l.purpose || "";
+      $(".what", row).textContent = [l.purpose, l.work?.purpose].filter(Boolean).join(" · ");
       $(".amount", row).textContent = gb(l.vram_mb);
       $(".where", row).textContent = l.gpu != null ? `GPU ${l.gpu}` : (l.gpu_request === "any" ? t("any_gpu") : `GPU ${[].concat(l.gpu_request).join(" / ")}`);
       $(".ttl", row).textContent = l.process_bound

@@ -116,3 +116,65 @@ def test_comfy_start_reserves_one_gpu_until_the_owned_process_exits(served, tmp_
     finally:
         hub.leases.release(full["lease_id"])
         hub.service_stop(args["id"])
+
+
+def test_auto_uses_arbiter_and_a_manual_service_lease_covers_its_work(served, tmp_path, monkeypatch):
+    hub, url = served
+    hub.leases.protected_gpus = [0]
+    monkeypatch.setattr(hub.leases, "_gpu_fn", lambda: [
+        SimpleNamespace(index=i, total_mb=mb, used_mb=0) for i, mb in enumerate((20000, 16000, 12000))
+    ])
+    install = tmp_path / "renderer"
+    (install / "comfy").mkdir(parents=True)
+    (install / "comfy" / "cli_args.py").write_text('parser.add_argument("--cuda-device")', encoding="utf-8")
+    (install / "main.py").write_text(
+        "import argparse\nfrom http.server import HTTPServer, SimpleHTTPRequestHandler\n"
+        "p = argparse.ArgumentParser()\np.add_argument('--port', type=int)\n"
+        "p.add_argument('--cuda-device', type=int)\na, _ = p.parse_known_args()\n"
+        "assert a.cuda_device == 2\nHTTPServer(('127.0.0.1', a.port), SimpleHTTPRequestHandler).serve_forever()\n",
+        encoding="utf-8")
+    hub.launcher.set_config({"comfyui": {"dir": str(install), "python": sys.executable}})
+    args = {"id": f"comfyui@{free_port()}", "wait_s": 20}
+    occupied = hub.leases.request(vram_mb=15500, gpu=1)["lease_id"]
+    manual = work = waiting = cold_work = None
+    try:
+        assert _req(url + "/api/services/start", {**args, "gpu": 1})[0] == 409
+        auto = tools.call(hub, "hub_service_start", args)
+        assert auto["ready"] and auto["gpu"] == 2, auto
+        assert tools.call(hub, auto["undo"]["tool"], auto["undo"]["arguments"])["ok"]
+        manual = hub.leases.request(vram_mb=11500, gpu=2)["lease_id"]
+        service = tools.call(hub, "hub_service_start", {**args, "lease_id": manual})
+        assert service["ready"] and service["lease_id"] == manual
+        request = {"owner": "prospero", "purpose": "image from shared service", "service": args["id"],
+                   "vram_mb": 11000, "gpu": 2}
+        _, job = _req(url + "/api/lease/request", request)
+        work = job["lease_id"]
+        assert job["state"] == "granted"
+        _, next_job = _req(url + "/api/lease/request", request)
+        waiting = next_job["lease_id"]
+        assert next_job["state"] == "queued"
+        status = hub.leases.status()
+        gpu = next(card for card in status["gpus"] if card["index"] == 2)
+        assert (gpu["reserved_mb"], gpu["leases"]) == (11500, 1)
+        shared = next(lease for lease in status["leases"] if lease["id"] == manual)
+        assert shared["work"]["lease_id"] == work
+        hub.leases.release(work)
+        assert hub.leases.get(waiting)["state"] == "granted"
+        hub.leases.release(waiting)
+        assert hub.leases.get(manual)["lease"]["process_bound"]
+        assert tools.call(hub, service["undo"]["tool"], service["undo"]["arguments"])["ok"]
+        assert not hub.leases.get(manual)["ok"]
+        _, cold = _req(url + "/api/lease/request", {**request, "vram_mb": 11500})
+        cold_work = cold["lease_id"]
+        assert cold["state"] == "granted"
+        code, cold_service = _req(url + "/api/services/start", {**args, "work_lease_id": cold_work})
+        assert code == 200 and cold_service["gpu"] == 2 and cold_service["ready"], cold_service
+        cold_lease = next(lease for lease in hub.leases.status()["leases"] if lease["gpu"] == 2)
+        assert cold_lease["vram_mb"] == 11500 and cold_lease["work"]["lease_id"] == cold_work
+        hub.leases.release(cold_work)
+        assert hub.leases.get(cold_service["lease_id"])["lease"]["vram_mb"] == 512
+    finally:
+        for lease_id in (work, waiting, manual, occupied, cold_work):
+            if lease_id:
+                hub.leases.release(lease_id)
+        hub.service_stop(args["id"])

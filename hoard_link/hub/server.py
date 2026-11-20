@@ -373,7 +373,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 res = arb.request(owner=str(body.get("owner") or ""), purpose=str(body.get("purpose") or ""),
                                   vram_mb=body.get("vram_mb", 0), gpu=body.get("gpu"), priority=body.get("priority", 0),
                                   ttl_s=body.get("ttl_s"), wait=bool(body.get("wait", False)), pid=body.get("pid"),
-                                  lease_id=body.get("lease_id"), wait_s=body.get("wait_s"))
+                                  lease_id=body.get("lease_id"), wait_s=body.get("wait_s"), service=body.get("service"))
             elif action == "renew":
                 res = arb.renew(str(body.get("lease_id") or ""), body.get("ttl_s"))
             else:
@@ -707,7 +707,8 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path in ("/api/services/start", "/api/services/stop"):
                 sid = str(body.get("id") or "")
                 if path.endswith("start"):
-                    res = hub.service_start(sid, gpu=body.get("gpu"), wait_s=float(body.get("wait_s") or 0))
+                    res = hub.service_start(sid, gpu=body.get("gpu"), wait_s=float(body.get("wait_s") or 0),
+                                            lease_id=body.get("lease_id"), work_lease_id=body.get("work_lease_id"))
                 else:
                     res = hub.service_stop(sid, expected_pid=body.get("expected_pid"))
                 return self._json(res, 200 if res.get("ok") else 409)

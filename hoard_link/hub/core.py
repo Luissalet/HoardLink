@@ -911,7 +911,9 @@ class Hub:
 
         return {"ok": True, **memory(self.launcher)}
 
-    def service_start(self, service_id: str, gpu: Any = None, wait_s: float = 0.0, *, automatic: bool = False) -> dict[str, Any]:
+    def service_start(self, service_id: str, gpu: Any = None, wait_s: float = 0.0, *,
+                      automatic: bool = False, lease_id: str | None = None,
+                      work_lease_id: str | None = None) -> dict[str, Any]:
         if self._stopping_all.is_set() or (automatic and self.automation_blocked("service:" + service_id)):
             return {"ok": False, "error": "stop all is still in progress"}
         self._manual_stop(["service:" + service_id], False)
@@ -920,7 +922,11 @@ class Hub:
         if service_id == "comfyui" or service_id.startswith("comfyui@"):
             from .service_leases import start_comfy
 
-            res = start_comfy(self.launcher, self.leases, service_id, gpu, wait_s)
+            res = start_comfy(self.launcher, self.leases, service_id, gpu, wait_s,
+                              lease_id=lease_id, work_lease_id=work_lease_id)
+        elif lease_id or work_lease_id:
+            return {"ok": False, "service": service_id,
+                    "error": "This service cannot attach a GPU lease / Este servicio no admite una reserva de GPU"}
         else:
             res = self.launcher.start(service_id, gpu=gpu, wait_s=wait_s)
         if res.get("ok"):
