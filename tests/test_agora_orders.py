@@ -390,6 +390,35 @@ def test_reference_use_survives_a_cancel_and_material_use_does_not(agora, tmp_pa
     assert full[rig["id"]]["status"] == "provisional" and "cancelada" in full[rig["id"]]["warnings"][0]
 
 
+def test_piece_can_use_material_and_references_from_another_order_in_its_space(agora, tmp_path):
+    source, _, pieces = cartographer(agora, tmp_path)
+    sheet = pieces["hoja"]
+    target = agora.order_create(person(title="Close-up", words="Turn the map."))["order"]
+    args = {"agent": "claude", "order_id": target["id"], "kind": "image", "title": "Key",
+            "url": "https://example.test/key.png"}
+    material = agora.piece_add({**args, "derives_from": [sheet["id"]]})["piece"]
+    reference = agora.piece_add({**args, "url": "https://example.test/pose.png",
+                                 "derives_from": [{"piece": sheet["id"], "role": "reference"}]})["piece"]
+    assert any(item["detail"] == "tubo a la izquierda" for item in material["keep"])
+    source_pieces = agora.order({"order_id": source["id"]})["order"]["piece_list"]
+    derived = next(piece["derived"] for piece in source_pieces if piece["id"] == sheet["id"])
+    assert {"piece": material["id"], "role": "material"} in derived
+    assert {"piece": reference["id"], "role": "reference"} in derived
+    with pytest.raises(AgoraError, match="not a piece of order"):
+        agora.piece_add({**args, "url": "https://example.test/other.png", "supersedes": sheet["id"]})
+    other = agora.for_space("ecosystem")
+    foreign = other.order_create(person(title="Other space", words="Isolated."))["order"]
+    with pytest.raises(AgoraError, match="no piece"):
+        other.piece_add({**args, "order_id": foreign["id"], "derives_from": [sheet["id"]]})
+    gate = agora.gate_open({"agent": "claude", "order_id": source["id"], "piece_ids": [sheet["id"]]})["gate"]
+    result = agora.gate_decide(person(gate_id=gate["id"], decision="cancel"))["decided"][0]
+    assert material["id"] in result["stale"] and reference["id"] not in result["stale"]
+    target_pieces = {piece["id"]: piece for piece in agora.order({"order_id": target["id"]})["order"]["piece_list"]}
+    assert target_pieces[material["id"]]["status"] == "stale"
+    assert target_pieces[reference["id"]]["status"] == "provisional"
+    assert "cancelada" in target_pieces[reference["id"]]["warnings"][0]
+
+
 def test_same_output_twice_is_one_piece_and_a_changed_file_is_its_next_revision(agora, tmp_path):
     order, keys, pieces = cartographer(agora, tmp_path)
     mesh = {"agent": "claude", "order_id": order["id"], "kind": "mesh", "title": "Malla", "path": "malla.glb",
