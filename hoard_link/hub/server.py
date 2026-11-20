@@ -685,7 +685,11 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": "Invalid session request"}, 400)
         if not self._bearer() and (
                 self._browser_metadata() or ui_session.SESSION_HEADER in self.headers) and not self._ui_proof():
-            self.close_connection = True
+            # Closing a socket with unread request bytes can reset the connection before the client sees the 403.
+            try:
+                self._read_body(max(MAX_BODY, AGORA_BIG_BODIES.get(path, 0)))
+            except ValueError:
+                self.close_connection = True
             return self._ui_denied()
         if path == "/api/link/copilot":
             return self._copilot()
