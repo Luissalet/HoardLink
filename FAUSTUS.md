@@ -1,5 +1,11 @@
 # Hoard Hub and Hoard Link
 
+## Calls across apps
+
+The Hub forwards optional agent and session identifiers from the worker CLI, MCP and shared
+HTTP tool calls. Apps with a write journal record that identity and session for review and undo.
+See [the agent command reference](docs/worker-cli.md).
+
 ## Production decisions
 
 Home links directly to each decision awaiting the person. Orders and draft passes load independently of the

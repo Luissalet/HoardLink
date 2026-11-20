@@ -12,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+from ..bridge import agent_headers
 from .config import HubConfig
 from .order_receipts import CONTEXT, request_context
 
@@ -53,6 +54,8 @@ class Client:
     def request(self, path, body=None, *, timeout=90):
         data = json.dumps(body, allow_nan=False).encode("utf-8") if body is not None else None
         headers = {"Content-Type": "application/json", "User-Agent": "hoard-hub-cli"}
+        if data is not None:
+            headers.update(agent_headers())
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
         request = Request(self.url + path, data=data, headers=headers)

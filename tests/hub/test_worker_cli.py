@@ -12,23 +12,24 @@ import pytest
 from hoard_link.hub import cli
 
 from ._hub_fakes import FakeApp, make_hub, serve
+from .test_hub_and_server import _http
 
 
 @pytest.fixture
 def served(tmp_path):
     with ExitStack() as cleanup:
-        app = FakeApp("fake")
+        app = FakeApp("fake", handlers={"echo": lambda arguments: arguments})
         cleanup.callback(app.stop)
         hub = make_hub(tmp_path, [app])
         cleanup.callback(hub.close)
         server = serve(hub)
         cleanup.callback(server.server_close)
         cleanup.callback(server.shutdown)
-        yield hub, hub.config.url
+        yield hub, hub.config.url, app
 
 
 def test_autodiscovery_status_tool_and_arguments_file(served, monkeypatch, tmp_path, capsys):
-    hub, url = served
+    hub, url, _ = served
     for option in ("HOARD_HUB_URL", "HOARD_HUB_TOKEN_FILE"):
         monkeypatch.delenv(option, raising=False)
     monkeypatch.setenv("HOARD_HUB_DATA_DIR", hub.config.data_dir)
@@ -83,7 +84,7 @@ def test_legacy_route_fallback_never_retries_a_call_after_timeout(monkeypatch):
 
 
 def test_isolated_target_ignores_inherited_connection(served, monkeypatch, tmp_path, capsys):
-    hub, url = served
+    hub, url, _ = served
     hub.write_url_file()
     inherited_token = tmp_path / "unrelated-token"
     inherited_token.write_text("unrelated", encoding="utf-8")
@@ -108,9 +109,54 @@ def test_isolated_target_ignores_inherited_connection(served, monkeypatch, tmp_p
     assert not cli.Client(hub_url=url).token
 
 
+@pytest.mark.parametrize("command, fallback", [
+    (["call", "fake", "echo"], "hub"),
+    (["tool", "hub_call_app"], "hub-tool"),
+])
+def test_cli_forwards_agent_identity(served, monkeypatch, tmp_path, capsys, command, fallback):
+    hub, _, app = served
+    hub.write_url_file()
+    arguments = {"text": "unchanged"}
+    args_file = tmp_path / "args.json"
+    payload = arguments if fallback == "hub" else {"app": "fake", "tool": "echo", "arguments": arguments}
+    args_file.write_text(json.dumps(payload), encoding="utf-8")
+    cli_args = [*command, "--data-dir", hub.config.data_dir, "--args-file", str(args_file), "--json"]
+
+    monkeypatch.setenv("HOARD_AGENT_ID", "  worker-1  ")
+    monkeypatch.setenv("HOARD_AGENT_SESSION", "run-42")
+    assert cli.main(cli_args) == 0, capsys.readouterr()
+    assert app.calls[-1]["agent"] == "worker-1"
+    assert app.calls[-1]["session"] == "run-42"
+    assert app.calls[-1]["arguments"] == arguments
+
+    monkeypatch.delenv("HOARD_AGENT_ID")
+    monkeypatch.delenv("HOARD_AGENT_SESSION")
+    assert cli.main(cli_args) == 0, capsys.readouterr()
+    assert app.calls[-1]["agent"] == fallback
+    assert "session" not in app.calls[-1]
+
+
+def test_shared_route_forwards_caller_and_session(served):
+    hub, url, app = served
+    headers = {"Authorization": "Bearer " + hub.token}
+    args = {"app": "fake", "tool": "echo", "arguments": {"text": "unchanged"}, "reason": "Test the proxy"}
+    payload = {"name": "hub_call_app", "arguments": args, "caller": "worker-β", "session": "run-雪"}
+    status, reply = _http(url + "/api/agent/call", payload, headers)
+    assert status == 200 and reply["result"]["result"] == args["arguments"]
+    assert app.calls[-1]["agent"] == payload["caller"]
+    assert app.calls[-1]["session"] == payload["session"]
+    assert app.calls[-1]["reason"] == args["reason"]
+
+    headers.update({"X-Agent-Id": "header-worker", "X-Agent-Session": "header-run"})
+    payload.update(agent="body-worker", _session="body-run")
+    assert _http(url + "/api/agent/call", payload, headers)[0] == 200
+    assert app.calls[-1]["agent"] == "header-worker"
+    assert app.calls[-1]["session"] == "header-run"
+
+
 @pytest.mark.skipif(os.name != "nt", reason="The batch launcher only runs on Windows")
 def test_batch_launcher_preserves_failure_exit_code(served, monkeypatch, tmp_path):
-    hub, _ = served
+    hub, _, _ = served
     for option in ("HOARD_HUB_URL", "HOARD_HUB_TOKEN_FILE"):
         monkeypatch.delenv(option, raising=False)
     monkeypatch.setenv("HOARD_HUB_DATA_DIR", hub.config.data_dir)

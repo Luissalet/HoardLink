@@ -609,7 +609,7 @@ def catalogue() -> list[dict[str, Any]]:
     ]
 
 
-def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
+def handlers(hub: Hub, *, agent: str = "", session: str = "") -> dict[str, Callable[[dict[str, Any]], Any]]:
     from . import portable_profiles
 
     def list_apps(_: dict[str, Any]) -> Any:
@@ -671,7 +671,7 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         return hub.call_app(str(a.get("app") or ""), str(a.get("tool") or ""), a.get("arguments") or {},
                             caller="hub-tool", timeout=max(1.0, min(timeout, 900.0)),
                             reason=a.get("reason") if isinstance(a.get("reason"), str) else None,
-                            agent="hub-tool")
+                            agent=agent or "hub-tool", session=session or None)
 
     def rule_run(a: dict[str, Any]) -> Any:
         rule = hub.rules.get(str(a.get("id") or ""))
@@ -863,9 +863,9 @@ def all_tools() -> list[dict[str, Any]]:
     return out
 
 
-def call(hub: Hub, name: str, arguments: dict[str, Any]) -> Any:
+def call(hub: Hub, name: str, arguments: dict[str, Any], *, agent: str = "", session: str = "") -> Any:
     from . import facets as _facets
-    fn = _facets.handlers(getattr(hub, "facets", [])).get(name) or handlers(hub).get(name)
+    fn = _facets.handlers(getattr(hub, "facets", [])).get(name) or handlers(hub, agent=agent, session=session).get(name)
     if fn is None:
         return {"ok": False, "error": f"unknown tool: {name}"}
     try:

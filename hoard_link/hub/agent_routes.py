@@ -22,7 +22,7 @@ def capture(hub, context, app, tool, arguments, invoke):
     return facet.capture(scope, app, tool, arguments, invoke)
 
 
-def invoke(hub, name, arguments):
+def invoke(hub, name, arguments, **identity):
     context = arguments.get(CONTEXT)
     meta = {}
     if context is not None and name != CALL:
@@ -31,9 +31,9 @@ def invoke(hub, name, arguments):
         app = str(arguments.get("app") or "") if native else ""
         tool = str(arguments.get("tool") or "") if native else name
         saved = arguments.get("arguments", {}) if native else arguments
-        result, meta = capture(hub, context, app, tool, saved, lambda: tools.call(hub, name, arguments))
+        result, meta = capture(hub, context, app, tool, saved, lambda: tools.call(hub, name, arguments, **identity))
     else:
-        result = tools.call(hub, name, {key: value for key, value in arguments.items() if key != CONTEXT})
+        result = tools.call(hub, name, {key: value for key, value in arguments.items() if key != CONTEXT}, **identity)
     ok = not (isinstance(result, dict) and result.get("ok") is False)
     if ok:
         status = 200
