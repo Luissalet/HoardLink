@@ -67,7 +67,8 @@ driver script that presses each `{key}` or `{action}`, waits `wait` ms and takes
 Godot needs a window to draw: it opens off screen for the few seconds of the sequence.
 
 **Apps.** `app: {app: "vulcan", tool: "model_render_photos", arguments: {id: 12}}` calls that tool through the hub and
-keeps the images its answer names (files, local URLs or inline images). Use it for objects that live in an app's
+keeps the images its answer names (files, local URLs or inline images). A native PNG in an `image_base64` field
+also becomes a view, for example `data_chart` with `action: "get"` and `image: true`. Use it for objects that live in an app's
 library; files on disk are looked at directly, without importing them anywhere.
 
 ## Repeating a look and comparing revisions
