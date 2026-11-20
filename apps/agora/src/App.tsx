@@ -8,7 +8,7 @@ const initial:Leader[]=Object.entries(providerNames).map(([id,name])=>({id,name,
 const labels:Record<string,string>={available:'Conectado',unverified:'Sin verificar',in_progress:'En curso',working:'Trabajando',running:'Trabajando',idle:'Disponible',ready:'Disponible',queued:'En cola',unavailable:'No disponible',unknown:'Sin datos',done:'Terminada',claimed:'En curso',review:'En revisión',approved:'Aprobada',changes:'Cambios pedidos',open:'Abierta',failed:'Interrumpido',incomplete:'Entrega incompleta',blocked:'Bloqueada',starting:'Iniciando',completed:'Entrega comprobada',stopped:'Detenido',stopping:'Deteniendo'};
 const status=(value:string)=>labels[value]||value;
 // Colour per provider (Agora #239): outlines that leader's messages and avatar. Saved in the Hub so
-// the browser and the desktop app agree; these are the defaults until Luis picks one.
+// the browser and the desktop app agree; these are the defaults until the person picks one.
 export const defaultColors:Record<string,string>={claude:'#d97757',codex:'#10a37f',cursor:'#7aa2f7',faustus:'#d0545b'};
 const providerOf=(agent?:string)=>{const head=(agent||'').split('-')[0];return head in defaultColors?head:'';};
 const time=(value?:number)=>value?new Date(value*1000).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}):'';

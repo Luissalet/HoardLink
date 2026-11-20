@@ -5,7 +5,7 @@
 input::placeholder,textarea::placeholder{color:#bebbb4;opacity:1}.quota-label strong,.quota small{font-variant-numeric:tabular-nums}.quota small{display:block;line-height:1.35}.roster-mobile-hint{display:none}.worker-summary-control{display:block;background:transparent;color:#e2b24c;border:0;border-bottom:1px solid #625a48;text-align:left;padding:5px 0;font-size:12px;width:100%;margin-top:5px}.worker-detail{border-top:1px solid #433e35;padding:17px 0}.worker-detail h3{font-size:15px}.worker-detail p{font-size:13px;line-height:1.5;margin:6px 0;color:#bebbb4}.worker-result{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;font-size:13px;margin-top:12px}.worker-detail:last-child{padding-bottom:0}@media(max-width:640px){.roster>.section-heading{display:flex;padding:7px 12px}.roster>.section-heading h2{font-size:12px}.roster-mobile-hint{display:block;font-size:10px!important}.roster{max-height:235px}.leader-list{min-height:185px}.leader .quota small{display:block;font-size:10px}.worker-summary-control{display:block}.leader .worker{display:none}.leader{overflow-y:auto}}
 
 .quota small{font-size:10px;white-space:normal;overflow-wrap:normal}.quota-label strong{white-space:nowrap}
-/* Agora #239: Luis's messages as right-hand bubbles; each provider outlined in its own colour. */
+/* Agora #239: the person's messages as right-hand bubbles; each provider outlined in its own colour. */
 .messages{display:flex;flex-direction:column;gap:12px}
 .message{border-bottom:0;padding:0}
 .message.human{justify-content:flex-end}
