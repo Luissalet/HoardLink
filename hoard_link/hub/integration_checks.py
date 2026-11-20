@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
-from .integration_git import IntegrationError, git, test_path
+from .integration_git import IntegrationError, diff_bytes, git, test_path
 
 
 SUITE_LOCK = Path(tempfile.gettempdir()) / "hoard-integration-test-slot.json"
@@ -58,6 +58,29 @@ def tests_for(delta, available, declared, config):
     if len(selected) > 40:
         raise IntegrationError("More than 40 test files match. Narrow the repository path map.")
     return {"contract": contract, "inference": sorted(inference)}
+
+
+def test_roots(files, tracked):
+    roots = {}
+    for file in files:
+        path = PurePosixPath(file)
+        fallback = path.parts[0] if len(path.parts) > 1 else "."
+        roots[file] = next((str(parent) for parent in path.parents
+                            if parent != PurePosixPath(".") and str(parent / "conftest.py") in tracked),
+                           fallback)
+    return roots
+
+
+def combine(results):
+    counts = {key: sum(row["counts"][key] for row in results.values())
+              for key in ("passed", "failed", "skipped")}
+    failures = {(f"{root}/{key}" if len(results) > 1 else key): info
+                for root, row in results.items() for key, info in row["failures"].items()}
+    result = {"counts": counts, "failures": failures, "roots": results}
+    errors = [f"{root}: {row['runner_error']}" for root, row in results.items() if row.get("runner_error")]
+    if errors:
+        result["runner_error"] = "\n".join(errors)
+    return result
 
 
 def test_env(data=None):
@@ -157,8 +180,7 @@ def suite(hub, repo, work, files, report, lane, *, remote, base, ref, empty_ok=F
     if not files:
         return {"counts": {"passed": 0, "failed": 0, "skipped": 0}, "failures": {}}
     if remote:
-        delta = git(repo, "diff", "--binary", "--full-index", "--no-ext-diff",
-                    "--no-renames", "--no-color", base, ref).stdout if base != ref else b""
+        delta = diff_bytes(repo, base, ref) if base != ref else b""
         payload = {"repo": remote, "base": base, "patch": base64.b64encode(delta).decode("ascii"),
                    "args": arguments(files, "REPORT", lane), "timeout": TIMEOUT,
                    "excluded": EXCLUDED_ENV}
@@ -175,4 +197,14 @@ def compare(base, candidate):
     for key, info in candidate["failures"].items():
         bucket = known if base["failures"].get(key, {}).get("signature") == info["signature"] else new
         bucket[key] = info
-    return {"main": base, "candidate": candidate, "known": known, "new": new}
+    result = {"main": base, "candidate": candidate, "known": known, "new": new}
+    if "roots" in base and "roots" in candidate:
+        result["roots"] = {root: compare(row, candidate["roots"][root])
+                           for root, row in base["roots"].items()}
+        for root, row in base["roots"].items():
+            ran = lambda data: data["counts"]["passed"] + data["counts"]["failed"]
+            if ran(row) and not ran(candidate["roots"].get(root, {"counts": {"passed": 0, "failed": 0}})):
+                # A root that ran contract tests on main and collected none in the candidate lost its contract.
+                new[f"{root}::<no tests ran>"] = {"signature": "root-lost", "file": root,
+                                                  "message": f"{ran(row)} contract tests ran on main and none in the candidate"}
+    return result

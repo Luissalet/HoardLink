@@ -32,6 +32,26 @@ def submission_tests(summary):
                               for line in matches for item in line.split(",") if item.strip()))
 
 
+def delivery_tests(agora, task, args):
+    revision = task["submission_revision"]
+    commits = ", ".join(task["commits"]) or "(none)"
+    marker = f"\n\nSubmission revision: {revision}\nCommits: {commits}"
+    # Submit publishes the revision and commits together. Handover only changes the owner.
+    proposals = agora.db.query("SELECT body FROM messages WHERE thread_id=? AND kind='proposal' "
+                               "AND created>=? ORDER BY id", (task["thread_id"], task["submitted_at"]))
+    for row in proposals:
+        body = row["body"]
+        if marker + "\n" in body or body.endswith(marker):
+            declared = submission_tests(body.rsplit(marker, 1)[0])
+            if declared:
+                return declared, True
+            break
+    provided = args.get("test_paths", [])
+    if not isinstance(provided, list):
+        raise repo_git.IntegrationError("test_paths must be a list of tracked pytest files")
+    return list(dict.fromkeys(repo_git.test_path(file) for file in provided)), False
+
+
 def delivery_contract(repo, branch, commits, files):
     if not files:
         raise repo_git.IntegrationError("Add Test-Paths with the path of the new or updated pytest file")
@@ -157,26 +177,27 @@ class IntegrationFacet(Facet):
         if target not in ("main", "master"):
             raise repo_git.IntegrationError("The registered repository must have its main or master branch checked out")
         base = repo_git.git_text(repo, "rev-parse", "HEAD")
-        # The stored proposal is timestamped with submit and comes from the task owner.
-        row = agora.db.one("SELECT body FROM messages WHERE thread_id=? AND kind='proposal' AND author=? "
-                           "AND created>=? ORDER BY id LIMIT 1",
-                           (task["thread_id"], task["owner"], task["submitted_at"]))
-        declared = submission_tests(row["body"] if row else "")
+        declared, from_submission = delivery_tests(agora, task, args)
+        if not declared:
+            raise repo_git.IntegrationError("The submission has no Test-Paths; provide tracked pytest files in test_paths")
         head = delivery_contract(repo, task["branch"], task["commits"], declared)
         fork = repo_git.git_text(repo, "merge-base", base, head)
         delta = repo_git.changed(repo, fork, head)
-        if not set(declared).issubset(delta):
+        if from_submission and not set(declared).issubset(delta):
             raise repo_git.IntegrationError("Test-Paths must name changed test files from this delivery")
         if repo_git.ancestor(repo, head, base):
             raise repo_git.IntegrationError("The delivery is already present in the target")
         config = checks.config_at(repo, base)
         # A submission cannot disable main's configured contract files or silently move them into inference.
-        files = checks.tests_for(delta, repo_git.tracked(repo, head) | repo_git.tracked(repo, base), declared, config)
+        tracked = repo_git.tracked(repo, head) | repo_git.tracked(repo, base)
+        files = checks.tests_for(delta, tracked, declared, config)
         live = args.get("live_test")
         if live and repo_git.test_path(live.split("::", 1)[0]) not in files["contract"]:
             raise repo_git.IntegrationError("The live case needs a test file in the contract selection")
         return repo, {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
-                      "branch": task["branch"], "delta": sorted(delta), "tests": files, "live_test": live}
+                      "branch": task["branch"], "delta": sorted(delta), "tests": files, "live_test": live,
+                      "test_paths": declared, "test_paths_source": "submission" if from_submission else "integrator",
+                      "test_roots": checks.test_roots(files["contract"] + files["inference"], tracked)}
 
     def _path(self, run):
         if not isinstance(run, str) or not re.fullmatch(r"[0-9a-f]{32}", run):
@@ -233,10 +254,18 @@ class IntegrationFacet(Facet):
                                family=manifest.get("x-family", {}))
 
     def _run_checks(self, repo, work, test_files, receipt, *, base, ref, lane="contract", remote=None, empty_ok=False):
-        files = [item for item in test_files if (work / item.split("::", 1)[0]).is_file()]
-        report = self._path(receipt["id"]).parent / f"{lane}-{ref}.xml"
-        return checks.suite(self.hub, repo, work, files, report, lane, base=base, ref=ref,
-                            remote=remote, empty_ok=empty_ok)
+        groups = {}
+        for item in test_files:
+            file = item.split("::", 1)[0]
+            group = groups.setdefault(receipt["plan"]["test_roots"][file], [])
+            if (work / file).is_file():
+                group.append(item)
+        results = {}
+        for index, (root, files) in enumerate(sorted(groups.items())):
+            report = self._path(receipt["id"]).parent / f"{lane}-{ref}-{index}.xml"
+            results[root] = checks.suite(self.hub, repo, work, files, report, lane, base=base, ref=ref,
+                                         remote=remote, empty_ok=empty_ok or len(groups) > 1)
+        return checks.combine(results)
 
     def _work(self, args, repo, task, receipt):
         run = receipt["id"]
@@ -510,7 +539,9 @@ class IntegrationFacet(Facet):
     def tools(cls):
         text = {"type": "string", "minLength": 1}
         delivery = {"task_id": {"type": "integer"}, "revision": {"type": "integer"},
-                    "space_id": text, "agent": text, "repo": text}
+                    "space_id": text, "agent": text, "repo": text,
+                    "test_paths": {"type": "array", "items": text,
+                                   "description": "Tracked pytest files when the submission has no Test-Paths."}}
         write = {**delivery, "merge": {"type": "boolean"}, "inference": {"type": "boolean"},
                  "spark_repo": text, "live_test": text}
         return [{"name": "hub_integration_" + key, "description": description,

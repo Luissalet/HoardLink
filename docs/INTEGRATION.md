@@ -15,9 +15,10 @@ Repository: Hoard Hub
 Test-Paths: tests/hub/test_integration.py
 ```
 
-Agora returns incomplete submissions to the worker before publishing a review request. The integration station
-applies the same contract when opening historic deliveries. Older submissions outside this station keep their
-existing format. The `Test-Paths` line accepts comma-separated pytest files tracked in the delivered commit.
+Agora returns incomplete integration submissions to the worker before publishing a review request. The station
+reads `Test-Paths` from the submitted revision, including after handover. The line accepts comma-separated pytest
+files changed in the delivery. When a historic submission has no line, the integrator can pass a `test_paths`
+array to plan or run. Those files must be tracked in the delivered commit and may be existing tests.
 
 ## Tools
 
@@ -51,9 +52,11 @@ changed module. For non-obvious dependencies, place a `.hoard-integration.json` 
 ```
 
 Use tests registered on main to define the shared map. Each comparison runs the selected files that exist at each
-revision. Matching test identities and assertion signatures are known failures; a changed signature is a new
-failure. Each repository and runner retains its own baseline after integration. A receipt carries the paired results,
-the baseline commit and the original case result.
+revision. The closest tracked `conftest.py` below the repository root determines a test's group. Files without
+one are grouped by their top-level directory. Each group runs in its own pytest process, in sequence, so test
+trees can use their own `conftest` imports. Matching test identities and assertion signatures within a group
+are known failures. A changed signature is a new failure. Each repository and runner retains its own baseline
+after integration. A receipt carries group and aggregate results, the baseline commit and the original case result.
 
 The default lane excludes `inference`, `live_model` and `gpu` markers and any inference file in the map.
 Pass `inference: true` to run that lane explicitly after arranging the model/GPU resources required by the tests.
@@ -76,3 +79,6 @@ uncommitted or ignored files and records the reason. A receipt distinguishes a f
 checkout, a rollback and a completed integration. The recovery patches and JUnit reports are under the Hub data
 directory in `integration/<receipt>/`. If an interruption occurred between checkout steps, use the last recorded
 event and the parked patches to recover the stored index and working changes.
+The station captures, stores and applies Git patches as bytes. For manual recovery on Windows, use
+`git diff --binary --full-index --output=<file>` to save a patch and `git apply <file>` to replay it.
+Windows PowerShell text redirection can write a UTF-16 file that Git cannot apply.

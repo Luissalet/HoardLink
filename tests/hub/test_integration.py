@@ -75,6 +75,7 @@ def test_move_preserves_both_layers_and_unrelated_paths(delivery, tmp_path):
     events = []
     scratch = tmp_path / "scratch"
     scratch.mkdir()
+    original = git.foreign(repo, {"feature.py"})
     git.move_checkout(repo, base, head, scratch, lambda state, data: events.append((state, data)))
     assert [event[0] for event in events] == ["prepared_checkout", "moved_checkout", "restored_checkout"]
     assert events[0][1]["parked"] == ["feature.py"]
@@ -82,9 +83,34 @@ def test_move_preserves_both_layers_and_unrelated_paths(delivery, tmp_path):
     assert (repo / "feature.py").read_text() == working.replace("line 2\n", "feature\n")
     assert git.git_text(repo, "show", ":other.txt") == "foreign outside"
     assert (repo / "draft.txt").read_text() == "untracked\n"
+    assert (scratch / "parked-index.patch").read_bytes() == original[1]
+    assert (scratch / "parked-worktree.patch").read_bytes() == original[2]
     git.move_checkout(repo, head, base, scratch, lambda *_: None)
     assert (repo / "feature.py").read_text() == working
     assert git.git_text(repo, "show", ":feature.py") == staged.strip()
+
+
+def test_binary_patch_round_trip_preserves_index_and_worktree(delivery, tmp_path):
+    repo, _, _, _ = delivery
+    asset = repo / "asset.bin"
+    asset.write_bytes(b"\x00\x81original\r\n")
+    base = commit(repo, "Add binary asset", asset.name)
+    staged, unstaged = b"\x00\xd1index\r\n", b"\x00\xffworking\n"
+    asset.write_bytes(staged)
+    git.git(repo, "add", "--", asset.name)
+    asset.write_bytes(unstaged)
+    parked = [git.patch(repo, [asset.name], staged=True), git.patch(repo, [asset.name])]
+    for index, data in enumerate(parked):
+        assert b"GIT binary patch\n" in data
+        journal = tmp_path / f"layer-{index}.patch"
+        journal.write_bytes(data)
+        parked[index] = journal.read_bytes()
+    with git.worktree(repo, tmp_path / "replay", base) as replay:
+        restored = git.replay(replay, *parked, [asset.name])
+    with git.worktree(repo, tmp_path / "restore", base) as restore:
+        git.apply_layers(restore, *restored)
+        assert git.git(restore, "show", ":" + asset.name).stdout == staged
+        assert (restore / asset.name).read_bytes() == unstaged
 
 
 def test_unreplayable_change_leaves_the_destination_exact(delivery, tmp_path):
@@ -147,6 +173,17 @@ def test_compare_requires_the_same_failure_and_signature():
     data = checks.compare({"failures": {"a": known, "b": known}}, {"failures": {"a": known, "b": updated, "c": known}})
     assert data["known"] == {"a": known}
     assert data["new"] == {"b": updated, "c": known}
+
+def test_compare_flags_a_test_root_that_stops_running():
+    def row(passed):
+        return {"counts": {"passed": passed, "failed": 0, "skipped": 0}, "failures": {}}
+
+    main = checks.combine({"editing_tests": row(10), "tests": row(93)})
+    lost = checks.compare(main, checks.combine({"editing_tests": row(0), "tests": row(95)}))
+    assert list(lost["new"]) == ["editing_tests::<no tests ran>"]
+    fresh = checks.compare(checks.combine({"editing_tests": row(0), "tests": row(93)}),
+                           checks.combine({"editing_tests": row(4), "tests": row(93)}))
+    assert fresh["new"] == {}
 
 
 def test_spark_request_executed_with_json_environment_and_git_diff(delivery, tmp_path):
@@ -255,6 +292,72 @@ def test_integrate_and_undo_exact_approved_delivery(delivery, tmp_path, monkeypa
         assert (repo / "feature.py").read_text() == working
         assert git.git_text(repo, "show", ":feature.py") == staged.strip()
         assert agora._task_row(task["id"])["status"] == "approved"
+    finally:
+        facet.close()
+        agora.close()
+
+
+@pytest.mark.parametrize("declared", [True, False])
+def test_transferred_delivery_compares_independent_conftests(delivery, tmp_path, monkeypatch, declared):
+    repo, _, _, branch = delivery
+    git.git(repo, "branch", "earlier-delivery", "delivery")
+    write(repo, "tests/conftest.py", "MAIN_NAME = 'main'\n")
+    write(repo, "editing_tests/conftest.py", "EDIT_NAME = 'editor'\n")
+    write(repo, "tests/test_api.py", "from conftest import MAIN_NAME\ndef test_api(): assert MAIN_NAME == 'main'\n")
+    write(repo, "editing_tests/test_api.py",
+          "from conftest import EDIT_NAME\ndef test_api(): assert EDIT_NAME == 'editor'\n")
+    base = commit(repo, "Add independent pytest roots", "tests/conftest.py", "editing_tests/conftest.py",
+                  "tests/test_api.py", "editing_tests/test_api.py")
+    git.git(branch, "-c", "user.name=Luissalet", "-c", "user.email=luissalet@users.noreply.github.com",
+            "merge", "--no-edit", "main")
+    write(branch, "api.py", "enabled = True\n")
+    test_path = "editing_tests/test_api.py"
+    if declared:
+        write(branch, test_path, "from conftest import EDIT_NAME\ndef test_api(): assert EDIT_NAME.startswith('edit')\n")
+    head = commit(branch, "Deliver API change", "api.py", test_path)
+    agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)),
+                          facet=lambda name: SimpleNamespace(agora=agora))
+    facet = IntegrationFacet(hub)
+    monkeypatch.setattr(checks, "SUITE_LOCK", tmp_path / "local-slot")
+    try:
+        task = agora.task_add({"agent": "author", "title": "API delivery", "repo": repo.name})["task"]
+        args = {"task_id": task["id"]}
+        agora.task_claim({**args, "agent": "author"})
+        ago = git.git_text(repo, "rev-parse", "earlier-delivery")
+        agora.task_submit({**args, "agent": "author", "branch": "earlier-delivery", "commits": [ago],
+                           "summary": "Test-Paths: tests/test_feature.py"})
+        agora.task_submit({**args, "agent": "author", "branch": "delivery", "commits": [head],
+                           "summary": f"Test-Paths: {test_path}" if declared else "Historic delivery"})
+        agora.task_review({**args, "agent": "reviewer", "verdict": "approve",
+                           "expected_submission_revision": 2, "body": "Reviewed current delivery."})
+        agora.heartbeat({"agent": "integrator"})
+        agora.handover({"agent": "author", "from_agent": "author", "to_agent": "integrator",
+                        "tasks": [task["id"]], "reason": "Hand over the approved revision."})
+        args.update(agent="integrator", revision=2)
+        if not declared:
+            with pytest.raises(git.IntegrationError, match="provide tracked pytest"):
+                facet.inspect(args)
+            with pytest.raises(git.IntegrationError, match="Invalid pytest path"):
+                facet.inspect({**args, "test_paths": ["../test_api.py"]})
+        plan = facet.inspect({**args, "test_paths": ["tests/test_api.py"]})["plan"]
+        assert plan["test_paths"] == [test_path if declared else "tests/test_api.py"]
+        assert plan["test_paths_source"] == ("submission" if declared else "integrator")
+        assert plan["tests"]["contract"] == [test_path, "tests/test_api.py", "tests/test_feature.py"]
+        run = facet.run({**args, "test_paths": ["tests/test_api.py"], "merge": True,
+                         "live_test": f"{test_path}::test_api"})["receipt"]["id"]
+        deadline = time.monotonic() + 35
+        while facet.active and time.monotonic() < deadline:
+            time.sleep(0.05)
+        receipt = facet.status({"id": run})["receipt"]
+        assert receipt["state"] == "integrated", receipt
+        assert receipt["comparison"]["roots"]["editing_tests"]["candidate"]["counts"]["passed"] == 1
+        assert receipt["comparison"]["roots"]["tests"]["main"]["counts"]["passed"] == 1
+        assert len(receipt["comparison"]["roots"]["tests"]["known"]) == 1
+        assert git.git_text(repo, "rev-parse", "HEAD") == head
+        assert agora._task_row(task["id"])["status"] == "done"
+        assert facet.undo({"id": run, "agent": "integrator"})["receipt"]["state"] == "undone"
+        assert git.git_text(repo, "rev-parse", "HEAD") == base
     finally:
         facet.close()
         agora.close()
