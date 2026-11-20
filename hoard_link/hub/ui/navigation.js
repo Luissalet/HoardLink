@@ -247,6 +247,9 @@
     const overview=node('div','hub-home-status');container.append(overview);window.HubStatus?.overview(overview);
     const layout=node('div','hub-home-layout'); const attention=node('section','hub-attention');
     heading(attention,tr('Necesita tu atención','Needs your attention'),tr('Abrir bandeja','Open inbox'),'#hub/communication');
+    attention.append(node('p','hint',tr(
+      'Agenda de hoy y plazos vencidos, avisos sin revisar, correo, chats e incidencias.',
+      'Today’s agenda and overdue items, unread notifications, mail, chats and incidents.')));
     if(!homeData) {
       attention.append(node('p','hub-empty',homeError?tr('No se ha podido consultar tu resumen. Puedes seguir entrando en tus proyectos y aplicaciones.','Your summary could not be loaded. You can still open projects and apps.'):tr('Consultando pendientes…','Checking pending items…')));
       if(homeError){const retry=node('button','ghost',tr('Reintentar','Retry'));retry.onclick=()=>loadHome(true);attention.append(retry);}
@@ -257,7 +260,7 @@
       for(const x of homeData.attention?.mail || [])items.push([x.subject || tr('Correo pendiente','Pending mail'),x.from_name || tr('Requiere revisión','Needs review'),'#hub/mailgate']);
       for(const x of homeData.attention?.chats || [])items.push([x.snippet || x.text || tr('Mensaje pendiente','Pending message'),tr('Conversación pendiente','Pending conversation'),'#hub/chats']);
       for(const x of homeData.system?.incidents || [])items.push([tr('Revisar ','Review ')+(apps.find(a=>a.id===x.app)?.name || x.app),tr('Hay una incidencia registrada. Consulta su estado.','An incident is recorded. Check its status.'),'#hub/audit']);
-      if(!items.length)attention.append(node('p','hub-empty',tr('No hay pendientes en las fuentes consultadas.','No pending items in the checked sources.')));
+      if(!items.length)attention.append(node('p','hub-empty',tr('No hay elementos pendientes en este resumen.','There are no pending items in this summary.')));
       if(homeData.noticesUnavailable)attention.append(node('p','hint',tr('Los avisos no se han podido consultar. Abre la bandeja para reintentar.','Notifications could not be checked. Open your inbox to retry.')));
       for(const item of items.slice(0,5))rowLink(attention,...item);
       if(items.length>5)attention.append(link(tr('Ver el resto de pendientes','See remaining items'),'#hub/today','hub-text-link'));
