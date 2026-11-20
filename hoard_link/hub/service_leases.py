@@ -19,6 +19,9 @@ def start_comfy(launcher, leases, service_id, gpu, wait_s, *, lease_id=None, wor
             return launcher.start(service_id, gpu=gpu, wait_s=wait_s)
         current = launcher.status(service)
         running = current["state"] in ("running", "starting")
+        if service.profile is not None and running and current["pid"] is None:
+            return {"ok": False, "service": service.id,
+                    "error": "The profile port is held by another process / Otro proceso ocupa el puerto del perfil"}
         if lease_id and running:
             existing = leases.get(lease_id).get("lease", {})
             if (existing.get("process_bound") and existing.get("purpose") == service.id
@@ -31,10 +34,10 @@ def start_comfy(launcher, leases, service_id, gpu, wait_s, *, lease_id=None, wor
         if lease_id and (running or not service.argv or "--cpu" in service.argv):
             return {"ok": False, "service": service.id,
                     "error": "A lease can only be attached to a new CUDA service / La reserva requiere un servicio CUDA nuevo"}
-        if running or not service.argv or "--cpu" in service.argv:
+        if running or service.problem or not service.argv or "--cpu" in service.argv:
             return launcher.start(service_id, gpu=gpu, wait_s=wait_s)
 
-        config = launcher.config().get("comfyui") or {}
+        config = launcher.comfy_config(service.id)
         wanted = gpu if gpu is not None else ("auto" if lease_id or work_lease_id else config.get("gpu", "auto"))
         supplied_lease = lease_id
         bound = False

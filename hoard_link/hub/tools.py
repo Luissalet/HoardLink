@@ -160,9 +160,33 @@ def catalogue() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": True},
         },
         {
+            "name": "hub_comfy_profile_register",
+            "description": "Register an installed image engine / Registrar un motor de imagen instalado. "
+                           "Declare its dedicated port, template IDs and model files. Does not start it. Returns undo.",
+            "inputSchema": {"type": "object", "properties": {
+                "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,40}$"},
+                "directory": {"type": "string"}, "python": {"type": "string"},
+                "port": {"type": "integer", "minimum": 1024, "maximum": 65535},
+                "templates": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "models": {"type": "array", "items": {"type": "string"},
+                           "description": "Paths relative to the installation, or absolute paths for shared models."},
+                "model_paths_config": {"type": "string", "description": "Existing file that maps extra model folders."},
+                "disable_custom_nodes": {"type": "boolean", "default": False},
+                "startup_vram_mb": {"type": "integer", "minimum": 1, "maximum": 100000, "default": 512}},
+                "required": ["name", "directory", "python", "port", "templates", "models"],
+                "additionalProperties": False},
+        },
+        {
+            "name": "hub_comfy_profile_unregister",
+            "description": "Remove a stopped engine profile / Retirar el perfil de un motor parado. Returns undo.",
+            "inputSchema": {"type": "object", "properties": {
+                "name": {"type": "string"}, "expected_registration": {"type": "string"}},
+                "required": ["name"], "additionalProperties": False},
+        },
+        {
             "name": "hub_service_start",
             "description": "Start a local backend server without Faustus / arrancar ComfyUI, Ollama o un servidor.\n"
-                           "id from hub_services: 'comfyui@8188' (any port; other ports get their own folders), "
+                           "id from hub_services: 'comfyui:<name>' (registered engine), 'comfyui@8188' (default install), "
                            "'ollama' or 'cmd:<id>' from ~/.hoard/backends.json. gpu: 'auto' (uncommitted VRAM) or an "
                            "index, ComfyUI only. lease_id attaches a granted reservation to this process until it stops. "
                            "wait_s waits until it answers (max 300).",
@@ -757,6 +781,8 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_stop_all": lambda _: hub.stop_all(),
         "hub_backends": lambda a: hub.backends(force=bool(a.get("force", False))),
         "hub_services": lambda a: hub.services(),
+        "hub_comfy_profile_register": lambda a: hub.launcher.register_comfy(**a),
+        "hub_comfy_profile_unregister": lambda a: hub.launcher.unregister_comfy(**a),
         "hub_gpu_memory": lambda a: hub.gpu_memory(),
         "hub_service_start": lambda a: hub.service_start(str(a.get("id") or ""), gpu=a.get("gpu"),
                                                          wait_s=float(a.get("wait_s") or 0),
