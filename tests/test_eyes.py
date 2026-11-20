@@ -304,6 +304,20 @@ def test_app_object_is_seen_through_its_own_view_tool(eyes: EyesFacet, tmp_path:
     assert "Unknown app" in eyes.look({"app": {"app": "nope", "tool": "x"}})["error"]
 
 
+def test_app_chart_plain_image_base64_becomes_a_view(eyes: EyesFacet) -> None:
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 24), "blue").save(buf, "PNG")
+    eyes.hub.app_result = {"ok": True, "chart_id": 1, "image_base64": base64.b64encode(buf.getvalue()).decode()}
+    app = next(iter(eyes.hub.apps))
+    arguments = {"action": "get", "chart_id": 1, "image": True}
+    out = eyes.look({"app": {"app": app, "tool": "data_chart", "arguments": arguments}})
+    assert out["status"] == "done" and len(out["views"]) == 1
+    assert eyes.hub.app_calls == [(app, "data_chart", arguments)]
+    assert out["facts"]["answer"]["chart_id"] == 1
+    reply = eyes.get(_request(out["views"][0]["url"]))
+    assert isinstance(reply, Reply) and reply.body == buf.getvalue()
+
+
 # -- HTTP ------------------------------------------------------------------------------------------------------------
 
 def test_routes_need_a_caller_and_serve_view_files(eyes: EyesFacet, tmp_path: Path) -> None:

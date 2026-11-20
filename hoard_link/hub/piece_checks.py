@@ -12,6 +12,7 @@ import time
 
 from .. import proc
 from .facets import Facet
+from .piece_checks_sheet import check_sheet, dataset_requirements
 from .production import _tool
 
 PROFILES = {
@@ -22,6 +23,7 @@ PROFILES = {
     "web": ("web-page",),
     "slides": ("editable-deck", "presentation-pptx"),
     "document": ("editable-report", "research-report", "document"),
+    "spreadsheet": ("data-table", "spreadsheet", "xlsx"),
     "narrative": ("pdf", "narrative-pdf"),
 }
 TYPE_PROFILES = {kind: profile for profile, kinds in PROFILES.items() for kind in kinds}
@@ -30,7 +32,7 @@ KINDS_BY_SUFFIX = {
     ".mp4": "video", ".mov": "video", ".webm": "video", ".mkv": "video",
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".tif": "image",
     ".html": "web", ".htm": "web", ".pptx": "slides", ".md": "document", ".docx": "document",
-    ".txt": "document", ".pdf": "document",
+    ".txt": "document", ".pdf": "document", ".xlsx": "spreadsheet",
 }
 ENGINES = {"print-mesh": "vulcan", "game-mesh": "vulcan", "web": "vitruvius"}
 VERDICTS = {
@@ -72,6 +74,7 @@ def run_checks(path, profile, requirements, *, narrative=None):
         "web": piece_checks_layout.check_web,
         "slides": piece_checks_layout.check_slides,
         "document": piece_checks_sources.check_document,
+        "spreadsheet": check_sheet,
         "narrative": piece_checks_narrative.check_narrative,
     }
     report = Report()
@@ -158,6 +161,10 @@ class PieceChecksFacet(Facet):
             requirements = args.get("requirements", {})
             if profile not in PROFILES or not isinstance(requirements, dict):
                 return {"ok": False, "error": "Choose a supported profile and an object of requirements."}
+            if profile == "spreadsheet":
+                requirements = {key: value for key, value in requirements.items() if not key.startswith("_")}
+                if "dataset" in requirements:
+                    requirements = dataset_requirements(self.hub, requirements)
             narrative, manuscript = None, None
             if row and profile == "narrative":
                 from .piece_checks_narrative import registered_source
@@ -245,7 +252,10 @@ class PieceChecksFacet(Facet):
         string = {"type": "string", "minLength": 1}
         properties = {"piece_id": {"type": "integer", "minimum": 1}, "space_id": string,
                       "profile": {"type": "string", "enum": list(PROFILES)},
-                      "requirements": {"type": "object"}}
+                      "requirements": {"type": "object", "description": (
+                          "Profile requirements. For XLSX, use dataset {name, version} to compare with its source. "
+                          "Para XLSX, usa dataset {name, version} para cotejar con su origen."
+                      )}}
         actor = {"agent": string, "language": {"enum": ["en", "es"]}}
         file = {**properties, "path": string, "kind": string}
         return [
@@ -278,6 +288,10 @@ def _note(result, language, detail_limit=3000):
         "details": ("Findings", "Hallazgos"), "detail": ("Detail", "Detalle"),
     }
     findings = []
+    measures = result["measures"]
+    if result["profile"] == "spreadsheet" and "row_count" in measures:
+        rows, cols = measures["row_count"], len(measures["columns"])
+        findings.append(f"{rows} filas · {cols} columnas" if language == "es" else f"{rows} rows · {cols} columns")
     for check in result["checks"]:
         if check["verdict"] != "pass":
             facts = []

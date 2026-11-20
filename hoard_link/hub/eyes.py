@@ -144,7 +144,9 @@ class EyesFacet(Facet):
                     walk(v, key)
             elif isinstance(node, str):
                 low = node.lower().split("?")[0]
-                if low.endswith(IMAGE_SUFFIXES):
+                if key == "image_base64" and node and not node.startswith("data:"):
+                    found.append(("b64", node))
+                elif low.endswith(IMAGE_SUFFIXES):
                     if os.path.isfile(node):
                         found.append(("file", node))
                     elif node.startswith("/") or render.is_url(node):

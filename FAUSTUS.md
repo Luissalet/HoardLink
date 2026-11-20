@@ -167,7 +167,9 @@ across the installed Hoards without starting them. `hub_station_catalog` reads
 manifest handoffs, links supported piece types to their technical checks, and
 proposes compatible chains. `hub_piece_validate` reports measurements from the
 file or registered revision. Checked looks and Orders gates display the
-technical verdict alongside the piece. See [production piece checks](docs/piece-checks.md).
+technical verdict alongside the piece. XLSX checks measure the headers, rows and cell types of
+the retained workbook. They can compare those measurements with the chosen Nightingale dataset
+version and verify the export fingerprint. See [production piece checks](docs/piece-checks.md).
 The Writer station takes an editorial brief through its dossier, manuscript and continuity review
 to PDF or EPUB. The narrative PDF checker compares the retained review with the full export,
 counts words and pages, inspects embedded fonts and reports continuity defects and their disposition.
