@@ -25,6 +25,11 @@ hand.
 An order is written from the Hub's page (Orders → New order), by a tool from a Faustus chat or an agent, or by any Hoard
 over `POST /api/agora/order_create` with its bearer token and `refs` pointing at the selection it was made on.
 
+## Work admission and budgets
+
+See [Studio work admission](STUDIO-ADMISSION.md) for machine turns, retry and GPU budgets, capability routing, and
+first-pass and station measures. Orders shows a budget hold alongside the gate and includes its reason in the worker's job.
+
 ## Plan
 
 `plan_set` adds, changes or removes jobs. Each new job is an Agora task of the order's space, labelled `order-<id>`, with
