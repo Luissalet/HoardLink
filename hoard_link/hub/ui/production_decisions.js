@@ -33,6 +33,7 @@ function pendingRow(row) {
   if (row.image) link.append(thumb(row.image));
   const words = el('span', 'hub-decision-words');
   words.append(el('strong', '', row.title), el('small', '', row.order));
+  if (row.pieces?.length) words.append(el('small', '', row.pieces.join(' · ')));
   if (row.variants?.length) {
     const variants = el('span', 'hub-decision-variants');
     for (const variant of row.variants) {

@@ -8,33 +8,13 @@ function scopeQuery(space) {
   return space === '*' ? 'all_spaces=1' : space ? `space_id=${encodeURIComponent(space)}` : '';
 }
 
-function thumbnail(pieces) {
-  const piece = pieces.find(p => p.previews?.length || p.view === 'image');
-  if (!piece) return null;
-  const suffix = piece.previews?.length ? '?preview=0' : '';
-  return {path: `/api/agora/piece_file/${piece.id}${suffix}`, title: piece.title};
-}
-
 export async function loadPending(api, space = '') {
-  const query = scopeQuery(space);
-  const [orders, drafts] = await Promise.allSettled([
-    read(api, 'orders', [query, 'limit=1'].filter(Boolean).join('&')), read(api, 'draft_passes', query),
-  ]);
-  const anchors = ['keyframe_start', 'keyframe_end', 'keyframe', 'animatic', 'composition', 'blocking_color'];
-  const passes = (drafts.value?.draft_passes || []).map(pass => {
-    const variants = pass.variants.filter(v => !['kept', 'discarded'].includes(v.status)).map(variant => {
-      const preferred = anchors.flatMap(anchor => variant.pieces.filter(piece => piece.anchor === anchor));
-      return {id: variant.id, title: variant.title, image: thumbnail(preferred) || thumbnail(variant.pieces)};
-    });
-    return {key: `draft-${pass.id}`, title: pass.title, order: pass.order?.title, space: pass.space_id,
-      image: null, variants};
-  });
-  const gates = (orders.value?.waiting || []).map(gate => {
-    const decided = new Set((gate.decisions || []).map(d => d.piece_id));
-    return {key: `gate-${gate.id}`, title: gate.title, order: gate.order?.title, space: gate.space_id,
-      image: thumbnail(gate.pieces.filter(p => !decided.has(p.id)))};
-  });
-  return {rows: [...passes, ...gates], incomplete: orders.status === 'rejected' || drafts.status === 'rejected'};
+  try {
+    const {rows} = await read(api, 'pending_decisions', scopeQuery(space));
+    return {rows, incomplete: false};
+  } catch {
+    return {rows: [], incomplete: true};
+  }
 }
 
 export async function loadHistory(api, space = '') {

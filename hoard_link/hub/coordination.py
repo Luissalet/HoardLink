@@ -44,7 +44,9 @@ class CoordinationFacet(Facet):
         urls = list(self.hub.config.faustus_urls or [''])
         try:
             from .. import where
-            urls = where.faustus_urls(urls, self.hub.placement.state()) or urls
+            placed = where.placed('faustus', self.hub.placement.state())
+            if placed:
+                return placed
         except Exception:  # noqa: BLE001 - placement is optional here
             pass
         return str(urls[0]).rstrip('/')

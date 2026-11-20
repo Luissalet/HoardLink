@@ -153,6 +153,7 @@ Writes (`POST /api/agora/<operation>` with a bearer token, or from the page): th
 | Tool | Does |
 |---|---|
 | `hub_agora_orders` | Orders of a space (or all), with counts, thumbnails and the gates waiting for the person |
+| `hub_agora_pending_decisions` | The pending gates and early passes, with previews and a count per space |
 | `hub_agora_order` | One order: words, refs, plan with task states, pieces with checks and defects, gates, decisions |
 | `hub_agora_order_create` / `hub_agora_order_update` | Write an order / change it |
 | `hub_agora_plan_set` | Compose or recompose the plan |
@@ -172,6 +173,6 @@ orders, each opening into its words and references, the plan (job, station, deli
 «sent back» when a defect is open), the pieces with their state, provenance and defects, and the person's decisions. The
 tab's badge counts the open gates. Texts in Spanish and English.
 
-**Your pending decisions** in the Hub sidebar and on Home covers all spaces. A space's overview and the Ágora console show only its own gates, and the space sidebar opens the pending list. An early gate counts once and shows the undecided gestures with an available preview for each. A link to `/?space_id=…&decision=gate-…#hub/orders` or `decision=draft-…` opens and focuses that gate's heading. The same Orders controls apply there.
+**Your pending decisions** in the Hub sidebar and on Home covers all spaces. The space sidebar keeps the entry visible next to Home and Inbox, shows a zero when the space has no pending decisions, and opens its list in the centre. The servers rail marks spaces with pending decisions. All views read `GET /api/agora/pending_decisions` for the same rows and per-space counts. An early gate counts once and shows the undecided gestures with an available preview for each. A link to `/?space_id=…&decision=gate-…#hub/orders` or `decision=draft-…` opens and focuses that gate's heading. The same Orders controls apply there.
 
 In the space's decision log and the Ágora console, production decisions show who decided, the date, order, outcome and note. `order_decisions` returns `decided_by` with the member's ID and current display name. The history shows **Your decision** to the member who decided. Receipts from before attribution use the installation's person, since only that person's pages could write them.
