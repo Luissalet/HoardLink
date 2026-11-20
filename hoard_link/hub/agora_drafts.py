@@ -556,8 +556,9 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "variants": {"type": "array", "items": variant, "minItems": 1, "maxItems": MAX_VARIANTS}},
                                ["agent", "order_id", "variants"])},
         {"name": "hub_agora_draft_pass_note_set",
-         "description": "Replace the note for a draft pass, including when it is shown. Send an empty string to clear it. "
-                        "Cambia la nota de la pasada, incluso si ya está mostrada. Envía texto vacío para borrarla." + undo,
+         "description": "Correct a draft pass note / Corrige la nota de una pasada.\n"
+                        "Works while the pass is shown. Send an empty string to clear the note. "
+                        "Funciona con la pasada mostrada. Envía texto vacío para borrar la nota." + undo,
          "inputSchema": schema({"agent": agent_prop, "pass_id": {"type": "integer", "minimum": 1},
                                 "note": {"type": "string", "maxLength": orders.TEXT_MAX}}, ["agent", "pass_id", "note"])},
         {"name": "hub_agora_draft_variant_set",
