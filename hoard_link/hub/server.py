@@ -373,12 +373,18 @@ class _HubHandler(BaseHTTPRequestHandler):
                 res = arb.request(owner=str(body.get("owner") or ""), purpose=str(body.get("purpose") or ""),
                                   vram_mb=body.get("vram_mb", 0), gpu=body.get("gpu"), priority=body.get("priority", 0),
                                   ttl_s=body.get("ttl_s"), wait=bool(body.get("wait", False)), pid=body.get("pid"),
-                                  lease_id=body.get("lease_id"), wait_s=body.get("wait_s"), service=body.get("service"))
+                                  lease_id=body.get("lease_id"), wait_s=body.get("wait_s"), service=body.get("service"),
+                                  avoid_gpus=tuple(int(gpu) for gpu in body.get("avoid_gpus", ())))
             elif action == "renew":
                 res = arb.renew(str(body.get("lease_id") or ""), body.get("ttl_s"))
+            elif action == "bind-process":
+                res = arb.bind_process(str(body.get("lease_id") or ""), int(body["pid"]), service=body.get("service"))
+            elif action == "reserve-service":
+                res = arb.reserve_service_for_work(str(body.get("lease_id") or ""), str(body.get("service") or ""),
+                                                   int(body["vram_mb"]), body.get("gpu", "any"))
             else:
                 res = arb.release(str(body.get("lease_id") or ""))
-        except LeaseError as exc:
+        except (LeaseError, ValueError, KeyError, TypeError) as exc:
             return self._json({"ok": False, "error": str(exc)}, 400)
         return self._lease_reply(res)
 
@@ -688,7 +694,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 args = body.get("arguments") or body.get("args") or {}
                 result, status = agent_routes.invoke(hub, name, args if isinstance(args, dict) else {})
                 return self._json(result, status)
-            if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release"):
+            if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release",
+                        "/api/lease/bind-process", "/api/lease/reserve-service"):
                 return self._lease_post(path.rsplit("/", 1)[1], body)
             if path in ("/api/lane/acquire", "/api/lane/renew", "/api/lane/release"):
                 who = self._family_ok()

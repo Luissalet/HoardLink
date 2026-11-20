@@ -9,6 +9,13 @@ The Work panel and the `hub_work` tool associate reservations with the job ID
 included in their purpose. A job using several cards exposes its reservations
 under `leases`.
 
+Hub instances on other ports use the primary Hub on 8810 for GPU reservations.
+Their data and named render services stay in their own instance. Lease status,
+requests, renewals and releases share the machine's queue. Starting a CUDA
+service through another Hub also uses that queue, including the reservation
+that follows the service process. If the primary Hub is unavailable, the other
+instance reports the reservation failure.
+
 When the Hub starts a local CUDA ComfyUI service it reserves its startup footprint before launching it on
 the assigned GPU. The default is 512 MiB, configurable as `comfyui.startup_vram_mb` in `backends.json`.
 Automatic selection uses the arbiter's uncommitted VRAM, skips protected GPUs and prefers cards without a
