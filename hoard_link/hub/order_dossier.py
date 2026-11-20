@@ -72,7 +72,9 @@ def _file_digest(path):
 
 
 def _link(path):
-    return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
+    entry = path.lstat()
+    return (stat.S_ISLNK(entry.st_mode)
+            or getattr(entry, "st_reparse_tag", 0) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None))
 
 
 def _directory_digest(path):

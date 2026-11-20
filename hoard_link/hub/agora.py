@@ -65,6 +65,7 @@ from . import agora_drafts
 from . import agora_debate
 from . import agora_review
 from . import agora_live
+from . import order_dossier
 from .facets import Facet, Reply, Request
 
 # code_peek refs: path/to/file.py#L10-L24@abc1234 (commit optional when the submission lists commits)
@@ -221,6 +222,8 @@ MIGRATIONS.append(agora_work.WORK_MIGRATION)
 MIGRATIONS.append(agora_orders.ORDERS_MIGRATION)
 # the draft pass of an order: variants in draft and the person's early gate (agora_drafts.py)
 MIGRATIONS.append(agora_drafts.DRAFTS_MIGRATION)
+# source receipts and native context for production orders
+MIGRATIONS.append(order_dossier.MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")

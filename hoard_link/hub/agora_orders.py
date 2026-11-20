@@ -432,7 +432,10 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if "after" in change and table in _KEYS:
                 sql = " AND ".join(f"{key}=?" for key in cond)
                 current = self.db.one(f"SELECT * FROM {table} WHERE {sql}", tuple(cond.values()))
-                if (dict(current) if current else None) != change["after"]:
+                after = change["after"]
+                if table == "agora_orders" and after is not None and "dossier" not in after:
+                    after = {**after, "dossier": "{}"}
+                if (dict(current) if current else None) != after:
                     raise _err("The order changed since this write", 409)
         for change in reversed(changes.get("rows") or []):
             table, cond, row = change["table"], change["where"], change["row"]
@@ -770,17 +773,18 @@ def order_create(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 
 
 def order_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
-    """Change an order: title, words, refs, deliverables, template, keep, folder, deadline or status."""
+    """Change order metadata, source references or dossier settings."""
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     before = _order_row(self, a.get("order_id"))
     material_receipts = None
     refs = _refs(a["refs"]) if "refs" in a else _load(before["refs"], [])
     folder = _txt(a["folder"], 1000, "folder") if "folder" in a else before["folder"]
+    sources_changed = "refs" in a or "folder" in a
     if "refs" in a or (folder != before["folder"] and any(r.get("path") and not os.path.isabs(r["path"]) for r in refs)):
         material_receipts = order_dossier.materials(refs, folder)
     with self.db.tx():
         row = _order_row(self, before["id"])
-        if material_receipts is not None and (row["refs"], row["folder"]) != (before["refs"], before["folder"]):
+        if sources_changed and (row["refs"], row["folder"]) != (before["refs"], before["folder"]):
             raise _err("the order's sources changed while fingerprinting them; read the order and retry", 409)
         fields: dict[str, Any] = {}
         if "title" in a:

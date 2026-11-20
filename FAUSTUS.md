@@ -168,6 +168,9 @@ manifest handoffs, links supported piece types to their technical checks, and
 proposes compatible chains. `hub_piece_validate` reports measurements from the
 file or registered revision. Checked looks and Orders gates display the
 technical verdict alongside the piece. See [production piece checks](docs/piece-checks.md).
+`hub_agora_order_create` and `hub_agora_order_update` record a [production dossier](docs/order-dossier.md)
+with the audience, constraints, starting material fingerprints and any context compiled by the source station.
+`hub_agora_job` delivers it with the worker's brief.
 The [integration station](docs/INTEGRATION.md) compares focused tests against the committed main branch, preserves
 overlapping Git changes, verifies the merged case and closes the approved delivery in the Agora. Its receipts appear
 under System → Integrations. The station leaves the person's production gates to their existing interface.

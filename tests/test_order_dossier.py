@@ -1,8 +1,10 @@
 import hashlib
+import json
 
 import pytest
 
 from hoard_link.hub.agora import Agora, AgoraError, MIGRATIONS, TOOLS
+from hoard_link.hub.agora_drafts import DRAFTS_MIGRATION
 from hoard_link.hub.order_dossier import MIGRATION
 from hoard_link.sqlkit import Database
 
@@ -100,12 +102,25 @@ def test_an_order_named_after_its_document_has_a_request(studio, tmp_path):
 
 def test_dossier_migrates_an_existing_order(tmp_path):
     path = tmp_path / "agora.db"
-    with Database(path, migrations=MIGRATIONS[:MIGRATIONS.index(MIGRATION)]) as db:
+    previous = MIGRATIONS[:MIGRATIONS.index(MIGRATION)]
+    assert DRAFTS_MIGRATION in previous
+    with Database(path, migrations=previous) as db:
         oid = db.insert("agora_orders", {"space_id": "ecosystem", "title": "Older order", "words": "Existing request",
                                         "created_by": "planner", "created": 1, "updated": 1})
+        original = dict(db.one("SELECT * FROM agora_orders WHERE id=?", (oid,)))
+        db.execute("UPDATE agora_orders SET updated=2 WHERE id=?", (oid,))
+        after = dict(db.one("SELECT * FROM agora_orders WHERE id=?", (oid,)))
+        db.insert("agora_order_journal", {
+            "token": "old-budget-write", "space_id": "ecosystem", "agent": "planner",
+            "op": "order_budget_set", "created": 2, "changes": json.dumps({
+                "rows": [{"table": "agora_orders", "where": {"id": oid}, "row": original, "after": after}],
+            }),
+        })
     studio = Agora(path)
     try:
         assert studio.order({"order_id": oid})["order"]["dossier"]["request"] == "Existing request"
+        studio.order_undo({"agent": "planner", "token": "old-budget-write"})
+        assert studio.db.scalar("SELECT updated FROM agora_orders WHERE id=?", (oid,)) == 1
         studio.order_update({"agent": "planner", "order_id": oid, "dossier": {"audience": "Workshop"}})
         assert studio.order({"order_id": oid})["order"]["dossier"]["audience"] == "Workshop"
     finally:
