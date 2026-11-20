@@ -18,10 +18,20 @@ def start_comfy(launcher, leases, service_id, gpu, wait_s, *, lease_id=None, wor
         except KeyError:
             return launcher.start(service_id, gpu=gpu, wait_s=wait_s)
         current = launcher.status(service)
-        if lease_id and (current["state"] in ("running", "starting") or not service.argv or "--cpu" in service.argv):
+        running = current["state"] in ("running", "starting")
+        if lease_id and running:
+            existing = leases.get(lease_id).get("lease", {})
+            if (existing.get("process_bound") and existing.get("purpose") == service.id
+                    and existing.get("pid") == current.get("pid")
+                    and gpu in (None, "", "auto", "any", existing["gpu"], str(existing["gpu"]))):
+                result = launcher.start(service_id, gpu=existing["gpu"], wait_s=wait_s)
+                return {**result, "lease_id": lease_id, "gpu": existing["gpu"],
+                        "undo": {"tool": "hub_service_stop",
+                                 "arguments": {"id": service.id, "expected_pid": current["pid"]}}}
+        if lease_id and (running or not service.argv or "--cpu" in service.argv):
             return {"ok": False, "service": service.id,
                     "error": "A lease can only be attached to a new CUDA service / La reserva requiere un servicio CUDA nuevo"}
-        if current["state"] in ("running", "starting") or not service.argv or "--cpu" in service.argv:
+        if running or not service.argv or "--cpu" in service.argv:
             return launcher.start(service_id, gpu=gpu, wait_s=wait_s)
 
         config = launcher.config().get("comfyui") or {}

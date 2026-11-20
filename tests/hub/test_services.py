@@ -145,6 +145,8 @@ def test_auto_uses_arbiter_and_a_manual_service_lease_covers_its_work(served, tm
         manual = hub.leases.request(vram_mb=11500, gpu=2)["lease_id"]
         service = tools.call(hub, "hub_service_start", {**args, "lease_id": manual})
         assert service["ready"] and service["lease_id"] == manual
+        repeated = tools.call(hub, "hub_service_start", {**args, "lease_id": manual})
+        assert repeated["already"] and repeated["undo"] == service["undo"]
         request = {"owner": "prospero", "purpose": "image from shared service", "service": args["id"],
                    "vram_mb": 11000, "gpu": 2}
         _, job = _req(url + "/api/lease/request", request)

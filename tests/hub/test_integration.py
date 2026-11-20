@@ -328,7 +328,8 @@ def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, 
         task = agora.task_add({"agent": "owner", "title": "Integrate two repos", "labels": ["integration"]})["task"]
         args = {"agent": "owner", "task_id": task["id"]}
         agora.task_claim(args)
-        summary = f"Test-Paths: {first.name}/tests/test_feature.py, {second.name}/{file}"
+        paths = f"tests/test_feature.py, {file}" if regression else f"{first.name}/tests/test_feature.py, {second.name}/{file}"
+        summary = f"Test-Paths: {paths}"
         agora.task_submit({**args, "branch": "delivery", "commits": [head[:12], second_head], "summary": summary})
         agora.task_review({**args, "agent": "reviewer", "verdict": "approve",
                            "expected_submission_revision": 1, "body": "Reviewed both branches."})
