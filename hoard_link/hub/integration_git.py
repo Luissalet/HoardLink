@@ -33,6 +33,12 @@ def git_text(repo, *args):
     return git(repo, *args).stdout.decode("utf-8").strip()
 
 
+def diff_bytes(repo, *args):
+    """Preserve Git's patch bytes across shells, files and subprocesses."""
+    return git(repo, "diff", "--binary", "--full-index", "--no-ext-diff", "--no-textconv",
+               "--no-renames", "--no-color", *args).stdout
+
+
 def paths(raw):
     return [os.fsdecode(name) for name in raw.split(b"\0") if name]
 
@@ -100,8 +106,7 @@ def patch(repo, names, *, staged=False):
     if not names:
         return b""
     flags = ["--cached"] if staged else []
-    return git(repo, "diff", *flags, "--binary", "--full-index", "--no-ext-diff",
-               "--no-renames", "--no-color", "--", *names).stdout
+    return diff_bytes(repo, *flags, "--", *names)
 
 
 def foreign(repo, delta):
