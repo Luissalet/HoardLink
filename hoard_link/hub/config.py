@@ -94,6 +94,7 @@ class HubConfig:
     window_size: list[int] = field(default_factory=lambda: [1280, 860])
     exit_with_window: bool = True
     language: str = "auto"         # auto | en | es
+    isolated_catalog: bool = False  # QA: serve local UI without probing Faustus and shared backends
     lease_headroom_mb: int = 256   # VRAM kept free on every GPU when granting leases
     # GPU lease settings: {"protected_gpus": [0, 1]} keeps those GPUs out of every "any" request (only a
     # request that names them gets them). Empty by default: nothing is protected until it is set.
@@ -266,6 +267,10 @@ class HubConfig:
             cfg.window_engine = env["HOARD_HUB_WINDOW_ENGINE"]
         if env.get("HOARD_HUB_LANGUAGE"):
             cfg.language = env["HOARD_HUB_LANGUAGE"]
+        if env.get("HOARD_HUB_ISOLATED_CATALOG") in ("1", "true", "yes", "on"):
+            cfg.isolated_catalog = True
+        if cfg.isolated_catalog:
+            cfg.faustus_urls = []
         if env.get("HOARD_HUB_BACKUP_DIR"):
             cfg.backup = {**(cfg.backup or {}), "dir": env["HOARD_HUB_BACKUP_DIR"]}
         if env.get("HOARD_HUB_JOBS") in ("0", "false", "no", "off"):

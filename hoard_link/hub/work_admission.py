@@ -155,8 +155,8 @@ class WorkAdmission:
                   {**order, "task_id": {"type": "integer"}, "key": {"type": "string"},
                    "action": {"enum": ["begin", "pass", "fail"]}, "gpu_seconds": {"type": "integer"}},
                   ("agent", "order_id", "task_id", "key", "action"), read=False),
-            _tool("hub_order_metrics", "First-pass decisions and station costs / decisiones a la primera y coste por puesto.",
-                  {**space, "all_spaces": {"type": "boolean"}}),
+            _tool("hub_order_metrics", "First-pass decisions, returns, task times and station costs / decisiones a la primera, devoluciones, plazos y coste por puesto.",
+                  {**space, "all_spaces": {"type": "boolean"}, "order_id": {"type": "integer", "minimum": 1}}),
             _tool("hub_worker_capability", "Find available runners by capability / busca ejecutores por capacidad.",
                   {**space, "capability": {"enum": ["reasoning_high", "vision_strict", "fast_local"]}}, ("capability",)),
         ]

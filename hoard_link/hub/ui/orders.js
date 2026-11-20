@@ -39,6 +39,7 @@
   const baseName = p => String(p || "").split(/[\\/]/).pop();
 
   let root = null, data = null, measures = null, lastSig = "", spaces = [], busy = false, opened = new Set(), details = new Map(), timers = [];
+  let composeView = null, composeKey = "";
   const drafts = new Map();   // gate id → note being written
 
   function stopTimers() { for (const t of timers) clearInterval(t); timers = []; }
@@ -261,10 +262,11 @@
       field(tr("Público destinatario", "Audience"), audience), field(tr("Restricciones", "Constraints"), constraints),
       field(tr("Materiales de partida", "Starting materials"), materials));
     const send = el("button", "primary", tr("Crear orden", "Create order")); send.type = "submit";
+    const source = window.HubOrderSources.picker(field);
     const row = el("div", "ord-compose-foot");
     row.append(el("small", "ord-muted", tr("Quien dirige la parte en trabajos y te trae aquí lo que haya que decidir.",
       "Whoever leads splits it into jobs and brings here what needs your decision.")), send);
-    form.append(words, grid, row);
+    form.append(words, grid, source.node, row);
     form.onsubmit = async ev => {
       ev.preventDefault();
       if (!words.value.trim() && !title.value.trim()) {
@@ -272,15 +274,24 @@
         words.focus(); return;
       }
       send.disabled = true;
+      source.node.disabled = true;
       const lines = t => t.value.split("\n").map(s => s.trim()).filter(Boolean);
       const refs = lines(materials).map(value => /^https?:\/\//i.test(value) ? { url: value } : { path: value });
-      const res = await ctx.api("/api/agora/order_create", { space_id: space.value, words: words.value.trim(), title: title.value.trim(),
-        keep: lines(keep), deliverables: lines(deliv), folder: folder.value.trim(), refs,
-        dossier: { audience: audience.value.trim(), constraints: lines(constraints) } }).catch(e => ({ ok: false, error: String(e) }));
-      send.disabled = false;
+      let res;
+      try {
+        const native = await source.read();
+        res = await ctx.api("/api/agora/order_create", { space_id: space.value, words: words.value.trim(), title: title.value.trim(),
+          keep: lines(keep), deliverables: lines(deliv), folder: folder.value.trim(), refs,
+          dossier: { audience: audience.value.trim(), constraints: lines(constraints), native } });
+      } catch (error) {
+        res = { ok: false, error: error.message };
+      } finally {
+        send.disabled = false;
+        source.node.disabled = false;
+      }
       if (!res?.ok) { ctx.toast(tr("No se ha creado la orden", "The order was not created"), "err", res?.error || ""); return; }
       ctx.toast(tr("Orden creada", "Order created"), "ok");
-      form.reset(); opened.add(res.order.id); lastSig = ""; await load();
+      form.reset(); source.reset(); opened.add(res.order.id); lastSig = ""; await load();
     };
     return form;
   }
@@ -292,7 +303,8 @@
     const titleOf = Object.fromEntries(plan.map(j => [j.task_id, j.task?.title || "#" + j.task_id]));
     const table = el("table", "ord-plan");
     const head = el("tr");
-    for (const h of [tr("Trabajo", "Job"), tr("Puesto", "Station"), tr("Entrega", "Delivers"), tr("Espera a", "Waits for"), tr("Para", "For"), tr("Estado", "State")]) head.append(el("th", "", h));
+    for (const h of [tr("Trabajo", "Job"), tr("Puesto", "Station"), tr("Repositorio", "Repository"), tr("Entrega", "Delivers"),
+      tr("Espera a", "Waits for"), tr("Para", "For"), tr("Estado", "State")]) head.append(el("th", "", h));
     const thead = el("thead"); thead.append(head); table.append(thead);
     const body = el("tbody");
     for (const j of plan) {
@@ -313,6 +325,7 @@
         name.append(requirements);
       }
       cell([j.station, j.skill].filter(Boolean).join(" · "));
+      cell(j.repo || "—");
       cell((j.produces || []).map(k => label(KIND, k)).join(", "));
       cell((j.after || []).map(id => titleOf[id] || "#" + id).join(", "));
       cell([j.assignee?.agent || j.task?.owner, j.assignee?.model, j.assignee?.machine].filter(Boolean).join(" · "));
@@ -400,6 +413,10 @@
     if (dossier.native) {
       const native = dossier.native;
       fact(tr("Expediente de origen", "Source dossier"), [native.app, native.object, native.source_rev, native.sha256].filter(Boolean).join(" · "));
+      if (Array.isArray(native.payload?.preserveDetails)) {
+        const preserved = native.payload.preserveDetails.filter(detail => typeof detail === "string");
+        fact(tr("Detalles del expediente de origen", "Details from the source dossier"), preserved.join(" · "));
+      }
     }
     fact(tr("Entregables", "Deliverables"), (order.deliverables || []).join(", "));
     fact(tr("No puede perderse", "Must not be lost"), (order.keep || []).join(" · "));
@@ -467,7 +484,12 @@
         "Keep fixes the piece as the reference for what comes next. Cancel sends it back to its station with your note, and what derives from it becomes stale.")));
       for (const g of waiting) wait.append(gateCard(g));
     }
-    page.append(wait, composer());
+    const nextComposeKey = JSON.stringify([ctx.lang(), spaces]);
+    if (composeKey !== nextComposeKey) {
+      composeView = composer();
+      composeKey = nextComposeKey;
+    }
+    page.append(wait, composeView);
     const list = el("section", "ord-list");
     list.append(el("h2", "", tr("Órdenes", "Orders")));
     const orders = data?.orders || [];

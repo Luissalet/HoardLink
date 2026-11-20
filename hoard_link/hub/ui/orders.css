@@ -67,6 +67,11 @@
 .ord-compose-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; }
 .ord-compose-grid label { display: grid; gap: 4px; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
 .ord-compose-grid input, .ord-compose-grid textarea, .ord-compose-grid select { width: 100%; }
+.ord-native-source { display: grid; gap: 10px; min-inline-size: 0; border: 1px solid var(--line); border-radius: 8px; }
+.ord-native-source legend { padding-inline: 4px; }
+.ord-native-source label { display: grid; gap: 4px; font-size: var(--hub-fs-1, 12px); color: var(--muted); }
+.ord-native-source input, .ord-native-source select { width: 100%; min-width: 0; }
+.ord-native-source .ord-compose-grid:empty { display: none; }
 .ord-compose-foot { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
 
 /* orders */
@@ -103,4 +108,12 @@
   .ord-order > summary { grid-template-columns: 1fr; }
   .ord-order-stats { justify-items: start; }
   .ord-plan { display: block; overflow-x: auto; }
+}
+
+@media (max-width: 650px) {
+  .ord-task-metrics thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .ord-task-metrics tbody, .ord-task-metrics tr { display: block; }
+  .ord-task-metrics tr { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .ord-task-metrics td { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 4px 0; border: 0; }
+  .ord-task-metrics td::before { content: attr(data-heading); color: var(--muted); }
 }

@@ -471,12 +471,19 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/programs":
                 return self._file(os.path.join(UI_DIR, "programs.html"))
             if path == "/api/copilot/info":
+                if hub.config.isolated_catalog:
+                    return self._json({"ok": False, "code": "isolated_catalog"}, 503)
                 from .copilot import host_info
                 try:
                     return self._json(host_info(hub))
                 except OSError as exc:
                     return self._json({"ok": False, "code": "faustus_unavailable", "error": str(exc)}, 503)
             if path in ("/api/copilot/panel.js", "/api/copilot/launcher.js"):
+                if hub.config.isolated_catalog:
+                    self.send_response(204)
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    return
                 from .copilot import host_relay
                 host_relay(hub).handle(self)
                 return
@@ -499,8 +506,12 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/placement":
                 return self._json(hub.placement.status())
             if path == "/api/backends":
+                if hub.config.isolated_catalog:
+                    return self._json({"ok": True, "isolated": True, "capabilities": {}, "gpus": []})
                 return self._json(hub.backends(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path == "/api/services":
+                if hub.config.isolated_catalog:
+                    return self._json({"ok": True, "isolated": True, "items": [], "gpus": [], "config_path": ""})
                 return self._json(hub.services())
             if path == "/api/memory":
                 return self._json(hub.gpu_memory())
@@ -641,6 +652,11 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return None
                 limit = PROXY_MAX_BODY
             elif path.startswith("/api/apps/") and path.endswith("/call"):
+                if self._family_ok() is None:
+                    self.close_connection = True
+                    return None
+                limit = PROXY_MAX_BODY
+            elif path in ("/api/agora/order_create", "/api/agora/order_update"):
                 if self._family_ok() is None:
                     self.close_connection = True
                     return None
