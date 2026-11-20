@@ -13,6 +13,7 @@
     testing_candidate: ["Probando la entrega", "Testing the delivery"],
     testing_inference: ["Probando inferencia", "Testing inference"],
     integrating: ["Fusionando", "Integrating"],
+    processing_repositories: ["Integrando repositorios", "Integrating repositories"],
     checking_live_case: ["Comprobando el caso de origen", "Checking the original case"],
     cleaning_delivery: ["Limpiando la entrega", "Cleaning the delivery"],
     delivery_retained: ["Árbol de entrega conservado", "Delivery worktree kept"],
@@ -33,12 +34,24 @@
   }
 
   function renderReceipt(ctx, target, receipt) {
+    if (receipt.repositories?.length) {
+      const sections = receipt.repositories.map(row => {
+        const section = ctx.el("section");
+        const body = ctx.el("div");
+        section.append(ctx.el("h3", "", `${row.plan.repo} · ${state(ctx, row.state)}`), body);
+        renderReceipt(ctx, body, row);
+        return section;
+      });
+      if (receipt.error) sections.push(ctx.el("p", "muted", receipt.error));
+      target.replaceChildren(...sections);
+      return;
+    }
     const {el} = ctx;
     const content = [];
     if (receipt.comparison) {
       const {main, candidate, known, new: regressions} = receipt.comparison;
       content.push(el("p", "", t(ctx,
-        `Principal: ${main.counts.passed} correctas. Entrega: ${candidate.counts.passed} correctas.`,
+        `Pruebas superadas · Principal ${main.counts.passed} · Entrega ${candidate.counts.passed}`,
         `Main: ${main.counts.passed} passed. Delivery: ${candidate.counts.passed} passed.`)));
       content.push(el("p", "", t(ctx,
         `${Object.keys(known).length} fallos conocidos · ${Object.keys(regressions).length} fallos nuevos`,
@@ -110,7 +123,8 @@
         const details = el("details", "hub-project-row");
         details.dataset.id = row.id;
         details.open = open.has(row.id);
-        const retained = row.cleanup?.retained && row.state !== "delivery_retained"
+        const kept = row.cleanup?.retained || row.repositories?.some(repo => repo.cleanup?.retained);
+        const retained = kept && row.state !== "delivery_retained"
           ? ` · ${state(ctx, "delivery_retained")}` : "";
         const summary = el("summary", "", `#${row.task_id} · ${row.repo} · ${state(ctx, row.state)}${retained}`);
         const body = el("div");

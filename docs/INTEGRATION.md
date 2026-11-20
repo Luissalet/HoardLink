@@ -8,7 +8,8 @@ leaves a receipt in System → Integrations. The Agora task stays approved until
 
 Use a named local branch and submit its tip and any other commits for review. For a production job that delivers
 `code_branch`, or an Agora task labelled `integration`, put the changed test paths in the submission summary.
-For new integration tasks, include the repository in the task or submission. The station handles one repository per task.
+For a single repository, include the repository in the task or submission. For several repositories, use the
+same branch name in each registered repository and include every branch tip in the submission.
 
 ```text
 Repository: Hoard Hub
@@ -20,12 +21,18 @@ reads `Test-Paths` from the submitted revision, including after handover. The li
 separated by commas or whitespace following each `.py` path. Use commas in new submissions. When a historic
 submission has no line, the integrator can pass a `test_paths`
 array to plan or run. Those files must be tracked in the delivered commit and may be existing tests.
+For a multirepository task, prefix each path with the registered repository name, for example
+`Test-Paths: First Repo/tests/test_first.py, Second Repo/tests/test_second.py`. Existing unqualified paths
+are matched to branch contents. `test_paths_by_repo` supplies paths for repositories without declared tests.
 
 ## Tools
 
 Use the usual Hub agent interface or `hub.cmd tool <name> --args-file <file>`. Pass the task id, its observed
 `revision`, your `agent` identity and `space_id`. For an old task without a repository, the station looks for a
-unique registered repository whose local delivery branch matches the submitted tip. Supply `repo` if the match is ambiguous.
+registered repositories whose local delivery branch tips appear in the submitted hashes. In a multirepository
+plan, `repo` selects a repository to inspect. A run processes every repository in order, with `repo` first
+when supplied. Set `live_tests` to an object keyed by repository name with the focused pytest node for each
+repository. Use `spark_repos` to specify remote checkouts per repository.
 
 | Tool | Operation |
 |---|---|
@@ -37,7 +44,10 @@ unique registered repository whose local delivery branch matches the submitted t
 The owner or a higher-ranked agent can integrate the exact approved revision. The assigned reviewer can plan and
 compare a delivery without merging it. The integrator holds the repository's Agora merge lock during the checkout
 change and finish. A finish records the exact approved revision and merged commit in the original task thread and
-releases its locks. It leaves the ownership intact. The station never pushes or decides a person's production gate.
+releases its locks. A multirepository run keeps the task open until all repositories pass. Its common receipt
+contains each comparison, live case, merge hash and cleanup. On a regression, the station attempts to restore
+any repositories it already moved. The receipt's undo restores completed repositories in reverse order.
+The task retains its owner. Production gates remain a decision for the person.
 
 ## Test selection and baseline
 

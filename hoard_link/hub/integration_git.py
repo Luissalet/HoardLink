@@ -74,6 +74,32 @@ def ancestor(repo, older, newer):
     return git(repo, "merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
 
 
+def delivery_repositories(agora, task, repo_hint=None):
+    """Associate every submitted commit with the registered branch that contains it."""
+    refs = task.get("commits") or []
+    branch = task.get("branch")
+    if not branch or not refs or not all(re.fullmatch(r"[0-9a-fA-F]{7,64}", ref) for ref in refs):
+        return {}
+    registered = getattr(agora, "registered_repositories", lambda: [])()
+    entries = {Path(item["path"]).resolve(): item["name"] for item in registered}
+    for name in (task.get("repo"), repo_hint):
+        if name and (path := agora.repo_lookup(name)):
+            entries.setdefault(Path(path).resolve(), name)
+    found = {}
+    for repo, name in entries.items():
+        try:
+            tip = branch_tip(repo, branch)
+        except IntegrationError:
+            continue
+        if not any(tip.startswith(ref.lower()) for ref in refs):
+            continue
+        commits = [ref for ref in refs if tip.startswith(ref.lower()) or ancestor(repo, ref, tip)]
+        found[repo] = (name, commits)
+    if found and set(refs) - {ref for _, commits in found.values() for ref in commits}:
+        raise IntegrationError("Some submitted commits do not belong to a registered delivery branch")
+    return found
+
+
 def delivery_repository(agora, task, *, summary="", repositories=None):
     """Resolve missing task metadata from an exact branch tip in the Git registry."""
     declared = re.search(r"^Repository:[ \t]*(.+)$", summary, flags=re.MULTILINE)
