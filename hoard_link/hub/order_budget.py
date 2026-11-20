@@ -204,7 +204,8 @@ def _task_measures(tasks):
 
 def _task_metrics(agora, oid, space):
     sql = (
-        "SELECT t.repo,t.context,t.commits,t.status,t.submission_revision,t.created,t.claimed_at,t.submitted_at,t.closed_at,"
+        "SELECT t.repo,t.context,t.commits,t.reviewed_commits,t.thread_id,t.status,t.submission_revision,"
+        "t.created,t.claimed_at,t.submitted_at,t.closed_at,"
         "coalesce(j.station,'') AS station FROM tasks t LEFT JOIN agora_order_jobs j ON j.task_id=t.id "
         "WHERE t.status<>'dropped' AND (j.task_id IS NULL OR j.removed=0)"
     )
@@ -216,9 +217,10 @@ def _task_metrics(agora, oid, space):
         params = ()
     rows = agora.db.query(sql, params)
     repositories = getattr(agora, "registered_repositories", lambda: [])()
-    refs = {ref for row in rows if row["status"] == "done" and not row["repo"]
-            for ref in _commit_refs(row)}
-    from .integration_git import repository_commit_index
+    refs = {ref for row in rows if row["submission_revision"] and not row["repo"]
+            for refs in _delivery_refs(row) for ref in refs}
+    from .integration import submission_summary
+    from .integration_git import declared_repository, repository_commit_index
 
     service_repo = getattr(agora, "order_service_repository", lambda: None)() if refs else None
     if service_repo and not any(Path(row["path"]).resolve() == Path(service_repo["path"]).resolve()
@@ -235,26 +237,42 @@ def _task_metrics(agora, oid, space):
         if station not in station_repos:
             station_repos[station] = orders._station_repo(agora, station)
         repo = row["repo"] or station_repos[station]
-        if not repo and row["status"] == "done":
-            candidates = [set(commit_index[ref]) for ref in _commit_refs(row)]
-            if candidates:
-                common = set.intersection(*candidates)
-                if len(common) == 1:
-                    repo = common.pop()
-                elif all(len(group) == 1 for group in candidates):
-                    names = sorted(set.union(*candidates))
+        if not repo and row["submission_revision"]:
+            for refs in _delivery_refs(row):
+                names = _commit_repositories(commit_index, refs)
+                if names:
                     repo = ", ".join(names)
                     station = station or ", ".join(dict.fromkeys(
                         stations[name.casefold()] for name in names if stations.get(name.casefold())))
+                    break
+            if not repo and row["submitted_at"] is not None:
+                task = dict(row)
+                for field in ("commits", "reviewed_commits"):
+                    task[field] = json.loads(task[field] or "[]")
+                repo = declared_repository(agora, submission_summary(agora, task))
+                repo = next((entry["name"] for entry in repositories if entry["name"].casefold() == repo.casefold()),
+                            repo)
         key = (station or stations.get(repo.casefold(), ""), repo)
         groups.setdefault(key, []).append(row)
     return [{"station": station, "repo": repo, **_task_measures(rows)}
             for (station, repo), rows in sorted(groups.items(), key=lambda item: (not any(item[0]), item[0]))]
 
 
-def _commit_refs(row):
-    return [ref for ref in json.loads(row["commits"] or "[]")
-            if isinstance(ref, str) and re.fullmatch(r"[0-9a-fA-F]{7,64}", ref)]
+def _delivery_refs(row):
+    for field in ("commits", "reviewed_commits"):
+        refs = json.loads(row[field] or "[]")
+        if refs and all(isinstance(ref, str) and re.fullmatch(r"[0-9a-fA-F]{7,64}", ref) for ref in refs):
+            yield refs
+
+
+def _commit_repositories(index, refs):
+    candidates = [set(index[ref]) for ref in refs]
+    common = set.intersection(*candidates)
+    if len(common) == 1:
+        return sorted(common)
+    if all(len(group) == 1 for group in candidates):
+        return sorted(set.union(*candidates))
+    return []
 
 
 def _repository_station(repo):

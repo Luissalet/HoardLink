@@ -172,16 +172,18 @@ technical verdict alongside the piece. See [production piece checks](docs/piece-
 with the audience, constraints, starting material fingerprints and any context compiled by the source station.
 `hub_agora_job` delivers it with the worker's brief. Orders can select a [native source dossier](docs/order-intake.md)
 in the form. Plans record the station and repository on the job, and `hub_order_metrics` groups returns and median
-task durations by station and repository.
+task durations by station and repository. Construction tasks can be attributed to the repository in their delivery.
 The [integration station](docs/INTEGRATION.md) compares focused tests against the committed main branch, preserves
-overlapping Git changes, verifies each repository's merged case and closes the approved delivery in the Agora.
+overlapping Git changes, creates a merge commit for each repository, verifies the merged case and closes the
+approved delivery in the Agora.
 A delivery across multiple repositories has one receipt with the results for each repository. The receipts appear
 under System → Integrations. The station leaves the person's production gates to their existing interface.
 `hub_modules`
 and `hub_module_set` use declared native module switches and return an undo
 request for a change. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any
 piece (image, video, model, web page, document, Godot scene or an app's object) into views to open, with an
-optional vision check of details to keep, and repeats the same camera on a new revision ([docs/eyes.md](docs/eyes.md)).
+optional vision check of details to keep, and repeats the same camera on a new revision. Mesh looks report the
+front axis used to orient the render ([docs/eyes.md](docs/eyes.md)).
 
 ## Faustus workers from Agora
 

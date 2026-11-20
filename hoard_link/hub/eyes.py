@@ -343,9 +343,15 @@ class EyesFacet(Facet):
         out = {"ok": record.get("status") != "failed", **record,
                "repeat": {"tool": "hub_eyes_look", "arguments": {"same_as": record["id"]}},
                "undo": {"tool": "hub_eyes_forget", "arguments": {"look_id": record["id"]}}}
+        if (record.get("piece") or {}).get("kind") == "mesh":
+            out["front_axis"] = self._front_axis(record)
         if record.get("status") == "running":
             out["poll"] = {"tool": "hub_eyes_get", "arguments": {"look_id": record["id"]}}
         return out
+
+    @staticmethod
+    def _front_axis(record: dict[str, Any]) -> Optional[str]:
+        return (record.get("resolved") or {}).get("front_axis") or (record.get("piece") or {}).get("front_axis")
 
     def get_look(self, args: dict[str, Any]) -> dict[str, Any]:
         record = self._read(str(args.get("look_id") or ""))
@@ -378,7 +384,7 @@ class EyesFacet(Facet):
                 rows.append({"id": rec["id"], "status": rec.get("status"), "created": rec.get("created"),
                              "label": rec.get("label"), "agent": rec.get("agent"), "kind": piece.get("kind"),
                              "source": piece.get("source"), "app": piece.get("app"), "sha256": piece.get("sha256"),
-                             "front_axis": piece.get("front_axis"),
+                             "front_axis": self._front_axis(rec),
                              "views": len(rec.get("views") or []), "sheet": (rec.get("sheet") or {}).get("path"),
                              "same_as": rec.get("same_as"), "vision": (rec.get("vision") or {}).get("status")})
         rows.sort(key=lambda r: r.get("created") or 0, reverse=True)
