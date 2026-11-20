@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
+from pathlib import Path
 from typing import Any, Optional
 
 from . import agora_orders as orders
@@ -520,11 +522,65 @@ def draft_anchors(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             "anchors": anchors, "guides": {k: v for k, v in guides.items() if v}, "derives_from": derives}
 
 
+def draft_figure_request(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """Queue an evaluated print pose from a paused take, with its pinned blocking."""
+    seconds = a.get("seconds")
+    size_mm = a.get("size_mm", 216)
+    if (isinstance(seconds, bool) or not isinstance(seconds, (float, int))
+            or not 0 <= seconds <= 4 or not math.isfinite(seconds)):
+        raise _err("Choose a time from 0 to 4 seconds. / Elige un instante entre 0 y 4 segundos.")
+    if isinstance(size_mm, bool) or not isinstance(size_mm, (float, int)) or not 10 <= size_mm <= 2000:
+        raise _err("Choose 10 to 2000 mm. / Elige un tamaño de 10 a 2000 mm.")
+    frame = math.floor(seconds * 24 + 0.5)
+    video_id = orders._int(a.get("take_piece"), "take_piece")
+    agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    with self.db.tx():
+        row = _variant_row(self, a.get("variant_id"))
+        draft = _pass_row(self, row["pass_id"])
+        if draft["status"] != "shown" or row["status"] != "ready":
+            raise _err("This variant is no longer waiting. / Esta variante ya no está pendiente.", 409)
+        variant = _variant_dict(self, row)
+        if variant["signature"] != a.get("signature"):
+            raise _err("The variant has changed. / La variante ha cambiado.", 409, error_code="variant_changed")
+        take = next((p for p in variant["pieces"] if p["id"] == video_id and p["anchor"] == "animatic"), None)
+        blocking = [p for p in variant["pieces"] if p["anchor"] == "blocking" and
+                    Path(p.get("path", "")).suffix.lower() == ".glb"]
+        if not take or Path(take.get("path", "")).suffix.lower() not in {".mp4", ".webm", ".mov", ".m4v"}:
+            raise _err("Choose a take attached to this variant. / Elige una toma de esta variante.")
+        if len(blocking) != 1 or not blocking[0].get("sha256") or not take.get("sha256"):
+            raise _err("The variant needs one registered blocking GLB. / La variante necesita un GLB de bloqueo registrado.")
+        source = blocking[0]
+        signature = hashlib.sha256(json.dumps([row["id"], video_id, take["sha256"], source["id"],
+                                               source["sha256"], frame, float(size_mm)]).encode()).hexdigest()
+        branch = "figure-" + signature[:24]
+        existing = self.db.one("SELECT task_id FROM agora_order_jobs WHERE order_id=? AND branch=? AND removed=0",
+                               (row["order_id"], branch))
+        if existing:
+            return {"ok": True, "task_id": existing["task_id"], "frame": frame, "existing": True, "undo": None}
+        plan = orders.plan_set(self, {
+            "order_id": row["order_id"], "agent": agent, "_person": bool(a.get("_person")),
+            "jobs": [{"key": "figure", "title": f"Figura de {variant['title']} · f{frame} · {size_mm:g} mm",
+                      "station": "phidias", "branch": branch, "skill": "studio-figure-print-and-slice",
+                      "inputs": [source["id"], video_id], "produces": ["posed-figure-mesh", "closed-print-mesh"],
+                      "body": (
+                          f"Toma #{video_id} r{take['revision']} ({take['sha256']}), {seconds:g} s. "
+                          f"Evalúa el GLB de bloqueo #{source['id']} r{source['revision']} con "
+                          f"blocking_freeze (frame={frame}, fps=24, source_sha256={source['sha256']}). "
+                          f"Registra el GLB estático como pieza derivada, con su recibo y agarres. Importa su "
+                          f"piece_id y SHA-256 con print_import (size_mm={size_mm:g}). Ajusta el presupuesto "
+                          f"de caras para la comprobación de impresión, esculpe, cierra y exporta el 3MF. "
+                          f"Si hay cuerpos separados por huecos pequeños, mide los huecos antes de usar bridge_gap_mm."),
+                      "check": "Coteja los agarres en frontal y tres cuartos, mide el 3MF y abre el laminado."}],
+        })
+    return {"ok": True, "task_id": plan["keys"]["figure"], "frame": frame, "undo": plan["undo"]}
+
+
 OPERATIONS = {"draft_pass_open": draft_pass_open, "draft_pass_note_set": draft_pass_note_set,
               "draft_variant_set": draft_variant_set,
               "draft_gate_open": draft_gate_open, "draft_decide": draft_decide,
-              "draft_passes": draft_passes, "draft_anchors": draft_anchors}
-WRITE_OPS = ("draft_pass_open", "draft_pass_note_set", "draft_variant_set", "draft_gate_open", "draft_decide")
+              "draft_passes": draft_passes, "draft_anchors": draft_anchors, "draft_figure_request": draft_figure_request}
+WRITE_OPS = ("draft_pass_open", "draft_pass_note_set", "draft_variant_set", "draft_gate_open", "draft_decide",
+             "draft_figure_request")
 READ_ROUTES = ("draft_passes", "draft_anchors")
 #: The person's early decision has no tool: only their pages call it.
 NO_TOOL = ("draft_decide",)
@@ -577,6 +633,14 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                         "made on their page. The order waits for it." + undo,
          "inputSchema": schema({"agent": agent_prop, "pass_id": {"type": "integer", "minimum": 1},
                                 "note": {"type": "string", "maxLength": 20000}}, ["agent", "pass_id"])},
+        {"name": "hub_agora_draft_figure_request",
+         "description": "Queue a figure from a paused take. / Encarga una figura de una toma pausada.\n"
+                        "Pins the take and the variant's blocking GLB." + undo,
+         "inputSchema": schema({"agent": agent_prop, "variant_id": {"type": "integer", "minimum": 1},
+                                "take_piece": {"type": "integer", "minimum": 1}, "signature": {"type": "string"},
+                                "seconds": {"type": "number", "minimum": 0, "maximum": 4},
+                                "size_mm": {"type": "number", "minimum": 10, "maximum": 2000}},
+                               ["agent", "variant_id", "take_piece", "signature", "seconds"])},
         {"name": "hub_agora_draft_passes", "read": True,
          "description": "Draft passes of an order with variants, pieces by anchor, measures against the baseline and "
                         "decisions; without order_id, those waiting for the person (all_spaces for every space).",
