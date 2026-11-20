@@ -50,6 +50,7 @@ FACET_MODULES = (
     "resources",
     "capabilities",
     "production",
+    "hub_app_calls",
     "station_drafts",
     "eyes",
     "piece_checks",
