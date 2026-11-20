@@ -758,7 +758,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
           "Strings are classified: path#L10-L20 or path:12 (file), commit sha, URL, '$ command' + newline + output, "
           "else a note. Or objects {kind: file|commit|url|command|note, ref, output, note}.",
           "items": {"type": ["string", "object"]}}
-    disp = {"type": "string", "enum": list(DISPOSITIONS)}
+    disp = {"type": "string"}
     return [
         {"name": "hub_agora_debate_open",
          "description": "Open a structured debate inside a thread (thread_id) or a task's thread (task_id): freezes a "

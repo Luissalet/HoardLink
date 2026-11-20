@@ -256,6 +256,7 @@ class HubConfig:
     def to_dict(self) -> dict[str, Any]:
         """The effective configuration as ``/api/config`` shows it: secrets masked (``save`` writes the real ones)."""
         out = asdict(self)
+        out["person"] = self.person_profile
         web = out.get("web")
         if isinstance(web, dict) and web.get("brave_api_key"):
             out["web"] = {**web, "brave_api_key": "\u2022\u2022\u2022\u2022" + str(web["brave_api_key"])[-4:]}
