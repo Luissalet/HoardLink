@@ -10,6 +10,8 @@ For an order, use `hub_website_publish_piece` with `space_id`, `piece_id`, `revi
 
 Use `website_form_check {url}` through Mercator to verify a real synthetic submission and its inbox record. Capture the receipt with the publication piece or record its verdict with `hub_agora_piece_check`. Use the existing [web piece checks](piece-checks.md) on the HTML piece for browser layout and accessibility checks. The form receipt includes `website_form_check_undo` arguments.
 
+For a booking handoff, register the exported ZIP as a `web-package` derived from the `interface-brief`. Use `hub_piece_validate_record` with `profile: "web"` and the requested `viewports` to measure the public page inside that ZIP before publishing the pinned revision.
+
 The Hub does not provide a public endpoint for these websites. For a public destination, configure an HTTPS reverse proxy to the site's own listener, or use an external static host with a compatible form backend.
 
 ## Español
@@ -23,5 +25,7 @@ Un agente puede publicar, consultar el estado y los envíos, despublicar y desha
 Para publicar desde una orden, usa `hub_website_publish_piece` con `space_id`, `piece_id`, `revision` y `slug`. La herramienta pasa la carpeta HTML guardada o el ZIP. Si el servidor viaja en un ZIP aparte, indica el `package_piece_id` registrado. El ZIP debe derivar como material de esa revisión web en la misma orden. Mercator verifica la huella al importar y devuelve la URL local, la procedencia y los argumentos para `website_undo`.
 
 Llama a `website_form_check {url}` en Mercator para comprobar un envío sintético y su entrada en el buzón. Puedes adjuntar el recibo a la pieza publicada o guardar el veredicto con `hub_agora_piece_check`. Aplica las [comprobaciones web de pieza](piece-checks.md) al HTML para revisar maquetación y accesibilidad. El recibo del formulario incluye los argumentos para `website_form_check_undo`.
+
+Para un relevo de reservas, registra el ZIP exportado como `web-package` derivado del `interface-brief`. Usa `hub_piece_validate_record` con el perfil `web` y las anchuras solicitadas para medir la página del ZIP antes de publicar esa revisión.
 
 Para un destino público, configura un proxy HTTPS hacia la dirección de la web, o un alojamiento estático externo con un servidor de formulario compatible.

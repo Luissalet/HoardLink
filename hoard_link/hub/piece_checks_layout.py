@@ -1,13 +1,14 @@
 """Rendered web checks and structural and rendered slide checks."""
 
 from collections import Counter
+from contextlib import contextmanager
 from itertools import combinations
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import tempfile
 import unicodedata
 from urllib.parse import urlsplit
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 import xml.etree.ElementTree as ET
 import posixpath
 
@@ -142,7 +143,50 @@ _WEB_MEASURES = r"""() => {
 }"""
 
 
+@contextmanager
+def _web_root(path):
+    if path.suffix.lower() != ".zip" or not path.is_file():
+        yield path
+        return
+    with tempfile.TemporaryDirectory(prefix="hub-piece-web-") as folder:
+        try:
+            with ZipFile(path) as archive:
+                files = [member for member in archive.infolist() if not member.is_dir()]
+                names = {member.filename for member in files}
+                parents = {name.split("/", 1)[0] for name in names}
+                wrapper = (next(iter(parents)) + "/" if len(parents) == 1 and not parents & names
+                           and "public" not in parents else "")
+                if wrapper + "public/index.html" in names:
+                    prefix = wrapper + "public/"
+                elif wrapper + "index.html" in names:
+                    prefix = wrapper
+                else:
+                    raise ValueError("The ZIP needs index.html at its root or in public/")
+                files = [member for member in files if member.filename.startswith(prefix)]
+                if len(files) > 10000 or sum(member.file_size for member in files) > 512 * 1024 * 1024:
+                    raise ValueError("The web package exceeds the file or byte limit")
+                seen = set()
+                for member in files:
+                    name = member.filename
+                    parts = PurePosixPath(name).parts
+                    key = tuple(part.casefold() for part in parts)
+                    if (PurePosixPath(name).as_posix() != name or name.startswith("/") or
+                            not parts or ".." in parts or re.search(r'[:\\<>|?*"]', name) or key in seen or
+                            any(part.endswith((".", " ")) for part in parts)):
+                        raise ValueError("The web package contains an invalid or duplicate path")
+                    seen.add(key)
+                    archive.extract(member, folder)
+        except BadZipFile as exc:
+            raise ValueError("The web package is not a readable ZIP") from exc
+        yield Path(folder) / prefix
+
+
 def check_web(path, requirements, report):
+    with _web_root(path) as root:
+        _check_web_page(root, requirements, report)
+
+
+def _check_web_page(path, requirements, report):
     from vitruvius_hoard.functional_check.browser import state_facts
     from vitruvius_hoard.functional_check.run import Browser, aimed
 
