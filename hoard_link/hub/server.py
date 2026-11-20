@@ -84,6 +84,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from ..agent_journal import clean_identity
 from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools, autostart, profile_editor, portable_profiles
@@ -267,6 +268,19 @@ class _HubHandler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": "bearer token required (data/mcp-token)"}, 401)
             return False
         return True
+
+    def _agent_identity(self, envelope: Optional[dict[str, Any]] = None) -> dict[str, str]:
+        body = envelope or {}
+
+        def field(key: str, limit: int) -> str:
+            value = body.get(key)
+            return clean_identity(value, limit) if isinstance(value, str) else ""
+
+        agent = (clean_identity(self.headers.get("X-Agent-Id")) or field("agent", 80)
+                 or field("caller", 80))
+        session = (clean_identity(self.headers.get("X-Agent-Session"), 120) or field("_session", 120)
+                   or field("session", 120))
+        return {key: value for key, value in (("agent", agent), ("session", session)) if value}
 
     # -- models for every app -----------------------------------------------------
     def _link_chat(self) -> None:
@@ -683,7 +697,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 tool = agent_routes.describe(path)
                 if tool is None:
                     return self._json({"ok": False, "error": "unknown tool"}, 404)
-                result, status = agent_routes.invoke(hub, tool["name"], body)
+                result, status = agent_routes.invoke(hub, tool["name"], body, **self._agent_identity())
                 return self._json(result, status)
             if self._facet("POST", path, parse_qs(urlsplit(self.path).query), body):
                 return None
@@ -692,7 +706,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return None
                 name = str(body.get("tool") or body.get("name") or "")
                 args = body.get("arguments") or body.get("args") or {}
-                result, status = agent_routes.invoke(hub, name, args if isinstance(args, dict) else {})
+                result, status = agent_routes.invoke(hub, name, args if isinstance(args, dict) else {},
+                                                     **self._agent_identity(body))
                 return self._json(result, status)
             if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release",
                         "/api/lease/bind-process", "/api/lease/reserve-service"):

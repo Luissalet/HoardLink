@@ -19,6 +19,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Optional
 
+from ..bridge import agent_headers
 from . import DEFAULT_PORT, HUB_VERSION, SERVICE
 from .order_receipts import CALL, CONTEXT, request_context
 from .tools import all_tools as catalogue
@@ -46,8 +47,10 @@ def _token() -> str:
 
 def _request(method: str, path: str, body: Optional[dict[str, Any]] = None, timeout: float = 90.0) -> tuple[Optional[int], Any]:
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(_url() + path, data=data, method=method,
-                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + _token()})
+    headers = {"Content-Type": "application/json", "Authorization": "Bearer " + _token()}
+    if data is not None:
+        headers.update(agent_headers())
+    req = urllib.request.Request(_url() + path, data=data, method=method, headers=headers)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         with opener.open(req, timeout=timeout) as resp:

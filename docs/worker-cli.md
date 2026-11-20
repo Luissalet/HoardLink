@@ -25,6 +25,10 @@ result by default. With `--json`, it writes one JSON value to stdout, including 
 result envelope on tool calls. The process exits with 0 on success, 1 on request or tool failure
 and 2 for invalid command-line syntax. A timed-out write is not retried.
 
+Set `HOARD_AGENT_ID` and `HOARD_AGENT_SESSION` before starting the CLI or the Hub's MCP bridge
+to attribute proxied writes in apps with an agent journal. Each variable is optional. Without
+them, the app sees the proxy's existing default identity and an empty session.
+
 The client prints the selected Hub URL to stderr before making a request. For an isolated instance,
 use `--data-dir` or `HOARD_HUB_DATA_DIR`. The selected folder supplies the URL written by the running
 Hub and its `mcp-token`. An absent URL file stops the command. Use `--hub-url` to select a destination
@@ -41,6 +45,10 @@ Send the Hub bearer token and the arguments object as the POST body. The named P
 shared `POST /api/agent/call` return the same `{ok, tool, result}` envelope, using the same
 handler as MCP. Existing app routes still work. `GET /api/apps/<id>/status` is an explicit alias
 for `GET /api/apps/<id>`. Use the named `hub_app_status` tool to include the log tail.
+
+For `hub_call_app`, set `X-Agent-Id` and `X-Agent-Session` on either endpoint, or put `caller`
+and `session` alongside `arguments` in a shared `POST /api/agent/call` request. Headers take
+precedence. Put the reason for a write in the `hub_call_app` arguments.
 
 ## Local programs
 

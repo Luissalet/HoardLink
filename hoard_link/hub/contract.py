@@ -206,11 +206,13 @@ def call_app(app: App, tool: str, arguments: Optional[dict[str, Any]] = None, *,
     agent_id = _identity(agent, 80)
     if agent_id:
         payload["agent"] = agent_id
-        headers["X-Agent-Id"] = agent_id
+        if agent_id.isascii():
+            headers["X-Agent-Id"] = agent_id
     session_id = _identity(session, 120)
     if session_id:
         payload["session"] = session_id
-        headers["X-Agent-Session"] = session_id
+        if session_id.isascii():
+            headers["X-Agent-Session"] = session_id
     status, body = _post(app.url + "/api/agent/call", payload, token, timeout, headers)
     contract = "shared"
     if status == 404 and _missing_route(body):
