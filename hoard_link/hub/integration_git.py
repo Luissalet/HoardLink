@@ -6,6 +6,7 @@ import os
 import re
 import stat
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
@@ -137,12 +138,17 @@ def repository_commit_index(repositories, refs):
     if not matches:
         return matches
     query = "".join(ref + "^{commit}\n" for ref in matches).encode("ascii")
-    for repo in repositories:
+
+    def object_types(repo):
         result = git(repo["path"], "cat-file", "--batch-check=%(objecttype)", check=False, data=query)
-        if result.returncode == 0:
-            for ref, kind in zip(matches, result.stdout.splitlines()):
+        return repo["name"], result.stdout.splitlines() if result.returncode == 0 else []
+
+    # Independent read-only checks. Bound the number of Git processes on large registries.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for name, kinds in pool.map(object_types, repositories):
+            for ref, kind in zip(matches, kinds):
                 if kind == b"commit":
-                    matches[ref].append(repo["name"])
+                    matches[ref].append(name)
     return matches
 
 
