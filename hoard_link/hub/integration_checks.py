@@ -36,6 +36,13 @@ def config_at(repo, ref):
     return config
 
 
+def contract_timeout(config):
+    seconds = config.get("contract_timeout_seconds", TIMEOUT)
+    if type(seconds) is not int or seconds < 1:
+        raise IntegrationError(f"{CONFIG}: contract_timeout_seconds must be a positive integer")
+    return seconds
+
+
 def tests_for(delta, available, declared, config):
     tests = {file for file in available if PurePosixPath(file).match("test_*.py")}
     selected = tests.intersection(delta) | set(declared)
@@ -130,13 +137,13 @@ def report_result(exit_code, report, output, *, empty_ok=False):
     return result
 
 
-def local_tests(repo, work, files, report, lane):
+def local_tests(repo, work, files, report, lane, *, timeout):
     python = next((repo / folder / path for folder in (".venv", "venv")
                    for path in ("Scripts/python.exe", "bin/python")
                    if (repo / folder / path).is_file()), Path(sys.executable))
     return subprocess.run(
         [str(python), *arguments(files, report, lane)], cwd=work, env=test_env(report.with_suffix(".data")),
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=TIMEOUT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
@@ -166,27 +173,33 @@ with tempfile.TemporaryDirectory(prefix="hoard-tests-") as temp:
         python = next((str(repo / v / "bin/python") for v in (".venv", "venv")
                        if (repo / v / "bin/python").is_file()), sys.executable)
         args = [str(report) if a == "REPORT" else a for a in p["args"]]
-        r = subprocess.run([python, *args], cwd=work, env=env, capture_output=True, timeout=p["timeout"])
-        print(json.dumps({"exit": r.returncode, "report": report.read_text(encoding="utf-8") if report.exists() else "",
-                          "output": (r.stdout + r.stderr).decode("utf-8", "replace")[-3500:]}))
+        try:
+            r = subprocess.run([python, *args], cwd=work, env=env, capture_output=True, timeout=p["timeout"])
+        except subprocess.TimeoutExpired:
+            print(json.dumps({"timed_out": True}))
+        else:
+            print(json.dumps({"exit": r.returncode, "report": report.read_text(encoding="utf-8") if report.exists() else "",
+                              "output": (r.stdout + r.stderr).decode("utf-8", "replace")[-3500:]}))
     finally:
         subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(work)],
                        check=True, capture_output=True, env=env, timeout=60)
 """
 
 
-def suite(hub, repo, work, files, report, lane, *, remote, base, ref, empty_ok=False):
+def suite(hub, repo, work, files, report, lane, *, remote, base, ref, empty_ok=False, timeout=TIMEOUT):
     if not files:
         return {"counts": {"passed": 0, "failed": 0, "skipped": 0}, "failures": {}}
     if remote:
         delta = diff_bytes(repo, base, ref) if base != ref else b""
         payload = {"repo": remote, "base": base, "patch": base64.b64encode(delta).decode("ascii"),
-                   "args": arguments(files, "REPORT", lane), "timeout": TIMEOUT,
+                   "args": arguments(files, "REPORT", lane), "timeout": timeout,
                    "excluded": EXCLUDED_ENV}
         result = json.loads(hub.placement._ssh("python3 -c " + shlex.quote(REMOTE_RUNNER),
-                                                input=json.dumps(payload), timeout=TIMEOUT + 130))
+                                                input=json.dumps(payload), timeout=timeout + 130))
+        if result.get("timed_out"):
+            raise subprocess.TimeoutExpired("remote pytest", timeout)
         return report_result(result["exit"], result["report"], result["output"], empty_ok=empty_ok)
-    result = local_tests(repo, work, files, report, lane)
+    result = local_tests(repo, work, files, report, lane, timeout=timeout)
     raw = report.read_bytes() if report.exists() else b""
     return report_result(result.returncode, raw, result.stdout.decode("utf-8", "replace"), empty_ok=empty_ok)
 

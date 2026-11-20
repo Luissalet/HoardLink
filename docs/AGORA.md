@@ -327,9 +327,10 @@ Arguments: `agent` (the caller), `from_agent`, `to_agent`, `reason` (required), 
 `from_agent` that is not done) and `include_reviews` (default true).
 
 - **Moves**: the owner of each selected task that is not `done`/`dropped`, with status, `review_state`,
-  `submission_revision`, reviewed commits, checkpoints and thread untouched; the live locks of `from_agent` attached to
-  those tasks (same resources and TTL, renewed from now); and, with `include_reviews`, the reviewer of tasks in
-  `review` / `changes` (an owner never ends up reviewing its own task: the reviewer is cleared and anyone else may review).
+  `submission_revision`, reviewed commits, checkpoints and thread untouched. The assigned reviewer and any signed
+  verdict stay on the task being taken over. If an open review would be assigned to the new owner, it opens
+  to other reviewers. Live locks of `from_agent` attached to those tasks move with the same resources and renewed
+  TTL. With `include_reviews`, reviews of other agents' tasks in `review` / `changes` can move as well.
   Locks without a task (`merge:`, `model:`) and done tasks stay where they are.
 - **Who may**: the person from the hub's page at any time; `from_agent` itself (a voluntary handover); any other
   registered agent once `from_agent` has had no heartbeat for `HANDOVER_IDLE_S` = 30 min. Otherwise `409` says how long

@@ -1,3 +1,4 @@
+import json
 import shlex
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from hoard_link.hub import integration_git as git
 from hoard_link.hub.agora import Agora, AgoraError
 from hoard_link.hub.agora_ranks import set_rank
 from hoard_link.hub.integration import INTEGRATION_TOKEN, IntegrationFacet, delivery_contract, submission_tests
+from hoard_link.hub.integration_runtime import IntegrationRuntime
 from hoard_link.hub.production import ProductionFacet
 
 
@@ -170,6 +172,23 @@ def test_large_focal_selection_is_not_rejected_or_truncated():
     assert checks.tests_for({"feature.py"}, files, [], {})["contract"] == sorted(files)
 
 
+@pytest.mark.parametrize("value", [0, -1, True, 5.5, "600", None])
+def test_contract_timeout_must_be_a_positive_integer(value):
+    assert checks.contract_timeout({}) == 300
+    with pytest.raises(git.IntegrationError, match="contract_timeout_seconds"):
+        checks.contract_timeout({"contract_timeout_seconds": value})
+
+
+def test_runtime_keeps_the_revision_loaded_at_startup(delivery):
+    repo, base, head, branch = delivery
+    running = IntegrationRuntime(repo)
+    assert running.status() == {"loaded_commit": base, "main_commit": base, "stale": False}
+    assert IntegrationRuntime(branch).status() == {"loaded_commit": head, "main_commit": base, "stale": False}
+    merge = git.merge_candidate(repo, head)
+    assert running.status() == {"loaded_commit": base, "main_commit": merge, "stale": True}
+    assert IntegrationRuntime(repo).status()["stale"] is False
+
+
 def test_test_environment_excludes_parent_hub_settings(monkeypatch):
     for key in ("AGORA_SPACE", "AGORA_AS", "HOARD_HUB_DATA_DIR", "HOARD_HUB_TOKEN_FILE", "PYTEST_ADDOPTS"):
         monkeypatch.setenv(key, "parent")
@@ -201,6 +220,8 @@ def test_spark_request_executed_with_json_environment_and_git_diff(delivery, tmp
     repo, base, head, worktree = delivery
 
     def ssh(command, *, input, timeout):
+        assert json.loads(input)["timeout"] == 480
+        assert timeout == 610
         _, *arguments = shlex.split(command)
         completed = subprocess.run([sys.executable, *arguments], input=input, encoding="utf-8",
                                    capture_output=True, timeout=timeout)
@@ -209,7 +230,7 @@ def test_spark_request_executed_with_json_environment_and_git_diff(delivery, tmp
 
     hub = SimpleNamespace(placement=SimpleNamespace(_ssh=ssh))
     result = checks.suite(hub, repo, worktree, ["tests/test_feature.py"], tmp_path / "report.xml",
-                          "contract", remote=str(repo), base=base, ref=head)
+                          "contract", remote=str(repo), base=base, ref=head, timeout=480)
     assert result["counts"]["passed"] == 1
     assert list(result["failures"]) == ["tests.test_feature::test_known"]
 
@@ -294,9 +315,10 @@ def test_receipt_corrects_historic_fast_forward_and_can_undo(delivery, tmp_path)
                "close_result": {key: closed[key] for key in ("commits", "result", "closed_at")}}
         write_json_atomic(path, raw)
         merge = git.merge_candidate(repo, head)
-        options = {"id": run, "agent": "owner", "repo": repo.name, "commit": merge}
-        with pytest.raises(AgoraError, match="belongs"):
-            facet.reconcile({**options, "agent": "someone-else"})
+        options = {"id": run, "agent": "verifier", "repo": repo.name, "commit": merge,
+                   "reason": "Checked both parents and the mainline tree."}
+        with pytest.raises(AgoraError, match="reason is required"):
+            facet.reconcile({**options, "reason": " "})
         with pytest.raises(git.IntegrationError, match="replacement"):
             facet.reconcile({**options, "commit": head})
         corrected = facet.reconcile(options)
@@ -304,11 +326,18 @@ def test_receipt_corrects_historic_fast_forward_and_can_undo(delivery, tmp_path)
         assert corrected["receipt"] == rcpt
         assert rcpt["repositories"][1]["merge_commit"] == rcpt["repositories"][1]["baseline"]["commit"] == merge
         assert rcpt["close_result"]["commits"] == ["own-merge", merge]
+        assert rcpt["correction"]["agent"] == "verifier" and rcpt["correction"]["reason"] == options["reason"]
         updated = agora._task_row(task["id"])
         assert updated["commits"] == ["own-merge", merge]
         assert updated["reviewed_commits"] == ["other-head", head]
         assert updated["result"] == agora._thread_row(task["thread_id"])["resolution"] == result.replace(head, merge)
-        assert facet.reconcile(options)["receipt"] == rcpt
+        thread = agora.thread({"thread_id": task["thread_id"]})
+        assert thread["thread"]["resolved_by"] == "owner"
+        assert thread["messages"][-1]["author"] == "verifier"
+        assert options["reason"] in thread["messages"][-1]["body"]
+        assert facet.reconcile({**options, "agent": "peer"}) == {"ok": True, "receipt": rcpt}
+        with pytest.raises(AgoraError, match="belongs"):
+            facet.reconcile({**corrected["undo"]["arguments"], "agent": "peer"})
         facet.reconcile(corrected["undo"]["arguments"])
         assert facet.status({"id": run})["receipt"] == raw
         assert agora._task_row(task["id"])["commits"] == ["own-merge", head]
@@ -323,18 +352,21 @@ def test_done_checks_manual_merge_parents_tree_and_mainline(delivery, tmp_path):
     agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
     try:
         task = agora.task_add({"agent": "owner", "title": "Manual merge", "repo": repo.name,
-                               "claim": True})["task"]
+                               "paths": ["feature.py"], "claim": True})["task"]
+        previous_locks = agora.locks()["locks"]
         opts = {"agent": "owner", "task_id": task["id"]}
         agora.task_submit({**opts, "branch": "delivery", "summary": "Review the branch", "commits": [head[:12]]})
         agora.task_review({**opts, "agent": "reviewer", "verdict": "approve", "expected_submission_revision": 1,
                            "body": "Reviewed."})
         with agora.db.tx():
-            set_rank(agora, "owner", "support", "fixture")
-            set_rank(agora, "integrator", "lead", "fixture")
+            set_rank(agora, "integrator", "support", "fixture")
+        verify = {**opts, "agent": "integrator", "result": "Checked the published merge and tree."}
         with git.worktree(repo, tmp_path / "manual", base) as work:
             unofficial = git.merge_candidate(work, head)
             with pytest.raises(AgoraError, match="not reviewed"):
                 agora.task_done({**opts, "commits": [unofficial]})
+            with pytest.raises(AgoraError, match="belongs"):
+                agora.task_done({**verify, "commits": [unofficial], "force": True, "reason": "Override"})
         git.git(repo, "merge", "--no-ff", "--no-commit", head)
         write(repo, "unreviewed.txt", "Foreign content")
         contaminated = commit(repo, "Merge with extra changes", "unreviewed.txt")
@@ -342,9 +374,31 @@ def test_done_checks_manual_merge_parents_tree_and_mainline(delivery, tmp_path):
             agora.task_done({**opts, "commits": [contaminated]})
         git.git(repo, "reset", "--keep", base)
         merge = git.merge_candidate(repo, head)
-        result = agora.task_done({**opts, "agent": "integrator", "commits": [merge]})["task"]
+        with pytest.raises(AgoraError, match="reason is required"):
+            agora.task_done({**verify, "commits": [merge], "result": ""})
+        response = agora.task_done({**verify, "commits": [merge]})
+        result = response["task"]
         assert result["commits"] == [merge] and result["review_state"] == "equivalent"
         assert result["reviewed_commits"] == [head[:12]] and result["owner"] == "owner"
+        assert result["reviewer"] == "reviewer" and result["result"] == verify["result"]
+        assert agora._thread_row(task["thread_id"])["resolved_by"] == "integrator"
+        assert not agora.locks()["locks"]
+        undo = response["undo"]["arguments"]
+        with pytest.raises(AgoraError, match="no longer matches"):
+            agora.task_done({**undo, "agent": "peer"})
+        lock = previous_locks[0]["resource"]
+        agora.lock({"agent": "peer", "resources": [lock]})
+        with pytest.raises(AgoraError, match="now in use"):
+            agora.task_done(undo)
+        assert agora._task_row(task["id"])["status"] == "done"
+        agora.unlock({"agent": "peer", "resources": [lock]})
+        restored = agora.task_done(undo)["task"]
+        assert restored["status"] == "approved" and restored["commits"] == [head[:12]]
+        assert restored["reviewer"] == "reviewer" and restored["result"] == task["result"]
+        assert agora.locks()["locks"] == previous_locks
+        assert git.git_text(repo, "rev-parse", "HEAD") == merge
+        with pytest.raises(AgoraError, match="already undone"):
+            agora.task_done(undo)
     finally:
         agora.close()
 
@@ -513,22 +567,32 @@ def test_transferred_delivery_compares_independent_conftests(delivery, tmp_path,
     write(repo, "tests/conftest.py", "MAIN_NAME = 'main'\n")
     write(repo, "editing_tests/conftest.py", "EDIT_NAME = 'editor'\n")
     write(repo, "tests/test_api.py", "from conftest import MAIN_NAME\ndef test_api(): assert MAIN_NAME == 'main'\n")
+    write(repo, checks.CONFIG, '{"contract_timeout_seconds": 600}')
     write(repo, "editing_tests/test_api.py",
           "from conftest import EDIT_NAME\ndef test_api(): assert EDIT_NAME == 'editor'\n")
     base = commit(repo, "Add independent pytest roots", "tests/conftest.py", "editing_tests/conftest.py",
-                  "tests/test_api.py", "editing_tests/test_api.py")
+                  "tests/test_api.py", "editing_tests/test_api.py", checks.CONFIG)
     git.git(branch, "-c", "user.name=Luissalet", "-c", "user.email=luissalet@users.noreply.github.com",
             "merge", "--no-edit", "main")
     write(branch, "api.py", "enabled = True\n")
+    write(branch, checks.CONFIG, '{"contract_timeout_seconds": 1}')
     test_path = "editing_tests/test_api.py"
     if declared:
         write(branch, test_path, "from conftest import EDIT_NAME\ndef test_api(): assert EDIT_NAME.startswith('edit')\n")
-    head = commit(branch, "Deliver API change", "api.py", test_path)
+    head = commit(branch, "Deliver API change", "api.py", test_path, checks.CONFIG)
     agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
     hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)),
                           facet=lambda name: SimpleNamespace(agora=agora))
     facet = IntegrationFacet(hub)
     monkeypatch.setattr(checks, "SUITE_LOCK", tmp_path / "local-slot")
+    run_local = checks.local_tests
+    timeouts = []
+
+    def record_timeout(repo, work, files, report, lane, *, timeout):
+        timeouts.append((lane, timeout))
+        return run_local(repo, work, files, report, lane, timeout=timeout)
+
+    monkeypatch.setattr(checks, "local_tests", record_timeout)
     try:
         task = agora.task_add({"agent": "author", "title": "API delivery", "repo": repo.name})["task"]
         args = {"task_id": task["id"]}
@@ -550,6 +614,7 @@ def test_transferred_delivery_compares_independent_conftests(delivery, tmp_path,
             with pytest.raises(git.IntegrationError, match="Invalid pytest path"):
                 facet.inspect({**args, "test_paths": ["../test_api.py"]})
         plan = facet.inspect({**args, "test_paths": ["tests/test_api.py"]})["plan"]
+        assert plan["contract_timeout_seconds"] == 600
         assert plan["test_paths"] == [test_path if declared else "tests/test_api.py"]
         assert plan["test_paths_source"] == ("submission" if declared else "integrator")
         assert plan["tests"]["contract"] == [test_path, "tests/test_api.py", "tests/test_feature.py"]
@@ -562,6 +627,7 @@ def test_transferred_delivery_compares_independent_conftests(delivery, tmp_path,
         assert receipt["state"] == "integrated", receipt
         assert receipt["comparison"]["roots"]["editing_tests"]["candidate"]["counts"]["passed"] == 1
         assert receipt["comparison"]["roots"]["tests"]["main"]["counts"]["passed"] == 1
+        assert timeouts == [("contract", 600)] * 4 + [("live", 600)]
         assert len(receipt["comparison"]["roots"]["tests"]["known"]) == 1
         assert git.git_text(repo, "rev-list", "--parents", "-n", "1", "HEAD").split() == [
             receipt["merge_commit"], base, head]

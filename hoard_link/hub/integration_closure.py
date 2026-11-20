@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from . import integration_git as git
 
@@ -37,7 +39,7 @@ def published_merge(repo, ref, *, base=None, head=None, target=None):
     return merge, second
 
 
-def verified_closure(agora, task, commits):
+def verified_closure(agora, task, commits, *, require_merges=False):
     """Resolve each new hash to one approved branch and account for all approved commits."""
     approved = set(task["reviewed_commits"] or [])
     if not approved or approved != set(task["commits"]) or not all(
@@ -47,6 +49,8 @@ def verified_closure(agora, task, commits):
              getattr(agora, "registered_repositories", lambda: [])()}
     if task["repo"] and agora.repo_lookup and (path := agora.repo_lookup(task["repo"])):
         repos.add(Path(path).resolve())
+    if require_merges and approved.intersection(commits):
+        return False
     covered = approved.intersection(commits)
     for ref in set(commits) - approved:
         matches = set()
@@ -62,3 +66,60 @@ def verified_closure(agora, task, commits):
             return False
         covered.update(matches.pop())
     return covered == approved
+
+
+def closure_snapshot(agora, task):
+    return {"task": {key: task[key] for key in ("status", "commits", "result", "review_state", "closed_at")},
+            "thread": dict(agora.db.one("SELECT status,resolution,resolved_by FROM threads WHERE id=?",
+                                        (task["thread_id"],))),
+            "locks": [dict(row) for row in agora.db.query("SELECT * FROM locks WHERE task_id=?", (task["id"],))]}
+
+
+def restore_closure(agora, task, before):
+    values = before["task"]
+    now = agora.clock()
+    agora.db.execute("UPDATE tasks SET status=?, commits=?, result=?, review_state=?, closed_at=?, updated=? WHERE id=?",
+                     (values["status"], json.dumps(values["commits"]), values["result"], values["review_state"],
+                      values["closed_at"], now, task["id"]))
+    thread = before["thread"]
+    agora.db.execute("UPDATE threads SET status=?, resolution=?, resolved_by=?, updated=? WHERE id=?",
+                     (thread["status"], thread["resolution"], thread["resolved_by"], now, task["thread_id"]))
+
+
+def record_closure_undo(agora, task, agent, now, commits, result):
+    token = uuid4().hex
+    snapshot = {"before": closure_snapshot(agora, task), "agent": agent, "revision": task["submission_revision"],
+                "after": {"closed_at": now, "status": "done", "commits": commits, "result": result,
+                          "review_state": "equivalent"}}
+    agora.db.insert("integration_closure_undo", {"task_id": task["id"], "token": token, "snapshot": json.dumps(snapshot)})
+    return {"tool": "hub_agora_task_done", "arguments": {"task_id": task["id"], "agent": agent,
+                                                       "space_id": agora.space_id, "undo_token": token}}
+
+
+def undo_closure(agora, task, agent, token):
+    if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
+        raise git.IntegrationError("Invalid closure undo token")
+    row = agora.db.one("SELECT snapshot FROM integration_closure_undo WHERE task_id=? AND token=?", (task["id"], token))
+    if not row:
+        raise git.IntegrationError("Unknown or already undone closure")
+    snapshot = json.loads(row["snapshot"])
+    thread = agora._thread_row(task["thread_id"])
+    if (snapshot["agent"] != agent or task["submission_revision"] != snapshot["revision"]
+            or any(task[key] != value for key, value in snapshot["after"].items())
+            or thread["status"] != "resolved" or thread["resolved_by"] != agent
+            or thread["resolution"] != task["result"]):
+        raise git.IntegrationError("The closure or task thread no longer matches the undo request")
+    before = snapshot["before"]
+    live = {lock["resource"] for lock in agora._live_locks()}
+    for lock in before["locks"]:
+        if lock["expires"] <= agora.clock():
+            continue
+        resource = lock["resource"]
+        if resource in live or not agora._acquire(lock["owner"], [resource], task["id"], lock["ttl_s"], lock["note"])["ok"]:
+            raise git.IntegrationError(f"The former task lock is now in use: {resource}")
+        agora.db.execute("UPDATE locks SET acquired=?, expires=? WHERE resource=?",
+                         (lock["acquired"], lock["expires"], resource))
+    restore_closure(agora, task, before)
+    agora.db.execute("DELETE FROM integration_closure_undo WHERE task_id=?", (task["id"],))
+    agora._system(task, "Se ha deshecho el cierre verificado en el Ágora.", agent)
+    return {"ok": True, "task": agora._task_row(task["id"])}
