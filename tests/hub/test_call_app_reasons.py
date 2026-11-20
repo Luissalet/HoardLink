@@ -84,7 +84,7 @@ def test_default_reasons(caller, expected):
 
 def test_hub_gives_default_reason_but_not_to_agents(app, monkeypatch):
     from hoard_link.hub import core
-    hub = SimpleNamespace(get=lambda _id: app, _safe_emit=lambda *a, **k: None)
+    hub = SimpleNamespace(get=lambda _id: app, facet=lambda _name: None, _safe_emit=lambda *a, **k: None)
     res = core.Hub.call_app(hub, "demo", "note_add", {"text": "x"}, caller="rule:daily", timeout=5)
     assert res["ok"] is True and _Recorder.seen[-1]["body"]["reason"] == "Automatic step of the Hub rule daily"
     assert _Recorder.seen[-1]["agent"] == "rule:daily"
@@ -96,7 +96,7 @@ def test_hub_gives_default_reason_but_not_to_agents(app, monkeypatch):
 
 def test_default_reason_names_the_agent_behind_a_hub_token(app):
     from hoard_link.hub import core
-    hub = SimpleNamespace(get=lambda _id: app, _safe_emit=lambda *a, **k: None)
+    hub = SimpleNamespace(get=lambda _id: app, facet=lambda _name: None, _safe_emit=lambda *a, **k: None)
     res = core.Hub.call_app(hub, "demo", "note_add", {"text": "x"}, caller="hub", agent="claude-live", session="s1", timeout=5)
     assert res["ok"] is True
     assert _Recorder.seen[-1]["body"]["reason"] == "Requested by claude-live through the Hub"
