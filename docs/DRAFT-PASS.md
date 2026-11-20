@@ -25,9 +25,9 @@ station makes a cheap version of what it delivers:
 declares its own, the Hub carries a starting declaration in `station_drafts.json` (shown as `declared_in: "hub"`); the
 manifest's block always wins (`"manifest"`). Starting declarations: Writer (outline of the brief), Prospero (few-step
 low-resolution image over the blocking; front and back only for the sheet; animatic of key frames without
-in-betweens), Vulcan (primitive blocking already split in parts and rigged, with flat colour, depth and normals from the
-shot's camera), Phidias (closing of the posed blocking without repair), Cicero (slide outline in text) and Vitruvius
-(page outline in text).
+in-betweens), Vulcan (`blocking_build` for a rigged primitive take with an editable scene, animated GLB and colour,
+depth and normals from the same camera at each key), Phidias (closing of the posed blocking without repair),
+Cicero (slide outline in text) and Vitruvius (page outline in text).
 
 `hub_station_drafts` lists every handoff with its draft mode and, with `from_type` and `to_type`, each chain with
 `draft_seconds`, `draft_gpu_seconds` and `without_draft` (the steps that have no draft mode yet).
