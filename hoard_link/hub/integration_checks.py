@@ -201,4 +201,10 @@ def compare(base, candidate):
     if "roots" in base and "roots" in candidate:
         result["roots"] = {root: compare(row, candidate["roots"][root])
                            for root, row in base["roots"].items()}
+        for root, row in base["roots"].items():
+            ran = lambda data: data["counts"]["passed"] + data["counts"]["failed"]
+            if ran(row) and not ran(candidate["roots"].get(root, {"counts": {"passed": 0, "failed": 0}})):
+                # A root that ran contract tests on main and collected none in the candidate lost its contract.
+                new[f"{root}::<no tests ran>"] = {"signature": "root-lost", "file": root,
+                                                  "message": f"{ran(row)} contract tests ran on main and none in the candidate"}
     return result

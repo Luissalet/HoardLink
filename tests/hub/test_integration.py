@@ -174,6 +174,17 @@ def test_compare_requires_the_same_failure_and_signature():
     assert data["known"] == {"a": known}
     assert data["new"] == {"b": updated, "c": known}
 
+def test_compare_flags_a_test_root_that_stops_running():
+    def row(passed):
+        return {"counts": {"passed": passed, "failed": 0, "skipped": 0}, "failures": {}}
+
+    main = checks.combine({"editing_tests": row(10), "tests": row(93)})
+    lost = checks.compare(main, checks.combine({"editing_tests": row(0), "tests": row(95)}))
+    assert list(lost["new"]) == ["editing_tests::<no tests ran>"]
+    fresh = checks.compare(checks.combine({"editing_tests": row(0), "tests": row(93)}),
+                           checks.combine({"editing_tests": row(4), "tests": row(93)}))
+    assert fresh["new"] == {}
+
 
 def test_spark_request_executed_with_json_environment_and_git_diff(delivery, tmp_path):
     repo, base, head, worktree = delivery
