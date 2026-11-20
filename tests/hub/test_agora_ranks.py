@@ -78,7 +78,7 @@ def test_only_the_person_gives_ranks_and_everyone_starts_as_an_agent(ag):
     assert out["changed"] and out["rank"] == "lead" and out["rank_level"] == 3
     assert not ag.member_rank_set({**person, "member": SONNET, "rank": "lead"})["changed"]       # said once
     lines = [m["body"] for m in ag.channel_read({"space_id": "atlas", "channel": "general"})["messages"]]
-    assert lines.count(f"person pone a {SONNET} como Responsable de este servidor.") == 1
+    assert lines.count(f"{ag.person_name} pone a {SONNET} como Responsable de este servidor.") == 1
     # the member list and the server view carry it; the person stands above the ladder
     members = {m["id"]: m for m in ag.members({"space_id": "atlas"})["members"]}
     assert members[SONNET]["rank"] == "lead" and members[SONNET]["rank_level"] == 3

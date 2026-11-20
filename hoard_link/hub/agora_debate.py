@@ -350,8 +350,6 @@ def debate_view(ag: Any, debate_id: Any) -> dict[str, Any]:
                                            (debate["id"],))]
     for seq, ev in enumerate(events, 1):
         ev["seq"] = seq
-        if ev.get("disposition"):
-            ev["disposition"] = normalize_disposition(ev["disposition"])
     findings = []
     for r in ag.db.query("SELECT * FROM agora_debate_findings WHERE debate_id=? ORDER BY id", (debate["id"],)):
         f = dict(r)

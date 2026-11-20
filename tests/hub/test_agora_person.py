@@ -95,9 +95,8 @@ def test_configured_person_at_the_http_and_agent_boundaries(tmp_path):
         fid = finding["finding"]["id"]
         with ag.db.tx():
             ag.db.execute("UPDATE agora_debate_findings SET disposition=? WHERE id=?", (legacy, fid))
-            ag.db.execute("UPDATE agora_debate_events SET disposition=? WHERE finding_id=?", (legacy, fid))
         view = request(f"debates/{d}")[1]
-        assert view["findings"][0]["disposition"] == view["events"][-1]["disposition"] == "needs_person"
+        assert view["findings"][0]["disposition"] == "needs_person"
         assert view["consensus"]["needs_person"] == [fid]
         from_tool = tools.call(hub, "hub_agora_debate_finding", {"agent": AGENT, "debate_id": d,
                               "claim": "A second option", "evidence": ["second.txt"], "disposition": legacy})

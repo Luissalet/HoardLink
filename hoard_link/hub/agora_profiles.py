@@ -102,7 +102,7 @@ def dm_slug(first: str, second: str) -> str:
 def _dm_title(self: Any, first: str, second: str) -> str:
     person = self.person_id
     pair = sorted((first, second), key=lambda x: (x != person, x))
-    return " · ".join(self.person_name if ident == person else ident for ident in pair)
+    return " · ".join(pair)
 
 
 def _dm_thread(self: Any, first: str, second: str, actor: str) -> tuple[int, str]:
@@ -195,6 +195,7 @@ def dm_list(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             continue
         other = next((p for p in pair if p != viewer), viewer)
         view = ch._channel_view(self, row, unread)
+        view["title"] = " · ".join(self.person_name if ident == self.person_id else ident for ident in pair)
         view.update(with_agent=other, participants=pair)
         out.append(view)
     out.sort(key=lambda v: float(v.get("last_at") or 0), reverse=True)
