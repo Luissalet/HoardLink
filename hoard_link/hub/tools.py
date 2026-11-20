@@ -161,7 +161,7 @@ def catalogue() -> list[dict[str, Any]]:
         },
         {
             "name": "hub_comfy_profile_register",
-            "description": "Register an installed image engine / Registrar un motor de imagen instalado. "
+            "description": "Register an image engine / Registra un motor de imagen.\n"
                            "Declare its dedicated port, template IDs and model files. Does not start it. Returns undo.",
             "inputSchema": {"type": "object", "properties": {
                 "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,40}$"},
