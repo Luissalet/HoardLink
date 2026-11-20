@@ -6,6 +6,43 @@ import pytest
 from ._hub_fakes import make_hub, serve
 
 
+def test_home_opens_decision_before_measures_and_keeps_focus(tmp_path):
+    playwright = pytest.importorskip("playwright.sync_api")
+    hub = make_hub(tmp_path)
+    agora = hub.facet("agora").agora
+    order = agora.order_create({"agent": "builder", "title": "Test order", "folder": str(tmp_path)})["order"]
+    (tmp_path / "draft.txt").write_text("Draft for review", encoding="utf-8")
+    piece = agora.piece_add({"agent": "builder", "order_id": order["id"], "title": "Draft", "kind": "text",
+                            "path": "draft.txt"})["piece"]
+    gate = agora.gate_open({"agent": "builder", "order_id": order["id"], "title": "Review the draft",
+                           "piece_ids": [piece["id"]]})["gate"]
+    server = serve(hub)
+    try:
+        with playwright.sync_playwright() as runtime:
+            try:
+                browser = runtime.chromium.launch(channel="chrome", headless=True)
+            except playwright.Error as error:
+                if "not found" in str(error).lower() or "executable doesn't exist" in str(error).lower():
+                    pytest.skip("Installed Chrome is required for the headless browser test")
+                raise
+            page = browser.new_page(locale="en-GB")
+            delayed = []
+            page.route("**/api/work-admission/metrics?all_spaces=1", lambda route: delayed.append(route))
+            page.goto(hub.config.url + "/#hub/home")
+            page.locator(".hub-decision-row", has_text="Review the draft").click()
+            heading = page.locator(f'[data-gate="{gate["id"]}"] h3')
+            playwright.expect(heading).to_be_focused()
+            assert len(delayed) == 1
+            delayed[0].continue_()
+            playwright.expect(page.get_by_role("heading", name="Production measures")).to_be_visible()
+            playwright.expect(heading).to_be_focused()
+            browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        hub.close()
+
+
 @pytest.mark.parametrize('width', [1280, 390])
 def test_project_navigation_preserves_scope_and_all_tools(tmp_path, width):
     browser_api = pytest.importorskip('playwright.sync_api')

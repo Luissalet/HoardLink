@@ -34,8 +34,10 @@
   const fileUrl = (piece, i) => `/api/agora/piece_file/${piece.id}` + (i === undefined ? "" : `?preview=${i}`);
   const baseName = p => String(p || "").split(/[\\/]/).pop();
 
-  let root = null, data = null, measures = null, lastSig = "", spaces = [], busy = false, opened = new Set(), details = new Map(), timers = [];
+  let root = null, page = null, data = null, lastSig = "", spaces = [], busy = false, opened = new Set(), details = new Map(), timers = [];
   let composeView = null, composeKey = "";
+  let orderSections = [], orderRequest = 0, spacesRequest = null;
+  let measures = null, metricsSection = null, metricsRequest = null, metricsSig = "";
   const drafts = new Map();   // gate id → note being written
 
   function stopTimers() { for (const t of timers) clearInterval(t); timers = []; }
@@ -231,6 +233,18 @@
   }
 
   // ---- writing an order ------------------------------------------------------------------------------
+  function setSpaceOptions(select) {
+    const selected = select.value;
+    const preferred = spaces.find(s => s.id === "estudio") ? "estudio" : "ecosystem";
+    select.replaceChildren(...spaces.map(space => {
+      const option = el("option", "", space.title || space.id);
+      option.value = space.id;
+      option.defaultSelected = space.id === preferred;
+      return option;
+    }));
+    if (spaces.some(space => space.id === selected)) select.value = selected;
+  }
+
   function composer() {
     const form = el("form", "ord-compose");
     form.append(el("h2", "", tr("Nueva orden", "New order")));
@@ -250,8 +264,7 @@
     const materials = el("textarea"); materials.rows = 2; materials.name = "materials";
     materials.placeholder = tr("Un fichero, carpeta o enlace por línea", "One file, folder or link per line");
     const space = el("select"); space.name = "space";
-    const preferred = spaces.find(s => s.id === "estudio") ? "estudio" : "ecosystem";
-    for (const s of spaces) { const o = el("option", "", s.title || s.id); o.value = s.id; if (s.id === preferred) o.selected = true; space.append(o); }
+    setSpaceOptions(space);
     grid.append(field(tr("Título", "Title"), title), field(tr("Proyecto", "Project"), space),
       field(tr("Detalles que no pueden perderse", "Details that must not be lost"), keep),
       field(tr("Entregables", "Deliverables"), deliv), field(tr("Carpeta de la orden", "Order folder"), folder),
@@ -275,6 +288,7 @@
       const refs = lines(materials).map(value => /^https?:\/\//i.test(value) ? { url: value } : { path: value });
       let res;
       try {
+        await spacesRequest;
         const native = await source.read();
         res = await ctx.api("/api/agora/order_create", { space_id: space.value, words: words.value.trim(), title: title.value.trim(),
           keep: lines(keep), deliverables: lines(deliv), folder: folder.value.trim(), refs,
@@ -465,10 +479,19 @@
   }
 
   // ---- page ----------------------------------------------------------------------------------------------
+  function replaceOrderSections(...sections) {
+    for (const section of orderSections) {
+      if (!sections.includes(section)) section.remove();
+    }
+    // Early draft passes are mounted separately at the top of this page.
+    const anchor = metricsSection;
+    for (const section of sections) page.insertBefore(section, anchor);
+    orderSections = sections;
+  }
+
   function render() {
-    if (!root) return;
+    if (!page) return;
     stopTimers();
-    const page = el("div", "ord-page");
     const waiting = data?.waiting || [];
     const wait = el("section", "ord-waiting");
     wait.setAttribute("aria-labelledby", "ord-waiting-title");
@@ -480,34 +503,68 @@
         "Keep fixes the piece as the reference for what comes next. Cancel sends it back to its station with your note, and what derives from it becomes stale.")));
       for (const g of waiting) wait.append(gateCard(g));
     }
-    const nextComposeKey = JSON.stringify([ctx.lang(), spaces]);
+    const nextComposeKey = ctx.lang();
     if (composeKey !== nextComposeKey) {
       composeView = composer();
       composeKey = nextComposeKey;
     }
-    page.append(wait, composeView);
     const list = el("section", "ord-list");
     list.append(el("h2", "", tr("Órdenes", "Orders")));
     const orders = data?.orders || [];
     if (!orders.length) list.append(el("p", "ord-muted", tr("Todavía no hay órdenes.", "There are no orders yet.")));
     for (const o of orders) list.append(orderRow(o));
-    page.append(list);
-    const stats = window.HubOrderMetrics?.render(measures);
-    if (stats) page.append(stats);
-    root.replaceChildren(page);
+    replaceOrderSections(wait, composeView, list);
     const badge = document.getElementById("orders-badge");
-    if (badge) badge.textContent = waiting.length ? String(waiting.length) : "";
+    const draftCount = Number(page.querySelector(":scope > .drf-early")?.dataset.count || 0);
+    const waitingCount = waiting.length + draftCount;
+    if (badge) badge.textContent = waitingCount ? String(waitingCount) : "";
+  }
+
+  function renderMetrics() {
+    const sig = JSON.stringify([measures, ctx.lang()]);
+    if (sig === metricsSig) return;
+    metricsSig = sig;
+    const next = window.HubOrderMetrics?.render(measures);
+    metricsSection?.remove();
+    if (next) page.append(next);
+    metricsSection = next || null;
+  }
+
+  function loadMetrics() {
+    if (metricsRequest || !window.HubOrderMetrics) return;
+    metricsRequest = window.HubOrderMetrics.load().then(result => {
+      measures = result;
+      renderMetrics();
+    }).finally(() => { metricsRequest = null; });
+  }
+
+  function loadSpaces() {
+    if (spaces.length || spacesRequest) return;
+    spacesRequest = ctx.api("/api/agora/spaces").catch(() => null).then(result => {
+      if (!result?.ok) return;
+      spaces = result.spaces || [];
+      if (composeView) setSpaceOptions(composeView.elements.space);
+    }).finally(() => { spacesRequest = null; });
   }
 
   async function load() {
-    if (!root) return;
-    const [res, sp, nextMeasures] = await Promise.all([ctx.api("/api/agora/orders?all_spaces=1").catch(e => ({ ok: false, error: String(e) })),
-      spaces.length ? null : ctx.api("/api/agora/spaces").catch(() => null), window.HubOrderMetrics?.load()]);
-    if (sp?.ok) spaces = sp.spaces || [];
-    if (!res?.ok) { root.replaceChildren(el("p", "ord-warn", tr("No se pueden leer las órdenes: ", "Orders cannot be read: ") + (res?.error || ""))); return; }
-    const sig = JSON.stringify([res, nextMeasures, ctx.lang()]);
-    if (sig === lastSig && root.childElementCount) return;   // nothing changed: keep players and open rows as they are
-    lastSig = sig; data = res; measures = nextMeasures;
+    if (!page) return;
+    const request = ++orderRequest;
+    const orders = ctx.api("/api/agora/orders?all_spaces=1").catch(e => ({ ok: false, error: String(e) }));
+    loadSpaces();
+    renderMetrics();
+    loadMetrics();
+    const res = await orders;
+    if (request !== orderRequest) return;
+    if (!res?.ok) {
+      lastSig = "";
+      stopTimers();
+      replaceOrderSections(el("p", "ord-warn", tr("No se pueden leer las órdenes: ", "Orders cannot be read: ") + (res?.error || "")));
+      return;
+    }
+    const sig = JSON.stringify([res, ctx.lang()]);
+    if (sig === lastSig) return;
+    lastSig = sig; data = res;
     render();
   }
 
@@ -519,7 +576,15 @@
   let ticks = 0;
   window.HubFacets.register("orders", {
     placement: "tab", order: 5, label: { es: "Órdenes", en: "Orders" },
-    mount(container) { root = container; root.classList.add("ord-root"); },
+    mount(container) {
+      root = container;
+      root.classList.add("ord-root");
+      page = el("div", "ord-page");
+      const loading = el("p", "ord-muted", tr("Cargando órdenes…", "Loading orders…"));
+      loading.setAttribute("role", "status");
+      replaceOrderSections(loading);
+      root.append(page);
+    },
     load() { return load(); },
     tick() { if (++ticks % 3 === 0 && !busy && !typing()) load(); },
     copilot: { context: () => ({ active_objects: [], view: { section: "orders", waiting: (data?.waiting || []).length } }) },
