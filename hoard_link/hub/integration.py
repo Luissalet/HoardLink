@@ -599,10 +599,14 @@ class IntegrationFacet(Facet):
         for app in getattr(self.hub, "apps", []):
             if not app.launch or not Path(app.launch.cwd).resolve().is_relative_to(repo):
                 continue
-            state = self.hub.app_status(app, windows={})
+            state = self.hub.app_status(app)
             prior = next((row for row in receipt.get("app_reload", []) if row["app"] == app.id), None)
             recover = field == "undo_app_reload" and prior and prior["state"] == "failed" and prior.get("stopped")
             if state["state"] != "running" and not recover:
+                continue
+            if state["state"] == "running" and (app.kind == "window-app" or state.get("windows")):
+                results.append({"app": app.id, "state": "deferred", "reason_code": "desktop_in_use",
+                                "reason": "Desktop app is running or has an open Hub window"})
                 continue
             if not state.get("stoppable") and not recover:
                 results.append({"app": app.id, "state": "deferred", "reason": "App process is not managed locally"})

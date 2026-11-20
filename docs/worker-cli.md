@@ -14,6 +14,8 @@ hub.cmd stations
 hub.cmd chain <input-type> <output-type> --json
 hub.cmd programs --refresh
 hub.cmd tool hub_programs --json
+hub.cmd --data-dir <isolated-data-folder> tool hub_list_apps --json
+hub.cmd --hub-url http://127.0.0.1:8934 --token-file <bearer-file> tool hub_list_apps --json
 ```
 
 `--args-file` takes a UTF-8 JSON object containing the tool arguments. `call` accepts `--reason`
@@ -23,10 +25,13 @@ result by default. With `--json`, it writes one JSON value to stdout, including 
 result envelope on tool calls. The process exits with 0 on success, 1 on request or tool failure
 and 2 for invalid command-line syntax. A timed-out write is not retried.
 
-The client reads connection settings from the Hub's data directory. Isolated instances can use
-`HOARD_HUB_DATA_DIR`, which supplies the running URL and bearer file automatically after the Hub
-starts. The usual `HOARD_HUB_URL` and `HOARD_HUB_TOKEN_FILE` overrides are also recognised. The
-CLI connects to an existing Hub. App lifecycle changes are explicit commands.
+The client prints the selected Hub URL to stderr before making a request. For an isolated instance,
+use `--data-dir` or `HOARD_HUB_DATA_DIR`. The selected folder supplies the URL written by the running
+Hub and its `mcp-token`. An absent URL file stops the command. Use `--hub-url` to select a destination
+directly and add `--token-file` when it requires a bearer token. These options can go before or after
+the subcommand. Explicit selection takes precedence over inherited settings. The legacy
+`HOARD_HUB_URL` and `HOARD_HUB_TOKEN_FILE` overrides apply when no isolated data directory or explicit
+URL is selected. The CLI connects to an existing Hub. App lifecycle changes are explicit commands.
 
 ## HTTP and MCP
 

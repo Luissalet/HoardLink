@@ -44,10 +44,12 @@ def delivery(tmp_path):
     write(repo, ".gitignore", "__pycache__/\n")
     write(repo, "tests/test_station.py", "def test_station(): assert True\n")
     write(repo, "tests/test_feature.py", """
+from pathlib import Path
 import pytest
 
-def test_known():
-    assert False, "stable reproduction"
+def test_known(tmp_path):
+    pending = (value for value in ())
+    assert False, f"{pending!r} did not open {tmp_path / 'record.json'} from {Path.cwd()}"
 
 @pytest.mark.inference
 def test_model():
@@ -232,7 +234,8 @@ def test_spark_request_executed_with_json_environment_and_git_diff(delivery, tmp
     result = checks.suite(hub, repo, worktree, ["tests/test_feature.py"], tmp_path / "report.xml",
                           "contract", remote=str(repo), base=base, ref=head, timeout=480)
     assert result["counts"]["passed"] == 1
-    assert list(result["failures"]) == ["tests.test_feature::test_known"]
+    known = result["failures"]["tests.test_feature::test_known"]["message"]
+    assert "at <address>" in known and "<pytest-temp>" in known and "<checkout>" in known
 
 
 def test_catalogue_plans_the_hub_integration_handoff(tmp_path):
@@ -436,7 +439,8 @@ def test_integrate_and_undo_exact_approved_delivery(delivery, tmp_path, monkeypa
         while facet.active and time.monotonic() < deadline:
             time.sleep(0.05)
         receipt = facet.status({"id": run})["receipt"]
-        assert receipt["comparison"]["known"]
+        assert len(receipt["comparison"]["known"]) == 1
+        assert receipt["comparison"]["new"] == {}
         assert receipt["comparison"]["candidate"]["counts"]["passed"] == 1
         assert receipt["state"] == "integrated", receipt
         assert not branch.exists()
@@ -463,7 +467,10 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
     write(second, "second.py", "VALUE = 2\n")
     second_head = commit(second, "Add second feature", "second.py")
     agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
-    app = SimpleNamespace(id="fixture", launch=SimpleNamespace(cwd=str(repo)))
+    launch = SimpleNamespace(cwd=str(repo))
+    app = SimpleNamespace(id="fixture", kind="app", launch=launch)
+    desktop = SimpleNamespace(id="desktop", kind="window-app", launch=launch)
+    browser = SimpleNamespace(id="browser", kind="app", launch=launch)
     reloaded = []
 
     def restart(app_id, *, automatic):
@@ -471,8 +478,9 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
         reloaded.append(git.git_text(repo, "rev-parse", "HEAD"))
         return {"ok": True, "ready": True, "pid": len(reloaded)}
 
-    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)), apps=[app],
-                          app_status=lambda app, **kwargs: {"state": "running", "stoppable": True}, restart=restart,
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)), apps=[app, desktop, browser],
+                          app_status=lambda app: {"state": "running", "stoppable": True,
+                                                  "windows": [{"pid": 4}] if app.id == "browser" else []}, restart=restart,
                           automation_blocked=lambda app_id: False, facet=lambda name: SimpleNamespace(agora=agora))
     facet = IntegrationFacet(hub)
     monkeypatch.setattr(checks, "SUITE_LOCK", tmp_path / "local-slot")
@@ -516,9 +524,12 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
         assert two["state"] == "integrated", two
         assert two["plan"]["base"] == one["merge_commit"]
         assert two["app_reload"][0]["state"] == "reloaded"
+        assert [(row["app"], row["state"], row["reason_code"]) for row in two["app_reload"][1:]] == [
+            (name, "deferred", "desktop_in_use") for name in ("desktop", "browser")]
         assert reloaded == [one["merge_commit"], two["merge_commit"]]
         undo = facet.undo({"id": second_id, "agent": "owner"})["receipt"]
         assert undo["undo_app_reload"][0]["state"] == "reloaded"
+        assert undo["undo_app_reload"][1:] == two["app_reload"][1:]
         assert reloaded[-1] == one["merge_commit"]
     finally:
         release.set()
@@ -674,9 +685,9 @@ def test_transferred_delivery_compares_independent_conftests(delivery, tmp_path,
     run_local = checks.local_tests
     timeouts = []
 
-    def record_timeout(repo, work, files, report, lane, *, timeout):
+    def record_timeout(repo, work, files, report, lane, basetemp, *, timeout):
         timeouts.append((lane, timeout))
-        return run_local(repo, work, files, report, lane, timeout=timeout)
+        return run_local(repo, work, files, report, lane, basetemp, timeout=timeout)
 
     monkeypatch.setattr(checks, "local_tests", record_timeout)
     try:

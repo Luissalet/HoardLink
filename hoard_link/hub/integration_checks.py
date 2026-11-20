@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -99,14 +100,25 @@ def test_env(data=None):
     return env
 
 
-def arguments(files, report, lane):
+def arguments(files, report, lane, basetemp):
     markers = "inference or live_model or gpu" if lane == "marked_inference" else MARKERS
     options = [] if lane == "inference" else ["-m", markers]
     return ["-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "junit_family=xunit1", "--junitxml", str(report),
-            *options, "--", *files]
+            "--basetemp", str(basetemp), *options, "--", *files]
 
 
-def report_result(exit_code, report, output, *, empty_ok=False):
+def _stable_message(message, paths):
+    # Default Python reprs include process-specific addresses, unlike literal hex values in assertions.
+    message = re.sub(r"(?<= at )0x[\da-fA-F]+(?=>)", "<address>", message.strip())
+    for label, path in paths.items():
+        path = str(path)
+        variants = {path, path.replace("\\", "/"), path.replace("\\", "\\\\")}
+        pattern = "|".join(re.escape(value) for value in sorted(variants, key=len, reverse=True))
+        message = re.sub(rf"(?<![\w/\\])(?:{pattern})(?=[^\w.-]|$)", f"<{label}>", message)
+    return message
+
+
+def report_result(exit_code, report, output, *, paths=None, empty_ok=False):
     if exit_code == 5 and empty_ok:
         return {"counts": {"passed": 0, "failed": 0, "skipped": 0}, "failures": {}}
     if not report or exit_code not in (0, 1, 2):
@@ -124,7 +136,7 @@ def report_result(exit_code, report, output, *, empty_ok=False):
             counts["failed"] += 1
             # Pytest's message contains the assertion and exception. Tracebacks include
             # checkout paths and line numbers, which can differ between the two trees.
-            details = failure.get("message", "").strip()
+            details = _stable_message(failure.get("message", ""), paths or {})
             failures[key] = {"signature": hashlib.sha256(details.encode()).hexdigest(), "file": case.get("file"),
                              "message": details[:500]}
         elif case.find("skipped") is not None:
@@ -137,12 +149,12 @@ def report_result(exit_code, report, output, *, empty_ok=False):
     return result
 
 
-def local_tests(repo, work, files, report, lane, *, timeout):
+def local_tests(repo, work, files, report, lane, basetemp, *, timeout):
     python = next((repo / folder / path for folder in (".venv", "venv")
                    for path in ("Scripts/python.exe", "bin/python")
                    if (repo / folder / path).is_file()), Path(sys.executable))
     return subprocess.run(
-        [str(python), *arguments(files, report, lane)], cwd=work, env=test_env(report.with_suffix(".data")),
+        [str(python), *arguments(files, report, lane, basetemp)], cwd=work, env=test_env(report.with_suffix(".data")),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
@@ -160,6 +172,7 @@ with tempfile.TemporaryDirectory(prefix="hoard-tests-") as temp:
     work = pathlib.Path(temp) / "checkout"
     report = pathlib.Path(temp) / "report.xml"
     data = pathlib.Path(temp) / "data"
+    basetemp = pathlib.Path(temp) / "pytest"
     env.update(HOARD_HUB_DATA_DIR=str(data), HOARD_HUB_TOKEN_FILE=str(data / "mcp-token"),
                HOARD_HUB_URL="http://127.0.0.1:1")
     subprocess.run(["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null",
@@ -172,13 +185,14 @@ with tempfile.TemporaryDirectory(prefix="hoard-tests-") as temp:
                            capture_output=True, env=env, timeout=60)
         python = next((str(repo / v / "bin/python") for v in (".venv", "venv")
                        if (repo / v / "bin/python").is_file()), sys.executable)
-        args = [str(report) if a == "REPORT" else a for a in p["args"]]
+        args = [{"REPORT": str(report), "PYTEST_TEMP": str(basetemp)}.get(a, a) for a in p["args"]]
         try:
             r = subprocess.run([python, *args], cwd=work, env=env, capture_output=True, timeout=p["timeout"])
         except subprocess.TimeoutExpired:
             print(json.dumps({"timed_out": True}))
         else:
             print(json.dumps({"exit": r.returncode, "report": report.read_text(encoding="utf-8") if report.exists() else "",
+                              "paths": {"checkout": str(work), "pytest-temp": str(basetemp), "hub-data": str(data)},
                               "output": (r.stdout + r.stderr).decode("utf-8", "replace")[-3500:]}))
     finally:
         subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(work)],
@@ -192,16 +206,19 @@ def suite(hub, repo, work, files, report, lane, *, remote, base, ref, empty_ok=F
     if remote:
         delta = diff_bytes(repo, base, ref) if base != ref else b""
         payload = {"repo": remote, "base": base, "patch": base64.b64encode(delta).decode("ascii"),
-                   "args": arguments(files, "REPORT", lane), "timeout": timeout,
+                   "args": arguments(files, "REPORT", lane, "PYTEST_TEMP"), "timeout": timeout,
                    "excluded": EXCLUDED_ENV}
         result = json.loads(hub.placement._ssh("python3 -c " + shlex.quote(REMOTE_RUNNER),
                                                 input=json.dumps(payload), timeout=timeout + 130))
         if result.get("timed_out"):
             raise subprocess.TimeoutExpired("remote pytest", timeout)
-        return report_result(result["exit"], result["report"], result["output"], empty_ok=empty_ok)
-    result = local_tests(repo, work, files, report, lane, timeout=timeout)
+        return report_result(result["exit"], result["report"], result["output"], paths=result["paths"], empty_ok=empty_ok)
+    with tempfile.TemporaryDirectory(prefix="hoard-tests-") as folder:
+        basetemp = Path(folder) / "pytest"
+        result = local_tests(repo, work, files, report, lane, basetemp, timeout=timeout)
     raw = report.read_bytes() if report.exists() else b""
-    return report_result(result.returncode, raw, result.stdout.decode("utf-8", "replace"), empty_ok=empty_ok)
+    paths = {"checkout": work, "pytest-temp": basetemp, "hub-data": report.with_suffix(".data")}
+    return report_result(result.returncode, raw, result.stdout.decode("utf-8", "replace"), paths=paths, empty_ok=empty_ok)
 
 
 def compare(base, candidate):
