@@ -31,6 +31,7 @@ from typing import Optional
 from . import DEFAULT_PORT, HUB_VERSION, SERVICE
 from .config import HubConfig
 from .core import Hub
+from .lease_remote import RemoteLeaseArbiter
 from . import autostart, desktop, procs
 from .server import make_server
 
@@ -155,7 +156,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             _open_own_window(cfg, "browser" if args.browser else "window")
         return 0
 
+    local_jobs = cfg.jobs_enabled
+    if cfg.port != DEFAULT_PORT:
+        cfg.jobs_enabled = False  # do not start the scheduler until the machine arbiter is connected
     hub = Hub(cfg)
+    if cfg.port != DEFAULT_PORT:
+        hub.leases = RemoteLeaseArbiter(cfg.port)
+        hub.leases.on_event = hub._lease_event
+        cfg.jobs_enabled = local_jobs
+        if local_jobs:
+            hub.jobs.start()
     try:
         server = make_server(hub)
     except OSError as exc:
