@@ -35,7 +35,7 @@
     const epoch = spaceEpoch, sid = activeSpace;
     if (body !== undefined) body = {space_id: sid, ...body};
     else if (sid !== 'ecosystem') path += (path.includes('?') ? '&' : '?') + 'space_id=' + encodeURIComponent(sid);
-    const result = await rawApi(path, body);
+    const result = await H.ctx.api(path, body);
     if (result?.person) H.ctx.agoraPerson = result.person;
     return epoch === spaceEpoch ? result : {ok: false, spaceChanged: true};
   }
