@@ -41,6 +41,9 @@ export async function loadHistory(api, space = '') {
   const query = scopeQuery(space);
   const log = await read(api, 'decisions', [query, 'limit=100'].filter(Boolean).join('&'));
   const decisions = log.production_decisions ?? (await read(api, 'order_decisions', query)).decisions;
+  const viewer = 'viewer' in log || !decisions.some(d => d.decided_by?.id)
+    ? log.viewer
+    : (await read(api, 'guild', [query, 'done_limit=0', 'offline_limit=0'].filter(Boolean).join('&')).catch(() => null))?.viewer;
   const rows = new Map();
   for (const d of decisions) {
     const {gate, draft_pass: pass, variant, order} = d.situation || {};
@@ -49,7 +52,7 @@ export async function loadHistory(api, space = '') {
     if (!rows.has(key)) rows.set(key, {id: d.id, title: pass?.title || gate?.title || d.piece_title,
       order: order?.title, variant: d.decision === 'keep' ? variant?.title : '', created: d.created,
       decision: d.decision, note: d.note, draft: Boolean(pass), decidedBy: d.decided_by?.name,
-      own: Boolean(log.viewer && log.viewer === d.decided_by?.id)});
+      own: Boolean(viewer && viewer === d.decided_by?.id)});
   }
   return [...rows.values()];
 }

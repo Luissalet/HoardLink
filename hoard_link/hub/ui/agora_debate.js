@@ -49,11 +49,13 @@
   };
   const t = (k) => L(S[k] || { es: k, en: k });
   const STATUSES = ["proposed", "challenged", "verified", "rejected"];
-  const DISPOSITIONS = ["adopt", "adapt", "drop", "needs_person"];
+  const dispositions = () => ["adopt", "adapt", "drop", H.ctx.agoraPerson ? "needs_person" : "needs_luis"];
   const cache = new Map();      // detail key -> last debates payload (repaint without flicker)
   const drafts = new Map();     // draft id -> text typed by the person (survives detail rebuilds)
   const inflight = new Set();
   const formsOpen = new Set();
+  let viewer;
+  const personId = () => H.ctx.agoraPerson?.id || viewer;
 
   function injectCss() {
     if (document.getElementById("css-agora-debate")) return;
@@ -153,7 +155,7 @@
     const id = `deb-${debate.id}-f${f.id}`;
     const ta = draft(id, "textarea", t("note"));
     const row = el("div", "ag-fnd-btns");
-    const own = f.author === H.ctx.agoraPerson?.id;   // the person's own finding: only withdrawing it makes sense
+    const own = f.author === personId();   // the person's own finding: only withdrawing it makes sense
     for (const op of own ? ["reject"] : ["verify", "challenge", "reject"]) {
       const b = el("button", op === "verify" ? "small primary" : "small", own ? t("withdraw") : t(op));
       b.dataset.op = op; b.dataset.finding = String(f.id);
@@ -198,7 +200,7 @@
     }
     if (debate.status === "open") {
       // stances on others' findings; on the person's own, withdrawing it (once withdrawn there is nothing left to do)
-      if (f.author !== H.ctx.agoraPerson?.id || f.status !== "rejected") card.appendChild(stanceBox(detail, debate, f, rerender));
+      if (f.author !== personId() || f.status !== "rejected") card.appendChild(stanceBox(detail, debate, f, rerender));
       card.appendChild(toggle(t("amend"), `deb-${debate.id}-f${f.id}-amend`, () => amendForm(detail, debate, f, rerender)));
     }
     return card;
@@ -213,8 +215,9 @@
     if (!drafts.has(base + "-claim")) claim.value = f.claim || "";
     const ev = draft(base + "-ev", "textarea", t("more_evidence"));
     const disp = el("select");
-    for (const d of DISPOSITIONS) { const o = el("option", "", t("d_" + d)); o.value = d; disp.appendChild(o); }
-    disp.value = drafts.get(base + "-disp") || (f.disposition === "needs_luis" ? "needs_person" : f.disposition);
+    const options = dispositions();
+    for (const d of options) { const o = el("option", "", t("d_" + d)); o.value = d; disp.appendChild(o); }
+    disp.value = drafts.get(base + "-disp") || (options.includes(f.disposition) ? f.disposition : options.at(-1));
     disp.onchange = () => drafts.set(base + "-disp", disp.value);
     const go = el("button", "small primary", t("save_amend"));
     go.onclick = async () => {
@@ -279,7 +282,7 @@
     const claim = draft(base + "-claim", "textarea", t("claim"));
     const ev = draft(base + "-ev", "textarea", t("evidence_lines"));
     const disp = el("select");
-    for (const d of DISPOSITIONS) { const o = el("option", "", t("d_" + d)); o.value = d; disp.appendChild(o); }
+    for (const d of dispositions()) { const o = el("option", "", t("d_" + d)); o.value = d; disp.appendChild(o); }
     disp.value = drafts.get(base + "-disp") || "adopt";
     disp.onchange = () => drafts.set(base + "-disp", disp.value);
     const go = el("button", "small primary", t("file_it"));
@@ -418,6 +421,10 @@
     try {
       const r = await get(detail, query(k));
       if (!r || !r.ok) return;
+      if (!personId()) {
+        const guild = await get(detail, "/api/agora/guild?done_limit=0&offline_limit=0").catch(() => null);
+        viewer = guild?.viewer;
+      }
       const now = detailNow(); const nk = keyOf(now);
       if (!now || !nk || nk.key !== k.key) return;
       const sig = JSON.stringify(r.debates);
