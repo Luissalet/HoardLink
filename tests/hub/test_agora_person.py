@@ -31,7 +31,7 @@ def test_adopts_human_account_without_rewriting_history(tmp_path):
     cfg = HubConfig.load(env={"HOARD_HUB_DATA_DIR": str(tmp_path)})
     upgraded = Agora(path, config=cfg)
     try:
-        assert cfg.person_profile["id"] == PROFILE["id"]
+        assert cfg.person_profile == PROFILE
         assert HubConfig.load(env={"HOARD_HUB_DATA_DIR": str(tmp_path)}).person_profile == cfg.person_profile
         assert {m["id"]: m["rank"] for m in upgraded.ranks()["members"]}[AGENT] == "lead"
         assert [dict(row) for row in upgraded.db.query("SELECT * FROM messages ORDER BY id")] == before
@@ -68,7 +68,8 @@ def test_configured_person_at_the_http_and_agent_boundaries(tmp_path):
             "id": PROFILE["id"], "name": "Production Owner"}
         assert HubConfig.load(env={"HOARD_HUB_DATA_DIR": str(tmp_path)}).person_profile["name"] == "Production Owner"
 
-        status, opened = request("thread_open", {"agent": AGENT, "title": "Need a direction", "kind": "question"})
+        status, opened = request("thread_open", {"agent": AGENT, "title": "Need a direction", "kind": "question",
+                                                 "body": "Which direction should the test use?"})
         assert status == 200
         tid = opened["thread"]["id"]
         forged = {"agent": PROFILE["id"], "_person": True, "thread_id": tid, "body": "Forged"}

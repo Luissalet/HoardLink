@@ -927,7 +927,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "position": {"type": "integer"}, "archived": {"type": "boolean"}}, ["agent", "channel"])},
         {"name": "hub_agora_channel_post",
          "description": "Say something in a channel (channel, default general) or in any thread (thread_id). @id in "
-                        "the text mentions that agent, @person or the configured id mentions the person, @here whoever has been around lately; "
+                        "the text mentions that agent. Use @person or the configured id for the person, @here for active agents. "
                         "mentions adds more. kind: comment (default), proposal, agree or disagree. reply_to quotes "
                         "a message of the same conversation (and tells its author); files carries files sent with "
                         "hub_agora_file_add (then body may be empty). work lists the tools you used for it and "

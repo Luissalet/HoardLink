@@ -932,14 +932,11 @@ class Agora:
 
     def _touch(self, agent: str) -> None:
         now = self.clock()
-        if agent == self.person_id:
-            kind = "human"
-        else:
-            kind = "agent"
+        person = agent == self.person_id
         self.db.execute(
             "INSERT INTO agents(id, name, kind, state, last_seen, created) VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen",
-            (agent, agent, kind, "working", now, now))
+            (agent, self.person_name if person else agent, "human" if person else "agent", "working", now, now))
         self.space_store.join(self.space_id, agent)
 
     def _task_row(self, task_id: Any) -> dict[str, Any]:
