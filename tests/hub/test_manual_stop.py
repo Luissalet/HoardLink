@@ -88,7 +88,7 @@ def test_stopping_app_before_it_listens_kills_its_verified_launcher(hub, monkeyp
     monkeypatch.setattr(procs, "health", lambda app: procs.Health("down"))
     monkeypatch.setattr(procs, "find_app_process", lambda app: None)
     monkeypatch.setattr(procs, "pid_running", lambda pid: True)
-    monkeypatch.setattr(procs, "proc_info", lambda pid: SimpleNamespace(pid=pid, created_at=123.0, cwd=app.folder, cmdline="", name="python"))
+    monkeypatch.setattr(procs, "proc_info", lambda pid: SimpleNamespace(pid=pid, created_at=123.0, cwd=None, cmdline="", name="node"))
     killed = []
     monkeypatch.setattr(procs, "terminate_tree", lambda pid, **kw: killed.append(pid) or {"ok": True})
     assert hub.stop(app.id)["ok"]

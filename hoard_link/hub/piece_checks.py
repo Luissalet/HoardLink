@@ -21,6 +21,7 @@ PROFILES = {
     "web": ("web-page",),
     "slides": ("editable-deck", "presentation-pptx"),
     "document": ("editable-report", "research-report", "document"),
+    "narrative": ("pdf", "narrative-pdf"),
 }
 TYPE_PROFILES = {kind: profile for profile, kinds in PROFILES.items() for kind in kinds}
 KINDS_BY_SUFFIX = {
@@ -59,8 +60,8 @@ class Report:
         return {"verdict": verdict, "reason": VERDICTS[verdict], "measures": self.measures, "checks": self.checks}
 
 
-def run_checks(path, profile, requirements):
-    from . import piece_checks_layout, piece_checks_media, piece_checks_mesh, piece_checks_sources
+def run_checks(path, profile, requirements, *, narrative=None):
+    from . import piece_checks_layout, piece_checks_media, piece_checks_mesh, piece_checks_narrative, piece_checks_sources
 
     handlers = {
         "image": piece_checks_media.check_image,
@@ -70,10 +71,11 @@ def run_checks(path, profile, requirements):
         "web": piece_checks_layout.check_web,
         "slides": piece_checks_layout.check_slides,
         "document": piece_checks_sources.check_document,
+        "narrative": piece_checks_narrative.check_narrative,
     }
     report = Report()
     try:
-        handlers[profile](path, requirements, report)
+        handlers[profile](path, requirements, report, **(narrative or {}))
     except (OSError, ValueError, KeyError, TypeError, IndexError, ImportError, RuntimeError,
             subprocess.SubprocessError) as exc:
         report.add("inspection", None, "Inspection could not be completed.",
@@ -134,7 +136,7 @@ class PieceChecksFacet(Facet):
         row = None
         try:
             if supplied[0] == "piece_id":
-                _, row, source = self._registered(args)
+                agora, row, source = self._registered(args)
             else:
                 source = args["path"]
             # The web engine serves an explicit local piece. A publication URL is a separate handoff.
@@ -147,6 +149,13 @@ class PieceChecksFacet(Facet):
             requirements = args.get("requirements", {})
             if profile not in PROFILES or not isinstance(requirements, dict):
                 return {"ok": False, "error": "Choose a supported profile and an object of requirements."}
+            narrative, manuscript = None, None
+            if row and profile == "narrative":
+                from .piece_checks_narrative import registered_source
+
+                manuscript_path, continuity, manuscript = registered_source(agora, row)
+                narrative = {"source": manuscript_path, "continuity": continuity}
+                requirements = {key: value for key, value in requirements.items() if key != "source_path"}
         except (ImportError, OSError, ValueError, TypeError) as exc:
             return {"ok": False, "error": str(exc)}
         if kind == "character-sheet":
@@ -155,11 +164,13 @@ class PieceChecksFacet(Facet):
             requirements = {**requirements, "_base": str(Path(row["path"]).parent)}
         engine = ENGINES.get(profile)
         result = (_engine(self.hub, engine, path, profile, requirements) if engine
-                  else run_checks(path, profile, requirements))
+                  else run_checks(path, profile, requirements, narrative=narrative))
         result.update(ok=True, path=str(path), profile=profile,
                       elapsed_ms=round(1000 * (time.monotonic() - started)))
         if row:
             result["piece"] = {key: row[key] for key in ("id", "kind", "revision", "sha256")}
+        if manuscript is not None:
+            result["measures"]["source_piece"] = manuscript
         return result
 
     def record(self, args):
@@ -270,6 +281,10 @@ def _note(result, language, detail_limit=3000):
                 shown = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
                 facts.append(f"{names[language == 'es']} {shown}")
             findings.append(f"{check['reason'][language]} {', '.join(facts)}".rstrip())
+    declaration = "Declared continuity defect" if language == "en" else "Defecto de continuidad declarado"
+    for finding in result["measures"].get("continuity", []):
+        if finding["disposition"] == "declared":
+            findings.append(f"{declaration} #{finding['id']} · {finding['declaration']}")
     details = "\n".join(findings)[:detail_limit]
     return f"{label} · {identity}{result['profile']} · {result['reason'][language]}\n{details}".rstrip()
 

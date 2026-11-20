@@ -363,6 +363,12 @@ class Hub:
                     renderer = programs.vulcan_blender_env()
                     if renderer:
                         launch_app = replace(app, launch=replace(app.launch, env={**app.launch.env, **renderer}))
+                if app_id == "writer" and app.launch:
+                    launch_app = replace(app, launch=replace(app.launch, env={
+                        **app.launch.env, "HOARD_HUB_URL": self.config.url,
+                        "HOARD_HUB_DATA_DIR": self.config.data_dir,
+                        "HOARD_HUB_TOKEN_FILE": self.config.token_file,
+                    }))
                 res = procs.start_app(launch_app, self.config.logs_dir, wait=wait)
                 if allocation.get("previous_port"):
                     res.update(previous_port=allocation["previous_port"], port=allocation["port"])
@@ -449,16 +455,18 @@ class Hub:
         proc = procs.find_app_process(app)
         with self._lock:
             spawned, created = self._spawned.get(app_id), self._spawned_created.get(app_id)
+        owned = False
         if spawned and created is not None and procs.pid_running(spawned):
             tracked = procs.proc_info(spawned)
             if tracked.created_at is not None and abs(tracked.created_at - created) < .01:
                 proc = tracked  # stop the launcher too, including a server still booting
+                owned = True
         if proc is None:
             desktop.close_windows(app_id, self.config.profiles_dir)
             return {"ok": True, "app": app_id, "detail": "not running"}
         if h.state == "foreign":
             return {"ok": False, "app": app_id, "error": "refusing: " + h.detail}
-        if h.state == "down":
+        if h.state == "down" and not owned:
             # Something listens but does not answer: only stop it when it is
             # clearly this app (its folder in the command line / cwd).
             folder = app.folder.lower()

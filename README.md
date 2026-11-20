@@ -33,7 +33,7 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 - One card per app: icon, name, purpose, port and state (running, starting, stopped, port busy), plus the process behind the port (pid, memory, uptime, children).
 - Actions: Open window, Browser, Start, Stop (only when the health check proves the listener is that app), Restart, Close windows, Folder, Log, and Start all / Stop all. Manual stops persist across restarts of the Hub.
 - Profiles: named sets of apps, external commands (a ComfyUI per GPU, a llama-server) and desktop windows started or stopped together, with JSON export and import.
-- `launch_overrides` let a machine start an app differently from its manifest, for example a developer build.
+- `launch_overrides` let a machine start an app differently from its manifest. Writer starts through its source checkout's desktop launcher.
 - Autostart at Windows login without admin rights.
 - Keep alive: the apps on the keep-alive list (`data/keep-alive.json`; Darwin, Links, Talos and Kafka by default) start with the Hub and start again when they fall, checked every minute with a growing wait after failed starts. A stop made by hand holds until the app is started again or the Hub restarts; apps marked `auto_start: false` are never kept alive. Toggled from each app's Manage menu, the command palette or `hub_keep_alive_set`.
 - A status bar on every page with Faustus (running, port, open, start, stop), the number of running Hoards and one meter per GPU.
@@ -64,7 +64,7 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 - Models for every app over HTTP (`/api/link/chat`, `/api/link/status`) so Node apps share the same resolution, leases and reasoning effort.
 - Instances: a second copy of an app on another data folder can speak as the app.
 - Fleet view that reconciles declared apps, jobs, rules and watchers into Today, Waiting for you, Blocked and Paused.
-- Production station catalogue and chain planning from manifest-declared piece types, skills and checks. Agents can check the app proxy and list or switch native modules with undo.
+- Production station catalogue and chain planning from manifest-declared piece types, skills and checks. The editorial chain links the dossier, manuscript, continuity review and PDF or EPUB export. Agents can check the app proxy and list or switch native modules with undo.
 
 **Agora**
 - The shared workspace of the coding agents and the person: heartbeats, tasks (open, claimed, in progress, review, approved, done) with all-or-nothing locks, threads, debates with evidence, decision log, reviews bound to submission revisions (with the diff of the delivery, comments on its lines sent to whoever delivered, and a guided review that orders the diff into chapters with the family's model), checkpoints, timelines and an inbox with long poll.
