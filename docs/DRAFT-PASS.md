@@ -100,10 +100,11 @@ created.
 
 ## The early gate on the Orders page
 
-While a pass waits, the Orders page shows it at the top, before the other gates: one card per variant, side by side,
-with its idea, time and GPU, and its pieces end to end (blocking, depth, normals, key frames, draft image…), each one
-opening at full size. The person writes an optional note and presses **Keep this one** or **Discard**. Texts in Spanish
-and English.
+While a pass waits, the Orders page shows it at the top, before the other gates. Each variant leads with its first
+and last key frames and a playable short take when available. Other key frames and draft images follow. Still images
+open at full size. **See how it was made** expands the production files, including blocking, depth and normals,
+and shows the variant's time and GPU. The person writes an optional note and presses **Keep this one** or **Discard**.
+The interface is available in Spanish and English.
 
 ## Tools
 

@@ -1,24 +1,33 @@
 /* Hoard Hub — Pasada 0: the early gate on the Orders page. Family tokens only, like orders.css. */
 .drf-early > p { max-width: 72ch; margin: 0 0 16px; }
-.drf-variants { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; margin-top: 16px; }
+.drf-variants { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); align-items: start; gap: 16px; margin-top: 16px; }
 .drf-variant { display: grid; gap: 8px; align-content: start; background: var(--bg-2, #161410); border: 1px solid var(--line);
   border-radius: 12px; padding: 14px; min-width: 0; }
-.drf-variant-head { display: flex; gap: 10px; align-items: baseline; }
+.drf-variant-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
 .drf-variant-head h4 { margin: 0; font-size: var(--hub-fs-3, 16px); color: var(--text); font-weight: 600; }
 .drf-key { font: 600 12px/1 var(--mono, ui-monospace, monospace); color: var(--accent); border: 1px solid var(--accent);
   border-radius: 6px; padding: 3px 6px; }
 .drf-idea { margin: 0; color: var(--text); max-width: 60ch; }
 .drf-note { margin: 0; color: var(--muted); font-size: var(--hub-fs-1, 12px); white-space: pre-wrap; }
-.drf-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
-.drf-piece { margin: 0; display: grid; gap: 4px; min-width: 0; }
+.drf-decision-media { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.drf-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(96px, 100%), 1fr)); gap: 8px; }
+.drf-piece { margin: 0; display: grid; gap: 4px; min-width: 0; align-content: start; }
+.drf-decision-media .drf-piece:only-child,
 .drf-wide { grid-column: 1 / -1; }
-.drf-wide .drf-media { aspect-ratio: 2 / 1; }
 .drf-piece figcaption { display: grid; gap: 1px; font-size: var(--hub-fs-1, 12px); }
 .drf-piece figcaption b { color: var(--text); font-weight: 600; }
-.drf-piece figcaption small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drf-media { position: relative; aspect-ratio: 2 / 3; background: #12100c; border-radius: 8px; overflow: hidden; display: grid; place-items: center; }
+.drf-piece figcaption small { overflow-wrap: anywhere; }
+.drf-media { position: relative; aspect-ratio: 1; background: var(--bg); border-radius: 8px; overflow: hidden; display: grid; place-items: center; }
+.drf-decision-media .drf-media { max-height: 300px; }
+.drf-wide .drf-media { aspect-ratio: 16 / 9; }
+.drf-media a { overflow-wrap: anywhere; }
+.drf-image-link { position: absolute; inset: 0; }
 .drf-media img, .drf-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 .drf-media a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.drf-technical { min-width: 0; }
+.drf-technical summary { cursor: pointer; color: var(--accent); padding-block: 8px; }
+.drf-technical[open] summary { margin-bottom: 8px; }
+.drf-technical > p { margin: 0 0 8px; overflow-wrap: anywhere; }
 .drf-decide { display: grid; grid-template-columns: 1fr; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; }
 .drf-decide textarea { width: 100%; resize: vertical; min-height: 40px; }
 .drf-decide .ord-gate-buttons { justify-content: flex-end; }
