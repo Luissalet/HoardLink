@@ -171,12 +171,37 @@ def _merge_journal(self: Any, journal: Any, token: Optional[str]) -> None:
 
 # ---- writes by agents -----------------------------------------------------------------------------------------
 
+def _visual_jobs(idea: str) -> list[dict[str, Any]]:
+    return [
+        {"key": "outline", "title": "Esquema del gesto", "station": "writer", "produces": ["outline"],
+         "body": f"{idea}\n\nFija el gesto, la cámara y los detalles del expediente que hay que conservar.".strip()},
+        {"key": "blocking", "title": "Bloqueo en volumen", "station": "vulcan", "after": ["outline"],
+         "produces": ["blocking", "image"],
+         "body": "Crea el bloqueo según el esquema con blocking_build. Entrega el GLB y el color, la profundidad "
+                 "y las normales por clave, con la misma cámara."},
+        {"key": "keyframes", "title": "Claves guiadas por el bloqueo", "station": "prospero", "after": ["blocking"],
+         "produces": ["image"],
+         "body": "Usa el color y la profundidad de cada pose del bloqueo para guiar su clave de imagen. "
+                 "Contrasta el gesto, el encuadre y los accesorios con el esquema."},
+        {"key": "shot", "title": "Plano de vídeo en borrador", "station": "prospero", "after": ["keyframes"],
+         "produces": ["video"],
+         "body": "Monta las claves en una animática corta. Comprueba que se lee el gesto en el orden previsto."},
+        {"key": "figure", "title": "Cierre de figura en borrador", "station": "phidias",
+         "after": ["blocking", "keyframes"], "produces": ["mesh"],
+         "body": "Congela la pose elegida del bloqueo y comprueba que se sostiene en la peana. "
+                 "Importa esa revisión, ejecuta el esculpido y el cierre, y comprueba apoyos, medidas y topología."},
+    ]
+
+
 def draft_pass_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """Open a draft pass of an order with its variants (key, title, idea and, optionally, the jobs of each variant)."""
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     variants = a.get("variants")
     if not isinstance(variants, list) or not 1 <= len(variants) <= MAX_VARIANTS:
         raise _err(f"variants: a list of 1 to {MAX_VARIANTS} variants {{key, title, idea, jobs}}")
+    template = a.get("template")
+    if template not in (None, "visual"):
+        raise _err("template must be visual / La plantilla debe ser visual")
     keys = []
     for v in variants:
         if not isinstance(v, dict):
@@ -199,11 +224,15 @@ def draft_pass_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         made = []
         for i, (v, key) in enumerate(zip(variants, keys)):
             jobs: list[int] = []
-            if v.get("jobs"):
-                if not isinstance(v["jobs"], list):
+            idea = orders._txt(v.get("idea"), 4000, "idea")
+            variant_jobs = v.get("jobs")
+            if template == "visual" and "jobs" not in v:
+                variant_jobs = _visual_jobs(idea)
+            if variant_jobs:
+                if not isinstance(variant_jobs, list):
                     raise _err(f"variant {key}: jobs is a list of plan jobs (as in plan_set)")
                 plan_jobs = []
-                for n, j in enumerate(v["jobs"]):
+                for n, j in enumerate(variant_jobs):
                     if not isinstance(j, dict) or j.get("task_id"):
                         raise _err(f"variant {key}: each job is a new plan job {{title, station, produces, check, after}}")
                     plan_jobs.append({**j, "key": f"{key}:{j.get('key') or n}", "branch": f"pasada0-{key}",
@@ -218,7 +247,7 @@ def draft_pass_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             vid = self.db.insert("agora_draft_variants", {
                 "pass_id": pid, "order_id": oid, "space_id": self.space_id, "key": key,
                 "title": orders._txt(v.get("title"), 200, "title") or key,
-                "idea": orders._txt(v.get("idea"), 4000, "idea"), "jobs": orders._dump(jobs), "status": "drafting",
+                "idea": idea, "jobs": orders._dump(jobs), "status": "drafting",
                 "measures": orders._dump(_measures(v.get("measures"))), "position": i, "created": now, "updated": now})
             journal.created("agora_draft_variants", vid)
             made.append(vid)
@@ -499,9 +528,12 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {"name": "hub_agora_draft_pass_open",
          "description": "Open a draft pass (pasada 0) of an order: 1-4 structural variants of the whole chain made in "
-                        "draft mode, each with its jobs (optional); baseline notes the time and GPU of a full pass." + undo,
+                        "draft mode. Use template=visual for outline → blocking → guided keys → draft shot and figure. "
+                        "Usa template=visual para esquema → bloqueo → claves guiadas → plano y figura. "
+                        "Variants can supply their own jobs. Baseline notes the time and GPU of a full pass." + undo,
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "title": {"type": "string", "maxLength": 200},
                                 "note": {"type": "string", "maxLength": 20000}, "baseline": measures,
+                                "template": {"type": "string", "enum": ["visual"]},
                                 "variants": {"type": "array", "items": variant, "minItems": 1, "maxItems": MAX_VARIANTS}},
                                ["agent", "order_id", "variants"])},
         {"name": "hub_agora_draft_variant_set",
