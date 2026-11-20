@@ -237,7 +237,7 @@
   function composer() {
     const form = el("form", "ord-compose");
     form.append(el("h2", "", tr("Nueva orden", "New order")));
-    const words = el("textarea"); words.rows = 3; words.required = true; words.name = "words";
+    const words = el("textarea"); words.rows = 3; words.name = "words";
     words.placeholder = tr("Qué quieres, con tus palabras. Por ejemplo: la cartógrafa sube tres escalones bajo la lluvia…",
       "What you want, in your words. For example: the cartographer climbs three steps in the rain…");
     words.setAttribute("aria-label", tr("La orden", "The order"));
@@ -247,12 +247,19 @@
     const keep = el("textarea"); keep.rows = 2; keep.name = "keep"; keep.placeholder = tr("Uno por línea: tubo a la izquierda…", "One per line: tube on the left…");
     const deliv = el("textarea"); deliv.rows = 2; deliv.name = "deliverables"; deliv.placeholder = tr("Uno por línea: lámina, vídeo de 8 s…", "One per line: concept sheet, 8 s video…");
     const folder = el("input"); folder.name = "folder"; folder.placeholder = "E:\\…";
+    const audience = el("input"); audience.name = "audience"; audience.maxLength = 2000;
+    const constraints = el("textarea"); constraints.rows = 2; constraints.name = "constraints";
+    constraints.placeholder = tr("Una por línea", "One per line");
+    const materials = el("textarea"); materials.rows = 2; materials.name = "materials";
+    materials.placeholder = tr("Un fichero, carpeta o enlace por línea", "One file, folder or link per line");
     const space = el("select"); space.name = "space";
     const preferred = spaces.find(s => s.id === "estudio") ? "estudio" : "ecosystem";
     for (const s of spaces) { const o = el("option", "", s.title || s.id); o.value = s.id; if (s.id === preferred) o.selected = true; space.append(o); }
     grid.append(field(tr("Título", "Title"), title), field(tr("Proyecto", "Project"), space),
       field(tr("Detalles que no pueden perderse", "Details that must not be lost"), keep),
-      field(tr("Entregables", "Deliverables"), deliv), field(tr("Carpeta de la orden", "Order folder"), folder));
+      field(tr("Entregables", "Deliverables"), deliv), field(tr("Carpeta de la orden", "Order folder"), folder),
+      field(tr("Público destinatario", "Audience"), audience), field(tr("Restricciones", "Constraints"), constraints),
+      field(tr("Materiales de partida", "Starting materials"), materials));
     const send = el("button", "primary", tr("Crear orden", "Create order")); send.type = "submit";
     const row = el("div", "ord-compose-foot");
     row.append(el("small", "ord-muted", tr("Quien dirige la parte en trabajos y te trae aquí lo que haya que decidir.",
@@ -260,11 +267,16 @@
     form.append(words, grid, row);
     form.onsubmit = async ev => {
       ev.preventDefault();
-      if (!words.value.trim()) { words.focus(); return; }
+      if (!words.value.trim() && !title.value.trim()) {
+        ctx.toast(tr("Escribe la orden o ponle un título", "Enter the request or give it a title"), "err");
+        words.focus(); return;
+      }
       send.disabled = true;
       const lines = t => t.value.split("\n").map(s => s.trim()).filter(Boolean);
+      const refs = lines(materials).map(value => /^https?:\/\//i.test(value) ? { url: value } : { path: value });
       const res = await ctx.api("/api/agora/order_create", { space_id: space.value, words: words.value.trim(), title: title.value.trim(),
-        keep: lines(keep), deliverables: lines(deliv), folder: folder.value.trim() }).catch(e => ({ ok: false, error: String(e) }));
+        keep: lines(keep), deliverables: lines(deliv), folder: folder.value.trim(), refs,
+        dossier: { audience: audience.value.trim(), constraints: lines(constraints) } }).catch(e => ({ ok: false, error: String(e) }));
       send.disabled = false;
       if (!res?.ok) { ctx.toast(tr("No se ha creado la orden", "The order was not created"), "err", res?.error || ""); return; }
       ctx.toast(tr("Orden creada", "Order created"), "ok");
@@ -363,10 +375,32 @@
 
   function orderBody(order) {
     const box = el("div", "ord-order-body");
-    if (order.words) box.append(el("p", "ord-words", order.words));
+    const dossier = order.dossier || {};
+    box.append(el("h4", "", tr("Expediente", "Dossier")));
+    if (dossier.request || order.words) box.append(el("p", "ord-words", dossier.request || order.words));
     const facts = el("dl", "ord-facts");
     const fact = (k, v) => { if (!v) return; facts.append(el("dt", "", k), el("dd", "", v)); };
     fact(tr("Origen", "Comes from"), (order.refs || []).map(r => [r.app, r.object, r.place, r.path, r.url, r.note].filter(Boolean).join(" · ")).join("; "));
+    fact(tr("Público destinatario", "Audience"), dossier.audience);
+    fact(tr("Restricciones", "Constraints"), (dossier.constraints || []).join(" · "));
+    if (dossier.materials?.length) {
+      const entries = el("ul");
+      const state = { unavailable: tr("No disponible", "Unavailable"), unrecorded: tr("Sin huella", "No digest"),
+        changed: tr("Huella distinta de la declarada", "Digest differs from the declaration"),
+        declared: tr("Huella declarada", "Declared digest") };
+      for (const material of dossier.materials) {
+        const name = material.path || material.url || [material.app, material.object, material.place, material.note].filter(Boolean).join(" · ");
+        const item = el("li", "", [name, material.source_rev, state[material.state]].filter(Boolean).join(" · "));
+        if (material.sha256) item.append(" · ", el("code", "", material.sha256));
+        entries.append(item);
+      }
+      const value = el("dd"); value.append(entries);
+      facts.append(el("dt", "", tr("Materiales de partida", "Starting materials")), value);
+    }
+    if (dossier.native) {
+      const native = dossier.native;
+      fact(tr("Expediente de origen", "Source dossier"), [native.app, native.object, native.source_rev, native.sha256].filter(Boolean).join(" · "));
+    }
     fact(tr("Entregables", "Deliverables"), (order.deliverables || []).join(", "));
     fact(tr("No puede perderse", "Must not be lost"), (order.keep || []).join(" · "));
     fact(tr("Plantilla", "Template"), order.template);

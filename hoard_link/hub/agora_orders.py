@@ -39,8 +39,7 @@ import shutil
 from typing import Any, Optional
 
 from . import order_budget
-
-from . import order_destinations
+from . import order_destinations, order_dossier
 
 ORDER_STATES = ("open", "producing", "waiting", "delivered", "cancelled")
 PIECE_STATES = ("provisional", "checked", "kept", "cancelled", "stale")
@@ -217,9 +216,12 @@ def _refs(value: Any) -> list[dict[str, str]]:
         if not isinstance(ref, dict):
             raise _err("each reference is an object {app, object, place, path, url, note}")
         clean = {k: _txt(ref.get(k), 1000, f"refs.{k}") for k in ("app", "object", "place", "path", "url", "note")}
+        for key, limit in (("sha256", 64), ("source_rev", 200)):
+            if ref.get(key):
+                clean[key] = _txt(ref[key], limit, f"refs.{key}")
         clean = {k: v for k, v in clean.items() if v}
         if clean:
-            out.append(clean)
+            out.append(order_dossier.ref_receipt(clean, _err))
     return out
 
 
@@ -430,7 +432,10 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if "after" in change and table in _KEYS:
                 sql = " AND ".join(f"{key}=?" for key in cond)
                 current = self.db.one(f"SELECT * FROM {table} WHERE {sql}", tuple(cond.values()))
-                if (dict(current) if current else None) != change["after"]:
+                after = change["after"]
+                if table == "agora_orders" and after is not None and "dossier" not in after:
+                    after = {**after, "dossier": "{}"}
+                if (dict(current) if current else None) != after:
                     raise _err("The order changed since this write", 409)
         for change in reversed(changes.get("rows") or []):
             table, cond, row = change["table"], change["where"], change["row"]
@@ -477,9 +482,15 @@ def _piece_row(self: Any, piece_id: Any) -> dict[str, Any]:
 
 def _order_dict(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
+    out.pop("dossier", None)
     for key, default in (("refs", []), ("deliverables", []), ("keep", [])):
         out[key] = _load(row.get(key), default)
     return out
+
+
+def _with_dossier(order: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    order["dossier"] = order_dossier.dossier(order, _load(row["dossier"], {}))
+    return order
 
 
 def view_of(piece: dict[str, Any]) -> str:
@@ -641,7 +652,7 @@ def order(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """One order whole: its words and references, the plan with each job's task state, every piece with its
     checks and defects, the gates and the person's decisions."""
     row = _order_row(self, a.get("order_id"))
-    out = _summary(self, row)
+    out = _with_dossier(_summary(self, row), row)
     oid = row["id"]
     out["plan"] = _plan(self, oid)
     pieces = {int(r["id"]): _piece_dict(self, dict(r), full=True) for r in
@@ -684,7 +695,9 @@ def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         raise _err(f"task #{tid} is not a job of any order in space {self.space_id}", 404)
     out = plan[tid]
     order_row = _order_row(self, row["order_id"])
-    out["order"] = {k: v for k, v in _order_dict(order_row).items() if k in
+    data = _order_dict(order_row)
+    out["dossier"] = order_dossier.dossier(data, _load(order_row["dossier"], {}))
+    out["order"] = {k: v for k, v in data.items() if k in
                     ("id", "title", "words", "refs", "deliverables", "keep", "folder", "status", "deadline", "template")}
     reason = order_budget.hold_reason(self, order_row["id"])
     if reason:
@@ -735,6 +748,9 @@ def order_create(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     if not title:
         raise _err("an order needs a title or the words of the request")
     folder = _txt(a.get("folder"), 1000, "folder")
+    refs = _refs(a.get("refs"))
+    dossier = order_dossier.settings(a.get("dossier", {}), {}, _txt, _strs, _err)
+    dossier["materials"] = order_dossier.materials(refs, folder)
     deadline = a.get("deadline")
     if deadline not in (None, ""):
         try:
@@ -747,7 +763,7 @@ def order_create(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     with self.db.tx():
         self._touch(agent)
         oid = self.db.insert("agora_orders", {
-            "space_id": self.space_id, "title": title, "words": words, "refs": _dump(_refs(a.get("refs"))),
+            "space_id": self.space_id, "title": title, "words": words, "refs": _dump(refs), "dossier": _dump(dossier),
             "deliverables": _dump(_strs(a.get("deliverables"), "deliverables")),
             "template": _txt(a.get("template"), 80, "template"), "keep": _dump(_strs(a.get("keep"), "keep")),
             "folder": folder, "status": "open", "deadline": deadline, "created_by": agent, "created": now, "updated": now})
@@ -755,21 +771,37 @@ def order_create(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         journal.created("agora_orders", oid)
         token = journal.save()
     self._bump("agora.order.created", {"order_id": oid, "title": title, "by": agent})
-    return {"ok": True, "order": _summary(self, _order_row(self, oid)), "undo": token}
+    row = _order_row(self, oid)
+    return {"ok": True, "order": _with_dossier(_summary(self, row), row), "undo": token}
 
 
 def order_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
-    """Change an order: title, words, refs, deliverables, template, keep, folder, deadline or status."""
+    """Change order metadata, source references or dossier settings."""
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
+    before = _order_row(self, a.get("order_id"))
+    material_receipts = None
+    refs = _refs(a["refs"]) if "refs" in a else _load(before["refs"], [])
+    folder = _txt(a["folder"], 1000, "folder") if "folder" in a else before["folder"]
+    sources_changed = "refs" in a or "folder" in a
+    if "refs" in a or (folder != before["folder"] and any(r.get("path") and not os.path.isabs(r["path"]) for r in refs)):
+        material_receipts = order_dossier.materials(refs, folder)
     with self.db.tx():
-        row = _order_row(self, a.get("order_id"))
+        row = _order_row(self, before["id"])
+        if sources_changed and (row["refs"], row["folder"]) != (before["refs"], before["folder"]):
+            raise _err("the order's sources changed while fingerprinting them; read the order and retry", 409)
         fields: dict[str, Any] = {}
         if "title" in a:
             fields["title"] = _txt(a["title"], 200, "title", required=True)
         if "words" in a:
             fields["words"] = _txt(a["words"], TEXT_MAX, "words")
         if "refs" in a:
-            fields["refs"] = _dump(_refs(a["refs"]))
+            fields["refs"] = _dump(refs)
+        if "dossier" in a or material_receipts is not None:
+            saved = _load(row["dossier"], {})
+            dossier = order_dossier.settings(a.get("dossier", {}), saved, _txt, _strs, _err)
+            if material_receipts is not None:
+                dossier["materials"] = material_receipts
+            fields["dossier"] = _dump(dossier)
         for key in ("deliverables", "keep"):
             if key in a:
                 fields[key] = _dump(_strs(a[key], key))
@@ -787,7 +819,7 @@ def order_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 raise _err(f"status must be one of {', '.join(ORDER_STATES)}")
             fields["status"] = status
         if not fields:
-            raise _err("nothing to change: give title, words, refs, deliverables, template, keep, folder, deadline or status")
+            raise _err("nothing to change: give title, words, refs, dossier, deliverables, template, keep, folder, deadline or status")
         journal = _Journal(self, agent, "order_update")
         journal.before("agora_orders", row["id"])
         fields["updated"] = _now(self)
@@ -795,7 +827,8 @@ def order_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                         (*fields.values(), row["id"]))
         token = journal.save()
     self._bump("agora.order.updated", {"order_id": row["id"], "by": agent, "fields": sorted(fields)})
-    return {"ok": True, "order": _summary(self, _order_row(self, row["id"])), "undo": token}
+    row = _order_row(self, row["id"])
+    return {"ok": True, "order": _with_dossier(_summary(self, row), row), "undo": token}
 
 
 def _set_status(self: Any, order_id: int, status: str, journal: _Journal, *, only_from: tuple[str, ...]) -> None:
@@ -1477,8 +1510,9 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
     piece_id = {"type": "integer", "minimum": 1, "description": "The piece's id (in hub_agora_order)."}
     ids = {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": MAX_ITEMS}
     texts = {"type": "array", "items": {"type": "string", "maxLength": 300}, "maxItems": 60}
-    ref = {"type": "object", "properties": {k: {"type": "string", "maxLength": 1000} for k in
-                                            ("app", "object", "place", "path", "url", "note")}, "additionalProperties": False}
+    ref = {"type": "object", "properties": {**{k: {"type": "string", "maxLength": 1000} for k in
+                                               ("app", "object", "place", "path", "url", "note")},
+                                             **order_dossier.MATERIAL_PROPERTIES}, "additionalProperties": False}
     kind = {"type": "string", "maxLength": 40, "description": "Piece kind: " + ", ".join(PIECE_KINDS) + " or another short slug."}
     undo = " Returns undo: pass it to hub_agora_order_undo to put back what it changed."
     job_item = {"type": "object", "additionalProperties": False, "properties": {
@@ -1505,17 +1539,18 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                         "piece with checks, defects and what derives from it, the gates and the decisions.",
          "inputSchema": schema({"order_id": order_id}, ["order_id"])},
         {"name": "hub_agora_order_create",
-         "description": "Create a production order: title, the person's words, refs (app, object, exact place, path), "
-                        "deliverables, template (branch), keep (details every piece must keep) and folder." + undo,
+         "description": "Create an order with starting materials (refs), deliverables, details to keep and an optional "
+                        "dossier (audience, constraints, native context)." + undo,
          "inputSchema": schema({"agent": agent_prop, "title": {"type": "string", "maxLength": 200},
                                 "words": {"type": "string", "maxLength": TEXT_MAX}, "refs": {"type": "array", "items": ref, "maxItems": 50},
+                                "dossier": order_dossier.DOSSIER_INPUT,
                                 "deliverables": texts, "template": {"type": "string", "maxLength": 80}, "keep": texts,
                                 "folder": {"type": "string", "maxLength": 1000}, "deadline": {"type": "number"}}, ["agent"])},
         {"name": "hub_agora_order_update",
-         "description": "Change an order: title, words, refs, deliverables, template, keep, folder, deadline or status "
-                        "(open, producing, waiting, delivered, cancelled)." + undo,
+         "description": "Change an order, its dossier or its refs. Resupplying refs fingerprints the current local materials." + undo,
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "title": {"type": "string", "maxLength": 200},
                                 "words": {"type": "string", "maxLength": TEXT_MAX}, "refs": {"type": "array", "items": ref, "maxItems": 50},
+                                "dossier": order_dossier.DOSSIER_INPUT,
                                 "deliverables": texts, "template": {"type": "string", "maxLength": 80}, "keep": texts,
                                 "folder": {"type": "string", "maxLength": 1000}, "deadline": {"type": ["number", "null"]},
                                 "status": {"type": "string", "enum": list(ORDER_STATES)}}, ["agent", "order_id"])},
@@ -1526,7 +1561,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id,
                                 "jobs": {"type": "array", "items": job_item, "maxItems": 60}, "remove": ids}, ["agent", "order_id"])},
         {"name": "hub_agora_job", "read": True,
-         "description": "Everything to start a job (task_id): the order's words and details to keep, station and check, "
+         "description": "Everything to start a job (task_id): the order's dossier, station and check, "
                         "input pieces, destination requirements, pinned details, kept references, defects and an "
                         "earlier kept piece of each kind it delivers.",
          "inputSchema": schema({"task_id": {"type": "integer", "minimum": 1}}, ["task_id"])},

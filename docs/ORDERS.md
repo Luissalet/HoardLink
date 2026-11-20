@@ -25,6 +25,9 @@ hand.
 An order is written from the Hub's page (Orders → New order), by a tool from a Faustus chat or an agent, or by any Hoard
 over `POST /api/agora/order_create` with its bearer token and `refs` pointing at the selection it was made on.
 
+The [production dossier](order-dossier.md) adds the audience, constraints and material fingerprints to the request,
+deliverables and details to keep. It can carry a source station's compiled context with its provenance.
+
 ## Work admission and budgets
 
 See [Studio work admission](STUDIO-ADMISSION.md) for machine turns, retry and GPU budgets, capability routing, and
@@ -49,7 +52,7 @@ Beside the task the order keeps:
 Parallel branches and sibling derivatives are jobs that wait on the same job. `task_id` changes a job; `remove` takes jobs
 out of the plan (an open task is dropped, a started one keeps its state).
 
-`job` (task id) is what a worker reads to start: the order's words, references and details to keep; the station and
+`job` (task id) is what a worker reads to start: the order's dossier; the station and
 check; the input pieces; the pieces the person kept in this order with their notes (they fix the look); the defects sent
 back to this job; and an earlier kept piece of each kind it delivers, from another order.
 
