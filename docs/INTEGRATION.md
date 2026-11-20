@@ -62,6 +62,14 @@ window are left running. The receipt records `desktop_in_use` and System → Int
 A reload failure triggers checkout rollback. Undo applies the same rules and records `undo_app_reload`.
 Apps stopped before integration retain their on-demand startup behavior.
 
+When browser source or its build inputs change, the station uses `npm ci` and `npm run build` on the exact
+merge candidate before moving the registered checkout. It publishes the console under `apps/agora/dist` and
+the Studio bundle under `static/studio` in their respective checkouts before the live case. Build failure
+leaves the checkout and the served bundle in place. The receipt's `frontend_build` records the entry hash
+and log. Rollback and undo restore the previous assets. A Studio served from a Spark still needs deployment
+to that host. Compare `/api/version` → `served_studio.bundle.sha` on the serving host with the built entry
+and open the destination through the Hub to verify it. `/agora/` on the Hub itself serves the team console.
+
 After a successful run, the station can remove a delivery worktree containing only ignored build outputs in
 `dist`, dependencies in `node_modules`, TypeScript build metadata and Python bytecode. Tracked changes, other
 ignored files, untracked files or linked entries retain the worktree.
