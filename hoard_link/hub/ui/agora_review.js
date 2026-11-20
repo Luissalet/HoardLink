@@ -202,7 +202,7 @@
 
   async function loadGuide(detail, k) {
     const st = state(k.key);
-    const r = await H.ctx.api("/api/agora/review_guide", { agent: "luis", space_id: spaceOf(detail), task_id: k.id, only_cached: true });
+    const r = await H.ctx.api("/api/agora/review_guide", { space_id: spaceOf(detail), task_id: k.id, only_cached: true });
     if (r && r.ok && r.guide) { st.guide = r.guide; if (overlay && overlay.dataset.key === k.key) paintOverlay(detail, k); }
   }
 
@@ -211,7 +211,7 @@
     st.waiting = true;
     paintOverlay(detail, k);
     let r = null;
-    try { r = await H.ctx.api("/api/agora/review_guide", { agent: "luis", space_id: spaceOf(detail), task_id: k.id, refresh: Boolean(refresh) }); }
+    try { r = await H.ctx.api("/api/agora/review_guide", { space_id: spaceOf(detail), task_id: k.id, refresh: Boolean(refresh) }); }
     catch (e) { r = { ok: false, error: String(e) }; }
     st.waiting = false;
     if (!r || !r.ok) toast((r && r.error) || "error", "err");
@@ -411,7 +411,7 @@
       if (!row) return;
       const box = el("div", "box mine");
       const who = el("div", "who");
-      who.appendChild(el("b", "", "luis"));
+      who.appendChild(el("b", "", H.ctx.agoraPerson?.name || L({es: "Persona", en: "Person"})));
       who.appendChild(el("span", "", t("pending")));
       const rm = el("button", "small ghost", t("remove"));
       rm.onclick = () => { st.pending.splice(i, 1); refreshOverlayBubbles(); updateSendBar(st); };
@@ -474,7 +474,7 @@
     go.onclick = async () => {
       if (!st.pending.length && !st.general.trim()) { toast(t("nothing"), "err"); return; }
       go.disabled = true;
-      const body = { agent: "luis", space_id: spaceOf(detail), task_id: k.id, expected_submission_revision: st.data.submission_revision,
+      const body = { space_id: spaceOf(detail), task_id: k.id, expected_submission_revision: st.data.submission_revision,
                      comments: st.pending.map((c) => ({ commit: c.commit, path: c.path, side: c.side, line: c.line, body: c.body })) };
       if (st.general.trim()) body.body = st.general.trim();
       const r = await H.ctx.api("/api/agora/review_comment_send", body);

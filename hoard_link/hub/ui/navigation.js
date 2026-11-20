@@ -30,7 +30,7 @@
   }
   const groups = [
     {id: 'home', label: ['Inicio', 'Home'], description: ['Tus pendientes y el trabajo que quieres continuar.', 'Open an app, continue a project or check shared work.']},
-    {id: 'pending_decisions', label: ['Decisiones pendientes', 'Pending decisions']},
+    {id: 'pending_decisions', label: ['Tus decisiones pendientes', 'Your pending decisions']},
     {id: 'orders', label: ['Órdenes', 'Orders'], defaultView: 'orders', facets: ['orders'], description: ['Lo que has encargado, su plan y sus piezas; arriba, lo que espera tu decisión.', 'What you ordered, its plan and its pieces; on top, what waits for your decision.']},
     {id: 'projects', label: ['Proyectos', 'Projects'], description: ['Cada proyecto tiene su propia ágora, sus tareas y sus conversaciones.', 'Each project has its own Agora, tasks and conversations.']},
     {id: 'apps', label: ['Aplicaciones', 'Applications'], description: ['Abre una aplicación o gestiona sus grupos de arranque.', 'Open an app or manage startup groups.']},
@@ -333,8 +333,45 @@
     rowLink(section,tr('Consultar ejecuciones','Review runs'),tr('Comprueba lo que está en marcha y los resultados anteriores.','Check current work and previous results.'),'#hub/work');
     rowLink(section,tr('Compras y pedidos','Purchases and orders'),tr('Consulta el estado y seguimiento de tus compras.','Track the status of your purchases.'),'#hub/purchases');
   }
+  async function personSettings(container) {
+    const ctx = window.HubFacets.ctx;
+    const form = node('form', 'hub-person-settings');
+    const label = node('label', '', tr('Tu nombre visible', 'Your display name'));
+    const name = node('input');
+    name.type = 'text'; name.required = true; name.maxLength = 80;
+    label.append(name);
+    const submit = node('button', 'small', tr('Guardar nombre', 'Save name'));
+    submit.type = 'submit'; submit.disabled = true;
+    const status = node('p', 'hint'); status.setAttribute('role', 'status');
+    form.append(label, submit, status); container.append(form);
+    try {
+      const result = await ctx.api('/api/agora/person');
+      if (!result.ok) throw new Error();
+      ctx.agoraPerson = result.person;
+      name.value = result.person.name;
+      submit.disabled = false;
+    } catch (_) {
+      status.textContent = tr('No se ha podido cargar el nombre.', 'Could not load the name.');
+    }
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      submit.disabled = true;
+      try {
+        const result = await ctx.api('/api/agora/person', { name: name.value });
+        if (!result.ok) throw new Error();
+        ctx.agoraPerson = result.person;
+        name.value = result.person.name;
+        status.textContent = tr('Nombre guardado.', 'Name saved.');
+      } catch (_) {
+        status.textContent = tr('No se ha podido guardar el nombre.', 'Could not save the name.');
+      } finally {
+        submit.disabled = false;
+      }
+    };
+  }
   function help(container) {
     const section=node('section','hub-help');container.append(section);
+    void personSettings(section);
     for(const [title,desc,href] of [[tr('Retomar un proyecto','Resume a project'),tr('Entra en Proyectos. Cada uno tiene su resumen y su propia ágora.','Open Projects. Each has an overview and its own Agora.'),'#hub/projects'],[tr('Encontrar una herramienta','Find a tool'),tr('Busca lo que quieres hacer, por ejemplo recetas, escribir una novela o analizar datos.','Search what you want to do, such as recipes, write a novel or analyze data.'),'#hub/apps'],[tr('Conexiones y modelos','Connections and models'),tr('Consulta qué servicios responden. Las aplicaciones paradas se inician cuando tú lo eliges.','Check which services respond. Stopped applications start when you choose.'),'#hub/system'],[tr('Avisos y notificaciones','Alerts and notifications'),tr('En Bandeja puedes consultar los avisos y configurar cómo recibirlos.','Inbox lets you read alerts and configure delivery.'),'#hub/notify'],[tr('Agenda, calendario y resúmenes','Agenda, calendar and digests'),tr('Consulta fechas, suscripción al calendario y opciones de resumen.','View dates, calendar subscription and digest options.'),'#hub/today']])rowLink(section,title,desc,href);
     section.append(node('p','hub-empty',tr('Ctrl + K abre la búsqueda. El selector Personal de la cabecera cambia la esfera; ES / EN cambia el idioma.','Ctrl + K opens search. The Personal selector changes sphere; ES / EN changes language.')));
   }

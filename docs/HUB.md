@@ -93,6 +93,10 @@ a stale copy of the whole profile. Profile writes read the current configuration
 under a process/file lock and replace the JSON file atomically, including when
 two Hub processes share a data folder.
 
+The Hub display name can be edited in **Help and settings**. The top-level
+`person` settings in `data/hub.json` hold the installation's stable person id and
+display name. See [the Ágora identity contract](AGORA.md#the-persons-identity).
+
 `data/hub.json` → `profiles`: `{ "<name>": { "apps": [...], "commands": [...], "desktop": [...] } }`.
 
 | Key | Meaning |

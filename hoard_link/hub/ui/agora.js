@@ -9,6 +9,8 @@
   const H = window.HubFacets;
   if (!H) return;
   const { el, api: rawApi, toast, L, fmtWhen } = H.ctx;
+  const personId = () => H.ctx.agoraPerson?.id;
+  const authorName = (id) => id && id === personId() ? H.ctx.agoraPerson.name : id;
   let activeSpace = 'ecosystem';
   let spaceEpoch = 0;
   let spacePicker, formsBox;
@@ -22,7 +24,7 @@
   function waitingInbox() {
     const key = `${activeSpace}:${spaceEpoch}`;
     if (!inboxFlights.has(key)) {
-      const flight = api('/api/agora/inbox?agent=luis&peek=1&limit=1');
+      const flight = api('/api/agora/inbox?peek=1&limit=1');
       inboxFlights.set(key, flight);
       flight.finally(() => { if (inboxFlights.get(key) === flight) inboxFlights.delete(key); }).catch(() => {});
     }
@@ -33,7 +35,8 @@
     const epoch = spaceEpoch, sid = activeSpace;
     if (body !== undefined) body = {space_id: sid, ...body};
     else if (sid !== 'ecosystem') path += (path.includes('?') ? '&' : '?') + 'space_id=' + encodeURIComponent(sid);
-    const result = await H.ctx.api(path, body);
+    const result = await rawApi(path, body);
+    if (result?.person) H.ctx.agoraPerson = result.person;
     return epoch === spaceEpoch ? result : {ok: false, spaceChanged: true};
   }
 
@@ -213,7 +216,7 @@
       .ag-event { min-width: 0; } .ag-event > small { display: block; color: var(--muted); margin-bottom: 4px; }
       .ag-msg { border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; background: var(--card-2); min-width: 0; }
       .ag-msg.system { background: transparent; border-style: dashed; color: var(--muted); font-size: var(--hub-fs-1, 12px); }
-      .ag-msg.luis { border-color: var(--accent); }
+      .ag-msg.person { border-color: var(--accent); }
       .ag-msg.escalation { border-color: #6a3b2f; }
       .ag-msg .ag-who { font-size: var(--hub-fs-1, 12px); color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
       .ag-msg .ag-who b { color: var(--text); }
@@ -327,7 +330,7 @@
 
   function renderAgents(b) {
     agentsBox.replaceChildren(); ready(agentsBox);
-    const list = (b.agents || []).filter((a) => a.id !== "luis");
+    const list = (b.agents || []).filter((a) => a.id !== personId());
     const only = Object.entries(b.observed_only || {});
     if (!list.length && !only.length) { agentsBox.appendChild(el("div", "hint", t("no_agents"))); return; }
     for (const a of list) {
@@ -409,7 +412,7 @@
     const un = (w && w.unbound) || [];
     if (!un.length) { unboundBox.parentNode.hidden = true; return; }
     unboundBox.parentNode.hidden = false;
-    const ids = [...new Set([...(b.agents || []).map((a) => a.id), ...Object.keys((w && w.agents) || {})])].filter((x) => x !== "luis").sort();
+    const ids = [...new Set([...(b.agents || []).map((a) => a.id), ...Object.keys((w && w.agents) || {})])].filter((x) => x !== personId()).sort();
     unboundBox.appendChild(el("div", "hint", t("unbound_hint")));
     for (const s of un.slice(0, 12)) {
       const row = el("div", "ag-unrow");
@@ -495,7 +498,7 @@
     const r = el("div", `ag-th ${th.status}${unread ? " unread" : ""}`);
     r.appendChild(pill(S["k_" + th.kind] ? t("k_" + th.kind) : th.kind));
     r.appendChild(el("span", "ag-t", th.title));
-    const meta = el("span", "hint", `${st(th.status)} · ${th.messages || 0} · ${th.last_author || ""} · ${fmtWhen(th.updated)} `);
+    const meta = el("span", "hint", `${st(th.status)} · ${th.messages || 0} · ${authorName(th.last_author) || ""} · ${fmtWhen(th.updated)} `);
     if (unread) meta.appendChild(el("span", "ag-unread", t("unread").replace("{n}", unread)));
     r.appendChild(meta);
     if (th.seen_upto != null) seenUpto.set(th.id, Number(th.seen_upto));
@@ -504,7 +507,7 @@
   }
 
   async function renderThreads() {
-    const q = new URLSearchParams({ agent: "luis" });
+    const q = new URLSearchParams();
     if (threadFilter !== "all") q.set("status", threadFilter);
     if (kindFilter) q.set("kind", kindFilter);
     const r = await api(`/api/agora/threads?${q}`);
@@ -603,7 +606,7 @@
       controls.querySelectorAll('button').forEach(b => { b.disabled = true; });
       try {
         // Capture the project now. Changing projects while sending must never redirect this reply.
-        const payload = {agent:'luis', space_id:sid, thread_id:th.id};
+        const payload = {space_id:sid, thread_id:th.id};
         const result = await rawApi('/api/agora/' + (resolve ? 'resolve' : 'post'),
           {...payload, ...(resolve ? {resolution:body} : {body, kind:'comment'})});
         if (!result?.ok) throw new Error(result?.error || t('quick_error'));
@@ -640,7 +643,7 @@
     if (r?.spaceChanged || generation !== waitingEpoch) return;
     if (!r?.ok) throw new Error(r?.error || t('load_error'));
     const esc = (r && r.escalated) || [];
-    const reviews = ((r && r.reviews) || []).filter((x) => x.reviewer === "luis");
+    const reviews = ((r && r.reviews) || []).filter((x) => x.reviewer === personId());
     const progress = (r && r.progress_alerts) || [];
     setBadge(esc.length);
     if (!esc.length && !reviews.length && !progress.length) { waitBox.hidden = true; return; }
@@ -708,12 +711,12 @@
   }
 
   function msgView(m, seen) {
-    const fresh = seen != null && m.id > seen && m.author !== "luis" && m.kind !== "system";
-    const d = el("div", `ag-msg ${m.kind === "system" ? "system" : ""} ${m.author === "luis" ? "luis" : ""} ${m.kind === "escalation" ? "escalation" : ""}${fresh ? " new" : ""}`);
+    const fresh = seen != null && m.id > seen && m.author !== personId() && m.kind !== "system";
+    const d = el("div", `ag-msg ${m.kind === "system" ? "system" : ""} ${m.author === personId() ? "person" : ""} ${m.kind === "escalation" ? "escalation" : ""}${fresh ? " new" : ""}`);
     const who = el("div", "ag-who");
     if (fresh) who.appendChild(el("span", "ag-newtag", t("new_msg")));
     who.appendChild(el("span", "", MK[m.kind] || "💬"));
-    who.appendChild(el("b", "", m.author));
+    who.appendChild(el("b", "", authorName(m.author)));
     who.appendChild(el("span", "", m.kind));
     who.appendChild(el("span", "", fmtWhen(m.created)));
     if ((m.mentions || []).length) who.appendChild(el("span", "", "→ " + m.mentions.join(", ")));
@@ -776,7 +779,7 @@
     const need = () => { const v = ta.value.trim(); if (!v) toast(t("need_text"), "err"); return v; };
     send.onclick = async () => {
       const body = need(); if (!body) return;
-      const r = await api("/api/agora/post", { agent: "luis", thread_id: thread.id, body, kind: kind.value });
+      const r = await api("/api/agora/post", { thread_id: thread.id, body, kind: kind.value });
       if (r?.spaceChanged) return;
       if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
     };
@@ -786,7 +789,7 @@
         const dec = el("button", "small", t("decide"));
         dec.onclick = async () => {
           const resolution = need(); if (!resolution) return;
-          const r = await api("/api/agora/resolve", { agent: "luis", thread_id: thread.id, resolution });
+          const r = await api("/api/agora/resolve", { thread_id: thread.id, resolution });
       if (r?.spaceChanged) return;
           if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
         };
@@ -795,7 +798,7 @@
         const ro = el("button", "small", t("reopen"));
         ro.onclick = async () => {
           const reason = need(); if (!reason) return;
-          const r = await api("/api/agora/reopen", { agent: "luis", thread_id: thread.id, reason });
+          const r = await api("/api/agora/reopen", { thread_id: thread.id, reason });
       if (r?.spaceChanged) return;
           if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
         };
@@ -824,7 +827,7 @@
         const b = el("button", "small", t(verdict));
         b.onclick = async () => {
           const body = need(); if (!body) return;
-          const r = await api("/api/agora/task_review", { agent: "luis", task_id: task.id, verdict, body, expected_submission_revision: reviewRevision });
+          const r = await api("/api/agora/task_review", { task_id: task.id, verdict, body, expected_submission_revision: reviewRevision });
       if (r?.spaceChanged) return;
           if (r && r.ok) { ta.value = ""; refreshDetail(); load(); } else toast((r && r.error) || "error", "err");
         };
@@ -847,7 +850,7 @@
   function timelineEvent(event, task, seen) {
     if (event.event_kind !== "checkpoint") return msgView(event, seen);
     const wrap = el("div", "ag-event");
-    wrap.appendChild(el("small", "", `${event.author} · ${fmtWhen(event.created)}`));
+    wrap.appendChild(el("small", "", `${authorName(event.author)} · ${fmtWhen(event.created)}`));
     wrap.appendChild(checkpointView(event.checkpoint, true));
     return wrap;
   }
@@ -857,7 +860,7 @@
     const selectionKey = `${current.type}-${current.id}`;
     detailBox.dataset.spaceId = activeSpace;
     const previousAfter = detailBox.dataset.key === selectionKey ? Number(detailBox.dataset.timelineAfter || 0) : 0;
-    const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}?agent=luis`);
+    const r = current.type === "task" ? await api(`/api/agora/tasks/${current.id}`) : await api(`/api/agora/threads/${current.id}`);
     if (!current || `${current.type}-${current.id}` !== selectionKey) return;
     if (!r || !r.ok) return;
     // a thread opened straight from a link: what was new comes from the read itself
@@ -945,7 +948,7 @@
       const all = r.messages || [];
       let start = 0;
       if (all.length > LONG_THREAD && detailBox.dataset.showAll !== selectionKey) {
-        const firstNew = seen == null ? -1 : all.findIndex((m) => m.id > seen && m.author !== "luis" && m.kind !== "system");
+        const firstNew = seen == null ? -1 : all.findIndex((m) => m.id > seen && m.author !== personId() && m.kind !== "system");
         start = Math.max(0, Math.min(all.length - LONG_THREAD, firstNew >= 0 ? firstNew - 5 : all.length));
       }
       if (start > 0) {
@@ -999,7 +1002,7 @@
     no.onclick = () => holder.replaceChildren();
     ok.onclick = async () => {
       if (!title.value.trim()) { toast(t("need_text"), "err"); return; }
-      const r = await api("/api/agora/task_add", { agent: "luis", title: title.value, body: body.value, repo: repo.value, paths: paths.value,
+      const r = await api("/api/agora/task_add", { title: title.value, body: body.value, repo: repo.value, paths: paths.value,
         priority: Number(prio.value), kind: kind.value, mentions: mention.value });
       if (r?.spaceChanged) return;
       if (r && r.ok) { holder.replaceChildren(); load(); } else toast((r && r.error) || "error", "err");
@@ -1021,7 +1024,7 @@
     no.onclick = () => holder.replaceChildren();
     ok.onclick = async () => {
       if (!title.value.trim() || !body.value.trim()) { toast(t("need_text"), "err"); return; }
-      const r = await api("/api/agora/thread_open", { agent: "luis", title: title.value, body: body.value, kind: kind.value, mentions: mention.value });
+      const r = await api("/api/agora/thread_open", { title: title.value, body: body.value, kind: kind.value, mentions: mention.value });
       if (r?.spaceChanged) return;
       if (r && r.ok) { holder.replaceChildren(); load(); openThread(r.thread.id); } else toast((r && r.error) || "error", "err");
     };
@@ -1082,7 +1085,7 @@
       const epoch = spaceEpoch;
       save.disabled = true;
       try {
-        const body = {agent: 'luis', title: title.value};
+        const body = {title: title.value};
         if (rename) { body.space_id = activeSpace; body.expected_revision = lastBoard?.space?.revision; }
         const r = await api('/api/agora/' + (rename ? 'space_update' : 'space_create'), body);
         if (epoch !== spaceEpoch || r?.spaceChanged) return;

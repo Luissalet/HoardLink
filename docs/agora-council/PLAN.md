@@ -1,6 +1,6 @@
 # Shared Agora coordination
 
-Luis authorised planning, debate and complete implementation on 13 October 2026. Agora is the common coordination product with multiple persistent spaces. The interface offers Conversation, Deliberation and Tasks and decisions. Council and Group remain internal compatible contracts, with all their capabilities and the development team's history preserved.
+Agora is the common coordination product with multiple persistent spaces. The interface offers Conversation, Deliberation and Tasks and decisions. Council and Group remain internal compatible contracts, with all their capabilities and the development team's history preserved.
 
 ## Product and ownership
 
