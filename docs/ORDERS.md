@@ -171,3 +171,7 @@ then the box to write an order (words, title, project, details that must not be 
 orders, each opening into its words and references, the plan (job, station, delivers, waits for, for whom, state, and
 «sent back» when a defect is open), the pieces with their state, provenance and defects, and the person's decisions. The
 tab's badge counts the open gates. Texts in Spanish and English.
+
+**Pending decisions** in the Hub sidebar and on Home covers all spaces. A space's overview and the Ágora console show only its own gates, and the space sidebar opens the pending list. An early gate counts once and shows the undecided gestures with an available preview for each. A link to `/?space_id=…&decision=gate-…#hub/orders` or `decision=draft-…` opens and focuses that gate's heading. The same Orders controls apply there.
+
+In the space's decision log, production decisions show the date, order, outcome and note from `order_decisions`, alongside the existing resolved threads. The list reads the stored outcome automatically. It does not create a second decision or a message on the person's behalf.
