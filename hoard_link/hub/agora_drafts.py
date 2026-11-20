@@ -418,6 +418,8 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     with self.db.tx():
         variant = _variant_row(self, a.get("variant_id"))
         draft = _pass_row(self, variant["pass_id"])
+        if a.get("pass_id") is not None and draft["id"] != orders._int(a["pass_id"], "pass_id"):
+            raise _err("the variant does not belong to this draft pass", 404)
         if draft["status"] != "shown":
             raise _err(f"draft pass #{draft['id']} is not waiting for a decision ({draft['status']})", 409)
         if variant["status"] in ("kept", "discarded"):

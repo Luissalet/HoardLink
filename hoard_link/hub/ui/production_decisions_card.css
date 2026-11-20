@@ -1,0 +1,86 @@
+.production-card {
+  display: grid;
+  min-inline-size: 0;
+  gap: .85rem;
+  padding: 1rem;
+  margin-block-end: .65rem;
+  border: 1px solid var(--fs-border, var(--line, GrayText));
+  border-radius: .6rem;
+  background: var(--fs-surface-1, var(--card, var(--surface, Canvas)));
+  color: var(--fs-text, var(--text, inherit));
+  overflow-wrap: anywhere;
+}
+.production-card :is(h3, h4, p) { margin: 0; }
+.production-card__heading { display: grid; justify-items: start; gap: .2rem; }
+.production-card__heading p { font-size: .9rem; }
+.production-card__heading a { min-block-size: 28px; display: inline-flex; align-items: center; }
+.production-card a { color: inherit; text-decoration: underline; text-underline-offset: .2em; }
+.production-card__variants, .production-card__pieces {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: .65rem;
+}
+.production-card__variant {
+  min-inline-size: 0;
+  display: grid;
+  align-content: start;
+  gap: .65rem;
+  border: 1px solid var(--fs-border, var(--line, GrayText));
+  border-radius: .45rem;
+  padding: .65rem;
+}
+.production-card__variant .production-card__pieces { grid-template-columns: 1fr; }
+.production-card__detail summary { cursor: pointer; min-block-size: 28px; }
+.production-card__detail summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.production-card__pieces { list-style: none; margin: 0; padding: 0; }
+.production-card__pieces li { min-inline-size: 0; display: grid; align-content: start; justify-items: start; gap: .35rem; }
+.production-card__pieces :is(video, audio) { inline-size: 100%; max-inline-size: 540px; }
+.production-card button, .production-card textarea, .production-card__dialog button {
+  font: inherit;
+  color: inherit;
+  background: var(--fs-surface-2, var(--card-2, var(--surface, Canvas)));
+  border: 1px solid var(--fs-text-2, var(--muted, GrayText));
+  border-radius: .4rem;
+}
+.production-card button:is(:hover, :focus-visible), .production-card__dialog button:hover {
+  background: color-mix(in srgb, currentColor 9%, var(--fs-surface-2, var(--card-2, var(--surface, Canvas))));
+}
+.production-card :is(button, a, textarea):focus-visible, .production-card__dialog button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+.production-card button, .production-card__dialog button { min-block-size: 44px; padding: .35rem .65rem; cursor: pointer; }
+.production-card button:disabled { opacity: .6; cursor: wait; }
+.production-card button.production-card__keep {
+  font-weight: 650;
+  border-color: var(--fs-text, var(--accent, currentColor));
+}
+.production-card__actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.production-card__note { display: grid; gap: .35rem; justify-items: start; font-size: .9rem; }
+.production-card textarea { inline-size: min(100%, 38rem); padding: .5rem; resize: vertical; box-sizing: border-box; }
+.production-card button.production-card__zoom {
+  inline-size: 100%;
+  max-inline-size: 560px;
+  padding: 0;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.production-card__zoom img {
+  display: block;
+  inline-size: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: contain;
+}
+.production-card__dialog {
+  max-inline-size: min(96vw, 94rem);
+  max-block-size: 94vh;
+  box-sizing: border-box;
+  padding: .75rem;
+  border: 1px solid currentColor;
+  border-radius: .5rem;
+  color: var(--fs-text, var(--text, inherit));
+  background: var(--fs-surface-1, var(--card, var(--surface, Canvas)));
+}
+.production-card__dialog::backdrop { background: rgb(0 0 0 / .72); }
+.production-card__dialog img { display: block; max-inline-size: 100%; max-block-size: 82vh; margin-block-start: .5rem; }
+.production-card__status:empty { display: none; }

@@ -33,7 +33,7 @@ def test_home_opens_decision_before_measures_and_keeps_focus(tmp_path):
             playwright.expect(attention).to_contain_text(
                 "Today’s agenda and overdue items, unread notifications, mail, chats and incidents.")
             playwright.expect(attention).to_contain_text("There are no pending items in this summary.")
-            page.locator(".hub-decision-row", has_text="Review the draft").click()
+            page.locator(".hub-decision-row", has_text="Review the draft").get_by_role("link", name="Open order").click()
             heading = page.locator(f'[data-gate="{gate["id"]}"] h3')
             playwright.expect(heading).to_be_focused()
             assert len(delayed) == 1

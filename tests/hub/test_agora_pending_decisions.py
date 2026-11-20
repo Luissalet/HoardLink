@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from hoard_link.hub.agora import TOOLS
+from hoard_link.hub import agora_person
 from tests.test_agora_drafts import draft_pass, ready
 
 from ._hub_fakes import http, make_hub, serve
@@ -33,14 +34,47 @@ def test_pending_decisions_counts_each_gate_once_in_its_space(tmp_path):
         assert draft['key'] == f'draft-{pass_id}'
         assert len(draft['variants']) == 3
         assert draft['variants'][0]['image']['piece_id'] == pieces['a']['keyframe_start']
+        assert draft['variants'][0]['signature']
+        assert draft['variants'][0]['artifacts'][0]['image']['piece_id'] == pieces['a']['keyframe_start']
         assert report['key'] == f'gate-{gate["id"]}'
         assert report['pieces'] == ['Report file']
         assert report['image'] is None
+        assert report['artifacts'] == [{'title': 'Report file', 'media': 'text',
+                                        'path': f"/api/agora/piece_file/{piece['id']}", 'url': None, 'image': None}]
         status, scoped = http(url + '?space_id=test-studio', headers=headers)
         assert status == 200
         assert scoped['rows'] == [draft]
         assert scoped['counts'] == {'test-studio': 1}
         assert any(tool['name'] == 'hub_agora_pending_decisions' for tool in TOOLS)
+
+        endpoint = hub.config.url + '/api/agora/'
+        gate_choice = {'key': report['key'], 'decision': 'cancel', 'note': 'Check the numbers'}
+        variant = draft['variants'][1]
+        draft_choice = {'key': draft['key'], 'space_id': 'test-studio', 'decision': 'keep',
+                        'variant_id': variant['id'], 'signature': variant['signature']}
+        studio_header = {**headers, 'X-Hoard-Person': 'faustus-studio'}
+        for operation, choice in [('production_decide', gate_choice), ('production_decide', draft_choice),
+                                  ('gate_decide', {**gate_choice, 'gate_id': gate['id']}),
+                                  ('draft_decide', draft_choice)]:
+            status, _ = http(endpoint + operation, {**choice, '_person': True}, studio_header)
+            assert status == 403
+        assert http(url + '?all_spaces=1', headers=headers)[1] == all_spaces
+        assert not {'hub_agora_production_decide', 'hub_agora_gate_decide', 'hub_agora_draft_decide'} & {
+            tool['name'] for tool in TOOLS}
+        proof = {**studio_header, agora_person.PROOF_HEADER: agora_person.token(hub)}
+        status, _ = http(endpoint + 'production_decide', {**draft_choice, 'key': f'draft-{pass_id + 1}'}, proof)
+        assert status == 404
+        status, _ = http(endpoint + 'production_decide', {**draft_choice, 'signature': 'stale'}, proof)
+        assert status == 409
+        status, result = http(endpoint + 'production_decide', draft_choice, proof)
+        assert status == 200 and result['kept'] == variant['id']
+        assert http(url + '?space_id=test-studio', headers=headers)[1]['counts'] == {}
+        status, result = http(endpoint + 'production_decide', gate_choice, proof)
+        assert status == 200 and result['gate']['status'] == 'decided'
+        result = http(endpoint + 'decisions', headers=headers)[1]['production_decisions']
+        assert result[0]['note'] == 'Check the numbers'
+        assert result[0]['decided_by']['id'] == root.person_id
+        assert http(url + '?all_spaces=1', headers=headers)[1]['counts'] == {}
     finally:
         server.shutdown()
         server.server_close()

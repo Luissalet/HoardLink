@@ -679,7 +679,7 @@ def _waiting_gates(self, all_spaces):
         view = self.for_space(g["space_id"])
         order = dict(self.db.one("SELECT id, title, space_id, deadline FROM agora_orders WHERE id=?", (g["order_id"],)) or {})
         piece_rows = self.db.query("SELECT p.* FROM agora_pieces p JOIN agora_gate_pieces gp ON gp.piece_id = p.id "
-                                   "WHERE gp.gate_id = ?", (g["id"],))
+                                   "WHERE gp.gate_id = ? ORDER BY gp.position", (g["id"],))
         pieces = {int(piece["id"]): _piece_dict(view, dict(piece)) for piece in piece_rows}
         gate = _gate_dict(view, dict(g), pieces)
         gate["order"] = order
@@ -699,6 +699,14 @@ def _decision_image(pieces):
             "path": f"/api/agora/piece_file/{piece['id']}" + ("?preview=0" if preview else "")}
 
 
+def _decision_artifact(piece):
+    file = f"/api/agora/piece_file/{piece['id']}" if piece.get("path") else None
+    media = piece["view"]
+    preview = _decision_image([piece])
+    return {"title": piece["title"], "media": media, "path": file,
+            "image": preview, "url": piece.get("url") if media == "web" else None}
+
+
 def pending_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """One row per open production decision, scoped to a space or across all spaces."""
     from .agora_drafts import draft_passes
@@ -712,7 +720,9 @@ def pending_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 continue
             pieces = variant["pieces"]
             preferred = [piece for anchor in _DECISION_ANCHORS for piece in pieces if piece.get("anchor") == anchor]
-            variants.append({"id": variant["id"], "title": variant["title"],
+            ordered = preferred + [piece for piece in pieces if piece not in preferred]
+            variants.append({"id": variant["id"], "title": variant["title"], "signature": variant["signature"],
+                             "artifacts": [_decision_artifact(piece) for piece in ordered],
                              "image": _decision_image(preferred) or _decision_image(pieces)})
         rows.append({"key": f"draft-{draft['id']}", "title": draft["title"], "order": (draft["order"] or {}).get("title"),
                      "space": draft["space_id"], "image": None, "variants": variants})
@@ -721,6 +731,7 @@ def pending_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         pieces = [piece for piece in gate["pieces"] if piece["id"] not in decided]
         rows.append({"key": f"gate-{gate['id']}", "title": gate["title"], "order": gate["order"].get("title"),
                      "space": gate["space_id"], "image": _decision_image(pieces),
+                     "artifacts": [_decision_artifact(piece) for piece in pieces],
                      "pieces": [piece["title"] for piece in pieces]})
     counts = {}
     for row in rows:

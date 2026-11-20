@@ -15,6 +15,9 @@ from .integration_git import IntegrationError
 def prepare_frontend(candidate: Path, paths: set[str], folder: Path):
     console_inputs = {"apps/agora/index.html", "apps/agora/package.json", "apps/agora/package-lock.json",
                       "apps/agora/vite.config.ts", "apps/agora/tsconfig.json",
+                      "hoard_link/hub/ui/production_decisions_card.js",
+                      "hoard_link/hub/ui/production_decisions_card.css",
+                      "hoard_link/hub/ui/production_decisions_card.d.ts",
                       "hoard_link/hub/ui/production_decisions_data.js",
                       "hoard_link/hub/ui/production_decisions_data.d.ts"}
     studio_inputs = {"package.json", "package-lock.json", "vite.config.ts", "tsconfig.json"}

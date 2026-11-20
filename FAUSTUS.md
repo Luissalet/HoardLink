@@ -8,10 +8,11 @@ See [the agent command reference](docs/worker-cli.md).
 
 ## Production decisions
 
-Home links directly to each decision awaiting the person. Orders and draft passes load independently of the
+Home brings each decision awaiting the person into view. Orders and draft passes load independently of the
 global production measures, which appear at the foot of Orders. See [studio admission](docs/STUDIO-ADMISSION.md).
 The pending list in the Hub and each Agora space shares `hub_agora_pending_decisions`, which returns open
-order gates, early passes and counts per space. The browser integration step compiles changed console and
+order gates, early passes and counts per space. The person can inspect the pieces, enlarge images, and decide
+with a note in the list. The choice enters the space's production record. The browser integration step compiles changed console and
 Studio assets from the reviewed merge. See [production orders](docs/ORDERS.md) and [integration](docs/INTEGRATION.md).
 
 ## Live Agora activity

@@ -89,7 +89,7 @@ def test_pending_queue_opens_exact_gate_and_uses_the_production_record(tmp_path)
             playwright.expect(row.get_by_text("Test order")).to_be_visible()
             playwright.expect(row.locator("img")).to_have_attribute("alt", "Map")
             playwright.expect(page.locator("#hub-global-decision-count")).to_have_text("1")
-            row.click()
+            row.get_by_role("link", name="Open order").click()
             playwright.expect(page.locator(f'[data-gate="{gate["id"]}"] h3')).to_be_focused()
             playwright.expect(page.get_by_role("button", name="Keep", exact=True)).to_be_visible()
 

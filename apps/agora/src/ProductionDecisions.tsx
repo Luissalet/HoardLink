@@ -1,6 +1,8 @@
-import {ArrowUpRight, Scale} from 'lucide-react';
-import {useEffect,useState} from 'react';
+import {Scale} from 'lucide-react';
+import {isTauri} from '@tauri-apps/api/core';
+import {useCallback,useEffect,useRef,useState} from 'react';
 import {decisionHeading,decisionUrl,loadHistory,loadPending,type DecisionRecord,type PendingDecision} from '../../../hoard_link/hub/ui/production_decisions_data.js';
+import {renderDecisionCards} from '../../../hoard_link/hub/ui/production_decisions_card.js';
 import {api,openHub,previewSource} from './api';
 
 const es = (localStorage.getItem('hub.lang') || navigator.language).startsWith('es');
@@ -10,6 +12,8 @@ export function useProductionDecisions(open: boolean) {
   const [state,setState] = useState<{rows: PendingDecision[]; incomplete: boolean}>();
   const [history,setHistory] = useState<DecisionRecord[]>();
   const [historyError,setHistoryError] = useState(false);
+  const [revision,setRevision] = useState(0);
+  const refresh = useCallback(() => setRevision(value => value + 1), []);
   useEffect(() => {
     let disposed = false;
     let loading = false;
@@ -27,8 +31,8 @@ export function useProductionDecisions(open: boolean) {
     const timer = window.setInterval(refresh, 8000);
     document.addEventListener('visibilitychange', refresh);
     return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
-  }, [open]);
-  return {state,history,historyError};
+  }, [open, revision]);
+  return {state,history,historyError,refresh};
 }
 
 export function DecisionButton({count, open, toggle}: {count?: number; open: boolean; toggle: () => void}) {
@@ -38,35 +42,25 @@ export function DecisionButton({count, open, toggle}: {count?: number; open: boo
   </button>;
 }
 
-function Thumbnail({image}: {image: NonNullable<PendingDecision['image']>}) {
-  const [source,setSource] = useState('');
-  useEffect(() => {
-    let current = true;
-    void previewSource(image.path).then(value => { if (current) setSource(value); }).catch(() => {});
-    return () => { current = false; };
-  }, [image.path]);
-  return source ? <img src={source} alt={image.title} loading="lazy" onError={() => setSource('')} /> : null;
-}
-
 export function ProductionDecisions({data, open}: {data: ReturnType<typeof useProductionDecisions>; open: boolean}) {
-  const {state,history,historyError} = data;
+  const {state,history,historyError,refresh} = data;
   const [openingError,setOpeningError] = useState('');
+  const cards = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!cards.current) return;
+    renderDecisionCards(cards.current, state?.rows ?? [], {
+      lang: es ? 'es' : 'en',
+      source: (path, media) => media === 'image' ? previewSource(path) : isTauri() || media === 'web' ? null : path,
+      orderHref: decisionUrl,
+      openOrder: (event, row) => void openHub(event, row.key).catch(error => setOpeningError(error.message)),
+      post: (operation, body) => api('/api/agora/' + operation, body),
+      refresh,
+    });
+  }, [state, refresh, open]);
   if (!open && !state?.rows.length && !state?.incomplete) return null;
   return <section className="console-decisions" data-expanded={open || undefined} aria-labelledby="console-pending-title">
     <h2 id="console-pending-title">{tr('Tus decisiones pendientes', 'Your pending decisions')}</h2>
-    {state?.rows.map(row => (
-      <a key={row.key} className="console-decision-link" href={decisionUrl(row)} target="_blank" rel="noopener"
-        onClick={event => void openHub(event, row.key).catch(error => setOpeningError(error.message))}>
-        {row.image && <Thumbnail key={row.image.path} image={row.image} />}
-        <span><strong>{row.title}</strong><small>{row.order}</small>
-          {!!row.variants?.length && <span className="console-decision-variants">{row.variants.map(variant => <span key={variant.id}>
-            {variant.image && <Thumbnail key={variant.image.path} image={variant.image} />}
-            <small>{variant.title}</small>
-          </span>)}</span>}
-        </span>
-        <ArrowUpRight size={15} aria-hidden="true" />
-      </a>
-    ))}
+    <div ref={cards} />
     {openingError && <p role="alert">{openingError}</p>}
     {!state && <p role="status">{tr('Consultando decisiones…', 'Loading decisions…')}</p>}
     {state?.incomplete && <p role="status">{tr('No se han podido consultar todas las decisiones pendientes.', 'Some pending decisions could not be loaded.')}</p>}
