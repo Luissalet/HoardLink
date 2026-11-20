@@ -30,6 +30,81 @@ def test_citations_distinguish_missing_target_and_no_citations(tmp_path):
     assert checks.run_checks(report, "document", {})["verdict"] == "unmeasured"
 
 
+def _narrative_pdf(path, content, *, embed=True, blank_page=False):
+    fitz = pytest.importorskip("pymupdf")
+    with fitz.open() as doc:
+        page = doc.new_page()
+        font = "helv"
+        if embed:
+            font = "test-font"
+            page.insert_font(fontname=font, fontbuffer=fitz.Font("helv").buffer)
+        page.insert_text((60, 60), content, fontname=font)
+        if blank_page:
+            doc.new_page()
+        doc.save(path)
+
+
+def test_narrative_distinguishes_layout_defects_and_ordered_text(tmp_path):
+    path = tmp_path / "story.pdf"
+    source = tmp_path / "story.txt"
+    source.write_text("Inés volvió. Mauro salió.", encoding="utf-8")
+    _narrative_pdf(path, "Mauro salió.\nInés volvió.", embed=False, blank_page=True)
+    requirements = {"min_words": 4, "max_words": 4, "page_count": 1, "source_path": str(source)}
+    result = _checks(checks.run_checks(path, "narrative", requirements))
+    assert result["word-count"]["verdict"] == "pass"
+    assert result["pagination"]["verdict"] == "fail" and result["pagination"]["details"] == [2]
+    assert result["embedded-fonts"]["verdict"] == "fail"
+    assert result["source-text"]["verdict"] == "fail"
+    assert result["continuity"]["verdict"] == "unmeasured"
+
+
+def test_narrative_uses_retained_review_and_checks_writing_defect_history(tmp_path):
+    from hoard_link.hub.agora import Agora
+
+    agora = Agora(tmp_path / "agora.db")
+    try:
+        order = agora.order_create({"agent": "writer", "title": "Story", "words": "Write a story.",
+                                    "folder": str(tmp_path)})["order"]["id"]
+        plan = agora.plan_set({"agent": "writer", "order_id": order, "jobs": [
+            {"key": "write", "title": "Draft", "station": "writer", "produces": ["manuscript"]},
+        ]})
+        task = plan["keys"]["write"]
+
+        def add(kind, path, **extra):
+            return agora.piece_add({"agent": "writer", "order_id": order, "title": kind,
+                                    "kind": kind, "path": str(path), **extra})["piece"]["id"]
+
+        source = tmp_path / "story.txt"
+        source.write_text("Inés usó la llave.", encoding="utf-8")
+        draft = add("manuscript", source, task_id=task)
+        defect = agora.piece_defect({"agent": "reviewer", "piece_id": draft,
+                                     "note": "The key is used before it is found."})["defect_id"]
+        source.write_text("Inés encontró la llave.", encoding="utf-8")
+        corrected = add("manuscript", source, task_id=task)
+        reviewed = add("reviewed-manuscript", source, derives_from=[corrected])
+        source.write_text("Overwritten outside Orders.", encoding="utf-8")
+        path = tmp_path / "story.pdf"
+        _narrative_pdf(path, "Inés encontró\nla llave.")
+        pdf = add("pdf", path, derives_from=[reviewed])
+        facet = checks.PieceChecksFacet(SimpleNamespace(facet=lambda name: SimpleNamespace(agora=agora)))
+        args = {"piece_id": pdf, "agent": "reviewer"}
+        result = facet.validate(args)
+        assert _checks(result)["source-text"]["verdict"] == "pass"
+        assert result["measures"]["source_piece"]["id"] == reviewed
+        assert result["verdict"] == "fail"
+        assert result["measures"]["continuity"][0]["disposition"] == "open"
+        result = facet.record({**args, "requirements": {"continuity_declarations": {str(defect): "Pending author review."}}})
+        assert result["verdict"] == "pass" and result["undo"]
+        assert "Pending author review." in checks._note(result, "en")
+        agora.defect_close({"agent": "reviewer", "defect_id": defect, "fixed_in": corrected,
+                            "note": "The text now finds the key first."})
+        final = facet.validate(args)
+        assert final["measures"]["continuity"][0]["disposition"] == "resolved"
+        assert final["verdict"] == "pass"
+    finally:
+        agora.close()
+
+
 def test_image_dimensions_alpha_and_declared_views(tmp_path):
     image = pytest.importorskip("PIL.Image")
     path = tmp_path / "sheet.png"

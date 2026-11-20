@@ -24,6 +24,24 @@ tools are available by MCP and `POST /api/agent/tools/<tool>`.
 | `web` | `viewports: [[w,h],...]`, optionally `resolve_remote` | Visible names, image alternatives, language and title, overlapping text, clipped text and horizontal overflow (with selectors and pixels beyond the viewport), broken links and images, and browser errors. Default sizes are 1440 × 900 and 390 × 844. |
 | `slides` | Optional `slide_count`, `size_emu: [w,h]`, `resolve_remote` | PPTX title placeholders, image alternatives, overlapping boxes of the same kind, boxes outside the slide, image and link relationships, and editable words missing from the render. |
 | `document` | Optional `citations: {id: target}` and `resolve_remote` | Local paths and HTTP targets, numbered Markdown references such as `[B1, B2]`, DOCX hyperlinks and PDF URI annotations. An HTTP denial or timeout is unresolved. Source reachability gives no verdict on the claim it supports. |
+| `narrative` | Optional `min_words`, `max_words`, `page_count` and `continuity_declarations: {defect_id: note}` | PDF word and page counts, pages with no extractable text, embedded font programs, ordered text comparison and continuity defects. |
+
+For a narrative order, register the PDF with kind `pdf` and link a single
+`reviewed-manuscript` as material. Link the current `manuscript` revision as
+material of the review, with the original editorial dossier as context.
+The technical check reads the retained DOCX or UTF-8 text of the review.
+It keeps punctuation and order while normalising Unicode and layout whitespace.
+Use the same text for title and body in both files. Extra text in running
+headers, footers or page numbers appears as a difference.
+
+Return continuity defects with `hub_agora_piece_defect` and close them with
+`hub_agora_defect_close` against the corrected revision. The PDF check reads
+the review and its material writing history, including superseded revisions.
+A closure counts when its corrected revision is in the current material
+lineage. To show an outstanding defect with the export, supply its native
+defect ID and a note in `continuity_declarations`. The check reports that note
+without closing the defect. For a local file, supply `source_path` for the
+text comparison. Continuity remains pending until the review is linked in Orders.
 
 Declare references as `[{"path": "...", "region": [left, top, right, bottom]}]`.
 Regions use fractions of the frame or image. Set `region` on the clip or on
