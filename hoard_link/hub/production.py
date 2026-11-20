@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
+from urllib.parse import urlsplit
 
 from .dispatch_proxy import probe_catalog
 from .facets import Facet
@@ -124,6 +126,14 @@ class ProductionFacet(Facet):
                         "state": "no_proxy", "responding": False,
                         "contract": "stdio" if app.kind == "mcp-only" else "unknown",
                         "error": "No HTTP app proxy route"}
+            placement = getattr(self.hub, "placement", None)
+            remote = placement.remote_app(app.id) if placement is not None else None
+            if remote and remote.get("url"):
+                # It runs on a Spark: probe where the proxy reaches it, not this PC's empty port.
+                parts = urlsplit(remote["url"])
+                target = copy.copy(app)
+                target.url = f"{parts.scheme}://{parts.netloc}"
+                return {**probe_catalog(target, timeout_s=timeout), "where": remote.get("where")}
             return probe_catalog(app, timeout_s=timeout)
 
         with ThreadPoolExecutor(max_workers=8) as pool:

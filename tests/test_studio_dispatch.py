@@ -180,3 +180,20 @@ def test_isolated_instances_create_own_data_use_own_token_and_undo(monkeypatch, 
     assert facet.isolated.manage(ended["undo"])["instance"]["state"] == "running"
     facet.close()
     assert all(not child.running for child in children)
+
+
+def test_proxy_check_probes_an_app_placed_on_a_spark_at_its_remote_origin(monkeypatch):
+    from hoard_link.hub import production
+
+    app = SimpleNamespace(id="hermes", kind="http", url="http://127.0.0.1:5221")
+    seen = []
+    monkeypatch.setattr(production, "probe_catalog",
+                        lambda target, timeout_s: seen.append(target.url) or {
+                            "app": target.id, "reachable": True, "state": "ready"})
+    placement = SimpleNamespace(remote_app=lambda app_id: {
+        "url": "https://spark3.example.ts.net:5221/products/", "where": "spark3", "state": "running"})
+    hub = SimpleNamespace(apps=[app], placement=placement, facet=lambda name: None, get=lambda app_id: app)
+    result = production.ProductionFacet.proxy_check(SimpleNamespace(hub=hub), {})
+    assert seen == ["https://spark3.example.ts.net:5221"]
+    assert app.url == "http://127.0.0.1:5221"
+    assert result["apps"][0]["where"] == "spark3" and result["unreachable"] == []
