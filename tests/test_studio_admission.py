@@ -91,7 +91,7 @@ def test_gpu_reservation_and_first_pass_counts(order, tmp_path):
     over = order_budget.attempt(agora, {**args, "action": "begin", "key": "oversize", "gpu_seconds": 11})
     assert over["hold"] == "gpu"
     gate, = agora.orders({})["waiting"]
-    agora.gate_decide({"agent": "luis", "_person": True, "gate_id": gate["id"], "decision": "keep"})
+    agora.gate_decide({"agent": "person", "_person": True, "gate_id": gate["id"], "decision": "keep"})
     with pytest.raises(AgoraError, match="has already decided"):
         agora.order_undo({"agent": "maker", "token": over["undo"]})
     chain, = order_budget.metrics(agora, {})["chains"]

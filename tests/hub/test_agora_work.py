@@ -90,7 +90,7 @@ def test_a_long_work_is_cut_on_pages_and_whole_in_work(ag):
 
 
 def test_what_the_person_writes_carries_neither(ag):
-    out = ag.channel_post({**S, "agent": "luis", "_person": True, "body": "Hola", "work": {"tools": TOOLS},
+    out = ag.channel_post({**S, "agent": "person", "_person": True, "body": "Hola", "work": {"tools": TOOLS},
                            "routine": {"name": "Resumen"}})
     assert "work" not in out and "routine" not in out
     assert "routine" not in _message(ag, out["message_id"])

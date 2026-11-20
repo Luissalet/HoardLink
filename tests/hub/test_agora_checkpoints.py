@@ -180,7 +180,7 @@ def test_owner_change_final_tasks_and_review_state_independence(tmp_path):
             write(ag, task_id, 1, agent="claude")
         assert exc.value.status == 403
         with pytest.raises(AgoraError) as exc:
-            write(ag, task_id, 1, agent="luis")
+            write(ag, task_id, 1, agent="person")
         assert exc.value.status == 403
         ag.task_release({"agent": "codex", "task_id": task_id, "reason": "Transfer"})
         ag.task_claim({"agent": "claude", "task_id": task_id})
@@ -317,7 +317,7 @@ def test_http_cli_and_real_stdio_mcp(tmp_path):
         status, result = http(base + "/api/agora/checkpoint", body, headers=headers)
         assert status == 200 and result["checkpoint"]["revision"] == 1
         assert http(base + "/api/agora/checkpoint", {**body, "payload": {"summary": "stale"}}, headers=headers)[0] == 409
-        assert http(base + "/api/agora/checkpoint", {**body, "agent": "luis"}, headers=headers)[0] == 403
+        assert http(base + "/api/agora/checkpoint", {**body, "agent": "person"}, headers=headers)[0] == 403
         assert http(base + f"/api/agora/checkpoints?task_id={task_id}&after_revision=0&limit=1")[1]["checkpoints"][0]["revision"] == 1
         assert http(base + f"/api/agora/checkpoints?task_id={task_id}&limit=oops")[0] == 400
         file = tmp_path / "checkpoint.json"

@@ -27,7 +27,7 @@ def _claude_files(tmp_path: Path, *, expires_ms: float, scopes=("user:inference"
         "accessToken": CLAUDE_TOKEN, "refreshToken": "sk-ant-ort01-refresh", "expiresAt": expires_ms,
         "scopes": list(scopes), "subscriptionType": "max", "rateLimitTier": "default_claude_max_20x"}}), encoding="utf-8")
     (tmp_path / ".claude.json").write_text(json.dumps({"oauthAccount": {
-        "accountUuid": "11111111-2222-3333-4444-555555555555", "emailAddress": "luis@example.invalid"}}), encoding="utf-8")
+        "accountUuid": "11111111-2222-3333-4444-555555555555", "emailAddress": "fixture@example.invalid"}}), encoding="utf-8")
     return config, tmp_path
 
 
@@ -72,7 +72,7 @@ def test_claude_reads_session_and_weekly_windows_without_leaking_identity(tmp_pa
     assert "claude.week-opus" not in windows, "a null window is not invented"
     assert report["pool_label"] == "Claude Max 20x"
     dumped = json.dumps(report)
-    assert CLAUDE_TOKEN not in dumped and "luis@example.invalid" not in dumped and "11111111" not in dumped
+    assert CLAUDE_TOKEN not in dumped and "fixture@example.invalid" not in dumped and "11111111" not in dumped
 
 
 def test_claude_limits_array_fills_scoped_weeks(tmp_path):

@@ -197,13 +197,13 @@ def test_debate_escalation_and_decision_log(ag):
     assert detail["stances"] == {"codex": "proposal", "claude": "disagree"}
     ag.escalate({"agent": "claude", "thread_id": th["id"], "question": "q8 500k or q4?"})
     assert ag.escalations == [(th["id"], "claude", "q8 500k or q4?")]
-    person = ag.inbox({"agent": "luis", "peek": True})
+    person = ag.inbox({"agent": "person", "peek": True})
     assert [t["id"] for t in person["escalated"]] == [th["id"]]
     assert person["escalated"][0]["question"] == "q8 500k or q4?" and person["escalated"][0]["escalated_by"] == "claude"
     with pytest.raises(AgoraError) as exc:
-        ag.post({"agent": "luis", "thread_id": th["id"], "body": "q4"})
+        ag.post({"agent": "person", "thread_id": th["id"], "body": "q4"})
     assert exc.value.status == 403
-    ag.resolve({"agent": "luis", "thread_id": th["id"], "resolution": "q4 for tests", "_person": True})
+    ag.resolve({"agent": "person", "thread_id": th["id"], "resolution": "q4 for tests", "_person": True})
     assert ag.decisions()["decisions"][0]["resolution"] == "q4 for tests"
     assert ag.board()["escalated"] == 0
 
@@ -268,7 +268,7 @@ def test_http_and_tools(tmp_path):
         r = tools.call(hub, "hub_agora_task_add", {"agent": "codex", "title": "From a tool", "repo": "HoardLink"})
         assert r["ok"]
         # a tool can never speak as the person
-        assert tools.call(hub, "hub_agora_task_add", {"agent": "luis", "title": "x", "_person": True})["ok"] is False
+        assert tools.call(hub, "hub_agora_task_add", {"agent": "person", "title": "x", "_person": True})["ok"] is False
         # writes without a token or the page are refused
         status, body = http(base + "/api/agora/heartbeat", {"agent": "claude"})
         assert status == 401
@@ -279,11 +279,11 @@ def test_http_and_tools(tmp_path):
         page = {"Sec-Fetch-Site": "same-origin"}
         status, body = http(base + "/api/agora/thread_open", {"title": "Hola", "body": "¿Qué tal?", "kind": "question"},
                             headers=page)
-        assert status == 200 and body["thread"]["created_by"] == "luis", body
+        assert status == 200 and body["thread"]["created_by"] == "person", body
         status, board = http(base + "/api/agora/board")
         assert status == 200 and board["counts"]["open"] == 1 and len(board["threads"]) == 1
         status, inbox = http(base + "/api/agora/inbox?agent=codex&peek=1")
-        assert inbox["counts"]["messages"] == 1 and inbox["messages"][0]["author"] == "luis"
+        assert inbox["counts"]["messages"] == 1 and inbox["messages"][0]["author"] == "person"
         status, err = http(base + "/api/agora/tasks/999")
         assert status == 404
         evs = hub.events.query(type="agora.*", limit=50)
@@ -300,12 +300,12 @@ def test_person_answer_takes_thread_out_of_escalation_and_task_threads_show(ag):
     ag.escalate({"agent": "codex", "thread_id": task["thread_id"], "question": "keep or drop?"})
     listed = ag.threads()["threads"]
     assert [t["id"] for t in listed] == [task["thread_id"]]            # escalated task threads are listed
-    ag.post({"agent": "luis", "thread_id": task["thread_id"], "body": "keep", "_person": True})
+    ag.post({"agent": "person", "thread_id": task["thread_id"], "body": "keep", "_person": True})
     assert ag.thread({"thread_id": task["thread_id"]})["thread"]["status"] == "open"
     assert ag.threads()["threads"] == []
     ag.task_submit({"agent": "codex", "task_id": tid, "summary": "s"})
     ag.escalate({"agent": "codex", "thread_id": task["thread_id"], "question": "approve?"})
-    ag.task_review({"agent": "luis", "task_id": tid, "expected_submission_revision": 1,
+    ag.task_review({"agent": "person", "task_id": tid, "expected_submission_revision": 1,
                     "verdict": "approve", "body": "ok", "_person": True})
     assert ag.board()["escalated"] == 0
 
@@ -381,7 +381,7 @@ def test_mentions_stay_pending_until_seen(ag):
     assert ag.ack({"agent": "codex", "all": True})["acked"] == [th["id"]]
     assert ag.inbox({"agent": "codex", "peek": True})["counts"]["pending"] == 0
     with pytest.raises(AgoraError):
-        ag.ack({"agent": "luis", "all": True})                     # only the page acks for the person
+        ag.ack({"agent": "person", "all": True})                     # only the page acks for the person
 
 
 def test_long_poll_does_not_return_early_for_standing_reviews(tmp_path):

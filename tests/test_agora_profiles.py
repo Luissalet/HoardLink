@@ -1,6 +1,7 @@
 import pytest
 
-from hoard_link.hub.agora import Agora, AgoraError, PERSON, TOOLS
+from hoard_link.hub.agora import Agora, AgoraError, TOOLS
+from hoard_link.hub.config import PERSON_ALIAS as PERSON
 from hoard_link.hub import agora_profiles
 
 
@@ -86,7 +87,7 @@ def test_instructions_are_the_persons_and_proposals_are_the_agents(agora):
     agora.agent_instructions_set(person(id="claude-worker-1", body="Rule one."))
     assert agora.agent_profile({"id": "claude-worker-1"})["instructions"]["body"] == "Rule one."
 
-    proposal = agora.agent_instruction_propose({"agent": "claude-worker-1", "add": "Rule two.", "reason": "Luis corrected me",
+    proposal = agora.agent_instruction_propose({"agent": "claude-worker-1", "add": "Rule two.", "reason": "the person corrected me",
                                                  "source": "task 7", "trigger": "correction"})["proposal"]
     assert proposal["status"] == "pending" and proposal["body"] == "Rule one.\nRule two."
     assert "+Rule two." in proposal["diff"] and proposal["stale"] is False

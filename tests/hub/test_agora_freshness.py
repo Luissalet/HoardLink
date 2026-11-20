@@ -1,7 +1,7 @@
 """A1/A2: say when an agent acts on a task without having read its thread, and an inbox of metadata only.
 
 The Ágora knows what each agent has seen (thread acks, the inbox read mark), so an answer can say "others wrote
-here since you last read it". It only informs: nothing is ever refused for it (Luis, 09-10: no more obstacles for
+here since you last read it". It only informs: nothing is ever refused for it (the person, 09-10: no more obstacles for
 the agents' autonomy).
 """
 
@@ -101,7 +101,7 @@ def test_done_and_post_say_so_too_but_other_threads_do_not(ag):
 
 def test_the_person_and_off_mode_get_no_notice(ag, tmp_path):
     tid, thread = _submitted(ag)
-    assert "unseen" not in _review(ag, tid, agent="luis", _person=True)
+    assert "unseen" not in _review(ag, tid, agent="person", _person=True)
     off = Agora(tmp_path / "off.db", freshness="off")
     tid2, _ = _submitted(off)
     assert "unseen" not in _review(off, tid2)

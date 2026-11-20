@@ -37,8 +37,8 @@ def test_empty_answer_with_evidence_is_not_empty_response():
 @pytest.mark.parametrize("answer", [
     "I am blocked by a missing credential.",
     "Estoy bloqueado: el repo no compila.",
-    "Waiting for Luis to pick the branch.",
-    "Necesito que Luis decida entre A y B.",
+    "Waiting for the person to pick the branch.",
+    "Necesito que la persona decida entre A y B.",
     "I need the owner to approve the lock.",
     "Tarea bloqueada por la revisión pendiente.",
 ])
@@ -150,7 +150,7 @@ def console(tmp_path):
     agora.db.execute("UPDATE messages SET created=created-3600")  # old history: not a "new" event for any turn
     hub = SimpleNamespace(
         config=SimpleNamespace(data_dir=str(tmp_path), token_file=str(tmp_path / "t"), url="http://127.0.0.1:1",
-                               faustus_urls=[]),
+                               faustus_urls=[], person_profile={"id": "person", "name": "Person"}),
         facet=lambda facet_id: SimpleNamespace(agora=agora) if facet_id == "agora" else None,
     )
     facet = AgoraConsoleFacet(hub)
@@ -226,7 +226,7 @@ def test_plan_only_turn_enqueues_exactly_one_continuation_then_chain_stops(conso
 
 
 def test_agora_activity_makes_the_turn_advanced_and_stops_the_chain(console):
-    task = console.agora.task_add({"agent": "luis-helper", "title": "Do the thing"})["task"]
+    task = console.agora.task_add({"agent": "person-helper", "title": "Do the thing"})["task"]
     _turn(console, "t1")
     console.agora.task_claim({"agent": "codex-agora", "task_id": task["id"]})
     console._finish_leader_turn("t1", "codex", "completed", "ok", "Next I will continue.", "sess", process_exit_code=0)
@@ -253,7 +253,7 @@ def test_real_event_for_the_agent_bypasses_the_throttle(console):
         with console._db() as db:
             db.execute("UPDATE leader_turns SET liveness='plan_only' WHERE id=?", (prior,))
     _turn(console, "t4", created=time.time() - 20)
-    console.agora.post({"agent": "luis-helper", "thread_id": THREAD_ID, "body": "codex-agora please look", "kind": "comment",
+    console.agora.post({"agent": "person-helper", "thread_id": THREAD_ID, "body": "codex-agora please look", "kind": "comment",
                         "mentions": ["codex-agora"]})
     console._finish_leader_turn("t4", "codex", "completed", "ok", "I'll now look.", "sess", process_exit_code=0)
     conts = _continuations(console)
@@ -275,7 +275,7 @@ def test_failed_blocked_and_unreadable_agora_never_continue(console):
     _turn(console, "f1")
     console._finish_leader_turn("f1", "codex", "failed", "boom", "", "sess")
     _turn(console, "b1")
-    console._finish_leader_turn("b1", "codex", "completed", "ok", "Estoy bloqueado esperando a Luis.", "sess", process_exit_code=0)
+    console._finish_leader_turn("b1", "codex", "completed", "ok", "Estoy bloqueado esperando a la persona.", "sess", process_exit_code=0)
     assert (_row(console, "f1")["liveness"], _row(console, "b1")["liveness"]) == ("failed", "blocked")
     assert _continuations(console) == []
     # without a readable Agora the turn is classified but nothing is relaunched
@@ -373,7 +373,7 @@ def test_lock_vocabulary_is_not_a_block():
     for text in ("Tomo el bloqueo path:Faustus/src y sigo.", "Reclamada con sus bloqueos; voy a implementar.",
                  "The task was blocked by a lock, now free; I'll start."):
         assert lv.classify_turn(state="completed", exit_code=0, answer=text, evidence={})["liveness"] != "blocked", text
-    for text in ("Estoy bloqueado: necesito la clave.", "Blocked on Luis for the GPU decision.", "No puedo seguir sin acceso."):
+    for text in ("Estoy bloqueado: necesito la clave.", "Blocked on the person for the GPU decision.", "No puedo seguir sin acceso."):
         assert lv.classify_turn(state="completed", exit_code=0, answer=text, evidence={})["liveness"] == "blocked", text
 
 
@@ -416,7 +416,7 @@ def test_another_agent_moving_the_leaders_task_is_not_its_progress(console):
     console.agora.task_claim({"agent": "codex-agora", "task_id": task["id"]})
     time.sleep(0.02)
     _turn(console, "rv3", created=time.time())  # the leader's own claim happened before this turn
-    console.agora.handover({"agent": "luis", "_person": True, "from_agent": "codex-agora", "to_agent": "builder-agent",
+    console.agora.handover({"agent": "person", "_person": True, "from_agent": "codex-agora", "to_agent": "builder-agent",
                             "tasks": [task["id"]], "force": True, "reason": "test"})
     console._finish_leader_turn("rv3", "codex", "completed", "ok", "Voy a seguir con la tarea.", "sess",
                                 process_exit_code=0)

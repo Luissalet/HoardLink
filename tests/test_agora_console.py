@@ -42,7 +42,8 @@ class FakeHub:
     def __init__(self, tmp_path: Path):
         self.config = SimpleNamespace(data_dir=str(tmp_path), token_file=str(tmp_path / "mcp-token"),
                                       url="http://127.0.0.1:62841",
-                                      faustus_urls=["http://127.0.0.1:7000"])
+                                      faustus_urls=["http://127.0.0.1:7000"],
+                                      person_profile={"id": "person", "name": "Test operator"})
         self.agora = FakeAgora()
         self.faustus_runtime = SimpleNamespace(installation=lambda: (tmp_path, "python-test"))
 
@@ -167,12 +168,12 @@ def test_message_posts_attributed_canonical_message_and_queues_real_provider_tur
 
     assert response["ok"]
     assert response["thread_id"] == THREAD_ID and response["message_id"] == 902
-    assert response["author"] == "luis"
+    assert response["author"] == "person"
     assert response["dispatch"][0]["status"] == "queued"
     assert "independent Codex console session" in response["dispatch"][0]["detail"]
     assert response["dispatch"][0]["legacy_mention"]["status"] == "queued"
     assert response["dispatch"][1]["status"] == "queued"
-    assert facet.hub.agora.posts == [{"agent": "luis", "_person": True, "thread_id": THREAD_ID,
+    assert facet.hub.agora.posts == [{"agent": "person", "_person": True, "thread_id": THREAD_ID,
                                      "body": "Review this candidate when your next turn starts.",
                                      "kind": "comment", "mentions": ["codex-investiga"]}]
     with facet._db() as db:
@@ -944,7 +945,7 @@ def test_mcp_message_identity_is_explicit_and_cannot_forge_luis(tmp_path):
     assert result["author"] == "claude"
     assert facet.hub.agora.posts[-1]["agent"] == "claude"
 
-    rejected = facet.handlers()["hub_agora_console_message"]({"body": "hello", "actor": "luis"})
+    rejected = facet.handlers()["hub_agora_console_message"]({"body": "hello", "actor": "person"})
     assert not rejected["ok"] and rejected["status"] == 400
 
 
@@ -952,7 +953,7 @@ def test_authenticated_agent_identity_is_preserved_by_http_dispatch(tmp_path):
     facet = _facet(tmp_path)
 
     response = facet.post(_request("POST", "/api/agora/console/message", {
-        "body": "Reply under my own identity.", "recipients": ["faustus"], "actor": "luis"},
+        "body": "Reply under my own identity.", "recipients": ["faustus"], "actor": "person"},
         caller="codex-agora", agent=True))
 
     assert response["ok"] and response["author"] == "codex-agora"
@@ -963,7 +964,7 @@ def test_hub_bearer_http_writes_as_console_identity_not_reserved_hub_or_luis(tmp
     facet = _facet(tmp_path)
 
     response = facet.post(_request("POST", "/api/agora/console/message", {
-        "body": "QA message from the authenticated Hub API.", "recipients": ["faustus"], "actor": "luis"},
+        "body": "QA message from the authenticated Hub API.", "recipients": ["faustus"], "actor": "person"},
         caller="hub", agent=True))
 
     assert response["ok"] and response["author"] == "codex-console"
@@ -1302,7 +1303,7 @@ def test_hub_restart_marks_ambiguous_leader_turn_unknown_without_replay(tmp_path
 
 
 def test_leader_colours_are_shared_validated_and_resettable(tmp_path):
-    """Luis picks a colour per provider; every client reads it from the overview (Agora #239)."""
+    """the person picks a colour per provider; every client reads it from the overview (Agora #239)."""
     facet = _facet(tmp_path)
     saved = facet.post(_request("POST", "/api/agora/console/color", {"leader_id": "cursor", "color": "#7AA2F7"}))
     assert saved == {"ok": True, "leader_id": "cursor", "color": "#7aa2f7"}
@@ -1821,7 +1822,7 @@ def test_a_model_of_claude_can_be_asked_for_by_its_full_name_and_is_dropped_when
     # a name nobody kept is the person's to bring in: an agent asking for it is told it is not offered
     assert facet.worker({"leader_id": "claude", "model": "claude-fable-5", "effort": "low", "task": "x"}, "claude-opus-1")["worker"]["state"] == "unavailable"
     assert facet._claude_named_models() == [] and commands == []
-    started = facet.worker({"leader_id": "claude", "model": "claude-fable-5", "effort": "low", "task": "x"}, "luis")
+    started = facet.worker({"leader_id": "claude", "model": "claude-fable-5", "effort": "low", "task": "x"}, "person")
     command = commands[-1][0]
     assert started["worker"]["state"] == "running" and command[command.index("--model") + 1] == "claude-fable-5"
     assert offered()[-1] == "claude-fable-5" and facet._claude_named_models() == ["claude-fable-5"]
@@ -1829,20 +1830,20 @@ def test_a_model_of_claude_can_be_asked_for_by_its_full_name_and_is_dropped_when
     assert facet.worker({"leader_id": "claude", "model": "claude-fable-5", "effort": "low", "task": "x"}, "claude-opus-1")["worker"]["state"] == "running"
     assert facet.suggest_worker_name("claude", "claude-fable-5")["name"] == "claude-fable-1"
     # and what the person starts it as is told with the provider, for the next one of that model
-    facet.worker({"leader_id": "claude", "model": "claude-fable-5", "effort": "low", "task": "x", "rank": "director"}, "luis")
+    facet.worker({"leader_id": "claude", "model": "claude-fable-5", "effort": "low", "task": "x", "rank": "director"}, "person")
     assert next(l for l in facet.overview()["leaders"] if l["id"] == "claude")["model_ranks"] == {"claude-fable-5": "director"}
     # a name that is not a model's full name is as unknown as before
     for bad in ("fable", "gpt-6", "claude-", "claude fable"):
-        assert facet.worker({"leader_id": "claude", "model": bad, "effort": "low", "task": "x"}, "luis")["worker"]["state"] == "unavailable"
+        assert facet.worker({"leader_id": "claude", "model": bad, "effort": "low", "task": "x"}, "person")["worker"]["state"] == "unavailable"
     assert facet._claude_named_models() == ["claude-fable-5"] and len(commands) == 3
     # a name comes in with a session that started, not with a saved preference; another provider has only its catalog
     assert not facet.set_preferences({"leader_id": "claude", "model": "claude-opus-9", "effort": "low"})["verified"]
     assert "claude-opus-9" not in offered()
-    assert facet.worker({"leader_id": "codex", "model": "claude-opus-9", "effort": "low", "task": "x"}, "luis")["worker"]["state"] == "unavailable"
-    facet.worker({"leader_id": "claude", "model": "claude-opus-9", "effort": "low", "task": "x"}, "luis")
+    assert facet.worker({"leader_id": "codex", "model": "claude-opus-9", "effort": "low", "task": "x"}, "person")["worker"]["state"] == "unavailable"
+    facet.worker({"leader_id": "claude", "model": "claude-opus-9", "effort": "low", "task": "x"}, "person")
     assert offered()[-2:] == ["claude-fable-5", "claude-opus-9"]
-    facet.set_preferences({"leader_id": "claude", "model": "claude-fable-5", "effort": "low"}, "luis")
-    facet.set_model_rank({"leader_id": "claude", "model": "claude-fable-5", "rank": "lead"}, "luis")
+    facet.set_preferences({"leader_id": "claude", "model": "claude-fable-5", "effort": "low"}, "person")
+    facet.set_model_rank({"leader_id": "claude", "model": "claude-fable-5", "rank": "lead"}, "person")
 
     # its provider refuses the model itself, at no cost: it is not offered again; any other failure leaves it
     def ends(worker_id, text, cost=0):
@@ -1863,7 +1864,7 @@ def test_a_model_of_claude_can_be_asked_for_by_its_full_name_and_is_dropped_when
     # with it go the preference and the role this server kept for it
     assert facet._preferences().get("claude") is None and "claude-fable-5" not in facet._model_ranks().get("claude", {})
     # the other refusal of the program's own: a version too old for the model
-    facet.worker({"leader_id": "claude", "model": "claude-fable-5", "effort": "low", "task": "x"}, "luis")
+    facet.worker({"leader_id": "claude", "model": "claude-fable-5", "effort": "low", "task": "x"}, "person")
     assert "claude-fable-5" in offered()
     ends(started["worker"]["id"], 'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Claude Code 2.1.104 does not support this model; version 2.1.290 or newer is required."}}')
     assert "claude-fable-5" not in offered()
@@ -1879,7 +1880,7 @@ def test_the_person_says_once_which_rank_the_sessions_of_a_model_start_with(tmp_
     facet = _facet(tmp_path)
     store = _with_real_agora(facet, tmp_path)
     store.heartbeat({"agent": "claude-opus-1", "state": "working"})
-    store.member_rank_set({"agent": "luis", "_person": True, "member": "claude-opus-1", "rank": "lead"})
+    store.member_rank_set({"agent": "person", "_person": True, "member": "claude-opus-1", "rank": "lead"})
     _claude_provider(facet)
     monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
     _capture_popen(monkeypatch)
@@ -1889,20 +1890,20 @@ def test_the_person_says_once_which_rank_the_sessions_of_a_model_start_with(tmp_
     try:
         assert kept() == {}
         # starting one as the person says it for that model, here; the next one of that model needs no telling
-        facet.worker({**base, "model": "opus", "name": "claude-a", "rank": "director"}, "luis")
+        facet.worker({**base, "model": "opus", "name": "claude-a", "rank": "director"}, "person")
         assert kept() == {"opus": "director"}
-        assert facet.worker({**base, "model": "opus", "name": "claude-b"}, "luis")["rank"] == "director" and rank("claude-b") == "director"
-        assert facet.worker({**base, "model": "sonnet", "name": "claude-c"}, "luis")["rank"] == "agent"     # another model: the usual
+        assert facet.worker({**base, "model": "opus", "name": "claude-b"}, "person")["rank"] == "director" and rank("claude-b") == "director"
+        assert facet.worker({**base, "model": "sonnet", "name": "claude-c"}, "person")["rank"] == "agent"     # another model: the usual
         # an agent starting one of that model still stands no higher than itself, and what it asks for changes nothing kept
         assert facet.worker({**base, "model": "opus", "name": "claude-d"}, "claude-opus-1")["rank"] == "lead"
         facet.worker({**base, "model": "opus", "name": "claude-e", "rank": "support"}, "claude-opus-1")
         assert kept() == {"opus": "director"}
         # said again by the person, also down to the usual rank; and said without starting anything
-        facet.worker({**base, "model": "opus", "name": "claude-f", "rank": "agent"}, "luis")
-        assert kept() == {"opus": "agent"} and facet.worker({**base, "model": "opus", "name": "claude-g"}, "luis")["rank"] == "agent"
-        saved = facet.set_model_rank({"leader_id": "claude", "model": "haiku", "rank": "support"}, "luis")
+        facet.worker({**base, "model": "opus", "name": "claude-f", "rank": "agent"}, "person")
+        assert kept() == {"opus": "agent"} and facet.worker({**base, "model": "opus", "name": "claude-g"}, "person")["rank"] == "agent"
+        saved = facet.set_model_rank({"leader_id": "claude", "model": "haiku", "rank": "support"}, "person")
         assert saved["ok"] and saved["model_ranks"] == {"opus": "agent", "haiku": "support"} == kept()
-        assert facet.worker({**base, "model": "haiku", "name": "claude-h"}, "luis")["rank"] == "support"
+        assert facet.worker({**base, "model": "haiku", "name": "claude-h"}, "person")["rank"] == "support"
         # only the person does: an agent's word, also with _person in the body of a request, is refused; no tool does it
         assert facet.set_model_rank({"leader_id": "claude", "model": "haiku", "rank": "director"}, "claude-opus-1")["status"] == 403
         refused = facet.post(_request("POST", "/api/agora/console/model_rank", caller="hub", agent=True,
@@ -1910,7 +1911,7 @@ def test_the_person_says_once_which_rank_the_sessions_of_a_model_start_with(tmp_
         assert refused["status"] == 403 and kept()["haiku"] == "support"
         assert not [name for name in facet.handlers() if "rank" in name]
         for bad in ({"model": "haiku", "rank": "emperor"}, {"model": "no-such-model", "rank": "lead"}, {"model": "haiku"}):
-            assert facet.set_model_rank({"leader_id": "claude", **bad}, "luis")["status"] == 400
+            assert facet.set_model_rank({"leader_id": "claude", **bad}, "person")["status"] == 400
         page = facet.post(_request("POST", "/api/agora/console/model_rank", body={"leader_id": "claude", "model": "sonnet", "rank": "lead"}))
         assert page["ok"] and kept()["sonnet"] == "lead"
         # saving a model and an effort says nothing about roles
@@ -1972,7 +1973,7 @@ def test_a_session_gets_the_rank_the_person_gives_and_never_more_than_whoever_st
     facet = _facet(tmp_path)
     store = _with_real_agora(facet, tmp_path)
     store.heartbeat({"agent": "claude-opus-1", "state": "working"})
-    store.member_rank_set({"agent": "luis", "_person": True, "member": "claude-opus-1", "rank": "lead"})
+    store.member_rank_set({"agent": "person", "_person": True, "member": "claude-opus-1", "rank": "lead"})
     _claude_provider(facet)
     monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: "claude-test.exe" if name == "claude" else None)
     commands = _capture_popen(monkeypatch)
@@ -1985,7 +1986,7 @@ def test_a_session_gets_the_rank_the_person_gives_and_never_more_than_whoever_st
         facet.worker({**base, "name": "claude-b", "rank": "director", "_person": True}, "codex-console")
         assert rank("claude-b") == "director"
         with store.db.tx():
-            assert store.db.one("SELECT set_by FROM agora_ranks WHERE agent='claude-b'")["set_by"] == "luis"
+            assert store.db.one("SELECT set_by FROM agora_ranks WHERE agent='claude-b'")["set_by"] == "person"
         # an agent starting one: its own rank is the ceiling, whatever it asks for or writes in the body
         facet.worker({**base, "name": "claude-c", "rank": "director"}, "claude-opus-1")
         assert rank("claude-c") == "lead" and "Your rank on this server is lead" in commands[-1][0][-1]
@@ -2002,13 +2003,13 @@ def test_a_session_gets_the_rank_the_person_gives_and_never_more_than_whoever_st
         tool({**base, "name": "claude-f", "rank": "director", "_person": True, "actor": "claude-opus-1"})
         assert rank("claude-f") == "lead"
         # no rank asked for: an agent like any other, and nothing is written
-        facet.worker({**base, "model": "haiku", "name": "claude-g"}, "luis")
+        facet.worker({**base, "model": "haiku", "name": "claude-g"}, "person")
         assert rank("claude-g") == "agent" and store.db.one("SELECT 1 AS x FROM agora_ranks WHERE agent='claude-g'") is None
-        out = facet.worker({**base, "name": "claude-h", "rank": "emperor"}, "luis")
+        out = facet.worker({**base, "name": "claude-h", "rank": "emperor"}, "person")
         assert out["ok"] is False and out["status"] == 400 and len(commands) == 9
         # a session that cannot start is given no rank
         monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: None)
-        refused = facet.worker({**base, "name": "claude-i", "rank": "director"}, "luis")
+        refused = facet.worker({**base, "name": "claude-i", "rank": "director"}, "person")
         assert refused["worker"]["state"] == "unavailable" and rank("claude-i") == "agent"
 
         # a session that fails without ever being on the server leaves no rank under its name, which is free again;

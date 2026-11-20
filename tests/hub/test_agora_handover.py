@@ -103,8 +103,8 @@ def test_constants():
 def test_person_can_hand_over_while_the_agent_is_fresh(ag):
     ids = _world(ag)
     ag.heartbeat({"agent": OLD, "doing": "still here"})
-    r = ag.handover({**_args(agent="luis"), "_person": True})
-    assert r["ok"] and r["by"] == "luis" and not r["noop"]
+    r = ag.handover({**_args(agent="person"), "_person": True})
+    assert r["ok"] and r["by"] == "person" and not r["noop"]
     assert _task(ag, ids["claimed"])["task"]["owner"] == NEW
 
 
@@ -114,7 +114,7 @@ def test_agent_blocked_while_the_source_is_fresh_and_allowed_after_30_minutes(ag
     before = _fingerprint(ag)
     with pytest.raises(AgoraError) as err:
         ag.handover(_args())
-    assert err.value.status == 409 and "luis" in str(err.value) and "30 min" in str(err.value)
+    assert err.value.status == 409 and "person" in str(err.value).lower() and "30 min" in str(err.value)
     assert err.value.extra["retry_after_s"] == 30 * 60 and err.value.extra["idle_s"] == 0
     assert _fingerprint(ag) == before
     ag.fake_clock.t += 29 * MIN
@@ -198,15 +198,15 @@ def test_target_must_be_registered_and_fresh(ag):
         ag.handover(_args())                                     # codex-relevo has been silent for over 6 h
     assert err.value.status == 409 and "no recent heartbeat" in str(err.value)
     # the person may choose a stale (but registered) successor, never an unknown one
-    r = ag.handover({**_args(agent="luis"), "_person": True})
+    r = ag.handover({**_args(agent="person"), "_person": True})
     assert r["ok"] and r["owner_moved"]
     with pytest.raises(AgoraError):
-        ag.handover({**_args(agent="luis", to_agent="codex-nobody"), "_person": True})
+        ag.handover({**_args(agent="person", to_agent="codex-nobody"), "_person": True})
 
 
 def test_bad_arguments(ag):
     _world(ag)
-    for kw in ({"reason": ""}, {"reason": "   "}, {"to_agent": OLD}, {"from_agent": "luis"}, {"to_agent": "luis"},
+    for kw in ({"reason": ""}, {"reason": "   "}, {"to_agent": OLD}, {"from_agent": "person"}, {"to_agent": "person"},
                {"from_agent": ""}, {"tasks": ["x"]}, {"tasks": [0]}):
         with pytest.raises(AgoraError) as err:
             ag.handover(_args(**kw))
@@ -214,7 +214,7 @@ def test_bad_arguments(ag):
     with pytest.raises(AgoraError):
         ag.handover({k: v for k, v in _args().items() if k != "reason"})
     with pytest.raises(AgoraError) as err:
-        ag.handover(_args(agent="luis"))                         # without the page's mark nobody speaks as the person
+        ag.handover(_args(agent="person"))                         # without the page's mark nobody speaks as the person
     assert err.value.status == 403
 
 
@@ -410,7 +410,7 @@ def test_idempotent(ag):
     assert again["ok"] and again["noop"] and again["tasks"] == [] and again["thread_id"] is None
     assert again["owner_moved"] == [] and again["locks_moved"] == []
     assert _fingerprint(ag) == state                                      # no rows, messages, threads or events
-    again_p = ag.handover({**_args(agent="luis"), "_person": True})
+    again_p = ag.handover({**_args(agent="person"), "_person": True})
     assert again_p["noop"] and _fingerprint(ag) == state
 
 
@@ -476,14 +476,14 @@ def test_http_tool_cli_and_mcp_smoke(tmp_path):
         body = {"agent": "claude", "from_agent": OLD, "to_agent": NEW, "reason": "test", "tasks": [ids[0]]}
         assert http(base + "/api/agora/handover", body)[0] == 401
         status, refused = http(base + "/api/agora/handover", body, headers=hdr)
-        assert status == 409 and not refused["ok"] and "luis" in refused["error"]
+        assert status == 409 and not refused["ok"] and "person" in refused["error"].lower()
         # the tool is refused the same way and can never speak as the person
         assert tools.call(hub, "hub_agora_handover", body)["status"] == 409
-        assert tools.call(hub, "hub_agora_handover", {**body, "agent": "luis", "_person": True})["ok"] is False
+        assert tools.call(hub, "hub_agora_handover", {**body, "agent": "person", "_person": True})["ok"] is False
         # the hub's page acts as the person
         status, done = http(base + "/api/agora/handover", {"from_agent": OLD, "to_agent": NEW, "reason": "page", "tasks": [ids[0]]},
                             headers=page)
-        assert status == 200 and done["ok"] and done["by"] == "luis" and done["owner_moved"] == [ids[0]]
+        assert status == 200 and done["ok"] and done["by"] == "person" and done["owner_moved"] == [ids[0]]
         assert ag.task({"task_id": ids[0]})["task"]["owner"] == NEW
         evs = hub.events.query(type="agora.handover", limit=10)
         evs = evs.get("events", evs) if isinstance(evs, dict) else evs

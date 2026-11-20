@@ -290,7 +290,7 @@ def test_agents_in_call():
     assert f("mcp__hoard-hub__hub_agora_heartbeat", {"agent": "claude", "doing": "x"}) == ["claude"]
     assert f("hub_agora_handover", json.dumps({"agent": "a-one", "from_agent": "dead", "to_agent": "b-two"})) == ["a-one"]
     assert f("exec", 'await tools.hub_agora_post({\\"agent\\": \\"codex-relevo\\", \\"body\\": \\"x\\"})') == ["codex-relevo"]
-    assert f("Bash", "python scripts/agora.py --as luis board") == []                      # never the person
+    assert f("Bash", "python scripts/agora.py --as fixture-owner board", "fixture-owner") == []                      # never the person
     assert f("Bash", "python tool.py --as reviewer") == []                                 # not an Ágora call
     assert f("Bash", "python scripts/agora.py --as '$AGENT' board") == []                  # a placeholder is no id
 
@@ -336,7 +336,7 @@ def test_explicit_binding_wins_persists_and_can_be_removed(roots, clock, tmp_pat
     assert again.view(force=True)["agents"]["codex-sparks"]["binding"] == "inferred"
     assert json.loads((tmp_path / "agent_watch.json").read_text(encoding="utf-8"))["bindings"] == {"cursor:abc-123": "cursor"}
 
-    for bad in ("Not An Id", "luis", "x"):
+    for bad in ("Not An Id", "person", "x"):
         with pytest.raises(aw.WatchError) as exc:
             again.bind("cursor:abc-123", bad)
         assert exc.value.status == 400
@@ -385,29 +385,29 @@ def test_agent_with_several_sessions_shows_the_one_that_needs_attention(roots, c
 # ---- stronger redaction and clean titles ------------------------------------------------------------------------
 
 def test_snippet_masks_passwords_numbers_emails_and_sudoers():
-    assert snippet("usuario luis password 20001234") == "usuario luis password ***"
+    assert snippet("usuario person password 20001234") == "usuario person password ***"
     assert snippet("mi contraseña es hunter22x, y luego despliega") == "mi contraseña ***, y luego despliega"
     assert snippet("La clave: abc def. Sigue con el bug") == "La clave ***. Sigue con el bug"
     assert snippet("el TOKEN de acceso vale zzz; ok") == "el TOKEN ***; ok"
     assert snippet("llama al 600123456 o al 12345") == "llama al *** o al 12345"       # six digits or more only
-    assert snippet("escribe a luis.m+x@example.co.uk ya") == "escribe a *** ya"
-    assert snippet("usuario luis ALL=(ALL) NOPASSWD: ALL") == ""
-    assert snippet("hecho\nluis ALL=(ALL:ALL) ALL\n/etc/sudoers.d/luis") == "hecho"
+    assert snippet("escribe a person.m+x@example.co.uk ya") == "escribe a *** ya"
+    assert snippet("usuario person ALL=(ALL) NOPASSWD: ALL") == ""
+    assert snippet("hecho\nluis ALL=(ALL:ALL) ALL\n/etc/sudoers.d/person") == "hecho"
     assert snippet("export HF=hf_" + "a" * 30) == ""
     assert snippet("curl -H 'Authorization: Bearer abcdef0123456789'") == ""
     assert snippet("Bearer abcdef0123456789xyz") == ""
-    msg = "mi usuario es luis y la contraseña 20001234\nluis ALL=(ALL) NOPASSWD: ALL\nlevanta el servidor"
+    msg = "mi usuario es person y la contraseña 20001234\nluis ALL=(ALL) NOPASSWD: ALL\nlevanta el servidor"
     out = snippet(msg)
     assert "20001234" not in out and "NOPASSWD" not in out and out.endswith("levanta el servidor")
 
 
 def test_titles_and_snippets_in_every_view_are_masked(roots, clock):
-    secret = "Entra con luis y la contraseña 20001234\nluis ALL=(ALL) NOPASSWD: ALL\nescribe a luis@example.com\nArregla el bucle"
+    secret = "Entra con person y la contraseña 20001234\nluis ALL=(ALL) NOPASSWD: ALL\nescribe a person@example.com\nArregla el bucle"
     codex_file(roots["codex"], cx_head(NOW - 90, prompt=secret) + [
         cx_start(NOW - 60), cx_exec(NOW - 50, "c1", "ssh root@host.example.org -p 22222222"),
         cx_msg(NOW - 40, "assistant", "Tu clave 99887766 y el correo a@b.io")], NOW - 40)
     blob = json.dumps(watch(roots, clock).view(force=True))
-    for leak in ("20001234", "NOPASSWD", "luis@example.com", "root@host.example.org", "22222222", "99887766", "a@b.io"):
+    for leak in ("20001234", "NOPASSWD", "person@example.com", "root@host.example.org", "22222222", "99887766", "a@b.io"):
         assert leak not in blob, leak
     assert "Arregla el bucle" in blob
 

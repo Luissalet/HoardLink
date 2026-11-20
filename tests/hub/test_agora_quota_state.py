@@ -46,7 +46,7 @@ def _report(ag, remaining, reset_hours=24, measurement="measured", provider="cur
 
 def test_provider_of_an_agent_id():
     assert Agora._quota_provider("cursor-agora") == "cursor" and Agora._quota_provider("codex-ayuda") == "codex"
-    assert Agora._quota_provider("claude") == "claude" and Agora._quota_provider("luis") is None
+    assert Agora._quota_provider("claude") == "claude" and Agora._quota_provider("person") is None
     assert Agora._quota_provider("cursorish") is None
 
 

@@ -195,9 +195,9 @@ def test_the_person_comments_only_from_the_page(ag):
     task = _delivered(ag)
     item = {"commit": ag.first, "path": "src/app.py", "line": 11, "body": "from the page"}
     with pytest.raises(AgoraError) as refused:
-        ag.review_comment_send({"agent": "luis", "task_id": task["id"], "comments": [item]})
+        ag.review_comment_send({"agent": "person", "task_id": task["id"], "comments": [item]})
     assert refused.value.status == 403
-    out = ag.review_comment_send({"agent": "luis", "_person": True, "task_id": task["id"], "comments": [item]})
+    out = ag.review_comment_send({"agent": "person", "_person": True, "task_id": task["id"], "comments": [item]})
     assert out["delivery"]["mentioned"] == ["builder"]
 
 
@@ -294,10 +294,10 @@ def test_http_routes_and_mcp_tools(tmp_path):
             headers=page)
         assert status == 200 and body["count"] == 1 and body["delivery"]["mentioned"] == ["builder"], body
         status, body = http(base + "/api/agora/review_comment_send", {
-            "agent": "luis", "task_id": task["id"], "comments": [{"path": "src/app.py", "line": 11, "body": "x"}]})
+            "agent": "person", "task_id": task["id"], "comments": [{"path": "src/app.py", "line": 11, "body": "x"}]})
         assert status == 401
         status, body = http(base + f"/api/agora/review_comments?task_id={task['id']}")
-        assert status == 200 and body["comments"][0]["author"] == "luis"
+        assert status == 200 and body["comments"][0]["author"] == "person"
         shown = tools.call(hub, "hub_agora_review_diff", {"task_id": task["id"], "summary_only": True})
         assert shown["commits"][0]["stats"]["files"] == 2
         sent = tools.call(hub, "hub_agora_review_comment_send", {
