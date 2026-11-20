@@ -1,5 +1,6 @@
 """Agent command-line contract and old-Hub compatibility."""
 
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,20 @@ import pytest
 
 from hoard_link.hub import cli
 
-from .test_hub_and_server import served  # noqa: F401
+from ._hub_fakes import FakeApp, make_hub, serve
+
+
+@pytest.fixture
+def served(tmp_path):
+    with ExitStack() as cleanup:
+        app = FakeApp("fake")
+        cleanup.callback(app.stop)
+        hub = make_hub(tmp_path, [app])
+        cleanup.callback(hub.close)
+        server = serve(hub)
+        cleanup.callback(server.server_close)
+        cleanup.callback(server.shutdown)
+        yield hub, hub.config.url
 
 
 def test_autodiscovery_status_tool_and_arguments_file(served, monkeypatch, tmp_path, capsys):
@@ -47,7 +61,7 @@ def test_bad_argument_file_is_reported_before_contacting_hub(tmp_path, monkeypat
 
 
 def test_legacy_route_fallback_never_retries_a_call_after_timeout(monkeypatch):
-    client = cli.Client()
+    client = cli.Client(hub_url="http://127.0.0.1:1")
     calls = []
 
     def old_hub(path, body, *, timeout):
@@ -68,6 +82,32 @@ def test_legacy_route_fallback_never_retries_a_call_after_timeout(monkeypatch):
     assert client.tool("hub_start_app", {"app": "fake"}) == (None, {"ok": False})
 
 
+def test_isolated_target_ignores_inherited_connection(served, monkeypatch, tmp_path, capsys):
+    hub, url = served
+    hub.write_url_file()
+    inherited_token = tmp_path / "unrelated-token"
+    inherited_token.write_text("unrelated", encoding="utf-8")
+    monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:1")
+    monkeypatch.setenv("HOARD_HUB_TOKEN_FILE", str(inherited_token))
+    monkeypatch.setenv("HOARD_HUB_DATA_DIR", hub.config.data_dir)
+    tool = ["tool", "hub_list_apps", "--json"]
+
+    assert cli.main(tool) == 0
+    result = capsys.readouterr()
+    assert json.loads(result.out)["ok"] and result.err.strip() == f"Hub: {url}"
+
+    monkeypatch.setenv("HOARD_HUB_DATA_DIR", str(tmp_path))
+    assert cli.main(tool) == 1
+    result = capsys.readouterr()
+    assert "No Hub URL" in json.loads(result.out)["error"] and not result.err
+
+    assert cli.main(["--data-dir", hub.config.data_dir, *tool]) == 0
+    assert capsys.readouterr().err.strip() == f"Hub: {url}"
+    assert cli.main([*tool, "--hub-url", url, "--token-file", hub.config.token_file]) == 0
+    assert capsys.readouterr().err.strip() == f"Hub: {url}"
+    assert not cli.Client(hub_url=url).token
+
+
 @pytest.mark.skipif(os.name != "nt", reason="The batch launcher only runs on Windows")
 def test_batch_launcher_preserves_failure_exit_code(served, monkeypatch, tmp_path):
     hub, _ = served
@@ -81,3 +121,4 @@ def test_batch_launcher_preserves_failure_exit_code(served, monkeypatch, tmp_pat
     completed = subprocess.run(f'cmd.exe /d /s /c "{invocation}"', cwd=tmp_path, capture_output=True, timeout=20)
     assert completed.returncode == 1, completed.stderr
     assert json.loads(completed.stdout)["status"] == 404
+    assert completed.stderr.decode("utf-8").strip() == f"Hub: {hub.config.url}"

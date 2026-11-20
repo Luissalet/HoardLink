@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import sys
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from .config import HubConfig
@@ -29,11 +29,25 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 class Client:
-    def __init__(self):
-        config = HubConfig.load()
-        self.url = (os.environ.get("HOARD_HUB_URL") or
-                    _read_setting(Path(config.data_dir) / "url") or config.url).rstrip("/")
-        self.token = _read_setting(Path(os.environ.get("HOARD_HUB_TOKEN_FILE") or config.token_file))
+    def __init__(self, *, hub_url=None, data_dir=None, token_file=None):
+        if hub_url is None:
+            selected_dir = data_dir if data_dir is not None else os.environ.get("HOARD_HUB_DATA_DIR")
+            if selected_dir:
+                folder = Path(selected_dir).expanduser()
+                hub_url = _read_setting(folder / "url")
+                if not hub_url:
+                    raise ValueError(f"No Hub URL in {folder / 'url'} / No hay una URL del Hub en ese fichero")
+                token_file = token_file or folder / "mcp-token"
+            else:
+                config = HubConfig.load()
+                hub_url = os.environ.get("HOARD_HUB_URL") or _read_setting(Path(config.url_file)) or config.url
+                token_file = token_file or os.environ.get("HOARD_HUB_TOKEN_FILE") or config.token_file
+        parsed = urlsplit(hub_url)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username is not None
+                or parsed.query or parsed.fragment or any(char.isspace() for char in hub_url)):
+            raise ValueError("Use an HTTP(S) Hub URL without credentials, query or fragment / Usa una URL HTTP(S) del Hub sin credenciales, consulta ni fragmento")
+        self.url = hub_url.rstrip("/")
+        self.token = _read_setting(Path(token_file)) if token_file else ""
         self.opener = build_opener(ProxyHandler({}), _NoRedirect())
 
     def request(self, path, body=None, *, timeout=90):
@@ -77,11 +91,20 @@ def _timeout(value):
 def _parser():
     parser = argparse.ArgumentParser(prog="hub.cmd", description="Hoard Hub commands for agents / Órdenes para agentes")
     parser.add_argument("--json", action="store_true", help="Machine-readable output")
+
+    def connection_options(target, *, default):
+        source = target.add_mutually_exclusive_group()
+        source.add_argument("--hub-url", default=default, help="Hub URL / URL del Hub")
+        source.add_argument("--data-dir", type=Path, default=default, help="Hub data directory / Carpeta de datos del Hub")
+        target.add_argument("--token-file", type=Path, default=default, help="Hub bearer file / Fichero de acceso al Hub")
+
+    connection_options(parser, default=None)
     commands = parser.add_subparsers(dest="command", required=True)
 
     def command(name, help_text):
         sub = commands.add_parser(name, help=help_text)
         sub.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+        connection_options(sub, default=argparse.SUPPRESS)
         return sub
 
     for name, help_text in [
@@ -164,13 +187,17 @@ def _human(command, body):
 def main(argv=None):
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.hub_url is not None and args.data_dir is not None:
+        parser.error("--hub-url and --data-dir are mutually exclusive / Elige --hub-url o --data-dir")
     status = None
     try:
         file = getattr(args, "args_file", None)
         arguments = json.loads(file.read_text(encoding="utf-8-sig")) if file else {}
         if not isinstance(arguments, dict):
             raise ValueError("Arguments must be a JSON object / Los argumentos deben ser un objeto JSON")
-        status, body = _run(Client(), args, arguments)
+        client = Client(hub_url=args.hub_url, data_dir=args.data_dir, token_file=args.token_file)
+        print(f"Hub: {client.url}", file=sys.stderr, flush=True)
+        status, body = _run(client, args, arguments)
     except (OSError, ValueError) as exc:
         body = {"ok": False, "error": str(exc)}
 
