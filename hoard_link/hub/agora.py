@@ -1221,13 +1221,23 @@ class Agora:
         wanted = [normalize_resource(r) for r in resources]
         live = self._live_locks()
         clashes = []
+        ceded_paths = set()
         for res in wanted:
             for lock in live:
                 if lock["owner"] != agent and conflicts(res, lock["resource"]):
+                    if (task_id is not None and res.startswith("path:") and lock["resource"].startswith("path:")
+                            and self.db.one("SELECT 1 FROM tasks WHERE id=? AND owner=? AND status='approved' "
+                                            "AND reviewed=1 AND submission_revision>0 "
+                                            "AND reviewed_submission_revision=submission_revision AND reviewed_commits=commits",
+                                            (lock["task_id"], lock["owner"]))):
+                        ceded_paths.add(lock["resource"])
+                        continue
                     clashes.append({"resource": res, "held": lock["resource"], "owner": lock["owner"],
                                     "task_id": lock["task_id"], "note": lock["note"], "expires": lock["expires"]})
         if clashes:
             return {"ok": False, "conflicts": clashes}
+        for path in sorted(ceded_paths):
+            self.db.execute("DELETE FROM locks WHERE resource=?", (path,))
         now = self.clock()
         for res in wanted:
             self.db.execute(
@@ -1235,7 +1245,7 @@ class Agora:
                 "ON CONFLICT(resource) DO UPDATE SET owner=excluded.owner, task_id=COALESCE(excluded.task_id, locks.task_id), "
                 "note=excluded.note, ttl_s=excluded.ttl_s, expires=excluded.expires",
                 (res, agent, task_id, note, ttl_s, now, now + ttl_s))
-        return {"ok": True, "locks": wanted}
+        return {"ok": True, "locks": wanted, **({"ceded_paths": sorted(ceded_paths)} if ceded_paths else {})}
 
     def _ttl(self, value: Any) -> int:
         if value in (None, ""):
@@ -2051,6 +2061,8 @@ class Agora:
         self._rearm_dependents(task["id"])
         fresh = self._task_row(task["id"])
         res = {"ok": True, "task": fresh, "locks": got["locks"]}
+        if got.get("ceded_paths"):
+            res["ceded_paths"] = got["ceded_paths"]
         if fresh["waiting_on"]:
             # Informs, never refuses: the owner may prepare work while the blockers finish.
             pending = [b for b in fresh["blocked_by"] if b["id"] in fresh["waiting_on"]]
