@@ -174,7 +174,8 @@ with the audience, constraints, starting material fingerprints and any context c
 in the form. Plans record the station and repository on the job, and `hub_order_metrics` groups returns and median
 task durations by station and repository.
 The [integration station](docs/INTEGRATION.md) compares focused tests against the committed main branch, preserves
-overlapping Git changes, verifies the merged case and closes the approved delivery in the Agora. Its receipts appear
+overlapping Git changes, verifies each repository's merged case and closes the approved delivery in the Agora.
+A delivery across multiple repositories has one receipt with the results for each repository. The receipts appear
 under System → Integrations. The station leaves the person's production gates to their existing interface.
 `hub_modules`
 and `hub_module_set` use declared native module switches and return an undo

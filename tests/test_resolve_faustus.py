@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from hoard_link.config import LinkConfig
-from tests.conftest import Router, make_link
+from tests.conftest import ISOLATED_HUB_PORT, Router, make_link
 
 HEALTHY = httpx.Response(200, json={"status": "healthy"})
 
@@ -204,7 +204,7 @@ def _placement(location: str, running: bool = False) -> httpx.Response:
 @pytest.mark.asyncio
 async def test_faustus_on_a_spark_is_found_through_the_hub():
     router = Router()
-    router.get(8810, "/api/placement", _placement("sparks"))
+    router.get(ISOLATED_HUB_PORT, "/api/placement", _placement("sparks"))
     router.get(7443, "/api/health", HEALTHY)
     router.get(7443, "/api/models", LLM_REGISTRY)
     llamacpp_ready(router)
@@ -219,15 +219,17 @@ async def test_the_hub_is_not_asked_when_faustus_answers_here_and_its_answer_nee
 
     calls = []
     router = Router()
-    router.get(8810, "/api/placement", lambda req: calls.append(req) or _placement("sparks"))
+    router.get(ISOLATED_HUB_PORT, "/api/placement", lambda req: calls.append(req) or _placement("sparks"))
     router.get(7000, "/api/health", HEALTHY)
     router.get(7000, "/api/models", LLM_REGISTRY)
     llamacpp_ready(router)
     link = make_link(router, config=LinkConfig(faustus_token="ody_test"))
     assert (await link.resolve("llm")).resolved and not calls
-    client = httpx.AsyncClient(transport=httpx.MockTransport(Router().get(8810, "/api/placement", _placement("pc"))))
+    pc = Router().get(ISOLATED_HUB_PORT, "/api/placement", _placement("pc"))
+    client = httpx.AsyncClient(transport=httpx.MockTransport(pc))
     assert await _faustus.placement_urls(client) == ()
-    client = httpx.AsyncClient(transport=httpx.MockTransport(Router().get(8810, "/api/placement", _placement("sparks", running=True))))
+    moving = Router().get(ISOLATED_HUB_PORT, "/api/placement", _placement("sparks", running=True))
+    client = httpx.AsyncClient(transport=httpx.MockTransport(moving))
     assert await _faustus.placement_urls(client) == ()                       # mid-move: nowhere yet
     client = httpx.AsyncClient(transport=httpx.MockTransport(Router()))
     assert await _faustus.placement_urls(client) == ()                       # no Hub
@@ -262,6 +264,7 @@ async def test_a_faustus_on_another_machine_gets_a_longer_health_probe(monkeypat
 async def test_link_reads_the_placement_with_the_rule_every_hoard_shares(document):
     from hoard_link import _faustus, where
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(Router().get(8810, "/api/placement", httpx.Response(200, json=document))))
+    router = Router().get(ISOLATED_HUB_PORT, "/api/placement", httpx.Response(200, json=document))
+    client = httpx.AsyncClient(transport=httpx.MockTransport(router))
     placed = where.placed("faustus", document)
     assert await _faustus.placement_urls(client) == ((placed,) if placed else ())

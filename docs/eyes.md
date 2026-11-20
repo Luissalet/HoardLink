@@ -51,6 +51,9 @@ every view; `resolved.camera` holds it in absolute numbers. Rendered by Blender 
 **3MF.** The Hub uses trimesh and its 3MF dependencies to read the build, then renders its geometry in Blender.
 The preview follows the build transforms and converts the declared unit to metres. Print materials and colour
 assignments are unavailable in this preview. For a topology or print-volume assessment use `print-mesh`.
+Declare the model's front with the same `front_axis` option in the 3MF build's Z-up coordinates. A 3MF producer
+can also set `<metadata name="hoard:FrontAxis">+y</metadata>` before the resources in `3D/3dmodel.model`,
+with `xmlns:hoard="urn:hoard:eyes"` on the model. An explicit or saved look declaration takes precedence.
 
 **Web.** Pages from disk are served on a temporary local port so relative links and fetches work. `interaction`
 steps are `{click}`, `{fill: [selector, text]}`, `{press}`, `{hover}`, `{scroll}`, `{select: [selector, value]}` and

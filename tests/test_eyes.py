@@ -439,7 +439,9 @@ def test_3mf_renders_z_up_with_units_and_build_transforms(eyes, tmp_path):
     mesh = tmp_path / "solid.3mf"
     with ZipFile(mesh, "w") as archive:
         archive.writestr("3D/3dmodel.model", """
-          <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unit="centimeter">
+          <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+                 xmlns:hoard="urn:hoard:eyes" unit="centimeter">
+            <metadata name="hoard:FrontAxis">+y</metadata>
             <resources><object id="1" type="model"><mesh><vertices>
                 <vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/>
                 <vertex x="0" y="2" z="0"/><vertex x="0" y="0" z="3"/>
@@ -451,11 +453,17 @@ def test_3mf_renders_z_up_with_units_and_build_transforms(eyes, tmp_path):
           </model>""")
     result = eyes.look({"path": str(mesh), "views": ["front"], "material": "neutral", "size": 128, "wait_s": 60})
     assert result["status"] == "done", result
+    assert result["piece"]["front_axis_source"] == "embedded"
+    assert abs(result["resolved"]["turn"]) == 180
     facts = result["facts"]
     assert facts["source_unit"] == "centimeter" and facts["geometry_only"]
     assert facts["dimensions_m"] == pytest.approx([.01, .02, .03])
-    assert facts["bounds_m"][0] == pytest.approx([.10, .20, .30])
+    assert facts["bounds_m"][0] == pytest.approx([-.11, -.22, .30])
     assert Path(result["views"][0]["path"]).is_file()
+    override = eyes.look({"same_as": result["id"], "front_axis": "-y"})
+    assert override["status"] == "done" and override["piece"]["front_axis_source"] == "declared"
+    assert override["resolved"]["turn"] == 0
+    assert override["facts"]["bounds_m"][0] == pytest.approx([.10, .20, .30])
 
 
 def test_web_widths_and_interaction(eyes: EyesFacet, tmp_path: Path) -> None:

@@ -163,17 +163,21 @@ def catalogue() -> list[dict[str, Any]]:
             "name": "hub_service_start",
             "description": "Start a local backend server without Faustus / arrancar ComfyUI, Ollama o un servidor.\n"
                            "id from hub_services: 'comfyui@8188' (any port; other ports get their own folders), "
-                           "'ollama' or 'cmd:<id>' from ~/.hoard/backends.json. gpu: 'auto' (most free memory) or an "
-                           "index, ComfyUI only. wait_s waits until it answers (max 300).",
+                           "'ollama' or 'cmd:<id>' from ~/.hoard/backends.json. gpu: 'auto' (uncommitted VRAM) or an "
+                           "index, ComfyUI only. lease_id attaches a granted reservation to this process until it stops. "
+                           "wait_s waits until it answers (max 300).",
             "inputSchema": {"type": "object", "properties": {
                 "id": {"type": "string"}, "gpu": {"type": ["string", "integer"], "default": "auto"},
+                "lease_id": {"type": "string"},
                 "wait_s": {"type": "number", "default": 0}}, "required": ["id"], "additionalProperties": False},
         },
         {
             "name": "hub_service_stop",
             "description": "Stop a backend server the Hoard family started / parar un servidor local arrancado aqui.\n"
-                           "One started by hand or by Faustus is refused (stop it where it runs).",
-            "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
+                           "One started by hand or by Faustus is refused (stop it where it runs). "
+                           "Use expected_pid from the start undo to stop only that process.",
+            "inputSchema": {"type": "object", "properties": {
+                "id": {"type": "string"}, "expected_pid": {"type": "integer"}},
                             "required": ["id"], "additionalProperties": False},
         },
         {
@@ -755,8 +759,9 @@ def handlers(hub: Hub) -> dict[str, Callable[[dict[str, Any]], Any]]:
         "hub_services": lambda a: hub.services(),
         "hub_gpu_memory": lambda a: hub.gpu_memory(),
         "hub_service_start": lambda a: hub.service_start(str(a.get("id") or ""), gpu=a.get("gpu"),
-                                                         wait_s=float(a.get("wait_s") or 0), automatic=bool(a.get("_automatic"))),
-        "hub_service_stop": lambda a: hub.service_stop(str(a.get("id") or "")),
+                                                         wait_s=float(a.get("wait_s") or 0),
+                                                         automatic=bool(a.get("_automatic")), lease_id=a.get("lease_id")),
+        "hub_service_stop": lambda a: hub.service_stop(str(a.get("id") or ""), expected_pid=a.get("expected_pid")),
         "hub_rescan": lambda _: {"ok": True, "apps": [a.id for a in hub.rescan()]},
         "hub_profile_list": lambda _: _compact_profiles(hub.profiles_status()),
         "hub_profile_patch": lambda a: hub.profile_patch(str(a.get('name') or ''), a.get('apps', {}), a.get('desktop', {})),

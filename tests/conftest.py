@@ -12,6 +12,9 @@ from hoard_link.config import LinkConfig
 from hoard_link.link import Link
 
 
+ISOLATED_HUB_PORT = 1
+
+
 class FakeClock:
     """A controllable clock + no-delay sleep for wait_idle() tests."""
 
@@ -113,11 +116,9 @@ def _no_real_toasts():
 
 @pytest.fixture(autouse=True)
 def _no_real_hub(monkeypatch):
-    """Never reach (or spawn) a real Hoard Hub from the test suite: the GPU
-    lease client talks to 127.0.0.1:8810, which in these tests is either
-    nothing or a route on a MockTransport."""
+    """Tests that need a live Hub supply their own loopback URL."""
     monkeypatch.setenv("HOARD_HUB_AUTOSTART", "0")
-    monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:8810")
+    monkeypatch.setenv("HOARD_HUB_URL", f"http://127.0.0.1:{ISOLATED_HUB_PORT}")
     # The placement lookup (where Faustus lives when the Hub moved it to a Spark) must not read the real Hub either.
     from hoard_link import where
     where.forget()

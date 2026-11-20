@@ -623,16 +623,18 @@ class Launcher:
             return ""
         return data.decode("utf-8", errors="replace")[-chars:]
 
+    def comfy_gpus(self) -> set[int]:
+        return {int(st["gpu"]) for sid, st in self._state().items()
+                if sid.startswith("comfyui@") and st.get("gpu") is not None
+                and process_alive(int(st.get("pid") or 0), st.get("created"))}
+
     def pick_gpu(self, exclude: Optional[set[int]] = None) -> Optional[int]:
         """The GPU with the most free memory, skipping ones another ComfyUI
         the family started already uses (when there is any other left)."""
         gpus = list_gpus()
         if not gpus:
             return None
-        busy = set(exclude or ())
-        for sid, st in self._state().items():
-            if sid.startswith("comfyui@") and st.get("gpu") is not None and process_alive(int(st.get("pid") or 0), st.get("created")):
-                busy.add(int(st["gpu"]))
+        busy = set(exclude or ()) | self.comfy_gpus()
         pool = [g for g in gpus if g["index"] not in busy] or gpus
         return max(pool, key=lambda g: g["free_mb"])["index"]
 

@@ -21,6 +21,7 @@ SUITE_LOCK = Path(tempfile.gettempdir()) / "hoard-integration-test-slot.json"
 MARKERS = "not (inference or live_model or gpu)"
 CONFIG = ".hoard-integration.json"
 TIMEOUT = 300
+BATCH_SIZE = 40
 EXCLUDED_ENV = ("AGORA_", "HOARD_HUB_", "PYTEST_", "GIT_DIR", "GIT_WORK_TREE",
                 "GIT_INDEX_FILE", "GIT_COMMON_DIR", "PYTHONPATH", "VIRTUAL_ENV")
 
@@ -55,8 +56,6 @@ def tests_for(delta, available, declared, config):
     contract = sorted(selected - inference)
     if not contract:
         raise IntegrationError("No affected contract test was selected")
-    if len(selected) > 40:
-        raise IntegrationError("More than 40 test files match. Narrow the repository path map.")
     return {"contract": contract, "inference": sorted(inference)}
 
 

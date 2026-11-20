@@ -86,12 +86,16 @@ class Lease:
     pid: Optional[int] = None
     pid_created: Optional[float] = None
     note: str = ""
+    process_bound: bool = False
+    service_lease: Optional[str] = None
+    service_target: Optional[str] = None
+    avoid_gpus: tuple[int, ...] = ()
 
     def to_dict(self, now: Optional[float] = None) -> dict[str, Any]:
         d = asdict(self)
         d["lease_id"] = self.id
         if now is not None:
-            d["expires_in_s"] = max(0, int(self.expires_at - now))
+            d["expires_in_s"] = None if self.process_bound else max(0, int(self.expires_at - now))
         return d
 
 
@@ -285,7 +289,11 @@ class LeaseArbiter:
         return out
 
     def _reserved(self, index: int) -> int:
-        return sum(l.vram_mb for l in self._leases.values() if l.state == "granted" and l.gpu == index)
+        return sum(self._additional(l) for l in self._leases.values() if l.state == "granted" and l.gpu == index)
+
+    def _additional(self, lease: Lease) -> int:
+        parent = self._leases.get(lease.service_lease or "")
+        return max(0, lease.vram_mb - parent.vram_mb) if parent else lease.vram_mb
 
     def _available(self, g: _Gpu, extra_reserved: int = 0) -> int:
         reserved = self._reserved(g.index) + extra_reserved
@@ -355,7 +363,7 @@ class LeaseArbiter:
         now = self._now()
         gone: list[tuple[Lease, str]] = []
         for lease in list(self._leases.values()):
-            if lease.expires_at <= now:
+            if not lease.process_bound and lease.expires_at <= now:
                 gone.append((lease, "expired" if lease.state == "granted" else "abandoned in queue"))
             elif lease.pid and not self._alive(lease.pid, lease.pid_created):
                 gone.append((lease, f"owner process {lease.pid} is gone"))
@@ -363,7 +371,17 @@ class LeaseArbiter:
             self._leases.pop(lease.id, None)
             self.reaped = (self.reaped + [{"lease_id": lease.id, "owner": lease.owner, "purpose": lease.purpose,
                                            "reason": why, "at": now}])[-20:]
-        return bool(gone)
+        orphaned = [lease.id for lease in self._leases.values()
+                    if lease.service_lease and lease.service_lease not in self._leases]
+        for lease_id in orphaned:
+            lease = self._leases[lease_id]
+            if lease.state == "granted":
+                lease.service_lease = None
+            else:
+                del self._leases[lease_id]
+        if gone or orphaned:
+            self._cond.notify_all()
+        return bool(gone or orphaned)
 
     def _candidates(self, lease: Lease, gpus: list[_Gpu]) -> list[_Gpu]:
         req = lease.gpu_request
@@ -376,7 +394,18 @@ class LeaseArbiter:
         changed = False
         blocked: set[int] = set()
         now = self._now()
+        busy = {l.service_lease for l in self._leases.values() if l.state == "granted" and l.service_lease}
         for lease in self._queue():
+            if lease.service_lease and lease.service_lease in busy:
+                continue
+            additional = self._additional(lease)
+            if lease.service_lease and not additional:
+                # A reserved service can use its own budget even while another
+                # request is waiting for that card to become free.
+                self._grant(lease, self._leases[lease.service_lease].gpu, now)
+                busy.add(lease.service_lease)
+                changed = True
+                continue
             if self._inventory_error:
                 note = f"GPU memory could not be verified: {self._inventory_error}; request remains queued"
                 if lease.note != note:
@@ -390,10 +419,12 @@ class LeaseArbiter:
                 continue
             cands = [g for g in self._candidates(lease, gpus) if g.index not in blocked]
             fits = [(self._available(g), g) for g in cands]
-            fits = [(avail, g) for avail, g in fits if avail >= lease.vram_mb]
+            fits = [(avail, g) for avail, g in fits if avail >= additional]
             if fits:
-                fits.sort(key=lambda ag: (-ag[0], ag[1].index))  # most room first: spreads the load
+                fits.sort(key=lambda ag: (ag[1].index in lease.avoid_gpus, -ag[0], ag[1].index))
                 self._grant(lease, fits[0][1].index, now)
+                if lease.service_lease:
+                    busy.add(lease.service_lease)
                 changed = True
             else:
                 blocked.update(g.index for g in self._candidates(lease, gpus))
@@ -429,13 +460,14 @@ class LeaseArbiter:
     def _reply(self, lease: Lease) -> dict[str, Any]:
         gpu_uuid = next((g.uuid for g in self._inv[1] if g.index == lease.gpu and g.uuid), None)
         return {"ok": True, "lease_id": lease.id, "state": lease.state, "gpu": lease.gpu, "gpu_uuid": gpu_uuid,
-                "expires_at": lease.expires_at, "position": self._position(lease),
+                "expires_at": None if lease.process_bound else lease.expires_at, "position": self._position(lease),
                 "lease": lease.to_dict(self._now())}
 
     # -- public API ----------------------------------------------------------
     def request(self, owner: str = "", purpose: str = "", vram_mb: int = 0, gpu: Any = None, priority: int = 0,
                 ttl_s: Optional[float] = None, wait: bool = False, pid: Optional[int] = None,
-                lease_id: Optional[str] = None, wait_s: Optional[float] = None) -> dict[str, Any]:
+                lease_id: Optional[str] = None, wait_s: Optional[float] = None, *,
+                service: Optional[str] = None, avoid_gpus: tuple[int, ...] = ()) -> dict[str, Any]:
         """New lease, or (with ``lease_id``) the current state of one that is
         already queued — that is how a client keeps waiting without losing
         its place. ``wait`` long-polls up to 25 s for a grant."""
@@ -448,7 +480,16 @@ class LeaseArbiter:
                 if lease.state == "queued":
                     lease.expires_at = self._now() + QUEUE_KEEPALIVE_S
             else:
+                parent = next((l for l in self._leases.values()
+                               if service and l.process_bound and l.purpose == service), None)
+                if parent:
+                    if parse_gpu_request(gpu) not in ("any", parent.gpu):
+                        raise LeaseError("The requested GPU differs from the service GPU")
+                    gpu = parent.gpu
                 lease = self._new(owner, purpose, vram_mb, gpu, priority, ttl_s, pid, gpus)
+                lease.service_lease = parent.id if parent else None
+                lease.service_target = service
+                lease.avoid_gpus = avoid_gpus
                 self._leases[lease.id] = lease
                 self._tick(save=True)
                 if lease.id not in self._leases:
@@ -535,6 +576,42 @@ class LeaseArbiter:
             self._save()
             return self._reply(lease)
 
+    def bind_process(self, lease_id: str, pid: int, *, service: Optional[str] = None) -> dict[str, Any]:
+        """Keep an internal service reservation until its exact process exits."""
+        with self._cond:
+            self._tick()
+            lease = self._leases.get(lease_id)
+            if lease is None or lease.state != "granted" or lease.service_lease:
+                raise LeaseError("A service needs a granted lease before binding its process")
+            created = pid_create_time(pid)
+            if not self._alive(pid, created):
+                raise LeaseError("The service process exited before its GPU reservation was bound")
+            lease.pid, lease.pid_created = pid, created
+            lease.process_bound = True
+            if service:
+                lease.owner, lease.purpose = "hub-service", service
+            self._save()
+            return self._reply(lease)
+
+    def reserve_service_for_work(self, job_id: str, service: str, vram_mb: int, gpu: Any) -> dict[str, Any]:
+        """Start a cold endpoint on the card already granted to its job."""
+        with self._cond:
+            gpus = self._tick()
+            job = self._leases.get(job_id)
+            if (not job or job.state != "granted" or job.gpu is None or job.service_lease
+                    or job.service_target != service or gpu not in ("any", job.gpu)):
+                raise LeaseError("The job has no matching GPU reservation for this service")
+            parent = self._new("hub-service", service, vram_mb, job.gpu, 0, 300, None, gpus)
+            device = next((g for g in gpus if g.index == job.gpu), None)
+            additional = max(0, parent.vram_mb - job.vram_mb)
+            if device is None or (additional and self._available(device) < additional):
+                raise LeaseError("GPU memory is unavailable for this service / No hay memoria de GPU para este servicio")
+            self._leases[parent.id] = parent
+            job.service_lease = parent.id
+            self._grant(parent, job.gpu, self._now())
+            self._save()
+            return self._reply(parent)
+
     def release(self, lease_id: str) -> dict[str, Any]:
         with self._cond:
             lease = self._leases.pop(str(lease_id or ""), None)
@@ -567,9 +644,20 @@ class LeaseArbiter:
                     "protected": g.index in self.protected_gpus, "uuid": g.uuid or None,
                     "reserved_mb": reserved, "base_used_mb": self._base_used.get(g.index, g.used_mb),
                     "available_mb": max(0, self._available(g)),
-                    "leases": sum(1 for l in self._leases.values() if l.state == "granted" and l.gpu == g.index),
+                    "leases": sum(1 for l in self._leases.values()
+                                  if l.state == "granted" and l.gpu == g.index and not l.service_lease),
                 })
-            granted = [l.to_dict(now) for l in self._ordered() if l.state == "granted"]
+            active = [l for l in self._ordered() if l.state == "granted"]
+            work = {l.service_lease: l for l in active if l.service_lease}
+            granted = []
+            for lease in active:
+                if lease.service_lease:
+                    continue
+                entry = lease.to_dict(now)
+                if job := work.get(lease.id):
+                    entry.update(vram_mb=max(lease.vram_mb, job.vram_mb),
+                                 startup_vram_mb=lease.vram_mb, work=job.to_dict(now))
+                granted.append(entry)
             queue = [dict(l.to_dict(now), position=i) for i, l in enumerate(self._queue(), 1)]
             return {"ok": True, "gpus": per_gpu, "inventory": bool(gpus), "leases": granted, "queue": queue,
                     "inventory_status": self._inventory_status, "inventory_error": self._inventory_error or None,

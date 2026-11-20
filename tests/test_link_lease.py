@@ -1,5 +1,4 @@
-"""Link takes a GPU lease only around a call that makes a server LOAD a
-model; a fake hub lives on port 8810 of the MockTransport."""
+"""Link takes a GPU lease around a model load through a fake Hub."""
 
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ import importlib
 lease_mod = importlib.import_module("hoard_link.lease")
 from hoard_link.config import CapabilityConfig, LinkConfig
 from hoard_link.errors import Unavailable
-from tests.conftest import Router, make_link
+from tests.conftest import ISOLATED_HUB_PORT, Router, make_link
 
 GIB = 1024 * 1024 * 1024
 
@@ -28,10 +27,10 @@ class FakeHub:
         self.released: list[str] = []
 
     def install(self, router: Router) -> Router:
-        router.get(8810, "/api/health", httpx.Response(200, json={"ok": True, "service": "hoard-hub"}))
-        router.post(8810, "/api/lease/request", self._request)
-        router.post(8810, "/api/lease/release", self._release)
-        router.post(8810, "/api/lease/renew", lambda r: httpx.Response(200, json={"ok": True, "lease_id": "L1"}))
+        router.get(ISOLATED_HUB_PORT, "/api/health", httpx.Response(200, json={"ok": True, "service": "hoard-hub"}))
+        router.post(ISOLATED_HUB_PORT, "/api/lease/request", self._request)
+        router.post(ISOLATED_HUB_PORT, "/api/lease/release", self._release)
+        router.post(ISOLATED_HUB_PORT, "/api/lease/renew", lambda r: httpx.Response(200, json={"ok": True, "lease_id": "L1"}))
         return router
 
     def _request(self, request: httpx.Request) -> httpx.Response:
@@ -103,7 +102,7 @@ async def test_lease_disabled_in_config():
 @pytest.mark.asyncio
 async def test_no_hub_falls_back_and_the_call_still_works(monkeypatch, caplog):
     monkeypatch.setattr(lease_mod, "gpu_free_mb", lambda: [])
-    router = ollama(Router(), [], [{"name": "m", "size": GIB}])   # nothing on 8810
+    router = ollama(Router(), [], [{"name": "m", "size": GIB}])   # no Hub in this mock
     link = make_link(router, config=LOAD_CFG)
     with caplog.at_level("WARNING", logger="hoard_link.lease"):
         res = await link.chat([{"role": "user", "content": "hi"}])
@@ -123,8 +122,8 @@ async def test_queued_past_timeout_is_unavailable():
 @pytest.mark.asyncio
 async def test_hub_refusal_loads_without_a_lease():
     router = ollama(Router(), [], [{"name": "m", "size": GIB}])
-    router.get(8810, "/api/health", httpx.Response(200, json={"service": "hoard-hub"}))
-    router.post(8810, "/api/lease/request", httpx.Response(400, json={"ok": False, "error": "can never fit"}))
+    router.get(ISOLATED_HUB_PORT, "/api/health", httpx.Response(200, json={"service": "hoard-hub"}))
+    router.post(ISOLATED_HUB_PORT, "/api/lease/request", httpx.Response(400, json={"ok": False, "error": "can never fit"}))
     res = await make_link(router, config=LOAD_CFG).chat([{"role": "user", "content": "hi"}])
     assert res.text == "hola"
 

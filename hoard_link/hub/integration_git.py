@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
@@ -73,6 +74,71 @@ def ancestor(repo, older, newer):
     return git(repo, "merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
 
 
+def delivery_repositories(agora, task, repo_hint=None):
+    """Associate every submitted commit with the registered branch that contains it."""
+    refs = task.get("commits") or []
+    branch = task.get("branch")
+    if not branch or not refs or not all(re.fullmatch(r"[0-9a-fA-F]{7,64}", ref) for ref in refs):
+        return {}
+    registered = getattr(agora, "registered_repositories", lambda: [])()
+    entries = {Path(item["path"]).resolve(): item["name"] for item in registered}
+    for name in (task.get("repo"), repo_hint):
+        if name and (path := agora.repo_lookup(name)):
+            entries.setdefault(Path(path).resolve(), name)
+    found = {}
+    for repo, name in entries.items():
+        try:
+            tip = branch_tip(repo, branch)
+        except IntegrationError:
+            continue
+        if not any(tip.startswith(ref.lower()) for ref in refs):
+            continue
+        commits = [ref for ref in refs if tip.startswith(ref.lower()) or ancestor(repo, ref, tip)]
+        found[repo] = (name, commits)
+    if found and set(refs) - {ref for _, commits in found.values() for ref in commits}:
+        raise IntegrationError("Some submitted commits do not belong to a registered delivery branch")
+    return found
+
+
+def delivery_repository(agora, task, *, summary="", repositories=None):
+    """Resolve missing task metadata from an exact branch tip in the Git registry."""
+    declared = re.search(r"^Repository:[ \t]*(.+)$", summary, flags=re.MULTILINE)
+    if declared:
+        name = declared.group(1).strip()
+        if agora.repo_lookup and agora.repo_lookup(name):
+            return name
+    if repositories is None:
+        repositories = getattr(agora, "registered_repositories", lambda: [])()
+    refs = task.get("commits") or []
+    branch = task.get("branch")
+    if not refs or not all(re.fullmatch(r"[0-9a-fA-F]{7,64}", ref) for ref in refs) or not branch:
+        return ""
+    matches = []
+    for item in repositories:
+        try:
+            tip = branch_tip(item["path"], branch)
+        except IntegrationError:
+            continue
+        if any(tip.startswith(ref.lower()) for ref in refs):
+            matches.append(item["name"])
+    return matches[0] if len(matches) == 1 else ""
+
+
+def repository_commit_index(repositories, refs):
+    """Check historical refs in one Git call per repo after delivery branches are gone."""
+    matches = {ref: [] for ref in refs}
+    if not matches:
+        return matches
+    query = "".join(ref + "^{commit}\n" for ref in matches).encode("ascii")
+    for repo in repositories:
+        result = git(repo["path"], "cat-file", "--batch-check=%(objecttype)", check=False, data=query)
+        if result.returncode == 0:
+            for ref, kind in zip(matches, result.stdout.splitlines()):
+                if kind == b"commit":
+                    matches[ref].append(repo["name"])
+    return matches
+
+
 def registered_worktree(repo, branch):
     raw = git(repo, "worktree", "list", "--porcelain", "-z").stdout.decode("utf-8")
     for record in raw.split("\0\0"):
@@ -92,8 +158,9 @@ def worktree(repo, path, commit):
 
 
 def merge_candidate(work, head):
+    subject = git_text(work, "show", "-s", "--format=%s", head)
     git(work, "-c", "user.name=Luissalet", "-c", "user.email=luissalet@users.noreply.github.com",
-        "merge", "--no-edit", "--no-gpg-sign", head)
+        "merge", "--no-edit", "--no-gpg-sign", "-m", f"Merge delivery: {subject}", head)
     return git_text(work, "rev-parse", "HEAD")
 
 
