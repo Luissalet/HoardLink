@@ -375,6 +375,7 @@
     box.append(el("h4", "", tr("Plan", "Plan")), planTable(order));
     box.append(el("h4", "", tr("Piezas", "Pieces")), pieceGrid(order));
     const dl = decisionList(order);
+    if (window.HubOrderReceipts) box.append(window.HubOrderReceipts(order));
     if (dl) box.append(el("h4", "", tr("Tus decisiones", "Your decisions")), dl);
     return box;
   }

@@ -68,9 +68,9 @@ class ProductionFacet(Facet):
     def start(self):
         agora = self.hub.facet("agora")
         if agora is not None:
-            agora.agora.order_station_catalog = lambda: self.catalog({})["stations"]
+            agora.agora.order_station_catalog = lambda: self.catalog({}, link_skills=False)["stations"]
 
-    def catalog(self, args):
+    def catalog(self, args, *, link_skills=True):
         from .piece_checks import descriptor
 
         app_filter = args.get("app")
@@ -107,6 +107,10 @@ class ProductionFacet(Facet):
             limit = max(1, min(20, int(args.get("limit", 5))))
             result.update(from_type=source, to_type=target,
                           chains=_chains(stations, source, target, limit))
+        if link_skills:
+            from .skill_bench import link_catalogue
+
+            return link_catalogue(self.hub, result)
         return result
 
     def proxy_check(self, args):

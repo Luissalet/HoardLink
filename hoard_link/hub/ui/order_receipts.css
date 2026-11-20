@@ -1,0 +1,25 @@
+.ord-receipts {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  min-width: 0;
+}
+.ord-receipts summary { cursor: pointer; overflow-wrap: anywhere; padding-block: 5px; }
+.ord-receipts details { margin: 4px 0; }
+.ord-receipts h5 { color: var(--muted); margin: 12px 0 4px; }
+.ord-receipts pre {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow: auto;
+}
+.ord-receipts-bench label {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  max-width: 42rem;
+}
+.ord-receipts-bench label > * { min-width: 0; width: 100%; }

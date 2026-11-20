@@ -2058,11 +2058,14 @@ class AgoraConsoleFacet(Facet):
                 "dispatch": dispatch, "delivery_semantics": "queued; a mention does not wake an idle agent immediately"}
 
     def _create_worker(self, args: dict[str, Any], actor: str = "codex-console", *,
-                       worker_id: Optional[str] = None) -> dict[str, Any]:
+                       worker_id: Optional[str] = None, benchmark_prompt: Optional[str] = None) -> dict[str, Any]:
         from .worker_capabilities import PROVIDERS, candidates
 
         reserved: list[str] = []
         try:
+            if benchmark_prompt is not None:
+                return self._create_worker_now(args, actor, reserved, worker_id or str(uuid.uuid4()),
+                                               benchmark_prompt=benchmark_prompt)
             capability = args.get("capability")
             if capability is None:
                 return self._create_worker_now(args, actor, reserved, worker_id or str(uuid.uuid4()))
@@ -2084,7 +2087,8 @@ class AgoraConsoleFacet(Facet):
             with _STARTING_LOCK:
                 _STARTING_NAMES.difference_update(reserved)
 
-    def _create_worker_now(self, args: dict[str, Any], actor: str, reserved: list[str], worker_id: str) -> dict[str, Any]:
+    def _create_worker_now(self, args: dict[str, Any], actor: str, reserved: list[str], worker_id: str, *,
+                           benchmark_prompt: Optional[str] = None) -> dict[str, Any]:
         leader_id = str(args.get("leader_id") or "").strip().lower()
         model = str(args.get("model") or "").strip()
         effort = str(args.get("effort") or "").strip().lower()
@@ -2201,9 +2205,14 @@ class AgoraConsoleFacet(Facet):
                 "Ending the provider turn without an Agora delivery is incomplete. "
             )
         prompt += "If blocked, report the exact cause in the task thread and preserve the session/worktree. Return concrete evidence."
-        prompt += agora_worker_profiles.briefing(agora_worker_profiles.read(self), template)
-        prompt += f"\n\nTask: {task}"
-        prompt += self._saved_instructions(agent_id)
+        if benchmark_prompt is None:
+            prompt += agora_worker_profiles.briefing(agora_worker_profiles.read(self), template)
+            prompt += f"\n\nTask: {task}"
+            prompt += self._saved_instructions(agent_id)
+        else:
+            from .skill_bench import TEMPLATE
+
+            prompt, template = benchmark_prompt, TEMPLATE
         if leader_id == "codex":
             command = [executable, "exec", "--json", "--model", model, "--config", f'model_reasoning_effort="{effort}"',
                        "--config", 'approval_policy="never"', "--sandbox", "danger-full-access",
@@ -2235,8 +2244,13 @@ class AgoraConsoleFacet(Facet):
                 command.extend(["--effort", effort])
             command.extend(["--", prompt])
             model_source = "aliases of the installed Claude Code CLI + independent `claude --print` session"
-            worker_cwd = self._neutral_worker_dir(work_dir, worker_dir)
             process_env = self._runner_env()
+            if benchmark_prompt is None:
+                worker_cwd = self._neutral_worker_dir(work_dir, worker_dir)
+            else:
+                from .skill_bench import clean_worker
+
+                command, worker_cwd, process_env = clean_worker(command[:-2], prompt, process_env, worker_id)
         else:
             setup_failed = False
             try:
@@ -2711,7 +2725,10 @@ class AgoraConsoleFacet(Facet):
                         db.execute("DELETE FROM preferences WHERE leader_id='claude' AND model=?", (worker["model"],))
                         db.execute("DELETE FROM model_ranks WHERE leader_id='claude' AND model=?", (worker["model"],))
 
-            verification = self._verify_worker_delivery(worker)
+            from . import skill_bench
+
+            benchmark = worker["template"] == skill_bench.TEMPLATE
+            verification = {"issues": []} if benchmark else self._verify_worker_delivery(worker)
             with self._db_lock, self._db() as db:
                 current = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
                 if current["state"] in ("stopping", "stopped") or cause == "cancelled":
@@ -2727,6 +2744,9 @@ class AgoraConsoleFacet(Facet):
                                else cause if cause not in ("", "answered") else "process_exit")
                     reason = summary.get("error") or metrics["provider_error"] or ""
                     detail = f"{leader.title()}: turno interrumpido ({outcome}, salida {code}). {reason[:500]}".strip()
+                elif benchmark:
+                    state, outcome = "completed", "benchmarked"
+                    detail = "Prueba de skill terminada / Skill test finished."
                 elif verification["issues"]:
                     state, outcome = "incomplete", "incomplete"
                     detail = "Trabajo incompleto: " + " ".join(verification["issues"])
@@ -2744,6 +2764,11 @@ class AgoraConsoleFacet(Facet):
                             metrics["tool_success_count"], metrics["tool_failure_count"], metrics["provider_error"],
                             json.dumps(verification), time.time(), worker_id))
             self._record("worker", worker_id, state, detail)
+            if benchmark:
+                receipts = self.hub.facet("order_receipts")
+                if receipts is not None:
+                    skill_bench.finish(receipts, worker_id)
+                return
             if state != "completed":
                 self._post_worker_status(worker, detail, verification)
             if state == "failed" and leader == "faustus" and not worker["retry_count"] and verification["issues"]:

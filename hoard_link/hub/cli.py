@@ -13,6 +13,7 @@ from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from .config import HubConfig
+from .order_receipts import CONTEXT, request_context
 
 
 def _read_setting(path):
@@ -56,6 +57,9 @@ class Client:
             return None, {"ok": False, "error": "Invalid Hub response / Respuesta del Hub no válida"}
 
     def tool(self, name, arguments, *, timeout=90):
+        context = request_context()
+        if context is not None:
+            arguments = {CONTEXT: context, **arguments}
         status, body = self.request("/api/agent/tools/" + quote(name, safe=""), arguments, timeout=timeout)
         if status == 404 and body == {"ok": False, "error": "not found"}:
             # Older Hubs only have the shared endpoint. Never retry after loss of observation.
@@ -117,8 +121,10 @@ def _run(client, args, arguments):
         return client.tool(f"hub_{command}_app", {"app": args.app})
     app_path = "/api/apps/" + quote(args.app.strip().lower(), safe="")
     if command == "call":
+        context = arguments.get(CONTEXT, request_context())
         return client.request(app_path + "/call", {
-            "tool": args.tool, "arguments": arguments, "timeout_s": args.timeout,
+            "tool": args.tool, "arguments": {key: value for key, value in arguments.items() if key != CONTEXT},
+            **({CONTEXT: context} if context is not None else {}), "timeout_s": args.timeout,
             "reason": args.reason,
         }, timeout=args.timeout + 15)
     status, body = client.request(app_path + ("/status" if command == "state" else "/tools"))

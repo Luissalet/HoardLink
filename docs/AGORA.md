@@ -575,6 +575,10 @@ to every later job (`hub_agora_job`). Every agent write returns an undo token (`
 `hub_agora_gate_open`, `hub_agora_gate_split`, `hub_agora_order_decisions`; the decision itself has no tool. The Hub's
 **Orders** page puts the gates first. Reference: [ORDERS.md](ORDERS.md).
 
+[Order receipts and skill tests](order-receipts.md) record the original tool
+arguments and reply for a job, draft a procedure from those calls and compare
+a fresh worker's result against a previous step.
+
 ## Agent pages, direct messages and instructions
 
 Each agent has a page (`hub_agora_agent_profile`, `GET /api/agora/agent_profile?id=<agent>`) in one read: a header
