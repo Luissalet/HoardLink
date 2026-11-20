@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 
 from .. import proc
+from . import piece_checks_identity as identity_model
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}
 
@@ -139,6 +140,76 @@ def _similarity(first, second):
     return round(float(np.mean([np.dot(a, b) if a.any() or b.any() else 1.0 for a, b in zip(first, second)])), 5)
 
 
+def _reference(ref, signature):
+    from PIL import Image
+
+    path = Path(ref["path"]).expanduser()
+    if ref.get("time_s") is not None:
+        time_s = float(ref["time_s"])
+        if not math.isfinite(time_s) or time_s < 0:
+            raise ValueError("Reference time_s must be nonnegative and finite")
+        return signature(_crop(_frame(path, time_s), ref.get("region")))
+    with Image.open(path) as image:
+        return signature(_crop(image, ref.get("region")))
+
+
+def _identity_options(requirements, shot):
+    shared, local = requirements.get("identity"), shot.get("identity")
+    if shared is None and local is None:
+        return None
+    if any(options is not None and not isinstance(options, dict) for options in (shared, local)):
+        raise ValueError("identity must be an object")
+    return {**(shared or {}), **(local or {})}
+
+
+def _start_identity(options, shot, row, report):
+    refs = options.get("references", shot.get("references", []))
+    threshold = options.get("min_similarity")
+    if threshold is not None:
+        threshold = float(threshold)
+        if not 0 < threshold <= 1:
+            raise ValueError("Identity min_similarity must be greater than zero and at most one")
+    region = options.get("region", shot.get("region"))
+    row["identity"] = {"method": identity_model.METHOD, "references": refs, "region": region,
+                       "min_similarity": threshold, "samples": []}
+    if refs:
+        try:
+            return {"references": [_reference(ref, identity_model.prepare) for ref in refs], "samples": []}
+        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
+            report.add("identity", None, "The identity references could not be loaded.",
+                       "No se han podido cargar las referencias de identidad.", shot=row["shot"], detail=str(exc))
+    else:
+        report.add("identity", None, "Supply a subject crop from a character sheet or reference frame.",
+                   "Indica un recorte del sujeto en la hoja de personaje o en un fotograma de referencia.", shot=row["shot"])
+    return None
+
+
+def _report_identity(report, jobs):
+    if not jobs:
+        return
+    try:
+        output = identity_model.compare([job for _, job in jobs])
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        for row, _ in jobs:
+            report.add("identity", None, "The identity model could not complete the comparison.",
+                       "El modelo de identidad no ha podido completar la comparación.", shot=row["shot"], detail=str(exc))
+        return
+    for (row, _), scores in zip(jobs, output["scores"], strict=True):
+        details = row["identity"]
+        details["model"] = output["model"]
+        samples = details["samples"]
+        for sample, score in zip(samples, scores, strict=True):
+            sample.update(score)
+        threshold = details["min_similarity"]
+        pending = [sample["time_s"] for sample in samples if sample["similarity"] is None]
+        failed = [sample for sample in samples if threshold is not None and sample["similarity"] is not None
+                  and sample["similarity"] < threshold]
+        passed = False if failed else None if threshold is None or pending else True
+        report.add("identity", passed, "Compare subject features with the visual references.",
+                   "Coteja los rasgos del sujeto con las referencias visuales.",
+                   shot=row["shot"], minimum=threshold, details=failed, unmeasured_times_s=pending)
+
+
 def _shots(requirements, duration, fps):
     shots = requirements.get("shots")
     if shots is None:
@@ -156,8 +227,6 @@ def _shots(requirements, duration, fps):
 
 
 def check_video(path, requirements, report):
-    from PIL import Image
-
     size, duration, fps = _video_info(path)
     if not (math.isfinite(duration) and duration > 0 and math.isfinite(fps) and fps > 0):
         raise ValueError("Video duration and frame rate must be positive")
@@ -173,17 +242,21 @@ def check_video(path, requirements, report):
         raise ValueError("Use a threshold between zero and one and a positive sampling interval")
     report.measures.update(method="colour-gradient-histogram-v1", min_similarity=threshold, interval_s=interval)
     all_samples = []
+    identity_jobs = []
     for index, shot in enumerate(_shots(requirements, duration, fps), 1):
         label = str(shot.get("id", index))
-        references = []
-        for ref in shot.get("references", []):
-            with Image.open(Path(ref["path"]).expanduser()) as image:
-                references.append(_signature(_crop(image, ref.get("region"))))
+        references = [_reference(ref, _signature) for ref in shot.get("references", [])] if threshold is not None else []
         samples = []
-        all_samples.append({"shot": label, "samples": samples})
-        if threshold is None or not references:
+        row = {"shot": label, "samples": samples}
+        all_samples.append(row)
+        options = _identity_options(requirements, shot)
+        identity = _start_identity(options, shot, row, report) if options is not None else None
+        if identity is not None:
+            identity_jobs.append((row, identity))
+        if not references:
             report.add("visual-continuity", None, "Supply reference regions and a similarity threshold.",
                        "Indica regiones de referencia y un umbral de similitud.", shot=label)
+        if not references and identity is None:
             continue
         start, end = float(shot["start_s"]), min(float(shot["end_s"]), duration)
         # Do not sample the next shot at a cut or seek beyond the last decodable frame.
@@ -195,10 +268,18 @@ def check_video(path, requirements, report):
         if last - times[-1] > 0.5 / fps:
             times.append(last)
         for seconds in times:
-            signature = _signature(_crop(_frame(path, seconds), shot.get("region")))
-            score = max(_similarity(reference, signature) for reference in references)
-            samples.append({"time_s": round(seconds, 4), "similarity": score})
-        failed = [sample for sample in samples if sample["similarity"] < float(threshold)]
-        report.add("visual-continuity", not failed, "Compare visual similarity in the declared region.",
-                   "Coteja la similitud visual en la región declarada.", shot=label, details=failed)
+            frame = _frame(path, seconds)
+            time_s = round(seconds, 4)
+            if references:
+                signature = _signature(_crop(frame, shot.get("region")))
+                score = max(_similarity(reference, signature) for reference in references)
+                samples.append({"time_s": time_s, "similarity": score})
+            if identity is not None:
+                row["identity"]["samples"].append({"time_s": time_s})
+                identity["samples"].append(identity_model.prepare(_crop(frame, row["identity"]["region"])))
+        if references:
+            failed = [sample for sample in samples if sample["similarity"] < float(threshold)]
+            report.add("visual-continuity", not failed, "Compare visual similarity in the declared region.",
+                       "Coteja la similitud visual en la región declarada.", shot=label, details=failed)
     report.measures["shots"] = all_samples
+    _report_identity(report, identity_jobs)

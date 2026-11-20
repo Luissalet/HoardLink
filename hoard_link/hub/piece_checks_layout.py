@@ -31,7 +31,34 @@ _WEB_MEASURES = r"""() => {
     Array.from(e.labels || []).some(label => label.textContent.trim()) ||
     e.textContent.trim() || e.querySelector('img[alt]:not([alt=""])') ||
     e.getAttribute('title')?.trim() || (e.type === 'submit' && e.value);
-  const result = {accessibility: [], overflow: [], overlaps: [], images: [], fragments: [], links: []};
+  const result = {accessibility: [], overflow: [], page_overflow_elements: [], overlaps: [], images: [],
+    fragments: [], links: []};
+  const viewportWidth = innerWidth;
+  const pageWide = document.documentElement.scrollWidth > viewportWidth + 1;
+  const overflowing = new Map();
+  const reportPageOverflow = (e, rect, source) => {
+    if (!pageWide || rect.right <= viewportWidth + 1 || !rect.width || !rect.height) return;
+    let edge = rect.right;
+    for (let parent = e; parent && parent !== document.documentElement; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (style.position === 'fixed') return;
+      if ((parent !== e || source === 'text') && /^(hidden|clip|auto|scroll)$/.test(style.overflowX)) {
+        const box = parent.getBoundingClientRect();
+        edge = Math.min(edge, box.left + parent.clientLeft + parent.clientWidth);
+        if (edge <= viewportWidth + 1) return;
+      }
+    }
+    const via = select(e);
+    if (edge > (overflowing.get(e)?.right_px || 0)) {
+      overflowing.set(e, {selector: via, source, right_px: Math.round(edge * 100) / 100,
+        beyond_px: Math.round((edge - viewportWidth) * 100) / 100});
+    }
+  };
+  if (pageWide) {
+    for (const e of [document.body, ...document.body.querySelectorAll('*')]) {
+      if (visible(e)) reportPageOverflow(e, e.getBoundingClientRect(), 'element');
+    }
+  }
   if (!document.documentElement.lang) result.accessibility.push({selector: 'html', rule: 'html-lang'});
   if (!document.title.trim()) result.accessibility.push({selector: 'title', rule: 'document-title'});
   for (const e of document.querySelectorAll('a[href],button,input,select,textarea,img,[role=button]')) {
@@ -69,6 +96,7 @@ _WEB_MEASURES = r"""() => {
     range.selectNodeContents(node);
     for (const rect of range.getClientRects()) {
       if (!rect.width || !rect.height) continue;
+      reportPageOverflow(e, rect, 'text');
       const selector = select(e);
       for (let parent = e; parent && parent !== document.body; parent = parent.parentElement) {
         const style = getComputedStyle(parent);
@@ -84,6 +112,15 @@ _WEB_MEASURES = r"""() => {
       boxes.push({e, rect, selector});
     }
   }
+  for (const [e, item] of overflowing) {
+    // Report the first crossing, and a descendant if it pushes the edge farther out.
+    let covered = false;
+    for (let parent = e.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+      if ((overflowing.get(parent)?.right_px || 0) >= item.right_px - 1) { covered = true; break; }
+    }
+    if (!covered) result.page_overflow_elements.push(item);
+  }
+  result.page_overflow_elements.sort((a, b) => b.beyond_px - a.beyond_px);
   boxes.sort((a, b) => a.rect.top - b.rect.top);
   const pairs = new Set();
   for (let i = 0; i < boxes.length; i++) {
@@ -157,7 +194,8 @@ def check_web(path, requirements, report):
     for key, (en, es) in rules.items():
         failures = [{"size_px": row["size_px"], "items": row[key]} for row in rows if row[key]]
         report.add(key.replace("_", "-"), not failures, en, es, details=failures)
-    failures = [{"size_px": row["size_px"], "clipped": row["overflow"], "page_px": row["page_overflow_px"]}
+    failures = [{"size_px": row["size_px"], "clipped": row["overflow"], "page_px": row["page_overflow_px"],
+                 "elements": row["page_overflow_elements"]}
                 for row in rows if row["overflow"] or row["page_overflow_px"] > 1]
     report.add("overflow", not failures, "Check clipped text and horizontal page overflow.",
                "Comprueba el texto recortado y el desbordamiento horizontal.", details=failures)

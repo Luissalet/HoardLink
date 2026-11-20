@@ -1,4 +1,4 @@
-"""Model-free checks of production pieces and their declared requirements."""
+"""Reproducible checks of production pieces and their declared requirements."""
 
 from __future__ import annotations
 
@@ -229,7 +229,7 @@ class PieceChecksFacet(Facet):
         actor = {"agent": string, "language": {"enum": ["en", "es"]}}
         file = {**properties, "path": string, "kind": string}
         return [
-            _tool("hub_piece_validate", "Check a piece without a model. Comprueba una pieza sin modelo.",
+            _tool("hub_piece_validate", "Check a piece against its requirements. Comprueba los requisitos de una pieza.",
                   file),
             _tool("hub_piece_validate_record", "Check and record an order piece. Comprueba y anota una pieza de una orden.",
                   {**properties, **actor}, ("piece_id",), read=False),

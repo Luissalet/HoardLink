@@ -402,6 +402,62 @@ def test_mesh_views_and_repeatable_camera(eyes: EyesFacet, tmp_path: Path) -> No
     assert again["compare"]["pairs"] == 2
 
 
+def test_declared_front_is_reused_by_fingerprint_and_removed_by_undo(eyes, tmp_path, monkeypatch):
+    def render(kind, source, out, opts):
+        return {"views": [], "resolved": {**opts, "turn": eyes_render.FRONT_AXIS_TURNS.get(opts.get("front_axis"), 0)}}
+
+    monkeypatch.setattr(eyes_render, "look", render)
+    mesh = tmp_path / "model.glb"
+    renamed = tmp_path / "renamed.glb"
+    for path in (mesh, renamed):
+        path.write_bytes(b"same piece")
+    args = {"path": str(mesh), "front_axis": "-x"}
+    declared = eyes.look(args)
+    assert declared["piece"]["front_axis_source"] == "declared"
+    saved = eyes.look({"path": str(renamed)})
+    assert saved["piece"]["front_axis_look"] == declared["id"]
+    assert saved["resolved"]["turn"] == 90
+    repeated = eyes.look({"same_as": saved["id"]})
+    assert repeated["piece"]["front_axis_source"] == "repeated"
+    assert repeated["resolved"]["front_axis"] == "-x"
+    assert "front_axis" not in eyes.look({"same_as": saved["id"], "turn": 0})["piece"]
+    assert eyes.look({**args, "turn": 0})["ok"] is False
+    renamed.write_bytes(b"another revision")
+    assert "front_axis" not in eyes.look({"path": str(renamed)})["piece"]
+    forgotten = eyes.forget(declared["undo"]["arguments"])
+    assert "front_axis" not in eyes.look({"path": str(mesh)})["piece"]
+    eyes.forget(forgotten["undo"]["arguments"])
+    assert eyes.look({"path": str(mesh)})["resolved"]["front_axis"] == "-x"
+
+
+@pytest.mark.skipif(not eyes_render.find_program("blender"), reason="Blender not installed")
+def test_3mf_renders_z_up_with_units_and_build_transforms(eyes, tmp_path):
+    from zipfile import ZipFile
+
+    pytest.importorskip("trimesh")
+    pytest.importorskip("lxml")
+    mesh = tmp_path / "solid.3mf"
+    with ZipFile(mesh, "w") as archive:
+        archive.writestr("3D/3dmodel.model", """
+          <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unit="centimeter">
+            <resources><object id="1" type="model"><mesh><vertices>
+                <vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/>
+                <vertex x="0" y="2" z="0"/><vertex x="0" y="0" z="3"/>
+              </vertices><triangles>
+                <triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/>
+                <triangle v1="0" v2="3" v3="2"/><triangle v1="1" v2="2" v3="3"/>
+              </triangles></mesh></object></resources>
+            <build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 10 20 30"/></build>
+          </model>""")
+    result = eyes.look({"path": str(mesh), "views": ["front"], "material": "neutral", "size": 128, "wait_s": 60})
+    assert result["status"] == "done", result
+    facts = result["facts"]
+    assert facts["source_unit"] == "centimeter" and facts["geometry_only"]
+    assert facts["dimensions_m"] == pytest.approx([.01, .02, .03])
+    assert facts["bounds_m"][0] == pytest.approx([.10, .20, .30])
+    assert Path(result["views"][0]["path"]).is_file()
+
+
 def test_web_widths_and_interaction(eyes: EyesFacet, tmp_path: Path) -> None:
     pytest.importorskip("playwright")
     site = tmp_path / "site"

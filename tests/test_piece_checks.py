@@ -68,6 +68,87 @@ def test_video_checks_declared_cuts_and_preserves_sample_time(tmp_path, monkeypa
     assert checks.run_checks(tmp_path / "clip.mp4", "video", {**requirements, "shots": shots})["verdict"] == "unmeasured"
 
 
+def test_video_identity_uses_each_shots_references_and_timecodes(tmp_path, monkeypatch):
+    import random
+    import math
+
+    image = pytest.importorskip("PIL.Image")
+    draw = pytest.importorskip("PIL.ImageDraw")
+    np = pytest.importorskip("numpy")
+    subject = image.new("RGB", (384, 384), "white")
+    shapes = []
+    rng = random.Random(7)
+    for y in range(20, 350, 36):
+        for x in range(20, 350, 36):
+            shapes.append((x, y, rng.randint(3, 17), rng.randint(3, 17), rng.randint(0, 150)))
+    other = subject.copy()
+    shuffled = rng.sample(shapes, len(shapes))
+    for picture, ordered in ((subject, shapes), (other, shuffled)):
+        painter = draw.Draw(picture)
+        for (x, y, *_), (_, _, w, h, tone) in zip(shapes, ordered):
+            painter.ellipse((x, y, x + w, y + h), fill=(tone,) * 3)
+    ref = tmp_path / "face.png"
+    reference_frame = tmp_path / "reference.mp4"
+    subject.save(ref)
+    reference_crop = media.identity_model.prepare(subject)
+    other_crop = media.identity_model.prepare(other)
+    vectors = {reference_crop: np.array([1., 0.]), other_crop: np.array([.4, .916515])}
+    monkeypatch.setattr(media.identity_model, "compare", lambda shots: {
+        "model": {"type": "fixture"}, "scores": media.identity_model._scores(shots, vectors)})
+    monkeypatch.setattr(media, "_video_info", lambda path: ([384, 384], 2.0, 24.0))
+    monkeypatch.setattr(media, "_frame", lambda path, seconds: other if path != reference_frame and .5 <= seconds < 1
+                        else subject)
+    references = [{"path": str(ref)}]
+    requirements = {"duration_s": 2, "size_px": [384, 384], "interval_s": .5, "min_similarity": .98,
+                    "identity": {"min_similarity": .7}}
+    shots = [{"id": "turn", "start_s": 0, "end_s": 1, "references": references},
+             {"id": "cut", "start_s": 1, "end_s": 2, "references": references,
+              "identity": {"references": [{"path": str(reference_frame), "time_s": .25}]}}]
+    report = checks.run_checks(tmp_path / "video.mp4", "video", {**requirements, "shots": shots})
+    identity = [row for row in report["checks"] if row["id"] == "identity"]
+    assert [(row["shot"], row["verdict"]) for row in identity] == [("turn", "fail"), ("cut", "pass")]
+    assert identity[0]["details"][0]["time_s"] == .5
+    first, second = report["measures"]["shots"]
+    assert math.isclose(first["samples"][1]["similarity"], 1.0, abs_tol=.01)
+    assert first["identity"]["samples"][0]["similarity"] == 1.0
+    assert first["identity"]["samples"][1]["similarity"] == .4
+    assert second["identity"]["samples"][0]["similarity"] == 1.0
+
+
+def test_video_with_unconfigured_identity_keeps_the_other_checks(tmp_path, monkeypatch):
+    image = pytest.importorskip("PIL.Image")
+    monkeypatch.delenv("HOARD_HUB_IDENTITY_MODEL", raising=False)
+    portrait = image.effect_noise((64, 64), 35)
+    path = tmp_path / "reference.png"
+    portrait.save(path)
+    monkeypatch.setattr(media, "_video_info", lambda _: ([64, 64], 1, 12))
+    monkeypatch.setattr(media, "_frame", lambda *_: portrait)
+    result = checks.run_checks(tmp_path / "clip.mp4", "video", {"size_px": [64, 64],
+        "duration_s": 1, "references": [{"path": str(path)}], "min_similarity": .9, "identity": {"min_similarity": .7}})
+    assert _checks(result)["visual-continuity"]["verdict"] == "pass"
+    assert _checks(result)["identity"]["verdict"] == "unmeasured"
+
+
+def test_web_page_overflow_names_the_element_and_excludes_a_scroll_container():
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runtime:
+        try:
+            browser = runtime.chromium.launch(channel="chrome", headless=True)
+        except playwright.Error as exc:
+            pytest.skip(f"Chrome unavailable: {exc}")
+        with browser:
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            page.set_content("""
+                <body style="margin:0">
+                  <aside style="width:200px; overflow:auto"><div id="inside" style="width:700px">Scroll</div></aside>
+                  <section><div id="culprit" style="width:470px">
+                    <div style="width:100%">Shown in the offending box</div></div></section>
+                </body>
+                """)
+            assert page.evaluate(layout._WEB_MEASURES)["page_overflow_elements"] == [
+                {"selector": "#culprit", "source": "element", "right_px": 470, "beyond_px": 80}]
+
+
 def test_print_reuses_vulcan_measurements_without_guessing_walls(tmp_path, monkeypatch):
     class NativeMesh:
         faces = [1] * 4

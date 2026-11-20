@@ -19,9 +19,9 @@ tools are available by MCP and `POST /api/agent/tools/<tool>`.
 | --- | --- | --- |
 | `print-mesh` | `build_volume_mm: [x,y,z]`, `min_wall_mm` | Boundary and non-manifold edges, face orientation, dimension fit and the smallest sampled wall. The fit uses the orientation in the file. Vulcan's wall sample is an estimate and needs a closed mesh and a ray engine. STL and other unitless formats use millimetres and report the assumption. |
 | `game-mesh` | `max_triangles`, `bones: [name]`, `pivots: [nodeName]`, optional `skinned: true` | GLB/glTF triangle count, joint names, named node pivots, missing or invalid vertex influences on skinned meshes, and dimensions of each texture. Rigid nodes outside a skin have no vertex weights; a file with no skin passes the skin checks as not applicable unless `bones` or `skinned` asks for one. |
-| `video` | `size_px`, `duration_s`, optional `duration_tolerance_s`, `interval_s`, `min_similarity` and references | Clip format and visual continuity, with scores and exact sample times grouped by shot. |
+| `video` | `size_px`, `duration_s`, optional `duration_tolerance_s`, `interval_s`, `min_similarity`, references and `identity` | Clip format, visual continuity and subject feature matches, with scores and exact sample times grouped by shot. |
 | `image` | `size_px`, optional `alpha`, `neutral_background`, `neutral_ratio`, `views`, `view_boxes` | Pixel size, alpha-channel presence, ratio of neutral or transparent border pixels, and counts of separate files or declared non-blank regions. |
-| `web` | `viewports: [[w,h],...]`, optionally `resolve_remote` | Visible names, image alternatives, language and title, overlapping text, clipped text, horizontal overflow, broken links and images, and browser errors. Default sizes are 1440 × 900 and 390 × 844. |
+| `web` | `viewports: [[w,h],...]`, optionally `resolve_remote` | Visible names, image alternatives, language and title, overlapping text, clipped text and horizontal overflow (with selectors and pixels beyond the viewport), broken links and images, and browser errors. Default sizes are 1440 × 900 and 390 × 844. |
 | `slides` | Optional `slide_count`, `size_emu: [w,h]`, `resolve_remote` | PPTX title placeholders, image alternatives, overlapping boxes of the same kind, boxes outside the slide, image and link relationships, and editable words missing from the render. |
 | `document` | Optional `citations: {id: target}` and `resolve_remote` | Local paths and HTTP targets, numbered Markdown references such as `[B1, B2]`, DOCX hyperlinks and PDF URI annotations. An HTTP denial or timeout is unresolved. Source reachability gives no verdict on the claim it supports. |
 
@@ -30,9 +30,26 @@ Regions use fractions of the frame or image. Set `region` on the clip or on
 each shot to exclude irrelevant background. For a cut, supply `shots` with
 `id`, `start_s`, `end_s`, `references` and optional `region` for each
 continuous span. Each shot starts a new sampling interval and includes its
-last decodable frame. The score compares colour and gradient histograms in
-the regions. A change in lighting, pose, background or framing can change
-the score. Identity and continuity details still need visual review.
+last decodable frame. The continuity score compares colour and gradient
+histograms in the regions.
+
+Set `identity: {min_similarity, region, references}` on the clip or a shot to
+compare the subject with a crop from the sheet or a reference frame. Use
+`time_s` on a reference to name a frame from a video directly. Shot settings
+override clip settings. Without an identity region or reference list the
+check uses the shot's continuity inputs. Supply a tight subject crop and
+references that cover the visible angles. DINOv2 compares subject features on the
+CPU and returns the best reference and its cosine similarity (0–1). The
+threshold applies to each sample. A flat crop or a missing model leaves the
+measurement pending. Calibrate the threshold for the piece and review the
+sampled frames when angle, framing or lighting change.
+
+**Identidad en vídeo y desbordamiento web.** La opción `identity` coteja los
+rasgos de cada muestra con un recorte de la hoja de personaje o de un
+fotograma de referencia. Devuelve la referencia más parecida, la puntuación
+y los segundos que no alcanzan el umbral. La comprobación de desbordamiento
+incluye el selector y los píxeles que sobresalen cuando identifica una caja
+o un fragmento de texto.
 
 A one-file character sheet needs `view_boxes` and an expected `views` count.
 Use the same coordinate format as for video regions. The inspector counts
@@ -55,7 +72,11 @@ revision that has no report in the note.
 
 Mesh inspection uses the detected Vulcan environment. Web checks use the
 Vitruvius browser engine headlessly on a loopback server. Video needs FFmpeg,
-FFprobe, Pillow and NumPy. Images use Pillow. PPTX uses python-pptx and
+FFprobe, Pillow and NumPy. For identity, set `HOARD_HUB_IDENTITY_MODEL` to a
+local DINOv2 directory containing `config.json` and `model.safetensors`.
+Set `HOARD_HUB_IDENTITY_PYTHON` if Torch, Transformers, NumPy and Pillow are
+installed in a separate Python environment. It uses the installed
+checkpoint and records its SHA-256. Images use Pillow. PPTX uses python-pptx and
 headless LibreOffice with a temporary profile, and PDF text and URI extraction
 use PyMuPDF. Missing engines leave a measurement pending. These checks do
-not start a Hoard service or request inference.
+not start a Hoard service or call the shared inference service.

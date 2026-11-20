@@ -44,6 +44,7 @@ MESH_VIEWS = {
     "top": None, "bottom": None,
 }
 DEFAULT_MESH_VIEWS = ("front", "front_right", "right", "back", "left", "front_left")
+FRONT_AXIS_TURNS = {"-y": 0.0, "-x": 90.0, "+y": 180.0, "+x": -90.0}
 
 
 def mesh_facing(view: Optional[str]) -> str:
@@ -336,18 +337,31 @@ def look_mesh(source: str, out: Path, opts: dict[str, Any], timeout: float = 600
     material = opts.get("material") or "both"
     if material not in ("neutral", "color", "both"):
         raise EyesError("material is neutral, color or both")
+    front_axis = opts.get("front_axis")
+    if front_axis is not None and (not isinstance(front_axis, str) or front_axis not in FRONT_AXIS_TURNS
+                                   or opts.get("turn") is not None):
+        raise EyesError("Use one front_axis (-y, -x, +y, +x) or turn / Indica un eje frontal o un giro")
+    turn = FRONT_AXIS_TURNS[front_axis] if front_axis else float(opts.get("turn") or 0.0)
     spec = {
         "source": str(Path(source).resolve()), "out": str(out.resolve()), "views": names,
         "materials": ["neutral", "color"] if material == "both" else [material],
-        "size": int(opts.get("size") or 640), "turn": float(opts.get("turn") or 0.0),
+        "size": int(opts.get("size") or 640), "turn": turn,
         "up": opts.get("up") or "z", "pose": opts.get("pose") or None, "camera": opts.get("camera") or None,
         "engine": opts.get("engine") or "workbench",
     }
-    spec_path = out / "mesh-spec.json"
-    spec_path.write_text(json.dumps(spec), encoding="utf-8")
-    script = Path(__file__).with_name("eyes_blender.py")
-    proc = _run([_need("blender"), "-b", "--factory-startup", "--python", str(script), "--", str(spec_path)], timeout)
-    spec_path.unlink(missing_ok=True)
+    blender = _need("blender")
+    source_is_3mf = Path(source).suffix.lower() == ".3mf"
+    with tempfile.TemporaryDirectory(prefix="hub-eyes-mesh-") as scratch:
+        if source_is_3mf:
+            from .eyes_3mf import to_glb
+
+            target = Path(scratch) / "piece.glb"
+            unit = to_glb(source, target)
+            spec["source"] = str(target)
+        spec_path = Path(scratch) / "mesh-spec.json"
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        script = Path(__file__).with_name("eyes_blender.py")
+        proc = _run([blender, "-b", "--factory-startup", "--python", str(script), "--", str(spec_path)], timeout)
     text = proc.stdout.decode("utf-8", "replace")
     line = next((l for l in reversed(text.splitlines()) if l.startswith("EYES_RESULT ")), None)
     if line is None:
@@ -356,6 +370,12 @@ def look_mesh(source: str, out: Path, opts: dict[str, Any], timeout: float = 600
     result = json.loads(line[len("EYES_RESULT "):])
     if not result.get("ok"):
         raise EyesError(result.get("error") or "Blender failed")
+    if front_axis:
+        result["resolved"]["front_axis"] = front_axis
+    if source_is_3mf:
+        result["facts"].update(source_format="3mf", source_unit=unit, geometry_only=True)
+        result["warnings"].append("3MF preview uses build geometry. Print colours and materials are unavailable. "
+                                  "/ La vista 3MF muestra la geometría de impresión sin colores ni materiales.")
     return {k: result.get(k) for k in ("views", "facts", "resolved", "warnings")}
 
 
