@@ -52,11 +52,6 @@ every view; `resolved.camera` holds it in absolute numbers. Rendered by Blender 
 The preview follows the build transforms and converts the declared unit to metres. Print materials and colour
 assignments are unavailable in this preview. For a topology or print-volume assessment use `print-mesh`.
 
-**Frente y 3MF.** `front_axis` declara el frente en los ejes de Blender tras aplicar `up`. Ojos guarda la
-declaración con la huella de la pieza y la reutiliza al volver a abrirla, aunque haya cambiado de nombre. Olvidar
-la mirada que declaró el eje deshace ese ajuste. En 3MF, Ojos abre la geometría con su escala y transformaciones
-de impresión. La vista previa carece de colores y materiales del laminador.
-
 **Web.** Pages from disk are served on a temporary local port so relative links and fetches work. `interaction`
 steps are `{click}`, `{fill: [selector, text]}`, `{press}`, `{hover}`, `{scroll}`, `{select: [selector, value]}` and
 `{wait: ms}`; console errors land in `facts.console_errors`. Headless Chromium, or an installed Brave, Chrome or Edge.
