@@ -2,12 +2,55 @@
 
 import base64
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from hoard_link.hub.agora import TOOLS
 from ._hub_fakes import http, make_hub, serve
+
+
+def test_decision_copy_has_no_installer_name():
+    root = Path(__file__).resolve().parents[2]
+    files = (
+        "apps/agora/src/ProductionDecisions.tsx",
+        "hoard_link/hub/ui/production_decisions.js",
+        "hoard_link/hub/ui/production_decisions_data.js",
+        "hoard_link/hub/ui/agora_debate.js",
+        "hoard_link/hub/agora_orders.py",
+    )
+    for path in files:
+        assert not re.search(r"\bluis\b", (root / path).read_text(encoding="utf-8"), re.IGNORECASE), path
+
+
+@pytest.mark.parametrize("display_name", ["Avery Chen", "Núria Serra"])
+def test_cancel_uses_the_deciding_member_in_the_receipt_and_task_thread(tmp_path, display_name):
+    ag = make_hub(tmp_path).facet("agora").agora
+    actor = "fixture-editor"
+    ag._touch(actor)
+    ag.db.execute("UPDATE agents SET name=? WHERE id=?", (display_name, actor))
+    order = ag.order_create({"agent": "builder", "title": "Test order", "words": "Make a map",
+                             "folder": str(tmp_path)})["order"]
+    plan = ag.plan_set({"agent": "builder", "order_id": order["id"], "jobs": [
+        {"key": "map", "title": "Make the map", "station": "mapping", "produces": ["text"]},
+    ]})
+    task_id = plan["keys"]["map"]
+    (tmp_path / "map.txt").write_text("East", encoding="utf-8")
+    piece = ag.piece_add({"agent": "builder", "order_id": order["id"], "task_id": task_id,
+                          "kind": "text", "title": "Map", "path": "map.txt"})["piece"]
+    gate = ag.gate_open({"agent": "builder", "order_id": order["id"], "title": "Map review",
+                         "piece_ids": [piece["id"]]})["gate"]
+
+    ag.gate_decide({"agent": actor, "_person": True, "gate_id": gate["id"], "decision": "cancel"})
+
+    record, = ag.order_decisions({"order_id": order["id"]})["decisions"]
+    assert record["decided_by"] == {"id": actor, "name": display_name}
+    assert record["situation"]["decided_by"] == actor
+    thread_id = ag._task_row(task_id)["thread_id"]
+    message = ag.db.one("SELECT author, body FROM messages WHERE thread_id=? ORDER BY id DESC", (thread_id,))
+    assert message["author"] == actor
+    assert message["body"].startswith(f"{display_name} cancela la pieza")
 
 
 def test_pending_queue_opens_exact_gate_and_uses_the_production_record(tmp_path):
@@ -50,13 +93,16 @@ def test_pending_queue_opens_exact_gate_and_uses_the_production_record(tmp_path)
             playwright.expect(page.locator(f'[data-gate="{gate["id"]}"] h3')).to_be_focused()
             playwright.expect(page.get_by_role("button", name="Keep", exact=True)).to_be_visible()
 
-            # A fictitious receipt for this test's order, independent of any person's live decision.
+            # An attributed receipt for this test's order, with a different member from the viewer.
+            actor = "fixture-editor"
+            ag._touch(actor)
             with ag.db.tx():
+                ag.db.execute("UPDATE agents SET name=? WHERE id=?", ("Núria Serra", actor))
                 ag.db.execute("UPDATE agora_gates SET status='decided' WHERE id=?", (gate["id"],))
                 ag.db.insert("agora_order_decisions", {
                     "space_id": "test-studio", "order_id": order["id"], "gate_id": gate["id"], "piece_id": piece["id"],
                     "decision": "keep", "note": "The folded corner stays", "created": 1795104000,
-                    "situation": json.dumps({"gate": {"id": gate["id"], "title": gate["title"]},
+                    "situation": json.dumps({"decided_by": actor, "gate": {"id": gate["id"], "title": gate["title"]},
                                              "order": {"id": order["id"], "title": order["title"]}}),
                 })
             status, log = http(url + "/api/agora/decisions?space_id=test-studio", headers=headers)
@@ -65,7 +111,7 @@ def test_pending_queue_opens_exact_gate_and_uses_the_production_record(tmp_path)
             assert [item["note"] for item in log["production_decisions"]] == ["The folded corner stays"]
             page.goto(url + "/?space_id=test-studio#agora-decisions")
             record = page.locator(".hub-decision-record")
-            playwright.expect(record).to_contain_text("Luis’s decision (")
+            playwright.expect(record).to_contain_text("Decision by Núria Serra (")
             playwright.expect(record).to_contain_text("The folded corner stays")
             playwright.expect(page.locator("#hub-agora-decisions .hub-decision-row")).to_have_count(0)
             playwright.expect(page.locator("#hub-global-decision-count")).to_have_text("")

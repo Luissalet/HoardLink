@@ -18,7 +18,10 @@ export type DecisionRecord = {
   decision: 'keep' | 'cancel';
   note: string;
   draft: boolean;
+  decidedBy?: string;
+  own: boolean;
 };
 export function loadPending(api: Api, space?: string): Promise<{rows: PendingDecision[]; incomplete: boolean}>;
 export function loadHistory(api: Api, space?: string): Promise<DecisionRecord[]>;
+export function decisionHeading(row: DecisionRecord, lang: 'es' | 'en'): string;
 export function decisionUrl(row: PendingDecision): string;
