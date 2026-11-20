@@ -172,15 +172,18 @@ def merge_candidate(work, head):
 
 
 def discard_delivery_caches(work):
-    """Return whether the worktree can be removed, discarding only ignored Python bytecode."""
+    """Return whether the worktree contains only ignored, regenerable build files."""
     status = git(work, "status", "--porcelain", "-z", "--untracked-files=all", "--ignored").stdout
     entries = paths(status)
     if any(not entry.startswith("!! ") for entry in entries):
         return False
+    root = work.resolve()
     caches = []
     for entry in entries:
         path = PurePosixPath(entry[3:])
-        if path.parent.name != "__pycache__" or path.suffix != ".pyc":
+        is_bytecode = path.parent.name == "__pycache__" and path.suffix == ".pyc"
+        is_frontend_output = any(part in ("dist", "node_modules") for part in path.parts[:-1])
+        if not (is_bytecode or is_frontend_output or path.suffix == ".tsbuildinfo"):
             return False
         local = work.joinpath(*path.parts)
         for item in (local, *local.parents):
@@ -189,7 +192,7 @@ def discard_delivery_caches(work):
                 return False
             if item == work:
                 break
-        if not stat.S_ISREG(local.lstat().st_mode):
+        if not local.resolve().is_relative_to(root) or not stat.S_ISREG(local.lstat().st_mode):
             return False
         caches.append(local)
     for cache in caches:
