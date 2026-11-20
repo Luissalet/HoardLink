@@ -225,6 +225,14 @@ def _pick_executable(value: Any, fill, cwd: str) -> str:
     return filled[0] if filled else ""
 
 
+def _writer_source(app: App) -> bool:
+    entry = Path(app.folder) / "scripts" / "dev-desktop.mjs"
+    return bool(app.launch and app.launch.argv
+                and Path(app.launch.executable).stem.lower() == "node"
+                and (Path(app.launch.cwd) / app.launch.argv[0]).resolve() == entry.resolve()
+                and entry.is_file())
+
+
 def apply_launch_override(app: "App", override: Any) -> "App":
     """Replace ``app.launch`` with a per-machine command from ``hub.json``.
 
@@ -372,6 +380,9 @@ def read_manifest(
 
     url_default = str(app_block.get("url_default") or defaults.get("APP_URL") or "").strip()
     url = fill(url_default) if url_default else ""
+    writer_port = os.environ.get("WH_AIBRIDGE_PORT", "")
+    if app_id == "writer" and re.fullmatch(r"[0-9]{4,5}", writer_port) and 1024 <= int(writer_port) <= 65535:
+        url = f"http://127.0.0.1:{int(writer_port)}"
     if not url:
         return None
     extra.setdefault("APP_URL", url.rstrip("/"))
@@ -413,6 +424,10 @@ def read_manifest(
     if not data_dir or "{" in data_dir or "%" in data_dir:
         data_dir = os.path.dirname(app.token_file)
     app.data_dir = os.path.normpath(data_dir)
+    if app_id == "writer" and (profile := os.environ.get("WH_USER_DATA_DIR")):
+        profile = os.path.abspath(os.path.expanduser(profile))
+        app.token_file = os.path.join(profile, "aibridge", "token")
+        app.data_dir = os.path.join(profile, "backups")
     if app_block.get("x-url-file"):
         app.runtime_url_file = expand_env(fill(app_block["x-url-file"]))
 
@@ -473,7 +488,9 @@ def scan(
     that is itself an app folder, sorted by name. A duplicate ``id`` keeps
     the first folder found and drops the rest, so two clones of the same
     app never make two cards. ``launch_overrides`` (app id → command, from
-    ``hub.json``) replaces a manifest's launch hint on this machine only."""
+    ``hub.json``) replaces a manifest's launch hint on this machine only.
+    Writer uses the source checkout's desktop launcher even if an installed
+    manifest or legacy executable override comes first."""
     seen: dict[str, App] = {}
     excluded = set(exclude_ids)
     icon_dirs = list(icon_dirs)
@@ -494,7 +511,20 @@ def scan(
                     candidates.append(p)
         for path in candidates:
             app = read_manifest(path, faustus_dir=faustus_dir, faustus_python=faustus_python, icon_dirs=icon_dirs,include_mcp_only=include_mcp_only)
-            if app is None or app.id in excluded or app.id in seen:
+            if app is None or app.id in excluded:
+                continue
+            if app.id == "writer":
+                if _writer_source(app):
+                    previous = seen.get(app.id)
+                    if previous is None or not _writer_source(previous):
+                        seen[app.id] = app
+                elif app.id not in seen:
+                    app.launch = None
+                    app.launchable = False
+                    app.launch_reason = "A Writer source checkout is required. Se necesita una copia del código de Writer."
+                    seen[app.id] = app
+                continue
+            if app.id in seen:
                 continue
             if launch_overrides and app.id in launch_overrides:
                 apply_launch_override(app, launch_overrides[app.id])

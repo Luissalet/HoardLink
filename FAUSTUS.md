@@ -168,6 +168,12 @@ manifest handoffs, links supported piece types to their technical checks, and
 proposes compatible chains. `hub_piece_validate` reports measurements from the
 file or registered revision. Checked looks and Orders gates display the
 technical verdict alongside the piece. See [production piece checks](docs/piece-checks.md).
+The Writer station takes an editorial brief through its dossier, manuscript and continuity review
+to PDF or EPUB. The narrative PDF checker compares the retained review with the full export,
+counts words and pages, inspects embedded fonts and reports continuity defects and their disposition.
+Writer starts from its source launcher. Use a distinct `WH_USER_DATA_DIR`, `WH_AIBRIDGE_PORT`,
+`WH_RENDERER_PORT` and `MEDIA_DOWNLOADER_PORT` for a separate profile; `WH_HEADLESS=1`
+keeps its Electron window hidden. Point the Hub's app roots at the source checkout.
 `hub_agora_order_create` and `hub_agora_order_update` record a [production dossier](docs/order-dossier.md)
 with the audience, constraints, starting material fingerprints and any context compiled by the source station.
 `hub_agora_job` delivers it with the worker's brief. Orders can select a [native source dossier](docs/order-intake.md)
