@@ -17,6 +17,16 @@ from hoard_link.coordination.rpc import RepositoryClient, encode, decode
 from ._hub_fakes import make_hub, serve
 
 
+def test_workspace_link_uses_the_active_placement(canonical, monkeypatch):
+    hub, _, _ = canonical
+    hub.config.faustus_urls = ['http://127.0.0.1:7000']
+    state = {'location': 'sparks', 'urls': {'faustus': 'https://workspace.example/'}}
+    monkeypatch.setattr(hub.placement, 'state', lambda: state)
+    assert hub.facet('coordination').config()['workspace_url'] == 'https://workspace.example/agora'
+    state['location'] = 'pc'
+    assert hub.facet('coordination').config()['workspace_url'] == 'http://127.0.0.1:7000/agora'
+
+
 @pytest.fixture
 def canonical(tmp_path, monkeypatch):
     with ExitStack() as cleanup:

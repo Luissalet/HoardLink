@@ -18,6 +18,7 @@ from uuid import uuid4
 from ..atomic import read_json, write_json_atomic
 from . import agora_ranks
 from . import integration_checks as checks
+from . import integration_frontend as frontend
 from . import integration_git as repo_git
 from . import integration_receipt
 from .agora import AgoraError, SpaceError, normalize_resource
@@ -191,7 +192,7 @@ class IntegrationFacet(Facet):
     def start(self):
         self.runtime = IntegrationRuntime(REPO_DIR)
         running = {"queued", "waiting_for_suite_slot", "testing_main", "testing_candidate", "testing_inference",
-                   "integrating", "prepared_checkout", "moved_checkout", "restored_checkout", "checking_live_case",
+                   "integrating", "prepared_checkout", "moved_checkout", "restored_checkout", "publishing_frontend", "checking_live_case",
                    "saving_baseline", "cleaning_delivery", "delivery_retained", "worktree_removed", "branch_removed",
                    "processing_repositories"}
         for path in self.root.glob("*/receipt.json"):
@@ -546,6 +547,10 @@ class IntegrationFacet(Facet):
                 if any(lane["failures"] for lane in receipt.get("inference", {}).values()):
                     update("inference_failed")
                     return
+                build = frontend.prepare_frontend(candidate, repo_git.changed(repo, base, merged), folder)
+                if cancelled():
+                    update("cancelled")
+                    return
                 self._snapshot(args, merge=True)
                 with agora.db.tx():
                     existing = next((row for row in agora._live_locks() if row["resource"] == merge_resource), None)
@@ -555,9 +560,17 @@ class IntegrationFacet(Facet):
                     took_lock = existing is None
                 if repo_git.branch_tip(repo, plan["branch"]) != head:
                     raise repo_git.IntegrationError("Delivery branch changed after its tests")
+                if build:
+                    frontend.prepare_publication(repo, build, folder)
+                    receipt["frontend_build"] = build
                 update("integrating")
                 repo_git.move_checkout(repo, base, merged, folder, update)
                 try:
+                    if build:
+                        build["publication_started"] = True
+                        update("publishing_frontend")
+                        frontend.publish_frontend(repo, build, folder)
+                        build["published"] = True
                     self._reload_apps(agora, repo, agent, receipt, "app_reload")
                     update("checking_live_case")
                     if any(result["state"] == "failed" for result in receipt["app_reload"]):
@@ -803,6 +816,11 @@ class IntegrationFacet(Facet):
             repo_git.move_checkout(repo, receipt["merge_commit"], plan["base"], recovery,
                                    lambda state, data: None)
             receipt["undo_checkout"] = True
+            write_json_atomic(path, receipt)
+        build = receipt.get("frontend_build")
+        if build and build.get("publication_started") and not build.get("restored"):
+            frontend.restore_frontend(repo, build, path.parent)
+            build["restored"] = True
             write_json_atomic(path, receipt)
         if "app_reload" in receipt:
             self._reload_apps(agora, repo, agent, receipt, "undo_app_reload")

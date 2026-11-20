@@ -15,6 +15,7 @@
     integrating: ["Fusionando", "Integrating"],
     processing_repositories: ["Integrando repositorios", "Integrating repositories"],
     checking_live_case: ["Comprobando el caso de origen", "Checking the original case"],
+    publishing_frontend: ["Publicando la interfaz web", "Publishing the web interface"],
     cleaning_delivery: ["Limpiando la entrega", "Cleaning the delivery"],
     delivery_retained: ["Árbol de entrega conservado", "Delivery worktree kept"],
     integrated: ["Integrada", "Integrated"],

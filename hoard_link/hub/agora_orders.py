@@ -666,6 +666,11 @@ def orders(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     rows = self.db.query("SELECT * FROM agora_orders" + (" WHERE " + " AND ".join(where) if where else "") +
                          " ORDER BY updated DESC LIMIT ?", (*params, limit))
     out = [_summary(self, dict(r)) for r in rows]
+    waiting = _waiting_gates(self, all_spaces)
+    return {"ok": True, "orders": out, "waiting": waiting, "kinds": list(PIECE_KINDS), "states": list(ORDER_STATES)}
+
+
+def _waiting_gates(self, all_spaces):
     gate_where = "g.status='open'" + ("" if all_spaces else " AND g.space_id=?")
     gates = self.db.query("SELECT g.* FROM agora_gates g WHERE " + gate_where + " ORDER BY g.created",
                           () if all_spaces else (self.space_id,))
@@ -679,7 +684,49 @@ def orders(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         gate = _gate_dict(view, dict(g), pieces)
         gate["order"] = order
         waiting.append(gate)
-    return {"ok": True, "orders": out, "waiting": waiting, "kinds": list(PIECE_KINDS), "states": list(ORDER_STATES)}
+    return waiting
+
+
+_DECISION_ANCHORS = ("keyframe_start", "keyframe_end", "keyframe", "animatic", "composition", "blocking_color")
+
+
+def _decision_image(pieces):
+    piece = next((p for p in pieces if p.get("previews") or p.get("view") == "image"), None)
+    if piece is None:
+        return None
+    preview = bool(piece.get("previews"))
+    return {"piece_id": piece["id"], "preview": preview, "title": piece["title"],
+            "path": f"/api/agora/piece_file/{piece['id']}" + ("?preview=0" if preview else "")}
+
+
+def pending_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+    """One row per open production decision, scoped to a space or across all spaces."""
+    from .agora_drafts import draft_passes
+
+    all_spaces = str(a.get("all_spaces", "")).lower() in ("1", "true", "yes")
+    rows = []
+    for draft in draft_passes(self, {"all_spaces": all_spaces})["draft_passes"]:
+        variants = []
+        for variant in draft["variants"]:
+            if variant["status"] in ("kept", "discarded"):
+                continue
+            pieces = variant["pieces"]
+            preferred = [piece for anchor in _DECISION_ANCHORS for piece in pieces if piece.get("anchor") == anchor]
+            variants.append({"id": variant["id"], "title": variant["title"],
+                             "image": _decision_image(preferred) or _decision_image(pieces)})
+        rows.append({"key": f"draft-{draft['id']}", "title": draft["title"], "order": (draft["order"] or {}).get("title"),
+                     "space": draft["space_id"], "image": None, "variants": variants})
+    for gate in _waiting_gates(self, all_spaces):
+        decided = {row["piece_id"] for row in gate["decisions"]}
+        pieces = [piece for piece in gate["pieces"] if piece["id"] not in decided]
+        rows.append({"key": f"gate-{gate['id']}", "title": gate["title"], "order": gate["order"].get("title"),
+                     "space": gate["space_id"], "image": _decision_image(pieces),
+                     "pieces": [piece["title"] for piece in pieces]})
+    counts = {}
+    for row in rows:
+        space = row["space"]
+        counts[space] = counts.get(space, 0) + 1
+    return {"ok": True, "rows": rows, "counts": counts}
 
 
 def order(self: Any, a: dict[str, Any]) -> dict[str, Any]:
@@ -1556,10 +1603,10 @@ OPERATIONS = {"order_create": order_create, "order_update": order_update, "order
               "plan_set": plan_set, "job": job, "piece_add": piece_add, "piece_check": piece_check,
               "piece_defect": piece_defect, "gate_open": gate_open, "gate_split": gate_split,
               "gate_decide": gate_decide, "order_decisions": order_decisions, "order_undo": order_undo,
-              "defect_close": defect_close}
+              "defect_close": defect_close, "pending_decisions": pending_decisions}
 WRITE_OPS = ("order_create", "order_update", "plan_set", "piece_add", "piece_check", "piece_defect", "defect_close",
              "gate_open", "gate_split", "gate_decide", "order_undo")
-READ_ROUTES = ("orders", "order", "job", "order_decisions")
+READ_ROUTES = ("orders", "order", "job", "order_decisions", "pending_decisions")
 #: The person's decision has no tool: only their pages call it.
 NO_TOOL = ("gate_decide",)
 
@@ -1589,6 +1636,9 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                   "description": "Jobs it waits for: keys of this call or task ids."},
         "branch": {"type": "string", "maxLength": 80}}}
     return [
+        {"name": "hub_agora_pending_decisions", "read": True,
+         "description": "Read pending production decisions and their counts by space, including early passes.",
+         "inputSchema": schema({"all_spaces": {"type": "boolean"}}, [])},
         {"name": "hub_agora_orders", "read": True,
          "description": "Production orders of a space (all_spaces for every one): status, job and piece counts, "
                         "thumbnails, and the gates waiting for the person's decision.",
