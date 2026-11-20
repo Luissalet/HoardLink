@@ -1,4 +1,5 @@
 import {decisionHeading, decisionUrl, loadHistory, loadPending} from './production_decisions_data.js';
+import {renderDecisionCards} from './production_decisions_card.js';
 
 const {api, el, lang, bus} = window.HubFacets.ctx;
 const tr = (es, en) => lang() === 'es' ? es : en;
@@ -19,35 +20,6 @@ function heading(title) {
   return wrapper;
 }
 
-function pendingRow(row) {
-  const link = el('a', 'hub-decision-row');
-  link.href = decisionUrl(row);
-  const thumb = (preview) => {
-    const image = el('img', 'hub-decision-thumb');
-    image.src = preview.path;
-    image.alt = preview.title;
-    image.loading = 'lazy';
-    image.onerror = () => image.remove();
-    return image;
-  };
-  if (row.image) link.append(thumb(row.image));
-  const words = el('span', 'hub-decision-words');
-  words.append(el('strong', '', row.title), el('small', '', row.order));
-  if (row.pieces?.length) words.append(el('small', '', row.pieces.join(' · ')));
-  if (row.variants?.length) {
-    const variants = el('span', 'hub-decision-variants');
-    for (const variant of row.variants) {
-      const item = el('span');
-      if (variant.image) item.append(thumb(variant.image));
-      item.append(el('small', '', variant.title));
-      variants.append(item);
-    }
-    words.append(variants);
-  }
-  link.append(words, el('span', 'hub-decision-action', tr('Abrir decisión', 'Open decision')));
-  return link;
-}
-
 export function watchPendingCount(space, count) {
   const refresh = async () => {
     if (document.hidden) return;
@@ -56,14 +28,21 @@ export function watchPendingCount(space, count) {
   };
   setInterval(refresh, 8000);
   document.addEventListener('visibilitychange', refresh);
+  bus.addEventListener('production-decision', refresh);
   refresh();
 }
 
 export function mount(root, space, {archive = false, count, hideEmpty = false, dedicated = false} = {}) {
   if (!root.isConnected) return;
-  let pendingSignature = '', historySignature = '', sequence = 0;
+  let historySignature = '', sequence = 0;
   const waiting = el('section', 'hub-production-decisions');
   const records = el('section', 'hub-production-decisions');
+  const pendingTitle = heading('');
+  const cards = el('div');
+  const message = el('p', 'hint');
+  message.setAttribute('role', 'status');
+  if (!dedicated) waiting.append(pendingTitle);
+  waiting.append(cards, message);
   root.replaceChildren(waiting);
   if (archive) root.append(records);
   async function refresh() {
@@ -74,15 +53,24 @@ export function mount(root, space, {archive = false, count, hideEmpty = false, d
       const state = await shared(pending, space, loadPending);
       if (!current()) return;
       count?.(state.rows.length, state.incomplete);
-      const signature = JSON.stringify([lang(), state]);
-      if (pendingSignature === signature) return;
-      pendingSignature = signature;
       waiting.hidden = hideEmpty && !state.rows.length && !state.incomplete;
-      waiting.replaceChildren();
-      if (!dedicated) waiting.append(heading(tr('Tus decisiones pendientes', 'Your pending decisions')));
-      for (const row of state.rows) waiting.append(pendingRow(row));
-      if (state.incomplete) waiting.append(el('p', 'hint', tr('No se han podido consultar todas las decisiones pendientes.', 'Some pending decisions could not be loaded.')));
-      else if (!state.rows.length) waiting.append(el('p', 'hint', tr('No tienes decisiones pendientes.', 'You have no pending decisions.')));
+      pendingTitle.firstChild.textContent = tr('Tus decisiones pendientes', 'Your pending decisions');
+      renderDecisionCards(cards, state.rows, {
+        lang: lang(), source: (path, media) => media === 'web' ? null : path, orderHref: decisionUrl, orderInPlace: true,
+        post: async (operation, body) => {
+          const answer = await api('/api/agora/' + operation, body);
+          if (!answer?.ok) throw new Error(answer?.error);
+        },
+        refresh: () => {
+          pending.clear();
+          history.clear();
+          bus.dispatchEvent(new Event('production-decision'));
+        },
+      });
+      message.textContent = state.incomplete
+        ? tr('No se han podido consultar todas las decisiones pendientes.', 'Some pending decisions could not be loaded.')
+        : state.rows.length ? '' : tr('No tienes decisiones pendientes.', 'You have no pending decisions.');
+      message.hidden = !message.textContent;
     };
     const refreshHistory = async () => {
       if (!archive) return;
@@ -108,11 +96,13 @@ export function mount(root, space, {archive = false, count, hideEmpty = false, d
     if (!root.isConnected) {
       clearInterval(interval);
       bus.removeEventListener('lang', refresh);
+      bus.removeEventListener('production-decision', refresh);
       document.removeEventListener('visibilitychange', onVisibility);
     } else refresh();
   }, 8000);
   const onVisibility = () => { if (!document.hidden) refresh(); };
   bus.addEventListener('lang', refresh);
+  bus.addEventListener('production-decision', refresh);
   document.addEventListener('visibilitychange', onVisibility);
   refresh();
 }

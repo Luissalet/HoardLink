@@ -63,6 +63,7 @@ from . import agora_threads
 from . import agora_work
 from . import agora_orders
 from . import agora_drafts
+from . import agora_person
 from . import agora_debate
 from . import agora_review
 from . import agora_live
@@ -3660,6 +3661,7 @@ class AgoraFacet(Facet):
 
     def __init__(self, hub: Any):
         super().__init__(hub)
+        agora_person.token(hub)
         events = getattr(hub, "events", None)
 
         def repo_lookup(name: str) -> Optional[Path]:
@@ -4243,11 +4245,14 @@ class AgoraFacet(Facet):
             if not req.caller():
                 return {"ok": False, "status": 401, "error": "send the hub's bearer token (data/mcp-token) or use the hub's page"}
             return self._watch_bind(dict(req.body or {}))
-        if op not in _WRITE_OPS:
+        if op not in _WRITE_OPS and op != "production_decide":
             return {"ok": False, "status": 404, "error": f"unknown Ágora operation {op}"}
         caller = req.caller()
         if not caller:
             return {"ok": False, "status": 401, "error": "send the hub's bearer token (data/mcp-token) or use the hub's page"}
+        if op in ("production_decide", "gate_decide", "draft_decide") and (
+                not self._person_surface(req) or not agora_person.can_decide(self.hub, req)):
+            return {"ok": False, "status": 403, "error": "Only the person's page can decide a production gate"}
         args = dict(req.body or {})
         args.pop("_person", None)
         if caller == "ui" or self._person_surface(req):
@@ -4262,6 +4267,15 @@ class AgoraFacet(Facet):
             return self._run(self._sync, args)
         if op == "task_submit":
             return self._run(self._submit, args)
+        if op == "production_decide":
+            target = re.fullmatch(r"(gate|draft)-([1-9][0-9]{0,17})", str(args.get("key") or ""))
+            if not target:
+                return {"ok": False, "status": 400, "error": "Choose a pending production gate"}
+            choice = {k: args[k] for k in ("space_id", "agent", "_person", "decision", "note") if k in args}
+            if target[1] == "draft":
+                choice.update(variant_id=args.get("variant_id"), pass_id=int(target[2]), signature=args.get("signature"))
+                return self._run(self.agora.draft_decide, choice)
+            return self._run(self.agora.gate_decide, {**choice, "gate_id": int(target[2])})
         return self._run(getattr(self.agora, op), args)
 
     @classmethod

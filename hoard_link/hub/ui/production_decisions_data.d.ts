@@ -1,5 +1,6 @@
 type Api = (path: string) => Promise<unknown>;
 type Preview = {path: string; title: string};
+type Artifact = {title: string; media: string; path: string | null; image: Preview | null; url: string | null};
 
 export type PendingDecision = {
   key: string;
@@ -7,7 +8,8 @@ export type PendingDecision = {
   order: string;
   space: string;
   image: Preview | null;
-  variants?: {id: number; title: string; image: Preview | null}[];
+  artifacts?: Artifact[];
+  variants?: {id: number; title: string; image: Preview | null; artifacts?: Artifact[]; signature: string}[];
 };
 export type DecisionRecord = {
   id: number;

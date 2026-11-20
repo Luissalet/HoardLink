@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import types
 
+import pytest
+
 from hoard_link.hub import placement_link as pl
 from hoard_link.hub import placement_remote as pr
 
@@ -55,6 +57,11 @@ class FakePlacement:
         return ""
 
 
+@pytest.fixture(autouse=True)
+def person_proof(monkeypatch):
+    monkeypatch.setattr(pl.agora_person, "token", lambda hub: "test-studio-proof")
+
+
 def _link(placement, procs):
     opened = []
 
@@ -81,7 +88,9 @@ def test_on_the_spark_it_tells_where_the_hub_is_and_opens_the_tunnel():
     assert state["wanted"] and state["up"] and state["node"] == "Spark3" and state["error"] == ""
     token_cmd, token = placement.sent[0]
     assert "umask 077" in token_cmd and "hub-token" in token_cmd and token == "tok-1"
-    link_cmd, body = placement.sent[1]
+    proof_cmd, proof = placement.sent[1]
+    assert "umask 077" in proof_cmd and pl.agora_person.TOKEN_NAME in proof_cmd and proof == "test-studio-proof"
+    link_cmd, body = placement.sent[2]
     told = json.loads(body)
     assert "hub-link.json" in link_cmd
     assert told["url"] == f"http://127.0.0.1:{pl.LINK_PORT}" and told["token_file"].endswith("/faustus-stack/hub-token")
@@ -90,7 +99,7 @@ def test_on_the_spark_it_tells_where_the_hub_is_and_opens_the_tunnel():
     assert "ExitOnForwardFailure=yes" in argv and kwargs["stdin"] is not None       # our pipe: the child ends with us
     assert f"-t {pl.REMOTE_IDLE_S}" in pl.REMOTE_CMD                                # and lets go of the port if we die
     link.tick()                                                                    # still up: nothing is sent again
-    assert len(placement.sent) == 2 and len(opened) == 1
+    assert len(placement.sent) == 3 and len(opened) == 1
     assert proc.written == b"\n"                                                    # the remote command is kept waiting
 
 
@@ -108,7 +117,7 @@ def test_a_tunnel_that_ends_is_reported_and_opened_again_later():
     assert not link.tick()["up"] and len(opened) == 1                               # not before the wait is over
     now[0] += pl.RETRY_S + 1
     assert link.tick()["up"] and len(opened) == 2
-    assert len(placement.sent) == 4                              # told again: its folder may have been wiped meanwhile
+    assert len(placement.sent) == 6                              # told again: its folder may have been wiped meanwhile
 
 
 def test_an_unreachable_spark_is_a_state_not_a_crash():

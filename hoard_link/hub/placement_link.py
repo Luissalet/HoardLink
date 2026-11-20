@@ -27,6 +27,8 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
+from . import agora_person
+
 LINK_PORT = 8811                 # on the Spark's loopback; 8810 stays free for a Hub of its own
 CHECK_S = 20.0                   # how often the tunnel is looked at
 RETRY_S = 60.0                   # how long to wait after a tunnel that would not open
@@ -184,12 +186,15 @@ class HubLink:
         """Leave on the Spark where the Hub is and its token (only when either changed: it costs two SSH round trips)."""
         from .placement import STACK
         token = str(getattr(self.placement.hub, "token", "") or "")
+        proof = agora_person.token(self.placement.hub)
         link = self.link_file()
-        mark = hashlib.sha256(json.dumps([node, link, token], sort_keys=True).encode("utf-8")).hexdigest()
+        mark = hashlib.sha256(json.dumps([node, link, token, proof], sort_keys=True).encode("utf-8")).hexdigest()
         if mark == self._told:
             return
         self.placement._ssh(f"umask 077; mkdir -p {STACK}; cat > {STACK}/hub-token.tmp && mv {STACK}/hub-token.tmp {STACK}/hub-token",
                             input=token, timeout=30)
+        path = f"{STACK}/{agora_person.TOKEN_NAME}"
+        self.placement._ssh(f"umask 077; cat > {path}.tmp && mv {path}.tmp {path}", input=proof, timeout=30)
         self.placement._ssh(f"cat > {STACK}/hub-link.json.tmp && mv {STACK}/hub-link.json.tmp {STACK}/hub-link.json",
                             input=json.dumps(link), timeout=30)
         self._told = mark
