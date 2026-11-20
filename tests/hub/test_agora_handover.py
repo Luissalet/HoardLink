@@ -14,7 +14,7 @@ import pytest
 from hoard_link.hub import tools
 from hoard_link.hub.agora import HANDOVER_IDLE_S, STALE_AGENT_S, Agora, AgoraError
 
-from ._hub_fakes import http, make_hub, serve
+from ._hub_fakes import http, make_hub, serve, ui_headers
 
 OLD, NEW = "codex-bucle", "codex-relevo"
 MIN = 60.0
@@ -462,7 +462,7 @@ def test_http_tool_cli_and_mcp_smoke(tmp_path):
     try:
         token = Path(hub.config.token_file).read_text(encoding="utf-8").strip()
         hdr = {"Authorization": "Bearer " + token}
-        page = {"Sec-Fetch-Site": "same-origin"}
+        page = ui_headers(hub)
         ag = hub.facet("agora").agora
         names = [t["name"] for t in tools.all_tools()]
         assert names.count("hub_agora_handover") == 1

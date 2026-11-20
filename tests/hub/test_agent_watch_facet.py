@@ -9,7 +9,7 @@ from pathlib import Path
 
 from hoard_link.hub import tools
 
-from ._hub_fakes import http, make_hub, serve
+from ._hub_fakes import http, make_hub, serve, ui_headers
 from ._transcripts import (clock, cursor_file, codex_file, cur_text, cur_user, cx_exec, cx_head, cx_start, roots)  # noqa: F401
 
 
@@ -30,7 +30,7 @@ def test_facet_routes_tools_and_board_merge(tmp_path, roots):
     try:
         token = Path(hub.config.token_file).read_text(encoding="utf-8").strip()
         hdr = {"Authorization": "Bearer " + token}
-        page = {"Sec-Fetch-Site": "same-origin"}
+        page = ui_headers(hub)
         status, w = http(base + "/api/agora/watch")
         assert status == 200 and w["ok"] and set(w) >= {"sessions", "agents", "questions", "unbound"}
         assert w["agents"]["codex-sparks"]["state"] == "tool" and w["agents"]["codex-sparks"]["tool"]["name"] == "exec"

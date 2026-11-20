@@ -4,7 +4,7 @@ from hoard_link.hub.agora import TOOLS
 from hoard_link.hub import agora_person
 from tests.test_agora_drafts import draft_pass, ready
 
-from ._hub_fakes import http, make_hub, serve
+from ._hub_fakes import http, make_hub, serve, ui_headers
 
 
 def test_pending_decisions_counts_each_gate_once_in_its_space(tmp_path):
@@ -53,11 +53,14 @@ def test_pending_decisions_counts_each_gate_once_in_its_space(tmp_path):
         draft_choice = {'key': draft['key'], 'space_id': 'test-studio', 'decision': 'keep',
                         'variant_id': variant['id'], 'signature': variant['signature']}
         studio_header = {**headers, 'X-Hoard-Person': 'faustus-studio'}
+        page_without_session = {'Sec-Fetch-Site': 'same-origin', 'Origin': hub.config.url}
         for operation, choice in [('production_decide', gate_choice), ('production_decide', draft_choice),
                                   ('gate_decide', {**gate_choice, 'gate_id': gate['id']}),
                                   ('draft_decide', draft_choice)]:
             status, _ = http(endpoint + operation, {**choice, '_person': True}, studio_header)
             assert status == 403
+            status, denied = http(endpoint + operation, choice, page_without_session)
+            assert status == 403 and denied['code'] == 'hub_ui_session_required'
         assert http(url + '?all_spaces=1', headers=headers)[1] == all_spaces
         assert not {'hub_agora_production_decide', 'hub_agora_gate_decide', 'hub_agora_draft_decide'} & {
             tool['name'] for tool in TOOLS}
@@ -66,7 +69,7 @@ def test_pending_decisions_counts_each_gate_once_in_its_space(tmp_path):
         assert status == 404
         status, _ = http(endpoint + 'production_decide', {**draft_choice, 'signature': 'stale'}, proof)
         assert status == 409
-        status, result = http(endpoint + 'production_decide', draft_choice, proof)
+        status, result = http(endpoint + 'draft_decide', draft_choice, ui_headers(hub))
         assert status == 200 and result['kept'] == variant['id']
         assert http(url + '?space_id=test-studio', headers=headers)[1]['counts'] == {}
         status, result = http(endpoint + 'production_decide', gate_choice, proof)

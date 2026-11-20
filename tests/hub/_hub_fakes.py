@@ -11,10 +11,12 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import parse_qs, urlsplit
 
 from hoard_link.hub.config import HubConfig
 from hoard_link.hub.core import Hub
 from hoard_link.hub.server import make_server
+from hoard_link.hub.ui_session import SESSION_HEADER, SESSION_PATH, launch_url
 
 from .conftest import free_port, write_manifest
 
@@ -139,6 +141,19 @@ def http(url: str, body=None, headers=None, method=None):
             return resp.status, json.loads(resp.read() or b"null")
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read() or b"null")
+
+
+def ui_url(hub: Hub, path: str = "/") -> str:
+    return launch_url(hub.config.url + path, hub.config.data_dir)
+
+
+def ui_headers(hub: Hub) -> dict[str, str]:
+    url = hub.config.url
+    ticket = parse_qs(urlsplit(ui_url(hub)).fragment)["hub-session"][0]
+    headers = {"Sec-Fetch-Site": "same-origin", "Origin": url}
+    status, reply = http(url + SESSION_PATH, {"ticket": ticket}, headers)
+    assert status == 200
+    return {**headers, SESSION_HEADER: reply["session"]}
 
 
 def wait_for(pred: Callable[[], Any], timeout: float = 5.0, step: float = 0.02) -> Any:

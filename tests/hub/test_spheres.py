@@ -16,9 +16,9 @@ from hoard_link.hub.server import make_server
 from hoard_link.hub.spheres import (NOTIFY_CHANNELS, SpheresFacet, blank_sphere, default_spheres, normalize_sphere,
                                     parse_days, sender_matches)
 
+from ._hub_fakes import ui_headers
 from .test_hub_and_server import _http
 
-UI = {"Sec-Fetch-Site": "same-origin"}
 
 
 @pytest.fixture
@@ -316,7 +316,7 @@ def test_http_edit_needs_hub_or_ui(served):
     status, body = _http(url + "/api/spheres", {"sphere": sphere}, headers=hubh)
     assert status == 200 and body["ok"] and [s["id"] for s in body["spheres"]][-1] == "family"
     # the page itself (same-origin, no token) may edit too
-    status, body = _http(url + "/api/spheres", {"sphere": {"id": "family", "vip": ["a@b.c"]}}, headers=UI)
+    status, body = _http(url + "/api/spheres", {"sphere": {"id": "family", "vip": ["a@b.c"]}}, headers=ui_headers(hub))
     assert status == 200 and next(s for s in body["spheres"] if s["id"] == "family")["vip"] == ["a@b.c"]
     status, body = _http(url + "/api/spheres", {"sphere": {"id": "family", "color": "bad"}}, headers=hubh)
     assert status == 400 and "color" in body["error"]
@@ -413,7 +413,7 @@ def test_batch_validation_failure_changes_nothing(sp):
 
 def test_batch_http_and_native_tool_share_the_patch(sp, served):
     hub,url,hubh,_=served
-    status,result=_http(url+'/api/spheres',{'patches':[{'id':'work','color':'#123456'}]},headers=UI)
+    status,result=_http(url+'/api/spheres',{'patches':[{'id':'work','color':'#123456'}]},headers=ui_headers(hub))
     assert status==200 and result['ok'] and sp.get('work')['color']=='#123456'
     status,result=_http(url+'/api/agent/call',{'name':'hub_spheres_patch',
         'arguments':{'patches':[{'id':'new-fixture','name':'New fixture'}],'removed':['work']}},headers=hubh)

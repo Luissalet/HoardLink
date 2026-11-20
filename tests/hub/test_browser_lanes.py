@@ -22,7 +22,7 @@ from hoard_link.hub.server import make_server
 
 from .conftest import free_port
 from .test_hub_and_server import _http
-from ._hub_fakes import wait_for
+from ._hub_fakes import wait_for, ui_headers
 
 
 class Clock:
@@ -348,7 +348,7 @@ def test_a_lane_is_bound_to_the_token_that_took_it(live_hub, monkeypatch):
     assert b["granted"] and hub.lanes.status()["lanes"][0]["holder"] == "faustus"
 
     # the Hub page (same-origin, no token) may force a lane away, and only release
-    page = {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors", "Origin": url}
+    page = ui_headers(hub)
     status, reply = _http(url + "/api/lane/acquire", {"domain": "other.com", "holder": "ui"}, headers=page)
     assert status == 403
     assert _http(url + "/api/lane/renew", {"lease_id": b["lease_id"]}, headers=page)[0] == 403

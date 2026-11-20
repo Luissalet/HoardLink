@@ -22,7 +22,7 @@ from hoard_link.hub.agora import (
     verify_code_peek,
 )
 
-from ._hub_fakes import http, make_hub, serve
+from ._hub_fakes import http, make_hub, serve, ui_headers
 
 
 def _git_repo(root: Path, files: dict[str, str]) -> str:
@@ -276,7 +276,7 @@ def test_http_and_tools(tmp_path):
         status, body = http(base + "/api/agora/heartbeat", {"agent": "claude", "doing": "testing"}, headers=hdr)
         assert status == 200 and body["ok"], body
         # the page writes as the person
-        page = {"Sec-Fetch-Site": "same-origin"}
+        page = ui_headers(hub)
         status, body = http(base + "/api/agora/thread_open", {"title": "Hola", "body": "¿Qué tal?", "kind": "question"},
                             headers=page)
         assert status == 200 and body["thread"]["created_by"] == "person", body

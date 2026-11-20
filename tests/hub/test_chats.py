@@ -18,6 +18,7 @@ from hoard_link.hub.chats import (ChatSources, MASK, http_request, iso_utc, mask
 from hoard_link.hub.facets import Request
 from hoard_link.hub.server import make_server
 
+from ._hub_fakes import ui_headers
 from .test_hub_and_server import _http
 from .test_mailgate import FakeSpheres, req
 
@@ -635,7 +636,7 @@ def served(hub, chats):
 
 
 def test_routes_through_the_real_server(served, chats, tmp_path, hub):
-    ui = {"Sec-Fetch-Site": "same-origin"}
+    ui = ui_headers(hub)
     assert _http(served + "/api/chats/sources")[0] == 401
     f = tmp_path / "c.jsonl"
     f.write_text(json.dumps({"ts": NOW, "channel": "a", "from": "b", "text": "hola desde http"}) + "\n", encoding="utf-8")

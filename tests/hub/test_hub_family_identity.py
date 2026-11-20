@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from ._hub_fakes import make_hub, serve
+from ._hub_fakes import make_hub, serve, ui_url
 
 
 def seed(hub):
@@ -70,7 +70,7 @@ def test_dark_identity_and_quick_reply_before_slow_board(tmp_path, monkeypatch, 
             browser=p.chromium.launch(headless=True)
             page=browser.new_page(viewport={'width':width,'height':900})
             errors=[]; page.on('pageerror', lambda e: errors.append(str(e)))
-            page.goto(hub.config.url+'/?space_id=alpha#hub/agora',wait_until='domcontentloaded')
+            page.goto(ui_url(hub, '/?space_id=alpha#hub/agora'),wait_until='domcontentloaded')
             item=page.locator(f'.ag-quick-item[data-thread-id="{th["id"]}"]')
             item.get_by_role('button',name='Reply here',exact=True).wait_for(timeout=6000)
             assert not release.is_set(), 'Waiting must render while the board is still blocked'

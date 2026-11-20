@@ -20,10 +20,10 @@ from hoard_link.hub.notify import (CHANNELS, MASK, NotifyFacet, build_toast_ps1,
                                    xml_escape)
 from hoard_link.hub.server import make_server
 
+from ._hub_fakes import ui_headers
 from .conftest import free_port
 from .test_hub_and_server import _http
 
-UI = {"Sec-Fetch-Site": "same-origin"}
 NOON = datetime(2026, 10, 5, 12, 0)      # a Monday, outside every default quiet window
 NIGHT = datetime(2026, 10, 5, 23, 30)
 
@@ -753,7 +753,7 @@ def test_http_post_uses_the_callers_identity(served, fx):
     # hub / ui choose the app (default hub)
     assert _http(url + "/api/notify", {"title": "From hub"}, headers=hubh)[1]["app"] == "hub"
     assert _http(url + "/api/notify", {"title": "As ledger", "app": "ledger"}, headers=hubh)[1]["app"] == "ledger"
-    assert _http(url + "/api/notify", {"title": "From ui", "app": "kafka"}, headers=UI)[1]["app"] == "kafka"
+    assert _http(url + "/api/notify", {"title": "From ui", "app": "kafka"}, headers=ui_headers(hub))[1]["app"] == "kafka"
     status, body = _http(url + "/api/notify", {"body": "no title"}, headers=hubh)
     assert status == 400 and "title" in body["error"]
 
@@ -786,7 +786,7 @@ def test_http_read(served, fx):
     ids = [_http(url + "/api/notify", {"title": f"N{i}", "app": "a"}, headers=hubh)[1]["id"] for i in range(3)]
     assert _http(url + "/api/notify/read", {"ids": ids[:1]})[0] == 401
     assert _http(url + "/api/notify/read", {"ids": ids[:1]}, headers=apph)[0] == 403
-    status, body = _http(url + "/api/notify/read", {"ids": ids[:1]}, headers=UI)
+    status, body = _http(url + "/api/notify/read", {"ids": ids[:1]}, headers=ui_headers(hub))
     assert status == 200 and body == {"ok": True, "marked": 1, "unseen": 2}
     status, body = _http(url + "/api/notify/read", {"all": True}, headers=hubh)
     assert body["marked"] == 2 and body["unseen"] == 0
@@ -807,7 +807,7 @@ def test_http_config_never_returns_secrets(served, fx):
     got = _http(url + "/api/notify/config")[1]
     assert got["channels"]["telegram"]["bot_token"] == MASK + "bot" if len("9999:very-secret-bot") < 8 else got["channels"]["telegram"]["bot_token"].startswith(MASK)
     # saving the masked view back (what the page does) keeps the secrets
-    status, body = _http(url + "/api/notify/config", {"channels": got["channels"]}, headers=UI)
+    status, body = _http(url + "/api/notify/config", {"channels": got["channels"]}, headers=ui_headers(hub))
     assert status == 200 and fx.config()["channels"]["telegram"]["bot_token"] == "9999:very-secret-bot"
     status, body = _http(url + "/api/notify/config", {"rate_per_app": "lots"}, headers=hubh)
     assert status == 400 and "rate_per_app" in body["error"]

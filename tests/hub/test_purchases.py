@@ -13,7 +13,7 @@ from hoard_link.hub import tools
 from hoard_link.hub.events import EventLog
 from hoard_link.hub.purchases import PurchasesFacet, merchant_similar, order_key, quick_add_url
 
-from ._hub_fakes import FakeApp, RecordingNotify, http, make_hub, serve, wait_for
+from ._hub_fakes import FakeApp, RecordingNotify, http, make_hub, serve, wait_for, ui_headers
 
 _n = [0]
 # Anchor fixture dates to "today" so undated shipments (event ts = now) stay inside the
@@ -340,7 +340,7 @@ def test_delivery_only_starts_home_on_explicit_open(world, monkeypatch):
             assert response.status == 200
             assert b'/ui/purchase-open.js' in response.read()
         assert calls == []  # Reading/prefetching the notification never starts HomeHoard.
-        status, result = http(url + "/api/purchases/1/open-home", {}, {"Sec-Fetch-Site": "same-origin", "Origin": url})
+        status, result = http(url + "/api/purchases/1/open-home", {}, ui_headers(hub))
         assert status == 200 and result["ok"]
         assert result["url"] == quick_add_url(hub.get("homehoard").url, before)
         assert calls == [("homehoard", True)]
