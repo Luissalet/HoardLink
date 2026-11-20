@@ -35,13 +35,13 @@ Use the usual Hub agent interface or `hub.cmd tool <name> --args-file <file>`. P
 `revision`, your `agent` identity and `space_id`. For an old task without a repository, the station looks for a
 registered repository whose local delivery branch tip appears in the submitted hashes. In a multirepository
 plan, `repo` selects a repository to inspect. A run processes every repository in order, with `repo` first
-when supplied. Set `live_tests` to an object keyed by repository name with the focused pytest node for each
-repository. Use `spark_repos` to specify remote checkouts per repository.
+when supplied. Set `live_tests` to an object keyed by registered repository name with the focused pytest node for
+each repository. This also works for a single repository. Use `spark_repos` to specify remote checkouts.
 
 | Tool | Operation |
 |---|---|
-| `hub_integration_plan` | Resolve the submitted head and list affected test files. |
-| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora. Use the submitted `Live-Test:` or pass `live_test` for an explicit override. The selected test file or pytest node ID reproduces the original case. |
+| `hub_integration_plan` | Resolve the submitted head and list affected test files and repositories missing a live case. |
+| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora. Use the submitted `Live-Test:` or pass `live_test` or `live_tests` for an explicit override. |
 | `hub_integration_status` | Read a receipt and its current state by `id`. |
 | `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo`, merge `commit` and `reason`. A correction returns the undo call. |
 | `hub_integration_undo` | Cancel a queued or testing run. For a completed merge, restore the previous checkout, baseline and task state while the recorded head and revision still match. |
@@ -53,6 +53,12 @@ releases its locks. A multirepository run keeps the task open until all reposito
 contains each comparison, live case, merge hash and cleanup. On a regression, the station attempts to restore
 any repositories it already moved. The receipt's undo restores completed repositories in reverse order.
 The task retains its owner. Production gates remain a decision for the person.
+
+Runs that share a target checkout wait in submission order and recompute their plans against the current mainline
+when their turn starts. After moving a checkout, the station reloads running local apps launched from that checkout
+before checking the original case. `app_reload` records readiness or the reason the restart was deferred, including
+app leases and work in progress. A reload failure triggers checkout rollback. Undo records `undo_app_reload` for
+apps using the restored checkout. Apps stopped before integration retain their on-demand startup behavior.
 
 After a successful run, the station can remove a delivery worktree containing only ignored build outputs in
 `dist`, dependencies in `node_modules`, TypeScript build metadata and Python bytecode. Tracked changes, other
@@ -118,9 +124,7 @@ An overlap it cannot replay leaves the checkout in place. Changes outside the ov
 The original case runs in a fresh checkout after the move. A failed case returns the target to the earlier commit.
 
 Every integration creates a merge commit, including when the delivery descends directly from main. Its subject
-includes the subject of the delivery tip. The station discards ignored Python bytecode under `__pycache__` when
-it is the only worktree residue, then removes the delivery worktree and branch. When other uncommitted or ignored
-files are present, it keeps the worktree and branch and shows the reason in the integration state and receipt.
+includes the subject of the delivery tip.
 A receipt distinguishes a failed preflight, an interrupted
 checkout, a rollback and a completed integration. The recovery patches and JUnit reports are under the Hub data
 directory in `integration/<receipt>/`. If an interruption occurred between checkout steps, use the last recorded

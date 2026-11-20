@@ -35,4 +35,10 @@ def invoke(hub, name, arguments):
     else:
         result = tools.call(hub, name, {key: value for key, value in arguments.items() if key != CONTEXT})
     ok = not (isinstance(result, dict) and result.get("ok") is False)
-    return {"ok": ok, "tool": name, "result": result, **meta}, 200 if ok else 400
+    if ok:
+        status = 200
+    elif result.get("code") == "worker_name_in_use":
+        status = 409
+    else:
+        status = 400
+    return {"ok": ok, "tool": name, "result": result, **meta}, status

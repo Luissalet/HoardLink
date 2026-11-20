@@ -1954,6 +1954,9 @@ def test_a_session_takes_the_name_it_is_given_and_the_hub_proposes_free_ones(tmp
                             ("claude-", 400), ("claude-revisor-", 400)):
             out = facet.worker({"leader_id": "claude", "model": "sonnet", "effort": "low", "task": "x", "name": bad})
             assert out["ok"] is False and out["status"] == status, bad
+            if status == 409:
+                assert out["code"] == "worker_name_in_use" and out["spaces"] == ["ecosystem"]
+                assert bad in out["error"] and "ya está en uso" in out["error"]
         assert len(commands) == 2
         # the name of a session that never got to start is free again
         monkeypatch.setattr("hoard_link.hub.agora_console.shutil.which", lambda name: None)

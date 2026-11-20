@@ -572,7 +572,7 @@ def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[s
         out["defects"] = [dict(d) for d in
                           self.db.query("SELECT * FROM agora_piece_defects WHERE piece_id=? ORDER BY id", (row["id"],))]
         out["derived"] = [{"piece": int(r["id"]), "role": d["role"]} for r in self.db.query(
-            "SELECT id, derives_from FROM agora_pieces WHERE order_id=?", (row["order_id"],))
+            "SELECT id, derives_from FROM agora_pieces WHERE space_id=? ORDER BY id", (row["space_id"],))
             for d in _parents(r["derives_from"]) if d["piece"] == row["id"]]
     return out
 
@@ -1038,9 +1038,7 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         decisions: list[int] = []
         inherited: list[dict[str, Any]] = []
         for pid in derives:
-            parent = self.db.one("SELECT order_id, decisions, keep FROM agora_pieces WHERE id=?", (pid,))
-            if not parent or parent["order_id"] != oid:
-                raise _err(f"piece #{pid} is not a piece of order #{oid}", 404)
+            parent = _piece_row(self, pid)
             decisions += [d for d in _load(parent["decisions"], []) if d not in decisions]
             kept = self.db.one("SELECT id FROM agora_order_decisions WHERE piece_id=? AND decision='keep' ORDER BY id DESC LIMIT 1", (pid,))
             if kept and kept["id"] not in decisions:
@@ -1209,9 +1207,9 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
     return did
 
 
-def _stale_below(self: Any, journal: _Journal, piece_id: int, order_id: int) -> list[int]:
+def _stale_below(self: Any, journal: _Journal, piece_id: int) -> list[int]:
     """Mark stale every piece derived (directly or not) from piece_id; returns their ids."""
-    rows = [dict(r) for r in self.db.query("SELECT id, derives_from, status FROM agora_pieces WHERE order_id=?", (order_id,))]
+    rows = [dict(r) for r in self.db.query("SELECT id, derives_from, status FROM agora_pieces WHERE space_id=?", (self.space_id,))]
     stale, frontier = [], [piece_id]
     while frontier:
         current = frontier.pop()
@@ -1398,7 +1396,7 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             else:
                 self.db.execute("UPDATE agora_pieces SET status='cancelled', updated=? WHERE id=?", (_now(self), pid))
                 _send_back(self, journal, piece, agent, note or "Cancelada en la puerta, sin nota.", source="gate")
-                stale = _stale_below(self, journal, pid, order_row["id"])
+                stale = _stale_below(self, journal, pid)
             result.append({"piece_id": pid, "decision_id": did, "stale": stale})
         _close_if_done(self, journal, gate["id"])
     self._bump("agora.order.decided", {"order_id": order_row["id"], "gate_id": gate["id"], "decision": decision,
@@ -1610,7 +1608,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_piece_add",
          "description": "Register a piece of an order: kind, title, path (relative to the order's folder or absolute), "
                         "url, or app + object + place (+ source_rev); previews (e.g. turntable frames); task_id of the "
-                        "job that made it, model, derives_from ({piece, role: material|reference}) and keep (the "
+                        "job that made it, model, derives_from (pieces in this space, role: material|reference) and keep (the "
                         "order's details by default). Files get a content print: the same output again returns the "
                         "same piece; a changed file at the same path is its next revision." + undo,
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "kind": kind,

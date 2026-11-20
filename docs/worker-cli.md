@@ -64,6 +64,7 @@ Use `hub_vulcan_blender_set {"version":"4.3"}` to select an installed Blender re
 for Vulcan. The Hub keeps the setting in its data folder and lists it as **Blender · Vulcan** in Local programs.
 The setting takes effect the next time the Hub launches Vulcan. Pass `null` for automatic selection, or use the
 returned undo call to restore the previous selection if it is still current.
+For primitive blocking, pin 4.3 with `hub_vulcan_blender_set {"version":"4.3"}`. Blender 5.2 is also compatible with the tested map pass.
 
 For programs outside discovery, use **Register a program** or call `hub_program_register` with
 `name`, an absolute `path`, `headless` instructions and an optional `version`. This records the

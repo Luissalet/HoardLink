@@ -25,7 +25,7 @@ import uuid
 import tomllib
 import urllib.error
 import urllib.request
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -75,7 +75,7 @@ SIGN_IN_REFUSED_TTL_S = 15 * 60
 #: Providers whose runner starts a model that lists no effort levels without one. The others always pass one.
 NO_EFFORT_LEADERS = ("claude", "faustus")
 #: Names of sessions being started right now, on any server: taken until their session is on record or gave up.
-_STARTING_NAMES: set[str] = set()
+_STARTING_NAMES: dict[str, str] = {}
 _STARTING_LOCK = threading.Lock()
 
 
@@ -2085,7 +2085,8 @@ class AgoraConsoleFacet(Facet):
             return reply
         finally:
             with _STARTING_LOCK:
-                _STARTING_NAMES.difference_update(reserved)
+                for name in reserved:
+                    _STARTING_NAMES.pop(name, None)
 
     def _create_worker_now(self, args: dict[str, Any], actor: str, reserved: list[str], worker_id: str, *,
                            benchmark_prompt: Optional[str] = None) -> dict[str, Any]:
@@ -2107,9 +2108,16 @@ class AgoraConsoleFacet(Facet):
             with _STARTING_LOCK:                     # checked and kept in one step: two at once do not both get it
                 status, problem = self._worker_name_problem(leader_id, wanted)
                 if not problem:
-                    _STARTING_NAMES.add(wanted)
+                    _STARTING_NAMES[wanted] = self.space_id
                     reserved.append(wanted)
             if problem:
+                if status == 409:
+                    spaces = self._worker_name_spaces(wanted)
+                    where = ", ".join(spaces)
+                    en = f"{wanted} is already in use" + (f" in {where}" if where else " by an Agora identity")
+                    es = f"El nombre {wanted} ya está en uso" + (f" en {where}" if where else " por una identidad del Ágora")
+                    return {"ok": False, "status": status, "code": "worker_name_in_use", "name": wanted,
+                            "spaces": spaces, "error": f"{en}. Choose another name. / {es}. Elige otro nombre."}
                 return {"ok": False, "status": status, "error": problem}
             agent_id = wanted
         rank_asked = str(args.get("rank") or "").strip().lower()
@@ -3092,6 +3100,32 @@ class AgoraConsoleFacet(Facet):
 
     # ---- the name and the rank a session comes in with ---------------------------------------------------------
 
+    def _running_worker_names(self):
+        root = self._db_path.parent
+        with self._db_lock:
+            for path in root.glob("agora-console*.db"):
+                space = path.stem.removeprefix("agora-console").removeprefix("-") or "ecosystem"
+                try:
+                    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
+                        rows = db.execute("SELECT agent_id FROM workers WHERE agent_id<>'' "
+                                          "AND state IN ('running','stopping')").fetchall()
+                except sqlite3.Error:
+                    logger.warning("Could not read active worker names in %s", space)
+                    continue
+                for (agent_id,) in rows:
+                    yield agent_id, space
+
+    def _worker_name_spaces(self, name: str) -> list[str]:
+        spaces = {space for agent_id, space in self._running_worker_names() if agent_id == name}
+        with _STARTING_LOCK:
+            if name in _STARTING_NAMES:
+                spaces.add(_STARTING_NAMES[name])
+        agora = self._agora()
+        if agora is not None:
+            spaces.update(row["space_id"] for row in agora.db.query(
+                "SELECT space_id FROM coordination_members WHERE agent=?", (name,)))
+        return sorted(spaces)
+
     def _taken_names(self) -> set[str]:
         """Names no new session may take: the leaders', the console's own, every agent the Agora knows and the
         sessions running now. A session that never got to start leaves its name free."""
@@ -3102,9 +3136,7 @@ class AgoraConsoleFacet(Facet):
                 taken |= {str(r["id"]) for r in agora.db.query("SELECT id FROM agents")}
             except Exception:  # noqa: BLE001 - without the Agora's list, the console's own still counts
                 pass
-        with self._db_lock, self._db() as db:
-            taken |= {str(r["agent_id"]) for r in db.execute(
-                "SELECT agent_id FROM workers WHERE agent_id<>'' AND state IN ('running','stopping')")}
+        taken.update(agent_id for agent_id, _ in self._running_worker_names())
         return taken | set(_STARTING_NAMES)
 
     @staticmethod

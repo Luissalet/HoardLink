@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from subprocess import TimeoutExpired
-from threading import Lock
+from threading import Condition, Lock
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -182,6 +182,8 @@ class IntegrationFacet(Facet):
         self.root = Path(hub.config.data_dir) / "integration"
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="integration")
         self.lock = Lock()
+        self.queue_changed = Condition(self.lock)
+        self.queue = {}
         self.active = {}
         self.cancelled = set()
         self.runtime = None
@@ -200,8 +202,9 @@ class IntegrationFacet(Facet):
                 write_json_atomic(path, receipt)
 
     def close(self):
-        with self.lock:
+        with self.queue_changed:
             self.cancelled.update(self.active.values())
+            self.queue_changed.notify_all()
         self.pool.shutdown(wait=True, cancel_futures=False)
 
     def _agora(self, args):
@@ -224,16 +227,9 @@ class IntegrationFacet(Facet):
             raise AgoraError("Integration requires approval of the exact submitted revision", 409)
         return agora, agent, task
 
-    def _delivery(self, agora, task, args, *, selected=None, repositories=()):
+    def _delivery(self, agora, task, args, repo, entry, *, repositories=()):
         summary = submission_summary(agora, task)
-        if selected:
-            repo, (repo_name, commits) = selected
-        else:
-            repo_name = (task["repo"] or args.get("repo") or
-                         repo_git.delivery_repository(agora, task, summary=summary))
-            if not repo_name or not (repo_path := agora.repo_lookup(repo_name)):
-                raise repo_git.IntegrationError("The delivery needs a repository registered in the Hub")
-            repo, commits = Path(repo_path).resolve(), task["commits"]
+        repo_name, commits = entry
         target = repo_git.git_text(repo, "symbolic-ref", "--short", "HEAD")
         if target not in ("main", "master"):
             raise repo_git.IntegrationError("The registered repository must have its main or master branch checked out")
@@ -262,7 +258,7 @@ class IntegrationFacet(Facet):
         live = args.get("live_test") or submission_live_test(summary, repo_name, repositories)
         if live and repo_git.test_path(live.split("::", 1)[0]) not in files["contract"]:
             raise repo_git.IntegrationError("The live case needs a test file in the contract selection")
-        return repo, {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
+        return {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
                       "branch": task["branch"], "commits": commits, "delta": sorted(delta), "tests": files, "live_test": live,
                       "test_paths": declared, "test_paths_source": "submission" if from_submission else "integrator",
                       "contract_timeout_seconds": checks.contract_timeout(config),
@@ -272,8 +268,14 @@ class IntegrationFacet(Facet):
         found = (repo_git.delivery_repositories(agora, task, args.get("repo"))
                  if len(task["commits"]) > 1 else {})
         if len(found) < 2:
-            repo, plan = self._delivery(agora, task, args)
-            return [(repo, plan, args)], [plan["repo_ref"]]
+            name = (task["repo"] or args.get("repo") or repo_git.delivery_repository(
+                agora, task, summary=submission_summary(agora, task)))
+            if not name or not (location := agora.repo_lookup(name)):
+                raise repo_git.IntegrationError("The delivery needs a repository registered in the Hub")
+            local = self._repository_args(args, name, [name])
+            repo = Path(location).resolve()
+            plan = self._delivery(agora, task, local, repo, (name, task["commits"]))
+            return [(repo, plan, local)], [name]
         hint = args.get("repo")
         first = Path(agora.repo_lookup(hint)).resolve() if hint and agora.repo_lookup(hint) else None
         if hint and first not in found:
@@ -285,18 +287,24 @@ class IntegrationFacet(Facet):
                 continue
             local = {key: value for key, value in args.items() if key not in ("live_test", "test_paths", "spark_repo")
                      or repo == first}
-            for field, param in (("live_test", "live_tests"), ("test_paths", "test_paths_by_repo"),
-                                 ("spark_repo", "spark_repos")):
-                mapping = args.get(param, {})
-                if not isinstance(mapping, dict) or set(mapping) - set(names):
-                    raise repo_git.IntegrationError("Use registered delivery names as repository map keys")
-                if entry[0] in mapping:
-                    local[field] = mapping[entry[0]]
-            if any(field in local and not isinstance(local[field], str) for field in ("live_test", "spark_repo")):
-                raise repo_git.IntegrationError("spark_repos and live_tests need string values")
-            _, plan = self._delivery(agora, task, local, selected=(repo, entry), repositories=names)
+            local = self._repository_args(local, entry[0], names)
+            plan = self._delivery(agora, task, local, repo, entry, repositories=names)
             plans.append((repo, plan, local))
         return plans, names
+
+    @staticmethod
+    def _repository_args(args, name, names):
+        local = args.copy()
+        for field, param in (("live_test", "live_tests"), ("test_paths", "test_paths_by_repo"),
+                             ("spark_repo", "spark_repos")):
+            mapping = args.get(param, {})
+            if not isinstance(mapping, dict) or set(mapping) - set(names):
+                raise repo_git.IntegrationError("Use registered delivery names as repository map keys")
+            if name in mapping:
+                local[field] = mapping[name]
+        if any(field in local and not isinstance(local[field], str) for field in ("live_test", "spark_repo")):
+            raise repo_git.IntegrationError("Spark checkouts and live tests need string values")
+        return local
 
     def _path(self, run):
         if not isinstance(run, str) or not re.fullmatch(r"[0-9a-f]{32}", run):
@@ -341,7 +349,7 @@ class IntegrationFacet(Facet):
         if merge and (missing := [plan["repo_ref"] for _, plan, _ in deliveries if not plan["live_test"]]):
             raise repo_git.IntegrationError("Supply the focused live_test that reproduces the original case for: "
                                             + ", ".join(missing))
-        repo, plan, _ = deliveries[0]
+        _, plan, _ = deliveries[0]
         with self.lock:
             if existing := self.active.get(key):
                 return self.status({"id": existing})
@@ -350,7 +358,7 @@ class IntegrationFacet(Facet):
             path.parent.mkdir(parents=True)
             receipt = {"id": run, "task_id": task["id"], "revision": task["submission_revision"],
                        "space_id": agora.space_id, "agent": agent, "plan": plan, "merge": merge,
-                       "state": "queued", "machine": "spark" if args.get("spark_repo") else "local",
+                       "state": "queued", "machine": "spark" if deliveries[0][2].get("spark_repo") else "local",
                        "created": time.time(), "events": []}
             if self.runtime:
                 receipt["runtime"] = self.runtime.status()
@@ -364,7 +372,8 @@ class IntegrationFacet(Facet):
                 receipt["machine"] = "multiple" if len({row["machine"] for row in receipt["repositories"]}) > 1 else receipt["repositories"][0]["machine"]
             write_json_atomic(path, receipt)
             self.active[key] = run
-            self.pool.submit(self._work, args, deliveries, task, receipt)
+            self.queue[run] = {repo for repo, _, _ in deliveries}
+            self.pool.submit(self._work, args, receipt)
         return {"ok": True, "receipt": receipt}
 
     def _baseline(self, repo):
@@ -401,7 +410,15 @@ class IntegrationFacet(Facet):
                     raise repo_git.IntegrationError(f"{lane} tests in {key} at {ref[:12]} exceeded {timeout} s") from exc
         return checks.combine(results)
 
-    def _work(self, args, deliveries, task, receipt):
+    def _repository_turn(self, run):
+        for earlier, paths in self.queue.items():
+            if earlier == run:
+                return True
+            if paths & self.queue[run]:
+                return False
+        return False
+
+    def _work(self, args, receipt):
         run = receipt["id"]
         path = self._path(run)
         group = receipt.get("repositories")
@@ -414,11 +431,25 @@ class IntegrationFacet(Facet):
             write_json_atomic(path, receipt)
 
         try:
+            with self.queue_changed:
+                self.queue_changed.wait_for(lambda: run in self.cancelled or self._repository_turn(run))
+                cancelled = run in self.cancelled
+            if cancelled:
+                update("cancelled")
+                return
+            agora, _, task = self._snapshot(args, merge=receipt["merge"])
+            deliveries, _ = self._deliveries(agora, task, args)
+            if {repo for repo, _, _ in deliveries} != self.queue[run]:
+                raise repo_git.IntegrationError("The registered delivery repositories changed while queued")
+            receipt["plan"] = deliveries[0][1]
+            if group:
+                for (_, plan, _), row in zip(deliveries, group):
+                    row["plan"] = plan
+            update("queued")
             if not group:
                 repo, _, local = deliveries[0]
                 self._work_repo(local, repo, task, receipt)
                 return
-            agora = self._agora(args)
             if receipt["merge"]:
                 resources = sorted({normalize_resource(f"merge:{repo.name}") for repo, _, _ in deliveries})
                 with agora.db.tx():
@@ -452,9 +483,11 @@ class IntegrationFacet(Facet):
         finally:
             if locks:
                 agora.unlock({"agent": agent, "resources": locks})
-            with self.lock:
+            with self.queue_changed:
                 self.active.pop((receipt["space_id"], receipt["task_id"]), None)
+                self.queue.pop(run, None)
                 self.cancelled.discard(run)
+                self.queue_changed.notify_all()
 
     def _work_repo(self, args, repo, task, receipt, *, progress=None):
         run = receipt["id"]
@@ -524,8 +557,11 @@ class IntegrationFacet(Facet):
                     raise repo_git.IntegrationError("Delivery branch changed after its tests")
                 update("integrating")
                 repo_git.move_checkout(repo, base, merged, folder, update)
-                update("checking_live_case")
                 try:
+                    self._reload_apps(agora, repo, agent, receipt, "app_reload")
+                    update("checking_live_case")
+                    if any(result["state"] == "failed" for result in receipt["app_reload"]):
+                        raise repo_git.IntegrationError("A running app did not come back ready after integration")
                     with repo_git.worktree(repo, folder / "live", merged) as live_tree:
                         receipt["live"] = self._run_checks(repo, live_tree, [plan["live_test"]], receipt,
                                                            base=base, ref=merged, lane="live", remote=remote)
@@ -557,6 +593,37 @@ class IntegrationFacet(Facet):
         finally:
             if took_lock:
                 agora.unlock({"agent": agent, "resources": [merge_resource]})
+
+    def _reload_apps(self, agora, repo, agent, receipt, field):
+        results = receipt[field] = []
+        for app in getattr(self.hub, "apps", []):
+            if not app.launch or not Path(app.launch.cwd).resolve().is_relative_to(repo):
+                continue
+            state = self.hub.app_status(app, windows={})
+            prior = next((row for row in receipt.get("app_reload", []) if row["app"] == app.id), None)
+            recover = field == "undo_app_reload" and prior and prior["state"] == "failed" and prior.get("stopped")
+            if state["state"] != "running" and not recover:
+                continue
+            if not state.get("stoppable") and not recover:
+                results.append({"app": app.id, "state": "deferred", "reason": "App process is not managed locally"})
+                continue
+            resource = normalize_resource(f"app:{app.id}")
+            with agora.db.tx():
+                existing = any(row["resource"] == resource for row in agora._live_locks())
+                got = agora._acquire(agent, [resource], None, 900, "Reload integrated application code")
+            if not got["ok"]:
+                results.append({"app": app.id, "state": "deferred", "reason": "App lease is held by another worker"})
+                continue
+            try:
+                result = self.hub.start(app.id, automatic=True) if recover else self.hub.restart(app.id, automatic=True)
+                deferred = result.get("skipped") or self.hub.automation_blocked(app.id)
+                ready = result.get("ok") and result.get("ready")
+                results.append({"app": app.id, "state": "deferred" if deferred else "reloaded" if ready else "failed",
+                                "reason": result.get("reason") or result.get("error"), "pid": result.get("pid"),
+                                "stopped": bool(result.get("stopped", {}).get("ok"))})
+            finally:
+                if not existing:
+                    agora.unlock({"agent": agent, "resources": [resource]})
 
     def _finish(self, agora, args, repo, task, receipt, update):
         _, agent, approved = self._snapshot(args, merge=True)
@@ -643,6 +710,7 @@ class IntegrationFacet(Facet):
                 if receipt["state"] in ("queued", "waiting_for_suite_slot", "testing_main", "testing_candidate",
                                         "testing_inference"):
                     self.cancelled.add(receipt["id"])
+                    self.queue_changed.notify_all()
                     return {"ok": True, "state": "cancelling"}
                 raise repo_git.IntegrationError("Wait for the merge operation to finish before undoing")
             if receipt["state"] == "undone":
@@ -732,6 +800,9 @@ class IntegrationFacet(Facet):
                                    lambda state, data: None)
             receipt["undo_checkout"] = True
             write_json_atomic(path, receipt)
+        if "app_reload" in receipt:
+            self._reload_apps(agora, repo, agent, receipt, "undo_app_reload")
+            write_json_atomic(path, receipt)
         if cleanup.get("removed_branch"):
             branch = repo_git.git(repo, "show-ref", "--verify", "--hash", "refs/heads/" + plan["branch"], check=False)
             if branch.returncode:
@@ -800,10 +871,9 @@ class IntegrationFacet(Facet):
                     "test_paths": {"type": "array", "items": text,
                                    "description": "Tracked pytest files when the submission has no Test-Paths."},
                     "test_paths_by_repo": {"type": "object", "additionalProperties": {"type": "array", "items": text}}}
+        delivery.update(live_test=text, live_tests={"type": "object", "additionalProperties": text})
         write = {**delivery, "merge": {"type": "boolean"}, "inference": {"type": "boolean"},
-                 "spark_repo": text, "live_test": text,
-                 "spark_repos": {"type": "object", "additionalProperties": text},
-                 "live_tests": {"type": "object", "additionalProperties": text}}
+                 "spark_repo": text, "spark_repos": {"type": "object", "additionalProperties": text}}
         return [{"name": "hub_integration_" + key, "description": description,
                  "inputSchema": {"type": "object", "properties": props, "required": required,
                                  "additionalProperties": False}, "annotations": {"readOnlyHint": read}}
