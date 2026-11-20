@@ -31,6 +31,56 @@
   const changed = new Set(); // variants that changed while the person was looking at them
   const expandedDetails = new Set();
 
+  function figureControls(pass, variant, piece, video) {
+    const controls = el("div", "ord-gate-buttons");
+    const request = el("button", "ghost small", tr("Hacer figura de este fotograma", "Make a figure from this frame"));
+    const undo = el("button", "ghost small", tr("Deshacer encargo", "Undo request"));
+    const status = el("small", "ord-muted");
+    status.setAttribute("role", "status");
+    request.type = undo.type = "button";
+    undo.hidden = true;
+    controls.append(request, undo, status);
+    let pending = false, token = null;
+    const refresh = () => { request.disabled = pending || !video.paused || video.seeking || video.readyState < 2; };
+    for (const event of ["loadeddata", "play", "pause", "seeking", "seeked", "emptied"]) {
+      video.addEventListener(event, refresh);
+    }
+    refresh();
+    request.onclick = async () => {
+      if (request.disabled) return;
+      pending = true;
+      refresh();
+      const result = await ctx.api("/api/agora/draft_figure_request", {
+        space_id: pass.space_id, variant_id: variant.id, take_piece: piece.id,
+        signature: variant.signature, seconds: video.currentTime,
+      }).catch(error => ({ok: false, error: String(error)}));
+      if (result?.ok) {
+        token = result.undo || (result.existing ? token : null);
+        undo.hidden = !token;
+        status.textContent = tr(`Figura encargada · tarea #${result.task_id} · f${result.frame}`,
+          `Figure requested · task #${result.task_id} · f${result.frame}`);
+      } else {
+        status.textContent = tr("No se ha encargado la figura.", "The figure was not requested.") + " " + (result?.error || "");
+      }
+      pending = false;
+      refresh();
+    };
+    undo.onclick = async () => {
+      undo.disabled = true;
+      const result = await ctx.api("/api/agora/order_undo", {space_id: pass.space_id, token})
+        .catch(error => ({ok: false, error: String(error)}));
+      undo.disabled = false;
+      if (result?.ok) {
+        token = null;
+        undo.hidden = true;
+        status.textContent = tr("Encargo deshecho.", "Request undone.");
+      } else {
+        status.textContent = tr("No se ha podido deshacer.", "The request could not be undone.") + " " + (result?.error || "");
+      }
+    };
+    return controls;
+  }
+
   function media(piece) {
     const box = el("div", "drf-media");
     const isImage = /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(piece.path || "");
@@ -55,9 +105,11 @@
 
   function pieceStrip(pass, variant, pieces, cls) {
     const strip = el("div", cls);
+    const blocking = variant.pieces.filter(p => p.anchor === "blocking" && /\.glb$/i.test(p.path || "") && p.sha256);
     for (const p of pieces) {
       const fig = el("figure", "drf-piece" + (p.anchor === "animatic" ? " drf-wide" : ""));
-      fig.append(media(p));
+      const contents = media(p);
+      fig.append(contents);
       const cap = el("figcaption");
       cap.append(el("b", "", anchorLabel(p.anchor)), el("small", "ord-muted", p.title));
       if (isVideo(p) && p.previews?.length) {
@@ -67,6 +119,9 @@
       }
       const also = pass.variants.filter(o => o.id !== variant.id && o.status !== "discarded" && o.pieces.some(q => q.id === p.id)).map(o => o.key.toUpperCase());
       if (also.length) cap.append(el("small", "drf-shared", tr(`También en ${also.join(", ")}: se conserva si se conserva cualquiera de ellas`, `Also in ${also.join(", ")}: kept if any of them is kept`)));
+      if (isVideo(p) && p.anchor === "animatic" && p.sha256 && blocking.length === 1) {
+        cap.append(figureControls(pass, variant, p, contents.querySelector("video")));
+      }
       fig.append(cap);
       strip.append(fig);
     }

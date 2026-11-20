@@ -45,8 +45,13 @@ and `idea`. The Hub creates a separate plan for each variant in this order:
    contact with the map, the silhouette and the props at each key, including the two-handed pose of a pass.
 4. **Prospero** assembles the keys into a draft shot. In the editing module, import the stills with `media_import`,
    place them in order with `timeline_edit` and export with `render_start`. **Phidias** can work in parallel
-   from the posed blocking. Freeze the selected frame to a static GLB before `print_import`, run `sculpt_start`
-   then `close_start`, and check the exported 3MF for contacts, dimensions and topology.
+   from the posed blocking. On the Orders page, pause the aligned take and select **Make a figure from this frame**
+   (**Hacer figura de este fotograma**). The action queues a production job with the pinned take, blocking, frame at
+   24 fps and 216 mm size. It leaves the draft gate open. An agent can queue the same work with
+   `hub_agora_draft_figure_request` and undo it with `hub_agora_order_undo`. Follow the queued job:
+   `blocking_freeze` exports the evaluated GLB and grip receipt. Register the static GLB as a derived piece and
+   pass its ID, hash and size to `print_import`. Run `sculpt_start`, then `close_start`, and check the exported
+   3MF for contacts, dimensions and topology before slicing.
 
 Attach the pieces to the corresponding variant after each job. The next job can locate them with
 `hub_agora_draft_passes` by order and variant. A variant can override the template with its own `jobs`, including
