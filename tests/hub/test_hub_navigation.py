@@ -29,6 +29,10 @@ def test_home_opens_decision_before_measures_and_keeps_focus(tmp_path):
             delayed = []
             page.route("**/api/work-admission/metrics?all_spaces=1", lambda route: delayed.append(route))
             page.goto(hub.config.url + "/#hub/home")
+            attention = page.locator(".hub-attention")
+            playwright.expect(attention).to_contain_text(
+                "Today’s agenda and overdue items, unread notifications, mail, chats and incidents.")
+            playwright.expect(attention).to_contain_text("There are no pending items in this summary.")
             page.locator(".hub-decision-row", has_text="Review the draft").click()
             heading = page.locator(f'[data-gate="{gate["id"]}"] h3')
             playwright.expect(heading).to_be_focused()
@@ -178,6 +182,8 @@ def test_task_discovery_project_resume_and_plain_automation(tmp_path, width):
                 base = hub.config.url
                 page.goto(base + '/#hub/home')
                 page.locator('.hub-attention-row', has_text='Informe preparado').wait_for()
+                browser_api.expect(page.locator('.hub-attention')).to_contain_text(
+                    'Agenda de hoy y plazos vencidos, avisos sin revisar, correo, chats e incidencias.')
                 page.goto(base + '/#hub/apps')
                 page.locator('#grid .card').first.wait_for()
                 page.locator('#hub-app-toolbar #search').fill('escribir una novela')
