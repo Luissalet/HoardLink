@@ -37,7 +37,7 @@ STUDIO = {
         "y las rutas antes de editar. Trabaja en un worktree aislado, con rama; evita cambios ajenos, enlaces "
         "simbólicos y junctions. Haz commits pequeños en inglés como Luissalet <luissalet@users.noreply.github.com>, "
         "sin trailers. Nunca hagas push ni integres en main salvo encargo explícito de integración. Añadir nunca "
-        "quita funciones. Interfaz en castellano de España y en inglés, sin eslóganes ni terminal para Luis. "
+        "quita funciones. Interfaz en castellano de España y en inglés, sin eslóganes ni terminal para la persona. "
         "Expón herramientas breves para agentes y deshacer en las que escriben. No metas artefactos de QA en los "
         "repositorios. Prueba la suite afectada y llama en vivo por la vía normal de un agente; mira el resultado "
         "con navegador sin ventana (Brave, o Chrome por Playwright con el canal chrome; nunca el escritorio). "
@@ -51,7 +51,7 @@ STUDIO = {
         "Estudio de producción dirigido por claude y codex-astra. Los agentes encadenan puestos de investigación, "
         "texto, presentación, producción visual, software, web y extensión del ecosistema. El expediente y cada "
         "pieza conservan origen, decisiones y detalles obligatorios. Verifica cada relevo con una pieza que abra "
-        "y devuelve los defectos al puesto que los introdujo, con pasos, vista o pose reproducibles. Luis decide "
+        "y devuelve los defectos al puesto que los introdujo, con pasos, vista o pose reproducibles. La persona decide "
         "en la puerta qué conserva. El plan y las primeras sondas están en el hilo 3995."
     ),
     "folders": [r"E:\Development\IA", r"E:\Development\IA\Projects\estudio", r"E:\Development\IA\Hoards\Faustusables"],

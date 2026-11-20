@@ -87,7 +87,7 @@ def test_review_reader_in_the_browser(tmp_path):
                 overlay.locator(".ag-rv-bubble.saved").first.wait_for()
                 assert overlay.locator(".ag-rv-bubble.queued").count() == 0
                 sent = ag.review_comments({"task_id": task["id"]})["comments"]
-                assert [(c["author"], c["line"], c["body"]) for c in sent] == [("luis", 11, "¿Por qué aquí?")]
+                assert [(c["author"], c["line"], c["body"]) for c in sent] == [("person", 11, "¿Por qué aquí?")]
                 assert any(m["mentions"] == ["builder"] and "¿Por qué aquí?" in m["body"]
                            for m in ag.task({"task_id": task["id"], "peek": True})["messages"])
                 overlay.locator('[data-action="guide"]').click()

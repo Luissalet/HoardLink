@@ -1,7 +1,8 @@
 """Draft pass (pasada 0): variants of the whole chain in draft, the person's early gate and the anchors of the full pass."""
 import pytest
 
-from hoard_link.hub.agora import Agora, AgoraError, PERSON, TOOLS
+from hoard_link.hub.agora import Agora, AgoraError, TOOLS
+from hoard_link.hub.config import PERSON_ALIAS as PERSON
 from hoard_link.hub import agora_drafts
 
 

@@ -111,7 +111,7 @@ def test_dark_identity_and_quick_reply_before_slow_board(tmp_path, monkeypatch, 
             item.wait_for(state='detached')
             saved=ag.thread({'space_id':'alpha','thread_id':th['id']})
             assert saved['thread']['status']=='open'
-            assert saved['messages'][-1]['author']=='luis'
+            assert saved['messages'][-1]['author']==ag.person_id
             assert saved['messages'][-1]['body']=='Keep chapter two and revise its ending.'
             assert not page.locator('.ag-detail').is_visible()
             task_item=page.locator(f'.ag-quick-item[data-thread-id="{task["thread_id"]}"]')

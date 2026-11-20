@@ -22,8 +22,8 @@ def test_agora_tab_unread_filters_keyboard_errors_and_layout(tmp_path, width, he
     plan = ag.thread_open({"agent": "claude", "title": "Plan de la interfaz", "body": "Primera idea"})["thread"]["id"]
     ag.post({"agent": "codex", "thread_id": plan, "body": "Segunda opinion"})
     ag.thread_open({"agent": "codex", "title": "Otro hilo", "kind": "question", "body": "Una pregunta"})
-    ag.task_add({"agent": "luis", "_person": True, "title": "Arreglo urgente", "repo": "Faustus", "priority": 0})
-    ag.task_add({"agent": "luis", "_person": True, "title": "Tarea del Hub", "repo": "HoardLink", "priority": 2})
+    ag.task_add({"agent": "person", "_person": True, "title": "Arreglo urgente", "repo": "Faustus", "priority": 0})
+    ag.task_add({"agent": "person", "_person": True, "title": "Tarea del Hub", "repo": "HoardLink", "priority": 2})
     base = hub.config.url.rstrip("/")
     unread = "2 sin leer" if language == "es" else "2 unread"
     try:
@@ -92,10 +92,10 @@ def test_agora_tab_unread_filters_keyboard_errors_and_layout(tmp_path, width, he
                 page.locator("#tab-agora .ag-error").wait_for(state="hidden")
                 # a long conversation mounts its recent part and the rest on request
                 longer = ag.thread_open({"agent": "codex", "title": "Hilo largo", "body": "inicio"})["thread"]["id"]
-                ag.thread({"thread_id": longer, "agent": "luis", "_person": True})
+                ag.thread({"thread_id": longer, "agent": "person", "_person": True})
                 for n in range(149):
                     ag.post({"agent": "codex", "thread_id": longer, "body": f"mensaje {n:03}"})
-                ag.thread({"thread_id": longer, "agent": "luis", "_person": True})   # all read
+                ag.thread({"thread_id": longer, "agent": "person", "_person": True})   # all read
                 page.goto(base + f"/#agora-{longer}")
                 earlier = page.locator("#tab-agora .ag-detail .ag-msgs > button")
                 earlier.wait_for()

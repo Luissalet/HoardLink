@@ -67,7 +67,7 @@ def test_status_rules():
     assert finding_status("a", {"b": "reject", "c": "reject", "d": "verify"}) == "rejected"
     assert finding_status("a", {"b": "reject", "c": "verify"}) == "challenged"
     assert finding_status("a", {"a": "reject", "b": "verify"}) == "rejected"          # withdrawn
-    assert finding_status("a", {"b": "reject", "c": "reject", "luis": "verify"}) == "verified"   # Luis decides
+    assert finding_status("a", {"b": "reject", "c": "reject", "person": "verify"}) == "verified"   # the person decides
     # by rank: the highest rank that took a stance decides, those below do not outvote it; equals count the same
     levels = {"b": 2, "c": 2, "d": 4, "e": 4}
     assert finding_status("a", {"b": "challenge", "c": "reject", "d": "verify"}, levels=levels) == "verified"
@@ -75,16 +75,16 @@ def test_status_rules():
     assert finding_status("a", {"b": "verify", "d": "reject", "e": "verify"}, levels=levels) == "challenged"
     assert finding_status("a", {"b": "verify", "c": "challenge"}, levels=levels) == "challenged"
     assert finding_status("a", {"a": "reject", "d": "verify"}, levels=levels) == "rejected"
-    assert finding_status("a", {"d": "verify", "luis": "reject"}, levels={**levels, "luis": 9}) == "rejected"
+    assert finding_status("a", {"d": "verify", "person": "reject"}, levels={**levels, "person": 9}) == "rejected"
     assert finding_status("a", {"b": "reject", "c": "reject", "d": "verify", "x": "challenge"}, levels=levels) == "verified"   # unknown: lowest
 
 
 def test_open_freezes_snapshot_and_invites(ag):
     tid = _thread(ag)
-    r = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex", "@luis"],
+    r = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex", "@person"],
                         "files": ["src/app.py#L3-L5", "src/app.py"], "commits": ["abc1234"], "repo": "Demo"})
     d = r["debate"]
-    assert d["participants"] == ["claude", "codex", "luis"] and d["status"] == "open"
+    assert d["participants"] == ["claude", "codex", "person"] and d["status"] == "open"
     snap = d["snapshot"]
     assert snap["head"] == ag.head and snap["question"].startswith("Should the board")
     assert snap["files"][0]["text"] == "line 3\nline 4\nline 5" and snap["files"][0]["lines"] == [3, 5]
@@ -104,8 +104,8 @@ def test_rounds_consensus_and_close_into_decision_log(ag):
     f2 = ag.debate_finding({"agent": "codex", "debate_id": did, "claim": "A 5 s cache already exists",
                             "evidence": ["bf3215f"], "disposition": "drop"})["finding"]
     f3 = ag.debate_finding({"agent": "codex", "debate_id": did, "claim": "Measure first",
-                            "disposition": "needs-luis"})["finding"]
-    assert f1["status"] == "proposed" and f1["evidence"][1]["kind"] == "command" and f3["disposition"] == "needs_luis"
+                            "disposition": "needs-person"})["finding"]
+    assert f1["status"] == "proposed" and f1["evidence"][1]["kind"] == "command" and f3["disposition"] == "needs_person"
     with pytest.raises(AgoraError):
         ag.debate_verify({"agent": "claude", "finding_id": f1["id"]})               # not your own
     r = ag.debate_challenge({"agent": "codex", "finding_id": f1["id"], "note": "only when refresh=1"})
@@ -119,12 +119,12 @@ def test_rounds_consensus_and_close_into_decision_log(ag):
     r = ag.debate_verify({"agent": "codex", "finding_id": f1["id"], "note": "reproduced"})
     assert r["finding"]["status"] == "verified" and len(r["finding"]["evidence"]) == 3
     ag.debate_reject({"agent": "claude", "finding_id": f2["id"], "note": "that cache is per process"})
-    ag.debate_verify({"agent": "luis", "_person": True, "finding_id": f3["id"]})
+    ag.debate_verify({"agent": "person", "_person": True, "finding_id": f3["id"]})
     view = ag.debate_show({"debate_id": did})
     c = view["consensus"]
     assert c["by_status"]["verified"] == [f1["id"], f3["id"]] and c["by_status"]["rejected"] == [f2["id"]]
     assert c["adopted"] == [f1["id"]] and c["participants"]["codex"]["challenge"] == 0
-    assert c["participants"]["codex"]["verify"] == 1 and "luis" in c["participants"]
+    assert c["participants"]["codex"]["verify"] == 1 and "person" in c["participants"]
     assert [e["seq"] for e in view["events"]] == list(range(1, len(view["events"]) + 1))
     closed = ag.debate_close({"agent": "claude", "debate_id": did, "outcome": "Cache the view for 5 s",
                               "dispositions": {str(f3["id"]): "adapt"}, "spawn_tasks": True})
@@ -180,23 +180,23 @@ def test_http_and_tools(tmp_path):
                 "hub_agora_debate_verify", "hub_agora_debate_reject", "hub_agora_debate_close",
                 "hub_agora_debate_show", "hub_agora_debate_list"} <= names
         tid = tools.call(hub, "hub_agora_thread_open", {"agent": "claude", "title": "T", "body": "q?"})["thread"]["id"]
-        r = tools.call(hub, "hub_agora_debate_open", {"agent": "claude", "thread_id": tid, "participants": ["luis"]})
+        r = tools.call(hub, "hub_agora_debate_open", {"agent": "claude", "thread_id": tid, "participants": ["person"]})
         assert r["ok"], r
         did = r["debate"]["id"]
-        assert tools.call(hub, "hub_agora_debate_open", {"agent": "luis", "thread_id": tid, "_person": True})["ok"] is False
+        assert tools.call(hub, "hub_agora_debate_open", {"agent": "person", "thread_id": tid, "_person": True})["ok"] is False
         f = tools.call(hub, "hub_agora_debate_finding", {"agent": "claude", "debate_id": did, "claim": "X",
                                                          "evidence": ["https://example.com"], "disposition": "adopt"})
         page = {"Sec-Fetch-Site": "same-origin"}
         status, body = http(base + "/api/agora/debate_verify", {"finding_id": f["finding"]["id"], "note": "ok"},
                             headers=page)
-        assert status == 200 and body["finding"]["verified_by"] == ["luis"], body
+        assert status == 200 and body["finding"]["verified_by"] == ["person"], body
         status, body = http(base + f"/api/agora/debates?thread_id={tid}&full=1")
         assert status == 200 and body["debates"][0]["consensus"]["counts"]["verified"] == 1
         status, body = http(base + f"/api/agora/debates/{did}")
         assert status == 200 and body["findings"][0]["status"] == "verified"
         status, body = http(base + "/api/agora/debate_close", {"debate_id": did, "outcome": "Adopt X",
                                                                 "spawn_tasks": True}, headers=page)
-        assert status == 200 and body["debate"]["closed_by"] == "luis" and len(body["tasks"]) == 1, body
+        assert status == 200 and body["debate"]["closed_by"] == "person" and len(body["tasks"]) == 1, body
         shown = tools.call(hub, "hub_agora_debate_show", {"debate_id": did})
         assert shown["debate"]["status"] == "closed" and shown["debate"]["decision_thread_id"] == tid
     finally:
@@ -218,7 +218,7 @@ def test_cli_debate_subcommands(ag, monkeypatch, capsys):
         op = path.split("?")[0].rsplit("/", 1)[-1]
         if method == "POST":
             fn = getattr(ag, op)
-            return fn({**body, "_person": body.get("agent") == "luis"})
+            return fn({**body, "_person": body.get("agent") == "person"})
         if "/debates/" in path:
             return ag.debate_show({"debate_id": op})
         return ag.debate_list({"thread_id": tid, "full": "1"})
@@ -251,7 +251,7 @@ def test_findings_board_in_the_browser(tmp_path, width):
     server = serve(hub)
     ag = hub.facet("agora").agora
     tid = ag.thread_open({"agent": "claude", "title": "Cache?", "body": "cache or not"})["thread"]["id"]
-    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["luis"]})["debate"]["id"]
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["person"]})["debate"]["id"]
     f1 = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "Rebuilt on every read",
                             "evidence": ["src/a.py:3"], "disposition": "adopt"})["finding"]["id"]
     base = hub.config.url.rstrip("/")
@@ -272,7 +272,7 @@ def test_findings_board_in_the_browser(tmp_path, width):
                 assert page.locator(".ag-deb-col.proposed .ag-fnd").count() == 1
                 card.locator('button[data-op="verify"]').click()
                 page.locator(f'.ag-deb-col.verified .ag-fnd[data-finding="{f1}"]').wait_for()
-                # Luis files a finding of his own from the board
+                # the person files a finding of his own from the board
                 page.locator(f'button[data-toggle="deb-{did}-add"]').click()
                 form = page.locator(".ag-deb-form").first
                 form.locator("textarea").nth(0).fill("Measure it first")
@@ -297,9 +297,9 @@ def test_findings_board_in_the_browser(tmp_path, width):
             finally:
                 browser.close()
         shown = ag.debate_show({"debate_id": did})
-        assert shown["debate"]["status"] == "closed" and shown["debate"]["closed_by"] == "luis"
+        assert shown["debate"]["status"] == "closed" and shown["debate"]["closed_by"] == "person"
         assert len(shown["debate"]["spawned_tasks"]) == 1
-        assert [f["author"] for f in shown["findings"]] == ["claude", "luis"]
+        assert [f["author"] for f in shown["findings"]] == ["claude", "person"]
         assert ag.decisions()["decisions"][0]["id"] == tid
     finally:
         server.shutdown()
@@ -503,13 +503,13 @@ def test_board_amends_withdraws_takes_a_repo_escapes_text_and_recovers_the_strea
     server = serve(hub)
     ag = hub.facet("agora").agora
     tid = ag.thread_open({"agent": "claude", "title": "Amend", "body": "amend?"})["thread"]["id"]
-    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["luis"]})["debate"]["id"]
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["person"]})["debate"]["id"]
     evil = '<img src=x onerror="window.__xss=1">'
     f1 = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "Old claim " + evil,
                             "evidence": ["javascript:window.__xss=2", {"kind": "url", "ref": "javascript:window.__xss=3"}],
                             "disposition": "adopt"})["finding"]["id"]
-    ag.debate_verify({"agent": "luis", "_person": True, "finding_id": f1})
-    f2 = ag.debate_finding({"agent": "luis", "_person": True, "debate_id": did, "claim": "Mine"})["finding"]["id"]
+    ag.debate_verify({"agent": "person", "_person": True, "finding_id": f1})
+    f2 = ag.debate_finding({"agent": "person", "_person": True, "debate_id": did, "claim": "Mine"})["finding"]["id"]
     base = hub.config.url.rstrip("/")
     try:
         with browser_api.sync_playwright() as p:

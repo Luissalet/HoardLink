@@ -9,7 +9,7 @@ def test_console_scopes_http_mcp_threads_and_worker_context(tmp_path, monkeypatc
     for sid in ('project-a', 'project-b'):
         agora.space_create({'agent':'tester','id':sid,'title':sid})
     hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path),token_file=str(tmp_path/'token'),
-        url='http://127.0.0.1:63496',faustus_urls=[]),
+        url='http://127.0.0.1:63496',faustus_urls=[],person_profile=agora.config.person_profile),
         facet=lambda name: SimpleNamespace(agora=agora) if name == 'agora' else None,
         faustus_status=lambda: {'reachable':False}, get=lambda ident:None)
     facet = AgoraConsoleFacet(hub)

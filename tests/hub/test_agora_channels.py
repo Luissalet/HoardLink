@@ -176,8 +176,8 @@ def test_guild_groups_task_threads_by_board_column_and_lists_members(ag):
     ag.channel_create({"space_id": "atlas", "agent": "claude", "title": "ideas"})
     ag.heartbeat({"space_id": "atlas", "agent": "codex", "doing": "revisando"})
 
-    g = ag.guild({"space_id": "atlas", "agent": "luis"})
-    assert g["space"]["id"] == "atlas" and g["viewer"] == "luis"
+    g = ag.guild({"space_id": "atlas", "agent": "person"})
+    assert g["space"]["id"] == "atlas" and g["viewer"] == "person"
     assert [t["title"] for t in g["tasks"]["open"]] == ["Pendiente", "Espera"] or \
         {t["title"] for t in g["tasks"]["open"]} == {"Pendiente", "Espera"}
     assert [t["title"] for t in g["tasks"]["in_progress"]] == ["En curso"]
@@ -213,13 +213,13 @@ def test_members_go_away_offline_and_out_of_quota(tmp_path):
         presence = {m["id"]: m["presence"] for m in a.guild({})["members"]}
         assert presence == {"claude": "working", "codex": "away", "cursor": "away"}
         clock.t += 7 * 3600
-        a.thread_open({"agent": "luis", "_person": True, "title": "hola", "body": "x"})
+        a.thread_open({"agent": "person", "_person": True, "title": "hola", "body": "x"})
         presence = {m["id"]: m["presence"] for m in a.guild({})["members"]}
-        assert presence["codex"] == "offline" and presence["luis"] == "person"
+        assert presence["codex"] == "offline" and presence["person"] == "person"
         # of those long gone only the latest come along; the rest are counted
         g = a.guild({"offline_limit": 2})
         gone = [m["id"] for m in g["members"] if m["presence"] == "offline"]
-        assert gone == ["claude", "cursor"] and g["members_older"] == 1 and "luis" in [m["id"] for m in g["members"]]
+        assert gone == ["claude", "cursor"] and g["members_older"] == 1 and "person" in [m["id"] for m in g["members"]]
         assert a.guild({})["members_older"] == 0
     finally:
         a.close()
@@ -236,7 +236,7 @@ def test_servers_list_spaces_with_meta_and_put_the_home_first(ag):
         ag.space_meta_set({"space_id": "zeta", "agent": "claude", "color": "red"})
     with pytest.raises(AgoraError):
         ag.space_meta_set({"space_id": "zeta", "agent": "claude", "folders": "E:/x"})
-    listing = ag.servers({"agent": "luis"})
+    listing = ag.servers({"agent": "person"})
     assert listing["servers"][0]["id"] == "ecosystem" and listing["version"]
     zeta = next(s for s in listing["servers"] if s["id"] == "zeta")
     assert zeta["icon"] == "Z" and zeta["folders"] == ["E:/zeta/docs", "E:/notas"] and zeta["workspace"] == "E:/zeta"
@@ -316,27 +316,27 @@ def test_only_the_persons_pages_speak_as_the_person(tmp_path):
         token = {"Authorization": "Bearer " + Path(hub.config.token_file).read_text().strip()}
         studio = {**token, "X-Hoard-Person": "faustus-studio"}
 
-        status, out = http(base + "/api/agora/channel_post", {"agent": "luis", "body": "soy yo"}, headers=token)
+        status, out = http(base + "/api/agora/channel_post", {"agent": "person", "body": "soy yo"}, headers=token)
         assert status == 403                                   # an agent's token alone never writes as the person
         status, out = http(base + "/api/agora/channel_post", {"body": "soy yo de verdad"}, headers=studio)
         assert status == 200 and out["thread"]["id"]
-        http(base + "/api/agora/channels?agent=luis", headers=token)      # the person's first look: «new» counts from here
+        http(base + "/api/agora/channels?agent=person", headers=token)      # the person's first look: «new» counts from here
         status, page = http(base + "/api/agora/channels/general", headers=token)
-        assert status == 200 and page["messages"][-1]["author"] == "luis" and page["messages"][-1]["body"] == "soy yo de verdad"
-        status, out = http(base + "/api/agora/channel_post", {"agent": "claude", "body": "@luis visto"}, headers=token)
-        assert status == 200 and out["mentions"] == ["luis"]
+        assert status == 200 and page["messages"][-1]["author"] == "person" and page["messages"][-1]["body"] == "soy yo de verdad"
+        status, out = http(base + "/api/agora/channel_post", {"agent": "claude", "body": "@person visto"}, headers=token)
+        assert status == 200 and out["mentions"] == ["person"]
 
         # reading as the person marks it seen only from the person's pages
-        status, listed = http(base + "/api/agora/channels?agent=luis", headers=token)
+        status, listed = http(base + "/api/agora/channels?agent=person", headers=token)
         assert next(c for c in listed["channels"] if c["slug"] == "general")["unread"] == 1
-        http(base + "/api/agora/channels/general?agent=luis", headers=token)
-        status, listed = http(base + "/api/agora/channels?agent=luis", headers=token)
+        http(base + "/api/agora/channels/general?agent=person", headers=token)
+        status, listed = http(base + "/api/agora/channels?agent=person", headers=token)
         assert next(c for c in listed["channels"] if c["slug"] == "general")["unread"] == 1
-        http(base + "/api/agora/channels/general?agent=luis", headers=studio)
-        status, listed = http(base + "/api/agora/channels?agent=luis", headers=token)
+        http(base + "/api/agora/channels/general?agent=person", headers=studio)
+        status, listed = http(base + "/api/agora/channels?agent=person", headers=token)
         assert next(c for c in listed["channels"] if c["slug"] == "general")["unread"] == 0
 
-        for route in ("servers?agent=luis", "guild", "feed?kind=activity&limit=5", "pulse", "search?q=visto&all_spaces=1"):
+        for route in ("servers?agent=person", "guild", "feed?kind=activity&limit=5", "pulse", "search?q=visto&all_spaces=1"):
             status, out = http(base + "/api/agora/" + route, headers=token)
             assert status == 200 and out["ok"], route
         status, out = http(base + "/api/agora/guild?space_id=nope", headers=token)
@@ -355,34 +355,34 @@ def test_only_the_persons_pages_read_and_mark_as_the_person(tmp_path):
         studio = {**token, "X-Hoard-Person": "faustus-studio"}
 
         def unread():
-            _, listed = http(base + "/api/agora/channels?agent=luis", headers=token)
+            _, listed = http(base + "/api/agora/channels?agent=person", headers=token)
             general = next(c for c in listed["channels"] if c["slug"] == "general")
             return general["unread"], general["mentions"]
 
         http(base + "/api/agora/channel_post", {"agent": "claude", "body": "abro el canal"}, headers=token)
         http(base + "/api/agora/channels", headers=studio)              # the person's first look
-        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "ping @luis"}, headers=token)
+        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "ping @person"}, headers=token)
         assert unread() == (1, 1)
         # an agent's token, whatever it asks for, reads as the person without marking anything
-        status, page = http(base + "/api/agora/channel_read", {"agent": "luis", "channel": "general"}, headers=token)
-        assert status == 200 and page["messages"][-1]["body"] == "ping @luis" and unread() == (1, 1)
-        status, page = http(base + "/api/agora/channel_read", {"agent": "luis", "channel": "general", "_person": True}, headers=token)
+        status, page = http(base + "/api/agora/channel_read", {"agent": "person", "channel": "general"}, headers=token)
+        assert status == 200 and page["messages"][-1]["body"] == "ping @person" and unread() == (1, 1)
+        status, page = http(base + "/api/agora/channel_read", {"agent": "person", "channel": "general", "_person": True}, headers=token)
         assert status == 200 and unread() == (1, 1)
-        status, out = http(base + "/api/agora/seen", {"agent": "luis"}, headers=token)
+        status, out = http(base + "/api/agora/seen", {"agent": "person"}, headers=token)
         assert status == 403 and unread() == (1, 1)
-        status, _ = http(base + "/api/agora/channels/general?agent=luis&_person=1", headers=token)
+        status, _ = http(base + "/api/agora/channels/general?agent=person&_person=1", headers=token)
         assert status == 200 and unread() == (1, 1)
         # the person's page does mark it
         status, _ = http(base + "/api/agora/channel_read", {"channel": "general"}, headers=studio)
         assert status == 200 and unread() == (0, 0)
-        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "otro @luis"}, headers=token)
+        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "otro @person"}, headers=token)
         assert unread() == (1, 1)
         status, _ = http(base + "/api/agora/seen", {}, headers=studio)
         assert status == 200 and unread() == (0, 0)
         # a header without a token grants nothing, and neither does an unknown page
         status, _ = http(base + "/api/agora/channel_post", {"body": "x"}, headers={"X-Hoard-Person": "faustus-studio"})
         assert status == 401
-        status, _ = http(base + "/api/agora/channel_post", {"agent": "luis", "body": "x"}, headers={**token, "X-Hoard-Person": "otra"})
+        status, _ = http(base + "/api/agora/channel_post", {"agent": "person", "body": "x"}, headers={**token, "X-Hoard-Person": "otra"})
         assert status == 403
         # the folders of this machine need a token
         status, _ = http(base + "/api/agora/folders?path=")
@@ -393,12 +393,12 @@ def test_naming_the_person_in_a_channel_tells_them_once_per_conversation(ag):
     told = []
     ag.mention_hook = lambda where, agent, body: told.append((where["space_id"], where["channel"], agent, body))
     ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "sin nadie"})
-    ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis ¿publicamos?"})
-    ag.channel_post({"space_id": "atlas", "agent": "luis", "_person": True, "body": "me nombro yo: @luis"})
-    assert told == [("atlas", "general", "claude", "@luis ¿publicamos?")]
+    ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@person ¿publicamos?"})
+    ag.channel_post({"space_id": "atlas", "agent": "person", "_person": True, "body": "me nombro yo: @person"})
+    assert told == [("atlas", "general", "claude", "@person ¿publicamos?")]
     ag.mention_hook = lambda *a: (_ for _ in ()).throw(RuntimeError("sin avisos"))
-    sent = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis otra vez"})
-    assert sent["ok"] and sent["mentions"] == ["luis"]            # a notification that fails never loses the message
+    sent = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@person otra vez"})
+    assert sent["ok"] and sent["mentions"] == ["person"]            # a notification that fails never loses the message
 
 
 def test_a_muted_server_announces_nothing_outside_the_page(ag):
@@ -407,28 +407,28 @@ def test_a_muted_server_announces_nothing_outside_the_page(ag):
     ag.escalate_hook = lambda thread, agent, question: asked.append((thread["space_id"], question))
     ag.space_create({"agent": "claude", "id": "zeta", "title": "Zeta"})
     # only the person silences a server: an agent may not decide what the person is told
-    for attempt in ({"agent": "claude", "muted": True}, {"agent": "luis", "muted": True}):
+    for attempt in ({"agent": "claude", "muted": True}, {"agent": "person", "muted": True}):
         with pytest.raises(AgoraError) as refused:
             ag.space_meta_set({"space_id": "atlas", **attempt})
         assert refused.value.status == 403
     assert ag.guild({"space_id": "atlas"})["space"]["meta"]["muted"] is False
-    assert ag.space_meta_set({"space_id": "atlas", "agent": "luis", "_person": True, "muted": True})["meta"]["muted"] is True
+    assert ag.space_meta_set({"space_id": "atlas", "agent": "person", "_person": True, "muted": True})["meta"]["muted"] is True
     with pytest.raises(AgoraError):
-        ag.space_meta_set({"space_id": "atlas", "agent": "luis", "_person": True, "muted": "a ratos"})
+        ag.space_meta_set({"space_id": "atlas", "agent": "person", "_person": True, "muted": "a ratos"})
 
-    quiet = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis ¿publicamos?"})
+    quiet = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@person ¿publicamos?"})
     ag.escalate({"space_id": "atlas", "agent": "claude", "thread_id": quiet["thread"]["id"], "question": "¿sí o no?"})
-    loud = ag.channel_post({"space_id": "zeta", "agent": "claude", "body": "@luis aquí sí"})
+    loud = ag.channel_post({"space_id": "zeta", "agent": "claude", "body": "@person aquí sí"})
     ag.escalate({"space_id": "zeta", "agent": "claude", "thread_id": loud["thread"]["id"], "question": "¿y aquí?"})
 
-    assert told == [("zeta", "@luis aquí sí")] and asked == [("zeta", "¿y aquí?")]
+    assert told == [("zeta", "@person aquí sí")] and asked == [("zeta", "¿y aquí?")]
     # nothing is lost inside: the mention and the question are there, and the list says which server is quiet
-    listing = {s["id"]: s for s in ag.servers({"agent": "luis", "_person": True})["servers"]}
+    listing = {s["id"]: s for s in ag.servers({"agent": "person", "_person": True})["servers"]}
     assert listing["atlas"]["muted"] is True and listing["zeta"]["muted"] is False
-    everything = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True})
+    everything = ag.inbox({"agent": "person", "all_spaces": True, "peek": True, "mine_only": True})
     assert {q["space_id"] for q in everything["escalated"]} == {"atlas", "zeta"}
     assert {m["space_id"] for m in everything["pending"]} == {"atlas", "zeta"}
-    heard = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
+    heard = ag.inbox({"agent": "person", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
     assert {q["space_id"] for q in heard["escalated"]} == {"zeta"} and {m["space_id"] for m in heard["pending"]} == {"zeta"}
     assert "atlas" not in heard["read_cursors"]
     assert ag.guild({"space_id": "atlas"})["space"]["meta"]["muted"] is True
@@ -436,19 +436,19 @@ def test_a_muted_server_announces_nothing_outside_the_page(ag):
     ag.space_meta_set({"space_id": "atlas", "agent": "claude", "color": "#112233"})
     assert ag.guild({"space_id": "atlas"})["space"]["meta"]["muted"] is True
     # heard again: what comes now is told, what was said meanwhile is not told late
-    ag.space_meta_set({"space_id": "atlas", "agent": "luis", "_person": True, "muted": False})
-    ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@luis ya se oye"})
-    assert told[-1] == ("atlas", "@luis ya se oye")
-    heard = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
-    assert [m["body"] for m in heard["pending"] if m["space_id"] == "atlas"] == ["@luis ya se oye"]
+    ag.space_meta_set({"space_id": "atlas", "agent": "person", "_person": True, "muted": False})
+    ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@person ya se oye"})
+    assert told[-1] == ("atlas", "@person ya se oye")
+    heard = ag.inbox({"agent": "person", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
+    assert [m["body"] for m in heard["pending"] if m["space_id"] == "atlas"] == ["@person ya se oye"]
     assert not [q for q in heard["escalated"] if q["space_id"] == "atlas"]
-    everything = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True})
+    everything = ag.inbox({"agent": "person", "all_spaces": True, "peek": True, "mine_only": True})
     assert len([m for m in everything["pending"] if m["space_id"] == "atlas"]) == 3      # the inbox itself keeps them all
     assert [q["space_id"] for q in everything["escalated"]].count("atlas") == 1
     # another change keeps the moment it was heard again; a server never silenced has none
     ag.space_meta_set({"space_id": "atlas", "agent": "claude", "color": "#445566"})
-    again = ag.inbox({"agent": "luis", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
-    assert [m["body"] for m in again["pending"] if m["space_id"] == "atlas"] == ["@luis ya se oye"]
+    again = ag.inbox({"agent": "person", "all_spaces": True, "peek": True, "mine_only": True, "skip_muted": True})
+    assert [m["body"] for m in again["pending"] if m["space_id"] == "atlas"] == ["@person ya se oye"]
     assert len([m for m in again["pending"] if m["space_id"] == "zeta"]) == 2 and [q["space_id"] for q in again["escalated"]] == ["zeta"]
 
 
@@ -462,13 +462,13 @@ def test_muting_and_the_heard_inbox_over_http(tmp_path):
         base = hub.config.url.rstrip("/")
         token = {"Authorization": "Bearer " + Path(hub.config.token_file).read_text().strip()}
         studio = {**token, "X-Hoard-Person": "faustus-studio"}
-        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "@luis ¿lo ves?"}, headers=token)
+        http(base + "/api/agora/channel_post", {"agent": "claude", "body": "@person ¿lo ves?"}, headers=token)
 
         status, out = http(base + "/api/agora/space_meta_set", {"agent": "claude", "muted": True}, headers=token)
         assert status == 403                                   # an agent's token does not silence the person's server
         status, out = http(base + "/api/agora/space_meta_set", {"muted": True}, headers=studio)
         assert status == 200 and out["meta"]["muted"] is True
-        inbox = "/api/agora/inbox?agent=luis&all_spaces=1&peek=1&mine_only=1"
+        inbox = "/api/agora/inbox?agent=person&all_spaces=1&peek=1&mine_only=1"
         status, everything = http(base + inbox, headers=token)
         status, heard = http(base + inbox + "&skip_muted=1", headers=token)
         assert len(everything["pending"]) == 1 and heard["pending"] == []
@@ -487,9 +487,9 @@ def test_the_hub_notifies_a_mention_of_the_person(tmp_path):
         cleanup.enter_context(pytest.MonkeyPatch.context()).setattr(
             notify, "send", lambda title, body="", **kw: sent.append({"title": title, "body": body, **kw}) or {"ok": True})
         agora = hub.facet("agora").agora
-        agora.channel_post({"agent": "claude", "body": "@luis mira   esto\ncuando puedas"})
+        agora.channel_post({"agent": "claude", "body": "@person mira   esto\ncuando puedas"})
         assert len(sent) == 1 and sent[0]["title"] == "Ágora: claude te menciona en #general"
-        assert sent[0]["body"] == "@luis mira esto cuando puedas" and sent[0]["priority"] == "normal"
+        assert sent[0]["body"] == "@person mira esto cuando puedas" and sent[0]["priority"] == "normal"
         assert sent[0]["dedupe_key"].startswith("agora-mention-") and "#agora-" in sent[0]["url"]
 
 
@@ -547,8 +547,8 @@ def test_feed_pages_do_not_skip_deliveries_of_the_same_instant(ag):
 
 def test_mentions_ignore_case_and_unknown_readers_leave_no_trace(ag):
     ag.heartbeat({"agent": "codex", "space_id": "atlas", "doing": "x"})
-    out = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@Codex y @LUIS, mirad"})
-    assert out["mentions"] == ["codex", "luis"]
+    out = ag.channel_post({"space_id": "atlas", "agent": "claude", "body": "@Codex y @PERSON, mirad"})
+    assert out["mentions"] == ["codex", "person"]
     ag.channels({"space_id": "atlas", "agent": "nadie-123"})
     ag.guild({"space_id": "atlas", "agent": "otro-que-no-existe"})
     rows = [r["agent"] for r in ag.db.query("SELECT agent FROM agora_seen_floor")]
@@ -635,7 +635,7 @@ def test_cli_and_mcp_speak_channels(tmp_path):
             {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
                 "name": "hub_agora_guild", "arguments": {"agent": "codex"}}},
             {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
-                "name": "hub_agora_channel_post", "arguments": {"agent": "luis", "body": "suplantación"}}},
+                "name": "hub_agora_channel_post", "arguments": {"agent": "person", "body": "suplantación"}}},
         ]
         result = subprocess.run([sys.executable, "-m", "hoard_link.hub.mcp"], cwd=root, env=env,
                                 input="\n".join(json.dumps(r) for r in requests) + "\n", capture_output=True,

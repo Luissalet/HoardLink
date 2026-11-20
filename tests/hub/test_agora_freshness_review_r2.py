@@ -32,10 +32,10 @@ def test_task_read_as_the_person_needs_the_page(tmp_path):
         thread = ag.task({"task_id": tid})["task"]["thread_id"]
         ag.post({"agent": "codex", "thread_id": thread, "body": "note"})
         with pytest.raises(AgoraError):
-            ag.task({"task_id": tid, "agent": "luis"})
-        assert _ack(ag, "luis", thread) is None
-        ag.task({"task_id": tid, "agent": "luis", "_person": True})
-        assert _ack(ag, "luis", thread) is not None
+            ag.task({"task_id": tid, "agent": "person"})
+        assert _ack(ag, "person", thread) is None
+        ag.task({"task_id": tid, "agent": "person", "_person": True})
+        assert _ack(ag, "person", thread) is not None
     finally:
         ag.close()
 
@@ -67,9 +67,9 @@ def test_metadata_only_inbox_keeps_no_text_over_http_and_mcp(tmp_path):
         assert out["messages"] and all("body" not in m for m in out["messages"])
         assert SECRET not in json.dumps(out, ensure_ascii=False)
 
-        # with a token the person's read is not recorded (only the page may read as luis)
-        status, _ = http(base + f"/api/agora/tasks/{tid}?agent=luis", headers=headers)
-        assert status == 200 and _ack(ag, "luis", thread) is None
+        # with a token the person's read is not recorded (only the page may read as person)
+        status, _ = http(base + f"/api/agora/tasks/{tid}?agent=person", headers=headers)
+        assert status == 200 and _ack(ag, "person", thread) is None
 
         root = Path(__file__).resolve().parents[2]
         env = dict(os.environ, HOARD_HUB_URL=base, HOARD_HUB_TOKEN_FILE=str(hub.config.token_file),
@@ -79,7 +79,7 @@ def test_metadata_only_inbox_keeps_no_text_over_http_and_mcp(tmp_path):
             {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "hub_agora_inbox", "arguments": {
                 "agent": "claude", "metadata_only": True}}},
             {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "hub_agora_task", "arguments": {
-                "task_id": tid, "agent": "luis"}}},
+                "task_id": tid, "agent": "person"}}},
         ]
         result = subprocess.run([sys.executable, "-m", "hoard_link.hub.mcp"], cwd=root, env=env,
                                 input="\n".join(json.dumps(r) for r in requests) + "\n", capture_output=True,
@@ -89,15 +89,15 @@ def test_metadata_only_inbox_keeps_no_text_over_http_and_mcp(tmp_path):
         meta = json.loads(replies[2]["result"]["content"][0]["text"])
         assert meta["metadata_only"] and meta["reviews"] and SECRET not in json.dumps(meta, ensure_ascii=False)
         assert replies[3]["result"].get("isError")              # an agent cannot read as the person
-        assert _ack(ag, "luis", thread) is None
+        assert _ack(ag, "person", thread) is None
 
 
 def test_the_person_metadata_inbox_hides_escalation_questions(tmp_path):
     ag = Agora(tmp_path / "a.db")
     try:
         th = ag.thread_open({"agent": "codex", "title": "Need you", "body": "context"})["thread"]["id"]
-        ag.escalate({"agent": "codex", "thread_id": th, "question": SECRET + " for Luis"})
-        out = ag.inbox({"agent": "luis", "_person": True, "metadata_only": True})
+        ag.escalate({"agent": "codex", "thread_id": th, "question": SECRET + " for the person"})
+        out = ag.inbox({"agent": "person", "_person": True, "metadata_only": True})
         assert out["escalated"] and out["escalated"][0]["question_chars"] > 0
         assert SECRET not in json.dumps(out, ensure_ascii=False)
     finally:

@@ -54,7 +54,7 @@ def test_facet_routes_tools_and_board_merge(tmp_path, roots):
         assert status == 200 and ok["binding"] == "explicit"
         status, bad = http(base + "/api/agora/watch/bind", {"session_key": "cursor:nope", "agent": "builder"}, headers=page)
         assert status == 404 and not bad["ok"]
-        status, bad = http(base + "/api/agora/watch/bind", {"session_key": "cursor:abc-123", "agent": "luis"}, headers=page)
+        status, bad = http(base + "/api/agora/watch/bind", {"session_key": "cursor:abc-123", "agent": "person"}, headers=page)
         assert status == 400
         status, board = http(base + "/api/agora/board")
         assert {a["id"]: a for a in board["agents"]}["builder"]["observed"]["engine"] == "cursor"

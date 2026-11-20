@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from hoard_link.hub.agora import PERSON
+from hoard_link.hub.config import PERSON_ALIAS as PERSON
 
 from ._hub_fakes import make_hub, serve
 

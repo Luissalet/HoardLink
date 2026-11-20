@@ -70,11 +70,11 @@ def test_an_agent_added_by_name_is_invited_until_it_shows_up(ag):
 
 
 def test_names_that_are_not_agents_are_refused(ag):
-    for bad in ("", "x", "con espacios", "luis", "hub", "system"):
+    for bad in ("", "x", "con espacios", "person", "hub", "system"):
         with pytest.raises(AgoraError):
             ag.member_add({"space_id": "atlas", "agent": "claude", "id": bad})
     with pytest.raises(AgoraError) as exc:
-        ag.member_remove({"space_id": "atlas", "agent": "claude", "id": "luis"})
+        ag.member_remove({"space_id": "atlas", "agent": "claude", "id": "person"})
     assert exc.value.status == 409
     with pytest.raises(AgoraError) as exc:
         ag.member_remove({"space_id": "atlas", "agent": "claude", "id": "nadie-aqui"})
@@ -94,7 +94,7 @@ def test_removing_an_agent_frees_its_work_and_drops_its_leases(ag):
     with pytest.raises(AgoraError) as exc:
         ag.member_remove({"space_id": "atlas", "agent": "claude", "id": "codex-ui"})
     assert exc.value.status == 409 and exc.value.extra.get("error_code") == "member_active"
-    out = ag.member_remove({"space_id": "atlas", "agent": "luis", "_person": True, "id": "codex-ui", "reason": "ya no hace falta"})
+    out = ag.member_remove({"space_id": "atlas", "agent": "person", "_person": True, "id": "codex-ui", "reason": "ya no hace falta"})
     assert out["ok"] and out["removed"] == "codex-ui"
     assert out["freed_tasks"] == [doing] and out["left_in_review"] == [sent] and out["handed_tasks"] == []
     assert out["forgotten"] is True                       # it was on no other server: the Ágora forgets it
@@ -228,7 +228,7 @@ def test_a_message_can_carry_files_and_a_file_goes_on_one_message_only(ag, tmp_p
             ag.file_add({"space_id": "atlas", "agent": "claude", **bad})
     secret = tmp_path / "clave.txt"                         # the hub never reads a path, whoever asks
     secret.write_text("no se lee", encoding="utf-8")
-    for who in ({"agent": "claude"}, {"agent": "luis", "_person": True}):
+    for who in ({"agent": "claude"}, {"agent": "person", "_person": True}):
         with pytest.raises(AgoraError) as exc:
             ag.file_add({"space_id": "atlas", **who, "path": str(secret)})
         assert exc.value.status == 400 and "content_base64" in str(exc.value)
@@ -326,8 +326,8 @@ def test_files_pictures_and_members_over_http(tmp_path):
         # the person reacts and quotes from Studio as the person; an agent's token alone does not
         mid = posted["message_id"]
         status, out = http(base + "/api/agora/react", {"message_id": mid, "emoji": "✅"}, headers=studio)
-        assert status == 200 and out["reactions"][0]["agents"] == ["luis"]
-        status, out = http(base + "/api/agora/react", {"agent": "luis", "message_id": mid, "emoji": "✅"}, headers=token)
+        assert status == 200 and out["reactions"][0]["agents"] == ["person"]
+        status, out = http(base + "/api/agora/react", {"agent": "person", "message_id": mid, "emoji": "✅"}, headers=token)
         assert status == 403
         status, page = http(base + "/api/agora/channels/general", headers=studio)
         shown = next(m for m in page["messages"] if m["id"] == mid)

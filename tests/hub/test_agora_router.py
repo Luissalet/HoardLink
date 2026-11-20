@@ -48,7 +48,7 @@ def _task(a, owner, title, **extra):
     return a.task_show({**S, "task_id": t["id"]})["task"] if hasattr(a, "task_show") else t
 
 
-def _say(a, body, *, thread=None, agent="luis", person=True, **extra):
+def _say(a, body, *, thread=None, agent="person", person=True, **extra):
     args = {**S, "agent": agent, "body": body, **extra}
     if person:
         args["_person"] = True
@@ -84,7 +84,7 @@ def test_a_message_in_a_task_thread_goes_to_the_owner_of_the_task(ag):
     assert "enrutador" in out["route"]["label"]
     # it reaches the inbox of the chosen one as a mention, and not the other's
     def mine(agent):
-        return [m for m in ag.inbox({**S, "agent": agent})["pending"] if m["author"] == "luis"]
+        return [m for m in ag.inbox({**S, "agent": agent})["pending"] if m["author"] == "person"]
     assert [m["body"] for m in mine("claude-a")] == ["¿cómo va esto?"] and mine("codex-b") == []
     # the message read back carries who was chosen and why
     page = ag.channel_read({**S, "thread_id": task["thread_id"]})
@@ -121,11 +121,11 @@ def test_locks_and_the_last_to_speak_count(ag):
     _around(ag, "claude-a", "codex-b", "cursor-c")
     t = _task(ag, "claude-a", "Otra cosa distinta")
     ag.lock({**S, "agent": "codex-b", "resource": "path:Atlas/src/exportador", "task_id": None})
-    found = agora_router.candidates(ag.for_space("atlas"), "el exportador falla", None, "luis")
+    found = agora_router.candidates(ag.for_space("atlas"), "el exportador falla", None, "person")
     assert found[0]["agent"] == "codex-b" and any("bloqueado" in r for r in found[0]["reasons"])
     # the last to talk in a thread is a candidate there
     _say(ag, "empiezo con la revisión", agent="cursor-c", person=False, thread=t["thread_id"])
-    again = {c["agent"]: c for c in agora_router.candidates(ag.for_space("atlas"), "sigue?", t["thread_id"], "luis")}
+    again = {c["agent"]: c for c in agora_router.candidates(ag.for_space("atlas"), "sigue?", t["thread_id"], "person")}
     assert "fue el último en hablar" in " ".join(again["cursor-c"]["reasons"])
     assert again["claude-a"]["score"] > again["cursor-c"]["score"]
 
@@ -136,16 +136,16 @@ def test_agents_without_quota_or_long_gone_are_not_chosen(ag):
     task = _task(ag, "codex-b", "Ajustes")
     # the owner stops being around (offline): an offline owner of the task still gets it, the invited one never
     ag.db.execute("UPDATE agents SET last_seen=? WHERE id='claude-a'", (ag.clock() - 7 * 3600,))
-    found = [c["agent"] for c in agora_router.candidates(ag.for_space("atlas"), "ajustes", task["thread_id"], "luis")]
+    found = [c["agent"] for c in agora_router.candidates(ag.for_space("atlas"), "ajustes", task["thread_id"], "person")]
     assert "claude-a" not in found and "codex-invited" not in found and "codex-b" in found
 
 
 def test_a_name_or_a_task_number_in_the_text_decides(ag):
     _around(ag, "claude-a", "codex-b")
     t = _task(ag, "codex-b", "Algo")
-    by_name = agora_router.candidates(ag.for_space("atlas"), "claude-a, ¿puedes mirar el menú?", None, "luis")
+    by_name = agora_router.candidates(ag.for_space("atlas"), "claude-a, ¿puedes mirar el menú?", None, "person")
     assert by_name[0]["agent"] == "claude-a" and "lo nombras" in by_name[0]["reasons"]
-    by_task = agora_router.candidates(ag.for_space("atlas"), f"qué pasa con la #{t['id']}", None, "luis")
+    by_task = agora_router.candidates(ag.for_space("atlas"), f"qué pasa con la #{t['id']}", None, "person")
     assert by_task[0]["agent"] == "codex-b"
 
 
@@ -262,8 +262,8 @@ def test_route_simulates_writes_nothing_and_applies_to_an_existing_message(ag):
 
 
 def test_the_threads_post_also_routes_and_nobody_around_means_nobody(ag):
-    thread = ag.thread_open({**S, "agent": "luis", "_person": True, "title": "Debate", "body": "abro"})["thread"]
-    out = ag.post({**S, "agent": "luis", "_person": True, "thread_id": thread["id"], "body": "¿qué opináis?"})
+    thread = ag.thread_open({**S, "agent": "person", "_person": True, "title": "Debate", "body": "abro"})["thread"]
+    out = ag.post({**S, "agent": "person", "_person": True, "thread_id": thread["id"], "body": "¿qué opináis?"})
     assert out["route"]["picks"] == [] and "route" in out
     assert out["route"]["label"].startswith("Nadie")
 
@@ -271,7 +271,7 @@ def test_the_threads_post_also_routes_and_nobody_around_means_nobody(ag):
 def test_a_thread_the_person_opens_without_naming_anyone_is_routed(ag):
     _around(ag, "claude-a", "codex-b")
     _task(ag, "claude-a", "Pantalla de ajustes del copiloto")
-    out = ag.thread_open({**S, "agent": "luis", "_person": True, "title": "Ajustes del copiloto",
+    out = ag.thread_open({**S, "agent": "person", "_person": True, "title": "Ajustes del copiloto",
                           "body": "Hay que repasar la pantalla de ajustes del copiloto", "kind": "question"})
     assert [p["agent"] for p in out["route"]["picks"]] == ["claude-a"]
     first = ag.thread({**S, "thread_id": out["thread"]["id"]})["messages"][0]

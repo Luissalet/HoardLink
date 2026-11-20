@@ -1,6 +1,6 @@
 # Agora console surface
 Mode: Operate. Scope: complete desktop/web console within the existing Hoard family.
-Build path: code-led, chosen under Luis's explicit delegation of architecture/design/implementation; live controls and actual runtime states are the prototype, no raster comp used.
+Build path: code-led; live controls and actual runtime states are the prototype, no raster comp used.
 User said to debate, decide and implement while he sleeps, so settled product questions and composition choice are delegated rather than another approval round.
 
 Existing authority: Hoard theme charcoal surfaces, Source Sans3 text, Cinzel brand and amber Hub accent. Preserve readable contrast and native window behaviour.

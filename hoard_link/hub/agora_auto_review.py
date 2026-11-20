@@ -303,7 +303,7 @@ class AutoReview:
             self._update(console, job, "cancelled", "profile_disabled")
             return
         owner = task["owner"]
-        if not owner or owner == "luis":
+        if not owner or owner == agora.person_id:
             self._update(console, job, "skipped", "no_agent_owner")
             return
         provider = owner.split("-", 1)[0]

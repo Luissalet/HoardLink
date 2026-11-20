@@ -166,7 +166,7 @@ This file describes two separate implemented surfaces. The **Hub shell** is `hoa
 
 **Creative North Star: “The Personal Workspace”**
 
-The Hub begins with attention and continuity: pending work, a project to continue and tools described by purpose. The official Hoard dark theme supplies warm charcoal, ivory text and gold actions, current context and keyboard focus. Luis explicitly rejected the light 1301 identity; task 1363 restores the family identity while retaining those workflows. The serif brand and original Hub icon anchor the rail.
+The Hub begins with attention and continuity: pending work, a project to continue and tools described by purpose. The official Hoard dark theme supplies warm charcoal, ivory text and gold actions, current context and keyboard focus. The serif brand and original Hub icon anchor the rail.
 
 **Key Characteristics:**
 - Official warm charcoal family surfaces, ivory text and gold actions.

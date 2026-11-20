@@ -62,7 +62,7 @@ def _err(message: str, status: int = 400, **extra: Any) -> Exception:
 
 def rank_of(self: Any, agent: Optional[str], sid: Optional[str] = None) -> str:
     """The rank of ``agent`` on this server: the one the person gave it, else ``agent``. The person is ``person``."""
-    if agent == _ag().PERSON:
+    if agent == self.person_id:
         return "person"
     row = self.db.one("SELECT rank FROM agora_ranks WHERE space_id=? AND agent=?", (sid or self.space_id, agent or ""))
     return row["rank"] if row and row["rank"] in LEVEL else DEFAULT
@@ -77,7 +77,7 @@ def outranks(self: Any, one: Optional[str], other: Optional[str], sid: Optional[
     """Whether ``one`` stands strictly above ``other`` on this server. It orders agents among themselves: the person
     is on no rung, so what they resolved or reviewed is treated as it always was, and what they may do is decided
     where they act."""
-    if not one or not other or one == _ag().PERSON:
+    if not one or not other or one == self.person_id:
         return False
     return level(self, one, sid) > level(self, other, sid)
 
@@ -118,7 +118,7 @@ def unanswered_above(self: Any, thread_id: int, agent: str) -> bool:
         asked = json.loads(last["mentions"] or "[]")
     except ValueError:
         asked = []
-    if not isinstance(asked, list) or _ag().PERSON in asked:
+    if not isinstance(asked, list) or self.person_id in asked:
         return False
     return self.db.one("SELECT 1 AS x FROM messages WHERE thread_id=? AND id>? AND author<>? AND kind<>'system' LIMIT 1",
                        (thread_id, last["id"], agent)) is None
@@ -166,12 +166,11 @@ def ranks(self: Any, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
 def member_rank_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """Give an agent its rank on this server. Only the person does, from their own pages."""
     from . import agora_social
-    ag = _ag()
     if not a.get("_person"):
         raise _err("only the person gives an agent its rank, from their own pages", 403)
     actor = self._agent(a.get("agent"), allow_person=True)
     ident = agora_social._member_id(a, "the agent whose rank changes")
-    if ident == ag.PERSON:
+    if ident == self.person_id:
         raise _err("the person stands above the ladder", 409)
     rank = str(a.get("rank") or "").strip().lower()
     if rank not in LEVEL:
@@ -182,7 +181,7 @@ def member_rank_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         self._touch(actor)
         changed = set_rank(self, ident, rank, actor)
         if changed:
-            agora_social._note(self, actor, f"{actor} pone a {ident} como {LABEL[rank]} de este servidor.")
+            agora_social._note(self, actor, f"{self.person_name} pone a {ident} como {LABEL[rank]} de este servidor.")
     if changed:
         self._bump("agora.member.rank", {"member": ident, "rank": rank, "by": actor})
     return {"ok": True, "member": ident, "rank": rank, "rank_level": LEVEL[rank], "changed": changed}
@@ -205,14 +204,14 @@ def task_assign(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             raise _err(f"task {task['id']} is {task['status']}", 409)
         if self.db.one("SELECT id FROM agents WHERE id=?", (target,)) is None or not agora_social._is_member(self, target):
             raise _err(f"{target} is not on {self.space_id}: add it to the server first", 409)
-        if caller != ag.PERSON and not outranks(self, caller, target):
+        if caller != self.person_id and not outranks(self, caller, target):
             raise _err(f"{caller} ({rank_of(self, caller)}) does not outrank {target} ({rank_of(self, target)}) on "
                        f"{self.space_id}: only a higher rank or the person assigns work", 403, error_code="rank")
         owner = task.get("owner")
         if owner == target and task["status"] in ag.ACTIVE:
             return {"ok": True, "noop": True, "task": task}
         held = bool(owner) and task["status"] in ag.ACTIVE
-        if held and caller != ag.PERSON and owner != caller and not outranks(self, caller, owner):
+        if held and caller != self.person_id and owner != caller and not outranks(self, caller, owner):
             raise _err(f"task {task['id']} is held by {owner} ({rank_of(self, owner)}), whom {caller} does not outrank",
                        403, error_code="rank", owner=owner)
         if not held:

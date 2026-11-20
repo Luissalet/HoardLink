@@ -873,7 +873,7 @@ class AgoraConsoleFacet(Facet):
         prompt = ("You are the independent Agora console leader " + identity + ". Continue the shared work chat. "
                   "At the start of each turn, use `E:\\Development\\IA\\agora.cmd --space " + self.space_id + " --as " + identity + " hb \"...\"`, then read inbox and board. "
                   "Before editing, read `E:\\Development\\IA\\CRITERIOS.md` first and `E:\\Development\\IA\\MEMORY.md` second; also read the repo AGENTS.md. "
-                  "Use this exact identity for all Agora operations; never impersonate Luis or another agent. "
+                  "Use this exact identity for all Agora operations; never impersonate the person or another agent. "
                   "Do not claim that queued messages woke another agent. Answer the latest message with useful work or a concise status. "
                   "If you change files, follow the repo's skills and Agora protocol, work in an isolated worktree, create/claim the Agora task, "
                   "and take path locks first. Do not fake reviews or claim a task complete without evidence."
@@ -1199,7 +1199,8 @@ class AgoraConsoleFacet(Facet):
             since = float(turn["started_at"] or turn["created_at"] or 0)
             evidence = self._liveness_evidence(leader_id, since, now)
             result = agora_liveness.classify_turn(state=state, exit_code=process_exit_code, answer=answer,
-                                                  evidence=evidence or {}, provider_error=str(metrics.get("provider_error") or ""))
+                                                  evidence=evidence or {}, provider_error=str(metrics.get("provider_error") or ""),
+                                                  person=self.hub.config.person_profile)
             reasons = list(result["reasons"])
             if evidence is None and result["liveness"] != "failed":
                 reasons.append("Agora evidence unavailable; no automatic continuation")
@@ -1390,6 +1391,7 @@ class AgoraConsoleFacet(Facet):
             observed = agents.get(worker.get("agent_id")) or {}
             worker.update({key: observed.get(key) for key in ("declared_model", "declared_effort", "declared_at")})
         return {"ok": True, "thread_id": self.thread_id, "leaders": leaders,
+                "person": self.hub.config.person_profile,
                 "agents": list(agents.values()), "workers": workers, "quota_pools": usage.get("providers", []),
                 "capacity_observations": {"codex": codex_observation()},
                 "activity": activity, "messages": messages, "console_turns": console_turns,
@@ -1466,6 +1468,10 @@ class AgoraConsoleFacet(Facet):
         facet = self.hub.facet("agora") if hasattr(self.hub, "facet") else None
         agora = getattr(facet, "agora", None)
         return agora.for_space(self.space_id) if agora is not None and self.space_id != 'ecosystem' else agora
+
+    @property
+    def person_id(self) -> str:
+        return self.hub.config.person_profile["id"]
 
     @property
     def thread_id(self):
@@ -2003,11 +2009,11 @@ class AgoraConsoleFacet(Facet):
         rank = str(args.get("rank") or "").strip().lower()
         if rank not in agora_ranks.LEVEL:
             return {"ok": False, "status": 400, "error": "rank must be one of " + ", ".join(n for n, _ in agora_ranks.LADDER)}
-        if not (actor == "luis" or args.get("_person") is True):
+        if not (actor == self.person_id or args.get("_person") is True):
             return {"ok": False, "status": 403, "error": "only the person says which rank the sessions of a model start with"}
         if not any(row.get("id") == model for row in self._provider_data()[leader_id].get("catalog") or []):
             return {"ok": False, "status": 400, "error": f"{model or 'that'} is not a model {leader_id} offers here"}
-        self._remember_model_rank(leader_id, model, rank, "luis")
+        self._remember_model_rank(leader_id, model, rank, self.person_id)
         self._record("preference", leader_id, "saved", f"{model} starts as {rank}")
         return {"ok": True, "leader_id": leader_id, "model": model, "rank": rank,
                 "model_ranks": self._model_ranks().get(leader_id, {})}
@@ -2029,7 +2035,7 @@ class AgoraConsoleFacet(Facet):
             return {"ok": False, "status": 503, "error": "Agora is not available in this Hub instance"}
         known = {str(row.get("id")) for row in agora.agents().get("agents", []) if isinstance(row, dict)}
         mentions = list(dict.fromkeys(leader_map[x] for x in recipients if leader_map[x] in known))
-        post = agora.post({"agent": actor, "_person": actor.lower() == "luis",
+        post = agora.post({"agent": actor, "_person": actor.lower() == self.person_id,
                            "thread_id": self.thread_id, "body": body, "kind": "comment", "mentions": mentions})
         if not post.get("ok"):
             return post
@@ -2123,7 +2129,7 @@ class AgoraConsoleFacet(Facet):
         rank_asked = str(args.get("rank") or "").strip().lower()
         if rank_asked and rank_asked not in agora_ranks.LEVEL:
             return {"ok": False, "status": 400, "error": "rank must be one of " + ", ".join(n for n, _ in agora_ranks.LADDER)}
-        by_person = actor == "luis" or args.get("_person") is True
+        by_person = actor == self.person_id or args.get("_person") is True
         now = time.time()
         provider = self._provider_data().get(leader_id) or {}
         saved = self._preferences().get(leader_id, {})
@@ -2352,9 +2358,9 @@ class AgoraConsoleFacet(Facet):
                             json.dumps(resume_command), str(worker_cwd), worker_id))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         # Its rank is written once the session exists: one that never started leaves none behind under its name.
-        self._give_worker_rank(agent_id, rank, "luis" if by_person else actor)
+        self._give_worker_rank(agent_id, rank, self.person_id if by_person else actor)
         if by_person and rank_asked:
-            self._remember_model_rank(leader_id, model, rank, "luis")    # what the person starts this model as, here
+            self._remember_model_rank(leader_id, model, rank, self.person_id)    # what the person starts this model as, here
         if named:
             self._keep_claude_model(model)
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
@@ -3129,7 +3135,7 @@ class AgoraConsoleFacet(Facet):
     def _taken_names(self) -> set[str]:
         """Names no new session may take: the leaders', the console's own, every agent the Agora knows and the
         sessions running now. A session that never got to start leaves its name free."""
-        taken = {row[2] for row in LEADERS} | set(CONSOLE_IDENTITIES.values()) | {"luis", "hub", "ui", "system"}
+        taken = {row[2] for row in LEADERS} | set(CONSOLE_IDENTITIES.values()) | {self.person_id, "hub", "ui", "system"}
         agora = self._agora()
         if agora is not None:
             try:
@@ -3221,12 +3227,11 @@ class AgoraConsoleFacet(Facet):
     def _operator(req: Request) -> bool:
         return req.caller() in ("hub", "ui") or req.agent()
 
-    @staticmethod
-    def _mcp_actor(args: dict[str, Any]) -> tuple[str, Optional[dict[str, Any]]]:
+    def _mcp_actor(self, args: dict[str, Any]) -> tuple[str, Optional[dict[str, Any]]]:
         actor = str(args.pop("actor", "codex-console") or "codex-console").strip().lower()
-        if actor == "luis" or actor in {"hub", "ui", "system"} or not actor or len(actor) > 64 or not all(
+        if actor == self.person_id or actor in {"hub", "ui", "system"} or not actor or len(actor) > 64 or not all(
                 ch.isascii() and (ch.isalnum() or ch in "_-") for ch in actor):
-            return "", {"ok": False, "status": 400, "error": "actor must be a valid agent identity; only the Hub page may write as luis"}
+            return "", {"ok": False, "status": 400, "error": "actor must be a valid agent identity; only the person's page may write as the person"}
         return actor, None
 
     def get(self, req: Request) -> Optional[Any]:
@@ -3283,18 +3288,20 @@ class AgoraConsoleFacet(Facet):
         caller_text = str(caller or "")
         valid_caller = bool(caller_text) and len(caller_text) <= 64 and caller_text.isascii() and all(
             ch.isalnum() or ch in "_-" for ch in caller_text)
-        if caller == "ui":
-            actor = "luis"
+        if self._person_page(req):
+            actor = self.person_id
         elif req.agent() and caller_text == "hub":
             # The shared Hub bearer authenticates the request but is not a
             # person or Agora agent identity. Attribute its API writes to the
             # console service identity; the Hub page remains the only caller
-            # that writes as Luis.
+            # that writes as the person.
             actor = "codex-console"
         elif req.agent() and valid_caller:
             actor = caller_to_agent.get(caller_text, caller_text)
         else:
             actor = caller_to_agent.get(caller_text, caller_text if caller_text in known_agent_ids else "codex-console")
+        if actor == self.person_id and not self._person_page(req):
+            return {"ok": False, "status": 403, "error": "Only the person's page can act as the person"}
         if req.path == "/api/agora/console/message":
             return self.send_message(args, actor)
         if req.path == "/api/agora/console/preferences":
@@ -3350,7 +3357,7 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_leaders", "description": "Live state of each leader's CLI (Claude, Codex, Cursor, Faustus): working, waiting, idle since <time>, auth_expired, error or unknown, read from its local session files (event kinds and timestamps only, never message contents), with last_activity_at, source, detail, the open Agora task ids it owns and idle_with_work when it is idle, logged out or failed while owning open tasks. No model call is made.",
              "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
-            {"name": "hub_agora_console_message", "description": "Post one attributed message to canonical Agora work thread 32 and mention the selected existing leaders. Mentions queue attention; they do not imply that an idle agent woke or replied. MCP agents may supply their own valid actor id; only the Hub page may post as luis.",
+            {"name": "hub_agora_console_message", "description": "Post one attributed message to canonical Agora work thread 32 and mention the selected existing leaders. Mentions queue attention; they do not imply that an idle agent woke or replied. MCP agents may supply their own valid actor id; only the person's page may post as the person.",
              "inputSchema": {"type": "object", "properties": {"body": {"type": "string", "minLength": 1, "maxLength": 20000}, "recipients": {"type": "array", "items": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}}, "actor": {"type": "string", "maxLength": 64}}, "required": ["body"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
             {"name": "hub_agora_console_preferences", "description": "Save a verified provider model and reasoning effort; Codex/Cursor independent console leaders and the child workers of Codex, Cursor and Claude consume the saved preferences. Faustus limitations are reported explicitly.",

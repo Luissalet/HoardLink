@@ -32,6 +32,7 @@ import time
 import unicodedata
 from typing import Any, Optional
 
+from .config import PERSON_ALIAS
 from . import agora_ranks
 from . import agora_router
 from . import agora_social
@@ -138,7 +139,7 @@ def _floor(self: Any, viewer: str) -> int:
     top = int(self.db.scalar("SELECT MAX(id) FROM messages", (), 0) or 0)
     # Remembered only for who the Agora knows (the person, an agent that has been here): a read with a made-up id
     # counts from now and leaves no row behind.
-    if viewer == _ag().PERSON or self.db.one("SELECT 1 AS known FROM agents WHERE id=?", (viewer,)):
+    if viewer == self.person_id or self.db.one("SELECT 1 AS known FROM agents WHERE id=?", (viewer,)):
         self.db.execute("INSERT OR IGNORE INTO agora_seen_floor(agent, space_id, msg_id, updated) VALUES(?,?,?,?)",
                         (viewer, self.space_id, top, self.clock()))
     return top
@@ -322,10 +323,14 @@ def channel_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 def _parse_mentions(self: Any, body: str, author: str) -> list[str]:
     """``@id`` in the text for ids the Ágora knows; ``@here`` / ``@todos`` reach whoever has been around lately."""
     ag = _ag()
-    names = {m.group(1).rstrip(".-").lower() for m in _MENTION.finditer(str(body or ""))}
+    matched = (m.group(1).lower() for m in _MENTION.finditer(str(body or "")))
+    names = {name if name == self.person_id else name.rstrip(".-") for name in matched}
     if not names:
         return []
     out: list[str] = []
+    if PERSON_ALIAS in names:
+        names.remove(PERSON_ALIAS)
+        names.add(self.person_id)
     if names & set(_EVERYONE):
         since = self.clock() - ag.STALE_AGENT_S
         out.extend(r["id"] for r in self.db.query(
@@ -335,8 +340,8 @@ def _parse_mentions(self: Any, body: str, author: str) -> list[str]:
     if known:
         marks = ",".join("?" * len(known))
         out.extend(r["id"] for r in self.db.query(f"SELECT id FROM agents WHERE id IN ({marks})", tuple(known)))
-        if ag.PERSON in known:
-            out.append(ag.PERSON)
+        if self.person_id in known:
+            out.append(self.person_id)
     seen: list[str] = []
     for name in out:
         if name != author and name not in seen:
@@ -373,7 +378,7 @@ def channel_post(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if not carried["files"]:
                 raise _err("body is required")
             body = " · ".join(f["name"] for f in carried["files"])
-        mentions = list(ag._list(a.get("mentions"), "mentions"))
+        mentions = self._mentions(a.get("mentions"))
         for name in _parse_mentions(self, body, agent):
             if name not in mentions:
                 mentions.append(name)
@@ -388,7 +393,7 @@ def channel_post(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     out["mentions"] = [*mentions, *[m for m in out.get("mentions") or [] if m not in mentions]]   # and those the router chose
     # Naming the person in a channel also tells them outside the page (the hub's notifications decide how and when).
     hook = getattr(self, "mention_hook", None)
-    if hook and ag.PERSON in mentions and agent != ag.PERSON and not muted(self, self.space_id):
+    if hook and self.person_id in mentions and agent != self.person_id and not muted(self, self.space_id):
         try:
             hook({"id": thread, "space_id": self.space_id, "channel": slug, "title": (out.get("thread") or {}).get("title") or ""},
                  agent, body)
@@ -402,7 +407,7 @@ def channel_read(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     it unseen) and ``seen_upto`` says up to where that reader had read before."""
     viewer = _viewer(self, a)
     # The person's reads count as read only from the person's own pages; anyone else looking as the person peeks.
-    peek = _bool(a.get("peek", False), "peek") or (viewer == _ag().PERSON and not a.get("_person"))
+    peek = _bool(a.get("peek", False), "peek") or (viewer == self.person_id and not a.get("_person"))
     thread, slug = _target_thread(self, a, agent=None)
     limit = _int(a.get("limit"), 50, 1, 200)
     before = a.get("before_id")
@@ -438,9 +443,9 @@ def seen(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     viewer = _viewer(self, a)
     if not viewer:
         raise _err("agent is required")
-    if viewer == _ag().PERSON and not a.get("_person"):
+    if viewer == self.person_id and not a.get("_person"):
         raise _err("only the person's own pages mark the person's reads", 403)
-    if viewer != _ag().PERSON and not self.db.one("SELECT 1 AS known FROM agents WHERE id=?", (viewer,)):
+    if viewer != self.person_id and not self.db.one("SELECT 1 AS known FROM agents WHERE id=?", (viewer,)):
         raise _err(f"the Agora does not know {viewer}", 404)
     top = int(self.db.scalar("SELECT MAX(id) FROM messages", (), 0) or 0)
     self.db.execute("INSERT INTO agora_seen_floor(agent, space_id, msg_id, updated) VALUES(?,?,?,?) "
@@ -593,7 +598,7 @@ def _members(self: Any, tasks_by_owner: dict[str, list[dict[str, Any]]]) -> list
                            "WHERE m.space_id=? ORDER BY a.last_seen DESC", (self.space_id,)):
         d = dict(r)
         ident = d["id"]
-        person = ident == ag.PERSON
+        person = ident == self.person_id
         quiet = now - float(d.get("last_seen") or 0)
         quota = self._quota_state_from(ident, pools)
         state = str(d.get("state") or "idle")
@@ -610,7 +615,7 @@ def _members(self: Any, tasks_by_owner: dict[str, list[dict[str, Any]]]) -> list
         else:
             presence = state if state in ag.AGENT_STATES else "idle"
         rank = "person" if person else ranks.get(ident, agora_ranks.DEFAULT)
-        out.append({"id": ident, "name": d.get("name") or ident, "kind": d.get("kind") or "agent",
+        out.append({"id": ident, "name": self.person_name if person else d.get("name") or ident, "kind": d.get("kind") or "agent",
                     "role": "person" if person else (quota.get("provider") or "other"),
                     "rank": rank, "rank_level": agora_ranks.PERSON_LEVEL if person else agora_ranks.LEVEL[rank],
                     "presence": presence, "state": state, "doing": d.get("doing") or "", "note": d.get("note") or "",
@@ -922,7 +927,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "position": {"type": "integer"}, "archived": {"type": "boolean"}}, ["agent", "channel"])},
         {"name": "hub_agora_channel_post",
          "description": "Say something in a channel (channel, default general) or in any thread (thread_id). @id in "
-                        "the text mentions that agent, @luis the person, @here whoever has been around lately; "
+                        "the text mentions that agent. Use @person or the configured id for the person, @here for active agents. "
                         "mentions adds more. kind: comment (default), proposal, agree or disagree. reply_to quotes "
                         "a message of the same conversation (and tells its author); files carries files sent with "
                         "hub_agora_file_add (then body may be empty). work lists the tools you used for it and "

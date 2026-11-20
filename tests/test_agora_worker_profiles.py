@@ -12,7 +12,8 @@ from hoard_link.hub.facets import Request
 def console_for(tmp_path):
     agora = Agora(tmp_path / "agora.db")
     agora.space_create({"id": "estudio", "title": "Estudio", "agent": "codex-builder"})
-    config = SimpleNamespace(data_dir=str(tmp_path), token_file=str(tmp_path / "mcp-token"), url="http://127.0.0.1:9940")
+    config = SimpleNamespace(data_dir=str(tmp_path), token_file=str(tmp_path / "mcp-token"), url="http://127.0.0.1:9940",
+                             person_profile=agora.config.person_profile)
     hub = SimpleNamespace(config=config, facet=lambda _: SimpleNamespace(agora=agora))
     return AgoraConsoleFacet(hub), agora
 

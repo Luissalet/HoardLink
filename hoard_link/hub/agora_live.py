@@ -102,7 +102,7 @@ def task_signal_at(task: dict[str, Any]) -> float:
 def project(board: dict[str, Any], watch: dict[str, Any], messages: list[dict[str, Any]],
             *, now: float, channel: str = "general", colors: dict[str, str] | None = None) -> dict[str, Any]:
     tasks = board.get("tasks", [])
-    members = {m["id"]: m for m in board.get("agents", []) if m["id"] not in ("luis", "system")}
+    members = {m["id"]: m for m in board.get("agents", []) if m["id"] not in ((board.get("person") or {}).get("id"), "system")}
     # Locks are global in the board. Only this server's task locks and unscoped member locks belong here.
     task_ids = {t["id"] for t in tasks}
     locks = [lock for lock in board.get("locks", []) if lock.get("owner") in members

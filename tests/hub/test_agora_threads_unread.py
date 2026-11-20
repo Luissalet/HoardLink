@@ -35,20 +35,20 @@ def _row(a, thread_id, agent):
 
 def test_unread_counts_others_messages_since_the_last_read_and_listing_marks_nothing(ag):
     th = ag.thread_open({"agent": "claude", "title": "Plan", "body": "first idea"})["thread"]["id"]
-    assert _row(ag, th, "luis")["unread"] == 1           # the opening message by someone else
+    assert _row(ag, th, "person")["unread"] == 1           # the opening message by someone else
     assert _row(ag, th, "claude")["unread"] == 0         # own messages never count
     ag.post({"agent": "codex", "thread_id": th, "body": "a second view"})
-    row = _row(ag, th, "luis")
+    row = _row(ag, th, "person")
     assert row["unread"] == 2 and row["seen_upto"] == 0
-    assert _row(ag, th, "luis")["unread"] == 2           # listing twice changes nothing
+    assert _row(ag, th, "person")["unread"] == 2           # listing twice changes nothing
 
-    first = ag.thread({"thread_id": th, "agent": "luis", "_person": True})   # reading the thread acks it
+    first = ag.thread({"thread_id": th, "agent": "person", "_person": True})   # reading the thread acks it
     assert first["seen_upto"] == 0                       # and says what the reader had seen before this read
     assert "seen_upto" not in ag.thread({"thread_id": th})
-    row = _row(ag, th, "luis")
+    row = _row(ag, th, "person")
     assert row["unread"] == 0 and row["seen_upto"] > 0
     ag.post({"agent": "claude", "thread_id": th, "body": "update"})
-    assert _row(ag, th, "luis")["unread"] == 1
+    assert _row(ag, th, "person")["unread"] == 1
     assert _row(ag, th, "codex")["unread"] == 1          # codex has seen its own post but not claude's update
 
 
@@ -77,7 +77,7 @@ def test_http_and_mcp_list_threads_with_unread(tmp_path, monkeypatch):
         th = ag.thread_open({"agent": "claude", "title": "Listed", "body": "hello"})["thread"]["id"]
         base = hub.config.url.rstrip("/")
         headers = {"Authorization": "Bearer " + Path(hub.config.token_file).read_text().strip()}
-        status, out = http(base + "/api/agora/threads?agent=luis", headers=headers)
+        status, out = http(base + "/api/agora/threads?agent=person", headers=headers)
         assert status == 200 and next(t for t in out["threads"] if t["id"] == th)["unread"] == 1
         root = Path(__file__).resolve().parents[2]
         env = dict(os.environ, HOARD_HUB_URL=base, HOARD_HUB_TOKEN_FILE=str(hub.config.token_file),

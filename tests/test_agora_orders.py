@@ -1,6 +1,7 @@
 import pytest
 
-from hoard_link.hub.agora import Agora, AgoraError, PERSON, TOOLS
+from hoard_link.hub.agora import Agora, AgoraError, TOOLS
+from hoard_link.hub.config import PERSON_ALIAS as PERSON
 from hoard_link.hub import agora_orders
 
 

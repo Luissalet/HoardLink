@@ -23,7 +23,7 @@ is the long-lived local process every agent can reach (HTTP, the MCP bridge, or 
 * every agent has an **inbox**: messages from others since its last read, reviews waiting for it, changes asked of
   it and answers to escalations. ``wait_s`` turns the inbox into a long poll so an agent can wait for a reply.
 
-Only the hub's own page may write as the person (``luis``); agents use their own ids. Everything is stored in
+Only the hub's own page may write as the configured person; agents use their own ids. Everything is stored in
 ``<data>/agora.db`` and announced on the event bus as ``agora.*``.
 
 HTTP (reads): ``GET /api/agora/board|inbox|tasks|tasks/<id>|threads|threads/<id>|locks|decisions|agents``.
@@ -53,6 +53,7 @@ from typing import Any, Callable, Optional
 from ..sqlkit import Database
 from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError, SpaceStore, space_id
 from . import agent_watch
+from .config import AGENT_ID_RE, PERSON_ALIAS, HubConfig
 from . import agora_channels
 from . import agora_ranks
 from . import agora_router
@@ -76,7 +77,6 @@ _BLOCK_KINDS = frozenset({"what_why", "paths", "code_peek", "flow", "sequence"})
 _GIT_TIMEOUT_S = 15.0
 CREATE_NO_WINDOW = 0x08000000
 
-PERSON = "luis"
 #: Pages that may speak as the person besides the hub's own (see ``AgoraFacet._person_surface``).
 PERSON_SURFACES = ("faustus-studio",)
 STALE_AGENT_S = 6 * 3600.0
@@ -97,7 +97,7 @@ THREAD_KINDS = ("task", "debate", "question", "decision", "review", "handoff", "
 THREAD_STATUSES = ("open", "resolved", "escalated")
 MSG_KINDS = ("comment", "proposal", "agree", "disagree", "approve", "changes", "resolution", "escalation", "system")
 AGENT_STATES = ("working", "idle", "waiting", "away")
-_AGENT_RE = re.compile(r"^[a-z][a-z0-9_.\-]{1,40}$")
+_AGENT_RE = AGENT_ID_RE
 _SCOPED = ("path", "repo", "merge")
 
 MIGRATIONS = [
@@ -244,7 +244,7 @@ DEP_CLEAR = ("approved", "done", "dropped")
 EXEMPT_KINDS = ("docs", "eval", "research", "chore")
 
 
-# A1 only informs: the Ágora never blocks an agent for not having read a thread (Luis, 09-10: no more
+# A1 only informs: the Ágora never blocks an agent for not having read a thread (the product policy: no more
 # obstacles for the agents' autonomy). "warn" lists what was unread in the answer; "off" says nothing.
 FRESHNESS_MODES = ("off", "warn")
 
@@ -799,7 +799,7 @@ class Agora:
                  task_idle_s: int = 3600,
                  repo_lookup: Optional[Callable[[str], Optional[Path]]] = None,
                  repo_roots: Optional[Callable[[str], list[Path]]] = None,
-                 freshness: Optional[str] = None):
+                 freshness: Optional[str] = None, config: Optional[HubConfig] = None):
         self.clock = clock
         # A1: when an agent acts on a task without having read what others wrote there since, "warn" (default)
         # says so in the answer and an event; "off" says nothing. Nothing is ever refused for it.
@@ -816,11 +816,29 @@ class Agora:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = Database(path, migrations=MIGRATIONS)
         self.db.migrate()
+        self.config = config if config is not None else HubConfig()
+        if config is not None and not config.person.get("id"):
+            historical = self.db.query("SELECT id, name FROM agents WHERE kind='human' LIMIT 2")
+            if len(historical) == 1:
+                config.update_person(historical=dict(historical[0]))
         self.space_id = DEFAULT_SPACE_ID
         self.space_store = SpaceStore(self.db, clock=self.clock)
         self._changed = threading.Condition()
         self._version = [0]
         self._space_sweeps: dict[str, float] = {}
+
+    @property
+    def person_id(self) -> str:
+        return self.config.person_profile["id"]
+
+    @property
+    def person_name(self) -> str:
+        return self.config.person_profile["name"]
+
+    def _mentions(self, value: Any) -> list[str]:
+        person = self.person_id
+        return list(dict.fromkeys(person if ident.lower().lstrip("@") in (PERSON_ALIAS, person) else ident
+                                  for ident in _list(value, "mentions")))
 
     def for_space(self, value: Any = None) -> "Agora":
         sid = space_id(value)
@@ -906,22 +924,19 @@ class Agora:
         agent = str(value or "").strip().lower()
         if not _AGENT_RE.match(agent):
             raise AgoraError("agent is required: a short id such as builder, reviewer or agent-2")
-        if agent == PERSON and not allow_person:
-            raise AgoraError(f"only the hub's page may write as {PERSON!r}; agents use their own id", 403)
+        if agent == self.person_id and not allow_person:
+            raise AgoraError("only the person's page may write as the person; agents use their own id", 403)
         if agent in ("hub", "ui", "system"):
             raise AgoraError(f"{agent!r} is reserved")
         return agent
 
     def _touch(self, agent: str) -> None:
         now = self.clock()
-        if agent == PERSON:
-            kind = "human"
-        else:
-            kind = "agent"
+        person = agent == self.person_id
         self.db.execute(
             "INSERT INTO agents(id, name, kind, state, last_seen, created) VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen",
-            (agent, agent, kind, "working", now, now))
+            (agent, self.person_name if person else agent, "human" if person else "agent", "working", now, now))
         self.space_store.join(self.space_id, agent)
 
     def _task_row(self, task_id: Any) -> dict[str, Any]:
@@ -1187,7 +1202,7 @@ class Agora:
         read? It never refuses: the unseen list goes in the answer (``unseen``) and in an ``agora.task.unseen``
         event, and nothing is written in the thread. Mode ``off`` and the person acting from the hub page skip it.
         Returns None (kept as a hook for the callers)."""
-        if self.freshness == "off" or agent == PERSON or a.get("_person"):
+        if self.freshness == "off" or agent == self.person_id or a.get("_person"):
             return None
         unseen = self._unseen(agent, int(task["id"]))
         if not unseen:
@@ -1285,7 +1300,7 @@ class Agora:
                 row = self.db.one("SELECT owner FROM locks WHERE resource=?", (res,))
                 if row is None:
                     continue
-                if row["owner"] != agent and agent != PERSON:
+                if row["owner"] != agent and agent != self.person_id:
                     raise AgoraError(f"{res} belongs to {row['owner']}", 409)
                 self.db.execute("DELETE FROM locks WHERE resource=?", (res,))
                 released.append(res)
@@ -1514,7 +1529,7 @@ class Agora:
         ids = []
         for value in agent_ids or []:
             agent = str(value or "").strip().lower()
-            if agent and agent not in ids and agent != PERSON:
+            if agent and agent not in ids and agent != self.person_id:
                 ids.append(agent)
         if not ids:
             return []
@@ -1561,7 +1576,7 @@ class Agora:
     def _worker_ids(self) -> list[str]:
         """Agents that can take work: not the person, not the hub, not a quota reporter (``*-capacity``)."""
         return [r["id"] for r in self.db.query("SELECT id FROM agents ORDER BY id")
-                if r["id"] not in (PERSON, "system", "hub", "ui") and not r["id"].endswith("-capacity")]
+                if r["id"] not in (self.person_id, "system", "hub", "ui") and not r["id"].endswith("-capacity")]
 
     @_space_operation
     def orphans(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -1846,6 +1861,8 @@ class Agora:
                                "FROM agents a JOIN coordination_members m ON m.agent=a.id "
                                "WHERE m.space_id=? ORDER BY a.last_seen DESC", (self.space_id,)):
             d = dict(r)
+            if d["id"] == self.person_id:
+                d["name"] = self.person_name
             d["stale"] = (now - float(d.get("last_seen") or 0)) > STALE_AGENT_S
             d["quota"] = self._quota_state_from(d["id"], pools)
             mine = [dict(x) for x in self.db.query("SELECT * FROM locks WHERE owner=? AND expires>?", (d["id"], now))]
@@ -1907,7 +1924,7 @@ class Agora:
                                             "space_id": self.space_id})
             self.db.execute("UPDATE tasks SET thread_id=? WHERE id=?", (th, tid))
             self._record_edit(self._task_row(tid), agent, None, 'created')
-            self._msg(th, agent, "proposal", body or title, _list(a.get("mentions"), "mentions"))
+            self._msg(th, agent, "proposal", body or title, self._mentions(a.get("mentions")))
             if clarification:
                 self._msg(th, agent, 'comment', clarification, [assigned] if assigned else [])
             if blocked_by:
@@ -2075,7 +2092,7 @@ class Agora:
         on this server (taking work back is part of handing it out)."""
         agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")) and allow_person)
         task = self._task_row(a.get("task_id"))
-        if task.get("owner") != agent and agent != PERSON:
+        if task.get("owner") != agent and agent != self.person_id:
             if not (superior and task.get("owner") and agora_ranks.outranks(self, agent, task["owner"])):
                 raise AgoraError(f"task {task['id']} belongs to {task.get('owner') or 'nobody'}: claim it first", 409)
         return agent, task
@@ -2084,12 +2101,12 @@ class Agora:
         """Rank among the agents of a server: a thread is not resolved against someone of higher rank who disagrees
         in it, and what a higher rank resolved is not resolved again or reopened from below. The person closes and
         opens anything; so does an equal of whoever resolved it."""
-        if agent == PERSON:
+        if agent == self.person_id:
             return
         closer = th.get("resolved_by") if th.get("status") == "resolved" else None
         if closer and closer != agent and agora_ranks.outranks(self, closer, agent):
             raise AgoraError(f"{closer} resolved this thread and outranks you on {self.space_id}: to {what} it is "
-                             f"theirs, an equal's or {PERSON}'s. Say why in the thread, or escalate.", 403,
+                             f"theirs, an equal's or the person's. Say why in the thread, or escalate.", 403,
                              error_code="rank", outranked_by=closer)
         if what == "resolve":
             against = agora_ranks.standing_against(self, int(th["id"]), agent)
@@ -2242,13 +2259,13 @@ class Agora:
                 self._system(task, stale_note, agent)
             # The review of a higher rank stands: its verdict on this delivery is not replaced from below (neither
             # approved over its changes, nor sent back over its approval, nor signed again by someone else).
-            if (agent != PERSON and task["status"] in ("changes", "approved")
+            if (agent != self.person_id and task["status"] in ("changes", "approved")
                     and task.get("reviewed_submission_revision") == expected_revision
                     and agora_ranks.outranks(self, task.get("reviewer"), agent)):
                 said = "asked for changes on" if task["status"] == "changes" else "approved"
                 raise AgoraError(f"{task['reviewer']} {said} this delivery and outranks you on {self.space_id}: their "
                                  f"review stands. Say what you found in the task's thread; a new delivery, they or "
-                                 f"{PERSON} change it.", 403, error_code="rank", outranked_by=task["reviewer"])
+                                 f"the person can change it.", 403, error_code="rank", outranked_by=task["reviewer"])
             status = "approved" if verdict == "approve" else "changes"
             now = self.clock()
             self.db.execute("UPDATE tasks SET status=?, reviewer=?, reviewed=?, reviewed_commits=?, "
@@ -2277,7 +2294,7 @@ class Agora:
                 details += "\n" + "\n".join(extra)
             self._msg(int(task["thread_id"]), agent, "approve" if verdict == "approve" else "changes",
                       details + "\n\n" + body, [task["owner"]] if task.get("owner") else [])
-            if agent == PERSON:
+            if agent == self.person_id:
                 self.db.execute("UPDATE threads SET status='open' WHERE id=? AND status='escalated'", (task["thread_id"],))
             if verdict == "changes":
                 agora_profiles.note_correction(self, task, agent, body)
@@ -2308,7 +2325,7 @@ class Agora:
                     return undo_closure(self, task, agent, a["undo_token"])
                 except IntegrationError as exc:
                     raise AgoraError(str(exc), 409) from exc
-            delegated = agent not in (PERSON, task["owner"]) and not integration
+            delegated = agent not in (self.person_id, task["owner"]) and not integration
             if integration or (delegated and task["status"] != "approved"):
                 self._owned(a, superior=integration)
             if integration and (task["status"] != "approved" or
@@ -2322,15 +2339,15 @@ class Agora:
             if stale_note:
                 self._system(task, stale_note, agent)
             now = self.clock()
-            if task["status"] == "review" and agent != PERSON:
+            if task["status"] == "review" and agent != self.person_id:
                 waited = now - float(task.get("submitted_at") or now)
                 if waited < self.review_grace_s and not (a.get("force") and str(a.get("reason") or "").strip()):
                     raise AgoraError(f"task {task['id']} has been waiting for review {int(waited // 60)} min; wait "
                                      f"{int(self.review_grace_s // 60)} min or pass force with a reason", 409)
-            if task["status"] == "changes" and agent != PERSON and agora_ranks.outranks(self, task.get("reviewer"), agent):
+            if task["status"] == "changes" and agent != self.person_id and agora_ranks.outranks(self, task.get("reviewer"), agent):
                 # The review of a higher rank stands: not even force closes the task over it.
                 raise AgoraError(f"{task['reviewer']} asked for changes on task {task['id']} and outranks you on "
-                                 f"{self.space_id}: address them and submit again; only they or {PERSON} let it "
+                                 f"{self.space_id}: address them and submit again; only they or the person can let it "
                                  "close as it is", 403, error_code="rank", outranked_by=task["reviewer"])
             if task["status"] == "changes" and not (a.get("force") and str(a.get("reason") or "").strip()):
                 raise AgoraError(f"the reviewer asked for changes on task {task['id']}: address them and submit again, "
@@ -2406,7 +2423,7 @@ class Agora:
         reason = _txt(a.get("reason"), 5000, "reason")
         with self.db.tx():
             agent, task = self._owned(a, superior=True)
-            taken_from = task.get("owner") if agent != PERSON and task.get("owner") not in (None, agent) else None
+            taken_from = task.get("owner") if agent != self.person_id and task.get("owner") not in (None, agent) else None
             if task["status"] in FINAL:
                 # A dropped task keeps its owner; releasing it again must not bring it back to open.
                 raise AgoraError(f"task {task['id']} is already {task['status']}", 409)
@@ -2585,11 +2602,10 @@ class Agora:
             return value.strip().lower() not in ("0", "false", "no", "off")
         return bool(value)
 
-    @staticmethod
-    def _handover_agent(value: Any, field: str) -> str:
+    def _handover_agent(self, value: Any, field: str) -> str:
         agent = str(value or "").strip().lower()
-        if agent == PERSON:
-            raise AgoraError(f"{field} must be an agent: {PERSON!r} does not own tasks to hand over")
+        if agent == self.person_id:
+            raise AgoraError(f"{field} must be an agent: the person does not own tasks to hand over")
         if not _AGENT_RE.match(agent) or agent in ("hub", "ui", "system"):
             raise AgoraError(f"{field} is required: the id of an agent such as codex-relevo")
         return agent
@@ -2605,7 +2621,7 @@ class Agora:
 
         Allowed for the person (the hub's page), for ``from_agent`` itself, and for any registered agent once
         ``from_agent`` has sent no heartbeat for ``handover_idle_s`` (30 min). ``force`` skips that wait for any
-        registered agent: Luis decides who works on what, and an agent acting on his order (a source out of quota
+        registered agent: the person allocates work, and an agent acting on their instructions (a source out of quota
         that keeps sending heartbeats, work that must move now) takes the work at once; the forced move is written
         in every task thread and in the coordination thread with its reason. ``to_agent`` must be registered and,
         unless the person asks, have a fresh heartbeat. One transaction; running it again changes nothing."""
@@ -2633,11 +2649,11 @@ class Agora:
         with self.db.tx():
             now = self.clock()
             # -- who may do it
-            if caller != PERSON and self.db.one("SELECT id FROM agents WHERE id=?", (caller,)) is None:
+            if caller != self.person_id and self.db.one("SELECT id FROM agents WHERE id=?", (caller,)) is None:
                 raise AgoraError(f"{caller} is not registered in the Agora: send a heartbeat first", 403)
             forced_active = False
             by_rank = False
-            if caller not in (PERSON, source):
+            if caller not in (self.person_id, source):
                 seen = self.db.one("SELECT last_seen FROM agents WHERE id=?", (source,))
                 idle = now - float(seen["last_seen"] or 0) if seen is not None else None
                 # Whoever outranks the source hands its work over at once: handing out the work is the rank's.
@@ -2650,13 +2666,13 @@ class Agora:
                     raise AgoraError(
                         f"{source} sent a heartbeat {int(idle // 60)} min ago: another agent can take its work over after "
                         f"{int(self.handover_idle_s // 60)} min without one (about {math.ceil(left / 60)} min from now); "
-                        f"{PERSON} can do it right away from the Hub", 409, idle_s=int(idle), retry_after_s=math.ceil(left),
+                        f"{self.person_name} can do it right away from the Hub", 409, idle_s=int(idle), retry_after_s=math.ceil(left),
                         required_idle_s=int(self.handover_idle_s))
             # -- who receives it
             row = self.db.one("SELECT last_seen FROM agents WHERE id=?", (target,))
             if row is None:
                 raise AgoraError(f"{target} is not registered in the Agora: it must send a heartbeat before it takes work over", 409)
-            if caller != PERSON and (now - float(row["last_seen"] or 0)) > STALE_AGENT_S:
+            if caller != self.person_id and (now - float(row["last_seen"] or 0)) > STALE_AGENT_S:
                 raise AgoraError(f"{target} has no recent heartbeat (more than {int(STALE_AGENT_S // 3600)} h): "
                                  "hand over to an agent that is working now", 409)
             # -- what moves
@@ -2700,7 +2716,7 @@ class Agora:
                 return {"ok": True, "noop": True, "by": caller, "from": source, "to": target, "reason": reason,
                         "tasks": [], "owner_moved": [], "reviewer_moved": [], "locks_moved": [], "skipped": skipped,
                         "thread_id": None}
-            if caller != PERSON:
+            if caller != self.person_id:
                 self._touch(caller)
             # -- apply
             owner_moved = [p["task"]["id"] for p in plan if p["owner_moved"]]
@@ -2827,7 +2843,7 @@ class Agora:
         task_id = None
         if a.get("task_id") not in (None, ""):
             task_id = self._task_row(a.get("task_id"))["id"]
-        mentions = _list(a.get("mentions"), "mentions")
+        mentions = self._mentions(a.get("mentions"))
         routed = None       # a thread the person opens without naming anyone is routed like any message of theirs
         if (a.get("_person") and not a.get("escalate")
                 and agora_router.applies(self, a, mentions, "proposal", agent, body)):
@@ -2863,7 +2879,7 @@ class Agora:
         # What the person writes without naming anyone is routed to the agents that should answer it (agora_router.py);
         # the model is asked here, before the write opens, so a slow answer never holds the database.
         routed = None
-        if person and agora_router.applies(self, a, _list(a.get("mentions"), "mentions"), kind, agent, body):
+        if person and agora_router.applies(self, a, self._mentions(a.get("mentions")), kind, agent, body):
             routed = agora_router.plan(self, body, int(self._thread_row(a.get("thread_id"))["id"]), agent)
         work, routine = agora_work.collect(self, agent, a, person=person)     # the tools used and the routine, checked first
         with self.db.tx():
@@ -2878,7 +2894,7 @@ class Agora:
             # open it again.
             stays = (th["status"] == "resolved" and kind in ("disagree", "proposal")
                      and agora_ranks.outranks(self, th.get("resolved_by"), agent))
-            mentions = _list(a.get("mentions"), "mentions")
+            mentions = self._mentions(a.get("mentions"))
             if stays and th["resolved_by"] not in mentions:
                 mentions = [*mentions, th["resolved_by"]]
             if routed:
@@ -2887,7 +2903,7 @@ class Agora:
             carried = agora_work.record(self, mid, th["id"], agent, work, routine)
             self._ack(agent, th["id"], mid)
             if ((th["status"] == "resolved" and kind in ("disagree", "proposal")) and not stays) or \
-                    (th["status"] == "escalated" and agent == PERSON):
+                    (th["status"] == "escalated" and agent == self.person_id):
                 self.db.execute("UPDATE threads SET status='open' WHERE id=?", (th["id"],))
         self._bump("agora.thread.message", {"thread_id": th["id"], "message_id": mid, "author": agent, "kind": kind})
         out = {"ok": True, "message_id": mid, "thread": self._thread_row(th["id"]), **carried}
@@ -2898,7 +2914,7 @@ class Agora:
             out["stays_resolved"] = True
             out["note"] = (f"{th.get('resolved_by')} resolved this thread and outranks you here: it stays resolved. "
                            "Convince them, or escalate.")
-        warnings = self._quota_warnings(_list(a.get("mentions"), "mentions"))
+        warnings = self._quota_warnings(self._mentions(a.get("mentions")))
         if warnings:
             out["quota_warnings"] = warnings
         return self._with_unseen(a, out)
@@ -2932,7 +2948,7 @@ class Agora:
             now = self.clock()
             # A question goes first to whoever is next above the one who asks and around: it reaches the person when
             # nobody is, or when the highest rank around sends it up.
-            above = [] if agent == PERSON else agora_ranks.superiors_around(self, agent)
+            above = [] if agent == self.person_id else agora_ranks.superiors_around(self, agent)
             # Asked again after those above left it unanswered, it stops waiting for them.
             waited = bool(above) and agora_ranks.unanswered_above(self, int(th["id"]), agent)
             if waited:
@@ -2944,10 +2960,10 @@ class Agora:
             self._bump("agora.thread.asked_up", {"thread_id": th["id"], "by": agent, "asked": above, "title": th["title"]})
             return {"ok": True, "thread": self._thread_row(th["id"]), "asked": above, "reached_person": False,
                     "note": f"The question went to {', '.join(above)}, who outrank you here and are around: they "
-                            f"answer it, or send it up to {PERSON}. If nobody has answered in "
-                            f"{int(agora_ranks.ASK_UP_WAIT_S // 60)} min, escalate again and it goes to {PERSON}."}
+                            f"answer it, or send it up to {self.person_name}. If nobody has answered in "
+                            f"{int(agora_ranks.ASK_UP_WAIT_S // 60)} min, escalate again and it goes to {self.person_name}."}
         with self.db.tx():
-            self._msg(th["id"], agent, "escalation", question, [PERSON])
+            self._msg(th["id"], agent, "escalation", question, [self.person_id])
             self.db.execute("UPDATE threads SET status='escalated', updated=? WHERE id=?", (now, th["id"]))
         self._bump("agora.thread.escalated", {"thread_id": th["id"], "by": agent, "title": th["title"]})
         if self.escalate_hook and not agora_channels.muted(self, th["space_id"]):   # a silenced server asks inside only
@@ -2955,9 +2971,9 @@ class Agora:
                 self.escalate_hook(th, agent, question)
             except Exception:  # noqa: BLE001
                 pass
-        out = {"ok": True, "thread": self._thread_row(th["id"]), "asked": [PERSON], "reached_person": True}
+        out = {"ok": True, "thread": self._thread_row(th["id"]), "asked": [self.person_id], "reached_person": True}
         if waited:
-            out["note"] = f"Nobody above you answered: the question went to {PERSON}."
+            out["note"] = f"Nobody above you answered: the question went to {self.person_name}."
         return out
 
     @_space_operation
@@ -3198,7 +3214,7 @@ class Agora:
             d["mentions"] = _l(d.get("mentions"))
             d["for_you"] = (agent in d["mentions"] or d.get("task_owner") == agent or d["thread_id"] in took_part
                             or d.get("thread_by") == agent or d["thread_kind"] in ("debate", "question", "decision", "handoff")
-                            or d["author"] == PERSON)
+                            or d["author"] == self.person_id)
             msgs.append(d)
         if a.get("mine_only"):
             msgs = [m for m in msgs if m["for_you"]]
@@ -3211,7 +3227,7 @@ class Agora:
             "SELECT t.*, (SELECT body FROM messages m WHERE m.thread_id=t.id AND m.kind='escalation' ORDER BY m.id DESC LIMIT 1) "
             "AS question, (SELECT author FROM messages m WHERE m.thread_id=t.id AND m.kind='escalation' ORDER BY m.id DESC "
             "LIMIT 1) AS escalated_by FROM threads t WHERE t.status='escalated' AND t.space_id=? ORDER BY t.updated",
-            (self.space_id,))] if agent == PERSON else []
+            (self.space_id,))] if agent == self.person_id else []
         pending = []
         for r in self.db.query(
                 "SELECT m.*, t.title AS thread_title, t.kind AS thread_kind, t.task_id AS task_id FROM messages m "
@@ -3258,7 +3274,7 @@ class Agora:
             [self._task_dict(r) for r in self.db.query(
                 "SELECT * FROM tasks WHERE status IN ('done','dropped') AND space_id=? ORDER BY closed_at DESC LIMIT 15",
                 (self.space_id,))]
-        return {"ok": True, "agents": self.agents()["agents"], "counts": counts, "tasks": tasks, "locks": live,
+        return {"ok": True, "person": self.config.person_profile, "agents": self.agents()["agents"], "counts": counts, "tasks": tasks, "locks": live,
                 "orphans": self.orphans()["findings"],
                 "lock_groups": group_locks(live),
                 "threads": self.threads({"limit": 40})["threads"],
@@ -3515,7 +3531,7 @@ TOOLS: list[dict[str, Any]] = [
                     "tasks it owns that are not done (status, review state, submission revision and history stay), their live "
                     "locks (renewed) and, with include_reviews (default), the reviewer role of other tasks in review/changes. "
                     "tasks limits it to those ids; reason is required. Allowed for from_agent itself, and for any registered "
-                    "agent once from_agent sent no heartbeat for 30 min, or right away with force=true (Luis's order: "
+                    "agent once from_agent sent no heartbeat for 30 min, or right away with force=true (the person's instructions: "
                     "an agent out of quota that keeps sending heartbeats, work that must move now); to_agent must have a "
                     "recent heartbeat. Announced in the tasks' threads and thread 32. Running it twice changes nothing.",
      "inputSchema": _schema({"agent": _A, "from_agent": {"type": "string", "description": "the agent that stopped"},
@@ -3684,7 +3700,7 @@ class AgoraFacet(Facet):
         task_idle_s = watch_cfg.get("task_idle_s", 3600) if isinstance(watch_cfg, dict) else 3600
         agora_cfg = getattr(hub.config, "agora", None)
         freshness = agora_cfg.get("freshness") if isinstance(agora_cfg, dict) else None
-        self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness,
+        self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness, config=hub.config,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
         self.agora.registered_repositories = lambda: getattr(getattr(hub, "repos", None), "discover", lambda: [])()
@@ -3724,7 +3740,7 @@ class AgoraFacet(Facet):
                         pass
                 self._watch = agent_watch.AgentWatch(
                     roots=cfg.get("roots") if isinstance(cfg.get("roots"), dict) else None,
-                    store_path=Path(self.hub.config.data_dir) / "agent_watch.json", **kw)
+                    store_path=Path(self.hub.config.data_dir) / "agent_watch.json", person_id=self.agora.person_id, **kw)
             return self._watch
 
     def _watch_enabled(self) -> bool:
@@ -3837,6 +3853,7 @@ class AgoraFacet(Facet):
 
     def _task(self, a: dict[str, Any]) -> dict[str, Any]:
         out = self.agora.task(a)
+        out["person"] = self.agora.config.person_profile
         return self._enrich(out, [out["task"]])
 
     def _tasks(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -3853,6 +3870,7 @@ class AgoraFacet(Facet):
 
     def _thread(self, a: dict[str, Any]) -> dict[str, Any]:
         out = self.agora.thread(a)
+        out["person"] = self.agora.config.person_profile
         return self._enrich(out, [out["task"]] if out.get("task") else [])
 
     def _activity(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -3868,6 +3886,8 @@ class AgoraFacet(Facet):
         return out
 
     def _inbox(self, a: dict[str, Any]) -> dict[str, Any]:
+        if str(a.get("agent") or "").strip().lower() == self.agora.person_id and not a.get("_person"):
+            a = {**a, "peek": True}
         out = self.agora.inbox(a)
         self._enrich(out, out["progress_alerts"])
         out["progress_alerts"] = [t for t in out["progress_alerts"] if (t.get("activity") or {}).get("state") == "stalled"]
@@ -4035,6 +4055,8 @@ class AgoraFacet(Facet):
             return None
         q = {k: v[0] for k, v in req.query.items() if v}
         ag = self.agora
+        if p == "/api/agora/person":
+            return {"ok": True, "person": ag.config.person_profile}
         if p == "/api/agora/spaces":
             return self._run(ag.spaces, q)
         if p.startswith("/api/agora/spaces/"):
@@ -4046,8 +4068,9 @@ class AgoraFacet(Facet):
         if p == "/api/agora/live":
             return self._run(self._live, q)
         if p == "/api/agora/inbox":
-            if q.get("agent", "").lower() == PERSON and req.caller() != "ui":
-                q["peek"] = "1"
+            q["_person"] = self._person_surface(req)
+            if q["_person"]:
+                q.setdefault("agent", ag.person_id)
             q["peek"] = str(q.get("peek", "")).lower() in ("1", "true", "yes")
             q["mine_only"] = str(q.get("mine_only", "")).lower() in ("1", "true", "yes")
             q["metadata_only"] = str(q.get("metadata_only", "")).lower() in ("1", "true", "yes")
@@ -4074,13 +4097,15 @@ class AgoraFacet(Facet):
                         pass
             return self._run(ag.checkpoints, q)
         if p.startswith("/api/agora/tasks/"):
-            who = q.get("agent", "").lower()
-            person = who == PERSON and req.caller() == "ui"
-            if who == PERSON and not person:
+            who = q.get("agent", "").strip().lower()
+            person = who == ag.person_id and req.caller() == "ui"
+            if who == ag.person_id and not person:
                 who = ""   # the person's read is recorded only from the hub's page
             return self._run(self._task, {"task_id": p.rsplit("/", 1)[1], "space_id": q.get("space_id"),
                                          **({"agent": who, "_person": person} if who else {})})
         if p == "/api/agora/threads":
+            if self._person_surface(req):
+                q.setdefault("agent", ag.person_id)
             q["include_tasks"] = str(q.get("include_tasks", "")).lower() in ("1", "true")
             return self._run(ag.threads, q)
         recent = re.fullmatch(r"/api/agora/threads/([0-9]+)/recent", p)
@@ -4094,16 +4119,19 @@ class AgoraFacet(Facet):
                         pass
             return self._run(ag.thread_recent, q)
         if p.startswith("/api/agora/threads/"):
-            who = q.get("agent", "").lower()
-            person = who == PERSON and req.caller() == "ui"
-            if who == PERSON and not person:
+            who = q.get("agent", ag.person_id if req.caller() == "ui" else "").strip().lower()
+            person = who == ag.person_id and req.caller() == "ui"
+            if who == ag.person_id and not person:
                 who = ""
             return self._run(self._thread, {"thread_id": p.rsplit("/", 1)[1], "agent": who, "_person": person,
                                            "space_id": q.get("space_id")})
         if p == "/api/agora/locks":
             return self._run(ag.locks, q)
         if p == "/api/agora/decisions":
-            return self._run(ag.decisions, q)
+            out = self._run(ag.decisions, q)
+            if out.get("ok"):
+                out["viewer"] = ag.person_id if self._person_surface(req) else None
+            return out
         if p in ("/api/agora/review_diff", "/api/agora/review_comments"):
             for key in ("task_id", "max_lines"):
                 if key in q and re.fullmatch(r"[0-9]+", q[key]):
@@ -4149,9 +4177,9 @@ class AgoraFacet(Facet):
                 if key in q:
                     q[key] = str(q[key]).lower() in ("1", "true", "yes")
             if "agent" not in q and self._person_surface(req):
-                q["agent"] = PERSON   # the person's pages read as the person
+                q["agent"] = ag.person_id   # the person's pages read as the person
             q["_person"] = self._person_surface(req)   # never taken from the query: only the page decides it
-            if q.get("agent", "").lower() == PERSON and not q["_person"]:
+            if q.get("agent", "").strip().lower() == ag.person_id and not q["_person"]:
                 q["peek"] = True   # the person's reads count only from the person's own pages
             if channel:
                 return self._run(ag.channel_read, {**q, "channel": channel.group(1)})
@@ -4201,6 +4229,14 @@ class AgoraFacet(Facet):
         if not p.startswith("/api/agora/"):
             return None
         op = p[len("/api/agora/"):].strip("/")
+        if op == "person":
+            if not self._person_surface(req):
+                return {"ok": False, "status": 403, "error": "Only the person's page can change the display name"}
+            name = (req.body or {}).get("name")
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80 or not name.strip().isprintable():
+                return {"ok": False, "status": 400, "error": "Display name must contain 1–80 printable characters"}
+            self.agora.config.update_person(name=name.strip())
+            return {"ok": True, "person": self.agora.config.person_profile}
         if op == "usage/report":
             op = "usage_report"
         if op == "watch/bind":
@@ -4215,8 +4251,8 @@ class AgoraFacet(Facet):
         args = dict(req.body or {})
         args.pop("_person", None)
         if caller == "ui" or self._person_surface(req):
-            args.setdefault("agent", PERSON)
-            args["_person"] = str(args.get("agent", "")).lower() == PERSON
+            args.setdefault("agent", self.agora.person_id)
+            args["_person"] = str(args.get("agent", "")).strip().lower() == self.agora.person_id
         if op == "checkpoint":
             args.pop("_person", None)
         if op == "read":

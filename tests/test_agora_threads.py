@@ -1,6 +1,7 @@
 import pytest
 
-from hoard_link.hub.agora import Agora, AgoraError, PERSON, TOOLS
+from hoard_link.hub.agora import Agora, AgoraError, TOOLS
+from hoard_link.hub.config import PERSON_ALIAS as PERSON
 from hoard_link.hub import agora_threads
 
 
@@ -263,5 +264,5 @@ def test_the_tools_exist_and_are_reachable_by_route_and_mcp_names(agora):
     assert set(agora_threads.READ_ROUTES) <= set(agora_channels.READ_ROUTES)
     # the person writes from their pages
     root = say(agora, "claude-a", "for the person")
-    out = agora.thread_from(person(message_id=root, title="De Luis"))
+    out = agora.thread_from(person(message_id=root, title="De the person"))
     assert out["thread"]["created_by"] == PERSON and out["thread"]["following"] is True

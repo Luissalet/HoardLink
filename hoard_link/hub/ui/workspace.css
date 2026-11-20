@@ -80,6 +80,10 @@ body:not([data-hub-view]) #family-panel,body:not([data-hub-view]) #strip,body:no
 #hub-apps .card .meta .port,#hub-apps .card .meta .pid{display:none}
 #hub-apps .profiles{background:var(--card-2)}
 .hub-project-overview,.hub-automation-home,.hub-help{max-width:950px;background:var(--card);padding:28px 32px;border:1px solid var(--line);border-radius:12px}
+.hub-person-settings{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-end}
+.hub-person-settings label{display:grid;gap:4px;flex:0 1 20rem;min-width:0}
+.hub-person-settings input{width:100%}
+.hub-person-settings p{flex:1 0 100%;margin:0}
 .hub-project-agora{padding:22px;background:var(--hoard-accent-soft);border:0;border-radius:8px;margin-bottom:30px}
 .hub-project-recent{margin-bottom:28px}
 .hub-project-details{font-size:var(--hub-fs-2, 14px);color:var(--muted);border-top:1px solid var(--line);padding-top:20px}

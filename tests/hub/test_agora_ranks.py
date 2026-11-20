@@ -39,7 +39,7 @@ def ag(tmp_path):
     for agent in (FABLE, OPUS, SONNET, HAIKU):
         a.heartbeat({"space_id": "atlas", "agent": agent, "state": "working"})
     for agent, rank in TEAM.items():
-        a.member_rank_set({"space_id": "atlas", "agent": "luis", "_person": True, "member": agent, "rank": rank})
+        a.member_rank_set({"space_id": "atlas", "agent": "person", "_person": True, "member": agent, "rank": rank})
     yield a
     a.close()
 
@@ -66,25 +66,25 @@ def test_only_the_person_gives_ranks_and_everyone_starts_as_an_agent(ag):
 
     # an agent decides neither its own rank nor another's; the person does, among the ranks there are
     for attempt in ({"agent": SONNET, "member": SONNET, "rank": "director"}, {"agent": FABLE, "member": HAIKU, "rank": "lead"},
-                    {"agent": "luis", "member": SONNET, "rank": "director"}):
+                    {"agent": "person", "member": SONNET, "rank": "director"}):
         assert _refused(ag.member_rank_set, {"space_id": "atlas", **attempt}).status == 403
     assert agora_ranks.rank_of(ag.for_space("atlas"), SONNET) == "agent"
-    person = {"space_id": "atlas", "agent": "luis", "_person": True}
+    person = {"space_id": "atlas", "agent": "person", "_person": True}
     _refused(ag.member_rank_set, {**person, "member": SONNET, "rank": "emperor"}, status=400)
     _refused(ag.member_rank_set, {**person, "member": "codex-nobody", "rank": "lead"}, status=404)
-    _refused(ag.member_rank_set, {**person, "member": "luis", "rank": "lead"}, status=409)
+    _refused(ag.member_rank_set, {**person, "member": "person", "rank": "lead"}, status=409)
 
     out = ag.member_rank_set({**person, "member": SONNET, "rank": "lead"})
     assert out["changed"] and out["rank"] == "lead" and out["rank_level"] == 3
     assert not ag.member_rank_set({**person, "member": SONNET, "rank": "lead"})["changed"]       # said once
     lines = [m["body"] for m in ag.channel_read({"space_id": "atlas", "channel": "general"})["messages"]]
-    assert lines.count(f"luis pone a {SONNET} como Responsable de este servidor.") == 1
+    assert lines.count(f"{ag.person_name} pone a {SONNET} como Responsable de este servidor.") == 1
     # the member list and the server view carry it; the person stands above the ladder
     members = {m["id"]: m for m in ag.members({"space_id": "atlas"})["members"]}
     assert members[SONNET]["rank"] == "lead" and members[SONNET]["rank_level"] == 3
     assert members[FABLE]["rank"] == "director" and members[SONNET]["role"] != members[SONNET]["rank"]
-    guild = {m["id"]: m for m in ag.guild({"space_id": "atlas", "agent": "luis", "_person": True})["members"]}
-    assert guild[HAIKU]["rank"] == "support" and guild.get("luis", {"rank": "person"})["rank"] == "person"
+    guild = {m["id"]: m for m in ag.guild({"space_id": "atlas", "agent": "person", "_person": True})["members"]}
+    assert guild[HAIKU]["rank"] == "support" and guild.get("person", {"rank": "person"})["rank"] == "person"
 
     # a rank is of one server, and leaves with the agent
     ag.space_create({"agent": "claude", "id": "zeta", "title": "Zeta"})
@@ -119,10 +119,10 @@ def test_the_word_of_a_higher_rank_closes_a_disagreement(ag):
     assert ag.thread({**S, "thread_id": th2})["thread"]["resolution"] == "Castellano."
     # an equal of whoever resolved it, and the person, may
     ag.heartbeat({**S, "agent": "codex-sol", "state": "working"})
-    ag.member_rank_set({**S, "agent": "luis", "_person": True, "member": "codex-sol", "rank": "director"})
+    ag.member_rank_set({**S, "agent": "person", "_person": True, "member": "codex-sol", "rank": "director"})
     assert ag.reopen({**S, "agent": "codex-sol", "thread_id": th2, "reason": "otra mirada"})["thread"]["status"] == "open"
     ag.resolve({**S, "agent": FABLE, "thread_id": th2, "resolution": "Castellano, visto otra vez."})
-    assert ag.reopen({**S, "agent": "luis", "_person": True, "thread_id": th2, "reason": "lo miro yo"})["thread"]["status"] == "open"
+    assert ag.reopen({**S, "agent": "person", "_person": True, "thread_id": th2, "reason": "lo miro yo"})["thread"]["status"] == "open"
 
     # what a lower rank resolved is opened again by an objection from above, as it always was
     th3 = ag.thread_open({**S, "agent": HAIKU, "title": "Nombre del canal", "kind": "decision", "body": "ideas"})["thread"]["id"]
@@ -156,7 +156,7 @@ def test_the_review_of_a_higher_rank_stands(ag):
     assert ag.task_review({**S, "agent": FABLE, "task_id": tid, "verdict": "approve", "body": "visto",
                            "expected_submission_revision": 2})["task"]["status"] == "approved"
     ag.task_review({**S, "agent": FABLE, "task_id": tid, "verdict": "changes", "body": "no, falta", "expected_submission_revision": 2})
-    assert ag.task_review({**S, "agent": "luis", "_person": True, "task_id": tid, "verdict": "approve", "body": "vale así",
+    assert ag.task_review({**S, "agent": "person", "_person": True, "task_id": tid, "verdict": "approve", "body": "vale así",
                            "expected_submission_revision": 2})["task"]["status"] == "approved"   # the person, always
 
     # changes asked from below, or by an equal, are overruled as they always were: with another approval, or force
@@ -169,7 +169,7 @@ def test_the_review_of_a_higher_rank_stands(ag):
 
 def test_the_person_is_on_no_rung_and_a_verdict_is_not_replaced_from_below(ag):
     S = {"space_id": "atlas"}
-    person = {**S, "agent": "luis", "_person": True}
+    person = {**S, "agent": "person", "_person": True}
     # what the person resolved is treated among the agents as it always was: objected to, it opens again
     th = ag.thread_open({**S, "agent": HAIKU, "title": "Decidido por la persona", "kind": "question", "body": "?"})["thread"]["id"]
     ag.resolve({**person, "thread_id": th, "resolution": "A"})
@@ -261,10 +261,10 @@ def test_in_a_debate_with_findings_the_highest_rank_decides_and_is_not_closed_ov
     k = ag.debate_finding({**S, "agent": SONNET, "debate_id": d4, "claim": "Un hecho"})["finding"]["id"]
     ag.debate_verify({**S, "agent": OPUS, "finding_id": k})
     assert ag.debate_challenge({**S, "agent": HAIKU, "finding_id": k, "note": "no"})["finding"]["status"] == "verified"
-    ag.member_rank_set({**S, "agent": "luis", "_person": True, "member": HAIKU, "rank": "director"})
+    ag.member_rank_set({**S, "agent": "person", "_person": True, "member": HAIKU, "rank": "director"})
     assert ag.debate_show({**S, "debate_id": d4})["findings"][0]["status"] == "challenged"
     _refused(ag.debate_close, {**S, "agent": SONNET, "debate_id": d4, "outcome": "Queda"})
-    ag.member_rank_set({**S, "agent": "luis", "_person": True, "member": HAIKU, "rank": "support"})
+    ag.member_rank_set({**S, "agent": "person", "_person": True, "member": HAIKU, "rank": "support"})
     assert ag.debate_close({**S, "agent": SONNET, "debate_id": d4, "outcome": "Queda"})["debate"]["status"] == "closed"
 
     # the director closes over anyone's challenge, and so does the person; among equals nothing changed
@@ -306,7 +306,7 @@ def test_a_higher_rank_hands_out_the_work(ag):
     _refused(ag.task_assign, {**S, "agent": OPUS, "task_id": mine, "to_agent": SONNET})
     assert ag.task({**S, "task_id": mine})["task"]["owner"] == FABLE
     # the person assigns to anyone, whatever the ranks
-    assert ag.task_assign({**S, "agent": "luis", "_person": True, "task_id": mine, "to_agent": OPUS})["task"]["owner"] == OPUS
+    assert ag.task_assign({**S, "agent": "person", "_person": True, "task_id": mine, "to_agent": OPUS})["task"]["owner"] == OPUS
 
     # taking work back: from above yes, from below no
     _refused(ag.task_release, {**S, "agent": HAIKU, "task_id": mine, "reason": "me la quedo"}, status=409)
@@ -336,14 +336,14 @@ def test_a_question_goes_first_to_whoever_is_above_and_around(ag):
     assert first["asked"] == [OPUS] and first["reached_person"] is False and first["thread"]["status"] == "open"
     assert OPUS in first["note"] and asked_of_luis == []
     assert any(m["kind"] == "escalation" and m["body"] == "¿Sí o no?" for m in ag.inbox({**S, "agent": OPUS, "peek": True})["messages"])
-    assert ag.inbox({**S, "agent": "luis", "peek": True, "mine_only": True})["escalated"] == []
+    assert ag.inbox({**S, "agent": "person", "peek": True, "mine_only": True})["escalated"] == []
     # the one asked answers it and closes it (its word stands), or sends it up one step at a time
     second = ag.escalate({**S, "agent": OPUS, "thread_id": th, "question": "No me toca a mí: ¿sí o no?"})
     assert second["asked"] == [FABLE] and second["reached_person"] is False and asked_of_luis == []
     third = ag.escalate({**S, "agent": FABLE, "thread_id": th, "question": "Decide tú: ¿publicamos?"})
-    assert third["asked"] == ["luis"] and third["reached_person"] is True and third["thread"]["status"] == "escalated"
+    assert third["asked"] == ["person"] and third["reached_person"] is True and third["thread"]["status"] == "escalated"
     assert asked_of_luis == [(FABLE, "Decide tú: ¿publicamos?")]
-    waiting = ag.inbox({**S, "agent": "luis", "peek": True, "mine_only": True})["escalated"]
+    waiting = ag.inbox({**S, "agent": "person", "peek": True, "mine_only": True})["escalated"]
     assert [q["id"] for q in waiting] == [th] and waiting[0]["question"] == "Decide tú: ¿publicamos?"
 
     # nobody above is around: it goes to the person as it always did
@@ -357,8 +357,8 @@ def test_a_question_goes_first_to_whoever_is_above_and_around(ag):
     th3 = ag.thread_open({**S, "agent": HAIKU, "title": "Otra", "kind": "question", "body": "?"})["thread"]["id"]
     assert ag.escalate({**S, "agent": HAIKU, "thread_id": th3, "question": "¿?"})["asked"] == [SONNET]
     # the person asking is never routed
-    th4 = ag.thread_open({**S, "agent": "luis", "_person": True, "title": "Mía", "kind": "question", "body": "?"})["thread"]["id"]
-    assert ag.escalate({**S, "agent": "luis", "_person": True, "thread_id": th4, "question": "¿?"})["reached_person"] is True
+    th4 = ag.thread_open({**S, "agent": "person", "_person": True, "title": "Mía", "kind": "question", "body": "?"})["thread"]["id"]
+    assert ag.escalate({**S, "agent": "person", "_person": True, "thread_id": th4, "question": "¿?"})["reached_person"] is True
 
 
 def test_ranks_over_http_the_cli_and_the_tools(tmp_path):
