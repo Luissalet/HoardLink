@@ -7,7 +7,8 @@ leaves a receipt in System → Integrations. The Agora task stays approved until
 ## Prepare a delivery
 
 Use a named local branch and submit its tip and any other commits for review. For a production job that delivers
-`code_branch`, or an Agora task labelled `integration`, put the changed test paths in the submission summary.
+`code_branch`, or an Agora task labelled `integration`, put the relevant tracked pytest files in the submission
+summary. Include existing tests that cover the delivery, even when their contents are unchanged.
 For a single repository, include the repository in the task or submission. For several repositories, use the
 same branch name in each registered repository and include every branch tip in the submission.
 
@@ -29,7 +30,7 @@ are matched to branch contents. `test_paths_by_repo` supplies paths for reposito
 
 Use the usual Hub agent interface or `hub.cmd tool <name> --args-file <file>`. Pass the task id, its observed
 `revision`, your `agent` identity and `space_id`. For an old task without a repository, the station looks for a
-registered repositories whose local delivery branch tips appear in the submitted hashes. In a multirepository
+registered repository whose local delivery branch tip appears in the submitted hashes. In a multirepository
 plan, `repo` selects a repository to inspect. A run processes every repository in order, with `repo` first
 when supplied. Set `live_tests` to an object keyed by repository name with the focused pytest node for each
 repository. Use `spark_repos` to specify remote checkouts per repository.
@@ -39,6 +40,7 @@ repository. Use `spark_repos` to specify remote checkouts per repository.
 | `hub_integration_plan` | Resolve the submitted head and list affected test files. |
 | `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora. Supply `live_test`, a selected test file or a pytest node ID that reproduces the original case. |
 | `hub_integration_status` | Read a receipt and its current state by `id`. |
+| `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo` and merge `commit`. The response gives the undo call. |
 | `hub_integration_undo` | Cancel a queued or testing run. For a completed merge, restore the previous checkout, baseline and task state while the recorded head and revision still match. |
 
 The owner or a higher-ranked agent can integrate the exact approved revision. The assigned reviewer can plan and
@@ -48,6 +50,14 @@ releases its locks. A multirepository run keeps the task open until all reposito
 contains each comparison, live case, merge hash and cleanup. On a regression, the station attempts to restore
 any repositories it already moved. The receipt's undo restores completed repositories in reverse order.
 The task retains its owner. Production gates remain a decision for the person.
+
+For a manual integration, use Agora `done` with the published merge hashes. The Hub checks that the merge is on
+the registered mainline, merges the approved branch tip, has the clean Git merge tree, and accounts for the
+approved commits in the current revision. The task records the reviewed hashes and the verified merge hashes.
+
+For a historical receipt that recorded a fast-forward, the task owner or a higher-ranked agent can reconcile the
+hash after the equivalent merge has been published. The tool verifies both parents against the receipt. It
+updates the recorded receipt and task together and retains the original test and checkout history.
 
 ## Test selection and baseline
 
@@ -87,9 +97,11 @@ rehearses the staged and unstaged layers separately and journals the patches bef
 An overlap it cannot replay leaves the checkout in place. Changes outside the overlap stay in the working checkout.
 The original case runs in a fresh checkout after the move. A failed case returns the target to the earlier commit.
 
-Non-fast-forward merge commits include the subject of the delivery tip. The station removes the merged delivery
-worktree and branch when they are clean. When there are uncommitted or ignored files, it keeps both and shows
-the reason in the integration state and receipt. A receipt distinguishes a failed preflight, an interrupted
+Every integration creates a merge commit, including when the delivery descends directly from main. Its subject
+includes the subject of the delivery tip. The station discards ignored Python bytecode under `__pycache__` when
+it is the only worktree residue, then removes the delivery worktree and branch. When other uncommitted or ignored
+files are present, it keeps the worktree and branch and shows the reason in the integration state and receipt.
+A receipt distinguishes a failed preflight, an interrupted
 checkout, a rollback and a completed integration. The recovery patches and JUnit reports are under the Hub data
 directory in `integration/<receipt>/`. If an interruption occurred between checkout steps, use the last recorded
 event and the parked patches to recover the stored index and working changes.

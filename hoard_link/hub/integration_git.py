@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
@@ -100,13 +101,19 @@ def delivery_repositories(agora, task, repo_hint=None):
     return found
 
 
-def delivery_repository(agora, task, *, summary="", repositories=None):
-    """Resolve missing task metadata from an exact branch tip in the Git registry."""
+def declared_repository(agora, summary):
     declared = re.search(r"^Repository:[ \t]*(.+)$", summary, flags=re.MULTILINE)
     if declared:
         name = declared.group(1).strip()
         if agora.repo_lookup and agora.repo_lookup(name):
             return name
+    return ""
+
+
+def delivery_repository(agora, task, *, summary="", repositories=None):
+    """Resolve missing task metadata from an exact branch tip in the Git registry."""
+    if name := declared_repository(agora, summary):
+        return name
     if repositories is None:
         repositories = getattr(agora, "registered_repositories", lambda: [])()
     refs = task.get("commits") or []
@@ -160,8 +167,34 @@ def worktree(repo, path, commit):
 def merge_candidate(work, head):
     subject = git_text(work, "show", "-s", "--format=%s", head)
     git(work, "-c", "user.name=Luissalet", "-c", "user.email=luissalet@users.noreply.github.com",
-        "merge", "--no-edit", "--no-gpg-sign", "-m", f"Merge delivery: {subject}", head)
+        "merge", "--no-ff", "--no-edit", "--no-gpg-sign", "-m", f"Merge delivery: {subject}", head)
     return git_text(work, "rev-parse", "HEAD")
+
+
+def discard_delivery_caches(work):
+    """Return whether the worktree can be removed, discarding only ignored Python bytecode."""
+    status = git(work, "status", "--porcelain", "-z", "--untracked-files=all", "--ignored").stdout
+    entries = paths(status)
+    if any(not entry.startswith("!! ") for entry in entries):
+        return False
+    caches = []
+    for entry in entries:
+        path = PurePosixPath(entry[3:])
+        if path.parent.name != "__pycache__" or path.suffix != ".pyc":
+            return False
+        local = work.joinpath(*path.parts)
+        for item in (local, *local.parents):
+            info = item.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                return False
+            if item == work:
+                break
+        if not stat.S_ISREG(local.lstat().st_mode):
+            return False
+        caches.append(local)
+    for cache in caches:
+        cache.unlink(missing_ok=True)
+    return True
 
 
 def overlaps(left, right):

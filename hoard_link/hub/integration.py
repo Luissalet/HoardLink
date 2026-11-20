@@ -18,6 +18,7 @@ from ..atomic import read_json, write_json_atomic
 from . import agora_ranks
 from . import integration_checks as checks
 from . import integration_git as repo_git
+from . import integration_receipt
 from .agora import AgoraError, SpaceError, normalize_resource
 from .facets import Facet
 
@@ -43,9 +44,16 @@ def repository_tests(paths, name, repositories):
     return files
 
 
+def declared_repository_tests(repo, tip, paths, name, repositories):
+    tracked = repo_git.tracked(repo, tip)
+    return list(dict.fromkeys(file for file, scoped in repository_tests(paths, name, repositories)
+                              if scoped or file in tracked))
+
+
 def submission_summary(agora, task):
     revision = task["submission_revision"]
-    commits = ", ".join(task["commits"]) or "(none)"
+    submitted = task.get("reviewed_commits") if task.get("status") == "done" else None
+    commits = ", ".join(submitted or task["commits"]) or "(none)"
     marker = f"\n\nSubmission revision: {revision}\nCommits: {commits}"
     # Submit publishes the revision and commits together. Handover only changes the owner.
     proposals = agora.db.query("SELECT body FROM messages WHERE thread_id=? AND kind='proposal' "
@@ -69,7 +77,7 @@ def delivery_tests(args, summary):
 
 def delivery_contract(repo, branch, commits, files):
     if not files:
-        raise repo_git.IntegrationError("Add Test-Paths with the path of the new or updated pytest file")
+        raise repo_git.IntegrationError("Add Test-Paths with the path of a tracked pytest file")
     tip = repo_git.branch_tip(repo, branch)
     if not commits or any(not re.fullmatch(r"[0-9a-fA-F]{7,64}", item) for item in commits):
         raise repo_git.IntegrationError("The delivery needs commit hashes")
@@ -93,22 +101,15 @@ def enforce_submission(agora, task, snap, summary):
                 paths = submission_tests(summary, scoped=True)
                 for repo, (name, commits) in found.items():
                     tip = repo_git.branch_tip(repo, snap["branch"])
-                    fork = repo_git.git_text(repo, "merge-base", "HEAD", tip)
-                    delta = repo_git.changed(repo, fork, tip)
-                    files = [file for file, scoped in repository_tests(paths, name, names) if scoped or file in delta]
-                    delivery_contract(repo, snap["branch"], commits, files)
-                    if set(files) - delta:
-                        raise repo_git.IntegrationError(f"{name}: Test-Paths must name changed test files")
+                    delivery_contract(repo, snap["branch"], commits,
+                                      declared_repository_tests(repo, tip, paths, name, names))
                 return
         name = snap["repo"] or repo_git.delivery_repository(agora, snap, summary=summary)
         repo = agora.repo_lookup(name) if agora.repo_lookup and name else None
         if repo is None:
             raise repo_git.IntegrationError("An integration task needs a registered repository")
         files = submission_tests(summary)
-        tip = delivery_contract(repo, snap["branch"], snap["commits"], files)
-        fork = repo_git.git_text(repo, "merge-base", "HEAD", tip)
-        if set(files) - repo_git.changed(repo, fork, tip):
-            raise repo_git.IntegrationError("Test-Paths must name changed test files from this delivery")
+        delivery_contract(repo, snap["branch"], snap["commits"], files)
     except repo_git.IntegrationError as exc:
         raise AgoraError(str(exc), 422, error_code="integration_contract") from exc
     snap["repo"] = name
@@ -213,14 +214,9 @@ class IntegrationFacet(Facet):
         base = repo_git.git_text(repo, "rev-parse", "HEAD")
         if repositories:
             # Files in legacy deliveries were listed without a repository prefix.
-            # Resolve those against each branch, preferring the changed files.
-            raw = repository_tests(submission_tests(summary, scoped=True), repo_name, repositories)
-            head = repo_git.branch_tip(repo, task["branch"])
-            tracked = repo_git.tracked(repo, head)
-            delta = repo_git.changed(repo, repo_git.git_text(repo, "merge-base", base, head), head)
-            declared = [file for file, scoped in raw if scoped or file in delta]
-            if not declared:
-                declared = [file for file, _ in raw if file in tracked]
+            # Include every declared test tracked on each delivery branch.
+            declared = declared_repository_tests(repo, repo_git.branch_tip(repo, task["branch"]),
+                                                 submission_tests(summary, scoped=True), repo_name, repositories)
             from_submission = bool(declared)
             if not declared:
                 declared, _ = delivery_tests(args, "")
@@ -231,8 +227,6 @@ class IntegrationFacet(Facet):
         head = delivery_contract(repo, task["branch"], commits, declared)
         fork = repo_git.git_text(repo, "merge-base", base, head)
         delta = repo_git.changed(repo, fork, head)
-        if from_submission and not repositories and not set(declared).issubset(delta):
-            raise repo_git.IntegrationError("Test-Paths must name changed test files from this delivery")
         if repo_git.ancestor(repo, head, base):
             raise repo_git.IntegrationError("The delivery is already present in the target")
         config = checks.config_at(repo, base)
@@ -544,7 +538,7 @@ class IntegrationFacet(Facet):
             raise repo_git.IntegrationError("The delivery checkout is the destination")
         if repo_git.branch_tip(repo, branch) != head:
             raise repo_git.IntegrationError("The delivery branch moved before cleanup")
-        if source and repo_git.git(source, "status", "--porcelain", "--untracked-files=all", "--ignored").stdout:
+        if source and not repo_git.discard_delivery_caches(source):
             cleanup["retained"] = "The delivery worktree contains uncommitted or ignored files"
             update("delivery_retained", {"worktree": str(source), "reason": cleanup["retained"]})
         else:
@@ -568,19 +562,40 @@ class IntegrationFacet(Facet):
                             f"{row['cleanup'].get('retained') or 'Rama de entrega retirada.'}" for row in rows)
         write_json_atomic(self._path(receipt["id"]), receipt)
         result = agora.task_done({"agent": receipt["agent"], "task_id": task["id"], "result": note,
-                                  "commits": [row["merge_commit"] for row in rows], "force": True,
-                                  "reason": "El commit de integración contiene íntegramente la entrega aprobada.",
+                                  "commits": [row["merge_commit"] for row in rows],
                                   "_integration": INTEGRATION_TOKEN,
                                   "_integration_revision": receipt["revision"]})
         receipt["close_result"] = {key: result["task"][key] for key in ("commits", "result", "closed_at")}
 
+    def _read_receipt(self, path):
+        receipt = read_json(path, None)
+        if receipt:
+            agora = self._agora(receipt)
+            return integration_receipt.apply_correction(receipt, integration_receipt.correction_for(agora, receipt["id"]))
+        return None
+
     def status(self, args):
-        receipt = read_json(self._path(args.get("id")), None)
+        receipt = self._read_receipt(self._path(args.get("id")))
         return {"ok": receipt is not None, "receipt": receipt}
+
+    def reconcile(self, args):
+        path = self._path(args.get("id"))
+        agora = self._agora(args)
+        with self.lock, agora.db.tx():
+            receipt = read_json(path, None)
+            if not receipt or receipt["space_id"] != agora.space_id:
+                raise repo_git.IntegrationError("Unknown integration receipt in this space")
+            if receipt["id"] in self.active.values():
+                raise repo_git.IntegrationError("Wait for the integration to finish")
+            agent, _ = agora._owned({**args, "task_id": receipt["task_id"]}, superior=True)
+            receipt, inverse = integration_receipt.reconcile(agora, agent, receipt, args)
+        return {"ok": True, "receipt": receipt,
+                "undo": {"tool": "hub_integration_reconcile", "arguments": {
+                    "id": receipt["id"], "agent": agent, "space_id": agora.space_id, **inverse}}}
 
     def undo(self, args):
         path = self._path(args.get("id"))
-        receipt = read_json(path, None)
+        receipt = self._read_receipt(path)
         if not receipt:
             raise repo_git.IntegrationError("Unknown integration receipt")
         agora = self._agora(args)
@@ -718,7 +733,12 @@ class IntegrationFacet(Facet):
         if req.q("repo"):
             agora = self._agora({"space_id": req.q("space_id")})
             repo = agora.repo_lookup(req.q("repo"))
-            return {"ok": bool(repo), "baseline": read_json(self._baseline(Path(repo).resolve()), {}) if repo else {}}
+            baseline = read_json(self._baseline(Path(repo).resolve()), {}) if repo else {}
+            for lane, record in baseline.items():
+                patch = integration_receipt.correction_for(agora, record.get("run"))
+                if patch and record.get("repo") == patch["repo"]:
+                    baseline[lane] = integration_receipt.corrected_baseline(record, patch)
+            return {"ok": bool(repo), "baseline": baseline}
         receipts = [read_json(path, {}) for path in self.root.glob("*/receipt.json")]
         receipts.sort(key=lambda row: row.get("created", 0), reverse=True)
         return {"ok": True, "receipts": [self._summary(row) for row in receipts[:30] if row]}
@@ -762,10 +782,14 @@ class IntegrationFacet(Facet):
                     ("run", "Check or integrate a delivery. Comprobar o fusionar una entrega.", write,
                      ["task_id", "revision", "agent"], False),
                     ("status", "Read an integration receipt. Ver un recibo de integración.", {"id": text}, ["id"], True),
+                    ("reconcile", "Record a verified merge after an old fast-forward. Corregir el recibo de un avance rápido.",
+                     {"id": text, "agent": text, "space_id": text, "repo": text, "commit": text,
+                      "restore": {"type": "boolean"}}, ["id", "agent"], False),
                     ("undo", "Undo an integration. Deshacer una integración.",
                      {"id": text, "agent": text, "space_id": text}, ["id", "agent"], False),
                 ]]
 
     def handlers(self):
         return {"hub_integration_" + key: self._safe(method) for key, method in
-                (("plan", self.inspect), ("run", self.run), ("status", self.status), ("undo", self.undo))}
+                (("plan", self.inspect), ("run", self.run), ("status", self.status),
+                 ("reconcile", self.reconcile), ("undo", self.undo))}

@@ -454,6 +454,7 @@ def test_3mf_renders_z_up_with_units_and_build_transforms(eyes, tmp_path):
     result = eyes.look({"path": str(mesh), "views": ["front"], "material": "neutral", "size": 128, "wait_s": 60})
     assert result["status"] == "done", result
     assert result["piece"]["front_axis_source"] == "embedded"
+    assert result["front_axis"] == result["resolved"]["front_axis"] == "+y"
     assert abs(result["resolved"]["turn"]) == 180
     facts = result["facts"]
     assert facts["source_unit"] == "centimeter" and facts["geometry_only"]
@@ -462,6 +463,9 @@ def test_3mf_renders_z_up_with_units_and_build_transforms(eyes, tmp_path):
     assert Path(result["views"][0]["path"]).is_file()
     override = eyes.look({"same_as": result["id"], "front_axis": "-y"})
     assert override["status"] == "done" and override["piece"]["front_axis_source"] == "declared"
+    assert override["front_axis"] == override["resolved"]["front_axis"] == "-y"
+    assert eyes.get_look({"look_id": override["id"]})["front_axis"] == "-y"
+    assert eyes.list_looks({"path": str(mesh)})["looks"][0]["front_axis"] == "-y"
     assert override["resolved"]["turn"] == 0
     assert override["facts"]["bounds_m"][0] == pytest.approx([.10, .20, .30])
 

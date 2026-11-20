@@ -109,3 +109,26 @@ def test_construction_returns_use_declared_station_or_unique_commit_repository(t
             ("hoardhub, comfyui", "Hoard Hub, Runtime", 1, 2)}
     finally:
         agora.close()
+
+
+def test_construction_returns_inherit_repository_from_approved_delivery(tmp_path):
+    repo = tmp_path / "Renderer"
+    repo.mkdir()
+    (repo / "faustus-plugin.json").write_text('{"id":"renderer"}', encoding="utf-8")
+    agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name.casefold() == "renderer" else None)
+    try:
+        order_budget.setup(agora)
+        agora.registered_repositories = lambda: [{"name": "Renderer", "path": str(repo)}]
+        task = agora.task_add({"agent": "maker", "title": "Build preview", "claim": True})["task"]
+        scope = {"agent": "maker", "task_id": task["id"]}
+        for revision in (1, 2):
+            agora.task_submit({**scope, "commits": [f"unavailable-{revision}"], "summary": "Repository: renderer"})
+            agora.task_review({**scope, "agent": "reviewer", "expected_submission_revision": revision,
+                               "verdict": "changes" if revision == 1 else "approve", "body": "Reviewed."})
+        agora.task_done({**scope, "commits": ["integrated-elsewhere"], "force": True, "reason": "Equivalent"})
+        group, = order_budget.metrics(agora, {})["task_stations"]
+        assert agora._task_row(task["id"])["repo"] == ""
+        assert (group["station"], group["repo"], group["returned_tasks"], group["resubmissions"]) == (
+            "renderer", "Renderer", 1, 1)
+    finally:
+        agora.close()

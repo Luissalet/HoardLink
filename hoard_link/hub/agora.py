@@ -224,6 +224,11 @@ MIGRATIONS.append(agora_orders.ORDERS_MIGRATION)
 MIGRATIONS.append(agora_drafts.DRAFTS_MIGRATION)
 # source receipts and native context for production orders
 MIGRATIONS.append(order_dossier.MIGRATION)
+MIGRATIONS.append("""
+CREATE TABLE integration_receipt_corrections (
+    receipt_id TEXT PRIMARY KEY, correction TEXT NOT NULL
+);
+""")
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -2272,10 +2277,14 @@ class Agora:
         """Integrated: commits and result. Releases the task's locks. Refused while a review is younger than 2 h
         unless ``force`` with a ``reason``; finishing without any review is recorded as such."""
         from .integration import INTEGRATION_TOKEN
+        from .integration_closure import verified_closure
+        from .integration_git import IntegrationError
 
         integration = a.get("_integration") is INTEGRATION_TOKEN
         with self.db.tx():
-            agent, task = self._owned(a, superior=integration)
+            agent, task = self._owned(a, superior=integration or bool(a.get("commits")))
+            if agent not in (PERSON, task["owner"]) and not integration and task["status"] != "approved":
+                self._owned(a)
             if integration and (task["status"] != "approved" or
                                 task["reviewed_submission_revision"] != a.get("_integration_revision") or
                                 task["submission_revision"] != a.get("_integration_revision")):
@@ -2307,10 +2316,18 @@ class Agora:
             unreviewed_commits = [c for c in commits if c not in seen]
             if task["status"] == "approved" and task.get("reviewed_submission_revision") != task.get("submission_revision"):
                 raise AgoraError(f"task {task['id']} approval does not match its current submission revision", 409)
+            verified = integration
+            if task["status"] == "approved" and unreviewed_commits and not integration:
+                try:
+                    verified = verified_closure(self, task, commits)
+                except (IntegrationError, OSError):
+                    verified = False
+            if agent not in (PERSON, task["owner"]) and not (integration or verified and unreviewed_commits):
+                self._owned(a)
             if task["status"] == "approved" and unreviewed_commits:
                 # Closing with commits the reviewer never saw (an integration that rewrote hashes, or new work): say
                 # how they relate to the approved ones, or submit them again.
-                if not (a.get("force") and str(a.get("reason") or "").strip()):
+                if not verified and not (a.get("force") and str(a.get("reason") or "").strip()):
                     raise AgoraError(f"task {task['id']} was approved on {', '.join(seen) or 'no commits'}; "
                                      f"{', '.join(unreviewed_commits)} were not reviewed: submit them, or pass force "
                                      "with a reason that says how they relate to the approved ones", 409)
@@ -2335,8 +2352,10 @@ class Agora:
             elif unreviewed:
                 note = "\n\n(Integrada sin revisión aprobada" + (f": {a.get('reason')}" if a.get("reason") else "") + ")"
             elif review_state == "equivalent":
+                evidence = ("fusión de la entrega aprobada verificada por el Hub" if verified else
+                            f"equivalencia declarada por {agent}: {a.get('reason')}")
                 note = (f"\n\n(Aprobada por {task.get('reviewer') or 'el revisor'} en {', '.join(seen)}; integrada como "
-                        f"{', '.join(commits)}, equivalencia declarada por {agent}: {a.get('reason')})")
+                        f"{', '.join(commits)}, {evidence})")
             else:
                 note = ""
             text = (result or "Hecho.") + note

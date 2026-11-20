@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from hoard_link.atomic import write_json_atomic
 from hoard_link.hub import integration_checks as checks
 from hoard_link.hub import integration_git as git
 from hoard_link.hub.agora import Agora, AgoraError
@@ -38,6 +39,8 @@ def delivery(tmp_path):
     git.git(repo, "config", "user.email", "luissalet@users.noreply.github.com")
     write(repo, "feature.py", LINES)
     write(repo, "other.txt", "unrelated\n")
+    write(repo, ".gitignore", "__pycache__/\n")
+    write(repo, "tests/test_station.py", "def test_station(): assert True\n")
     write(repo, "tests/test_feature.py", """
 import pytest
 
@@ -48,7 +51,8 @@ def test_known():
 def test_model():
     pytest.fail("The contract lane must never run this")
 """)
-    base = commit(repo, "Create baseline", "feature.py", "other.txt", "tests/test_feature.py")
+    base = commit(repo, "Create baseline", ".gitignore", "feature.py", "other.txt",
+                  "tests/test_feature.py", "tests/test_station.py")
     branch = tmp_path / "delivery"
     git.git(repo, "worktree", "add", "-b", "delivery", str(branch), base)
     write(branch, "feature.py", LINES.replace("line 2\n", "feature\n"))
@@ -229,7 +233,7 @@ def test_code_delivery_returns_incomplete_submission_before_review(delivery, tmp
         task = agora.task_add({"agent": "worker", "title": "Code delivery", "labels": ["integration"]})["task"]
         args = {"agent": "worker", "task_id": task["id"]}
         agora.task_claim(args)
-        summary = f"Repository: {repo.name}\nTest-Paths: tests/test_feature.py"
+        summary = f"Repository: {repo.name}\nTest-Paths: tests/test_station.py"
         with pytest.raises(AgoraError, match="branch"):
             agora.task_submit({**args, "summary": summary, "commits": [head]})
         assert agora._task_row(task["id"])["submission_revision"] == 0
@@ -265,8 +269,89 @@ def test_integration_finishes_approved_task_without_handover(delivery, tmp_path)
         agora.close()
 
 
+def test_receipt_corrects_historic_fast_forward_and_can_undo(delivery, tmp_path):
+    repo, base, head, _ = delivery
+    agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
+    facet = IntegrationFacet(SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)),
+                                             facet=lambda name: SimpleNamespace(agora=agora)))
+    try:
+        task = agora.task_add({"agent": "owner", "title": "Two repositories", "claim": True})["task"]
+        args = {"agent": "owner", "task_id": task["id"]}
+        agora.task_submit({**args, "summary": "Delivery", "commits": ["other-head", head]})
+        agora.task_review({**args, "agent": "reviewer", "verdict": "approve", "expected_submission_revision": 1,
+                           "body": "Reviewed."})
+        run = "a" * 32
+        result = f"Integration {run}\nFirst repo own-merge\n{repo.name} {head}"
+        closed = agora.task_done({**args, "commits": ["own-merge", head], "result": result,
+                                  "force": True, "reason": "Merged the approved delivery"})["task"]
+        path = facet._path(run)
+        path.parent.mkdir(parents=True)
+        raw = {"id": run, "task_id": task["id"], "agent": "owner", "space_id": agora.space_id,
+               "state": "integrated", "revision": 1, "repositories": [
+                   {"plan": {"repo_ref": "First repo"}, "merge_commit": "own-merge"},
+                   {"plan": {"repo_ref": repo.name, "base": base, "head": head, "target": "main"},
+                    "merge_commit": head, "baseline": {"commit": head}}],
+               "close_result": {key: closed[key] for key in ("commits", "result", "closed_at")}}
+        write_json_atomic(path, raw)
+        merge = git.merge_candidate(repo, head)
+        options = {"id": run, "agent": "owner", "repo": repo.name, "commit": merge}
+        with pytest.raises(AgoraError, match="belongs"):
+            facet.reconcile({**options, "agent": "someone-else"})
+        with pytest.raises(git.IntegrationError, match="replacement"):
+            facet.reconcile({**options, "commit": head})
+        corrected = facet.reconcile(options)
+        rcpt = facet.status({"id": run})["receipt"]
+        assert corrected["receipt"] == rcpt
+        assert rcpt["repositories"][1]["merge_commit"] == rcpt["repositories"][1]["baseline"]["commit"] == merge
+        assert rcpt["close_result"]["commits"] == ["own-merge", merge]
+        updated = agora._task_row(task["id"])
+        assert updated["commits"] == ["own-merge", merge]
+        assert updated["reviewed_commits"] == ["other-head", head]
+        assert updated["result"] == agora._thread_row(task["thread_id"])["resolution"] == result.replace(head, merge)
+        assert facet.reconcile(options)["receipt"] == rcpt
+        facet.reconcile(corrected["undo"]["arguments"])
+        assert facet.status({"id": run})["receipt"] == raw
+        assert agora._task_row(task["id"])["commits"] == ["own-merge", head]
+        assert git.git_text(repo, "rev-parse", "HEAD") == merge
+    finally:
+        facet.close()
+        agora.close()
+
+
+def test_done_checks_manual_merge_parents_tree_and_mainline(delivery, tmp_path):
+    repo, base, head, _ = delivery
+    agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
+    try:
+        task = agora.task_add({"agent": "owner", "title": "Manual merge", "repo": repo.name,
+                               "claim": True})["task"]
+        opts = {"agent": "owner", "task_id": task["id"]}
+        agora.task_submit({**opts, "branch": "delivery", "summary": "Review the branch", "commits": [head[:12]]})
+        agora.task_review({**opts, "agent": "reviewer", "verdict": "approve", "expected_submission_revision": 1,
+                           "body": "Reviewed."})
+        with agora.db.tx():
+            set_rank(agora, "owner", "support", "fixture")
+            set_rank(agora, "integrator", "lead", "fixture")
+        with git.worktree(repo, tmp_path / "manual", base) as work:
+            unofficial = git.merge_candidate(work, head)
+            with pytest.raises(AgoraError, match="not reviewed"):
+                agora.task_done({**opts, "commits": [unofficial]})
+        git.git(repo, "merge", "--no-ff", "--no-commit", head)
+        write(repo, "unreviewed.txt", "Foreign content")
+        contaminated = commit(repo, "Merge with extra changes", "unreviewed.txt")
+        with pytest.raises(AgoraError, match="not reviewed"):
+            agora.task_done({**opts, "commits": [contaminated]})
+        git.git(repo, "reset", "--keep", base)
+        merge = git.merge_candidate(repo, head)
+        result = agora.task_done({**opts, "agent": "integrator", "commits": [merge]})["task"]
+        assert result["commits"] == [merge] and result["review_state"] == "equivalent"
+        assert result["reviewed_commits"] == [head[:12]] and result["owner"] == "owner"
+    finally:
+        agora.close()
+
+
 def test_integrate_and_undo_exact_approved_delivery(delivery, tmp_path, monkeypatch):
     repo, base, head, branch = delivery
+    write(branch, "tests/__pycache__/test_feature.cpython-312.pyc", "regenerable")
     staged, working = dirty_checkout(repo)
     agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
     hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)),
@@ -291,7 +376,8 @@ def test_integrate_and_undo_exact_approved_delivery(delivery, tmp_path, monkeypa
         assert receipt["comparison"]["candidate"]["counts"]["passed"] == 1
         assert receipt["state"] == "integrated", receipt
         assert not branch.exists()
-        assert git.git_text(repo, "rev-parse", "HEAD") == head
+        merge = receipt["merge_commit"]
+        assert git.git_text(repo, "rev-list", "--parents", "-n", "1", "HEAD").split() == [merge, base, head]
         assert agora._task_row(task["id"])["status"] == "done"
         assert facet.undo({"id": run, "agent": "owner"})["receipt"]["state"] == "undone"
         assert branch.exists()
@@ -328,7 +414,7 @@ def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, 
         task = agora.task_add({"agent": "owner", "title": "Integrate two repos", "labels": ["integration"]})["task"]
         args = {"agent": "owner", "task_id": task["id"]}
         agora.task_claim(args)
-        paths = f"tests/test_feature.py, {file}" if regression else f"{first.name}/tests/test_feature.py, {second.name}/{file}"
+        paths = f"tests/test_feature.py, tests/test_station.py, {file}"
         summary = f"Test-Paths: {paths}"
         agora.task_submit({**args, "branch": "delivery", "commits": [head[:12], second_head], "summary": summary})
         agora.task_review({**args, "agent": "reviewer", "verdict": "approve",
@@ -337,7 +423,10 @@ def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, 
         selected = facet.inspect({**args, "repo": second.name})
         assert selected["plan"]["commits"] == [second_head]
         assert set(selected["repositories"]) == set(repos)
-        assert [p["head"] for p in facet.inspect(args)["plans"]] == [head, second_head]
+        plans = facet.inspect(args)["plans"]
+        assert [p["head"] for p in plans] == [head, second_head]
+        assert plans[0]["test_paths"] == ["tests/test_feature.py", "tests/test_station.py"]
+        assert "tests/test_station.py" in plans[0]["tests"]["contract"]
         run = facet.run({**args, "merge": True, "live_tests": {
             first.name: "tests/test_feature.py::test_new", second.name: file + "::test_other",
         }})["receipt"]["id"]
@@ -351,8 +440,11 @@ def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, 
             assert receipt["repositories"][0]["state"] == "rolled_back"
         else:
             assert receipt["state"] == "integrated", receipt
-            assert [row["merge_commit"] for row in receipt["repositories"]] == [head, second_head]
-            assert agora._task_row(task["id"])["commits"] == [head, second_head]
+            merges = [row["merge_commit"] for row in receipt["repositories"]]
+            assert git.git_text(first, "rev-list", "--parents", "-n", "1", "HEAD").split() == [merges[0], base, head]
+            assert git.git_text(second, "rev-list", "--parents", "-n", "1", "HEAD").split() == [
+                merges[1], second_base, second_head]
+            assert agora._task_row(task["id"])["commits"] == merges
             assert not tree.exists() and not second_tree.exists()
             assert facet.undo({"id": run, "agent": "owner"})["receipt"]["state"] == "undone"
         assert tree.exists() and second_tree.exists()
@@ -374,6 +466,7 @@ def test_integration_infers_repo_batches_tests_and_reports_retained_delivery(del
     head = commit(branch, "Add delivery checks", *paths)
     write(repo, ".git/info/exclude", "*.keep\n")
     write(branch, "private.keep", "preserve\n")
+    write(branch, "tests/__pycache__/test_feature.cpython-312.pyc", "retained with the rest")
     agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
     agora.registered_repositories = lambda: [{"name": repo.name, "path": str(repo)}]
     hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)),
@@ -404,6 +497,7 @@ def test_integration_infers_repo_batches_tests_and_reports_retained_delivery(del
         assert facet._summary(receipt)["cleanup"]["retained"]
         assert git.git_text(repo, "log", "-1", "--format=%s") == "Merge delivery: Add delivery checks"
         assert (branch / "private.keep").read_text().strip() == "preserve"
+        assert (branch / "tests/__pycache__/test_feature.cpython-312.pyc").is_file()
         assert facet.undo({**args, "id": run})["receipt"]["state"] == "undone"
         assert git.git_text(repo, "rev-parse", "HEAD") == main
         assert git.ancestor(repo, base, main)
@@ -469,7 +563,8 @@ def test_transferred_delivery_compares_independent_conftests(delivery, tmp_path,
         assert receipt["comparison"]["roots"]["editing_tests"]["candidate"]["counts"]["passed"] == 1
         assert receipt["comparison"]["roots"]["tests"]["main"]["counts"]["passed"] == 1
         assert len(receipt["comparison"]["roots"]["tests"]["known"]) == 1
-        assert git.git_text(repo, "rev-parse", "HEAD") == head
+        assert git.git_text(repo, "rev-list", "--parents", "-n", "1", "HEAD").split() == [
+            receipt["merge_commit"], base, head]
         assert agora._task_row(task["id"])["status"] == "done"
         assert facet.undo({"id": run, "agent": "integrator"})["receipt"]["state"] == "undone"
         assert git.git_text(repo, "rev-parse", "HEAD") == base
