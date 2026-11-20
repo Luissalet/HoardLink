@@ -39,13 +39,13 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 REPEATABLE = {
     "image": ("size", "facing"),
     "video": ("seconds", "size", "facing"),
-    "mesh": ("views", "material", "camera", "turn", "up", "pose", "size", "engine"),
+    "mesh": ("views", "material", "camera", "turn", "front_axis", "up", "pose", "size", "engine"),
     "web": ("widths", "interaction", "full_page", "facing"),
     "document": ("pages", "size", "facing"),
     "game": ("inputs", "resolution", "scene", "facing"),
     "app": ("facing",),
 }
-OPTION_KEYS = ("crops", "size", "seconds", "frames", "views", "material", "camera", "turn", "up", "pose", "engine",
+OPTION_KEYS = ("crops", "size", "seconds", "frames", "views", "material", "camera", "turn", "front_axis", "up", "pose", "engine",
                "widths", "interaction", "full_page", "settle_ms", "pages", "max_pages", "inputs", "resolution", "scene",
                "facing")
 
@@ -184,6 +184,21 @@ class EyesFacet(Facet):
                 "resolved": {}, "warnings": warnings}
 
     # -- looks -------------------------------------------------------------------------------------------------
+    def _piece_front(self, sha256: str, up: Optional[str]) -> Optional[dict[str, Any]]:
+        """Use the latest successful declaration for these bytes, including after a rename."""
+        declarations = []
+        for path in self.root.glob("e*/look.json"):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            piece = record.get("piece") or {}
+            if (piece.get("sha256") == sha256 and record.get("status") == "done"
+                    and piece.get("front_axis_source") == "declared"
+                    and (up is None or piece.get("up") == up)):
+                declarations.append(record)
+        return max(declarations, key=lambda record: (record["created"], record["id"]), default=None)
+
     def _options(self, args: dict[str, Any], previous: Optional[dict[str, Any]], kind: str) -> dict[str, Any]:
         opts: dict[str, Any] = {}
         if previous:
@@ -191,6 +206,10 @@ class EyesFacet(Facet):
             opts.update({k: resolved[k] for k in REPEATABLE.get(kind, ()) if resolved.get(k) is not None})
             if resolved.get("crops"):
                 opts["crops"] = resolved["crops"]
+        if opts.get("front_axis") or args.get("front_axis") is not None:
+            opts.pop("turn", None)
+        if args.get("turn") is not None:
+            opts.pop("front_axis", None)
         opts.update({k: args[k] for k in OPTION_KEYS if args.get(k) is not None})
         return opts
 
@@ -280,6 +299,22 @@ class EyesFacet(Facet):
         except (ValueError, render.EyesError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
         opts = self._options(merged, previous, piece["kind"])
+        if piece["kind"] == "mesh":
+            axis = args.get("front_axis")
+            if axis is not None:
+                if not isinstance(axis, str) or axis not in render.FRONT_AXIS_TURNS or args.get("turn") is not None:
+                    return {"ok": False, "error": "Use one front_axis (-y, -x, +y, +x) or turn / "
+                                                  "Indica un eje frontal o un giro"}
+                piece.update(front_axis=axis, front_axis_source="declared", up=opts.get("up", "z"))
+            elif opts.get("front_axis"):
+                piece.update(front_axis=opts["front_axis"], front_axis_source="repeated",
+                             up=opts.get("up", "z"), front_axis_look=previous["id"])
+            elif "turn" not in opts and piece.get("sha256"):
+                declaration = self._piece_front(piece["sha256"], opts.get("up"))
+                if declaration:
+                    opts.update({key: declaration["piece"][key] for key in ("front_axis", "up")})
+                    piece.update(front_axis=opts["front_axis"], up=opts["up"],
+                                 front_axis_source="saved", front_axis_look=declaration["id"])
         vision_opts = None
         if args.get("describe") or args.get("keep"):
             vision_opts = {"keep": list(args.get("keep") or []), "language": args.get("language") or "es",
@@ -337,6 +372,7 @@ class EyesFacet(Facet):
                 rows.append({"id": rec["id"], "status": rec.get("status"), "created": rec.get("created"),
                              "label": rec.get("label"), "agent": rec.get("agent"), "kind": piece.get("kind"),
                              "source": piece.get("source"), "app": piece.get("app"), "sha256": piece.get("sha256"),
+                             "front_axis": piece.get("front_axis"),
                              "views": len(rec.get("views") or []), "sheet": (rec.get("sheet") or {}).get("path"),
                              "same_as": rec.get("same_as"), "vision": (rec.get("vision") or {}).get("status")})
         rows.sort(key=lambda r: r.get("created") or 0, reverse=True)
@@ -422,6 +458,9 @@ class EyesFacet(Facet):
                    "views": {"type": "array", "items": {"type": "string", "enum": list(render.MESH_VIEWS)}},
                    "material": {"type": "string", "enum": ["neutral", "color", "both"]},
                    "turn": {"type": "number", "description": "Degrees counterclockwise from above, to face the front."},
+                   "front_axis": {"type": "string", "enum": list(render.FRONT_AXIS_TURNS),
+                                  "description": "Subject's front in Blender world axes after applying up. Saved by "
+                                                 "piece fingerprint. Eje frontal de la pieza tras aplicar up."},
                    "facing": {"type": "string", "enum": list(vision.FACINGS),
                               "description": "Pictures, videos, pages: how the subject faces the viewer (front: its "
                                              "left is on the image's right), for checking left and right in keep. "

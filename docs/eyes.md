@@ -26,7 +26,7 @@ The kind is detected from the file and can be forced with `kind`.
 |---|---|---|---|
 | `image` | PNG, JPEG, WebP… | the image (longest side `size`, 1600) | `crops` |
 | `video` | MP4, MOV, WebM… | frames at `seconds`, or `frames` spread from start to end (8) | `seconds`, `frames`, `size`, `crops` |
-| `mesh` | GLB, glTF, FBX, OBJ, STL, PLY, USD, DAE, `.blend` | anatomical views in neutral clay and/or own colours | `views`, `material`, `turn`, `up`, `pose`, `camera`, `engine`, `size` |
+| `mesh` | GLB, glTF, FBX, OBJ, STL, PLY, USD, DAE, 3MF, `.blend` | anatomical views in neutral clay and/or own colours | `views`, `material`, `front_axis`, `turn`, `up`, `pose`, `camera`, `engine`, `size` |
 | `web` | URL, HTML file, site folder or ZIP | 390, 1024 and 1440 px, plus `-after` shots when `interaction` is given | `widths`, `interaction`, `full_page` |
 | `document` | PDF, PPTX, DOCX, ODP, XLSX… | rendered pages with their text | `pages`, `size` |
 | `game` | Godot project folder | `start`, the steps marked `shot`, and `end` | `inputs`, `resolution`, `scene` |
@@ -36,13 +36,26 @@ The kind is detected from the file and can be forced with `kind`.
 ones) and enlarges it; the box is in fractions of the view (0–1) or in pixels. Zones are views too (`<view>--<name>`).
 
 **Models.** Views are named after the subject's own side: `front`, `back`, `right` (its right profile), `left`,
-`front_right`, `front_left`, `back_right`, `back_left`, `top`, `bottom`. The front is the glTF forward axis; when a
-model faces elsewhere, `turn` rotates it (degrees, counterclockwise seen from above) and `up: "y"` stands up a model
-that arrives lying down. `material` is `neutral` (clay, to read shape), `color` (its textures or vertex colours) or
+`front_right`, `front_left`, `back_right`, `back_left`, `top`, `bottom`. The default front is Blender's `-y`
+(glTF `+Z`). Declare a different front with `front_axis: "-x"`, `"+x"`, `"-y"` or `"+y"` in Blender's
+world coordinates after standing the model up. The latest successful declaration is saved against the piece's
+SHA-256 and reused for those bytes. The look identifies the declaration, and forgetting or restoring it undoes
+or restores reuse. A different revision can be declared separately. Use `turn` by itself for a one-off rotation
+(degrees, counterclockwise seen from above). `up: "y"` stands up a model that arrives lying down.
+`material` is `neutral` (clay, to read shape), `color` (its textures or vertex colours) or
 `both`; a model without colours of its own says so in `warnings`. `pose` is `{action, frame}` or
 `{bones: {name: [x, y, z]}}` in degrees; `facts` lists bones and actions. The camera is orthographic and the same for
 every view; `resolved.camera` holds it in absolute numbers. Rendered by Blender in the background (`workbench`, or
 `eevee`).
+
+**3MF.** The Hub uses trimesh and its 3MF dependencies to read the build, then renders its geometry in Blender.
+The preview follows the build transforms and converts the declared unit to metres. Print materials and colour
+assignments are unavailable in this preview. For a topology or print-volume assessment use `print-mesh`.
+
+**Frente y 3MF.** `front_axis` declara el frente en los ejes de Blender tras aplicar `up`. Ojos guarda la
+declaración con la huella de la pieza y la reutiliza al volver a abrirla, aunque haya cambiado de nombre. Olvidar
+la mirada que declaró el eje deshace ese ajuste. En 3MF, Ojos abre la geometría con su escala y transformaciones
+de impresión. La vista previa carece de colores y materiales del laminador.
 
 **Web.** Pages from disk are served on a temporary local port so relative links and fetches work. `interaction`
 steps are `{click}`, `{fill: [selector, text]}`, `{press}`, `{hover}`, `{scroll}`, `{select: [selector, value]}` and
