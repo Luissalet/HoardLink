@@ -53,6 +53,15 @@ The Orders page and `hub_order_metrics` show:
 - Logical pieces whose first decision kept revision one. Superseding revisions share the piece's lineage.
 - Defects returned, elapsed work and reported GPU use by station. Passed and failed attempt costs appear in their own
   columns. An older station with only a defect receipt shows missing time and GPU fields.
+- Agora tasks grouped by the plan's station and the task's repository. For closed tasks, revision one is a first
+  submission, revision two or later is a returned task, and revisions after the first count toward resubmissions.
+  Median creation-to-close and claim-to-latest-submission durations are reported separately for both cohorts.
+  Closure without a submission counts toward closed tasks. Missing dates yield no sample.
+
+The revision count follows the studio's task report and may include edits that invalidate a review. Piece defects
+remain their own measure. Space-wide totals include standalone tasks. Older tasks without recorded station or
+repository stay in the corresponding unassigned group. Pass `order_id` to measure just the selected order and its
+current plan. Without it the tool measures the selected space, or every space with `all_spaces: true`.
 
 HTTP uses `/api/work-admission/metrics` and `/api/work-admission/capability` for reads, and
 `POST /api/work-admission/ticket`, `/api/work-admission/budget` and `/api/work-admission/attempt` for work.

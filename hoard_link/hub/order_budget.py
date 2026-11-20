@@ -1,6 +1,8 @@
 """Limits and receipts for work on a production order."""
 from __future__ import annotations
 
+from statistics import median
+
 from . import agora_orders as orders
 
 BUDGET_MIGRATION = """
@@ -173,8 +175,62 @@ def attempt(agora, args):
     return {"ok": True, "attempt": result, "hold": reason, "undo": token}
 
 
+def _task_measures(tasks):
+    closed = [row for row in tasks if row["status"] == "done"]
+    first = [row for row in closed if row["submission_revision"] == 1]
+    returned = [row for row in closed if row["submission_revision"] > 1]
+
+    def elapsed(rows, start, end):
+        seconds = [row[end] - row[start] for row in rows
+                   if row[start] is not None and row[end] is not None and row[end] >= row[start]]
+        return median(seconds) if seconds else None
+
+    return {
+        "tasks": len(tasks),
+        "closed_tasks": len(closed),
+        "first_submission_tasks": len(first),
+        "returned_tasks": len(returned),
+        "resubmissions": sum(row["submission_revision"] - 1 for row in returned),
+        "median_close_first_seconds": elapsed(first, "created", "closed_at"),
+        "median_close_returned_seconds": elapsed(returned, "created", "closed_at"),
+        "median_submit_first_seconds": elapsed(first, "claimed_at", "submitted_at"),
+        "median_submit_returned_seconds": elapsed(returned, "claimed_at", "submitted_at"),
+    }
+
+
+def _task_metrics(agora, oid, space):
+    sql = (
+        "SELECT t.repo,t.status,t.submission_revision,t.created,t.claimed_at,t.submitted_at,t.closed_at,"
+        "coalesce(j.station,'') AS station FROM tasks t LEFT JOIN agora_order_jobs j ON j.task_id=t.id "
+        "WHERE t.status<>'dropped' AND (j.task_id IS NULL OR j.removed=0)"
+    )
+    if oid is not None:
+        sql, params = sql + " AND j.order_id=?", (oid,)
+    elif space:
+        sql, params = sql + " AND t.space_id=?", (space,)
+    else:
+        params = ()
+    groups = {}
+    repos = {}
+    for row in agora.db.query(sql, params):
+        station = row["station"]
+        if station not in repos:
+            repos[station] = orders._station_repo(agora, station)
+        key = (station, row["repo"] or repos[station])
+        groups.setdefault(key, []).append(row)
+    return [{"station": station, "repo": repo, **_task_measures(rows)}
+            for (station, repo), rows in sorted(groups.items(), key=lambda item: (not any(item[0]), item[0]))]
+
+
 def metrics(agora, args):
-    where, params = ("", ()) if args.get("all_spaces") in (True, "1") else ("WHERE o.space_id=?", (agora.space_id,))
+    all_spaces = args.get("all_spaces") in (True, "1")
+    space = None if all_spaces else agora.space_id
+    oid = orders._int(args.get("order_id"), "order_id", required=False)
+    if oid is not None:
+        orders._order_row(agora, oid, any_space=all_spaces)
+        where, params = "WHERE o.id=?", (oid,)
+    else:
+        where, params = ("WHERE o.space_id=?", (space,)) if space else ("", ())
     chains = agora.db.query(
         "WITH RECURSIVE lineage(id,root) AS (SELECT id,id FROM agora_pieces WHERE supersedes IS NULL "
         "UNION ALL SELECT p.id,l.root FROM agora_pieces p JOIN lineage l ON p.supersedes=l.id), "
@@ -215,4 +271,4 @@ def metrics(agora, args):
         f"{'AND' if where else 'WHERE'} b.reason<>'' AND o.status NOT IN ('delivered','cancelled') ORDER BY o.id", params,
     )
     return {"ok": True, "chains": [dict(row) for row in chains], "stations": [stations[key] for key in sorted(stations)],
-            "holds": [dict(row) for row in holds]}
+            "holds": [dict(row) for row in holds], "task_stations": _task_metrics(agora, oid, space)}

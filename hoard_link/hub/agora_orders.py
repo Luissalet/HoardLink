@@ -374,6 +374,25 @@ class _Journal:
         self.created_tasks: list[int] = []
         self.task_status: list[dict[str, Any]] = []
         self.task_deps: list[dict[str, Any]] = []
+        self.task_metadata: list[dict[str, Any]] = []
+
+    def metadata(self, task_id: int, station: str, repo: str) -> None:
+        row = self.ag.db.one("SELECT repo, context FROM tasks WHERE id=?", (task_id,))
+        old = dict(row)
+        context = _load(row["context"], {})
+        if station:
+            context["station"] = station
+        else:
+            context.pop("station", None)
+        new = {"repo": repo, "context": _dump(context)}
+        if repo == old["repo"] and context == _load(old["context"], {}):
+            return
+        change = next((item for item in self.task_metadata if item["task_id"] == task_id), None)
+        if change:
+            change["after"] = new
+        else:
+            self.task_metadata.append({"task_id": task_id, "before": old, "after": new})
+        self.ag.db.execute("UPDATE tasks SET repo=?, context=? WHERE id=?", (repo, new["context"], task_id))
 
     def deps(self, task_id: int) -> None:
         """Remember what a task waits for now."""
@@ -395,7 +414,7 @@ class _Journal:
         self.rows.append({"table": table, "where": where or {_KEYS[table]: key}, "row": None})
 
     def save(self) -> Optional[str]:
-        if self.agent == _ag().PERSON or not (self.rows or self.created_tasks or self.task_status or self.task_deps):
+        if self.agent == _ag().PERSON or not (self.rows or self.created_tasks or self.task_status or self.task_deps or self.task_metadata):
             return None
         if any(change["table"] in ("agora_order_budgets", "agora_order_attempts") for change in self.rows):
             for change in self.rows:
@@ -407,7 +426,7 @@ class _Journal:
         self.ag.db.insert("agora_order_journal", {
             "token": token, "space_id": self.ag.space_id, "agent": self.agent, "op": self.op, "created": _now(self.ag),
             "changes": _dump({"rows": self.rows, "created_tasks": self.created_tasks, "task_status": self.task_status,
-                              "task_deps": self.task_deps})})
+                              "task_deps": self.task_deps, "task_metadata": self.task_metadata})})
         return token
 
 
@@ -422,6 +441,10 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         if entry["undone"]:
             raise _err(f"that write was already undone", 409)
         changes = _load(entry["changes"], {})
+        for item in changes.get("task_metadata", []):
+            current = self.db.one("SELECT repo, context FROM tasks WHERE id=?", (item["task_id"],))
+            if current is None or dict(current) != item["after"]:
+                raise _err("The task's station or repository changed since this write", 409)
         for change in changes.get("rows") or []:
             table, cond = change["table"], change["where"]
             if table != "agora_gates" and "after" not in change:
@@ -452,6 +475,9 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 self._apply_deps(agent, self._task_row(item["task_id"]), add=[], remove=[], replace=item["blockers"])
         for item in changes.get("task_status") or []:
             self.db.execute("UPDATE tasks SET status=?, updated=? WHERE id=?", (item["status"], _now(self), item["task_id"]))
+        for item in changes.get("task_metadata", []):
+            before = item["before"]
+            self.db.execute("UPDATE tasks SET repo=?, context=? WHERE id=?", (before["repo"], before["context"], item["task_id"]))
         for tid in changes.get("created_tasks") or []:
             task = self.db.one("SELECT * FROM tasks WHERE id=?", (tid,))
             if task and task["status"] not in ("done", "dropped"):
@@ -551,12 +577,20 @@ def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[s
     return out
 
 
+def _station_repo(self: Any, station: str) -> str:
+    resolve = getattr(self, "order_station_repo", None)
+    return (resolve(station) or "") if resolve and station else ""
+
+
 def _job_dict(self: Any, row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     for key, default in (("inputs", []), ("produces", []), ("assignee", {})):
         out[key] = _load(row.get(key), default)
-    task = self.db.one("SELECT id, title, status, owner, thread_id FROM tasks WHERE id=?", (row["task_id"],))
+    task = self.db.one("SELECT id, title, status, owner, thread_id, repo FROM tasks WHERE id=?", (row["task_id"],))
     out["task"] = dict(task) if task else None
+    out["repo"] = (task["repo"] if task else "") or _station_repo(self, row["station"])
+    if task:
+        out["task"]["station"] = row["station"]
     out["after"] = [int(r["blocker_id"]) for r in
                     self.db.query("SELECT blocker_id FROM agora_task_deps WHERE task_id=? ORDER BY blocker_id", (row["task_id"],))]
     out["removed"] = bool(row["removed"])
@@ -858,7 +892,7 @@ def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         pending_after: list[tuple[int, list[Any]]] = []
         for raw in jobs:
             if not isinstance(raw, dict):
-                raise _err("each job is an object {title, station, skill, inputs, produces, check, assignee, after}")
+                raise _err("each job is an object {title, station, repo, skill, inputs, produces, check, assignee, after}")
             inputs = _ids(raw.get("inputs"), "inputs")
             for pid in inputs:
                 p = self.db.one("SELECT order_id FROM agora_pieces WHERE id=?", (pid,))
@@ -868,16 +902,21 @@ def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                       "inputs": _dump(inputs), "produces": _dump([_kind(k, "produces") for k in (raw.get("produces") or [])][:20]),
                       "check_how": _txt(raw.get("check"), 4000, "check"), "assignee": _dump(_assignee(raw.get("assignee"))),
                       "branch": _txt(raw.get("branch"), 80, "branch")}
+            repo = _txt(raw.get("repo"), 120, "repo")
             tid = _int(raw.get("task_id"), "task_id", required=False)
             if tid:
                 existing = self.db.one("SELECT * FROM agora_order_jobs WHERE task_id=?", (tid,))
                 if not existing or existing["order_id"] != oid:
                     raise _err(f"task #{tid} is not a job of order #{oid}", 404)
+                station = fields["station"] if "station" in raw else existing["station"]
                 journal.before("agora_order_jobs", tid)
                 given = {k: v for k, v in fields.items() if (k if k != "check_how" else "check") in raw}
                 if given:
                     self.db.execute(f"UPDATE agora_order_jobs SET {', '.join(f'{k}=?' for k in given)} WHERE task_id=?",
                                     (*given.values(), tid))
+                if "repo" not in raw and station == existing["station"]:
+                    repo = self.db.scalar("SELECT repo FROM tasks WHERE id=?", (tid,), "")
+                journal.metadata(tid, station, repo or _station_repo(self, station))
             else:
                 title = _txt(raw.get("title"), 300, "title", required=True)
                 station = fields["station"]
@@ -894,6 +933,8 @@ def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 added = self.task_add({"agent": agent, "_person": bool(a.get("_person")), "title": title,
                                        "body": (body + "\n\n" if body else "") + "\n".join(lines),
                                        "kind": raw.get("kind") or "task", "acceptance": fields["check_how"],
+                                       "repo": repo or _station_repo(self, station),
+                                       "context": {"station": station} if station else {},
                                        "labels": [f"order-{oid}"] + ([fields["branch"]] if fields["branch"] else []),
                                        **({"mentions": [assignee["agent"]]} if assignee.get("agent") else {})})
                 tid = int(added["task"]["id"])
@@ -1521,6 +1562,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         "title": {"type": "string", "maxLength": 300}, "body": {"type": "string", "maxLength": 20000},
         "kind": {"type": "string", "maxLength": 20},
         "station": {"type": "string", "maxLength": 120, "description": "The Hoard (app id) that does it."},
+        "repo": {"type": "string", "maxLength": 120, "description": "Repository name. Defaults to the station's discovered repository."},
         "skill": {"type": "string", "maxLength": 200}, "inputs": ids, "produces": {"type": "array", "items": kind, "maxItems": 20},
         "check": {"type": "string", "maxLength": 4000, "description": "How its output is checked."},
         "assignee": {"type": "object", "properties": {"agent": {"type": "string"}, "model": {"type": "string"},

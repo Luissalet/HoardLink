@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Lock
 from urllib.parse import urlsplit
 
@@ -21,6 +22,11 @@ def _tool(name, description, properties=None, required=(), *, read=True):
                         "required": list(required), "additionalProperties": False},
         "annotations": {"readOnlyHint": read, "destructiveHint": False},
     }
+
+
+def _app_repo(app):
+    folder = getattr(app, "folder", "")
+    return Path(folder).name if folder else ""
 
 
 def _chains(stations, source, target, limit):
@@ -60,6 +66,7 @@ def _chains(stations, source, target, limit):
 
 class ProductionFacet(Facet):
     id = "production"
+    ui_scripts = ("order_sources.js",)
 
     def __init__(self, hub):
         super().__init__(hub)
@@ -69,6 +76,16 @@ class ProductionFacet(Facet):
         agora = self.hub.facet("agora")
         if agora is not None:
             agora.agora.order_station_catalog = lambda: self.catalog({}, link_skills=False)["stations"]
+            agora.agora.order_station_repo = self.station_repo
+
+    def station_repo(self, station):
+        app = self.hub.get(station)
+        if app:
+            return _app_repo(app)
+        integration = self.hub.facet("integration")
+        if integration is not None and station == integration.station().id:
+            return "Hoard Hub"
+        return ""
 
     def catalog(self, args, *, link_skills=True):
         from .piece_checks import descriptor
@@ -77,8 +94,9 @@ class ProductionFacet(Facet):
         stations = []
         apps = list(self.hub.apps)
         integration = self.hub.facet("integration")
-        if integration is not None:
-            apps.append(integration.station())
+        integration_app = integration.station() if integration is not None else None
+        if integration_app is not None:
+            apps.append(integration_app)
         for app in sorted(apps, key=lambda app: app.id):
             declaration = app.family.get("production")
             if (not isinstance(declaration, dict) or
@@ -93,7 +111,8 @@ class ProductionFacet(Facet):
                 and isinstance(row.get("skill"), str) and isinstance(row.get("check"), dict)
             ] if isinstance(raw_handoffs, list) else []
             if handoffs:
-                stations.append({"app": app.id, "name": app.name, "handoffs": [
+                repo = "Hoard Hub" if app is integration_app else _app_repo(app)
+                stations.append({"app": app.id, "name": app.name, "repo": repo, "handoffs": [
                     {**row, "requires": declared_requirements(app.id, row),
                      "piece_checks": {kind: check for kind in [row["accepts"], *row["produces"]]
                                               if (check := descriptor(kind)) is not None}}

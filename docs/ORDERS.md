@@ -27,6 +27,8 @@ over `POST /api/agora/order_create` with its bearer token and `refs` pointing at
 
 The [production dossier](order-dossier.md) adds the audience, constraints and material fingerprints to the request,
 deliverables and details to keep. It can carry a source station's compiled context with its provenance.
+The [source picker and job ownership](order-intake.md) guide covers choosing a native dossier in the form, recording
+repositories, and opening the page against an isolated test catalogue.
 
 ## Work admission and budgets
 
@@ -42,6 +44,7 @@ Beside the task the order keeps:
 | Field | Meaning |
 |---|---|
 | `station`, `skill` | The Hoard that does the job and the skill it is done with |
+| `repo` | Repository recorded on the Agora task, defaulting to the discovered station's repository |
 | `inputs` | Pieces it starts from |
 | `produces` | Kinds of piece it must deliver |
 | `check` | How its output is checked (also the task's acceptance) |
