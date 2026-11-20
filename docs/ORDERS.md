@@ -77,6 +77,8 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
   shows and the person decides on, even after the station overwrites the file. A file too big to copy (over 2 GB, or a
   site over 64 MB) is checked against its print instead: if it changed, it is not shown and the gate refuses the decision
   (`piece_changed`) until the station registers it again. `bytes` says `kept` or `unverified`.
+* **Order thumbnails.** The order list uses the first registered preview as the thumbnail, including for documents
+  such as editable slide decks and PDFs. An image with no registered preview uses the image file itself.
 * **Material and reference.** Cancelling a piece makes stale every piece made from it, directly or not, and nothing is
   deleted. A piece that only used it as a reference stays valid and carries a warning that its reference was
   cancelled. A piece with no inputs and no job reads as «provenance not given».

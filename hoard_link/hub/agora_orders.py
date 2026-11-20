@@ -595,9 +595,12 @@ def _summary(self: Any, row: dict[str, Any]) -> dict[str, Any]:
     out["gates_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_gates WHERE order_id=? AND status='open'", (oid,), 0) or 0)
     thumbs = self.db.query("SELECT id, kind, title, path, url, previews FROM agora_pieces WHERE order_id=? "
                            "AND status NOT IN ('cancelled','stale') ORDER BY (status='kept') DESC, id DESC LIMIT 6", (oid,))
-    out["thumbs"] = [{"id": t["id"], "kind": t["kind"], "title": t["title"],
-                      "view": view_of({"path": t["path"], "url": t["url"], "previews": _load(t["previews"], [])})}
-                     for t in thumbs]
+    out["thumbs"] = []
+    for t in thumbs:
+        previews = _load(t["previews"], [])
+        out["thumbs"].append({"id": t["id"], "kind": t["kind"], "title": t["title"],
+                              "view": view_of({"path": t["path"], "url": t["url"], "previews": previews}),
+                              "preview": 0 if previews else None})
     return out
 
 

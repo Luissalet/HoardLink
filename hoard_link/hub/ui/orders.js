@@ -399,9 +399,9 @@
       el("small", "", tr(`${o.jobs.done}/${o.jobs.total} trabajos`, `${o.jobs.done}/${o.jobs.total} jobs`)),
       el("small", "", tr(`${o.pieces.kept} conservadas · ${o.pieces.provisional + o.pieces.checked} en curso`, `${o.pieces.kept} kept · ${o.pieces.provisional + o.pieces.checked} in progress`)));
     const thumbs = el("div", "ord-thumbs");
-    for (const t of (o.thumbs || []).filter(t => t.view === "image" || t.view === "turntable").slice(0, 4)) {
+    for (const t of (o.thumbs || []).filter(t => t.preview != null || t.view === "image" || t.view === "turntable").slice(0, 4)) {
       const i = el("img"); i.alt = t.title; i.loading = "lazy";
-      i.src = t.view === "turntable" ? `/api/agora/piece_file/${t.id}?preview=0` : `/api/agora/piece_file/${t.id}`;
+      i.src = fileUrl(t, t.preview ?? (t.view === "turntable" ? 0 : undefined));
       i.onerror = () => i.remove();
       thumbs.append(i);
     }
