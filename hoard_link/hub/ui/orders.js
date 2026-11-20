@@ -4,10 +4,6 @@
 (() => {
   "use strict";
   if (!window.HubFacets) return;
-  const css = document.createElement("link");
-  css.rel = "stylesheet"; css.href = "/ui/orders.css";
-  document.head.appendChild(css);
-
   const ctx = window.HubFacets.ctx;
   const es = () => ctx.lang() === "es";
   const tr = (a, b) => (es() ? a : b);

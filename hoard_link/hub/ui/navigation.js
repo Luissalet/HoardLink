@@ -12,6 +12,7 @@
   const tr = (spanish, english) => es() ? spanish : english;
   const icons = {
     home: '<path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/>',
+    pending_decisions: '<path d="M12 3v18M7 21h10M4 7h16M4 7l-2 6h4L4 7Zm16 0-2 6h4l-2-6Z"/>',
     orders: '<path d="M6 3h9l4 4v14H6Z"/><path d="M14 3v5h5M9 12h7M9 16h4"/>',
     projects: '<path d="M3 6h7l2 3h9v11H3Z"/><path d="M3 9V4h7l2 2h7v3"/>',
     apps: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -29,6 +30,7 @@
   }
   const groups = [
     {id: 'home', label: ['Inicio', 'Home'], description: ['Tus pendientes y el trabajo que quieres continuar.', 'Open an app, continue a project or check shared work.']},
+    {id: 'pending_decisions', label: ['Decisiones pendientes', 'Pending decisions']},
     {id: 'orders', label: ['Órdenes', 'Orders'], defaultView: 'orders', facets: ['orders'], description: ['Lo que has encargado, su plan y sus piezas; arriba, lo que espera tu decisión.', 'What you ordered, its plan and its pieces; on top, what waits for your decision.']},
     {id: 'projects', label: ['Proyectos', 'Projects'], description: ['Cada proyecto tiene su propia ágora, sus tareas y sus conversaciones.', 'Each project has its own Agora, tasks and conversations.']},
     {id: 'apps', label: ['Aplicaciones', 'Applications'], description: ['Abre una aplicación o gestiona sus grupos de arranque.', 'Open an app or manage startup groups.']},
@@ -61,6 +63,7 @@
   };
   let spaces = [], spacesError = '', workspaceUrl = '', apps = [], ready = false;
   let route = 'home', selecting = false, appsSignature = '', catalogActions = [];
+  let globalDecisionCount = '';
   const activeView = () => groups.find(g => g.id === route)?.defaultView || route;
   const labels = value => es() ? value[0] : value[1];
   const facetButtons = () => [...document.querySelectorAll('#family-tabs .tab')];
@@ -104,7 +107,7 @@
     const activeGroup = route === 'search' ? 'search' : route === 'project' || route === 'agora' ? 'projects' : groups.some(g => g.id === route) ? route : groupFor(route).id;
     // Three labelled sections: your own work, the tools you run, the shared environment.
     const sections = [
-      [tr('Tu espacio', 'Your space'), ['home', 'orders', 'projects', 'communication', 'search']],
+      [tr('Tu espacio', 'Your space'), ['home', 'pending_decisions', 'orders', 'projects', 'communication', 'search']],
       [tr('Herramientas', 'Tools'), ['apps', 'automation']],
       [tr('Entorno', 'Environment'), ['system']],
     ];
@@ -115,8 +118,24 @@
         const group = groups.find(g => g.id === id);
         const item = link(group ? labels(group.label) : tr('Buscar', 'Search'), '#hub/' + id, 'hub-nav-link' + (id === 'search' ? ' hub-nav-search' : ''));
         item.prepend(icon(id));
+        if (id === 'pending_decisions') {
+          const count = node('span', 'hub-decision-count', globalDecisionCount);
+          count.id = 'hub-global-decision-count';
+          item.append(count);
+        }
         if (activeGroup === id) item.setAttribute('aria-current', 'page');
         section.append(item);
+        if (id === 'projects' && ['project', 'agora'].includes(route)) {
+          const decisions = link(tr('Decisiones', 'Decisions'), '#agora-decisions', 'hub-nav-link');
+          decisions.prepend(icon('orders'));
+          const count = node('span', 'hub-decision-count');
+          count.id = 'hub-space-decision-count';
+          const feed = $('#hub-agora-decisions');
+          if (feed?.dataset.space === spaceId()) count.textContent = feed.dataset.count || '';
+          decisions.append(count);
+          if (location.hash === '#agora-decisions') decisions.setAttribute('aria-current', 'location');
+          section.append(decisions);
+        }
       }
       nav.append(section);
     }
@@ -224,6 +243,7 @@
     }catch(_){if(epoch===homeEpoch)homeError=true;}finally{if(epoch===homeEpoch){homeLoading=false;if(route==='home')show('home');}}
   }
   function home(container) {
+    decisionSummary(container, '*');
     const overview=node('div','hub-home-status');container.append(overview);window.HubStatus?.overview(overview);
     const layout=node('div','hub-home-layout'); const attention=node('section','hub-attention');
     heading(attention,tr('Necesita tu atención','Needs your attention'),tr('Abrir bandeja','Open inbox'),'#hub/communication');
@@ -264,6 +284,7 @@
   }
   function projectOverview(container) {
     const sid=spaceId(), space=activeSpace();
+    decisionSummary(container, sid);
     const section=node('section','hub-project-overview');container.append(section);
     heading(section,tr('Dónde continuar','Where to continue'));
     rowLink(section,tr('Entrar en el ágora del proyecto','Enter this project’s Agora'),tr('Tareas, conversaciones, revisiones y decisiones de este proyecto.','This project’s tasks, conversations, reviews and decisions.'),'#hub/agora','hub-project-agora');
@@ -280,6 +301,24 @@
       if(threads.length){const conversations=node('div','hub-project-conversations');heading(conversations,tr('Conversaciones del proyecto','Project conversations'));for(const thread of threads){const a=rowLink(conversations,thread.title,thread.last_author?tr('Último mensaje: ','Last message: ')+thread.last_author:'','#hub/agora');a.onclick=event=>{event.preventDefault();go('agora');window.HubFacets.ctx.bus.dispatchEvent(new CustomEvent('open-project-thread',{detail:{id:thread.id}}));};}recent.append(conversations);}
     }
     const details=node('details','hub-project-details');details.append(node('summary','',tr('Ubicación y ajustes del proyecto','Project location and settings')),node('p','',space?.workspace || tr('Sin carpeta asociada','No associated folder')));const manage=node('button','ghost',tr('Gestionar este espacio','Manage this space'));manage.onclick=()=>go('agora');details.append(manage);section.append(details);
+  }
+  function setGlobalDecisionCount(total, incomplete) {
+    globalDecisionCount = total ? String(total) + (incomplete ? '+' : '') : '';
+    const badge = $('#hub-global-decision-count');
+    if (badge) badge.textContent = globalDecisionCount;
+  }
+  function decisionSummary(container, sid, dedicated = false) {
+    const slot = node('div');
+    container.append(slot);
+    import('/ui/production_decisions.js').then(({mount}) => mount(slot, sid, {
+      hideEmpty: !dedicated,
+      dedicated,
+      count: (total, incomplete) => {
+        if (sid === '*') { setGlobalDecisionCount(total, incomplete); return; }
+        const badge = $('#hub-space-decision-count');
+        if (badge) badge.textContent = total ? String(total) + (incomplete ? '+' : '') : '';
+      },
+    }));
   }
   async function loadProjectBoard(sid) {
     if(boards.has(sid))return;boards.set(sid,{loading:true});
@@ -311,7 +350,7 @@
     const project = route === 'project' || route === 'agora';
     const title = route === 'home' ? tr('Inicio', 'Home') : route === 'help' ? tr('Ayuda y ajustes', 'Help and settings') : route === 'today' ? tr('Agenda y resumen', 'Agenda and digest') : group ? labels(group.label) : project ? (activeSpace()?.title || spaceId()) : facetLabel(route);
     $('#hub-page-title').textContent = title;
-    $('#hub-page-description').textContent = group ? labels(group.description) : project ? tr('Tu trabajo, conversaciones y decisiones en un mismo proyecto.', 'Project Agora · tasks, discussions and decisions in this space.') : descriptions[route] ? labels(descriptions[route]) : '';
+    $('#hub-page-description').textContent = group?.description ? labels(group.description) : project ? tr('Tu trabajo, conversaciones y decisiones en un mismo proyecto.', 'Project Agora · tasks, discussions and decisions in this space.') : descriptions[route] ? labels(descriptions[route]) : '';
     const breadcrumb = $('#hub-breadcrumb'); breadcrumb.replaceChildren();
     const parent = project ? groups.find(g => g.id === 'projects') : group || ['search','help','today'].includes(route) ? null : groupFor(route);
     breadcrumb.hidden = !parent;
@@ -320,6 +359,7 @@
     const actions = $('#hub-page-actions'); actions.replaceChildren();
     const landing = $('#hub-landing'); landing.replaceChildren();
     if (route === 'home') { landing.hidden = false; home(landing); }
+    else if (route === 'pending_decisions') { landing.hidden = false; decisionSummary(landing, '*', true); }
     else if(route==='help'){landing.hidden=false;help(landing);}
     else if(route==='today'){}
     else if(route==='automation'){landing.hidden=false;automationHome(landing);}
@@ -362,9 +402,13 @@
   }
   function fromLocation() {
     const match = /^#hub\/([a-z_]+)$/.exec(location.hash);
-    if (/^#agora(?:-\d+)?$/.test(location.hash)) show('agora');
+    if (/^#agora(?:-\d+|-decisions)?$/.test(location.hash)) show('agora');
     else show(match?.[1] || 'home');
     (route === 'search' ? document.querySelector('.sr-q') : $('#hub-content'))?.focus({preventScroll: true}); window.scrollTo({top: 0});
+    if (location.hash === '#agora-decisions') $('#agora-decisions')?.scrollIntoView();
+    if (route === 'orders' && new URLSearchParams(location.search).has('decision')) {
+      import('/ui/production_decisions.js').then(({focusOrderDecision}) => focusOrderDecision());
+    }
   }
   async function loadProjects() {
     spacesError = '';
@@ -415,7 +459,7 @@
     window.addEventListener('hub:tab', event => {
       if (selecting || !event.detail.openPanel) return;
       const id = event.detail.name;
-      if (id === 'agora' && /^#agora-\d+$/.test(location.hash)) show('agora');
+      if (id === 'agora' && /^#agora-(?:\d+|decisions)$/.test(location.hash)) show('agora');
       else go(id);
     });
     window.addEventListener('hub:space', event => {
@@ -432,6 +476,7 @@
       if (signature !== appsSignature) { appsSignature = signature; if (route === 'home') show('home'); }
     });
     window.addEventListener('hashchange', fromLocation); window.addEventListener('popstate', fromLocation);
+    import('/ui/production_decisions.js').then(({watchPendingCount}) => watchPendingCount('*', setGlobalDecisionCount));
     $('#btn-lang').addEventListener('click', () => setTimeout(() => show(route), 0));
     window.HubFacets.ctx.api('/api/coordination/config').then(config => {
       workspaceUrl = config.workspace_url || '';

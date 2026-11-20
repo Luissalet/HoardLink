@@ -147,7 +147,7 @@
   const MK = { comment: "💬", proposal: "📝", agree: "👍", disagree: "✋", approve: "✅", changes: "🔁", resolution: "🏁", escalation: "🙋", system: "⚙️" };
   const t = (k) => L(S[k]);
   const st = (k) => (ST[k] ? L(ST[k]) : k);
-  let box, waitBox, qBox, unboundBox, agentsBox, boardBox, threadsBox, locksBox, decisionsBox, detailBox, mainBox, badge;
+  let box, waitBox, qBox, unboundBox, agentsBox, boardBox, threadsBox, locksBox, decisionsBox, productionBox, detailBox, mainBox, badge;
   let threadFilter = "open";
   let kindFilter = "";
   let textFilter = "";
@@ -548,6 +548,21 @@
       x.style.cursor = "pointer"; activatable(x, () => openThread(d.id), d.title);
       decisionsBox.appendChild(x);
     }
+  }
+
+  function showProductionDecisions(space) {
+    if (productionBox.firstChild?.dataset.space === space) return;
+    const slot = el('div');
+    slot.dataset.space = space;
+    productionBox.dataset.space = space;
+    productionBox.dataset.count = '';
+    productionBox.replaceChildren(slot);
+    import('/ui/production_decisions.js').then(({mount}) => mount(slot, space, {archive: true, count(total, incomplete) {
+      const value = total ? String(total) + (incomplete ? '+' : '') : '';
+      productionBox.dataset.count = value;
+      const badge = document.getElementById('hub-space-decision-count');
+      if (badge) badge.textContent = value;
+    }}));
   }
 
   function quickReply(th) {
@@ -1034,10 +1049,10 @@
     }
     const url = new URL(location.href);
     if (sid === 'ecosystem') url.searchParams.delete('space_id'); else url.searchParams.set('space_id', sid);
-    url.hash = location.hash.startsWith('#hub/') ? (location.hash === '#hub/agora' ? 'hub/agora' : 'hub/project') : current?.type === 'thread' ? `agora-${current.id}` : '';
+    url.hash = location.hash === '#agora-decisions' ? 'agora-decisions' : location.hash.startsWith('#hub/') ? (location.hash === '#hub/agora' ? 'hub/agora' : 'hub/project') : current?.type === 'thread' ? `agora-${current.id}` : '';
     history.replaceState(null, '', url);
     renderAgents(lastBoard || {agents: []}); renderBoard(lastBoard || {tasks: []});
-    renderDecisions(lastBoard || {decisions: []}); threadsBox.replaceChildren(); waitBox.hidden = true;
+    renderDecisions(lastBoard || {decisions: []}); showProductionDecisions(sid); threadsBox.replaceChildren(); waitBox.hidden = true;
     load();
     window.dispatchEvent(new CustomEvent('hub:space', {detail: {space_id: sid}}));
   }
@@ -1186,11 +1201,14 @@
       }
       const th = section("threads", filters); threadsBox = el("div", "ag-threads"); th.appendChild(threadsBox); mainBox.appendChild(th);
       const lk = section("locks"); locksBox = el("div"); lk.appendChild(locksBox); mainBox.appendChild(lk);
-      const dc = section("decisions"); decisionsBox = el("div", "ag-threads"); dc.appendChild(decisionsBox); mainBox.appendChild(dc);
+      const dc = section("decisions"); dc.id = 'agora-decisions';
+      productionBox = el('div'); productionBox.id = 'hub-agora-decisions';
+      decisionsBox = el("div", "ag-threads"); dc.append(productionBox, decisionsBox); mainBox.appendChild(dc);
       mainBox.append(a, un, lk, dc);
       splitBox.appendChild(mainBox);
       detailBox = el("div", "ag-detail"); detailBox.hidden = true; splitBox.appendChild(detailBox);
       box.appendChild(splitBox);
+      showProductionDecisions(activeSpace);
       skeleton(agentsBox, 2, true); skeleton(boardBox, 4, true); skeleton(threadsBox, 4);
       window.matchMedia("(min-width: 1200px)").addEventListener("change", () => showDetail(!detailBox.hidden));
       pollBadge(); setInterval(pollBadge, 15000);
