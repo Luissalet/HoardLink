@@ -577,7 +577,10 @@ to every later job (`hub_agora_job`). Every agent write returns an undo token (`
 `hub_agora_orders`, `hub_agora_order`, `hub_agora_order_create`, `hub_agora_order_update`, `hub_agora_plan_set`,
 `hub_agora_job`, `hub_agora_piece_add`, `hub_agora_piece_check`, `hub_agora_piece_defect`, `hub_agora_defect_close`,
 `hub_agora_gate_open`, `hub_agora_gate_split`, `hub_agora_order_decisions`; the decision itself has no tool. The Hub's
-**Orders** page puts the gates first. Reference: [ORDERS.md](ORDERS.md).
+**Orders** page puts the gates first. The Hub and Ágora sidebars link to **Pending decisions**, and the Hub home and
+space overview list the open gates. The decision log (`GET /api/agora/decisions`, `hub_agora_decisions`) adds
+`production_decisions` alongside the resolved threads in `decisions`. Those receipts come from the original order
+decisions, including their dates and notes. Reference: [ORDERS.md](ORDERS.md).
 
 `derives_from` accepts a piece from any order in the same space. Material dependencies inherit the source details and
 become stale if the source is cancelled. References retain the link and show a warning. Both orders expose the link.

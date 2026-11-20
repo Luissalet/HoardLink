@@ -3095,11 +3095,13 @@ class Agora:
 
     @_space_operation
     def decisions(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """The space's recorded thread resolutions and production decisions."""
         limit = max(1, min(int((a or {}).get("limit") or 50), 500))
         rows = self.db.query("SELECT id, title, kind, resolution, resolved_by, updated, space_id FROM threads "
                              "WHERE status='resolved' AND kind<>'task' AND space_id=? ORDER BY updated DESC LIMIT ?",
                              (self.space_id, limit))
-        return {"ok": True, "decisions": [dict(r) for r in rows]}
+        production = agora_orders.order_decisions(self, {"limit": limit})["decisions"]
+        return {"ok": True, "decisions": [dict(r) for r in rows], "production_decisions": production}
 
     # -- inbox ---------------------------------------------------------------------------------------------------
 
@@ -3589,7 +3591,7 @@ TOOLS: list[dict[str, Any]] = [
                     "finished (approved, exempt or unreviewed), reviews given, decisions, and what waits now.",
      "inputSchema": _schema({"hours": {"type": "number"}}, [])},
     {"name": "hub_agora_decisions", "read": True,
-     "description": "The decision log: resolved threads with their resolution, newest first.",
+     "description": "The space's decision log: resolved threads and recorded production decisions, newest first.",
      "inputSchema": _schema({"limit": {"type": "integer"}}, [])},
     {"name": "hub_agora_threads", "read": True,
      "description": "List threads (escalated first, then open, newest first), filtered by status or kind; task threads "

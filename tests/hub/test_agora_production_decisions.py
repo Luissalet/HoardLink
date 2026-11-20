@@ -59,6 +59,10 @@ def test_pending_queue_opens_exact_gate_and_uses_the_production_record(tmp_path)
                     "situation": json.dumps({"gate": {"id": gate["id"], "title": gate["title"]},
                                              "order": {"id": order["id"], "title": order["title"]}}),
                 })
+            status, log = http(url + "/api/agora/decisions?space_id=test-studio", headers=headers)
+            assert status == 200
+            assert log["decisions"] == []
+            assert [item["note"] for item in log["production_decisions"]] == ["The folded corner stays"]
             page.goto(url + "/?space_id=test-studio#agora-decisions")
             record = page.locator(".hub-decision-record")
             playwright.expect(record).to_contain_text("Luis’s decision (")
