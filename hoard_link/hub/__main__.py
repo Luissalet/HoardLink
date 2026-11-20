@@ -43,14 +43,14 @@ def _already_running(url: str) -> bool:
 
 def _open_own_window(cfg: HubConfig, mode: str) -> Optional[int]:
     """Returns the pid of a Chromium --app window when that route was used."""
-    url = ui_session.launch_url(cfg.url, cfg.data_dir)
     if mode == "browser":
-        desktop.open_in_browser(url)
+        desktop.open_in_browser(ui_session.launch_url(cfg.url, cfg.data_dir))
         return None
     icon = os.path.join(os.path.dirname(desktop.SHELL_DIR), "app-icon.png")
-    res = desktop.open_window(url, "_hub", cfg.profiles_dir, browser=cfg.browser,
+    res = desktop.open_window(cfg.url, desktop.HUB_WINDOW_ID, cfg.profiles_dir, browser=cfg.browser,
                               size=(int(cfg.window_size[0]), int(cfg.window_size[1])),
-                              engine=cfg.window_engine, name="Hoard Hub", icon=icon)
+                              engine=cfg.window_engine, name="Hoard Hub", icon=icon,
+                              browser_url=lambda: ui_session.launch_url(cfg.url, cfg.data_dir))
     return res.get("pid") if res.get("ok") and res.get("mode") == "app-window" else None
 
 

@@ -132,9 +132,13 @@ function card(row, options, previousNote) {
         options.refresh();
       } catch (error) {
         const sessionRequired = error?.code === 'hub_ui_session_required';
-        status.textContent = sessionRequired
-          ? tr('Abre el Hub desde su lanzador para hacer cambios.', 'Open the Hub from its launcher to make changes.')
-          : tr('No se ha guardado la decisión. Actualiza la lista e inténtalo de nuevo.', 'The decision was not saved. Refresh the list and try again.');
+        if (sessionRequired) {
+          status.textContent = window.hoardHubSession
+            ? tr('La decisión sigue pendiente.', 'The decision is still pending.')
+            : tr('Abre el Hub desde su lanzador para hacer cambios.', 'Open the Hub from its launcher to make changes.');
+        } else {
+          status.textContent = tr('No se ha guardado la decisión. Actualiza la lista e inténtalo de nuevo.', 'The decision was not saved. Refresh the list and try again.');
+        }
         status.title = error instanceof Error ? error.message : '';
         if (!sessionRequired) options.refresh();
       } finally {

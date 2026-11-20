@@ -61,8 +61,50 @@ let bar = null;
 let view = null;
 let colours = { bg: '#17191a', fg: '#eeeae2', muted: '#babcb6', accent: '#d5b575' };
 const origin = (() => { try { return new URL(appUrl).origin; } catch { return ''; } })();
+const hubLaunch = appId === '_hub' && /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(origin)
+  ? new URL('/api/ui/launch', origin) : null;
 const stateFile = path.join(dataDir, 'hoard-window.json');
 const logFile = path.join(dataDir, 'hoard-window.log');
+
+function isHubPage(url) {
+  if (!hubLaunch) return false;
+  try {
+    const page = new URL(url);
+    const pathname = page.pathname.replace(/\/+$/, '') || '/';
+    return page.origin === origin && ['/', '/agora', '/programs'].includes(pathname);
+  } catch { return false; }
+}
+
+if (hubLaunch) {
+  // The launcher gives the Hub <data>/profiles/_hub. A direct shell launch uses the repository default.
+  const hubData = path.basename(dataDir) === '_hub' && path.basename(path.dirname(dataDir)) === 'profiles'
+    ? path.resolve(dataDir, '..', '..') : path.resolve(__dirname, '..', 'data');
+  ipcMain.handle('hoard:hub-session-ticket', async ({ sender, senderFrame }) => {
+    if (!view || sender !== view.webContents || !senderFrame || senderFrame !== sender.mainFrame
+        || !isHubPage(senderFrame.url)) return null;
+    try {
+      const key = (await fs.promises.readFile(path.join(hubData, 'hub-ui-launch-token'), 'utf8')).trim();
+      const response = await fetch(hubLaunch, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(3000),
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (response.ok) return (await response.json()).ticket || null;
+    } catch { /* The page can request a session again when the Hub is available. */ }
+    return null;
+  });
+}
+
+function refreshHubSession() {
+  const wc = view?.webContents;
+  if (wc && isHubPage(wc.getURL())) wc.send('hoard:hub-session-refresh');
+}
+
+function openHome() {
+  if (!view) return;
+  // Moving between Hub fragments can keep the current document and preload.
+  refreshHubSession();
+  view.webContents.loadURL(appUrl);
+}
 
 function log(...parts) {
   const line = `${new Date().toISOString()} ${parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ')}\n`;
@@ -153,7 +195,7 @@ function menuTemplate() {
     { type: 'separator' },
     { label: 'Atrás', accelerator: 'Alt+Left', enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
     { label: 'Adelante', accelerator: 'Alt+Right', enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
-    { label: 'Ir al inicio', click: () => wc.loadURL(appUrl) },
+    { label: 'Ir al inicio', click: openHome },
     { type: 'separator' },
     { label: 'Ampliar', accelerator: 'Ctrl+=', click: () => zoom(+0.1) },
     { label: 'Reducir', accelerator: 'Ctrl+-', click: () => zoom(-0.1) },
@@ -249,7 +291,11 @@ function create() {
     webPreferences: { preload: path.join(__dirname, 'preload-bar.cjs'), contextIsolation: true, sandbox: true, backgroundThrottling: false },
   });
   view = new WebContentsView({
-    webPreferences: { preload: path.join(__dirname, 'preload-app.cjs'), contextIsolation: true, sandbox: true, spellcheck: true, backgroundThrottling: false },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-app.cjs'), contextIsolation: true, sandbox: true,
+      spellcheck: true, backgroundThrottling: false,
+      additionalArguments: hubLaunch ? [`--hoard-hub-origin=${origin}`] : [],
+    },
   });
   bar.setBackgroundColor(colours.bg);
   win.contentView.addChildView(view);
@@ -351,7 +397,7 @@ ipcMain.on('hoard:start-drag', (e, file) => {
   e.sender.startDrag({ file, icon: thumb });
   log('drag', file);
 });
-ipcMain.on('hoard:home', () => { if (view) view.webContents.loadURL(appUrl); });
+ipcMain.on('hoard:home', openHome);
 ipcMain.on('hoard:reload', () => { if (view) view.webContents.reload(); });
 
 app.on('second-instance', () => {
@@ -359,6 +405,7 @@ app.on('second-instance', () => {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  refreshHubSession();
 });
 
 app.whenReady().then(() => {

@@ -1,0 +1,25 @@
+.hub-session-recovery {
+  position: fixed;
+  inset: auto auto 1rem 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
+  width: max-content;
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: .75rem 1rem;
+  color: var(--text, CanvasText);
+  background: var(--card, Canvas);
+  border: 1px solid var(--line, ButtonBorder);
+  border-radius: .5rem;
+  box-shadow: 0 4px 16px #0004;
+}
+
+.hub-session-recovery button {
+  cursor: pointer;
+  padding: .35rem .75rem;
+  min-height: 40px;
+  font: inherit;
+}

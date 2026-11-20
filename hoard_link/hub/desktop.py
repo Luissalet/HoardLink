@@ -35,7 +35,7 @@ import shutil
 import subprocess
 import sys
 import webbrowser
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .procs import _psutil, proc_info, terminate_tree
 
@@ -124,7 +124,7 @@ def profile_dir(profiles_root: str, app_id: str) -> str:
 
 def open_window(
     url: str, app_id: str, profiles_root: str, *, browser: str = "auto", size: tuple[int, int] = (1280, 860),
-    engine: str = "auto", name: str = "", icon: Optional[str] = None,
+    engine: str = "auto", name: str = "", icon: Optional[str] = None, browser_url: Optional[Callable[[], str]] = None,
 ) -> dict[str, Any]:
     """Open ``url`` as a desktop window with its own profile: the Hoard
     Window shell when installed (``engine`` auto/shell), else a Chromium
@@ -134,6 +134,8 @@ def open_window(
         res = _open_shell_window(url, app_id, profiles_root, size=size, name=name, icon=icon)
         if res.get("ok"):
             return res
+    if browser_url is not None:
+        url = browser_url()
     exe = find_browser(browser)
     if exe is None:
         opened = webbrowser.open(url)
