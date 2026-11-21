@@ -4,6 +4,9 @@ $repositoryRoot = Split-Path $PSScriptRoot -Parent
 $appRoot = Join-Path $repositoryRoot 'apps\agora'
 $localBinary = Join-Path $appRoot 'bin\hoard-agora.exe'
 $buildBinary = Join-Path $appRoot 'src-tauri\target\release\hoard-agora.exe'
+if ($env:CARGO_TARGET_DIR) {
+    $buildBinary = Join-Path $env:CARGO_TARGET_DIR 'release\hoard-agora.exe'
+}
 $hubAddress = [Uri]$HubUrl
 if ($hubAddress.Scheme -ne 'http' -or -not $hubAddress.IsLoopback) { throw 'Agora requires the local Hub URL.' }
 if ($Build) {
@@ -13,7 +16,7 @@ if ($Build) {
             & npm.cmd ci --no-audit --no-fund
             if ($LASTEXITCODE -ne 0) { throw 'Could not install app dependencies.' }
         }
-        & npm.cmd run desktop:build
+        & npm.cmd run desktop:build -- -- --locked
         if ($LASTEXITCODE -ne 0) { throw 'Could not build the desktop application.' }
     } finally { Pop-Location }
 }
@@ -26,6 +29,6 @@ if ($Web) {
     Start-Process ($env:AGORA_HUB_URL + '/agora/#hub-session=' + $launch.ticket)
     exit
 }
-$binaryPath = if (Test-Path -LiteralPath $localBinary) { $localBinary } else { $buildBinary }
+$binaryPath = if (-not $Build -and (Test-Path -LiteralPath $localBinary)) { $localBinary } else { $buildBinary }
 if (-not (Test-Path -LiteralPath $binaryPath)) { throw 'Desktop build is missing. Run scripts/start-agora.ps1 -Build, or use -Web.' }
 Start-Process -FilePath $binaryPath -WorkingDirectory $appRoot -WindowStyle Hidden
