@@ -50,7 +50,7 @@ def cx_msg(t: float, role: str, text: str) -> dict:
     return cx(t, "response_item", {"type": "message", "role": role, "content": [{"type": ptype, "text": text}]})
 
 
-def cx_head(t: float, cwd: str = "C:\\Users\\user\\Desktop\\Faustus", prompt: str = "Arregla el bucle del agente") -> list:
+def cx_head(t: float, cwd: str = "C:\\Users\\example-user\\Desktop\\Faustus", prompt: str = "Arregla el bucle del agente") -> list:
     return [cx(t, "session_meta", {"session_id": CODEX_ID, "id": CODEX_ID, "timestamp": iso(t), "cwd": cwd,
                                     "originator": "codex_work_desktop", "cli_version": "0.1"}),
             cx(t, "response_item", {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "rules"}]}),
@@ -95,7 +95,7 @@ CUR_END = {"type": "turn_ended", "status": "success"}
 
 
 def cursor_file(root: Path, lines: list, mtime: float, cid: str = "abc-123") -> Path:
-    return put(root / "c-Users-user-Desktop-Faustus" / "agent-transcripts" / cid / f"{cid}.jsonl", lines, mtime)
+    return put(root / "c-Users-alice-Desktop-Faustus" / "agent-transcripts" / cid / f"{cid}.jsonl", lines, mtime)
 
 
 def cl_user(t: float, text: str) -> dict:

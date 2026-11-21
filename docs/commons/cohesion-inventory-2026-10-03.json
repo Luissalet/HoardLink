@@ -6,7 +6,7 @@
     {
       "id": "argus",
       "name": "Argus's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Argus's Hoard",
+      "folder": "<workspace>/Argus's Hoard",
       "purpose": "Private screen memory: periodic screenshots of the user's own PC, OCR'd and searchable by text, app, window and time, stored only on the machine.",
       "capabilities": [
         "screen-history",
@@ -96,7 +96,7 @@
     {
       "id": "babel",
       "name": "Babel's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Babel's Hoard",
+      "folder": "<workspace>/Babel's Hoard",
       "purpose": "Gives the model the exact, version-installed API signatures and docs for this project instead of its training-data guesses, and can check code it wrote for hallucinated APIs.",
       "capabilities": [
         "api-lookup",
@@ -157,7 +157,7 @@
     {
       "id": "borges",
       "name": "Borges's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Borges's Hoard",
+      "folder": "<workspace>/Borges's Hoard",
       "purpose": "The user's personal library: folders of their own documents, and their own Faustus conversations and the links they saved in Links Hoard, indexed locally so the assistant can answer 'where did I read/write/decide X' with exact page, section and chat-turn citations.",
       "capabilities": [
         "library",
@@ -253,7 +253,7 @@
     {
       "id": "cassandra",
       "name": "Cassandra's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Cassandra's Hoard",
+      "folder": "<workspace>/Cassandra's Hoard",
       "purpose": "Observability for the local AI stack: which local services (the workspace, llama-server, Ollama, ComfyUI, the launcher and every Hoard app) are up, what went down and when, what else changed at that moment, what the logs said, what the GPUs were doing, whether the user's public websites are up (HTTP, TLS certificate, DNS, domain expiry), and opt-in restarts.",
       "capabilities": [
         "service-status",
@@ -341,7 +341,7 @@
     {
       "id": "cicero",
       "name": "Cicero's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Cicero's Hoard",
+      "folder": "<workspace>/Cicero's Hoard",
       "purpose": "A local workspace that turns a brief and source documents into an editable presentation: outline, slides with speaker notes, per-slide review and revisions, themes, and export to PPTX (native text and charts), PDF, HTML and Markdown, for assistants over MCP.",
       "capabilities": [
         "presentation-decks",
@@ -433,7 +433,7 @@
     {
       "id": "cookhoard",
       "name": "CookHoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\CookHoard",
+      "folder": "<workspace>/CookHoard",
       "purpose": "Local cooking assistant for recipes, fridge-aware recommendations, a weekly menu and a unified shopping list. It imports recipes from video links (Instagram, TikTok, YouTube, Facebook) and pasted text into reviewable drafts, keeps a pantry with places and expiry dates, reads supermarket tickets into prices, costs recipes and menus against a weekly budget and warns every morning about food that is about to expire. Everything stays on the computer.",
       "capabilities": [
         "recipes",
@@ -542,7 +542,7 @@
     {
       "id": "daguerre",
       "name": "Daguerre's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Daguerre's Hoard",
+      "folder": "<workspace>/Daguerre's Hoard",
       "purpose": "Lets the assistant search, look at and organize the user's local photo library by content, place and time.",
       "capabilities": [
         "photo search",
@@ -610,7 +610,7 @@
     {
       "id": "diskhoard",
       "name": "DiskHoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Disk Hoard",
+      "folder": "<workspace>/Disk Hoard",
       "purpose": "Measures what fills the user's disks, knows which folders are regenerable junk (caches, node_modules, build output, temp files) and can clean them: to the Recycle Bin, permanently with explicit confirmation, or through a reviewable PowerShell script. It also splits a folder into ZIPs that each stay under a size limit (upload sites with a per-file cap), cutting a file bigger than the limit into raw .zip.001 volumes.",
       "capabilities": [
         "disk-usage",
@@ -671,7 +671,7 @@
     {
       "id": "dorian",
       "name": "Dorian's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Dorian's Hoard",
+      "folder": "<workspace>/Dorian's Hoard",
       "purpose": "Consult the user's reviewed personal context and reflection with source attribution, and submit new information for the user's review through Dorian's Hoard's permissioned MCP server.",
       "capabilities": [
         "personal-context",
@@ -719,7 +719,7 @@
     {
       "id": "echo",
       "name": "Echo's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Echo's Hoard",
+      "folder": "<workspace>/Echo's Hoard",
       "purpose": "Everything the user copies, kept on their own PC, searchable, with frequent copies pinned; the assistant can search the clipboard history and set the clipboard.",
       "capabilities": [
         "clipboard-history",
@@ -787,7 +787,7 @@
     {
       "id": "funes",
       "name": "Funes's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Funes's Hoard",
+      "folder": "<workspace>/Funes's Hoard",
       "purpose": "Gives the assistant a local memory of desktop activity and audio sessions. Records and transcribes meetings and voice notes, searches transcripts, and merges them with screen and clipboard memory in one citable timeline.",
       "capabilities": [
         "activity timeline",
@@ -873,7 +873,7 @@
     {
       "id": "galton",
       "name": "Galton's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Galton's Hoard",
+      "folder": "<workspace>/Galton's Hoard",
       "purpose": "A local test bench for the language and vision models on this computer: it asks each model tasks whose answers can be checked (reasoning, maths, Python with hidden tests, JSON extraction, tool calling, instruction following, long-context retrieval, citations, vision, translation, summaries, Spanish writing, and cases you add), stores every answer with its timing and memory use, compares models with confidence intervals and paired tests, watches for new or changed models and regressions, and publishes a routing table (routes.json) that Hoard Link reads so every app of the family uses the measured best model for each task. GGUF files run on a llama-server of its own on the GPUs you allow, under a lease; running servers and Ollama models are called as they are. Everything stays on the computer.",
       "capabilities": [
         "model-benchmarks",
@@ -961,7 +961,7 @@
     {
       "id": "gepetto",
       "name": "Gepetto's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Gepetto's Hoard",
+      "folder": "<workspace>/Gepetto's Hoard",
       "purpose": "Drive Gepetto's Hoard's 3D projects, analysis and jobs through its REST API.",
       "capabilities": [
         "projects",
@@ -1027,7 +1027,7 @@
     {
       "id": "hoardhub",
       "name": "Hoard Hub",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\HoardLink",
+      "folder": "<workspace>/HoardLink",
       "purpose": "Desktop hub for the family of local apps: lists them with their state, starts and stops their servers, opens them as their own desktop windows, reports which local model servers Hoard Link resolves and arbitrates GPU memory between the apps with a single lease queue.",
       "capabilities": [
         "app-inventory",
@@ -1128,7 +1128,7 @@
     {
       "id": "homehoard",
       "name": "HomeHoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\HomeHoard",
+      "folder": "<workspace>/HomeHoard",
       "purpose": "Inventario doméstico local que guarda la casa en el ordenador: dónde está cada objeto, la ficha de cada aparato (marca, modelo, compra, garantía, recambios, papeles en Kafka's Hoard) y las tareas de mantenimiento con su base legal o recomendación, avisadas a través de Kafka.",
       "capabilities": [
         "household-inventory",
@@ -1224,7 +1224,7 @@
     {
       "id": "hypatia",
       "name": "Hypatia's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Hypatia's Hoard",
+      "folder": "<workspace>/Hypatia's Hoard",
       "purpose": "The user's exam-prep bank (Exam Coach) on their PC: subjects, topics and questions with spaced repetition, quizzes and mock exams in chat, answer grading, and a notebook of their own sources with cited answers, study guides, podcast, mind maps and a Socratic tutor. A teacher role adds classes, exams generated from the teacher's bank and sources with citations and versions, rubrics, batch correction with model proposals the teacher confirms, grades and class analysis (student data stays local). The Exam Coach PWA served by the same app shows and syncs the same data.",
       "capabilities": [
         "exam-prep",
@@ -1337,7 +1337,7 @@
     {
       "id": "jobhunter",
       "name": "Jobhunter's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\JobHunter's Hoard",
+      "folder": "<workspace>/JobHunter's Hoard",
       "purpose": "Track job searches, applications, answers and context through the Jobhunter MCP bridge.",
       "capabilities": [
         "contexts",
@@ -1405,7 +1405,7 @@
     {
       "id": "kafka",
       "name": "Kafka's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Kafka's Hoard",
+      "folder": "<workspace>/Kafka's Hoard",
       "purpose": "A local paperwork keeper: it reads invoices, contracts, insurance policies, receipts and warranties, letters from the tax office, the traffic authority or the town hall, fines, ITV and ID documents from uploads, watched folders and the mail account configured in Faustus (attachments included), extracts who issued them, the amounts and every date that matters, turns those dates into deadlines (payments, renewals, the last day to cancel a renewal, end of warranty, end of a commitment period, deadlines to appeal or pay a fine with discount, expiry of IDs, next ITV) counting Spanish working days where the law does, reminds you before each one (the family hub, Windows toast, ntfy, Telegram, email), shows its deadlines in the family agenda, reads paperwork mail through the hub's mail gateway, links invoices to the matching ledger movement, turns meeting action items into deadlines and prepares a tax-return folder and answers questions with citations to the document and page. It also has a workshop for the files themselves: merge, split, reorder, rotate, compress, password-protect, watermark and describe PDFs, turn photos or Word documents into PDF, render pages as images and shrink PNG, JPEG and WEBP images under a size limit, always into new files. Everything stays on the computer.",
       "capabilities": [
         "paperwork",
@@ -1550,7 +1550,7 @@
     {
       "id": "laplace",
       "name": "Laplace's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Laplace's Hoard",
+      "folder": "<workspace>/Laplace's Hoard",
       "purpose": "Gives the model exact arithmetic, symbolic math, unit conversion, statistics, date arithmetic and read-only SQL over local files, with every computation logged and citable.",
       "capabilities": [
         "arithmetic",
@@ -1606,7 +1606,7 @@
     {
       "id": "ledger",
       "name": "Ledger's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Ledger's Hoard",
+      "folder": "<workspace>/Ledger's Hoard",
       "purpose": "Household money ledger: accounts, categorised entries, monthly budgets, reports, bank CSV imports, and payments and subscriptions read from the mail account connected to Faustus, shared expenses split among people, a month-end balance forecast, income booked from sales, documents of other apps attached to movements, and a place on the family agenda (subscription renewals, trial ends, expected charges, money owed), all stored locally.",
       "capabilities": [
         "accounts",
@@ -1707,7 +1707,7 @@
     {
       "id": "links",
       "name": "Links Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Links Hoard",
+      "folder": "<workspace>/Links Hoard",
       "purpose": "Read-later bookmark library with extracted article text, tags and highlights, stored locally; also downloads the video, audio or photos behind a link (YouTube, X, Instagram, TikTok…) to disk.",
       "capabilities": [
         "bookmarks",
@@ -1805,7 +1805,7 @@
     {
       "id": "lumiere",
       "name": "Lumiere's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Lumiere's Hoard",
+      "folder": "<workspace>/Lumiere's Hoard",
       "purpose": "A local video editor: media library with proxies, a multitrack timeline (cuts, ripple edits, speed and speed curves, nested sequences, shape masks, transitions, titles, picture-in-picture, keyframes, effects, multicam synced by sound), text-based editing on word-level transcripts with speaker separation, automatic tools (silence and filler-word removal, scene cuts, vertical reframing that follows faces, captions, cuts on the beat, highlights of long videos read by the local model, background music picking, b-roll suggestions, loudness matching, stabilization), project templates with slots, edit plans written from plain language, translated subtitles, several formats in one export and frame-exact ffmpeg renders with GPU encoding, for people and for assistants over MCP.",
       "capabilities": [
         "video-editing",
@@ -1942,7 +1942,7 @@
     {
       "id": "mercator",
       "name": "Mercator's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Mercator's Hoard",
+      "folder": "<workspace>/Mercator's Hoard",
       "purpose": "Panel local de WatchHoard y BookHoard, catálogo y ventas de Cults, y calendario de publicación (posts, métricas, mejores horas).",
       "capabilities": [
         "project-metrics",
@@ -2025,7 +2025,7 @@
     {
       "id": "midas",
       "name": "Midas's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Midas's Hoard",
+      "folder": "<workspace>/Midas's Hoard",
       "purpose": "A local market-research lab: frozen, provenance-tagged market snapshots from free providers, falsifiable investment theses with invalidation rules, an honest backtester with sealed holdout and overfitting checks, a number-checked advocate/risk/arbiter committee, and portfolio analysis. Research only: no trading, no advice.",
       "capabilities": [
         "market-data-snapshots",
@@ -2109,7 +2109,7 @@
     {
       "id": "nightingale",
       "name": "Nightingale's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Nightingale's Hoard",
+      "folder": "<workspace>/Nightingale's Hoard",
       "purpose": "The user's own data workbench: ingest files/folders/URLs into a local DuckDB workbench, clean data with versioned steps (undo/redo, lineage, replay), run quality rules, build charts and dashboards, and train quick models — every operation recorded and explained.",
       "capabilities": [
         "ingest",
@@ -2188,7 +2188,7 @@
     {
       "id": "people",
       "name": "People's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\People's Hoard",
+      "folder": "<workspace>/People's Hoard",
       "purpose": "Personal CRM: who people are, what to remember about them, when you last talked and what to follow up on, all stored locally.",
       "capabilities": [
         "people",
@@ -2292,7 +2292,7 @@
     {
       "id": "phileas",
       "name": "Phileas's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Phileas's Hoard",
+      "folder": "<workspace>/Phileas's Hoard",
       "purpose": "A local shipment and trip tracker: reads shipping mail from the inbox configured in Faustus (shops, Amazon, carriers), turns it into shipments, follows each one with its carrier (UPS, Correos, DHL, 17TRACK for the rest) and estimates the arrival day from the carrier's date, the shop's date and promise and your own past parcels, with notifications by Windows toast, the family bus, ntfy, Telegram or email. It also reads travel bookings from the same mail (flights, trains, buses, ferries, car rental, stays), groups them into trips, reminds about online check-in, checks identity-document expiry through Kafka, shares trip expenses with balances and passes a person's share to Ledger, and exports trips to the calendar.",
       "capabilities": [
         "shipment-tracking",
@@ -2407,7 +2407,7 @@
     {
       "id": "platos",
       "name": "Plato's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Plato's Hoard",
+      "folder": "<workspace>/Plato's Hoard",
       "purpose": "Create, edit and export documents through Plato's Hoard's editor API.",
       "capabilities": [
         "documents",
@@ -2453,7 +2453,7 @@
     {
       "id": "prospero",
       "name": "Prospero's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Prospero's Hoard",
+      "folder": "<workspace>/Prospero's Hoard",
       "purpose": "Directs a media studio (ComfyUI, ffmpeg, TTS) to produce consistent characters (model sheets, local LoRA training, portable character packs), photocards, album art, beat-cut music videos as resumable productions and reusable recipes, narrated vertical shorts from a topic or a script (voice-over, word-by-word captions, stock or generated pictures, ducked music), cloned voices, audiobooks and dubbed video.",
       "capabilities": [
         "image generation",
@@ -2571,7 +2571,7 @@
     {
       "id": "pygmalion",
       "name": "Pygmalion's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Pygmalion's Hoard",
+      "folder": "<workspace>/Pygmalion's Hoard",
       "purpose": "A local model tuning and extension studio: it prepares datasets (from files, the family's other apps or synthetic generation with a teacher model), trains LoRA and QLoRA adapters on the allowed GPUs, merges adapters and whole models (linear, slerp, ties, dare), extends the context length with YaRN, converts to GGUF, builds importance matrices, quantizes, measures perplexity, evaluates every result against its baseline through Galton's Hoard, and publishes the winner to Ollama or as a llama.cpp backend for Faustus. Every artifact keeps its lineage and a recipe that can be exported and replayed. All jobs queue on two lanes (gpu and cpu), hold a GPU lease from the hub while they run, can be cancelled and resumed, and everything stays on the computer.",
       "capabilities": [
         "fine-tuning",
@@ -2669,7 +2669,7 @@
     {
       "id": "scheherazade",
       "name": "Scheherazade's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Scheherazade's Hoard",
+      "folder": "<workspace>/Scheherazade's Hoard",
       "purpose": "Keeps a story world's state (entities, facts, threads, dice) outside the model and hands the narrator exactly the slice it needs for the next scene.",
       "capabilities": [
         "storytelling",
@@ -2733,7 +2733,7 @@
     {
       "id": "tantalus",
       "name": "Tantalus's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Tantalus's Hoard",
+      "folder": "<workspace>/Tantalus's Hoard",
       "purpose": "A local product watcher: restocks, price drops, pre-orders and new SKUs at retailers (typed events with a confidence score, revalidation and cooldown), shop-by-shop stock (chains such as Carrefour included) and release days of trading-card products from public stock aggregators, second-hand finds on Wallapop and Facebook Marketplace scored by explainable packs, material news from official pages, feeds and searches, and the sale mails of game stores and book retailers read (read-only) from the Faustus mailbox and matched to wishlists and watchers, plus a mail noise report, with a dashboard of what is new and notifications by Windows toast, the family bus, ntfy, Telegram or email.",
       "capabilities": [
         "restock-watch",
@@ -2875,7 +2875,7 @@
     {
       "id": "vitruvius",
       "name": "Vitruvius's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Vitruvius's Hoard",
+      "folder": "<workspace>/Vitruvius's Hoard",
       "purpose": "A local frontend-design workbench: a criterion library ingested from open design-skill repos, a render-capture-critique loop on real Chromium, a design-system (tokens) generator with a live playground, and a reference gallery of captured websites.",
       "capabilities": [
         "design-criterion-library",
@@ -2972,7 +2972,7 @@
     {
       "id": "vulcan",
       "name": "Vulcan's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Vulcan's Hoard",
+      "folder": "<workspace>/Vulcan's Hoard",
       "purpose": "The user's personal library of 3D-printable models: folders of STL, 3MF and OBJ files scanned locally (dimensions, triangles, watertightness, thumbnails, duplicates) so the assistant can find models and write their marketplace listings. It also sorts a loose folder into one folder per group from a list the user pastes (plan, apply, undo; never deletes or overwrites) and drafts the sheet of every folder in one call.",
       "capabilities": [
         "3d-models",
@@ -3076,7 +3076,7 @@
     {
       "id": "writer",
       "name": "Writer's Hoard",
-      "folder": "C:\\Users\\user\\Desktop\\Proyectos independientes\\Writers hoard desktop",
+      "folder": "<workspace>/Writers hoard desktop",
       "purpose": "Draft, edit and query manuscripts through the Writer's Hoard AI bridge: projects, chapters, notes, outline, search, worldbuilding.",
       "capabilities": [
         "documents",

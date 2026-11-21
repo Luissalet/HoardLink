@@ -16,7 +16,7 @@ import pytest
 from hoard_link import guard
 from tests.commons.jsrun import node
 
-PARENT = "https://spark3.example-tailnet.ts.net"
+PARENT = "https://spark3.example.ts.net"
 HEADERS = {"host": "localhost:5190", "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate",
            "sec-fetch-dest": "iframe", "referer": PARENT + "/studio?dock=darwin"}
 
@@ -187,7 +187,7 @@ def test_node_discovery_nonblocking_cache_and_failure(tmp_path):
     script.write_text("""
 import assert from 'node:assert/strict';
 import {createFaustusOrigins, createGuard} from MODULE;
-const parent = 'https://spark3.example-tailnet.ts.net';
+const parent = 'https://spark3.example.ts.net';
 const origins = createFaustusOrigins({faustusUrls:['https://configured.example:443/path'], hubUrl:HUB, cachePath:CACHE});
 const headers = HEADERS;
 const guard = createGuard({port:5190, faustusOrigins:origins});

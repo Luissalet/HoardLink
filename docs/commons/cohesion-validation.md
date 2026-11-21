@@ -4,6 +4,7 @@
 
 El inventario inicial del día 3 reúne 35 manifiestos: el Hub y 34 aplicaciones.
 El inventario final añade Faustus como raíz explícita y contiene 36 entradas.
+En los dos inventarios, `<workspace>` representa la carpeta común de los repositorios.
 WatchHoard y BookHoard, situados dentro de otras carpetas, se revisaron por sus
 fuentes y documentación y no cuentan como dos manifiestos adicionales. El
 usuario aclaró después que son independientes: quedan fuera del plan de familia.

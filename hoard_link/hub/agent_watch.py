@@ -740,7 +740,7 @@ def _key_of(f: "_File") -> str:
 
 
 def _workspace_from_slug(slug: str) -> str:
-    """``c--Users-user-Desktop-Modelos`` → ``Modelos``: the last part of the slug (a lossy path encoding)."""
+    """``c--Users-alice-Desktop-Modelos`` → ``Modelos``: the last part of the slug (a lossy path encoding)."""
     parts = [p for p in re.split(r"[-]+", slug) if p]
     return parts[-1] if parts else slug
 
