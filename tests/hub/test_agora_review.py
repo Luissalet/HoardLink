@@ -137,6 +137,19 @@ def test_repo_less_delivery_infers_registered_commits_and_leaves_missing_visible
     with pytest.raises(AgoraError, match="--repo-commits") as exc:
         ag.review_diff({"task_id": unreadable["id"]})
     assert exc.value.status == 409
+    assert f"agora update {unreadable['id']} --repo" in str(exc.value)
+
+
+def test_repo_less_delivery_reads_the_matching_checkout_when_names_repeat(ag, tmp_path):
+    demo = tmp_path / "Demo"
+    other = tmp_path / "other" / "Demo"
+    other.mkdir(parents=True)
+    _run(other, "init")
+    ag.registered_repositories = lambda: [{"name": "Demo", "path": root} for root in (other, demo)]
+    ag.repo_lookup = lambda name: other
+    task = _delivered(ag, commits=[ag.first], repo="")
+    [commit] = ag.review_diff({"task_id": task["id"]})["commits"]
+    assert commit["repo"] == "Demo" and commit["sha"] == ag.first and commit["files"]
 
 
 def test_grouped_submit_keeps_other_repository_when_one_is_rebased(ag, tmp_path):
@@ -187,6 +200,12 @@ def test_legacy_diff_infers_repositories_per_commit_and_reports_shared_hash(ag, 
     assert commits[0]["repository_candidates"] == ["Demo", "Other"]
     assert commits[0]["sha"] == ag.first and commits[0]["files"]
     assert commits[1]["repo"] == "Other"
+    primary_task = _delivered(ag, commits=[ag.first, other_ref])
+    legacy = ag.review_diff({"task_id": primary_task["id"]})["commits"]
+    assert [(c["repo"], c["sha"]) for c in legacy] == [("Demo", ag.first), ("Other", other_ref)]
+    ag.repo_roots = lambda name: [demo, other] if name == "Demo" else []
+    legacy = ag.review_diff({"task_id": primary_task["id"]})["commits"]
+    assert [(c["repo"], c["sha"]) for c in legacy] == [("Demo", ag.first), ("Demo", other_ref)]
     ag.task_submit({"agent": "builder", "task_id": task["id"], "summary": "Named",
                     "commits_by_repo": {"Demo": [ag.first], "Other": [other_ref]}})
     assert ag.review_diff({"task_id": task["id"]})["repositories"] == ["Demo", "Other"]

@@ -1985,13 +1985,16 @@ class Agora:
         return res
 
     def _record_edit(self, task, author, before, kind='edit'):
-        keys = ('title', 'body', 'acceptance', 'priority', 'owner', 'kind', 'status', 'labels', 'context')
+        keys = ('title', 'body', 'acceptance', 'priority', 'owner', 'kind', 'status', 'labels', 'context',
+                'repo', 'repositories')
         snapshot = lambda value: {key: value.get(key) for key in keys}
         latest = self.db.one('SELECT MAX(revision) AS n FROM task_edits WHERE task_id=?', (task['id'],))['n']
-        self.db.insert('task_edits', {'task_id': task['id'], 'revision': 0 if latest is None else latest + 1,
+        revision = 0 if latest is None else latest + 1
+        self.db.insert('task_edits', {'task_id': task['id'], 'revision': revision,
             'author': author, 'created': self.clock(), 'kind': kind,
             'before_json': _j(snapshot(before)) if before is not None else None, 'after_json': _j(snapshot(task))})
         agora_threads.index_task(self, task)
+        return revision
 
     @_space_operation
     def task_edit(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -2162,9 +2165,29 @@ class Agora:
 
     @_space_operation
     def task_update(self, a: dict[str, Any]) -> dict[str, Any]:
-        """Progress note, status in_progress/blocked, branch, more paths (with their locks)."""
+        """Update progress, branch, paths, locks or the task's repositories."""
         with self.db.tx():
             agent, task = self._owned(a)
+            revision = None
+            undo_revision = a.get("undo_repository_revision")
+            repo = a.get("repositories", a.get("repo"))
+            primary, repositories = task["repo"], task["repositories"]
+            if repo is not None:
+                repositories = _repositories(repo)
+                primary = repositories[0] if repositories else ""
+            if undo_revision is not None:
+                if type(undo_revision) is not int or undo_revision < 1 or any(k in a for k in ("repo", "repositories")):
+                    raise AgoraError("undo_repository_revision must be a positive integer, used without repo or repositories")
+                edit = self.db.one("SELECT revision, before_json, after_json FROM task_edits WHERE task_id=? "
+                                   "AND kind IN ('repository_update', 'repository_undo') ORDER BY revision DESC LIMIT 1",
+                                   (task["id"],))
+                after = json.loads(edit["after_json"]) if edit else {}
+                if (edit is None or edit["revision"] != undo_revision
+                        or after["repo"] != task["repo"] or after["repositories"] != task["repositories"]):
+                    raise AgoraError("The task's repositories changed. Read its edit history before undoing.", 409,
+                                     error_code="stale_repository_edit")
+                before = json.loads(edit["before_json"])
+                primary, repositories = before["repo"], before["repositories"]
             self._touch(agent)
             status = str(a.get("status") or task["status"]).lower()
             if status not in ("claimed", "in_progress", "blocked", task["status"]):
@@ -2178,14 +2201,16 @@ class Agora:
             fields: dict[str, Any] = {"status": status, "updated": now}
             if a.get("branch") is not None:
                 fields["branch"] = _txt(a.get("branch"), 200, "branch")
-            if a.get("repositories", a.get("repo")) is not None:
-                repositories = _repositories(a.get("repositories", a.get("repo")))
+            if primary != task["repo"] or repositories != task["repositories"]:
                 fields["repositories"] = _j(repositories)
-                fields["repo"] = repositories[0] if repositories else ""
+                fields["repo"] = primary
             if a.get("paths") is not None:
                 fields["paths"] = _j(sorted(set(task["paths"]) | set(_list(a.get("paths"), "paths"))))
             sets = ", ".join(f"{k}=?" for k in fields)
             self.db.execute(f"UPDATE tasks SET {sets} WHERE id=?", (*fields.values(), task["id"]))
+            if "repositories" in fields:
+                kind = "repository_update" if undo_revision is None else "repository_undo"
+                revision = self._record_edit(self._task_row(task["id"]), agent, task, kind)
             note = _txt(a.get("note"), 20000, "note")
             if note:
                 self._msg(int(task["thread_id"]), agent, "comment", note)
@@ -2193,7 +2218,13 @@ class Agora:
                 self._system(task, f"{agent}: {task['status']} → {status}.", agent)
         self._bump("agora.task.status", {"task_id": task["id"], "agent": agent, "status": status})
         self._rearm_dependents(task["id"])
-        return {"ok": True, "task": self._task_row(task["id"])}
+        result = {"ok": True, "task": self._task_row(task["id"])}
+        if revision is not None:
+            result["undo"] = {"tool": "hub_agora_task_update", "arguments": {
+                "agent": agent, "space_id": self.space_id, "task_id": task["id"],
+                "undo_repository_revision": revision,
+            }}
+        return result
 
     def worker_status(self, agent: str, task_ids: list[int], detail: str) -> None:
         """Record a console-observed stop without releasing the worker's task or locks."""
@@ -3574,9 +3605,10 @@ TOOLS: list[dict[str, Any]] = [
                              "force": {"type": "boolean"}}, ["agent", "task_id"])},
     {"name": "hub_agora_task_update",
      "description": "Update your task's status, branch, paths or locks. repo sets a single repository; "
-                    "repositories replaces the whole list (empty clears it).",
+                    "repositories replaces the list (empty clears it). Repository changes return undo arguments.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "note": {"type": "string"}, "status": {"type": "string"},
                              "branch": {"type": "string"}, "repo": {"type": "string"}, "repositories": _STRS,
+                             "undo_repository_revision": {"type": "integer", "minimum": 1},
                              "paths": _STRS, "locks": _STRS, "ttl_s": {"type": "integer"}},
                             ["agent", "task_id"])},
     {"name": "hub_agora_task_submit",

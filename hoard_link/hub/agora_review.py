@@ -239,47 +239,69 @@ def _task_diff(ag: Any, task: dict[str, Any]) -> list[dict[str, Any]]:
         raise _err(f"task {task['id']} lists no commits: submit it with its commit hashes to review the diff", 409)
     names = task["repositories"]
     assigned = {ref: name for name, refs in task["commits_by_repo"].items() for ref in refs}
-    # A legacy single-repository task already tells us where to look.
+    primary_reads = {}
+    other_primary_roots = {}
+    # Older deliveries could name one repository but submit a flat list from several.
     if len(names) == 1 and not assigned:
-        roots = _roots(ag, names[0])
-        return [{**commit_diff(roots, ref), "repo": names[0]} for ref in commits]
+        first, *others = _roots(ag, names[0])
+        primary_reads = {ref: {**commit_diff([first], ref), "repo": names[0]} for ref in commits}
+        other_primary_roots = {str(root): names[0] for root in others}
 
-    unassigned = [ref for ref in commits if ref not in assigned and is_commit_hash(ref)]
+    unassigned = [ref for ref in commits if ref not in assigned and is_commit_hash(ref)
+                  and (not primary_reads or primary_reads[ref].get("error"))]
     matches: dict[str, list[str]] = {}
     roots_by_name: dict[str, list[Path]] = {}
+    registry: dict[str, str] = {}
     if unassigned:
-        if names:
+        if names and not primary_reads:
             roots_by_name = {name: _registered_roots(ag, name) for name in names}
-            entries = [{"name": name, "path": roots[0]} for name, roots in roots_by_name.items() if roots]
+            registry = {str(roots[0]): name for name, roots in roots_by_name.items() if roots}
         else:
-            entries = getattr(ag, "registered_repositories", lambda: [])()
-        matches = repository_commit_index(entries, unassigned)
-
-    def read(name: str, ref: str) -> dict[str, Any]:
-        if name not in roots_by_name:
-            roots_by_name[name] = _registered_roots(ag, name)
-        return {**commit_diff(roots_by_name[name], ref), "repo": name}
+            registry = {str(entry["path"]): entry["name"] for entry in
+                        getattr(ag, "registered_repositories", lambda: [])()}
+            registry.update(other_primary_roots)
+        # Keep the path that matched. Different registered checkouts can have the same folder name.
+        matches = repository_commit_index(({"name": path, "path": path} for path in registry), unassigned)
 
     result = []
     for ref in commits:
-        candidates = [assigned[ref]] if ref in assigned else matches.get(ref, [])
-        if len(candidates) == 1:
-            result.append(read(candidates[0], ref))
+        paths = matches.get(ref, [])
+        if ref in primary_reads and not paths:
+            result.append(primary_reads[ref])
+            continue
+        if ref in primary_reads:
+            # Preserve the declared repository's checkout order when it has the object.
+            preferred = [Path(root) for root in other_primary_roots if root in paths]
+            if preferred:
+                commit = commit_diff(preferred, ref)
+                if not commit.get("error"):
+                    result.append({**commit, "repo": names[0]})
+                    continue
+        if ref in assigned:
+            name = assigned[ref]
+            if name not in roots_by_name:
+                roots_by_name[name] = _registered_roots(ag, name)
+            result.append({**commit_diff(roots_by_name[name], ref), "repo": name})
+            continue
+        if len(paths) == 1:
+            result.append({**commit_diff([Path(paths[0])], ref), "repo": registry[paths[0]]})
             continue
         # A shared commit has the same diff everywhere. An abbreviated hash can instead match different commits.
-        reads = [item for name in candidates if not (item := read(name, ref)).get("error")]
+        reads = [{**item, "repo": registry[path]} for path in paths
+                 if not (item := commit_diff([Path(path)], ref)).get("error")]
         if reads and len({item["sha"] for item in reads}) == 1:
-            result.append({**reads[0], "repository_candidates": [item["repo"] for item in reads]})
+            result.append({**reads[0], "repository_candidates": list(dict.fromkeys(item["repo"] for item in reads))})
             continue
         error = ("hash matches different commits; submit the full hash and its repository" if reads else
                  "no registered checkout has this commit")
         result.append({"sha": ref, "short": ref[:10], "repo": None, "error": error,
-                       "repository_candidates": candidates})
-    if all(item.get("error") for item in result):
+                       "repository_candidates": list(dict.fromkeys(registry[path] for path in paths))})
+    if not primary_reads and all(item.get("error") for item in result):
         hashes = ", ".join(item["short"] for item in result)
         raise _err(f"No commit can be resolved for task {task['id']} ({hashes}). "
-                   "Make the commits available in a registered repository and submit with commits_by_repo "
-                   "or --repo-commits to identify it.", 409, error_code="delivery_repository_unresolved",
+                   "Make the full hashes available in a registered checkout. Set the task's repository with "
+                   f"agora update {task['id']} --repo REPOSITORY, or submit with --repo-commits (commits_by_repo in MCP) "
+                   "to identify the repositories per commit.", 409, error_code="delivery_repository_unresolved",
                    commits=result)
     return result
 
