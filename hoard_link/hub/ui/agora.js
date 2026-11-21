@@ -83,6 +83,13 @@
     kind_proposal: { es: "Propuesta", en: "Proposal" }, kind_agree: { es: "De acuerdo", en: "Agree" }, kind_disagree: { es: "En desacuerdo", en: "Disagree" },
     filter_open: { es: "Abiertas", en: "Open" }, filter_all: { es: "Todas", en: "All" }, filter_resolved: { es: "Resueltas", en: "Resolved" },
     resolution: { es: "Resolución", en: "Resolution" }, stances: { es: "Posturas", en: "Stances" },
+    decision_withdrawn: { es: "Decisión retirada", en: "Decision withdrawn" },
+    decision_history: { es: "Historial de la decisión", en: "Decision history" },
+    decision_recorded: { es: "Decisión apuntada", en: "Decision recorded" },
+    decision_amended: { es: "Decisión enmendada", en: "Decision amended" },
+    decision_undo: { es: "Cambio deshecho", en: "Change undone" },
+    history_before: { es: "Anterior", en: "Before" },
+    history_after: { es: "Después", en: "After" },
     k_debate: { es: "debate", en: "debate" }, k_question: { es: "pregunta", en: "question" }, k_decision: { es: "decisión", en: "decision" },
     k_review: { es: "revisión", en: "review" }, k_handoff: { es: "relevo", en: "handoff" }, k_note: { es: "nota", en: "note" }, k_task: { es: "tarea", en: "task" },
     submission: { es: "entrega", en: "submission" },
@@ -546,10 +553,26 @@
     for (const d of list) {
       const x = el("div", "ag-dec");
       x.appendChild(el("b", "", d.title));
-      x.appendChild(el("span", "", d.resolution));
+      x.appendChild(el("span", "", d.withdrawn ? t("decision_withdrawn") : d.resolution));
       x.appendChild(el("small", "", `${d.resolved_by || ""} · ${fmtWhen(d.updated)}`));
       x.style.cursor = "pointer"; activatable(x, () => openThread(d.id), d.title);
       decisionsBox.appendChild(x);
+      if (d.history?.length) {
+        const history = el("details", "ag-dec");
+        history.appendChild(el("summary", "", t("decision_history")));
+        const labels = {recorded: "decision_recorded", amend: "decision_amended",
+          withdraw: "decision_withdrawn", undo: "decision_undo"};
+        for (const change of [...d.history].reverse()) {
+          const row = el("div", "ag-msg");
+          row.appendChild(el("b", "", t(labels[change.action])));
+          row.appendChild(el("small", "", `${change.author} · ${fmtWhen(change.created)}`));
+          for (const [key, value] of [["history_before", change.before_text], ["history_after", change.after_text]]) {
+            if (value != null) row.appendChild(el("p", "ag-body", `${t(key)}: ${value}`));
+          }
+          history.appendChild(row);
+        }
+        decisionsBox.appendChild(history);
+      }
     }
   }
 
@@ -918,7 +941,8 @@
     if (r.stances && Object.keys(r.stances).length) {
       detailBox.appendChild(el("div", "hint", `${t("stances")}: ` + Object.entries(r.stances).map(([k, v]) => `${k} ${MK[v] || ""}`).join(" · ")));
     }
-    if (thread.resolution) detailBox.appendChild(el("div", "ag-dec", `${t("resolution")}: ${thread.resolution}`));
+    if (thread.withdrawn) detailBox.appendChild(el("div", "ag-dec", t("decision_withdrawn")));
+    else if (thread.resolution) detailBox.appendChild(el("div", "ag-dec", `${t("resolution")}: ${thread.resolution}`));
     const msgs = el("div", "ag-msgs");
     const seen = detailBox.dataset.seen ? Number(detailBox.dataset.seen) : null;
     if (r.timeline && task) {

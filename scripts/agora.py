@@ -760,6 +760,14 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("resolve"); s.add_argument("thread", type=int); texts(s, "text")
     s = sub.add_parser("escalate"); s.add_argument("thread", type=int); texts(s, "question")
     s = sub.add_parser("reopen"); s.add_argument("thread", type=int); s.add_argument("--reason", required=True)
+    s = sub.add_parser("retitle", help="cambia el título de un hilo con historial y deshacer")
+    s.add_argument("thread", type=int); texts(s, "title")
+    s = sub.add_parser("amend", help="enmenda una decisión apuntada")
+    s.add_argument("thread", type=int); texts(s, "text")
+    s = sub.add_parser("withdraw", help="retira una decisión apuntada")
+    s.add_argument("thread", type=int)
+    s = sub.add_parser("undo", help="deshace un cambio de título o decisión con su token")
+    s.add_argument("thread", type=int); s.add_argument("--token", required=True)
     s = sub.add_parser("handover", help="traspasa las tareas (bloqueos y revisiones) de un agente caido a su relevo")
     s.add_argument("--from", dest="from_agent", required=True, help="agente que ya no responde")
     s.add_argument("--to", dest="to_agent", required=True, help="agente que retoma el trabajo (con latido reciente)")
@@ -817,7 +825,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("ack"); s.add_argument("thread", type=int, nargs="?"); s.add_argument("--all", action="store_true")
     s = sub.add_parser("digest"); s.add_argument("--hours", type=float, default=12)
     s = sub.add_parser("tasks"); s.add_argument("--status"); s.add_argument("--owner"); s.add_argument("--repo")
-    sub.add_parser("decisions")
+    s = sub.add_parser("decisions"); s.add_argument("--history", action="store_true")
     s = sub.add_parser("orphans", help="trabajo que nadie mueve (revisor o dueño callado o sin cuota) y quién puede cogerlo")
     s.add_argument("--sweep", action="store_true", help="anunciarlas ya en los hilos (cada hallazgo una sola vez)")
     sub.add_parser("watch", help="estado real de cada agente según su transcripción, preguntas pendientes y sesiones sin asignar")
@@ -1148,6 +1156,17 @@ def main(argv: list[str] | None = None) -> int:
         r = call("GET", "/api/agora/search?" + urllib.parse.urlencode({"q": a.q, "limit": a.limit, **({"all_spaces": "1"} if a.all else {})}))
     elif c == "resolve":
         r = call("POST", "/api/agora/resolve", {"agent": ag, "thread_id": a.thread, "resolution": text_arg(a, "text") or ""})
+    elif c in ("retitle", "amend", "withdraw", "undo"):
+        op = {"retitle": "thread_retitle", "amend": "decision_amend", "withdraw": "decision_withdraw",
+              "undo": "decision_history_undo"}[c]
+        args = {"agent": ag, "thread_id": a.thread}
+        if c == "retitle":
+            args["title"] = text_arg(a, "title") or ""
+        elif c == "amend":
+            args["resolution"] = text_arg(a, "text") or ""
+        elif c == "undo":
+            args["undo_token"] = a.token
+        r = call("POST", f"/api/agora/{op}", args)
     elif c == "escalate":
         r = call("POST", "/api/agora/escalate", {"agent": ag, "thread_id": a.thread, "question": text_arg(a, "question") or ""})
     elif c == "reopen":
@@ -1348,8 +1367,16 @@ def main(argv: list[str] | None = None) -> int:
         if not r.get("findings"):
             print("Sin trabajo huérfano.")
     elif c == "decisions":
+        history_labels = {"recorded": "apuntada", "amend": "enmendada", "withdraw": "retirada", "undo": "deshecha"}
         for d in r.get("decisions", []):
-            print(f"{d['id']:<4} {when(d['updated'])} {d['title']}\n     → {d['resolution']} ({d.get('resolved_by')})")
+            current = "Decisión retirada" if d.get("withdrawn") else d["resolution"]
+            print(f"{d['id']:<4} {when(d['updated'])} {d['title']}\n     → {current} ({d.get('resolved_by')})")
+            if a.history:
+                for event in d.get("history", []):
+                    print(f"       {when(event['created'])} · {event['author']} · {history_labels[event['action']]}")
+                    for label, field in (("Anterior", "before_text"), ("Después", "after_text")):
+                        if event[field] is not None:
+                            print(f"         {label}\n{event[field]}")
     elif c == "locks" and "free" in r:
         print("libre" if r["free"] else "ocupado por " + ", ".join(f"{x['owner']} ({x['resource']})" for x in r["held_by"]))
     elif c == "locks":
@@ -1364,6 +1391,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ok · {'tarea #' if 'priority' in brief else 'hilo '}{brief['id']} [{brief.get('status')}] {brief.get('title')}")
         else:
             print("ok · " + json.dumps(brief, ensure_ascii=False))
+        if c in ("retitle", "amend", "withdraw") and r.get("undo_token"):
+            print(f"  Deshacer: undo {a.thread} --token {r['undo_token']}")
         if c == "escalate" and r.get("asked"):      # by rank, a question may go to another agent before the person
             print("  la pregunta ha ido a: " + ", ".join(r["asked"]) + ("" if r.get("reached_person") else " (por rango; llega a la persona si la suben)"))
         if r.get("stays_resolved"):
