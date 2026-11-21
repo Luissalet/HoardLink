@@ -99,7 +99,7 @@ def catalogue() -> list[dict[str, Any]]:
         },
         {
             "name": "hub_start_app",
-            "description": "Start an app and wait for readiness. An isolated Hub starts a headless copy on private data. "
+            "description": "Start an app and wait; headless in isolated Hubs. "
                            "Keywords: start, launch, arrancar, iniciar, encender.",
             "inputSchema": {"type": "object", "properties": {"app": _APP_ID, "wait": {"type": "boolean", "default": True}},
                             "required": ["app"], "additionalProperties": False},
@@ -116,7 +116,7 @@ def catalogue() -> list[dict[str, Any]]:
         },
         {
             "name": "hub_open_app",
-            "description": "Open an app, starting it if needed. An isolated Hub returns the URL for a headless browser. "
+            "description": "Open an app, starting it if needed; isolated Hubs return its URL. "
                            "Keywords: abrir, ventana.",
             "inputSchema": {"type": "object", "properties": {"app": _APP_ID,
                                                             "mode": {"type": "string", "enum": ["window", "browser"], "default": "window"},
