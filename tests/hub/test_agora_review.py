@@ -124,6 +124,74 @@ def test_diff_needs_commits_a_repo_and_a_readable_commit(ag):
     assert unknown.value.status == 404
 
 
+def test_repo_less_delivery_infers_registered_commits_and_leaves_missing_visible(ag, tmp_path):
+    ag.registered_repositories = lambda: [{"name": "Demo", "path": str(tmp_path / "Demo")}]
+    missing = "0123456789abcdef0123456789abcdef01234567"
+    task = _delivered(ag, commits=[ag.first, missing], repo="")
+    out = ag.review_diff({"task_id": task["id"], "summary_only": True})
+    assert out["repositories"] == ["Demo"]
+    assert out["commits"][0]["repo"] == "Demo"
+    assert out["commits"][0]["files"][0]["hunks"] == []
+    assert out["commits"][1]["error"]
+    unreadable = _delivered(ag, commits=[missing], repo="")
+    with pytest.raises(AgoraError, match="--repo-commits") as exc:
+        ag.review_diff({"task_id": unreadable["id"]})
+    assert exc.value.status == 409
+
+
+def test_grouped_submit_keeps_other_repository_when_one_is_rebased(ag, tmp_path):
+    demo = tmp_path / "Demo"
+    other = tmp_path / "Other"
+    other.mkdir()
+    _run(other, "init")
+    _run(other, "config", "user.email", "t@example.com")
+    _run(other, "config", "user.name", "t")
+    (other / "other.txt").write_text("from another repository\n", encoding="utf-8")
+    _run(other, "add", ".")
+    _run(other, "commit", "-m", "Other delivery")
+    other_ref = _run(other, "rev-parse", "HEAD")
+    ag.repo_lookup = {"Demo": demo, "Other": other}.get
+    task = ag.task_add({"agent": "builder", "title": "Cross-repo", "repo": "Demo", "claim": True})["task"]
+    args = {"agent": "builder", "task_id": task["id"]}
+    task = ag.task_update({**args, "repositories": ["Demo", "Other", "demo"]})["task"]
+    assert task["repo"] == "Demo" and task["repositories"] == ["Demo", "Other"]
+    r1 = ag.task_submit({**args, "summary": "First", "commits_by_repo": {
+        "Demo": [ag.second], "Other": [other_ref]}})["task"]
+    _run(demo, "commit", "--amend", "-m", "Rewritten delivery")
+    new_ref = _run(demo, "rev-parse", "HEAD")
+    r2 = ag.task_submit({**args, "summary": "Second", "commits_by_repo": {"Demo": [new_ref]}})["task"]
+    assert r1["submission_revision"] == 1 and r2["submission_revision"] == 2
+    assert r2["commits"] == [new_ref, other_ref]
+    assert r2["commits_by_repo"] == {"Demo": [new_ref], "Other": [other_ref]}
+    diff = ag.review_diff(args)
+    assert [(c["repo"], c["sha"]) for c in diff["commits"]] == [("Demo", new_ref), ("Other", other_ref)]
+    assert diff["commits"][1]["files"][0]["hunks"][0]["lines"][0]["text"] == "from another repository"
+    with pytest.raises(AgoraError, match="either commits"):
+        ag.task_submit({**args, "summary": "Invalid", "commits": [new_ref], "commits_by_repo": {"Other": [other_ref]}})
+    assert ag.task(args)["task"]["submission_revision"] == 2
+
+
+def test_legacy_diff_infers_repositories_per_commit_and_reports_shared_hash(ag, tmp_path):
+    demo = tmp_path / "Demo"
+    other = tmp_path / "Other"
+    _run(tmp_path, "clone", str(demo), str(other))
+    _run(other, "config", "user.email", "t@example.com")
+    _run(other, "config", "user.name", "t")
+    _run(other, "commit", "--allow-empty", "-m", "Only in the second repository")
+    other_ref = _run(other, "rev-parse", "HEAD")
+    ag.repo_lookup = {"Demo": demo, "Other": other}.get
+    ag.registered_repositories = lambda: [{"name": name, "path": path} for name, path in
+                                          (("Demo", demo), ("Other", other))]
+    task = _delivered(ag, commits=[ag.first, other_ref], repo="")
+    commits = ag.review_diff({"task_id": task["id"]})["commits"]
+    assert commits[0]["repository_candidates"] == ["Demo", "Other"]
+    assert commits[0]["sha"] == ag.first and commits[0]["files"]
+    assert commits[1]["repo"] == "Other"
+    ag.task_submit({"agent": "builder", "task_id": task["id"], "summary": "Named",
+                    "commits_by_repo": {"Demo": [ag.first], "Other": [other_ref]}})
+    assert ag.review_diff({"task_id": task["id"]})["repositories"] == ["Demo", "Other"]
+
+
 def test_comments_reach_the_owner_as_one_message(ag):
     task = _delivered(ag)
     revision = task["submission_revision"]

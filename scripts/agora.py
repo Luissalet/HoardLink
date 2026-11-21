@@ -404,7 +404,10 @@ def print_conversation(r: dict) -> None:
     th = r.get("thread") or {}
     if head:
         print(f"#{head['id']} [{head['status']}] {head['title']} — owner {head.get('owner') or '-'}, revisor "
-              f"{head.get('reviewer') or '-'}, repo {head.get('repo') or '-'}, rutas {', '.join(head.get('paths') or []) or '-'}")
+              f"{head.get('reviewer') or '-'}, repo {', '.join(head.get('repositories') or []) or head.get('repo') or '-'}, "
+              f"rutas {', '.join(head.get('paths') or []) or '-'}")
+        for name, hashes in (head.get("commits_by_repo") or {}).items():
+            print(f"  {name}: {', '.join(hashes)}")
         if head.get("branch") or head.get("commits"):
             print(f"  rama {head.get('branch') or '-'} · commits {', '.join(head.get('commits') or []) or '-'}")
         print(f"  entrega r{head.get('submission_revision', 0)} · revisión votada {head.get('reviewed_submission_revision') or '-'}")
@@ -603,11 +606,14 @@ def print_review(r: dict, cmd: str) -> None:
     print(f"ok · tarea #{r['task_id']} {r.get('title', '')} · entrega r{r['submission_revision']} · "
           f"{len(r.get('comments') or [])} comentario(s)")
     for c in r.get("commits") or []:
+        repositories = c.get("repository_candidates") or ([c["repo"]] if c.get("repo") else [])
+        prefix = f"{' / '.join(repositories)} · " if repositories else ""
         if c.get("error"):
-            print(f"  {c['short']}: {c['error']}")
+            print(f"  {prefix}{c['short']}: {c['error']}")
             continue
         st = c.get("stats") or {}
-        print(f"  {c['short']} {c.get('subject', '')} · {st.get('files', 0)} fichero(s) +{st.get('additions', 0)} -{st.get('deletions', 0)}")
+        print(f"  {prefix}{c['short']} {c.get('subject', '')} · "
+              f"{st.get('files', 0)} fichero(s) +{st.get('additions', 0)} -{st.get('deletions', 0)}")
         for f in c.get("files") or []:
             print(f"    [{f['status']}] {f['path']} +{f['additions']} -{f['deletions']}{' (binario)' if f['binary'] else ''}")
             for h in f.get("hunks") or []:
@@ -725,7 +731,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("task", type=int); s.add_argument("--idle-after", type=int)
     s = sub.add_parser("timeline", help="cronología de tarea con mensajes, cambios y checkpoints")
     s.add_argument("task", type=int); s.add_argument("--after", type=int, default=0); s.add_argument("--limit", type=int, default=100)
-    s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--repo"); s.add_argument("--paths", action="append")
+    s = sub.add_parser("add"); s.add_argument("title"); texts(s, "body"); s.add_argument("--paths", action="append")
+    s.add_argument("--repo", action="append", help="repositorio; repítelo para añadir varios")
     s.add_argument("--kind", default="feature"); s.add_argument("--prio", type=int, default=2); s.add_argument("--claim", action="store_true")
     s.add_argument("--lock", action="append"); s.add_argument("--mention", action="append")
     s.add_argument("--blocked-by", action="append", help="ids de las tareas a las que espera (12,13 o repetido)")
@@ -734,8 +741,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--set", action="append")
     s = sub.add_parser("claim"); s.add_argument("task", type=int); s.add_argument("--lock", action="append"); s.add_argument("--ttl", type=int); s.add_argument("--force", action="store_true")
     s = sub.add_parser("update"); s.add_argument("task", type=int); texts(s, "note"); s.add_argument("--status"); s.add_argument("--branch")
+    s.add_argument("--repo", action="append", help="sustituye los repositorios; repetible, vacío para quitarlos")
     s.add_argument("--paths", action="append"); s.add_argument("--lock", action="append")
     s = sub.add_parser("submit"); s.add_argument("task", type=int); texts(s, "summary"); s.add_argument("--commits", action="append"); s.add_argument("--branch"); s.add_argument("--reviewer")
+    s.add_argument("--repo-commits", action="append", metavar="REPO=HASH,HASH",
+                   help="sustituye los hashes de ese repositorio; repetible, REPO= para quitar el grupo")
     s.add_argument("--blocks-file", help="JSON UTF-8 list of structured review blocks (what_why, paths, code_peek, flow, sequence)")
     s = sub.add_parser("review"); s.add_argument("task", type=int); s.add_argument("verdict", choices=["approve", "changes"]); s.add_argument("--revision", type=int, required=True, help="submission_revision you inspected before reviewing; not the latest revision fetched automatically"); texts(s, "body")
     s.add_argument("--block-comments-file", help="JSON UTF-8 list of {block_id, body} notes on structured blocks")
@@ -950,7 +960,8 @@ def main(argv: list[str] | None = None) -> int:
                   **({"renew_resources": [] if a.no_renew_locks else a.renew_resource}
                      if a.no_renew_locks or a.renew_resource is not None else {})})
     elif c == "add":
-        r = call("POST", "/api/agora/task_add", {"agent": ag, "title": a.title, "body": text_arg(a, "body") or "", "repo": a.repo or "",
+        r = call("POST", "/api/agora/task_add", {"agent": ag, "title": a.title, "body": text_arg(a, "body") or "",
+                                                 "repositories": a.repo or [],
                                                  "paths": csv(a.paths), "kind": a.kind, "priority": a.prio, "claim": a.claim,
                                                  "locks": csv(a.lock), "mentions": csv(a.mention),
                                                  "blocked_by": [x.lstrip("#") for x in csv(a.blocked_by)]})
@@ -969,12 +980,24 @@ def main(argv: list[str] | None = None) -> int:
             body["status"] = a.status
         if a.branch:
             body["branch"] = a.branch
+        if a.repo is not None:
+            body["repositories"] = a.repo
         if a.paths:
             body["paths"] = csv(a.paths)
         r = call("POST", "/api/agora/task_update", body)
     elif c == "submit":
         body = {"agent": ag, "task_id": a.task, "summary": text_arg(a, "summary") or "",
                 "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer}
+        if a.repo_commits:
+            if a.commits:
+                p.error("usa --commits o --repo-commits")
+            by_repo = {}
+            for group in a.repo_commits:
+                repo, sep, refs = group.partition("=")
+                if not sep or not repo.strip():
+                    p.error("--repo-commits necesita REPO=HASH,HASH")
+                by_repo.setdefault(repo.strip(), []).extend(csv([refs]))
+            body["commits_by_repo"] = by_repo
         if getattr(a, "blocks_file", None):
             try:
                 raw = sys.stdin.read() if a.blocks_file == "-" else Path(a.blocks_file).read_text(encoding="utf-8-sig")

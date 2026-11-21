@@ -236,6 +236,10 @@ CREATE TABLE integration_closure_undo (
     token TEXT NOT NULL UNIQUE, snapshot TEXT NOT NULL
 );
 """)
+MIGRATIONS.append("""
+ALTER TABLE tasks ADD COLUMN repositories TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE tasks ADD COLUMN commits_by_repo TEXT NOT NULL DEFAULT '{}';
+""")
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -402,6 +406,40 @@ def _list(value: Any, field: str, limit: int = 50) -> list[str]:
     if not isinstance(value, list) or len(value) > limit:
         raise AgoraError(f"{field} must be a list (at most {limit})")
     return [str(v).strip() for v in value if str(v).strip()]
+
+
+def _repositories(value: Any) -> list[str]:
+    names = _list(value, "repositories") if isinstance(value, list) else [_txt(value, 120, "repo")]
+    distinct: dict[str, str] = {}
+    for name in names:
+        if name:
+            _txt(name, 120, "repository")
+            distinct.setdefault(name.casefold(), name)
+    return list(distinct.values())
+
+
+def _submission_commits(a: dict[str, Any], task: dict[str, Any]) -> tuple[list[str], dict[str, list[str]]]:
+    flat = _list(a.get("commits"), "commits")
+    raw = a.get("commits_by_repo")
+    if raw is None:
+        return (flat, {}) if flat else (task["commits"], task["commits_by_repo"])
+    if flat or not isinstance(raw, dict) or not raw:
+        raise AgoraError("send either commits or a nonempty commits_by_repo object")
+    groups = {name.casefold(): (name, refs) for name, refs in task["commits_by_repo"].items()}
+    for key, refs in raw.items():
+        name = _txt(key, 120, "repository", required=True)
+        if not isinstance(refs, list) or len(refs) > 50 or any(
+                not isinstance(ref, str) or not agora_review.is_commit_hash(ref) for ref in refs):
+            raise AgoraError(f"commits_by_repo[{name!r}] must be an array of commit hashes")
+        if refs:
+            groups[name.casefold()] = (name, [ref.lower() for ref in refs])
+        else:
+            groups.pop(name.casefold(), None)
+    by_repo = dict(groups.values())
+    commits = [ref for refs in by_repo.values() for ref in refs]
+    if not commits or len(commits) > agora_review.MAX_COMMITS or len(set(commits)) != len(commits):
+        raise AgoraError(f"commits_by_repo must contain 1 to {agora_review.MAX_COMMITS} distinct commit hashes")
+    return commits, by_repo
 
 
 # Optional test hook run inside ``_git_show`` (e.g. concurrent writes while verify is slow).
@@ -969,6 +1007,8 @@ class Agora:
         d['context'] = json.loads(d.get('context') or '{}')
         d["paths"] = _l(d.get("paths"))
         d["commits"] = _l(d.get("commits"))
+        d["repositories"] = _l(d.get("repositories")) or _repositories(d.get("repo"))
+        d["commits_by_repo"] = json.loads(d.get("commits_by_repo") or "{}") or {}
         d["reviewed_commits"] = _l(d.get("reviewed_commits"))
         d["reviewed"] = bool(d.get("reviewed"))
         d.setdefault("review_state", None)
@@ -1898,7 +1938,8 @@ class Agora:
                     raise ValueError('Expected object')
             except (TypeError, ValueError):
                 raise AgoraError('origin_snapshot must be a JSON object') from None
-        repo = _txt(a.get("repo"), 120, "repo")
+        repositories = _repositories(a.get("repositories", a.get("repo")))
+        repo = repositories[0] if repositories else ""
         blocked_by = self._dep_ids(a.get("blocked_by"), "blocked_by")
         blocks = self._dep_ids(a.get('blocks'), 'blocks')
         now = self.clock()
@@ -1912,7 +1953,9 @@ class Agora:
             imported_status = a.get('origin_status', 'open') if origin else 'open'
             if imported_status not in ('open', 'in_progress', 'blocked', 'done', 'dropped'):
                 raise AgoraError('Invalid imported task status')
-            tid = self.db.insert("tasks", {"title": title, "body": body, "repo": repo, "paths": _j(paths), "kind": kind,
+            tid = self.db.insert("tasks", {"title": title, "body": body,
+                                           "repo": repo, "repositories": _j(repositories),
+                                           "paths": _j(paths), "kind": kind,
                                            "priority": priority, "status": imported_status, "created_by": agent,
                                            "created": now, "updated": now, "space_id": self.space_id,
                                            'acceptance': _txt(a.get('acceptance'), 200000, 'acceptance'), 'origin_ref': origin,
@@ -2133,6 +2176,10 @@ class Agora:
             fields: dict[str, Any] = {"status": status, "updated": now}
             if a.get("branch") is not None:
                 fields["branch"] = _txt(a.get("branch"), 200, "branch")
+            if a.get("repositories", a.get("repo")) is not None:
+                repositories = _repositories(a.get("repositories", a.get("repo")))
+                fields["repositories"] = _j(repositories)
+                fields["repo"] = repositories[0] if repositories else ""
             if a.get("paths") is not None:
                 fields["paths"] = _j(sorted(set(task["paths"]) | set(_list(a.get("paths"), "paths"))))
             sets = ", ".join(f"{k}=?" for k in fields)
@@ -2176,12 +2223,13 @@ class Agora:
             reviewer = str(a.get("reviewer") or "").strip().lower() or None
             if reviewer == agent:
                 raise AgoraError("the reviewer must be someone else")
-            commits = _list(a.get("commits"), "commits") or list(task["commits"] or [])
+            commits, commits_by_repo = _submission_commits(a, task)
             snap = {
                 "id": int(task["id"]), "owner": agent, "status": task["status"],
                 "submission_revision": int(task.get("submission_revision") or 0),
                 "repo": str(task.get("repo") or ""), "thread_id": int(task["thread_id"]),
-                "commits": commits, "branch": a.get("branch"), "reviewer": reviewer,
+                "commits": commits, "commits_by_repo": commits_by_repo,
+                "repositories": task["repositories"], "branch": a.get("branch"), "reviewer": reviewer,
             }
         # Phase 2: verify peeks without holding the database write lock.
         from .integration import enforce_submission
@@ -2204,20 +2252,25 @@ class Agora:
                                  error_code="submit_conflict",
                                  current_revision=task["submission_revision"],
                                  current_commits=task["commits"])
+            if task["repositories"] != snap["repositories"]:
+                raise AgoraError("task repositories changed during submission", 409, error_code="submit_conflict")
             stale_note = self._require_fresh(agent, task, a, "submit")
             now = self.clock()
             # A new submission asks for a new verdict: an approval given to earlier commits does not carry over.
             self.db.execute(
                 "UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
-                "repo=COALESCE(NULLIF(?, ''), repo), "
+                "repo=COALESCE(NULLIF(?, ''), repo), commits_by_repo=?, "
                 "submission_blocks=?, submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL, "
                 "reviewed_submission_revision=NULL, submission_revision=submission_revision+1 WHERE id=?",
-                (snap["reviewer"], snap["branch"], _j(snap["commits"] or task["commits"]), snap["repo"],
+                (snap["reviewer"], snap["branch"], _j(snap["commits"]), snap["repo"],
+                 json.dumps(snap["commits_by_repo"], ensure_ascii=False),
                  json.dumps(blocks, ensure_ascii=False) if blocks is not None else None,
                  now, now, task["id"]))
             task = self._task_row(task["id"])
             revision = task["submission_revision"]
             details = f"\n\nSubmission revision: {revision}\nCommits: {', '.join(task['commits']) or '(none)'}"
+            for name, hashes in commits_by_repo.items():
+                details += f"\n{name}: {', '.join(hashes)}"
             if blocks:
                 details += _format_blocks_for_message(blocks)
             if stale_note:
@@ -3460,15 +3513,15 @@ TOOLS: list[dict[str, Any]] = [
                                             "maxItems": 100},
                              "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, ["agent"])},
     {"name": "hub_agora_task_add",
-     "description": "Propose a task (kind feature|bug|research|review|chore|eval|docs, priority 0 urgent..3 someday, "
-                    "repo and paths it touches). blocked_by lists task ids it waits for. claim=true also claims it.",
+     "description": "Propose a task with one repo or a repositories array, and the paths it touches. "
+                    "The first repository is primary. blocked_by lists task IDs it waits for; claim=true claims it.",
      "inputSchema": _schema({"agent": _A, "title": {"type": "string"}, "body": {"type": "string"},
                              "acceptance": {"type": "string"}, "origin_ref": {"type": "string"},
                              "owner": {"type": ["string", "null"]}, "note": {"type": "string"},
                              "labels": _STRS, "context": {"type": "object"},
                              "origin_snapshot": {"type": "string", "description": "Lossless original record when migrating existing project work."},
                              "origin_status": {"type": "string", "enum": ["open", "in_progress", "blocked", "done", "dropped"]},
-                             "repo": {"type": "string"}, "paths": _STRS, "kind": {"type": "string"},
+                             "repo": {"type": "string"}, "repositories": _STRS, "paths": _STRS, "kind": {"type": "string"},
                              "priority": {"type": "integer"}, "mentions": _STRS, "claim": {"type": "boolean"},
                              "blocked_by": {"type": "array", "items": {"type": "integer"}},
                              "blocks": {"type": "array", "items": {"type": "integer"}},
@@ -3492,17 +3545,22 @@ TOOLS: list[dict[str, Any]] = [
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "locks": _STRS, "ttl_s": {"type": "integer"},
                              "force": {"type": "boolean"}}, ["agent", "task_id"])},
     {"name": "hub_agora_task_update",
-     "description": "Progress on your task: note, status in_progress|blocked, branch, more paths and locks.",
+     "description": "Update your task's status, branch, paths or locks. repo sets a single repository; "
+                    "repositories replaces the whole list (empty clears it).",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "note": {"type": "string"}, "status": {"type": "string"},
-                             "branch": {"type": "string"}, "paths": _STRS, "locks": _STRS, "ttl_s": {"type": "integer"}},
+                             "branch": {"type": "string"}, "repo": {"type": "string"}, "repositories": _STRS,
+                             "paths": _STRS, "locks": _STRS, "ttl_s": {"type": "integer"}},
                             ["agent", "task_id"])},
     {"name": "hub_agora_task_submit",
      "description": "Ask for review of your task before integrating it: summary of what changed, how it was "
-                    "verified, branch/commits; optionally name the reviewer. Optional blocks: structured review "
+                    "verified, branch/commits; optionally name the reviewer. Use commits_by_repo instead of commits "
+                    "to replace the hashes of named repositories and keep other groups. An empty group removes it. "
+                    "Optional blocks: structured review "
                     "(what_why, paths, code_peek with path#Lx-Ly@commit verified against the task repo or an "
                     "identity-checked absolute checkout for isolated clones, flow, sequence). Block ids must be unique.",
      "inputSchema": _schema({"agent": _A, "task_id": _TASK, "summary": {"type": "string"}, "branch": {"type": "string"},
-                             "commits": _STRS, "reviewer": {"type": "string"},
+                             "commits": _STRS, "commits_by_repo": {"type": "object", "additionalProperties": _STRS},
+                             "reviewer": {"type": "string"},
                              "blocks": {"type": "array", "items": {"type": "object"}, "maxItems": 40}},
                             ["agent", "task_id", "summary"])},
     {"name": "hub_agora_task_review",

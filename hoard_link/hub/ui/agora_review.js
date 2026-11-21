@@ -17,6 +17,7 @@
     commits_n: { es: "commit(s)", en: "commit(s)" }, files_n: { es: "fichero(s)", en: "file(s)" },
     comments_n: { es: "comentario(s)", en: "comment(s)" },
     unreadable: { es: "No se puede leer este commit en ningún repositorio registrado", en: "No registered checkout can read this commit" },
+    unresolved: { es: "Entrega pendiente de localizar. Quien la envió debe indicar en qué repositorio están sus commits.", en: "Delivery location needed. The submitter must identify the repository containing its commits." },
     all_commits: { es: "Todos los commits", en: "All commits" },
     pending: { es: "por enviar", en: "to send" },
     send: { es: "Enviar comentarios", en: "Send comments" },
@@ -57,6 +58,7 @@
   };
   const withSpace = (path, sid) => (sid === "ecosystem" ? path : path + (path.includes("?") ? "&" : "?") + "space_id=" + encodeURIComponent(sid));
   const state = (key) => { if (!states.has(key)) states.set(key, { data: null, guide: null, pending: [], general: "", chapter: -1, commit: "", open: false }); return states.get(key); };
+  const repoLabel = (commit) => commit.repository_candidates?.join(" / ") || commit.repo;
 
   function injectCss() {
     if (document.getElementById("css-agora-review")) return;
@@ -139,6 +141,7 @@
     sec.dataset.key = k.key;
     const head = el("div", "ag-rv-head");
     head.appendChild(el("h4", "", `${t("title")} r${d.submission_revision}`));
+    if (d.repositories?.length) head.appendChild(el("span", "hint", d.repositories.join(" · ")));
     const sum = totals(d);
     head.appendChild(el("span", "hint", `${(d.commits || []).length} ${t("commits_n")} · ${sum.files} ${t("files_n")} · +${sum.add} −${sum.del} · ${(d.comments || []).length} ${t("comments_n")}`));
     const open = el("button", "small primary", t("open"));
@@ -234,7 +237,8 @@
       const sel = el("select");
       sel.setAttribute("aria-label", t("all_commits"));
       sel.appendChild(Object.assign(el("option", "", t("all_commits")), { value: "" }));
-      for (const c of d.commits) sel.appendChild(Object.assign(el("option", "", `${c.short} ${c.subject || ""}`.slice(0, 70)), { value: c.sha }));
+      for (const c of d.commits) sel.appendChild(Object.assign(el("option", "",
+        [repoLabel(c), c.short, (c.subject || "").slice(0, 50)].filter(Boolean).join(" · ")), { value: c.sha }));
       sel.value = st.commit;
       sel.onchange = () => { st.commit = sel.value; paintOverlay(detail, k); };
       top.appendChild(sel);
@@ -302,6 +306,7 @@
       if (st.commit && c.sha !== st.commit) continue;
       const sec = el("section", "ag-rv-commit");
       const h = el("h4");
+      if (repoLabel(c)) h.appendChild(el("span", "", repoLabel(c)));
       h.appendChild(el("code", "", c.short));
       h.appendChild(el("span", "", c.subject || ""));
       sec.appendChild(h);
@@ -513,14 +518,27 @@
     try {
       const st = state(k.key);
       const r = await fetchDiff(spaceOf(detail), k.id, false);
-      if (!r || !r.ok) { if (!st.data) missing.set(k.key, Date.now()); return; }
+      if (!r || !r.ok) {
+        if (!st.data) missing.set(k.key, Date.now());
+        if (r?.error_code === "delivery_repository_unresolved" && keyOf(detailNow())?.key === k.key) {
+          const current = detailNow();
+          const note = el("section", "ag-review", t("unresolved"));
+          note.setAttribute("role", "status");
+          const existing = current.querySelector(".ag-review");
+          if (existing) existing.replaceWith(note); else current.appendChild(note);
+          st.data = null;
+          if (overlay?.dataset.key === k.key) closeOverlay();
+          missing.set(k.key, Date.now());
+        }
+        return;
+      }
       missing.delete(k.key);
-      const rsig = JSON.stringify([r.submission_revision, (r.commits || []).map((c) => c.sha)]);   // which delivery this is
+      const rsig = JSON.stringify([r.submission_revision, (r.commits || []).map((c) => [c.sha, repoLabel(c), c.error])]);
       const sig = rsig + String(r.has_guide);
       const csig = JSON.stringify((r.comments || []).map((c) => c.id));
       const changed = !st.data || st.sig !== sig;
       const cchanged = !st.data || st.csig !== csig;
-      if (st.rsig && st.rsig !== rsig) { st.guide = null; st.pending = []; st.chapter = -1; }   // resubmitted: what was read or queued is of the old one
+      if (st.rsig && st.rsig !== rsig) { st.guide = null; st.pending = []; st.chapter = -1; st.commit = ""; }
       st.data = r; st.sig = sig; st.rsig = rsig; st.csig = csig;
       const now = detailNow();
       const nk = keyOf(now);
