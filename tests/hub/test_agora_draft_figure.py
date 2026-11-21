@@ -72,12 +72,13 @@ def test_registered_frame_follows_take_or_waits_for_model_selection(tmp_path):
         still = add("frame.png", "image", [other_take["id"]])
         relief = add("relief.glb", "mesh")
         request = {**args, "frame_piece": still["id"], "seconds": 0.625}
-        assert call("draft_figure_request", request, 400)["error_code"] == "articulated_model_required"
+        missing = call("draft_figure_request", request)
+        assert missing["status"] == "needs_model" and missing["model_choices"] == []
         assert call("draft_figure_request", {**request, "model_piece": relief["id"]}, 400)["error_code"] == "articulated_model_required"
 
         model = add("pose.glb", "blocking")
-        needs_choice = call("draft_figure_request", request, 400)
-        assert needs_choice["error_code"] == "articulated_model_confirmation_required"
+        needs_choice = call("draft_figure_request", request)
+        assert needs_choice["status"] == "needs_model"
         assert needs_choice["model_choices"] == [{"id": model["id"], "title": "pose.glb", "revision": 1}]
         assert not call("order", args)["order"]["plan"]
         queued = call("draft_figure_request", {**request, "model_piece": model["id"]})
@@ -91,8 +92,8 @@ def test_registered_frame_follows_take_or_waits_for_model_selection(tmp_path):
                 == queued["task_id"])
 
         second = add("second.glb", "rigged_model")
-        ambiguous = call("draft_figure_request", request, 400)
-        assert ambiguous["error_code"] == "articulated_model_ambiguous"
+        ambiguous = call("draft_figure_request", request)
+        assert ambiguous["status"] == "needs_model"
         assert [p["id"] for p in ambiguous["model_choices"]] == [model["id"], second["id"]]
 
         take = add("take.mp4", "video", [second["id"], {"piece": model["id"], "role": "reference"}])
