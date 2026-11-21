@@ -39,7 +39,7 @@ import shutil
 from typing import Any, Optional
 
 from . import order_budget
-from . import order_destinations, order_dossier, order_figure_lineage
+from . import order_destinations, order_dossier, order_figure_lineage, order_gate_readiness
 
 ORDER_STATES = ("open", "producing", "waiting", "delivered", "cancelled")
 PIECE_STATES = ("provisional", "checked", "kept", "cancelled", "stale")
@@ -633,7 +633,8 @@ def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[s
     if full:
         if step := order_figure_lineage.missing_model(self, row):
             out["missing_figure_model"] = step
-        out["checks"] = [{**dict(c), "keep": _load(c["keep"], [])} for c in
+        out["checks"] = [{**dict(c), "keep": _load(c["keep"], []),
+                          "resolves_pending": _load(c["resolves_pending"], [])} for c in
                          self.db.query("SELECT * FROM agora_piece_checks WHERE piece_id=? ORDER BY id", (row["id"],))]
         out["defects"] = [dict(d) for d in
                           self.db.query("SELECT * FROM agora_piece_defects WHERE piece_id=? ORDER BY id", (row["id"],))]
@@ -1402,8 +1403,14 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                          **{k: _txt(mark.get(k), 1000, f"keep.{k}") for k in ("note", "how", "evidence") if mark.get(k)}})
             clean.append({"id": item["id"], "detail": item["detail"], "state": state,
                           **{k: item[k] for k in ("note", "how", "evidence", "anchor") if k in item}})
+        sources = a.get("resolves_pending")
+        resolved = order_gate_readiness.validate_resolutions(
+            piece, self.db.query("SELECT * FROM agora_piece_checks WHERE piece_id=? ORDER BY id", (piece["id"],)),
+            sources, ok=ok, note=note, marks=clean, error=_err,
+        ) if sources not in (None, []) else []
         cid = self.db.insert("agora_piece_checks", {"piece_id": piece["id"], "space_id": self.space_id, "agent": agent,
                                                     "ok": 1 if ok else 0, "note": note, "keep": _dump(clean),
+                                                    "resolves_pending": _dump(resolved),
                                                     "created": _now(self)})
         journal.created("agora_piece_checks", cid)
         status = piece["status"]
@@ -1421,7 +1428,7 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 
 def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, note: str, *, view: str = "",
                pose: str = "", at: str = "", step: str = "", expected: str = "", observed: str = "", evidence: str = "",
-               source: str = "check", task_id: Optional[int] = None) -> int:
+               source: str = "check", task_id: Optional[int] = None, required: bool = True) -> int:
     """Record a defect of a piece and tell the job that made it, in its task's thread."""
     target = task_id or piece.get("task_id")
     station = piece.get("station") or ""
@@ -1434,7 +1441,7 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
         "piece_id": piece["id"], "order_id": piece["order_id"], "space_id": self.space_id, "task_id": target,
         "station": station, "agent": agent, "note": note, "view": view, "pose": pose, "at": at, "step": step,
         "expected": expected, "observed": observed, "evidence": evidence,
-        "source": source, "status": "open", "created": _now(self)})
+        "source": source, "status": "open", "required": int(required), "created": _now(self)})
     journal.created("agora_piece_defects", did)
     order_budget.check_returns(self, _order_row(self, piece["order_id"]), journal, agent)
     if target:
@@ -1485,13 +1492,16 @@ def piece_defect(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     piece): note, and view, pose, at (second) and step where it shows. The job's task hears it in its thread."""
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     note = _txt(a.get("note"), TEXT_MAX, "note", required=True)
+    required = a.get("required", True)
+    if not isinstance(required, bool):
+        raise _err("required debe ser true o false. / required must be true or false.")
     with self.db.tx():
         piece = _piece_row(self, a.get("piece_id"))
         journal = _Journal(self, agent, "piece_defect")
         did = _send_back(self, journal, piece, agent, note,
                          **{k: _txt(a.get(k), 300, k) for k in ("view", "pose", "at", "step")},
                          **{k: _txt(a.get(k), 4000, k) for k in ("expected", "observed", "evidence")},
-                         task_id=_int(a.get("task_id"), "task_id", required=False))
+                         task_id=_int(a.get("task_id"), "task_id", required=False), required=required)
         token = journal.save()
     self._bump("agora.order.defect", {"piece_id": piece["id"], "defect_id": did, "by": agent})
     return {"ok": True, "defect_id": did, "piece": _piece_dict(self, _piece_row(self, piece["id"]), full=True), "undo": token}
@@ -1531,16 +1541,20 @@ def gate_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     ids = _ids(a.get("piece_ids"), "piece_ids")
     if not ids:
         raise _err("piece_ids: the pieces to show")
+    note = _txt(a.get("note"), TEXT_MAX, "note")
     with self.db.tx():
         order_row = _order_row(self, a.get("order_id"))
+        pieces = []
         for pid in ids:
-            p = self.db.one("SELECT order_id FROM agora_pieces WHERE id=?", (pid,))
+            p = self.db.one("SELECT * FROM agora_pieces WHERE id=?", (pid,))
             if not p or p["order_id"] != order_row["id"]:
                 raise _err(f"piece #{pid} is not a piece of order #{order_row['id']}", 404)
+            pieces.append(dict(p))
+        order_gate_readiness.validate(self, pieces, note, _err)
         title = _txt(a.get("title"), 200, "title") or f"Puerta de «{order_row['title']}»"
         journal = _Journal(self, agent, "gate_open")
         gid = self.db.insert("agora_gates", {"order_id": order_row["id"], "space_id": self.space_id, "title": title,
-                                             "note": _txt(a.get("note"), TEXT_MAX, "note"), "status": "open",
+                                             "note": note, "status": "open",
                                              "opened_by": agent, "created": _now(self)})
         journal.created("agora_gates", gid)
         for i, pid in enumerate(ids):
@@ -1925,9 +1939,12 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_piece_check",
          "description": "Note a check of a piece: what you looked at (note), ok, and per detail to keep (by id or "
                         "detail) its state, evidence and an optional anchor to a registered reference. Passing with "
-                        "no detail missing or unchecked marks it checked." + undo,
+                        "no detail missing or unchecked marks it checked. Use resolves_pending to close earlier pending "
+                        "checks by ID or piece_note for a pending statement on the piece." + undo,
          "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
                                 "ok": {"type": "boolean"},
+                                "resolves_pending": {"type": "array", "maxItems": 60, "items": {
+                                    "anyOf": [{"type": "integer", "minimum": 1}, {"const": "piece_note"}]}},
                                 "keep": {"type": "array", "maxItems": 60, "items": {"type": "object", "additionalProperties": False,
                                          "properties": {"id": {"type": "string", "maxLength": 20},
                                                         "detail": {"type": "string", "maxLength": 300}, "ok": {"type": "boolean"},
@@ -1940,12 +1957,14 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_piece_defect",
          "description": "Send a reproducible defect of a piece back to the job that caused it (task_id, default the "
                         "job that made it): note, expected, observed, evidence, and view, pose, at (second) or step "
-                        "(slide, block, size). Its task hears it in its thread." + undo,
+                        "(slide, block, size). Its task hears it in its thread. Only defects outside the order's "
+                        "requirements may use required=false, with the defect note in the piece title and first line." + undo,
          "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
                                 "view": {"type": "string", "maxLength": 300}, "pose": {"type": "string", "maxLength": 300},
                                 "at": {"type": "string", "maxLength": 300}, "step": {"type": "string", "maxLength": 300},
                                 "expected": {"type": "string", "maxLength": 4000}, "observed": {"type": "string", "maxLength": 4000},
                                 "evidence": {"type": "string", "maxLength": 4000},
+                                "required": {"type": "boolean", "default": True},
                                 "task_id": {"type": "integer", "minimum": 1}}, ["agent", "piece_id", "note"])},
         {"name": "hub_agora_defect_close",
          "description": "Close a defect when the same check passes again: fixed_in is the piece (new revision) where "
@@ -1955,7 +1974,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                ["agent", "defect_id", "note"])},
         {"name": "hub_agora_gate_open",
          "description": "Show pieces of an order to the person for one keep-or-cancel decision, made on their page; the "
-                        "order waits for it. Pieces not yet decided can keep moving as provisional." + undo,
+                        "order waits for it. Every piece must pass its checks and disclose any non-required defect "
+                        "on the piece itself. Required defects block the gate." + undo,
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "piece_ids": ids,
                                 "title": {"type": "string", "maxLength": 200}, "note": {"type": "string", "maxLength": TEXT_MAX}},
                                ["agent", "order_id", "piece_ids"])},
