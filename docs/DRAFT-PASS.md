@@ -124,3 +124,14 @@ The interface is available in Spanish and English.
 
 HTTP: `GET /api/agora/draft_passes`, `GET /api/agora/draft_anchors`, `POST /api/agora/<operation>` with a bearer token
 (or from the page; `draft_decide` only from the person's pages).
+
+
+### Figure from a registered frame
+
+Use `hub_agora_draft_figure_request` with the order ID, the registered image ID
+in `frame_piece`, and seconds into the aligned take. Pass `model_piece` when an
+order has multiple articulated GLBs. The result pins both revisions and gives
+`freeze_arguments` for baking the articulated GLB at 24 fps with print size and a 2 mm wall for the blocking's paper. Record the model as
+material and the image as a reference using the returned `derives_from`. If
+there is no articulated model, the tool asks for one before creating any job.
+The figure job checks the closed mesh, transferred colours and sliced layers.
