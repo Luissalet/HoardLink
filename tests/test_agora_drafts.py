@@ -83,6 +83,36 @@ def test_a_draft_pass_has_variants_with_pieces_by_anchor_and_measures(agora, tmp
                              "share_of_baseline": round(150 / 1800, 3), "gpu_share_of_baseline": round(120 / 900, 3)}
 
 
+def test_keep_starts_the_full_pass_and_drops_unfinished_alternatives(agora, tmp_path):
+    order, opened, pieces = draft_pass(agora, tmp_path, jobs=True)
+    ready(agora, opened, pieces)
+    a, b, c = opened["draft_pass"]["variants"]
+    jobs = agora.plan_set({"agent": "producer", "order_id": order["id"], "jobs": [
+        {"key": "first", "title": "Full pass brief"},
+        {"key": "wrong", "title": "Discarded follow-up", "after": [b["jobs"][0]]},
+        {"key": "later", "title": "Full pass take", "after": ["first"]},
+    ]})["keys"]
+    agora.task_claim({"agent": "worker", "task_id": b["jobs"][0], "locks": ["path:synthetic/draft"]})
+    agora.db.execute("UPDATE tasks SET result=? WHERE id=?", ("Prior result", b["jobs"][0]))
+    gate = agora.draft_gate_open({"agent": "producer", "pass_id": opened["draft_pass"]["id"]})
+    outcome = decide(agora, a["id"], "keep", "Conserva el giro")
+
+    assert outcome["ready_jobs"] == [jobs["first"]]
+    assert set(outcome["discarded_jobs"]) == set(b["jobs"] + c["jobs"])
+    assert agora._task_row(jobs["wrong"])["waiting_on"] == [b["jobs"][0]]
+    discarded = agora._task_row(b["jobs"][0])
+    assert discarded["status"] == "dropped" and discarded["owner"] == "worker"
+    assert discarded["result"].startswith("Prior result") and "Conserva el giro" in discarded["result"]
+    assert agora.locks({"check": "path:synthetic/draft"})["free"]
+    with pytest.raises(AgoraError):
+        agora.order_undo({"agent": "producer", "token": gate["undo"]})
+    agora.order_undo(person(token=outcome["undo"]))
+    assert agora._task_row(b["jobs"][0])["status"] == "claimed"
+    assert agora._task_row(b["jobs"][0])["result"] == "Prior result"
+    assert not agora.locks({"check": "path:synthetic/draft"})["free"]
+    assert agora.draft_passes({"order_id": order["id"]})["draft_passes"][0]["status"] == "shown"
+
+
 def test_a_variant_without_pieces_cannot_be_ready_and_the_gate_waits_for_every_variant(agora, tmp_path):
     order, opened, pieces = draft_pass(agora, tmp_path)
     first = opened["draft_pass"]["variants"][0]

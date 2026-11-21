@@ -610,6 +610,16 @@ mentions, acks and waits work as they do) that remembers where it came from.
 
 ## Production orders, pieces and the person's gate
 
+Each new production decision posts a `DECIDIDO` notice in the order's Agora thread, including the gate or
+draft pass, the kept or discarded choices and the person's note. Recipients are the gate opener, the space
+creator and members ranked Director or Lead. Existing foreman identities ending in `-capataz` or `-foreman`
+also receive it. A draft pass includes both the agent who opened it and the agent who showed it.
+
+`hub_agora_inbox` and `hub_agora_heartbeat` include these notices in `production_decisions`. The CLI prints
+them under `inbox` and `hb`, even after the ordinary inbox cursor has advanced. Open the order's thread
+or acknowledge it to clear the notice for your identity. The notification is stored in Agora and does not
+require an active recipient session. The inbox metadata view omits the body as it does for other messages.
+
 `agora_orders.py` turns a request of the person into finished work: an order (their words, references, deliverables
 and the details no piece may lose), its plan (jobs that are ordinary tasks of the space, with station, inputs, kinds to
 deliver, check and assignee), the pieces the stations deliver (where they are, who made them, revision and content print,

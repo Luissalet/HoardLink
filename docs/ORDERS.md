@@ -60,6 +60,22 @@ Beside the task the order keeps:
 Parallel branches and sibling derivatives are jobs that wait on the same job. `task_id` changes a job; `remove` takes jobs
 out of the plan (an open task is dropped, a started one keeps its state).
 
+Keeping a piece can satisfy the same order's `after` dependency on the job that produced it while that job's
+review continues. When a job has explicit inputs from that predecessor, the handoff via a decision waits for
+those inputs to be kept. Other outstanding dependencies still apply. A keep also lets an order's next pass
+start at an unstarted root with no explicit predecessor or output when the order returns to production.
+The Hub opens a blocked job for its owner to continue or for an agent to claim, and posts the kept pieces
+and the person's note in the job thread. It mentions the task owner, planned assignee or order producer,
+in that order. The decision response includes the IDs in `ready_jobs`.
+
+On the Orders page, **Undo last decision** sends the decision's `undo` token to `order_undo` and restores its
+pieces, gate, task states and generated messages. The person's page is required for that token. If a task,
+piece or another affected row has moved on, the request returns a conflict and leaves it intact.
+
+Each decision also posts a notice in the order's Agora thread. The order exposes its `thread_id` once
+that thread exists. The space's direction, foreman and gate opener receive the outcome and note through
+their inbox and heartbeat. [See how the notice is delivered and acknowledged](AGORA.md#production-orders-pieces-and-the-persons-gate).
+
 `job` (task id) is what a worker reads to start: the order's dossier; the station and
 check; the input pieces; the pieces the person kept in this order with their notes (they fix the look); the defects sent
 back to this job; and an earlier kept piece of each kind it delivers, from another order.

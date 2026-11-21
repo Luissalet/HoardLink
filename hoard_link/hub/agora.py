@@ -242,6 +242,8 @@ ALTER TABLE tasks ADD COLUMN repositories TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE tasks ADD COLUMN commits_by_repo TEXT NOT NULL DEFAULT '{}';
 """)
 MIGRATIONS.append(agora_decision_history.MIGRATION)
+MIGRATIONS.append(agora_orders.DECISION_HANDOFF_MIGRATION)
+MIGRATIONS.append(agora_orders.DECISION_NOTICE_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -815,9 +817,9 @@ def project_inbox_metadata(out: dict[str, Any]) -> dict[str, Any]:
     def keep(item: dict[str, Any], fields: tuple[str, ...], texts: dict[str, Any]) -> dict[str, Any]:
         slim = {k: item[k] for k in (*fields, 'space_id') if k in item}
         for name, value in texts.items():
-            slim[name] = len(str(value or ""))
+            slim[name] = item.get(name, 0) if value is None else len(str(value))
         return slim
-    for key in ("messages", "pending"):
+    for key in ("messages", "pending", "production_decisions"):
         out[key] = [keep(m, _META_MESSAGE, {"body_chars": m.get("body")}) for m in out.get(key) or []]
     for key in ("reviews", "changes", "progress_alerts"):
         out[key] = [dict(keep(t, _META_TASK, {"body_chars": t.get("body")}),
@@ -1030,7 +1032,7 @@ class Agora:
         deps = self.db.query("SELECT t.id, t.title, t.status, t.owner FROM agora_task_deps d JOIN tasks t ON t.id=d.blocker_id "
                              "WHERE d.task_id=? ORDER BY t.id", (d["id"],))
         d["blocked_by"] = [{"id": r["id"], "title": r["title"], "status": r["status"], "owner": r["owner"]} for r in deps]
-        d["waiting_on"] = [r["id"] for r in deps if r["status"] not in DEP_CLEAR]
+        d["waiting_on"] = agora_orders.waiting_on(self, d["id"], deps)
         d["dependents"] = [r["task_id"] for r in self.db.query(
             "SELECT task_id FROM agora_task_deps WHERE blocker_id=? ORDER BY task_id", (d["id"],))]
         d["activity"] = self._task_activity(d, volatile=False)
@@ -1207,8 +1209,9 @@ class Agora:
         mid = self.db.insert("messages", {"thread_id": thread_id, "author": author, "kind": kind, "body": body,
                                           "mentions": _j(mentions), "created": now})
         self.db.execute("UPDATE threads SET updated=? WHERE id=?", (now, thread_id))
-        agora_threads.on_message(self, thread_id, author, kind, body, mentions or [])
-        agora_threads.index_message(self, mid, thread_id, kind, body)
+        if kind != "production_decision":
+            agora_threads.on_message(self, thread_id, author, kind, body, mentions or [])
+            agora_threads.index_message(self, mid, thread_id, kind, body)
         return mid
 
     def _system(self, task: dict[str, Any], text: str, actor: str = "system") -> Optional[int]:
@@ -1792,7 +1795,7 @@ class Agora:
         except Exception:  # noqa: BLE001
             pass
         inbox = self.inbox({"agent": agent, "peek": True})
-        return {"ok": True, "agent": agent, "inbox": inbox["counts"],
+        return {"ok": True, "agent": agent, "inbox": inbox["counts"], "production_decisions": inbox["production_decisions"],
                 "lock_renewal": {"mode": "all" if selected is None else "selected",
                                  "renewed_resources": renewed}}
 
@@ -2583,8 +2586,9 @@ class Agora:
         row = self.db.one("SELECT status FROM tasks WHERE id=?", (int(blocker_id),))
         if row is None or row["status"] in DEP_CLEAR:
             return
-        self.db.execute("DELETE FROM agora_dep_wakeups WHERE task_id IN "
-                        "(SELECT task_id FROM agora_task_deps WHERE blocker_id=?)", (int(blocker_id),))
+        for dep in self.db.query("SELECT task_id FROM agora_task_deps WHERE blocker_id=?", (int(blocker_id),)):
+            if blocker_id in self._task_row(dep["task_id"])["waiting_on"]:
+                self.db.execute("DELETE FROM agora_dep_wakeups WHERE task_id=?", (dep["task_id"],))
 
     def _apply_deps(self, agent: str, task: dict[str, Any], *, add: list[int], remove: list[int],
                     replace: Optional[list[int]]) -> dict[str, list[int]]:
@@ -3270,7 +3274,7 @@ class Agora:
         """An explicit receiver view; each space retains its own read cursor."""
         agent = self._agent(a.get('agent'), allow_person=True)
         deadline = self.clock() + max(0, min(float(a.get('wait_s') or 0), MAX_WAIT_S))
-        fields = ('messages', 'reviews', 'changes', 'escalated', 'pending', 'progress_alerts')
+        fields = ('messages', 'reviews', 'changes', 'escalated', 'pending', 'progress_alerts', 'production_decisions')
         while True:
             version = self._version[0]
             out = {'ok': True, 'agent': agent, 'all_spaces': True, **{name: [] for name in fields}}
@@ -3289,12 +3293,14 @@ class Agora:
                         "SELECT created FROM messages WHERE thread_id=? AND kind='escalation' ORDER BY id DESC LIMIT 1",
                         (r['id'],), 0) or 0) for r in page['escalated']}      # when the question itself was put
                     page = {**page, 'pending': [r for r in page['pending'] if float(r.get('created') or 0) >= heard],
+                            'production_decisions': [r for r in page['production_decisions'] if r['created'] >= heard],
                             'escalated': [r for r in page['escalated'] if asked[r['id']] >= heard]}
                 out['read_cursors'][sid] = page['since_id']
                 for name in fields:
                     out[name].extend({**row, 'space_id': sid} for row in page[name])
                 out['out_of_quota'] = page['out_of_quota']
             out['messages'].sort(key=lambda row: row['id'])
+            out['production_decisions'].sort(key=lambda row: row['id'])
             limit = max(1, min(int(a.get('limit') or 100), 500))
             out['messages'] = out['messages'][:limit]
             out['counts'] = {name: len(out[name]) for name in fields}
@@ -3351,8 +3357,20 @@ class Agora:
             d["mentions"] = _l(d.get("mentions"))
             if agent in d["mentions"]:
                 pending.append(d)
+        production_decisions = []
+        for r in self.db.query(
+                "SELECT m.*, t.title AS thread_title, t.kind AS thread_kind FROM messages m "
+                "JOIN threads t ON t.id=m.thread_id LEFT JOIN acks k ON k.agent=? AND k.thread_id=m.thread_id "
+                "WHERE m.kind='production_decision' AND m.author<>? AND m.mentions LIKE ? "
+                "AND m.id>COALESCE(k.upto, 0) AND t.space_id=? ORDER BY m.id",
+                (agent, agent, f'%"{agent}"%', self.space_id)):
+            d = dict(r)
+            d["mentions"] = _l(d["mentions"])
+            if agent in d["mentions"]:
+                production_decisions.append(d)
         counts = {"messages": len(msgs), "for_you": sum(1 for m in msgs if m["for_you"]), "reviews": len(reviews),
-                  "changes": len(changes), "escalated": len(escalated), "pending": len(pending)}
+                  "changes": len(changes), "escalated": len(escalated), "pending": len(pending),
+                  "production_decisions": len(production_decisions)}
         counts["total"] = counts["messages"] + counts["reviews"] + counts["changes"] + counts["escalated"]
         progress_alerts = [self._task_dict(r) for r in self.db.query(
             "SELECT * FROM tasks WHERE created_by=? AND status IN ('claimed','in_progress','changes') AND space_id=?",
@@ -3366,6 +3384,7 @@ class Agora:
             if state["state"] == "exhausted":
                 out_of_quota.append({"agent": r["id"], "reset_at": state["reset_at"], "note": state["note"]})
         return {"ok": True, "agent": agent, "since_id": since, "counts": counts, "messages": msgs,
+                "production_decisions": production_decisions,
                 "reviews": reviews, "changes": changes, "escalated": escalated, "pending": pending,
                 "progress_alerts": progress_alerts, "out_of_quota": out_of_quota}
 
@@ -3542,7 +3561,8 @@ TOOLS: list[dict[str, Any]] = [
                             ["agent", "provider_id", "pool_id", "pool_label", "source", "windows"])},
     {"name": "hub_agora_inbox", "read": True,
      "description": "Your Ágora inbox: messages from the others since your last read (for_you when it concerns you), "
-                    "reviews waiting for you and changes asked of you. wait_s (<=60 here) waits for something new; "
+                    "reviews waiting for you, changes asked of you and production decisions until you open their thread. "
+                    "wait_s (<=60 here) waits for something new; "
                     "peek keeps the read mark. metadata_only returns who/where/what kind without bodies and keeps "
                     "the read mark: read the bodies with hub_agora_thread or hub_agora_task (with agent).",
      "inputSchema": _schema({"agent": _A, "wait_s": {"type": "number"}, "peek": {"type": "boolean"},
@@ -3553,7 +3573,8 @@ TOOLS: list[dict[str, Any]] = [
      "description": "Tell the Ágora you are here and what you are doing (state working|idle|waiting|away). "
                     "Renews every owned lock by default. Optional model and effort are agent-declared, stored per space "
                     "and trimmed to 80/20 characters; omitting them preserves the previous report. "
-                    "Optional renew_resources selects exact live owned locks; [] reports state without renewal.",
+                    "Optional renew_resources selects exact live owned locks; [] reports state without renewal. "
+                    "Includes pending production decision notices without marking them read.",
       "inputSchema": _schema({"agent": _A, "doing": {"type": "string"}, "state": {"type": "string"},
                               "name": {"type": "string"}, "note": {"type": "string"},
                               "model": {"type": "string", "description": "Agent-declared model (trimmed to 80 characters), not provider-verified."},
@@ -4376,7 +4397,7 @@ class AgoraFacet(Facet):
         args.pop("_person", None)
         # The optional Studio marker alone is not proof of the person's authority for these edits.
         person_surface = self._person_surface(req)
-        if op in agora_decision_history.WRITE_OPS:
+        if op in agora_decision_history.WRITE_OPS or op == "order_undo":
             person_surface = person_surface and agora_person.can_decide(self.hub, req)
         if person_surface:
             args.setdefault("agent", self.agora.person_id)

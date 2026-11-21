@@ -60,7 +60,47 @@ def test_order_plan_is_made_of_agora_tasks_with_dependencies(agora, tmp_path):
     # pieces inherit the details to keep and know where they are
     assert [k["detail"] for k in pieces["hoja"]["keep"]] == ["tubo a la izquierda", "al mapa le falta una esquina"]
     assert pieces["malla"]["view"] == "turntable" and pieces["lamina"]["view"] == "image" and pieces["lamina"]["exists"]
+
+
+def test_keep_unblocks_the_next_jobs_without_finishing_the_predecessor(agora, tmp_path):
+    order, keys, pieces = cartographer(agora, tmp_path)
+    agora.task_update(person(task_id=keys["mesh"], status="blocked"))
+    gate = agora.gate_open({"agent": "claude", "order_id": order["id"],
+                            "piece_ids": [pieces["hoja"]["id"]]})["gate"]
+
+    outcome = agora.gate_decide(person(gate_id=gate["id"], decision="keep", note="Conserva la esquina"))
+    assert set(outcome["ready_jobs"]) == {keys["mesh"], keys["video"]}
+    assert agora._task_row(keys["sheet"])["status"] == "open"
+    assert agora._task_row(keys["mesh"])["status"] == "open"
+    assert agora._task_row(keys["mesh"])["waiting_on"] == []
+    assert agora._task_row(keys["rig"])["waiting_on"] == [keys["mesh"]]
+    for key, recipient in (("mesh", "codex-volumen"), ("video", "claude")):
+        messages = agora._messages(agora._task_row(keys[key])["thread_id"])
+        assert messages[-1]["mentions"] == [recipient]
+        assert "Conserva la esquina" in messages[-1]["body"]
+    with pytest.raises(AgoraError) as refused:
+        agora.order_undo({"agent": "claude", "token": outcome["undo"]})
+    assert refused.value.status == 403
+    agora.order_undo(person(token=outcome["undo"]))
+    assert agora._task_row(keys["mesh"])["status"] == "blocked"
+    assert agora._task_row(keys["mesh"])["waiting_on"] == [keys["sheet"]]
+    assert agora.gate_decide(person(gate_id=gate["id"], decision="keep"))["ready_jobs"] == outcome["ready_jobs"]
     assert pieces["malla"]["station"] == "vulcan"
+
+
+def test_final_cancellation_releases_a_root_using_the_earlier_keep(agora, tmp_path):
+    order, _, pieces = cartographer(agora, tmp_path)
+    task_id = agora.plan_set({"agent": "claude", "order_id": order["id"],
+                              "jobs": [{"key": "next", "title": "New pass"}]})["keys"]["next"]
+    gate = agora.gate_open({"agent": "claude", "order_id": order["id"],
+                            "piece_ids": [pieces["lamina"]["id"], pieces["hoja"]["id"]]})["gate"]
+    keep = agora.gate_decide(person(gate_id=gate["id"], piece_id=pieces["lamina"]["id"],
+                                    decision="keep", note="Keep the fold"))
+    assert task_id not in keep["ready_jobs"]
+    cancel = agora.gate_decide(person(gate_id=gate["id"], decision="cancel", note="Replace this"))
+    assert task_id in cancel["ready_jobs"]
+    message = agora._messages(agora._task_row(task_id)["thread_id"])[-1]
+    assert "Keep the fold" in message["body"] and "Replace this" not in message["body"]
 
 
 def test_check_marks_details_and_defect_goes_back_to_its_job(agora, tmp_path):

@@ -40,6 +40,16 @@
   let orderSections = [], orderRequest = 0, spacesRequest = null;
   let measures = null, metricsSection = null, metricsRequest = null, metricsSig = "";
   const drafts = new Map();   // gate id → note being written
+  let lastDecision = null;
+
+  function rememberDecision({ spaceId, orderId, token }) {
+    if (!token) return;
+    lastDecision = { spaceId, orderId, token };
+    details.delete(orderId);
+    lastSig = "";
+    load();
+  }
+  ctx.bus.addEventListener("orders:decision", event => rememberDecision(event.detail));
 
   function stopTimers() { for (const t of timers) clearInterval(t); timers = []; }
 
@@ -197,8 +207,7 @@
     const stale = (res.decided || []).reduce((n, d) => n + (d.stale?.length || 0), 0);
     ctx.toast(decision === "keep" ? tr("Conservado", "Kept")
       : tr("Cancelado: vuelve a su puesto", "Cancelled: back to its station") + (stale ? tr(`; ${stale} pieza(s) derivadas quedan caducas`, `; ${stale} derived piece(s) are now stale`) : ""), "ok");
-    details.delete(gate.order_id); lastSig = "";
-    await load();
+    rememberDecision({ spaceId: gate.space_id, orderId: gate.order_id, token: res.undo });
   }
 
   async function split(gate, piece) {
@@ -546,6 +555,29 @@
     const wh = el("h2", "", waiting.length ? tr("Te esperan", "Waiting for you") : tr("Nada espera tu decisión", "Nothing waits for your decision"));
     wh.id = "ord-waiting-title";
     wait.append(wh);
+    if (lastDecision) {
+      const saved = lastDecision;
+      const undo = el("button", "ghost small", tr("Deshacer la última decisión", "Undo last decision"));
+      undo.type = "button";
+      undo.onclick = async () => {
+        if (busy) return;
+        busy = undo.disabled = true;
+        const result = await ctx.api("/api/agora/order_undo", { space_id: saved.spaceId, token: saved.token })
+          .catch(error => ({ ok: false, error: String(error) }));
+        busy = undo.disabled = false;
+        if (!result?.ok) {
+          ctx.toast(tr("No se ha podido deshacer la decisión", "The decision could not be undone"), "err", result?.error);
+          return;
+        }
+        lastDecision = null;
+        details.delete(saved.orderId);
+        lastSig = "";
+        ctx.toast(tr("Decisión deshecha", "Decision undone"), "ok");
+        ctx.bus.dispatchEvent(new Event("orders:decision-undone"));
+        await load();
+      };
+      wait.append(undo);
+    }
     if (waiting.length) {
       wait.append(el("p", "ord-muted", tr("Conservar fija la pieza como referencia para lo que venga después. Cancelar la devuelve a su puesto con tu nota, y lo que derive de ella queda caduco.",
         "Keep fixes the piece as the reference for what comes next. Cancel sends it back to its station with your note, and what derives from it becomes stale.")));

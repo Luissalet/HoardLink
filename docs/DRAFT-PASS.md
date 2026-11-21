@@ -72,6 +72,12 @@ Anchors are short slugs. Those the guides know: `depth`, `normals`, `composition
 
 What a decision does:
 
+Keeping a variant releases the eligible full-pass jobs and posts the selected variant, its kept pieces and the
+person's note in their task threads. Unfinished jobs exclusive to discarded variants are closed as `dropped`
+with the note in their result and thread; owners, submissions and pieces remain recorded. These jobs do not
+clear an `after` in the order unless an output from them was kept. The decision returns `ready_jobs`,
+`discarded_jobs` and an `undo` token for the person's page.
+
 * **Keep**: the variant becomes `kept`, its pieces become kept pieces of the order, so `job` hands them to every later
   job like anything else the person kept, and `draft_anchors` returns them to the expensive pass.
 * **Cancel** (discard): the variant becomes `discarded` with the person's note; its pieces are marked cancelled

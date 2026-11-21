@@ -399,10 +399,49 @@ def _settle(self: Any, journal: Any, variant: dict[str, Any], status: str, note:
             self.db.execute("UPDATE agora_pieces SET status='cancelled', stale_because=?, updated=? WHERE id=?",
                             (f"variante «{variant['key']}» descartada en la pasada 0", now, pid))
             stale += orders._stale_below(self, journal, pid, variant["order_id"])
-        self.db.insert("agora_order_decisions", {
+        did = self.db.insert("agora_order_decisions", {
             "order_id": variant["order_id"], "gate_id": 0, "piece_id": pid, "space_id": self.space_id,
             "decision": decision, "note": note, "situation": orders._dump(situation), "created": now})
+        journal.created("agora_order_decisions", did)
     return stale
+
+
+def _discard_jobs(self: Any, journal: Any, order: dict, variants: list[dict], discarded: list[int], note: str,
+                  opened_by: str) -> list[int]:
+    keep_jobs = {tid for row in self.db.query(
+        "SELECT jobs FROM agora_draft_variants WHERE order_id=? AND status<>'discarded'", (order["id"],))
+                 for tid in orders._load(row["jobs"], [])}
+    plan = {job["task_id"]: job for job in orders._plan(self, order["id"])}
+    closed = []
+    for variant in variants:
+        if variant["id"] not in discarded:
+            continue
+        for tid in orders._load(variant["jobs"], []):
+            job = plan.get(tid)
+            if tid in keep_jobs or not job or not job["task"]:
+                continue
+            journal.before("agora_order_discarded_jobs", tid)
+            self.db.execute("INSERT OR IGNORE INTO agora_order_discarded_jobs(task_id, variant_id) VALUES(?,?)",
+                            (tid, variant["id"]))
+            task = job["task"]
+            if task["status"] in orders._ag().FINAL:
+                continue
+            journal.before("tasks", tid)
+            why = (f"Trabajo descartado en la pasada 0 «{variant['title']}» de la orden #{order['id']}."
+                   + (f"\nNota: {note}" if note else ""))
+            prior = self.db.scalar("SELECT result FROM tasks WHERE id=?", (tid,), "")
+            result = f"{prior}\n\n{why}" if prior else why
+            now = orders._now(self)
+            self.db.execute("UPDATE tasks SET status='dropped', result=?, updated=?, closed_at=? WHERE id=?",
+                            (result, now, now, tid))
+            for lock in self.db.query("SELECT resource FROM locks WHERE task_id=?", (tid,)):
+                journal.before("locks", lock["resource"])
+            self.db.execute("DELETE FROM locks WHERE task_id=?", (tid,))
+            mid = self._msg(task["thread_id"], journal.agent, "system", why,
+                            orders._job_recipient(self, order, job, opened_by))
+            journal.created("messages", mid)
+            closed.append(tid)
+    return closed
 
 
 def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
@@ -441,7 +480,7 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                      "deadline": order_row["deadline"], "draft_pass": {"id": draft["id"], "title": draft["title"]},
                      "variant": {"id": variant["id"], "key": variant["key"], "title": variant["title"]},
                      "alternatives": [{"id": v["id"], "key": v["key"], "title": v["title"], "status": v["status"]} for v in rows]}
-        journal = orders._Journal(self, agent, "draft_decide")
+        journal = orders._Journal(self, agent, "draft_decide", undo_for_person=True)
         result: dict[str, Any] = {"kept": None, "discarded": [], "stale": [], "shared": []}
         if decision == "keep":
             result["stale"] += _settle(self, journal, variant, "kept", note, situation, "keep", result["shared"])
@@ -463,11 +502,31 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             self.db.execute("UPDATE agora_draft_passes SET status='decided', decided=? WHERE id=?", (orders._now(self), draft["id"]))
             busy = self.db.scalar("SELECT COUNT(*) FROM agora_gates WHERE order_id=? AND status='open'", (draft["order_id"],), 0)
             busy += self.db.scalar("SELECT COUNT(*) FROM agora_draft_passes WHERE order_id=? AND status='shown'", (draft["order_id"],), 0)
-            if not busy:
+            if not busy and not orders.order_budget.hold_reason(self, order_row["id"]):
                 orders._set_status(self, draft["order_id"], "producing", journal, only_from=("waiting",))
+        opener = draft["shown_by"] or draft["opened_by"]
+        result["discarded_jobs"] = _discard_jobs(self, journal, order_row, rows, result["discarded"], note, opener)
+        result["ready_jobs"] = []
+        if decision == "keep":
+            resumed = order_row["status"] == "waiting" and orders._order_row(self, order_row["id"])["status"] == "producing"
+            result["ready_jobs"] = orders._handoff(
+                self, journal, order_row, [orders._piece_row(self, p["id"]) for p in current["pieces"]], note,
+                opened_by=opener, resumed=resumed, variant=variant)
+        outcomes = []
+        for choice in rows:
+            if choice["id"] != result["kept"] and choice["id"] not in result["discarded"]:
+                continue
+            pieces = self.db.query("SELECT p.id, p.title FROM agora_draft_pieces l JOIN agora_pieces p ON p.id=l.piece_id "
+                                   "WHERE l.variant_id=? ORDER BY l.position, p.id", (choice["id"],))
+            names = ", ".join(f"#{p['id']} «{p['title']}»" for p in pieces)
+            label = f"«{choice['title']}»" + (f" ({names})" if names else "")
+            outcomes.append(("Conservada" if choice["id"] == result["kept"] else "Descartada", label))
+        orders._decision_notice(self, journal, order_row, f"Pasada 0 #{draft['id']} «{draft['title']}»",
+                                [draft["opened_by"], draft["shown_by"]], outcomes, note)
+        token = journal.save()
     self._bump("agora.order.decided", {"order_id": draft["order_id"], "draft_pass": draft["id"], "decision": decision,
                                        "variant": variant["id"]})
-    return {"ok": True, **result, "draft_pass": _pass_dict(self, _pass_row(self, draft["id"]))}
+    return {"ok": True, **result, "draft_pass": _pass_dict(self, _pass_row(self, draft["id"])), "undo": token}
 
 
 # ---- reading --------------------------------------------------------------------------------------------------

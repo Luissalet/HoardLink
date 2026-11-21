@@ -150,6 +150,9 @@
     notes.delete(variant.id); changed.delete(variant.id); expandedDetails.delete(variant.id);
     ctx.toast(decision === "keep" ? tr(`Conservada «${variant.title}»: la pasada cara partirá de ella`, `Kept «${variant.title}»: the full pass starts from it`)
       : tr(`Descartada «${variant.title}»: queda guardada con tu nota`, `Discarded «${variant.title}»: it stays, with your note`), "ok");
+    ctx.bus.dispatchEvent(new CustomEvent("orders:decision", {
+      detail: { spaceId: pass.space_id, orderId: pass.order_id, token: res.undo },
+    }));
     lastSig = ""; await load();
   }
 
@@ -251,6 +254,7 @@
     if (sig !== lastSig) { lastSig = sig; passes = res.draft_passes || []; }
     paint();
   }
+  ctx.bus.addEventListener("orders:decision-undone", () => { force = true; load(); });
 
   // The Orders page repaints its whole body; put the early gate back each time it does.
   const watch = new MutationObserver(() => paint());
