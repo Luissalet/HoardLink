@@ -1,4 +1,4 @@
-/* Native dossiers selected through the Hub's existing app proxy. */
+/* Source controls for dossiers and pieces on the Orders page. */
 (() => {
   "use strict";
   const { el, api, lang } = window.HubFacets.ctx;
@@ -10,6 +10,63 @@
     coase_backend_packet: "coase",
   };
   const object = value => value && typeof value === "object" && !Array.isArray(value);
+  const modelUndos = new Map();
+
+  function figureModel(caption, order, piece, refresh) {
+    const step = piece.missing_figure_model;
+    if (!step) return;
+    const notice = el("small", "ord-muted",
+      tr("No hay un modelo articulado de origen registrado.", "No articulated source model is registered."));
+    const request = el("button", "ghost small", tr("Pedir modelo articulado", "Request articulated model"));
+    const undo = el("button", "ghost small", tr("Deshacer encargo", "Undo request"));
+    const status = el("small", "ord-muted");
+    request.type = undo.type = "button";
+    status.setAttribute("role", "status");
+    let task = step.task_id;
+    let available = false;
+    const show = () => {
+      request.hidden = !!task || available;
+      undo.hidden = !task || modelUndos.get(piece.id)?.task !== task;
+      notice.hidden = available;
+      status.textContent = task
+        ? tr(`Modelo encargado a Vulcan · tarea #${task}`, `Model requested from Vulcan · task #${task}`)
+        : available ? tr("El modelo de origen ya está disponible.", "The source model is now available.") : "";
+      status.hidden = !status.textContent;
+    };
+    const write = async (op, fields) => {
+      request.disabled = undo.disabled = true;
+      const result = await api(`/api/agora/${op}`, { space_id: order.space_id, ...fields }).catch(() => null);
+      request.disabled = undo.disabled = false;
+      if (!result?.ok) {
+        status.hidden = false;
+        status.textContent = op === "order_undo"
+          ? tr("No se ha podido deshacer el encargo.", "Could not undo the request.")
+          : tr("No se ha podido encargar el modelo.", "Could not request the model.");
+      }
+      return result;
+    };
+    request.onclick = async () => {
+      const result = await write("draft_model_request", { order_id: order.id, piece_id: piece.id });
+      if (!result?.ok) return;
+      task = result.task_id;
+      available = result.status === "model_available";
+      if (result.undo) modelUndos.set(piece.id, { token: result.undo, task });
+      show();
+      await refresh();
+    };
+    undo.onclick = async () => {
+      const entry = modelUndos.get(piece.id);
+      if (!entry) return;
+      const result = await write("order_undo", { token: entry.token });
+      if (!result?.ok) return;
+      modelUndos.delete(piece.id);
+      task = null;
+      show();
+      await refresh();
+    };
+    show();
+    caption.append(notice, request, undo, status);
+  }
 
   function native(tool, payload, id) {
     if (!object(payload)) throw new Error(tr("El origen no devolvió un expediente.", "The source did not return a dossier."));
@@ -155,5 +212,5 @@
       },
     };
   }
-  window.HubOrderSources = { picker };
+  window.HubOrderSources = { picker, figureModel };
 })();

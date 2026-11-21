@@ -131,9 +131,11 @@ HTTP: `GET /api/agora/draft_passes`, `GET /api/agora/draft_anchors`, `POST /api/
 Use `hub_agora_draft_figure_request` with the order ID, the registered image ID
 in `frame_piece`, and seconds into the aligned take. The Hub follows material
 links from the frame through its take to the articulated GLB in the order.
-When those links do not identify a single usable model, it returns
-`model_choices` (ID, title and revision) and waits for an explicit
-`model_piece`. If none is available, register an animated GLB first.
+For a take or frame that needs an articulated model, the request returns
+`status: needs_model` with the next step. Use `hub_agora_draft_model_request`
+to add the modelling job to the order, or supply the matching `model_piece`
+explicitly when you already have it. When the material lineage points to
+several models, select the matching revision from `model_choices`.
 
 The result pins both revisions and gives `freeze_arguments` for baking the
 articulated GLB at 24 fps with print size and a 2 mm wall for the blocking's

@@ -93,6 +93,11 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
 * **Material and reference.** Cancelling a piece makes stale every piece made from it, directly or not, and nothing is
   deleted. A piece that only used it as a reference stays valid and carries a warning that its reference was
   cancelled. A piece with no inputs and no job reads as «provenance not given».
+* **Takes and frames.** Register a render or a pose with its articulated GLB as material. When a take uses that
+  render or pose, the Hub carries the GLB revision onto the take and onto a frame extracted from it. Keep the
+  render and take links as well. The figure request uses the pinned material GLB when the lineage identifies one.
+  A take or frame without a usable articulated origin offers **Request articulated model** on its piece card.
+  Agents can queue the same modelling job with `hub_agora_draft_model_request`; the order's usual undo applies.
 * **Decisions travel.** A piece made from or looking at a kept piece carries the id of the person's decision that kept
   it.
 * **Checks** (`piece_check`): `note`, `ok`, and per detail (`id` or text) a `state` — `ok`, `missing` or `not_visible`

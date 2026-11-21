@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import agora_orders as orders
+from . import order_figure_lineage
 
 PASS_STATES = ("drafting", "shown", "decided")
 VARIANT_STATES = ("drafting", "ready", "kept", "discarded")
@@ -525,12 +526,8 @@ def draft_anchors(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 
 
 def _figure_source(self: Any, reference: dict[str, Any], model_piece: Any) -> dict[str, Any]:
-    """Resolve the model from the frame's material lineage or ask for an explicit choice."""
-    def eligible(piece):
-        return (piece["kind"] in orders.ARTICULATED_KINDS and piece["status"] not in ("cancelled", "stale")
-                and piece["sha256"] and Path(piece["path"]).suffix.lower() == ".glb"
-                and (Path(piece["stored"]).is_file() or Path(piece["path"]).is_file()))
-
+    """Resolve the GLB, offer the modelling step, or give explicit choices."""
+    eligible = order_figure_lineage.eligible_model
     order_id = reference["order_id"]
     if model_piece is not None:
         piece = orders._piece_row(self, model_piece)
@@ -544,20 +541,23 @@ def _figure_source(self: Any, reference: dict[str, Any], model_piece: Any) -> di
         linked = [p for p in lineage if eligible(p)]
         if len(lineage) == 1 and linked:
             return linked[0]
+        placeholders = ", ".join("?" for _ in orders.ARTICULATED_KINDS)
         candidates = linked or [dict(p) for p in self.db.query(
-            "SELECT * FROM agora_pieces WHERE order_id=? AND kind IN (?, ?, ?, ?) ORDER BY id",
+            f"SELECT * FROM agora_pieces WHERE order_id=? AND kind IN ({placeholders}) ORDER BY id",
             (order_id, *orders.ARTICULATED_KINDS),
         ) if eligible(p)]
         if not linked:
             replaced = {p["supersedes"] for p in candidates}
             candidates = [p for p in candidates if p["id"] not in replaced]
+    choices = [{"id": p["id"], "title": p["title"], "revision": p["revision"]}
+               for p in sorted(candidates, key=lambda p: p["id"])]
+    if model_piece is None and (step := order_figure_lineage.missing_model(self, reference)):
+        return {"ok": True, "status": "needs_model", "next_step": step, "model_choices": choices, "undo": None}
     if not candidates:
         raise _err("Create or register an animated GLB for this order first. / "
                    "Crea o registra primero un GLB animado para esta orden.",
                    409, error_code="articulated_model_required")
 
-    choices = [{"id": p["id"], "title": p["title"], "revision": p["revision"]}
-               for p in sorted(candidates, key=lambda p: p["id"])]
     if len(choices) == 1:
         choice = choices[0]
         name = f"#{choice['id']} «{choice['title']}»"
@@ -590,6 +590,8 @@ def draft_figure_request(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                     or not reference["exists"] or reference["status"] in ("cancelled", "stale")):
                 raise _err("Choose a registered frame image from this order. / Elige un fotograma registrado de esta orden.")
             source = _figure_source(self, reference_row, a.get("model_piece"))
+            if source.get("status") == "needs_model":
+                return source
             variant_id, title = None, order["title"]
         else:
             row = _variant_row(self, a.get("variant_id"))
@@ -654,9 +656,10 @@ def draft_figure_request(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 OPERATIONS = {"draft_pass_open": draft_pass_open, "draft_pass_note_set": draft_pass_note_set,
               "draft_variant_set": draft_variant_set,
               "draft_gate_open": draft_gate_open, "draft_decide": draft_decide,
-              "draft_passes": draft_passes, "draft_anchors": draft_anchors, "draft_figure_request": draft_figure_request}
+              "draft_passes": draft_passes, "draft_anchors": draft_anchors, "draft_figure_request": draft_figure_request,
+              "draft_model_request": order_figure_lineage.draft_model_request}
 WRITE_OPS = ("draft_pass_open", "draft_pass_note_set", "draft_variant_set", "draft_gate_open", "draft_decide",
-             "draft_figure_request")
+             "draft_figure_request", "draft_model_request")
 READ_ROUTES = ("draft_passes", "draft_anchors")
 #: The person's early decision has no tool: only their pages call it.
 NO_TOOL = ("draft_decide",)
@@ -711,8 +714,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "note": {"type": "string", "maxLength": 20000}}, ["agent", "pass_id"])},
         {"name": "hub_agora_draft_figure_request",
          "description": "Queue a figure from a paused take. / Encarga una figura de una toma pausada.\n"
-                        "For a registered frame, use order_id and frame_piece. If its material lineage does not "
-                        "resolve the GLB, confirm model_piece from model_choices." + undo,
+                        "For a registered frame use order_id and frame_piece. If it needs an articulated model, "
+                        "use hub_agora_draft_model_request or specify a matching model_piece from model_choices." + undo,
          "inputSchema": schema({"agent": agent_prop, "variant_id": {"type": "integer", "minimum": 1},
                                 "take_piece": {"type": "integer", "minimum": 1}, "signature": {"type": "string"},
                                 "order_id": order_id,
@@ -721,6 +724,11 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "seconds": {"type": "number", "minimum": 0, "maximum": 100_000 / 24},
                                 "size_mm": {"type": "number", "minimum": 10, "maximum": 2000}},
                                ["agent", "seconds"])},
+        {"name": "hub_agora_draft_model_request",
+         "description": "Queue an articulated GLB for a take or frame without one. / "
+                        "Encarga el GLB articulado que falta para una toma o un fotograma." + undo,
+         "inputSchema": schema({"agent": agent_prop, "order_id": order_id,
+                                "piece_id": {"type": "integer", "minimum": 1}}, ["agent", "order_id", "piece_id"])},
         {"name": "hub_agora_draft_passes", "read": True,
          "description": "Draft passes of an order with variants, pieces by anchor, measures against the baseline and "
                         "decisions; without order_id, those waiting for the person (all_spaces for every space).",

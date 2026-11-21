@@ -408,6 +408,10 @@
       const named = role => (p.derivation || []).filter(d => d.role === role).map(d => byId[d.piece]?.title || "#" + d.piece).join(", ");
       if (named("material")) cap.append(el("small", "ord-muted", tr("Hecha a partir de ", "Made from ") + named("material")));
       if (named("reference")) cap.append(el("small", "ord-muted", tr("Mirando ", "Looking at ") + named("reference")));
+      window.HubOrderSources?.figureModel?.(cap, order, p, () => {
+        details.delete(order.id);
+        return load();
+      });
       if (p.provenance === "unspecified") cap.append(el("small", "ord-muted", tr("Procedencia sin precisar", "Provenance not given")));
       if (p.stale_because) cap.append(el("small", "ord-warn", p.stale_because));
       for (const w of p.warnings || []) cap.append(el("small", "ord-warn", w));

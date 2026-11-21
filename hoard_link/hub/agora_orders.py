@@ -39,7 +39,7 @@ import shutil
 from typing import Any, Optional
 
 from . import order_budget
-from . import order_destinations, order_dossier
+from . import order_destinations, order_dossier, order_figure_lineage
 
 ORDER_STATES = ("open", "producing", "waiting", "delivered", "cancelled")
 PIECE_STATES = ("provisional", "checked", "kept", "cancelled", "stale")
@@ -368,8 +368,9 @@ def _now(self: Any) -> float:
 class _Journal:
     """What one call changes, so ``order_undo`` can put it back."""
 
-    def __init__(self, self_: Any, agent: str, op: str):
+    def __init__(self, self_: Any, agent: str, op: str, *, undo_for_person: bool = False):
         self.ag, self.agent, self.op = self_, agent, op
+        self.undo_for_person = undo_for_person
         self.rows: list[dict[str, Any]] = []
         self.created_tasks: list[int] = []
         self.task_status: list[dict[str, Any]] = []
@@ -414,7 +415,9 @@ class _Journal:
         self.rows.append({"table": table, "where": where or {_KEYS[table]: key}, "row": None})
 
     def save(self) -> Optional[str]:
-        if self.agent == _person_id(self.ag) or not (self.rows or self.created_tasks or self.task_status or self.task_deps or self.task_metadata):
+        if self.agent == _person_id(self.ag) and not self.undo_for_person:
+            return None
+        if not (self.rows or self.created_tasks or self.task_status or self.task_deps or self.task_metadata):
             return None
         if any(change["table"] in ("agora_order_budgets", "agora_order_attempts") for change in self.rows):
             for change in self.rows:
@@ -545,7 +548,7 @@ def view_of(piece: dict[str, Any]) -> str:
     return "file" if path else "object"
 
 
-ARTICULATED_KINDS = ("rigged_model", "rigged-model", "articulated-model", "blocking")
+ARTICULATED_KINDS = ("rigged_model", "rigged-model", "articulated-model", "articulated-mesh", "blocking")
 FIGURE_KINDS = {"posed-figure-mesh", "closed-print-mesh", "coloured-3mf"}
 
 
@@ -599,6 +602,8 @@ def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[s
     out["defects_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_piece_defects WHERE piece_id=? AND status='open'",
                                              (row["id"],), 0) or 0)
     if full:
+        if step := order_figure_lineage.missing_model(self, row):
+            out["missing_figure_model"] = step
         out["checks"] = [{**dict(c), "keep": _load(c["keep"], [])} for c in
                          self.db.query("SELECT * FROM agora_piece_checks WHERE piece_id=? ORDER BY id", (row["id"],))]
         out["defects"] = [dict(d) for d in
@@ -987,7 +992,7 @@ def _set_status(self: Any, order_id: int, status: str, journal: _Journal, *, onl
         self.db.execute("UPDATE agora_orders SET status=?, updated=? WHERE id=?", (status, _now(self), order_id))
 
 
-def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
+def plan_set(self: Any, a: dict[str, Any], *, undo_for_person: bool = False) -> dict[str, Any]:
     """Add, change or remove the jobs of an order. Each job without task_id becomes an Ágora task of this space;
     ``after`` names the jobs it waits for (their key in this call or a task id)."""
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
@@ -1000,7 +1005,7 @@ def plan_set(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     with self.db.tx():
         order_row = _order_row(self, a.get("order_id"))
         oid = order_row["id"]
-        journal = _Journal(self, agent, "plan_set")
+        journal = _Journal(self, agent, "plan_set", undo_for_person=undo_for_person)
         keys: dict[str, int] = {}
         position = int(self.db.scalar("SELECT COALESCE(MAX(position), 0) FROM agora_order_jobs WHERE order_id=?", (oid,), 0) or 0)
         touched: list[int] = []
@@ -1127,6 +1132,9 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 raise _err(f"task #{task_id} is not a job of order #{oid}", 404)
             station = station or job_row["station"]
         derivation = _derivation(a.get("derives_from"))
+        derivation = order_figure_lineage.add_model_materials(self, {
+            "order_id": oid, "kind": kind, "path": path, "derives_from": _dump(derivation),
+        }, derivation)
         derives = [d["piece"] for d in derivation]
         source_rev = _txt(a.get("source_rev"), 200, "source_rev")
         supersedes = _int(a.get("supersedes"), "supersedes", required=False)
