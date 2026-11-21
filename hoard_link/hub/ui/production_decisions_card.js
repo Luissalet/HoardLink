@@ -133,7 +133,7 @@ function card(row, options, previousNote) {
       } catch (error) {
         const sessionRequired = error?.code === 'hub_ui_session_required';
         if (sessionRequired) {
-          status.textContent = window.hoardHubSession
+          status.textContent = window.hoardHubSession || window.hoardWindow?.shell === 'hoard-window'
             ? tr('La decisión sigue pendiente.', 'The decision is still pending.')
             : tr('Abre el Hub desde su lanzador para hacer cambios.', 'Open the Hub from its launcher to make changes.');
         } else {

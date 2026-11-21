@@ -23,3 +23,15 @@
   min-height: 40px;
   font: inherit;
 }
+
+.hub-workspace > .top:has(> .hub-session-upgrade) {
+  flex-wrap: wrap;
+}
+
+.top > .hub-session-upgrade {
+  position: static;
+  transform: none;
+  flex-basis: 100%;
+  max-width: none;
+  box-shadow: none;
+}

@@ -3,6 +3,7 @@
   "use strict";
   const send = window.fetch.bind(window);
   const shell = window.hoardHubSession;
+  const previousWindow = !shell && window.hoardWindow?.shell === "hoard-window";
   const storageKey = "hub.ui.session";
   let proof = "";
   let renewal;
@@ -34,12 +35,15 @@
     return renewal;
   }
 
-  function showRecovery() {
-    if (notice || !document.body) return;
+  function isSpanish() {
     const lang = document.documentElement.dataset.hoardApp === "hub"
       ? document.documentElement.lang : navigator.language;
-    let spanish = lang.startsWith("es");
-    try { spanish = (localStorage.getItem("hub.lang") || lang).startsWith("es"); } catch (_) { /* Use page language. */ }
+    try { return (localStorage.getItem("hub.lang") || lang).startsWith("es"); }
+    catch (_) { return lang.startsWith("es"); }
+  }
+
+  function showRecovery() {
+    if (notice || !document.body) return;
     const style = document.createElement("link");
     style.rel = "stylesheet";
     style.href = "/ui/browser-session.css";
@@ -49,6 +53,21 @@
     notice.className = "hub-session-recovery";
     const message = document.createElement("span");
     message.role = "status";
+    notice.append(message);
+    if (previousWindow) {
+      const translate = () => {
+        message.textContent = isSpanish()
+          ? "Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir el Hub."
+          : "This window is from an earlier version. Close it and reopen the Hub.";
+      };
+      translate();
+      new MutationObserver(translate).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
+      notice.classList.add("hub-session-upgrade");
+      const toolbar = document.querySelector(".hub-workspace > .top");
+      (toolbar || document.body).append(notice);
+      return;
+    }
+    const spanish = isSpanish();
     message.textContent = spanish ? "La sesión de escritura no está disponible." : "The write session is unavailable.";
     const button = document.createElement("button");
     button.type = "button";
@@ -61,7 +80,7 @@
         button.disabled = false;
       }
     };
-    notice.append(message, button);
+    notice.append(button);
     document.body.append(notice);
   }
 
@@ -73,6 +92,12 @@
   }
   if (shell || ticket) renew(ticket);
   shell?.onRefresh(() => { renew(); });
+  if (previousWindow) {
+    window.addEventListener("DOMContentLoaded", async () => {
+      if (renewal) await renewal;
+      if (!proof) showRecovery();
+    }, { once: true });
+  }
 
   window.fetch = async (input, init) => {
     const request = input instanceof Request ? input : null;
@@ -88,7 +113,7 @@
       init = { ...init, headers };
     }
     const response = await send(input, init);
-    if (shell && response.status === 403) {
+    if ((shell || previousWindow) && response.status === 403) {
       const error = await response.clone().json().catch(() => null);
       if (error?.code === "hub_ui_session_required") showRecovery();
     }

@@ -244,8 +244,8 @@ class _HubHandler(BaseHTTPRequestHandler):
 
     def _ui_denied(self) -> None:
         spanish = self.headers.get("Accept-Language", "").lower().startswith("es")
-        error = ("Abre el Hub desde su lanzador para hacer cambios." if spanish
-                 else "Open the Hub from its launcher to make changes.")
+        error = ("Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir el Hub."
+                 if spanish else "This window is from an earlier version. Close it and reopen the Hub.")
         return self._json({"ok": False, "code": "hub_ui_session_required", "error": error}, 403)
 
     def _ui_session_post(self, path: str) -> None:

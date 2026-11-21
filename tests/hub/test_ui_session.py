@@ -32,6 +32,13 @@ def test_launcher_tickets_require_local_credential_and_are_single_use(tmp_path):
         for headers in ({"Sec-Fetch-Site": "none"}, browser, {**browser, ui_session.SESSION_HEADER: "invalid"}):
             status, reply = http(endpoint, event, headers)
             assert status == 403 and reply["code"] == "hub_ui_session_required"
+        for locale, message in (
+            ("es-ES,es;q=0.9,en;q=0.8", "Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir el Hub."),
+            ("en-GB,en;q=0.9,es;q=0.8", "This window is from an earlier version. Close it and reopen the Hub."),
+        ):
+            status, reply = http(endpoint, event, {**browser, "Accept-Language": locale})
+            assert status == 403
+            assert reply == {"ok": False, "code": "hub_ui_session_required", "error": message}
         assert http(endpoint, event, {**browser, ui_session.SESSION_HEADER: session["session"]})[1]["event"]["source"] == "ui"
         assert http(endpoint, event, agent)[1]["event"]["source"] == "hub"
     finally:
