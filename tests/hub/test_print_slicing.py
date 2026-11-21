@@ -115,7 +115,13 @@ def test_slice_records_defects_in_order_and_undoes_them_together(served, tmp_pat
     assert {d["source"] for d in piece["defects"]} == {"check"}
     assert Path(result["receipt"]).is_file() and Path(result["log"]).is_file()
 
-    gate = call("hub_agora_gate_open", **actor, order_id=order["id"], piece_ids=[piece["id"]], title="Slicing")
+    passed = call("hub_agora_piece_check", **actor, piece_id=piece["id"], note="Reviewed the test report.")
+    gate_args = {**actor, "order_id": order["id"], "piece_ids": [piece["id"]], "title": "Slicing"}
+    status, blocked = _http(f"{url}/api/agent/tools/hub_agora_gate_open", gate_args, headers)
+    assert status != 200 and "fails the brief" in str(blocked)
+    closures = [call("hub_agora_defect_close", **actor, defect_id=d["id"], fixed_in=piece["id"],
+                     note="Test fixture: verified correction.") for d in piece["defects"]]
+    gate = call("hub_agora_gate_open", **gate_args)
     current = call("hub_agora_order", space_id=actor["space_id"], order_id=order["id"])["order"]
     note = current["gates"][0]["technical_advisories"][0]["note"]
     assert "calc_exclude_triangles" in note
@@ -123,6 +129,8 @@ def test_slice_records_defects_in_order_and_undoes_them_together(served, tmp_pat
     status, loaded = _http(f"{url}/api/programs/print-slice-reports?piece={piece['id']}&piece={source['id']}&piece=-1", None)
     assert status == 200 and loaded["reports"] == {str(piece["id"]): report}
     assert call("hub_agora_order_undo", **actor, token=gate["undo"])["ok"]
+    for change in [*reversed(closures), passed]:
+        assert call("hub_agora_order_undo", **actor, token=change["undo"])["ok"]
     for token in result["undo"]:
         assert call("hub_agora_order_undo", **actor, token=token)["ok"]
     assert not call("hub_agora_job", space_id=actor["space_id"], task_id=jobs["slice"])["job"]["defects"]

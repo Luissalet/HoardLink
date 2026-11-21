@@ -39,6 +39,7 @@ def test_cancel_uses_the_deciding_member_in_the_receipt_and_task_thread(tmp_path
     (tmp_path / "map.txt").write_text("East", encoding="utf-8")
     piece = ag.piece_add({"agent": "builder", "order_id": order["id"], "task_id": task_id,
                           "kind": "text", "title": "Map", "path": "map.txt"})["piece"]
+    ag.piece_check({"agent": "builder", "piece_id": piece["id"], "note": "Reviewed the test map."})
     gate = ag.gate_open({"agent": "builder", "order_id": order["id"], "title": "Map review",
                          "piece_ids": [piece["id"]]})["gate"]
 
@@ -63,6 +64,7 @@ def test_pending_queue_opens_exact_gate_and_uses_the_production_record(tmp_path)
     (tmp_path / "map.png").write_bytes(base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII="))
     piece = ag.piece_add({"agent": "builder", "order_id": order["id"], "title": "Map", "kind": "image", "path": "map.png"})["piece"]
+    ag.piece_check({"agent": "builder", "piece_id": piece["id"], "note": "Reviewed the test map."})
     gate = ag.gate_open({"agent": "builder", "order_id": order["id"], "title": "Choose the map", "piece_ids": [piece["id"]]})["gate"]
 
     server = serve(hub)
@@ -135,6 +137,7 @@ def test_gate_shows_registered_views_and_keeps_the_original_file_accessible(tmp_
         (tmp_path / name).write_bytes(name.encode())
         piece = agora.piece_add({"agent": "builder", "order_id": order["id"], "kind": "document",
                                 "title": name, "path": name, "previews": previews})["piece"]
+        agora.piece_check({"agent": "builder", "piece_id": piece["id"], "note": "Reviewed the test document."})
         piece_ids.append(piece["id"])
     gate = agora.gate_open({"agent": "builder", "order_id": order["id"], "title": "Review the stair",
                             "piece_ids": piece_ids})["gate"]

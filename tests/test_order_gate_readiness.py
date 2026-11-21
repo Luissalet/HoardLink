@@ -100,7 +100,7 @@ def test_gate_note_cannot_be_the_only_place_with_a_defect(production, note):
     check(production, candidate)
     refused(production, "gate_undisclosed_defect", candidate, note=note)
     refused(production, "gate_note_pending", candidate, note="Pendiente de comprobar el giro.")
-    assert open_gate(production, candidate, note="Comparar cómo se abre el mapa.")["ok"]
+    assert open_gate(production, candidate, note="Comparar el mapa al que le falta una esquina. Sin defectos.")["ok"]
 
 
 def test_only_a_non_required_defect_disclosed_on_the_piece_can_be_shown(production):

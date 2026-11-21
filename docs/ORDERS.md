@@ -118,7 +118,9 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
   it.
 * **Checks** (`piece_check`): `note`, `ok`, and per detail (`id` or text) a `state` — `ok`, `missing` or `not_visible`
   (the detail cannot be seen in this piece, which is not a failure) — with `how` and `evidence`. Inheriting a detail never
-  inherits its approval: every piece is checked on its own.
+  inherits its approval: every piece is checked on its own. When an earlier check or the piece note declares work
+  pending, record what you verified and how in a passing check. Send `resolves_pending` with the pending check IDs,
+  `"piece_note"`, or both, as identified in the gate refusal. The original notes remain in the history.
 * **Details travel with the relay.** A piece receives the details of every piece it derives from (material or
   reference), so a detail first set at one station («square buckle» on the sheet, not in the order) reaches the next
   station to be checked there. Each detail says where it was set: `source` `order`, or `piece` with `from` (the piece
@@ -128,11 +130,22 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
 * **Defects** (`piece_defect`): `note`, `expected`, `observed`, `evidence`, and where it shows: `view`, `pose`, `at`
   (second), `step` (slide, block, size, steps). It goes to the job that made the piece (or `task_id`): its task hears it
   in its thread, mentioning the owner. `defect_close` closes it with the piece (`fixed_in`, usually the next revision)
-  where the same check passed again.
+  where the same check passed again. The defect still applies to the original when the fix is on a different piece.
 
 ## Gate
 
-`gate_open` shows pieces of an order to the person for one decision. On the Orders page each piece has the preview its
+`gate_open` shows pieces of an order to the person for one decision. Before opening, it verifies each selected revision
+has a passing latest check, its required details are marked, and its recorded checks have no unresolved pending work.
+A refusal gives the reason in Spanish and English and leaves the order and its pending decisions as they were.
+
+Record known defects on the affected piece with `piece_defect` and route required fixes back to the originating job.
+Defects are required by default, including older records. For a defect outside the brief, send `required: false` and
+use the same short, specific defect description in `piece_defect.note`, the piece title and the first line of its note.
+The title puts the limitation where the person can see it when deciding. The gate note can repeat a disclosed defect.
+The Hub recognises common Spanish and English phrases for pending work and defects in free-form notes. Record defects
+explicitly so the rule can evaluate them independently of wording.
+
+On the Orders page each piece has the preview its
 kind needs — image, turntable frames (a mesh with previews), video, audio, a web (its screenshots first, and «See it
 working» loads it in a sandboxed frame without the page's origin, so it cannot act as the person; a page with its own address is framed from there; its scripts are written in as
 `data:` addresses, so `defer`, `async` and modules keep their timing), PDF (a browser without a PDF viewer, such as a

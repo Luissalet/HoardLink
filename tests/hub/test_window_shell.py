@@ -200,6 +200,7 @@ def test_hub_shell_without_ticket_can_reload_and_recover_a_write_session(
         (tmp_path / filename).write_text(title, encoding="utf-8")
         piece = ag.piece_add({**agent, "order_id": order["id"], "title": title, "kind": "text",
                               "path": filename})["piece"]
+        ag.piece_check({**agent, "piece_id": piece["id"], "note": "Reviewed the test piece."})
         return ag.gate_open({**agent, "order_id": order["id"], "title": title,
                              "piece_ids": [piece["id"]]})["gate"]
 
@@ -353,6 +354,7 @@ def test_previous_hub_shell_can_read_and_reopening_restores_writes(tmp_path, mon
     (tmp_path / "piece.txt").write_text("A piece for the upgrade test", encoding="utf-8")
     piece = ag.piece_add({**agent, "order_id": order["id"], "title": "Upgrade piece", "kind": "text",
                          "path": "piece.txt"})["piece"]
+    ag.piece_check({**agent, "piece_id": piece["id"], "note": "Reviewed the test piece."})
     gate = ag.gate_open({**agent, "order_id": order["id"], "title": "Upgrade decision",
                         "piece_ids": [piece["id"]]})["gate"]
     decision_selector = f".hub-decision-row[data-decision='gate-{gate['id']}']:visible"

@@ -25,7 +25,11 @@ _DEFECT = re.compile(
     r"parpadeo|flicker|artefacto visual|visual artifact|deformed|deformado|"
     r"(?:dark|bright) spots?|clipping|intersect(?:s|ion)|atraviesa|no se (?:ve|distingue)|"
     r"(?:remains?|still) (?:broken|missing|incorrect)|queda (?:roto|incompleto)|"
-    r"falta (?:el|la|un|una)|(?:is|are) missing)\b"
+    r"(?:is|are) missing)\b|(?:^|[.!?;:] )falta (?:el|la|un|una)\b"
+)
+_NO_DEFECT = re.compile(
+    r"\b(?:sin|no se (?:ven|observan)|no hay|no(?: visible| known| reported)?) "
+    r"(?:defectos?|defects?|manchas?|stains?|aranazos?|scratches?|clipping|parpadeo|flicker)\b"
 )
 
 
@@ -128,7 +132,7 @@ def validate(self: Any, pieces: list[dict[str, Any]], gate_note: str, error: Cal
                 "The gate note declares a pending check.")
     for caption in sorted(disclosed, key=len, reverse=True):
         context = re.sub(r"(?<!\w)" + re.escape(caption) + r"(?!\w)", "", context)
-    if _DEFECT.search(context):
+    if _DEFECT.search(_NO_DEFECT.sub("", context)):
         _refuse(error, "gate_undisclosed_defect",
                 "La nota de la puerta menciona un defecto. Regístralo en la pieza correspondiente.",
                 "The gate note mentions a defect. Record it on the affected piece.")
