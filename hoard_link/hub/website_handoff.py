@@ -23,6 +23,17 @@ TOOL = {
             "slug": STRING,
             "title": STRING,
             "start_with_hub": {"type": "boolean", "default": True},
+            "form": {
+                "type": "object",
+                "description": "Declare the static website's POST route and synthetic test fields.",
+                "properties": {
+                    "path": STRING,
+                    "fields": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "marker_field": STRING,
+                },
+                "required": ["path", "fields", "marker_field"],
+                "additionalProperties": False,
+            },
         },
         "required": ["piece_id", "revision", "slug"],
         "additionalProperties": False,
@@ -85,4 +96,5 @@ def publish_piece(hub, args):
         "slug": args["slug"], "title": args.get("title") or web["title"],
         "source": str(path), "source_sha256": sha, "provenance": provenance,
         "start_with_hub": args.get("start_with_hub", True),
+        **({"form": args["form"]} if "form" in args else {}),
     }, caller="website-handoff", timeout=60)

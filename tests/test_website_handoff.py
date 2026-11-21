@@ -73,6 +73,19 @@ def test_website_handoff_uses_retained_folder_and_rejects_changed_snapshot(order
     assert hub.call_app.call_count == 1
 
 
+def test_website_handoff_forwards_the_form_without_changing_the_registered_piece(order_source):
+    hub, agora, _, web, _ = order_source
+    before = agora.order({"order_id": web["order_id"]})
+    form = {"path": "/api/encargos", "fields": {"details": "Synthetic"}, "marker_field": "details"}
+    args = {"space_id": "studio", "piece_id": web["id"], "revision": web["revision"], "slug": "demo", "form": form}
+    assert website_handoff.publish_piece(hub, args)["ok"]
+    payload = hub.call_app.call_args.args[2]
+    assert payload["form"] == form
+    assert payload["provenance"]["web"]["sha256"] == web["sha256"]
+    assert not (Path(payload["source"]) / "website.json").exists()
+    assert agora.order({"order_id": web["order_id"]}) == before
+
+
 def test_website_handoff_rejects_wrong_revision_space_and_unlinked_package(order_source):
     hub, _, add, web, _ = order_source
     unrelated = add("site.zip", "web-package")
