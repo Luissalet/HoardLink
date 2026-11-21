@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -59,7 +60,7 @@ def page(server):
     sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
         page = browser.new_page(reduced_motion="reduce")
         page.goto(server)
         page.frame_locator("iframe").locator("h1").wait_for()
@@ -80,7 +81,8 @@ def test_mirrors_are_identical():
 def test_handshake_schema_queue_context_and_inert_top_level(page, server):
     ready = page.evaluate("messages.find(m=>m.type==='dock/ready')")
     assert ready["app"] == {"id": "fixture", "name": "Bridge fixture"}
-    assert len(ready["tools"]) == 9
+    generic = re.findall(r"^\s+generic\('([^']+)',", BRIDGE_JS, re.MULTILINE)
+    assert sorted(tool["name"] for tool in ready["tools"]) == sorted([*generic, "custom_tool"])
     assert ready["context"]["view"] == "library"
     assert len(ready["context"]["summary"]) == 400
     for tool in ready["tools"]:
@@ -152,7 +154,7 @@ def test_origin_changed_message_and_prehello(server):
     sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
         page = browser.new_page()
         page.goto(server)
         frame = page.frames[1]

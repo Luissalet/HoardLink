@@ -573,6 +573,10 @@ that accepts `editable-report`.
   the same adapter as `GET /api/apps/<id>/tools`. It reports the HTTP status,
   tool count and any failure per Hoard. The check leaves stopped apps stopped
   and does not invoke their tools.
+  For catalogue regression tests, compare the published tool names with the
+  registry or shipped manifest. Compare sorted lists to catch duplicates as well
+  as missing or unexpected entries. When a guide documents the catalogue, check
+  its names or its generated count against the same source.
 - `hub_modules` reads native module state. A Hoard declares its module groups in
   `x-family.module_controls` with native `list` and `set` tool names and an
   optional `name_field` (the default is `module`). A list tool returns a
