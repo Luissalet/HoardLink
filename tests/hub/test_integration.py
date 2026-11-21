@@ -18,7 +18,11 @@ from hoard_link.hub.production import ProductionFacet
 
 
 LINES = "\n".join(f"line {i}" for i in range(60)) + "\n"
-RUN_WAIT_SECONDS = 180
+
+
+def wait_for_runs(facet):
+    with facet.queue_changed:
+        facet.queue_changed.wait_for(lambda: not facet.active)
 
 
 def write(repo, name, text):
@@ -460,9 +464,7 @@ def test_integrate_and_undo_exact_approved_delivery(delivery, tmp_path, monkeypa
                            "expected_submission_revision": 1, "body": "Reviewed exact branch."})
         result = facet.run(args)
         run = result["receipt"]["id"]
-        deadline = time.monotonic() + RUN_WAIT_SECONDS
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert len(receipt["comparison"]["known"]) == 1
         assert receipt["comparison"]["new"] == {}
@@ -514,8 +516,10 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
 
     def checks_with_pause(*args, **kwargs):
         if not first_started.is_set():
-            first_started.set()
-            assert release.wait(10)
+            with facet.queue_changed:
+                first_started.set()
+                facet.queue_changed.notify_all()
+            release.wait()
         return original(*args, **kwargs)
 
     monkeypatch.setattr(facet, "_run_checks", checks_with_pause)
@@ -539,8 +543,7 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
         resource = f"merge:{repo.name}"
         assert agora.lock({"agent": "manual", "resources": [resource]})["ok"]
         first_id = facet.run({**first, "live_test": case})["receipt"]["id"]
-        deadline = time.monotonic() + 10
-        while facet.status({"id": first_id})["receipt"]["state"] == "queued" and time.monotonic() < deadline:
+        while facet.active and facet.status({"id": first_id})["receipt"]["state"] == "queued":
             time.sleep(0.05)
         assert facet.status({"id": first_id})["receipt"]["state"] == "waiting_for_merge_lock"
         extra = "tests/test_still_known.py"
@@ -551,13 +554,13 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
             "missing-test": {"file": "deleted.py"}
         }}})
         agora.unlock({"agent": "manual", "resources": [resource]})
-        assert first_started.wait(10)
+        with facet.queue_changed:
+            facet.queue_changed.wait_for(lambda: first_started.is_set() or not facet.active)
+        assert first_started.is_set()
         second_id = facet.run(next_args)["receipt"]["id"]
         assert facet.status({"id": second_id})["receipt"]["state"] == "queued"
         release.set()
-        deadline = time.monotonic() + RUN_WAIT_SECONDS
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         one, two = (facet.status({"id": run})["receipt"] for run in (first_id, second_id))
         assert one["state"] == "integrated", one
         assert two["state"] == "integrated", two
@@ -625,9 +628,7 @@ def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, 
         assert "tests/test_station.py" in plans[0]["tests"]["contract"]
         assert [p["live_test"] for p in plans] == ["tests/test_feature.py::test_new", None]
         run = facet.run({**args, "merge": True})["receipt"]["id"]
-        deadline = time.monotonic() + RUN_WAIT_SECONDS
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert len(receipt["repositories"]) == 2
         if regression:
@@ -683,9 +684,7 @@ def test_integration_infers_repo_batches_tests_and_reports_retained_delivery(del
         assert facet.inspect({**args, "revision": 1})["missing_live_tests"] == [repo.name]
         run = facet.run({**args, "revision": 1, "merge": True,
                           "live_test": f"{paths[-1]}::test_delivery"})["receipt"]["id"]
-        deadline = time.monotonic() + RUN_WAIT_SECONDS
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert receipt["state"] == "integrated", receipt
         assert receipt["comparison"]["candidate"]["counts"]["passed"] == 42
@@ -761,9 +760,7 @@ def test_transferred_delivery_compares_independent_conftests(delivery, tmp_path,
         assert plan["tests"]["contract"] == [test_path, "tests/test_api.py", "tests/test_feature.py"]
         run = facet.run({**args, "test_paths": ["tests/test_api.py"], "merge": True,
                          "live_test": f"{test_path}::test_api"})["receipt"]["id"]
-        deadline = time.monotonic() + RUN_WAIT_SECONDS
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert receipt["state"] == "integrated", receipt
         assert receipt["comparison"]["roots"]["editing_tests"]["candidate"]["counts"]["passed"] == 1
