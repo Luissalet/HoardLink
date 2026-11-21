@@ -501,13 +501,24 @@ live view (`live`) adds `calls`, `calls_done` and `turn_started_at` to each task
 HTTP: `GET /api/agora/work`. Tool: `hub_agora_work`. From a terminal: `agora.py say … --routine "<name>"
 --work-file <json>`; `read` prints the tools and routine under each message.
 
-**Who writes as the person.** The hub's own page, and Faustus Studio speaking for the person signed in there: Studio's
-server sends the hub's token plus `X-Hoard-Person: faustus-studio`. A token alone never writes as the person, and the
-person's reads count as read only from those two pages: `channel_read` as the person from anywhere else is a peek,
-and `seen` as the person is refused. This is a convention between the programs of one person on one machine, like
-every other identity in the Agora: it keeps an agent from speaking or reading as the person by mistake, it is not a
-wall against a program that sets out to. When Faustus runs on a Spark it reaches this Hub through the
-tunnel the Hub keeps open for it (`placement_link.py`, see the README), and everything above works the same.
+**Who writes as the person.** The Hub desktop window opens a write session when its page loads or reloads.
+If the session needs to be restored, use **Restore session** and try the action again. The page keeps the current
+view and any decision note. In a regular browser, open the Hub from its launcher to enable writes in that profile.
+A desktop window from an earlier version keeps reads available and displays a notice to close it and reopen
+the Hub. The `hub_ui_session_required` response includes those instructions in English or Spanish according to
+`Accept-Language`, including for a page that has yet to reload after an update.
+Both the launcher and the desktop main process use `data/hub-ui-launch-token` to request a single-use ticket.
+The page exchanges the ticket for the session it sends with writes on the Hub origin. Bookmarks and tabs in the
+same browser profile share the session. A fresh browser profile can read. Removing the Hub site data clears
+that browser's session. Rotating the launcher credential and restarting the Hub invalidates existing sessions.
+A program with filesystem access to the launcher credential or the authenticated browser profile has the
+authority of that local installation.
+
+Studio continues to speak for the person signed in there over the existing relay. The server sends the Hub token
+and `X-Hoard-Person: faustus-studio`. For production choices it also sends the dedicated
+`data/agora-person-mcp-token` credential. When Studio runs remotely it reaches the Hub through the placement
+tunnel. Read attribution is unchanged. A `channel_read` as the person outside their pages is a peek, and
+`seen` as the person is refused.
 
 ## Ranks
 

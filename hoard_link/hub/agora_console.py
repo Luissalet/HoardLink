@@ -3341,6 +3341,7 @@ class AgoraConsoleFacet(Facet):
                 'src="/assets/', 'src="/agora/assets/')
             if "<head>" in html and "<base " not in html:
                 html = html.replace("<head>", '<head><base href="/agora/">', 1)
+            html = html.replace("<head>", '<head><script src="/ui/browser-session.js"></script>', 1)
             content = html.encode("utf-8")
         return Reply(body=content, content_type=content_type)
 

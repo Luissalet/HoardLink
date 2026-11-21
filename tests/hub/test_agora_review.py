@@ -12,7 +12,7 @@ from hoard_link.hub import tools
 from hoard_link.hub.agora import Agora, AgoraError
 from hoard_link.hub.agora_review import build_chapters, parse_patch
 
-from ._hub_fakes import http, make_hub, serve
+from ._hub_fakes import http, make_hub, serve, ui_headers
 
 
 def _run(root: Path, *args: str) -> str:
@@ -278,7 +278,7 @@ def test_http_routes_and_mcp_tools(tmp_path):
     base = hub.config.url.rstrip("/")
     facet = hub.facet("agora")
     facet.agora.repo_lookup = lambda name: repo if name == "Demo" else None
-    page = {"Sec-Fetch-Site": "same-origin"}
+    page = ui_headers(hub)
     try:
         names = {t["name"] for t in tools.all_tools()}
         assert {"hub_agora_review_diff", "hub_agora_review_comments", "hub_agora_review_comment_send",

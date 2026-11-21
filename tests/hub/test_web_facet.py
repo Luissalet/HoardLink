@@ -23,10 +23,10 @@ from hoard_link.hub.server import make_server
 from hoard_link.hub.web import WebDb, WebFacet, web_settings
 from hoard_link.web import safety
 
+from ._hub_fakes import ui_headers
 from .conftest import free_port
 from .test_hub_and_server import _http
 
-UI = {"Sec-Fetch-Site": "same-origin"}
 
 ARTICLE = ("<html><head><title>Tea at home</title><meta property='og:title' content='Tea at home'>"
            "<meta name='description' content='How to brew tea.'><meta property='og:image' content='/img/tea.png'>"
@@ -569,8 +569,8 @@ def test_http_routes_need_a_family_caller_and_use_its_identity(served, site):
     status, body = _http(url + "/api/web/preview?url=" + site.base + "/article", headers=apph)
     assert status == 200 and body["title"] == "Tea at home"
     assert _http(url + "/api/web/hosts/clear", {"host": "127.0.0.1"}, headers=apph)[0] == 403
-    assert _http(url + "/api/web/hosts/clear", {"host": "127.0.0.1"}, headers=UI)[0] == 200
-    assert _http(url + "/api/web/status", headers=UI)[1]["enabled"] is True
+    assert _http(url + "/api/web/hosts/clear", {"host": "127.0.0.1"}, headers=ui_headers(hub))[0] == 200
+    assert _http(url + "/api/web/status", headers=ui_headers(hub))[1]["enabled"] is True
     status, body = _http(url + "/api/web/search", {"query": "x", "engines": ["nope"]}, headers=apph)
     assert status == 400 and "unknown engine" in body["error"]
     assert _http(url + "/api/web/open", {"url": "http://user:pw@x.test/"}, headers=apph)[0] == 400
@@ -584,16 +584,17 @@ def test_http_fetch_file_and_the_hub_page_may_use_operator_local(hub, site):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         url = hub.config.url
-        status, body = _http(url + "/api/web/fetch", {"url": site.base + "/article", "profile": "operator_local", "extract": "readable"}, headers=UI)
+        page = ui_headers(hub)
+        status, body = _http(url + "/api/web/fetch", {"url": site.base + "/article", "profile": "operator_local", "extract": "readable"}, headers=page)
         assert status == 200 and body["ok"] and body["extract"]["title"] == "Tea at home"
-        status, body = _http(url + "/api/web/fetch", {"url": site.base + "/article"}, headers=UI)
+        status, body = _http(url + "/api/web/fetch", {"url": site.base + "/article"}, headers=page)
         assert status == 200 and body["ok"] is False and body["error_kind"] == "policy"
-        status, body = _http(url + "/api/web/preview", {"url": site.base + "/article", "profile": "operator_local"}, headers=UI)
+        status, body = _http(url + "/api/web/preview", {"url": site.base + "/article", "profile": "operator_local"}, headers=page)
         assert status == 200 and body["ok"] and body["from_cache"] is False
-        status, body = _http(url + "/api/web/preview", {"url": site.base + "/article"}, headers=UI)
+        status, body = _http(url + "/api/web/preview", {"url": site.base + "/article"}, headers=page)
         assert body["ok"] is False and body["error_kind"] == "policy"           # nothing the operator read is kept for the apps
         site.routes["/f.txt"] = (200, {"Content-Type": "text/plain"}, b"data")
-        status, body = _http(url + "/api/web/fetch_file", {"url": site.base + "/f.txt", "profile": "operator_local"}, headers=UI)
+        status, body = _http(url + "/api/web/fetch_file", {"url": site.base + "/f.txt", "profile": "operator_local"}, headers=page)
         assert status == 200 and body["ok"] and Path(body["path"]).parent.name == "ui"
     finally:
         server.shutdown()

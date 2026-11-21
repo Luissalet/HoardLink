@@ -76,17 +76,19 @@ class Health:
         return {"state": self.state, "status": self.status, "service": self.service, "detail": self.detail}
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def fetch_json(url: str, timeout: float = HEALTH_TIMEOUT_S, *, follow_redirects: bool = True,
                max_bytes: Optional[int] = None) -> tuple[Optional[int], Any]:
     """``(status, json-or-None)``; ``(None, None)`` when nothing answered.
     Ignores proxies: this is loopback, and a system proxy would otherwise
     swallow every probe."""
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "hoard-hub"})
-    class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LazyHTTPSHandler(),
-                                         *([] if follow_redirects else [NoRedirect()]))
+                                         *([] if follow_redirects else [_NoRedirect()]))
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw = resp.read() if max_bytes is None else resp.read(max_bytes + 1)
@@ -107,11 +109,14 @@ def fetch_json(url: str, timeout: float = HEALTH_TIMEOUT_S, *, follow_redirects:
         return status, None
 
 
-def fetch_json_post(url: str, body: Any, timeout: float = 120.0) -> tuple[Optional[int], Any]:
+def fetch_json_post(url: str, body: Any, timeout: float = 120.0, *,
+                    headers: Optional[dict[str, str]] = None,
+                    follow_redirects: bool = True) -> tuple[Optional[int], Any]:
     """POST JSON to a loopback URL; same contract as :func:`fetch_json`."""
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
-                                 headers={"Content-Type": "application/json", "User-Agent": "hoard-hub"})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LazyHTTPSHandler())
+                                 headers={"Content-Type": "application/json", "User-Agent": "hoard-hub", **(headers or {})})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LazyHTTPSHandler(),
+                                         *([] if follow_redirects else [_NoRedirect()]))
     try:
         with opener.open(req, timeout=timeout) as resp:
             raw, status = resp.read(), resp.status

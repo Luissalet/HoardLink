@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ._hub_fakes import make_hub, serve
+from ._hub_fakes import make_hub, serve, ui_url
 from .test_agora_review import GUIDE, _delivered, _repo, ag  # noqa: F401  (the fixture is shared)
 
 
@@ -69,7 +69,7 @@ def test_review_reader_in_the_browser(tmp_path):
                 page = browser.new_page(viewport={"width": 1280, "height": 800})
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                page.goto(base + "/")
+                page.goto(ui_url(hub))
                 page.evaluate("language => localStorage.setItem('hub.lang', language)", "es")
                 page.goto(base + "/#hub/agora")
                 tab = page.locator("#tab-agora")

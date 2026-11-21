@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::Value;
+use std::{path::PathBuf, time::Duration};
 
 fn valid_agora_path(path: &str) -> bool {
     let route = path.split('?').next().unwrap_or("");
@@ -20,6 +21,23 @@ fn piece_preview(path: &str) -> bool {
     !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit())
 }
 
+fn hub_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder().timeout(Duration::from_secs(30)).no_proxy()
+        .redirect(reqwest::redirect::Policy::none()).build().map_err(|e| e.to_string())
+}
+
+async fn launch_ticket(client: &reqwest::Client, base: &str) -> Result<String, String> {
+    let data_dir = std::env::var_os("HOARD_HUB_DATA_DIR").map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../data")
+    });
+    let error = "Abre el Hub desde su lanzador para hacer cambios. / Open the Hub from its launcher to make changes.";
+    let key = std::fs::read_to_string(data_dir.join("hub-ui-launch-token")).map_err(|_| error)?;
+    let reply: Value = client.post(format!("{base}/api/ui/launch")).bearer_auth(key.trim())
+        .json(&serde_json::json!({})).send().await.map_err(|_| error)?
+        .json().await.map_err(|_| error)?;
+    reply["ticket"].as_str().map(str::to_owned).ok_or_else(|| error.into())
+}
+
 // The shell only relays the local coordination API; it exposes no arbitrary URL,
 // shell command, credential file or filesystem operation to browser content.
 #[tauri::command]
@@ -32,8 +50,16 @@ async fn hub_request(path: String, body: Option<Value>) -> Result<Value, String>
     if parsed.scheme() != "http" || !matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]")) || parsed.username() != "" || parsed.password().is_some() || parsed.path() != "/" {
         return Err("El Hub debe estar en una dirección local".into());
     }
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).redirect(reqwest::redirect::Policy::none()).build().map_err(|e|e.to_string())?;
-    let mut request = if let Some(ref value) = body { client.post(format!("{}{}",base.trim_end_matches('/'),path)).json(value) } else { client.get(format!("{}{}",base.trim_end_matches('/'),path)) };
+    let base = base.trim_end_matches('/');
+    let client = hub_client()?;
+    let url = format!("{base}{path}");
+    let mut request = if let Some(ref value) = body {
+        let ticket = launch_ticket(&client, base).await?;
+        let error = "No se pudo abrir la sesión del Hub. / Could not open the Hub session.";
+        let reply: Value = client.post(format!("{base}/api/ui/session")).json(&serde_json::json!({"ticket": ticket}))
+            .send().await.map_err(|_| error)?.json().await.map_err(|_| error)?;
+        client.post(url).json(value).header("X-Hoard-UI-Session", reply["session"].as_str().ok_or(error)?)
+    } else { client.get(url) };
     request = request.header("Origin",base.trim_end_matches('/')).header("Sec-Fetch-Site","same-origin");
     let response = request.send().await.map_err(|_| "No se puede conectar con el Hub local".to_string())?;
     let status = response.status();
@@ -51,20 +77,22 @@ async fn hub_request(path: String, body: Option<Value>) -> Result<Value, String>
     Ok(value)
 }
 #[tauri::command]
-fn open_hub(space_id: Option<String>, decision: Option<String>) -> Result<(), String> {
+async fn open_hub(space_id: Option<String>, decision: Option<String>) -> Result<(), String> {
     let base = std::env::var("AGORA_HUB_URL").unwrap_or_else(|_| "http://127.0.0.1:8810".into());
     let mut parsed = reqwest::Url::parse(&base).map_err(|_| "Dirección del Hub no válida")?;
     if parsed.scheme() != "http" || !matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]")) || parsed.username() != "" || parsed.password().is_some() || parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some() {
         return Err("El Hub debe estar en una dirección local".into());
     }
     if let Some(id) = space_id { parsed.query_pairs_mut().append_pair("space_id", &id); }
-    if let Some(key) = decision {
+    let view = if let Some(key) = decision {
         if !decision_key(&key) { return Err("Enlace a decisión no válido".into()); }
         parsed.query_pairs_mut().append_pair("decision", &key);
-        parsed.set_fragment(Some("hub/orders"));
+        "hub/orders"
     } else {
-        parsed.set_fragment(Some("agora"));
-    }
+        "agora"
+    };
+    let ticket = launch_ticket(&hub_client()?, base.trim_end_matches('/')).await?;
+    parsed.set_fragment(Some(&format!("hub-session={ticket}&view={view}")));
     std::process::Command::new("explorer.exe").arg(parsed.as_str()).spawn().map_err(|_| "No se puede abrir Hoard Hub".to_string())?;
     Ok(())
 }

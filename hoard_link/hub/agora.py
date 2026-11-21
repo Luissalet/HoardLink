@@ -3984,8 +3984,7 @@ class AgoraFacet(Facet):
 
     @staticmethod
     def _person_surface(req: Request) -> bool:
-        """True when the request comes from one of the person's own pages: the hub's page, or Faustus Studio
-        speaking for the person signed in there (the hub's token plus ``X-Hoard-Person``). Agents never send it."""
+        """The Hub page (with a browser session for writes), or Studio speaking for the person signed in there."""
         if req.caller() == "ui":
             return True
         headers = req.headers

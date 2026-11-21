@@ -14,6 +14,7 @@ import pytest
 from hoard_link.hub.agora import Agora, AgoraError
 
 
+from ._hub_fakes import ui_url
 @pytest.fixture
 def agora(tmp_path):
     ag = Agora(tmp_path / "agora.db")
@@ -233,7 +234,7 @@ def test_browser_spaces_preserve_draft_create_rename_and_ignore_late_board(tmp_p
             page = browser.new_page(viewport={"width": width, "height": height})
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
-            page.goto(hub.config.url)
+            page.goto(ui_url(hub))
             page.evaluate("localStorage.setItem('hub.lang', 'es')")
             page.reload()
             page.goto(hub.config.url + '/#hub/agora')

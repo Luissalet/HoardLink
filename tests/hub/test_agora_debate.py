@@ -14,7 +14,7 @@ from hoard_link.hub import tools
 from hoard_link.hub.agora import Agora, AgoraError, MIGRATIONS
 from hoard_link.hub.agora_debate import finding_status, guess_evidence_kind, normalize_evidence
 
-from ._hub_fakes import http, make_hub, serve
+from ._hub_fakes import http, make_hub, serve, ui_headers, ui_url
 
 
 def _git_repo(root: Path) -> str:
@@ -186,7 +186,7 @@ def test_http_and_tools(tmp_path):
         assert tools.call(hub, "hub_agora_debate_open", {"agent": "person", "thread_id": tid, "_person": True})["ok"] is False
         f = tools.call(hub, "hub_agora_debate_finding", {"agent": "claude", "debate_id": did, "claim": "X",
                                                          "evidence": ["https://example.com"], "disposition": "adopt"})
-        page = {"Sec-Fetch-Site": "same-origin"}
+        page = ui_headers(hub)
         status, body = http(base + "/api/agora/debate_verify", {"finding_id": f["finding"]["id"], "note": "ok"},
                             headers=page)
         assert status == 200 and body["finding"]["verified_by"] == ["person"], body
@@ -264,7 +264,7 @@ def test_findings_board_in_the_browser(tmp_path, width):
                 page = browser.new_page(viewport={"width": width, "height": 900})
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                page.goto(base + "/")
+                page.goto(ui_url(hub))
                 page.evaluate("() => localStorage.setItem('hub.lang', 'en')")
                 page.goto(base + f"/#agora-{tid}")
                 card = page.locator(f'.ag-fnd[data-finding="{f1}"]')
@@ -345,7 +345,7 @@ def test_board_updates_live_from_the_event_stream(tmp_path):
             browser = p.chromium.launch(headless=True)
             try:
                 page = browser.new_page(viewport={"width": 1280, "height": 900})
-                page.goto(base + "/")
+                page.goto(ui_url(hub))
                 page.evaluate("() => localStorage.setItem('hub.lang', 'en')")
                 page.goto(base + f"/#agora-{tid}")
                 page.locator(".ag-debates .ag-deb").wait_for()
@@ -526,7 +526,7 @@ def test_board_amends_withdraws_takes_a_repo_escapes_text_and_recovers_the_strea
                     refused["n"] += 1
                     route.fulfill(status=503, body="restarting")
                 page.route("**/api/events/stream*", refuse)
-                page.goto(base + "/")
+                page.goto(ui_url(hub))
                 page.evaluate("() => localStorage.setItem('hub.lang', 'en')")
                 page.goto(base + f"/#agora-{tid}")
                 card = page.locator(f'.ag-deb-col.verified .ag-fnd[data-finding="{f1}"]')

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ._hub_fakes import make_hub, serve
+from ._hub_fakes import make_hub, serve, ui_url
 
 
 def test_home_opens_decision_before_measures_and_keeps_focus(tmp_path):
@@ -67,7 +67,7 @@ def test_project_navigation_preserves_scope_and_all_tools(tmp_path, width):
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 base = hub.config.url
-                page.goto(base)
+                page.goto(ui_url(hub))
                 page.locator('.hub-project-open').filter(has_text='Alpha').click()
                 page.locator('.hub-project-agora').click()
                 page.locator('.ag-card', has_text='Alpha task').wait_for()
@@ -180,7 +180,7 @@ def test_task_discovery_project_resume_and_plain_automation(tmp_path, width):
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 base = hub.config.url
-                page.goto(base + '/#hub/home')
+                page.goto(ui_url(hub, '/#hub/home'))
                 page.locator('.hub-attention-row', has_text='Informe preparado').wait_for()
                 browser_api.expect(page.locator('.hub-attention')).to_contain_text(
                     'Agenda de hoy y plazos vencidos, avisos sin revisar, correo, chats e incidencias.')

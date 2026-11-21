@@ -17,8 +17,15 @@ if ($Build) {
         if ($LASTEXITCODE -ne 0) { throw 'Could not build the desktop application.' }
     } finally { Pop-Location }
 }
-if ($Web) { Start-Process ($HubUrl.TrimEnd('/') + '/agora/'); exit }
+$env:AGORA_HUB_URL = $HubUrl.TrimEnd('/')
+if (-not $env:HOARD_HUB_DATA_DIR) { $env:HOARD_HUB_DATA_DIR = Join-Path $repositoryRoot 'data' }
+if ($Web) {
+    $key = (Get-Content -LiteralPath (Join-Path $env:HOARD_HUB_DATA_DIR 'hub-ui-launch-token') -Raw).Trim()
+    $launch = Invoke-RestMethod -Method Post -Uri ($env:AGORA_HUB_URL + '/api/ui/launch') -MaximumRedirection 0 `
+        -Headers @{ Authorization = 'Bearer ' + $key } -ContentType 'application/json' -Body '{}'
+    Start-Process ($env:AGORA_HUB_URL + '/agora/#hub-session=' + $launch.ticket)
+    exit
+}
 $binaryPath = if (Test-Path -LiteralPath $localBinary) { $localBinary } else { $buildBinary }
 if (-not (Test-Path -LiteralPath $binaryPath)) { throw 'Desktop build is missing. Run scripts/start-agora.ps1 -Build, or use -Web.' }
-$env:AGORA_HUB_URL = $HubUrl.TrimEnd('/')
 Start-Process -FilePath $binaryPath -WorkingDirectory $appRoot -WindowStyle Hidden

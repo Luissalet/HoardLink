@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('hoardWindow', {
   // handler after preventDefault): any program accepts the drop.
   startDrag: (file) => ipcRenderer.send('hoard:start-drag', String(file || '')),
 });
+if (process.isMainFrame && process.argv.includes(`--hoard-hub-origin=${location.origin}`)) {
+  contextBridge.exposeInMainWorld('hoardHubSession', {
+    requestTicket: () => ipcRenderer.invoke('hoard:hub-session-ticket'),
+    onRefresh: (refresh) => { ipcRenderer.on('hoard:hub-session-refresh', () => refresh()); },
+  });
+}
 window.addEventListener('DOMContentLoaded', () => {
   document.documentElement.dataset.hoardWindow = '1';
 });

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from ._hub_fakes import FakeApp, http, make_hub, serve
+from ._hub_fakes import FakeApp, http, make_hub, serve, ui_url
 
 
 def test_select_native_dossiers_from_orders(tmp_path, monkeypatch):
@@ -44,7 +44,7 @@ def test_select_native_dossiers_from_orders(tmp_path, monkeypatch):
                 pytest.skip("Chrome is unavailable")
             try:
                 page = browser.new_page(locale="en-GB", viewport={"width": 390, "height": 844})
-                page.goto(hub.config.url + "/#hub/orders")
+                page.goto(ui_url(hub, "/#hub/orders"))
                 source = page.get_by_label("Dossier source")
 
                 def create(title, expected):

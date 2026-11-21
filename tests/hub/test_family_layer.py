@@ -22,6 +22,7 @@ from hoard_link.hub.jobs import Scheduler, is_due, next_run, parse_every, valida
 from hoard_link.hub.rules import RuleEngine, example_rules, rule_matches
 from hoard_link.hub.server import make_server
 
+from ._hub_fakes import ui_headers
 from .conftest import free_port, write_manifest
 from .test_hub_and_server import _http
 
@@ -291,7 +292,7 @@ def test_call_app_proxy_and_events_over_http(fserved):
     assert status == 200 and body["event"]["source"] == "contract"
     status, body = _http(url + "/api/events", {"type": "x", "data": {}})
     assert status == 401
-    status, body = _http(url + "/api/events", {"type": "ui.test", "data": {}}, headers={"Sec-Fetch-Site": "same-origin"})
+    status, body = _http(url + "/api/events", {"type": "ui.test", "data": {}}, headers=ui_headers(hub))
     assert status == 200 and body["event"]["source"] == "ui"
     status, body = _http(url + "/api/events", {"type": "", "data": {}}, headers=hub_tok)
     assert status == 400

@@ -20,6 +20,7 @@ from hoard_link.hub.facets import Reply, Request
 from hoard_link.hub.mailgate import (MailGate, MailStore, domain_of, fold, guess_category, match_interest, normalize_spec)
 from hoard_link.hub.server import make_server
 
+from ._hub_fakes import ui_headers
 from .test_hub_and_server import _http
 
 
@@ -571,7 +572,7 @@ def served(hub, gate):
 
 
 def test_routes_through_the_real_server(served, gate, hub):
-    ui = {"Sec-Fetch-Site": "same-origin"}
+    ui = ui_headers(hub)
     assert _http(served + "/api/mail/status")[0] == 401
     st, body = _http(served + "/api/mail/status", headers=ui)
     assert st == 200 and body["enabled"] is False

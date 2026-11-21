@@ -9,6 +9,7 @@ from hoard_link.hub import local_programs as programs
 from hoard_link.hub.config import HubConfig
 from hoard_link.hub.core import Hub
 
+from ._hub_fakes import ui_headers
 from .test_hub_and_server import _http, served  # noqa: F401
 
 
@@ -75,7 +76,7 @@ def test_http_registry_uses_the_same_manual_entries_as_named_tools(served, tmp_p
     payload = {"name": "Local Test", "path": str(Path(tmp_path) / "tool"), "headless": "tool --batch"}
     assert _http(url + "/api/programs/register", payload)[0] == 401
     assert _http(url + "/api/programs", None)[1] == {"ok": True, "programs": []}
-    page_headers = {"Sec-Fetch-Site": "same-origin", "Origin": url}
+    page_headers = ui_headers(hub)
     status, added = _http(url + "/api/programs/register", payload, page_headers)
     assert status == 200 and added["changed"]
     agent_headers = {"Authorization": f"Bearer {hub.token}"}

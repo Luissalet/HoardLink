@@ -15,6 +15,11 @@ The hub uses it automatically when `shell/node_modules/electron` exists
 window. Set `window_engine` to `shell` or `chromium` in `data/hub.json` to
 force one.
 
+The Hub window restores its write session on each page load. Its main process
+reads the Hub launcher credential from the data directory and requests a
+single-use ticket. Only the ticket passes to the Hub page. If a write needs a
+new session, **Restore session** keeps the current page and note in place.
+
 What the window does:
 
 - **Colours** — read from the page after every load: `--hoard-deep`,

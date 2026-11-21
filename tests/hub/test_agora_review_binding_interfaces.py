@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from ._hub_fakes import http, make_hub, serve
+from ._hub_fakes import http, make_hub, serve, ui_url
 
 
 def evidence(tmp_path, name):
@@ -109,8 +109,13 @@ def test_browser_preserves_draft_revision_and_rejects_racing_submit(tmp_path, la
                 errors, calls = [], []
                 page.on("pageerror", lambda e: errors.append(str(e)))
                 page.on("request", lambda r: calls.append(json.loads(r.post_data)) if r.url.endswith("/task_review") else None)
-                page.goto(base + f"/api/agora/tasks/{task_id}")
-                page.set_content('<html><head><style>[hidden]{display:none!important}body{font:14px Arial;padding:20px;--muted:#555;--line:#aaa;--card-2:#eee;--mono:monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><div id="root"></div></body></html>')
+                path = "/review-fixture"
+                markup = ('<html><head><script src="/ui/browser-session.js"></script>'
+                          '<style>[hidden]{display:none!important}body{font:14px Arial;padding:20px;--muted:#555;'
+                          '--line:#aaa;--card-2:#eee;--mono:monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere}'
+                          '</style></head><body><div id="root"></div></body></html>')
+                page.route(base + path, lambda route: route.fulfill(status=200, content_type="text/html", body=markup))
+                page.goto(ui_url(hub, path))
                 page.evaluate("""language => {
                   window.executed = false; window.toasts = [];
                   window.HubFacets = {ctx: {bus: new EventTarget(), lang: () => language,
