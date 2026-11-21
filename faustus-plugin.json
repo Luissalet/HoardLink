@@ -1,5 +1,11 @@
 {
   "x-family": {
+    "isolated_instance": {
+      "unsupported": {
+        "en": "Start the Hub directly with --port and --data-dir to create an isolated catalog.",
+        "es": "Arranca el Hub directamente con --port y --data-dir para crear un catálogo aislado."
+      }
+    },
     "production": {
       "handoffs": [
         {
