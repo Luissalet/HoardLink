@@ -221,7 +221,16 @@ exit with no submission, or with pending changes, is recorded as `incomplete` ("
 and a task still `claimed` is moved to `blocked` keeping its owner and locks. If a worker is cut (inactivity, process
 death, Hub restart, provider error) the card and the task thread state the observed cause and the last state; the Hub
 then tries one automatic continuation on the same Faustus session and folder when that session is still available.
-**Continue** (Hub page, `POST` worker action, `hub_agora_console_worker`) resumes the same worker id manually.
+**Continue** in the worker details accepts a follow-up message and reopens the original idle session, including after
+a verified delivery. The worker keeps its Agora identity and workspace. `POST /api/agora/console/worker` and
+`hub_agora_console_worker` accept `action: continue`, `worker_id` and an optional `message`.
+
+An unavailable original session returns `worker_session_unavailable` with the reason. Use **Replace worker** in the
+same details panel, or call `action: replace` with `worker_id`, `task_id` and the optional follow-up message. The
+replacement receives the previous report, assignment and task thread. The selected task and its active locks move
+after the replacement checks in, preserving the review and its revision. Worker details show the handover state.
+The response includes the stop request. After transfer, the handover receipt also includes the reverse handover
+request, subject to the usual Agora rules. The API can choose another provider and model for the replacement.
 After a Hub restart, running workers are re-identified from their stored process and runtime, and finished ones are
 reconciled from their run receipts.
 

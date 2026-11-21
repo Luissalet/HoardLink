@@ -258,7 +258,10 @@ Worker details show the actual server URL, workspace and observed tool counts.
 `POST /api/chat/stop/<session_id>` with the native run identity and work scope.
 The durable receipt reports cancellation separately from task completion.
 HTTP `/api/agora/console/worker` and MCP `hub_agora_console_worker` share this
-flow, including `action=stop`. Native Spark workspaces can use the placed
+flow, including `action=stop`. A follow-up with `action=continue` reopens the
+original idle child session after a turn ends. When the original session is
+unavailable, `action=replace` starts another worker with the prior report and
+transfers the selected task after the worker checks in. Native Spark workspaces can use the placed
 instance directly with its connected Agora connector.
 
 ### Apps placed on a Spark

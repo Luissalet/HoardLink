@@ -33,6 +33,7 @@ from urllib.parse import quote, urlencode
 
 from . import agora_auto_review, agora_liveness, agora_ranks, agora_worker_profiles
 from . import work_admission
+from .agora import AgoraError, FINAL
 from .agora_capacity import codex_executable, codex_observation
 from .agora_leader_state import build_leader_states, resolve_paths
 from .facets import Facet, Reply, Request
@@ -74,6 +75,12 @@ _CATALOG_EPOCH = [0]
 SIGN_IN_REFUSED_TTL_S = 15 * 60
 #: Providers whose runner starts a model that lists no effort levels without one. The others always pass one.
 NO_EFFORT_LEADERS = ("claude", "faustus")
+IDLE_WORKER_STATES = ("completed", "failed", "incomplete", "stopped", "unknown")
+RESUME_ISSUES = {
+    "missing_session": "The original session is missing. / No se encuentra la sesión original.",
+    "missing_workspace": "The original workspace is missing. / No se encuentra la carpeta de trabajo original.",
+    "missing_receipt": "The receipt does not identify the original session. / El recibo no identifica la sesión original.",
+}
 #: Names of sessions being started right now, on any server: taken until their session is on record or gave up.
 _STARTING_NAMES: dict[str, str] = {}
 _STARTING_LOCK = threading.Lock()
@@ -255,7 +262,9 @@ class AgoraConsoleFacet(Facet):
                                       ("retry_count", "INTEGER NOT NULL DEFAULT 0"), ("runtime_endpoint", "TEXT NOT NULL DEFAULT ''"),
                                       ("runtime_pid", "INTEGER"), ("runtime_started_at", "REAL"),
                                       ("template", "TEXT NOT NULL DEFAULT ''"),
-                                      ("verification", "TEXT NOT NULL DEFAULT ''")):
+                                      ("verification", "TEXT NOT NULL DEFAULT ''"),
+                                      ("resume_issue", "TEXT NOT NULL DEFAULT ''"),
+                                      ("replacement", "TEXT NOT NULL DEFAULT '{}'")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE workers ADD COLUMN {name} {declaration}")
             for name in ("faustus_url", "workspace"):
@@ -715,7 +724,10 @@ class AgoraConsoleFacet(Facet):
         workers = []
         for row in rows:
             worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
+            replacement = json.loads(row["replacement"])
             worker["can_continue"] = self._worker_can_continue(row)
+            worker["resume_issue"] = row["resume_issue"]
+            worker["replacement"] = self._public_replacement(replacement)
             worker["retry_count"] = row["retry_count"]
             if row["parent_id"] == "faustus" and row["state"] == "running" and row["log_path"]:
                 path = Path(row["log_path"])
@@ -763,8 +775,12 @@ class AgoraConsoleFacet(Facet):
     def _start_worker_recovery(self) -> None:
         with self._db_lock, self._db() as db:
             pending = db.execute("SELECT 1 FROM workers WHERE state='unknown' AND outcome LIKE 'hub_restart%' LIMIT 1").fetchone()
+            replacing = [row["id"] for row in db.execute("SELECT id,replacement FROM workers WHERE replacement<>'{}'")
+                         if json.loads(row["replacement"]).get("state") == "waiting_for_worker"]
         if pending:
             threading.Thread(target=self._recover_workers, daemon=True, name="agora-worker-recovery").start()
+        for worker_id in replacing:
+            self._start_replacement_handoff(worker_id)
 
     def _recover_workers(self) -> None:
         while not self._recovery_stop.is_set():
@@ -1285,7 +1301,7 @@ class AgoraConsoleFacet(Facet):
                 item = payload.get("item") if isinstance(payload.get("item"), dict) else payload
                 item_kind = str(item.get("type") or item.get("kind") or "").lower()
                 if "error" in kind or kind.endswith(".failed") or payload.get("is_error") is True:
-                    provider_error = str(payload.get("message") or payload.get("error") or payload.get("text") or kind)[:1000]
+                    provider_error = str(payload.get("message") or payload.get("error") or payload.get("errors") or payload.get("text") or kind)[:1000]
                 code = item.get("exit_code")
                 state = str(item.get("status") or payload.get("status") or "").lower()
                 is_tool = any(token in item_kind or token in kind for token in
@@ -2348,6 +2364,8 @@ class AgoraConsoleFacet(Facet):
                        (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id, model_source, now, now))
             if template:
                 db.execute("UPDATE workers SET template=? WHERE id=?", (template, worker_id))
+            if leader_id == "claude":
+                db.execute("UPDATE workers SET launch_cwd=? WHERE id=?", (str(worker_cwd), worker_id))
             if leader_id == "faustus":
                 runtime = faustus_session.get("runtime") or {}
                 resume_command = command.copy()
@@ -2420,7 +2438,9 @@ class AgoraConsoleFacet(Facet):
             found = self._cursor_workspace_from_receipts(session_id)
             return str(found) if found else ""
         if leader == "codex" and re.fullmatch(r"[0-9a-f-]{36}", session_id):
-            root = resolve_paths()["codex_sessions"]
+            codex_home = os.environ.get("CODEX_HOME")
+            root = (Path(codex_home) / "sessions" if codex_home and not os.environ.get("HOARD_LEADER_CODEX_SESSIONS")
+                    else resolve_paths()["codex_sessions"])
             for path in root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"):
                 try:
                     with path.open(encoding="utf-8") as stream:
@@ -2599,9 +2619,10 @@ class AgoraConsoleFacet(Facet):
 
     @staticmethod
     def _worker_can_continue(row: Any) -> bool:
-        return bool(row["parent_id"] == "faustus" and row["session_id"]
-                    and (row["launch_command"] or (row["log_path"] and row["faustus_url"]))
-                    and row["state"] in ("failed", "incomplete", "stopped", "unknown"))
+        fields = dict(row)
+        return bool(row["log_path"] and row["state"] in IDLE_WORKER_STATES
+                    and not fields.get("resume_issue") and fields.get("replacement", "{}") == "{}"
+                    and fields.get("template") != "skill-benchmark")
 
     def _worker_launch_spec(self, row: Any) -> tuple[list[str], str]:
         if row["launch_command"]:
@@ -2623,30 +2644,260 @@ class AgoraConsoleFacet(Facet):
             command.extend(["--effort", row["effort"]])
         return command, str(root)
 
+    def _resume_unavailable(self, row: Any, issue: str = "") -> dict[str, Any]:
+        if issue:
+            with self._db_lock, self._db() as db:
+                db.execute("UPDATE workers SET state=?,resume_issue=?,updated_at=? WHERE id=?",
+                           (row["state"], issue, time.time(), row["id"]))
+        else:
+            issue = row["resume_issue"]
+        return {"ok": False, "status": 409, "code": "worker_session_unavailable", "reason": issue,
+                "error": RESUME_ISSUES[issue] + " Use Replace worker to hand over the task. / Usa Crear relevo para traspasar la tarea.",
+                "replacement": {"action": "replace", "worker_id": row["id"], "requires": ["task_id"]}}
+
+    def _continue_cli_worker(self, row: Any, prompt: str, log_path: Path, result_path: Path) -> dict[str, Any]:
+        leader, session = row["parent_id"], row["session_id"]
+        if not session:
+            return self._resume_unavailable(row, "missing_session")
+        original_root = Path(__file__).resolve().parents[2]
+        if leader == "codex":
+            cwd = self._worker_workspace(leader, session)
+            if not cwd:
+                return self._resume_unavailable(row, "missing_session")
+            if not (Path(cwd) / ".git").is_file():
+                return self._resume_unavailable(row, "missing_workspace")
+            executable = self._codex_executable()
+            command = [executable, "exec", "resume", "--json", "--model", row["model"],
+                       "--config", f'model_reasoning_effort="{row["effort"]}"',
+                       "--config", 'approval_policy="never"', "--config", 'sandbox_mode="danger-full-access"',
+                       "--output-last-message", str(result_path), "--", session, prompt]
+        elif leader == "claude":
+            claude_config = os.environ.get("CLAUDE_CONFIG_DIR")
+            projects = (Path(claude_config) / "projects" if claude_config and not os.environ.get("HOARD_LEADER_CLAUDE_PROJECTS")
+                        else resolve_paths()["claude_projects"])
+            if not re.fullmatch(r"[0-9a-f-]{36}", session) or not any(projects.glob(f"*/{session}.jsonl")):
+                return self._resume_unavailable(row, "missing_session")
+            cwd = row["launch_cwd"] or row["workspace"] or str(self._neutral_worker_dir(original_root, log_path.parent))
+            if not Path(cwd).is_dir():
+                return self._resume_unavailable(row, "missing_workspace")
+            executable = shutil.which("claude")
+            command = [executable, "--print", "--output-format", "stream-json", "--verbose",
+                       "--permission-mode", "bypassPermissions", "--resume", session]
+            if row["model"] != "default":
+                command.extend(["--model", row["model"]])
+            if row["effort"] and row["effort"] != "default":
+                command.extend(["--effort", row["effort"]])
+            command.extend(["--", prompt])
+        elif leader == "cursor":
+            cwd = self._verified_cursor_worktree(row["workspace"])
+            if cwd is None:
+                return self._resume_unavailable(row, "missing_workspace")
+            runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
+            node, entry = runtime / "node.exe", runtime / "index.js"
+            executable = str(node) if node.is_file() and entry.is_file() else None
+            command = [executable, str(entry), "--print", "--output-format", "stream-json", "--model", row["model"],
+                       "--workspace", str(cwd), "--resume", session, "--trust", "--force", "--", prompt]
+        else:
+            return self._resume_unavailable(row, "missing_receipt")
+        try:
+            if not executable:
+                raise FileNotFoundError(f"{leader.title()} runner unavailable")
+            with log_path.open("w", encoding="utf-8") as log:
+                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                           text=True, cwd=str(cwd), env=self._runner_env(),
+                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, ValueError) as exc:
+            with self._db_lock, self._db() as db:
+                db.execute("UPDATE workers SET state=?,updated_at=? WHERE id=?", (row["state"], time.time(), row["id"]))
+            return {"ok": False, "status": 503, "error": f"Could not start the original runner. / No se pudo iniciar el ejecutor original. ({type(exc).__name__})"}
+        detail = "Se ha solicitado continuar el turno. / A follow-up turn was requested."
+        with self._db_lock, self._db() as db:
+            self._processes[row["id"]] = process
+            db.execute("UPDATE workers SET state='running',pid=?,log_path=?,workspace=?,detail=?,outcome='unverified',"
+                       "process_exit_code=NULL,updated_at=? WHERE id=?",
+                       (process.pid, str(log_path), str(cwd), detail, time.time(), row["id"]))
+        return self._resumed_worker(row, process, result_path, detail)
+
+    def _resumed_worker(self, row: Any, process: subprocess.Popen[str], result_path: Path, detail: str) -> dict[str, Any]:
+        worker_id = row["id"]
+        self._record("worker", worker_id, "running", detail)
+        threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
+                         name=f"agora-worker-{worker_id[:8]}").start()
+        return {"ok": True, "worker_id": worker_id, "session_id": row["session_id"], "state": "running",
+                "undo": {"tool": "hub_agora_console_worker", "arguments": {"action": "stop", "worker_id": worker_id,
+                                                                              "space_id": self.space_id}}}
+
+    def _replace_worker(self, args: dict[str, Any], actor: str, message: str) -> dict[str, Any]:
+        worker_id = str(args.get("worker_id") or "")
+        agora = self._agora()
+        if agora is None:
+            return {"ok": False, "status": 503, "error": "Agora is unavailable. / El Ágora no está disponible."}
+        with self._db_lock, self._db() as db:
+            row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "status": 404, "error": "Unknown worker. / Trabajador desconocido."}
+            if (not row["resume_issue"] or row["state"] not in IDLE_WORKER_STATES
+                    or worker_id in self._processes or (row["state"] == "unknown" and self._original_worker_running(row))):
+                return {"ok": False, "status": 409, "error": "Replace an idle worker after its original session is found unavailable. / Crea un relevo cuando el trabajador esté libre y su sesión no esté disponible."}
+            try:
+                task = agora._task_row(args.get("task_id"))
+            except AgoraError as exc:
+                return {"ok": False, "status": exc.status, "error": str(exc)}
+            existing = json.loads(row["replacement"])
+            if existing and existing["state"] != "failed":
+                if existing["task_id"] != task["id"]:
+                    return {"ok": False, "status": 409, "error": "This worker already has a replacement. / Este trabajador ya tiene un relevo."}
+                return self._replacement_reply(existing)
+            source = row["agent_id"]
+            if task["owner"] != source or task["status"] in FINAL:
+                return {"ok": False, "status": 409, "error": "Select an open task owned by this worker. / Elige una tarea abierta de este trabajador."}
+            if actor != agora.person_id and agora.db.one("SELECT id FROM agents WHERE id=?", (actor,)) is None:
+                return {"ok": False, "status": 403, "error": "Send a heartbeat before handing work over. / Envía un latido antes de traspasar trabajo."}
+            seen = agora.db.one("SELECT last_seen FROM agents WHERE id=?", (source,))
+            if (actor not in (agora.person_id, source) and seen and seen["last_seen"] is not None
+                    and agora.clock() - seen["last_seen"] < agora.handover_idle_s
+                    and not agora_ranks.outranks(agora, actor, source)):
+                return {"ok": False, "status": 403, "error": "A higher-ranked agent can hand this task over now. / Un agente de mayor rango puede traspasar ya esta tarea."}
+            replacement = {"worker_id": str(uuid.uuid4()), "task_id": task["id"], "state": "waiting_for_worker",
+                           "actor": actor, "started_at": time.time()}
+            db.execute("UPDATE workers SET replacement=? WHERE id=?", (json.dumps(replacement), worker_id))
+
+        prompt = (
+            f"Take over Agora task #{task['id']} (thread {task['thread_id']}) from {source}. After your first heartbeat, "
+            "wait until the task lists you as owner before changing anything. Read the task and its review thread. "
+            f"Inspect its recorded branch and commits from your own isolated worktree. Previous workspace: {row['workspace'] or 'unrecorded'}.\n\n"
+            f"Previous assignment:\n{row['task'][:2400]}\n\nPrevious worker's last report:\n{row['result'][:2000] or row['detail'][:600]}"
+        )
+        if message:
+            prompt += "\n\nFollow-up from the console:\n" + message
+        leader = str(args.get("leader_id") or row["parent_id"])
+        same_model = leader == row["parent_id"] and not args.get("model")
+        try:
+            launched = self._create_worker({"leader_id": leader, "task": prompt, "rank": "support",
+                                            "model": args.get("model") or (row["model"] if same_model else ""),
+                                            "effort": args.get("effort") or (row["effort"] if same_model else "")},
+                                           actor, worker_id=replacement["worker_id"])
+        except Exception:
+            self._finish_replacement(worker_id, replacement, "failed", "Replacement could not start. / No se pudo iniciar el relevo.")
+            raise
+        if (launched.get("worker") or {}).get("state") not in ("running", "completed", "incomplete"):
+            detail = launched.get("error") or launched.get("warning") or "Replacement could not start. / No se pudo iniciar el relevo."
+            self._finish_replacement(worker_id, replacement, "failed", detail)
+            return {"ok": False, "status": launched.get("status", 409), "error": detail}
+        self._start_replacement_handoff(worker_id)
+        return self._replacement_reply(replacement)
+
+    def _replacement_reply(self, replacement: dict[str, Any]) -> dict[str, Any]:
+        target = replacement["worker_id"]
+        return {"ok": True, "worker_id": target,
+                "handover": self._public_replacement(replacement),
+                "undo": {"tool": "hub_agora_console_worker", "arguments": {"action": "stop", "worker_id": target,
+                                                                              "space_id": self.space_id}}}
+
+    @staticmethod
+    def _public_replacement(replacement: dict[str, Any]) -> dict[str, Any]:
+        return {key: replacement[key] for key in ("worker_id", "task_id", "state", "detail", "undo_handover")
+                if key in replacement}
+
+    def _start_replacement_handoff(self, worker_id: str) -> None:
+        threading.Thread(target=self._replacement_handoff, args=(worker_id,), daemon=True,
+                         name=f"agora-handoff-{worker_id[:8]}").start()
+
+    def _replacement_handoff(self, worker_id: str) -> None:
+        agora = self._agora()
+        with self._db_lock, self._db() as db:
+            source = db.execute("SELECT agent_id,replacement FROM workers WHERE id=?", (worker_id,)).fetchone()
+        replacement = json.loads(source["replacement"])
+        target_id = replacement["worker_id"]
+        detail = "The replacement has no launch receipt. / No consta el arranque del relevo."
+        while not self._recovery_stop.is_set():
+            with self._db_lock, self._db() as db:
+                target = db.execute("SELECT * FROM workers WHERE id=?", (target_id,)).fetchone()
+                if target is None:
+                    break
+                agent = target["agent_id"]
+                try:
+                    task = agora._task_row(replacement["task_id"])
+                    undo = {"tool": "hub_agora_handover", "arguments": {
+                        "space_id": self.space_id, "from_agent": agent, "to_agent": source["agent_id"],
+                        "tasks": [task["id"]], "include_reviews": False, "reason": "Undo the console worker handover."}}
+                    if task["owner"] == agent:
+                        self._finish_replacement(worker_id, {**replacement, "undo_handover": undo}, "transferred")
+                        return
+                    if task["owner"] != source["agent_id"] or task["status"] in FINAL:
+                        detail = "The task changed before the handover. / La tarea cambió antes del traspaso."
+                        break
+                    if target["state"] not in ("running", "unknown"):
+                        detail = "The replacement ended before the handover. / El relevo terminó antes del traspaso."
+                        break
+                    seen = agora.db.one("SELECT last_seen FROM agents WHERE id=?", (agent,))
+                    if seen and float(seen["last_seen"] or 0) >= replacement["started_at"]:
+                        actor = replacement["actor"]
+                        moved = agora.handover({"agent": actor, "_person": actor == agora.person_id,
+                                                "from_agent": source["agent_id"], "to_agent": agent,
+                                                "tasks": [task["id"]], "include_reviews": False,
+                                                "reason": "La sesión original no está disponible. Relevo solicitado desde la consola."})
+                        if task["id"] in moved["owner_moved"]:
+                            self._finish_replacement(worker_id, {**replacement, "undo_handover": undo}, "transferred")
+                            return
+                        detail = "The task could not be transferred. / No se pudo traspasar la tarea."
+                        break
+                except AgoraError as exc:
+                    detail = str(exc)
+                    break
+            self._recovery_stop.wait(0.5)
+        if not self._recovery_stop.is_set():
+            self._stop_worker(target_id)
+            self._finish_replacement(worker_id, replacement, "failed", detail)
+
+    def _finish_replacement(self, worker_id: str, replacement: dict[str, Any], state: str, detail: str = "") -> None:
+        with self._db_lock, self._db() as db:
+            db.execute("UPDATE workers SET replacement=?,updated_at=? WHERE id=?",
+                       (json.dumps({**replacement, "state": state, "detail": detail}), time.time(), worker_id))
+
     def _continue_worker(self, worker_id: str, automatic: bool = False,
-                         previous_process: Optional[subprocess.Popen[str]] = None) -> dict[str, Any]:
+                         previous_process: Optional[subprocess.Popen[str]] = None, message: str = "") -> dict[str, Any]:
         with self._db_lock, self._db() as db:
             row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
             if row is None:
                 return {"ok": False, "status": 404, "error": "unknown worker"}
+            if row["resume_issue"] and row["replacement"] == "{}":
+                return self._resume_unavailable(row)
             if (not self._worker_can_continue(row)
                     or self._processes.get(worker_id) not in (None, previous_process)
                     or (automatic and row["retry_count"])):
-                return {"ok": False, "status": 409, "error": "No idle Faustus session is available to continue"}
+                return {"ok": False, "status": 409, "error": "The worker is not idle or is already being replaced. / El trabajador no está libre o ya tiene un relevo."}
             if row["state"] == "unknown" and self._original_worker_running(row):
                 return {"ok": False, "status": 409, "error": "The original runner is still alive"}
             db.execute("UPDATE workers SET state='starting',retry_count=retry_count+?,updated_at=? WHERE id=?",
                        (int(automatic), time.time(), worker_id))
             self._processes.pop(worker_id, None)
 
+        prompt = (
+            "Continue the assigned task in this same session and worktree under your existing Agora identity. "
+            "Read the task thread and inspect the existing work before repeating any action. Complete verification, "
+            "commit your changes and submit the task in Agora before ending."
+        )
+        if message:
+            prompt += "\n\nFollow-up from the console:\n" + message
+        log_path = Path(row["log_path"]).with_name(f"{worker_id}-resume-{time.time_ns()}.jsonl")
+        result_path = log_path.with_suffix(".txt")
+        if row["parent_id"] != "faustus":
+            return self._continue_cli_worker(row, prompt, log_path, result_path)
+
         self._adopt_worker_runtime(row)
         base_url = row["faustus_url"]
         session_busy = False
         try:
+            if not row["session_id"]:
+                return self._resume_unavailable(row, "missing_session")
+            if not row["launch_command"] and not row["faustus_url"]:
+                return self._resume_unavailable(row, "missing_receipt")
             command, cwd = self._worker_launch_spec(row)
             if (command[command.index("--session") + 1] != row["session_id"]
                     or command[command.index("--agent-id") + 1] != row["agent_id"]):
-                raise RuntimeError("El recibo no coincide con la sesión o identidad original.")
+                self._close_worker_runtime(worker_id)
+                return self._resume_unavailable(row, "missing_receipt")
             status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
             runtime = self._faustus_runtimes.get(worker_id)
             runtime_process = runtime.get("process") if runtime else None
@@ -2671,15 +2922,13 @@ class AgoraConsoleFacet(Facet):
                     raise RuntimeError("La sesión original aún tiene un turno activo.")
                 status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
             status, sessions = self._faustus_session_request("GET", "/api/sessions", base_url=base_url)
-            if status != 200 or not isinstance(sessions, list) or not any(
-                    isinstance(session, dict) and session.get("id") == row["session_id"] for session in sessions):
-                raise RuntimeError("Faustus no encuentra la sesión original.")
+            if status != 200 or not isinstance(sessions, list):
+                raise RuntimeError("Faustus did not confirm the session list. / Faustus no confirmó la lista de sesiones.")
+            if not any(isinstance(session, dict) and session.get("id") == row["session_id"] for session in sessions):
+                self._close_worker_runtime(worker_id)
+                return self._resume_unavailable(row, "missing_session")
             command[command.index("--url") + 1] = base_url
-            command[command.index("-p") + 1] = (
-                "Continue the assigned task in this same session and worktree. Read the task thread and inspect "
-                "the existing work before repeating any action. Complete verification, commit your changes and "
-                "submit the task in Agora before ending. Prior stop: " + row["detail"])
-            log_path = Path(row["log_path"]).with_name(f"{worker_id}-resume-{time.time_ns()}.jsonl")
+            command[command.index("-p") + 1] = prompt + "\n\nPrior stop: " + row["detail"]
             with log_path.open("w", encoding="utf-8") as log:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                            text=True, cwd=cwd, env=self._faustus_runner_env(),
@@ -2702,13 +2951,10 @@ class AgoraConsoleFacet(Facet):
             resume_command[resume_command.index("-p") + 1] = ""
             db.execute("UPDATE workers SET state='running',pid=?,log_path=?,faustus_url=?,detail=?,"
                        "runtime_pid=?,runtime_started_at=?,launch_command=?,launch_cwd=?,"
-                       "outcome='unverified',result='',process_exit_code=NULL,updated_at=? WHERE id=?",
+                       "outcome='unverified',process_exit_code=NULL,updated_at=? WHERE id=?",
                        (process.pid, str(log_path), base_url, detail, runtime.get("pid"), runtime.get("created_at"),
                         json.dumps(resume_command), cwd, time.time(), worker_id))
-        self._record("worker", worker_id, "running", detail)
-        threading.Thread(target=self._monitor_worker, args=(worker_id, process, log_path.with_suffix(".txt")),
-                         daemon=True, name=f"agora-worker-{worker_id[:8]}").start()
-        return {"ok": True, "worker_id": worker_id, "state": "running"}
+        return self._resumed_worker(row, process, result_path, detail)
 
     def _monitor_worker(self, worker_id: str, process: subprocess.Popen[str], result_path: Path) -> None:
         try:
@@ -2728,6 +2974,11 @@ class AgoraConsoleFacet(Facet):
                 worker["workspace"] = self._worker_workspace(leader, worker["session_id"])
             result = result_path.read_text(encoding="utf-8")[:20000] if result_path.is_file() else stream_result[:20000]
             metrics = self._runner_metrics(log_path)
+            resumed = log_path.name.startswith(f"{worker_id}-resume-")
+            resume_issue = ""
+            if resumed and code and re.search(r"no (?:conversation|session|chat|rollout) found|(?:session|thread) not found",
+                                              metrics["provider_error"], re.IGNORECASE):
+                resume_issue = "missing_session"
             summary = self._worker_summary(log_path)
             cause = str(summary.get("stop") or "")
             refused_sign_in = leader == "claude" and code != 0 and self._claude_refused_sign_in(log_path)
@@ -2773,10 +3024,10 @@ class AgoraConsoleFacet(Facet):
                 if state in ("failed", "stopped") and verification["issues"]:
                     detail += " " + " ".join(verification["issues"])
                 db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=?,workspace=?,process_exit_code=?,"
-                           "outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,verification=?,updated_at=? WHERE id=?",
-                           (state, result, detail, worker["session_id"], worker["workspace"], code, outcome,
+                           "outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,verification=?,resume_issue=?,updated_at=? WHERE id=?",
+                           (state, result or worker["result"], detail, worker["session_id"], worker["workspace"], code, outcome,
                             metrics["tool_success_count"], metrics["tool_failure_count"], metrics["provider_error"],
-                            json.dumps(verification), time.time(), worker_id))
+                            json.dumps(verification), resume_issue, time.time(), worker_id))
             self._record("worker", worker_id, state, detail)
             if benchmark:
                 receipts = self.hub.facet("order_receipts")
@@ -2973,6 +3224,9 @@ class AgoraConsoleFacet(Facet):
                         session_id = value
                         break
                 text = payload.get("result") or payload.get("text")
+                item = payload.get("item")
+                if event.get("type") == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
+                    text = item.get("text")
                 if isinstance(text, str) and text:
                     final_text = text
         except OSError:
@@ -3057,11 +3311,16 @@ class AgoraConsoleFacet(Facet):
             self._ensure_leader_drain(leader_id)
             return {"ok": True, "leader_id": leader_id, "session_id": session_id, "state": "idle",
                     "detail": "The ambiguous turn remains unknown; queued later turns may now continue."}
-        if action in ("continue", "resume"):
-            return self._continue_worker(str(args.get("worker_id") or ""))
+        if action in ("continue", "resume", "replace"):
+            message = args.get("message", "")
+            if not isinstance(message, str) or len(message) > 4000:
+                return {"ok": False, "status": 400, "error": "Message must have at most 4000 characters. / El mensaje puede tener hasta 4000 caracteres."}
+            if action == "replace":
+                return self._replace_worker(args, actor, message.strip())
+            return self._continue_worker(str(args.get("worker_id") or ""), message=message.strip())
         if action in ("stop", "cancel"):
             return self._stop_worker(str(args.get("worker_id") or ""))
-        return {"ok": False, "status": 400, "error": "action must be create, stop, continue, register, heartbeat, finish or reconcile"}
+        return {"ok": False, "status": 400, "error": "action must be create, stop, continue, replace, register, heartbeat, finish or reconcile"}
 
     def _external_worker(self, args: dict[str, Any], action: str, actor: str) -> dict[str, Any]:
         worker_id = str(args.get("worker_id") or "").strip()
@@ -3373,10 +3632,12 @@ class AgoraConsoleFacet(Facet):
             {"name": agora_auto_review.TOOL, "description": "Read automatic reviews and corrections with their task revisions, worker states and reasons for waiting.",
              "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
-            {"name": "hub_agora_console_worker", "description": "Start or stop a separate Codex, Claude or managed Cursor child in an isolated worktree, or a Faustus child in the space's workspace, with a model and effort level from the provider catalog. Faustus follows placement. A PC workspace with Faustus on a Spark starts a dedicated headless PC runtime using that Sparks model. Worker receipts report the actual Faustus URL, workspace and observed tool counts. Stop cancels that worker's exact active run through the native API. Continue resumes the original idle Faustus session and workspace. Models without effort levels start without one. Also register external workers or reconcile an ambiguous console session.",
+            {"name": "hub_agora_console_worker", "description": "Start or stop a console worker. Continue an idle worker in its original session with a follow-up message. If the session is unavailable, replace starts a new worker with the prior report and hands task_id over after its heartbeat. Models without effort levels start without one. Also register external workers or reconcile an ambiguous leader session.",
              "inputSchema": {"type": "object", "properties": {
-                 "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile", "continue"]},
+                 "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile", "continue", "replace"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
+                 "message": {"type": "string", "maxLength": 4000, "description": "Follow-up instruction for continue or replace."},
+                 "task_id": {"type": "integer", "minimum": 1, "description": "Task to transfer with replace. It must belong to the original worker."},
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},
                  "capability": {"enum": ["reasoning_high", "vision_strict", "fast_local"]},
