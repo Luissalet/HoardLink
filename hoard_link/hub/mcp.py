@@ -79,6 +79,14 @@ def _text(payload: Any) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False, indent=1, default=str)}]}
 
 
+def _discoverable_tools() -> list[dict[str, Any]]:
+    # Some clients split underscores in MCP names before searching descriptions.
+    return [
+        {**tool, "description": f"{tool['description']}\nID: {tool['name']}"}
+        for tool in catalogue()
+    ]
+
+
 def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
     method = msg.get("method")
     msg_id = msg.get("id")
@@ -104,7 +112,7 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
     if method == "ping":
         return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": catalogue()}}
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": _discoverable_tools()}}
     if method == "tools/call":
         name = str(params.get("name") or "")
         args = dict(params.get("arguments") or {})

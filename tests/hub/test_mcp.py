@@ -1,4 +1,4 @@
-"""Native MCP observation budgets over private real HTTP; no model or live Hub."""
+"""Native MCP discovery and observation budgets without the running Hub."""
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -40,6 +40,17 @@ class Handler(BaseHTTPRequestHandler):
 def call(name='hub_call_app', arguments=None):
     return mcp.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {
         'name': name, 'arguments': arguments or {}}})
+
+
+def test_native_catalogue_keeps_exact_ids_searchable():
+    source = tools.all_tools()
+    reply = mcp.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'})
+    listed = reply['result']['tools']
+
+    assert len(listed) == len(source)
+    for native, canonical in zip(listed, source):
+        assert native['description'] == f"{canonical['description']}\nID: {canonical['name']}"
+        assert {**native, 'description': canonical['description']} == canonical
 
 
 @pytest.mark.parametrize('transport_failure', [False, True])
