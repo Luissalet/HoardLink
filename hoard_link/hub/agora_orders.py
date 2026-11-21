@@ -694,9 +694,12 @@ def _decision_image(pieces):
     piece = next((p for p in pieces if p.get("previews") or p.get("view") == "image"), None)
     if piece is None:
         return None
-    preview = bool(piece.get("previews"))
-    return {"piece_id": piece["id"], "preview": preview, "title": piece["title"],
-            "path": f"/api/agora/piece_file/{piece['id']}" + ("?preview=0" if preview else "")}
+    return _decision_view(piece, 0 if piece.get("previews") else None)
+
+
+def _decision_view(piece, index):
+    return {"piece_id": piece["id"], "preview": index is not None, "title": piece["title"],
+            "path": f"/api/agora/piece_file/{piece['id']}" + (f"?preview={index}" if index is not None else "")}
 
 
 def _decision_artifact(piece):
@@ -704,6 +707,8 @@ def _decision_artifact(piece):
     media = piece["view"]
     preview = _decision_image([piece])
     return {"title": piece["title"], "media": media, "path": file,
+            "filename": os.path.basename(piece["path"]) if file else None,
+            "previews": [_decision_view(piece, index) for index in range(len(piece.get("previews") or []))],
             "image": preview, "url": piece.get("url") if media == "web" else None}
 
 
