@@ -240,10 +240,12 @@ def _task_diff(ag: Any, task: dict[str, Any]) -> list[dict[str, Any]]:
     names = task["repositories"]
     assigned = {ref: name for name, refs in task["commits_by_repo"].items() for ref in refs}
     primary_reads = {}
+    other_primary_roots = {}
     # Older deliveries could name one repository but submit a flat list from several.
     if len(names) == 1 and not assigned:
-        roots = _roots(ag, names[0])
-        primary_reads = {ref: {**commit_diff(roots, ref), "repo": names[0]} for ref in commits}
+        first, *others = _roots(ag, names[0])
+        primary_reads = {ref: {**commit_diff([first], ref), "repo": names[0]} for ref in commits}
+        other_primary_roots = {str(root): names[0] for root in others}
 
     unassigned = [ref for ref in commits if ref not in assigned and is_commit_hash(ref)
                   and (not primary_reads or primary_reads[ref].get("error"))]
@@ -257,6 +259,7 @@ def _task_diff(ag: Any, task: dict[str, Any]) -> list[dict[str, Any]]:
         else:
             registry = {str(entry["path"]): entry["name"] for entry in
                         getattr(ag, "registered_repositories", lambda: [])()}
+            registry.update(other_primary_roots)
         # Keep the path that matched. Different registered checkouts can have the same folder name.
         matches = repository_commit_index(({"name": path, "path": path} for path in registry), unassigned)
 
@@ -266,6 +269,14 @@ def _task_diff(ag: Any, task: dict[str, Any]) -> list[dict[str, Any]]:
         if ref in primary_reads and not paths:
             result.append(primary_reads[ref])
             continue
+        if ref in primary_reads:
+            # Preserve the declared repository's checkout order when it has the object.
+            preferred = [Path(root) for root in other_primary_roots if root in paths]
+            if preferred:
+                commit = commit_diff(preferred, ref)
+                if not commit.get("error"):
+                    result.append({**commit, "repo": names[0]})
+                    continue
         if ref in assigned:
             name = assigned[ref]
             if name not in roots_by_name:

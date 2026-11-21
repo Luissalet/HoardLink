@@ -203,6 +203,9 @@ def test_legacy_diff_infers_repositories_per_commit_and_reports_shared_hash(ag, 
     primary_task = _delivered(ag, commits=[ag.first, other_ref])
     legacy = ag.review_diff({"task_id": primary_task["id"]})["commits"]
     assert [(c["repo"], c["sha"]) for c in legacy] == [("Demo", ag.first), ("Other", other_ref)]
+    ag.repo_roots = lambda name: [demo, other] if name == "Demo" else []
+    legacy = ag.review_diff({"task_id": primary_task["id"]})["commits"]
+    assert [(c["repo"], c["sha"]) for c in legacy] == [("Demo", ag.first), ("Demo", other_ref)]
     ag.task_submit({"agent": "builder", "task_id": task["id"], "summary": "Named",
                     "commits_by_repo": {"Demo": [ag.first], "Other": [other_ref]}})
     assert ag.review_diff({"task_id": task["id"]})["repositories"] == ["Demo", "Other"]
