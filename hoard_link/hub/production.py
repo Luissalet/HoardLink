@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from .dispatch_proxy import probe_catalog
 from .facets import Facet
+from .order_app_references import resolve as resolve_app_references
 from .order_destinations import declared_requirements
 
 
@@ -77,6 +78,7 @@ class ProductionFacet(Facet):
         if agora is not None:
             agora.agora.order_station_catalog = lambda: self.catalog({}, link_skills=False)["stations"]
             agora.agora.order_station_repo = self.station_repo
+            agora.agora.order_app_references = lambda refs: resolve_app_references(self.hub, refs)
 
     def station_repo(self, station):
         app = self.hub.get(station)
