@@ -272,7 +272,9 @@ class IntegrationFacet(Facet):
         tracked = repo_git.tracked(repo, head) | repo_git.tracked(repo, base)
         machine = "spark" if args.get("spark_repo") else "local"
         previous = read_json(self._baseline(repo), {}).get(machine, {})
-        known_files = {row.get("file") for row in previous.get("failures", {}).values()} & tracked
+        # Older pytest receipts used the platform's native separator.
+        known_files = {row["file"].replace("\\", "/") for row in previous.get("failures", {}).values()
+                       if row.get("file")} & tracked
         try:
             files = checks.tests_for(delta, tracked, set(test_paths) | known_files | ({live_file} if live else set()),
                                      config)

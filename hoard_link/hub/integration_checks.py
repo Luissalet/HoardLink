@@ -138,7 +138,9 @@ def report_result(exit_code, report, output, *, paths=None, empty_ok=False):
             # Pytest's message contains the assertion and exception. Tracebacks include
             # checkout paths and line numbers, which can differ between the two trees.
             details = _stable_message(failure.get("message", ""), paths or {})
-            failures[key] = {"signature": hashlib.sha256(details.encode()).hexdigest(), "file": case.get("file"),
+            file = case.get("file")
+            failures[key] = {"signature": hashlib.sha256(details.encode()).hexdigest(),
+                             "file": file.replace("\\", "/") if file else None,
                              "message": details[:500]}
         elif case.find("skipped") is not None:
             counts["skipped"] += 1
