@@ -4,6 +4,7 @@ import {useCallback,useEffect,useRef,useState} from 'react';
 import {decisionHeading,decisionUrl,loadHistory,loadPending,type DecisionRecord,type PendingDecision} from '../../../hoard_link/hub/ui/production_decisions_data.js';
 import {renderDecisionCards} from '../../../hoard_link/hub/ui/production_decisions_card.js';
 import {api,lang,openHub,previewSource} from './api';
+import {inStudio,studioPiece} from './studioTransport';
 
 const es = lang === 'es';
 const tr = (spanish: string, english: string) => es ? spanish : english;
@@ -20,7 +21,10 @@ export function useProductionDecisions(open: boolean) {
     const refresh = async () => {
       if (loading || document.hidden) return;
       loading = true;
-      const reads = [loadPending(api).then(next => { if (!disposed) setState(next); })];
+      const reads = [loadPending(api).then(next => {
+        if (!disposed) setState(previous =>
+          inStudio && next.incomplete && previous ? {...next, rows: previous.rows} : next);
+      })];
       if (open) reads.push(loadHistory(api).then(next => {
         if (!disposed) { setHistory(next); setHistoryError(false); }
       }).catch(() => { if (!disposed) setHistoryError(true); }));
@@ -50,8 +54,13 @@ export function ProductionDecisions({data, open}: {data: ReturnType<typeof usePr
     if (!cards.current) return;
     renderDecisionCards(cards.current, state?.rows ?? [], {
       lang: es ? 'es' : 'en',
-      source: (path, media) => media === 'image' ? previewSource(path) : isTauri() || media === 'web' ? null : path,
-      orderHref: decisionUrl,
+      source: (path, media) => {
+        if (inStudio) return studioPiece(path, media);
+        return media === 'image' ? previewSource(path) : isTauri() || media === 'web' ? null : path;
+      },
+      orderHref: row => inStudio
+        ? '/api/hoard/agora/open?' + new URLSearchParams({space_id: row.space, decision: row.key})
+        : decisionUrl(row),
       openOrder: (event, row) => void openHub(event, row.key).catch(error => setOpeningError(error.message)),
       post: (operation, body) => api('/api/agora/' + operation, body),
       refresh,

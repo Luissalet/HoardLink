@@ -1,0 +1,20 @@
+html[data-studio-write] body {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+html[data-studio-write] #root {
+  flex: 1;
+  min-height: 0;
+}
+
+html[data-studio-write] .app {
+  height: 100%;
+}
+
+.studio-console-status {
+  padding: 0.65rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
