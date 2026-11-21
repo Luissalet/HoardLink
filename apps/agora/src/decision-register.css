@@ -44,7 +44,7 @@
 .register-text > strong, .register-history p > span {display: block; font-size: 13px; color: var(--muted);}
 .register-actions {display: flex; gap: 8px; flex-wrap: wrap; margin-block: 12px;}
 .register-form {border-block: 1px solid var(--line); padding-block: 12px;}
-.register-form label, .register-error {display: grid; gap: 8px; justify-items: start;}
+.register-field, .register-error {display: grid; gap: 8px; justify-items: start;}
 .register-form input, .register-form textarea {
   width: 100%;
   padding: 8px 10px;

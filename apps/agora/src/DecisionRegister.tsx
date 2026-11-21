@@ -185,12 +185,14 @@ export function DecisionRegister() {
               onClick={() => change('undo', receipt.token)}>{copy.undo} · {copy.actions[receipt.change.action]}</button>)}
           </div>
           {editing && <form className="register-form" onSubmit={event => { event.preventDefault(); change(editing); }}>
-            {editing === 'withdraw' ? <p>{copy.confirm}</p> : <label>
-              {editing === 'retitle' ? copy.title : copy.resolution}
+            {editing === 'withdraw' ? <p>{copy.confirm}</p> : <div className="register-field">
+              <label htmlFor="register-edit-value">{editing === 'retitle' ? copy.title : copy.resolution}</label>
               {editing === 'retitle'
-                ? <input autoFocus required value={text} maxLength={200} onChange={event => setText(event.target.value)}/>
-                : <textarea autoFocus required value={text} maxLength={20000} onChange={event => setText(event.target.value)}/>}
-            </label>}
+                ? <input id="register-edit-value" autoFocus required value={text} maxLength={200}
+                    onChange={event => setText(event.target.value)}/>
+                : <textarea id="register-edit-value" autoFocus required value={text} maxLength={20000}
+                    onChange={event => setText(event.target.value)}/>}
+            </div>}
             <div className="register-actions">
               <button type="submit" className="primary" disabled={busy || (editing !== 'withdraw' && !text.trim())}>
                 {editing === 'withdraw' ? copy.withdraw : copy.save}
