@@ -56,9 +56,10 @@ def test_outdated_native_console_gets_a_visible_error_without_a_write(tmp_path):
     headers = {"Origin": hub.config.url, "Sec-Fetch-Site": "same-origin", "Accept": "*/*",
                "Content-Type": "application/json"}
     body = {"leader_id": "codex", "color": "#112233"}
+    colors = hub.facet("agora_console")._colors
     connection = HTTPConnection("127.0.0.1", hub.config.port, timeout=5)
     try:
-        before = http(hub.config.url + "/api/agora/console/overview")[1]["leaders"]
+        before = colors()
         for language, notice in (
             (None, "Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir la consola del Ágora."),
             ("en-GB", "This window is from an earlier version. Close it and reopen the Agora console."),
@@ -73,8 +74,7 @@ def test_outdated_native_console_gets_a_visible_error_without_a_write(tmp_path):
             connection.request("POST", path, json.dumps(body), {**headers, **additional})
             result = connection.getresponse()
             assert result.status == 403 and json.loads(result.read())["code"] == "hub_ui_session_required"
-        after = http(hub.config.url + "/api/agora/console/overview")[1]["leaders"]
-        assert [leader.get("color") for leader in before] == [leader.get("color") for leader in after]
+        assert colors() == before
     finally:
         connection.close()
         server.shutdown()
