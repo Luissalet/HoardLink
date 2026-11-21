@@ -122,7 +122,16 @@ class Placement:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, self.path)
+        # Readers (the status route, the health poll) open the file without the lock. On Windows a replace over a file
+        # somebody has open is refused for that instant: wait for the read to end instead of failing the whole move.
+        for attempt in range(40):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                if attempt == 39:
+                    raise
+                time.sleep(0.05)
 
     def _update(self, **changes: Any) -> dict[str, Any]:
         with self._lock:

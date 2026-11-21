@@ -330,3 +330,24 @@ def test_bridge_pid_comes_from_faustus_record(tmp_path):
     assert pl.Placement._bridge_pid(tmp_path) is None
     _write(tmp_path / "data" / "whatsapp" / "bridge.json", '{"pid": 4321, "port": 8790}')
     assert pl.Placement._bridge_pid(tmp_path) == 4321
+
+
+def test_saving_the_state_waits_for_a_reader_that_holds_the_file(tmp_path, monkeypatch):
+    from hoard_link.hub import placement as pl
+    hub = _hub(tmp_path)
+    try:
+        real, calls = os.replace, []
+
+        def busy_twice(src, dst):
+            calls.append(1)
+            if len(calls) <= 2:
+                raise PermissionError(5, "Access is denied")
+            return real(src, dst)
+
+        monkeypatch.setattr(pl.os, "replace", busy_twice)
+        monkeypatch.setattr(pl.time, "sleep", lambda _s: None)
+        hub.placement._update(urls={"faustus": "https://example.invalid"})
+        assert len(calls) == 3 and hub.placement.state()["urls"] == {"faustus": "https://example.invalid"}
+    finally:
+        monkeypatch.undo()
+        hub.close()
