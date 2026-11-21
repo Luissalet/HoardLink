@@ -76,6 +76,77 @@ def _facet(tmp_path):
     return facet
 
 
+def test_orphan_workers_are_reconciled_without_changing_finished_receipts(tmp_path, monkeypatch):
+    from hoard_link.hub import procs
+
+    started = time.time() - 120
+    pids = {3649, 3650, 3651, 3652}
+    directory = tmp_path / "agora-console" / "workers"
+    directory.mkdir(parents=True)
+    result = directory / "finished.result.txt"
+    result.write_text("Final answer", encoding="utf-8")
+    os.utime(result, (started + 30, started + 30))
+    calls = []
+
+    def process(pid):
+        # The recycled PID has a different creation time. The unrelated CLI
+        # has a superficially similar result filename in another Hub's folder.
+        output = result if pid == 3649 else tmp_path.parent / "finished.result.txt"
+        return SimpleNamespace(pid=pid, create_time=lambda: started + (1 if pid == 3651 else 0),
+                               cmdline=lambda: ["codex.exe", "exec", "--output-last-message", str(output)],
+                               status=lambda: "sleeping", is_running=lambda: pid in pids)
+
+    def terminate(pid, *, created_at, exact_identity):
+        calls.append((pid, created_at, exact_identity))
+        pids.remove(pid)
+        return {"ok": True, "stopped": [pid]}
+
+    monkeypatch.setattr(procs, "_psutil", lambda: SimpleNamespace(
+        pids=lambda: list(pids), Process=process, Error=RuntimeError, STATUS_ZOMBIE="zombie"))
+    monkeypatch.setattr(procs, "terminate_tree", terminate)
+    facet = _facet(tmp_path)
+    with facet._db() as db:
+        for worker_id, state, pid, recorded_at in (
+            ("finished", "completed", 3649, None),
+            ("interrupted", "running", 3650, started),
+            ("recycled", "failed", 3651, started),
+            ("other", "failed", 3652, None),
+        ):
+            db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,pid,log_path,created_at,updated_at,"
+                       "process_started_at) VALUES(?,'codex','model','','Assignment',?,?,?,?,?,?)",
+                       (worker_id, state, pid, str(directory / f"{worker_id}.jsonl"), started, started + 60, recorded_at))
+        db.executemany("INSERT INTO workers(id,parent_id,model,effort,task,state,created_at,updated_at)"
+                       " VALUES(?,'codex','model','','Later assignment','completed',?,?)",
+                       [(f"later-{i}", started + 60, started + 60) for i in range(101)])
+    facet = _facet(tmp_path)  # startup reconciliation, with no local Popen handles
+    assert calls == []
+    found = facet.worker({"action": "reconcile"})["orphans"]
+    assert {row["id"]: row["state"] for row in found} == {"finished": "completed", "interrupted": "unknown"}
+    finished = next(row for row in found if row["id"] == "finished")
+    assert finished["task"] == "Assignment"
+    assert finished["can_continue"] is False
+    assert finished["orphan_process"]["last_activity_at"] == pytest.approx(started + 30)
+    assert finished["orphan_process"]["age_seconds"] >= 120
+    assert {row["id"] for row in facet.overview()["workers"] if row.get("orphan_process")} == {"finished", "interrupted"}
+    assert facet.worker({"action": "stop", "worker_id": "finished"})["status"] == 409
+    assert facet.worker({"action": "continue", "worker_id": "finished"})["status"] == 409
+    stop = {"action": "stop_orphan", "worker_id": "finished"}
+    assert facet.worker(stop, "codex")["status"] == 400
+    assert facet.worker({**stop, "confirm_process": {"pid": 3649, "started_at": started + 1}}, "codex")["status"] == 409
+    stop["confirm_process"] = {"pid": 3649, "started_at": started}
+    assert facet.worker(stop, "codex-other")["status"] == 403
+    assert calls == []
+    stopped = facet.worker(stop, "codex")
+    assert stopped["ok"] and stopped["irreversible"] and stopped["undo"] is None
+    assert calls == [(3649, started, True)]
+    assert [row["id"] for row in facet.worker({"action": "reconcile"})["orphans"]] == ["interrupted"]
+    assert facet.worker({"action": "stop_orphan", "worker_id": "interrupted",
+                         "confirm_process": {"pid": 3650, "started_at": started}}, "codex")["ok"]
+    with facet._db() as db:
+        assert db.execute("SELECT state FROM workers WHERE id='finished'").fetchone()[0] == "completed"
+        assert db.execute("SELECT outcome FROM workers WHERE id='interrupted'").fetchone()[0] == "hub_restart_stopping"
+
+
 def test_capacity_reporter_starts_with_this_hub_configuration(tmp_path, monkeypatch):
     calls = []
     stopped = []
