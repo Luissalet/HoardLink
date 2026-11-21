@@ -152,10 +152,14 @@ def report_result(exit_code, report, output, *, paths=None, empty_ok=False):
     return result
 
 
+def app_python(repo):
+    return next((repo / folder / path for folder in (".venv", "venv")
+                 for path in ("Scripts/python.exe", "bin/python")
+                 if (repo / folder / path).is_file()), None)
+
+
 def local_tests(repo, work, files, report, lane, basetemp, *, timeout):
-    python = next((repo / folder / path for folder in (".venv", "venv")
-                   for path in ("Scripts/python.exe", "bin/python")
-                   if (repo / folder / path).is_file()), Path(sys.executable))
+    python = app_python(repo) or Path(sys.executable)
     return subprocess.run(
         [str(python), *arguments(files, report, lane, basetemp)], cwd=work, env=test_env(report.with_suffix(".data")),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,

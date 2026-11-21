@@ -14,6 +14,8 @@
     testing_candidate: ["Probando la entrega", "Testing the delivery"],
     testing_inference: ["Probando inferencia", "Testing inference"],
     integrating: ["Fusionando", "Integrating"],
+    checking_dependencies: ["Comprobando dependencias", "Checking dependencies"],
+    installing_dependencies: ["Actualizando dependencias", "Updating dependencies"],
     processing_repositories: ["Integrando repositorios", "Integrating repositories"],
     checking_live_case: ["Comprobando el caso de origen", "Checking the original case"],
     publishing_frontend: ["Publicando la interfaz web", "Publishing the web interface"],
@@ -41,6 +43,39 @@
       `Correction verified by ${correction.agent} (${correction.repo}). ${correction.reason}`));
   }
 
+  function dependencyFailure(receipt) {
+    return receipt.dependencies?.some(row => ["failed", "unverified"].includes(row.install?.state));
+  }
+
+  function dependencyNotes(ctx, rows, heading) {
+    const states = {
+      stale: ["Hay dependencias por actualizar", "Dependencies need updating"],
+      current: ["Dependencias al día", "Dependencies are current"],
+      unverified: ["No se pudieron comprobar todas las dependencias", "Some dependencies could not be checked"],
+      installed: ["Dependencias actualizadas", "Dependencies updated"],
+      failed: ["Falló la actualización de dependencias", "Dependency update failed"],
+      running: ["Actualizando dependencias", "Updating dependencies"],
+    };
+    const visible = rows?.filter(row => row.changed.length || row.status !== "current" || row.install);
+    if (!visible?.length) return [];
+    const list = ctx.el("ul");
+    for (const row of visible) {
+      const install = row.install;
+      const deferred = install?.state === "deferred";
+      const label = deferred
+        ? (install.reason === "app_running"
+          ? t(ctx, "Actualización aplazada mientras la aplicación está en marcha", "Update deferred while the app is running")
+          : t(ctx, "Se ha aplazado la actualización de dependencias", "Dependency update deferred"))
+        : t(ctx, ...states[install?.state ?? row.status]);
+      const packages = row.issues?.map(item => item.package).join(", ");
+      const details = [...row.changed, ...(packages ? [packages] : [])].join(" · ");
+      const item = ctx.el("li", "", `${row.manager} · ${label}`);
+      if (details) item.append(ctx.el("p", "muted", details));
+      list.append(item);
+    }
+    return [ctx.el("h4", "", t(ctx, ...heading)), list];
+  }
+
   function renderReceipt(ctx, target, receipt) {
     if (receipt.repositories?.length) {
       const sections = receipt.repositories.map(row => {
@@ -51,7 +86,7 @@
         return section;
       });
       if (receipt.correction?.agent) sections.push(correctionNote(ctx, receipt.correction));
-      if (receipt.error && !receipt.repositories.some(row => row.test_timeout &&
+      if (receipt.error && !receipt.repositories.some(row => (row.test_timeout || dependencyFailure(row)) &&
         receipt.error === `${row.plan.repo}: ${row.error}`)) {
         sections.push(ctx.el("p", "muted", receipt.error));
       }
@@ -75,6 +110,12 @@
         content.push(list);
       }
     }
+    content.push(...dependencyNotes(ctx, receipt.dependencies,
+      ["Dependencias de la copia principal", "Main checkout dependencies"]));
+    content.push(...dependencyNotes(ctx, receipt.dependency_preflight,
+      ["Dependencias de la fusión propuesta", "Proposed merge dependencies"]));
+    content.push(...dependencyNotes(ctx, receipt.undo_dependencies,
+      ["Dependencias tras deshacer la fusión", "Dependencies after undoing the merge"]));
     if (receipt.live) {
       const passed = receipt.live.counts.passed &&
         (receipt.state === "integrated" || receipt.state === "undone");
@@ -130,7 +171,9 @@
     }
     if (receipt.error) {
       const timeout = receipt.test_timeout;
-      const message = timeout ? t(ctx,
+      const message = dependencyFailure(receipt) && receipt.state === "rolled_back" ? t(ctx,
+        "La actualización de dependencias quedó incompleta. Se ha restaurado la copia anterior.",
+        "The dependency update did not complete. The previous checkout was restored.") : timeout ? t(ctx,
         `Las pruebas de ${timeout.group} en ${timeout.commit} superaron el límite de ${timeout.seconds} s. Ajusta el plazo del repositorio o acota las pruebas.`,
         `Tests in ${timeout.group} at ${timeout.commit} exceeded the ${timeout.seconds} s limit. Adjust the repository budget or narrow the test selection.`) : receipt.error;
       const error = el("p", "muted", message);

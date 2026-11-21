@@ -43,7 +43,7 @@ each repository. This also works for a single repository. Use `spark_repos` to s
 | Tool | Operation |
 |---|---|
 | `hub_integration_plan` | Resolve the submitted head and list affected test files and repositories missing a live case. |
-| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora after the post-merge check. The submitted `Live-Test:`, `live_test` or `live_tests` selects a narrower check. |
+| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora after the post-merge check. Add `install_dependencies: true` to update stale dependencies before that check. The submitted `Live-Test:`, `live_test` or `live_tests` selects a narrower check. |
 | `hub_integration_status` | Read a receipt and its current state by `id`. |
 | `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo`, merge `commit` and `reason`. A correction returns the undo call. |
 | `hub_integration_undo` | Cancel a queued or testing run. For a completed merge, restore the previous checkout, baseline and task state while the recorded head and revision still match. |
@@ -57,7 +57,24 @@ any repositories it already moved. The receipt's undo restores completed reposit
 The task retains its owner. Production gates remain a decision for the person.
 
 Runs that share a target checkout wait in submission order and recompute their plans against the current mainline
-when their turn starts. After moving a checkout, the station reloads running local apps launched from that checkout
+when their turn starts. After moving the registered checkout, the station checks its local dependencies before
+reloading apps and running the post-merge test. The receipt's `dependencies` shows the specification changes,
+missing or mismatched packages, and the exact commands and working directory for the integrator.
+The npm check uses each tracked `package-lock.json`, the installed `node_modules/.package-lock.json`, and the
+package versions on disk. The Python check uses `requirements-lock.txt` or `requirements.txt`, their tracked
+local includes, and the default dependencies in `pyproject.toml`. It evaluates requirements in the registered
+checkout's `.venv` or `venv`. A preflight failure can report the proposed merge's dependency checks in
+`dependency_preflight`. Commands in that diagnostic apply to the proposed specifications.
+
+Dependency installation is opt-in on an approved merge. The station uses `npm install --no-save` or the
+app interpreter's `-m pip install`, records the installer output and the installed version changes, and checks the
+environment again. It can bootstrap pip with `ensurepip` in an existing venv. If the venv is missing, the
+receipt gives provisioning commands. Installation is deferred while an app from the checkout is running or
+there are local manifest edits. The checkout and task can be restored with the integration's undo. Package
+manager changes made before rollback or undo remain in the environment. The receipt's `undo_dependencies`
+shows the restored checkout's requirements and how to bring its environment up to date.
+
+The station reloads running local apps launched from the merged checkout
 before checking the original case. Running apps that open their own desktop window and apps with an open Hub
 window are left running. The receipt records `desktop_in_use` and System → Integrations shows the deferral.
 `app_reload` also records readiness and other deferral reasons, including app leases and work in progress.

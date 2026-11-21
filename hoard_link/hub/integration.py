@@ -18,6 +18,7 @@ from uuid import uuid4
 from ..atomic import read_json, write_json_atomic
 from . import agora_ranks
 from . import integration_checks as checks
+from . import integration_dependencies as dependencies
 from . import integration_frontend as frontend
 from . import integration_git as repo_git
 from . import integration_receipt
@@ -208,7 +209,8 @@ class IntegrationFacet(Facet):
         self.runtime = IntegrationRuntime(REPO_DIR)
         running = {"queued", "waiting_for_merge_lock", "waiting_for_suite_slot", "testing_main",
                    "testing_candidate", "testing_inference", "integrating", "prepared_checkout",
-                   "moved_checkout", "restored_checkout", "publishing_frontend", "checking_live_case",
+                   "moved_checkout", "restored_checkout", "checking_dependencies", "installing_dependencies",
+                   "publishing_frontend", "checking_live_case",
                    "saving_baseline", "cleaning_delivery", "delivery_retained", "worktree_removed", "branch_removed",
                    "processing_repositories"}
         for path in self.root.glob("*/receipt.json"):
@@ -376,11 +378,13 @@ class IntegrationFacet(Facet):
                 "runtime": self.runtime.status() if self.runtime else None}
 
     def run(self, args):
-        if any(type(args.get(flag, False)) is not bool for flag in ("merge", "inference")):
-            raise repo_git.IntegrationError("merge and inference must be booleans")
+        if any(type(args.get(flag, False)) is not bool for flag in ("merge", "inference", "install_dependencies")):
+            raise repo_git.IntegrationError("merge, inference and install_dependencies must be booleans")
         if any(key in args and not isinstance(args[key], str) for key in ("spark_repo", "live_test")):
             raise repo_git.IntegrationError("spark_repo and live_test must be strings")
         merge = args.get("merge", False)
+        if args.get("install_dependencies") and not merge:
+            raise repo_git.IntegrationError("Dependency installation requires an approved merge")
         agora, agent, task = self._snapshot(args, merge=merge)
         key = (agora.space_id, task["id"])
         with self.lock:
@@ -603,6 +607,9 @@ class IntegrationFacet(Facet):
                     update("cancelled")
                     return
                 if comparison["new"] or not receipt["merge"]:
+                    if receipt["merge"]:
+                        receipt["dependency_preflight"] = dependencies.public(
+                            dependencies.probe(repo, candidate, base, merged))
                     update("regressions" if comparison["new"] else "checked")
                     return
                 if any(lane["failures"] for lane in receipt.get("inference", {}).values()):
@@ -621,6 +628,21 @@ class IntegrationFacet(Facet):
                 update("integrating")
                 repo_git.move_checkout(repo, base, merged, folder, update)
                 try:
+                    update("checking_dependencies")
+                    def probe_dependencies():
+                        return dependencies.probe(repo, candidate, base, merged)
+
+                    rows = probe_dependencies()
+                    receipt["dependencies"] = dependencies.public(rows)
+                    if args.get("install_dependencies") and any(row["status"] == "stale" for row in rows):
+                        def record_install():
+                            receipt["dependencies"] = dependencies.public(rows)
+                            update("installing_dependencies")
+
+                        dependencies.install(repo, rows, folder, self._dependency_apps(repo),
+                                             probe_dependencies, record_install)
+                        if any(row.get("install", {}).get("state") in ("failed", "unverified") for row in rows):
+                            raise repo_git.IntegrationError("The dependency update did not complete. See the receipt.")
                     if build:
                         build["publication_started"] = True
                         update("publishing_frontend")
@@ -662,7 +684,24 @@ class IntegrationFacet(Facet):
                 update("cancelled")
                 return
             receipt["error"] = str(exc)
+            if not moved and receipt["merge"] and "merge_commit" in receipt:
+                try:
+                    with repo_git.worktree(repo, folder / "dependency-preflight", receipt["merge_commit"]) as source:
+                        receipt["dependency_preflight"] = dependencies.public(
+                            dependencies.probe(repo, source, base, receipt["merge_commit"]))
+                except (OSError, repo_git.IntegrationError, TimeoutExpired) as error:
+                    receipt["dependency_preflight_error"] = str(error)
             update("needs_attention" if moved else "failed")
+
+    def _dependency_apps(self, repo):
+        running = ["hub"] if REPO_DIR.samefile(repo) else []
+        for app in getattr(self.hub, "apps", []):
+            if not app.launch or not Path(app.launch.cwd).resolve().is_relative_to(repo):
+                continue
+            state = self.hub.app_status(app)
+            if state["state"] != "down" or state.get("process") or state.get("windows"):
+                running.append(app.id)
+        return sorted(set(running))
 
     def _reload_apps(self, agora, repo, agent, receipt, field):
         results = receipt[field] = []
@@ -874,6 +913,14 @@ class IntegrationFacet(Facet):
                                    lambda state, data: None)
             receipt["undo_checkout"] = True
             write_json_atomic(path, receipt)
+        if any(row.get("install", {}).get("log") for row in receipt.get("dependencies", [])):
+            try:
+                with repo_git.worktree(repo, recovery / "dependency-base", plan["base"]) as source:
+                    receipt["undo_dependencies"] = dependencies.public(
+                        dependencies.probe(repo, source, receipt["merge_commit"], plan["base"]))
+            except (OSError, repo_git.IntegrationError, TimeoutExpired) as exc:
+                receipt["undo_dependencies_error"] = str(exc)
+            write_json_atomic(path, receipt)
         build = receipt.get("frontend_build")
         if build and build.get("publication_started") and not build.get("restored"):
             frontend.restore_frontend(repo, build, path.parent)
@@ -956,7 +1003,10 @@ class IntegrationFacet(Facet):
                     "test_paths_by_repo": {"type": "object", "additionalProperties": {"type": "array", "items": text}}}
         delivery.update(live_test=text, live_tests={"type": "object", "additionalProperties": text},
                         spark_repo=text, spark_repos={"type": "object", "additionalProperties": text})
-        write = {**delivery, "merge": {"type": "boolean"}, "inference": {"type": "boolean"}}
+        write = {**delivery, "merge": {"type": "boolean"}, "inference": {"type": "boolean"},
+                 "install_dependencies": {"type": "boolean",
+                                          "description": "Update stale app dependencies during an approved merge. "
+                                                         "Actualiza las dependencias durante una fusión aprobada."}}
         return [{"name": "hub_integration_" + key, "description": description,
                  "inputSchema": {"type": "object", "properties": props, "required": required,
                                  "additionalProperties": False}, "annotations": {"readOnlyHint": read}}
