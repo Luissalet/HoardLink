@@ -44,3 +44,12 @@ What the window does:
 - **Drag files out** — `window.hoardWindow.startDrag(path)`, called from a
   `dragstart` handler after `preventDefault()`, drags a local file as a real
   file, so chats, mail and Explorer accept the drop.
+
+## Testing the Hub window
+
+For an isolated checkout, set `HOARD_WINDOW_TEST_ELECTRON` to the installed
+Electron executable before running `tests/hub/test_window_shell.py`. The
+upgrade test measures the notice and title before and after scrolling at
+desktop and mobile widths in both languages. It then reopens the hidden
+window and verifies that writes work again. Use Chrome through Playwright
+in headless mode to capture images of the Hub page.
