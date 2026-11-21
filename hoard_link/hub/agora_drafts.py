@@ -524,31 +524,47 @@ def draft_anchors(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             "anchors": anchors, "guides": {k: v for k, v in guides.items() if v}, "derives_from": derives}
 
 
-def _figure_source(self: Any, order_id: int, model_piece: Any) -> dict[str, Any]:
-    """Find one available articulated GLB in this order, or ask the worker to supply it."""
-    if model_piece is None:
-        candidates = [dict(p) for p in self.db.query(
-            "SELECT * FROM agora_pieces WHERE order_id=? AND kind IN ('rigged_model', 'rigged-model', "
-            "'articulated-model', 'blocking') AND status NOT IN ('cancelled', 'stale') ORDER BY id",
-            (order_id,),
-        )]
-        replaced = {piece["supersedes"] for piece in candidates}
-        candidates = [p for p in candidates if p["id"] not in replaced]
-    else:
+def _figure_source(self: Any, reference: dict[str, Any], model_piece: Any) -> dict[str, Any]:
+    """Resolve the model from the frame's material lineage or ask for an explicit choice."""
+    def eligible(piece):
+        return (piece["kind"] in orders.ARTICULATED_KINDS and piece["status"] not in ("cancelled", "stale")
+                and piece["sha256"] and Path(piece["path"]).suffix.lower() == ".glb"
+                and (Path(piece["stored"]).is_file() or Path(piece["path"]).is_file()))
+
+    order_id = reference["order_id"]
+    if model_piece is not None:
         piece = orders._piece_row(self, model_piece)
         if piece["order_id"] != order_id:
             raise _err("Choose a model from this order. / Elige un modelo de esta orden.", 404)
-        candidates = [piece] if piece["kind"] in {"rigged_model", "rigged-model", "articulated-model", "blocking"} else []
-    candidates = [p for p in candidates if p["status"] not in ("cancelled", "stale") and p["sha256"]
-                  and Path(p["path"]).suffix.lower() == ".glb" and orders._piece_dict(self, p)["exists"]]
+        if eligible(piece):
+            return piece
+        candidates = []
+    else:
+        lineage = list(orders._figure_materials(self, reference, same_order=True))
+        linked = [p for p in lineage if eligible(p)]
+        if len(lineage) == 1 and linked:
+            return linked[0]
+        candidates = linked or [dict(p) for p in self.db.query(
+            "SELECT * FROM agora_pieces WHERE order_id=? AND kind IN (?, ?, ?, ?) ORDER BY id",
+            (order_id, *orders.ARTICULATED_KINDS),
+        ) if eligible(p)]
+        if not linked:
+            replaced = {p["supersedes"] for p in candidates}
+            candidates = [p for p in candidates if p["id"] not in replaced]
     if not candidates:
         raise _err("Create or register an animated GLB for this order first. / "
                    "Crea o registra primero un GLB animado para esta orden.",
                    409, error_code="articulated_model_required")
-    if len(candidates) > 1:
-        raise _err("Choose model_piece for the matching take. / Indica el model_piece de la toma.",
-                   409, error_code="articulated_model_ambiguous")
-    return candidates[0]
+
+    choices = [{"id": p["id"], "title": p["title"], "revision": p["revision"]}
+               for p in sorted(candidates, key=lambda p: p["id"])]
+    if len(choices) == 1:
+        choice = choices[0]
+        name = f"#{choice['id']} «{choice['title']}»"
+        raise _err(f"Confirm {name} with model_piece. / Confirma {name} con model_piece.",
+                   409, error_code="articulated_model_confirmation_required", model_choices=choices)
+    raise _err("Choose model_piece for the matching take. / Indica el model_piece de la toma.",
+               409, error_code="articulated_model_ambiguous", model_choices=choices)
 
 
 def draft_figure_request(self: Any, a: dict[str, Any]) -> dict[str, Any]:
@@ -568,11 +584,12 @@ def draft_figure_request(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if any(a.get(key) is not None for key in ("variant_id", "take_piece", "signature")):
                 raise _err("Use frame_piece or a paused variant. / Usa frame_piece o una variante pausada.")
             order = orders._order_row(self, a.get("order_id"))
-            reference = orders._piece_dict(self, orders._piece_row(self, a["frame_piece"]))
+            reference_row = orders._piece_row(self, a["frame_piece"])
+            reference = orders._piece_dict(self, reference_row)
             if (reference["order_id"] != order["id"] or reference["view"] != "image" or not reference["sha256"]
                     or not reference["exists"] or reference["status"] in ("cancelled", "stale")):
                 raise _err("Choose a registered frame image from this order. / Elige un fotograma registrado de esta orden.")
-            source = _figure_source(self, order["id"], a.get("model_piece"))
+            source = _figure_source(self, reference_row, a.get("model_piece"))
             variant_id, title = None, order["title"]
         else:
             row = _variant_row(self, a.get("variant_id"))
@@ -606,7 +623,9 @@ def draft_figure_request(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                   "source_sha256": source["sha256"], "frame": frame, "fps": 24}
         if from_frame:
             frozen.update(print_size_mm=size_mm, sheet_wall_mm=2.0)
-        result = {"ok": True, "frame": frame, "freeze_arguments": frozen, "derives_from": derivation}
+        test_pose = orders._is_blocking(self, source)
+        result = {"ok": True, "frame": frame, "freeze_arguments": frozen, "derives_from": derivation,
+                  "test_pose": test_pose}
         if existing:
             return {**result, "task_id": existing["task_id"], "existing": True, "undo": None}
         plan = orders.plan_set(self, {
@@ -621,7 +640,8 @@ def draft_figure_request(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                           f"Evalúa el GLB articulado #{source['id']} r{source['revision']} con "
                           f"blocking_freeze (frame={frame}, fps=24, source_sha256={source['sha256']}). "
                           "Registra la pose estática con el GLB articulado como material y la imagen o toma como referencia. "
-                          f"Importa el piece_id y SHA-256 de la pose con print_import (size_mm={size_mm:g}). "
+                          + ("Conserva el linaje de material de la pose de prueba hasta el 3MF. " if test_pose else "")
+                          + f"Importa el piece_id y SHA-256 de la pose con print_import (size_mm={size_mm:g}). "
                           "Esculpe, cierra y mide la pared. Colorea en Nikias desde el GLB posado y coteja la paleta "
                           "con la referencia visual. Registra el 3MF y las vistas del laminado. "
                           "Si quedan cuerpos separados, mide los huecos antes de usar bridge_gap_mm."),
@@ -691,8 +711,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "note": {"type": "string", "maxLength": 20000}}, ["agent", "pass_id"])},
         {"name": "hub_agora_draft_figure_request",
          "description": "Queue a figure from a paused take. / Encarga una figura de una toma pausada.\n"
-                        "Use order_id and frame_piece for a registered frame, with model_piece if there are "
-                        "several articulated GLBs. Usa el fotograma registrado como referencia de la pose." + undo,
+                        "For a registered frame, use order_id and frame_piece. If its material lineage does not "
+                        "resolve the GLB, confirm model_piece from model_choices." + undo,
          "inputSchema": schema({"agent": agent_prop, "variant_id": {"type": "integer", "minimum": 1},
                                 "take_piece": {"type": "integer", "minimum": 1}, "signature": {"type": "string"},
                                 "order_id": order_id,

@@ -545,6 +545,36 @@ def view_of(piece: dict[str, Any]) -> str:
     return "file" if path else "object"
 
 
+ARTICULATED_KINDS = ("rigged_model", "rigged-model", "articulated-model", "blocking")
+FIGURE_KINDS = {"posed-figure-mesh", "closed-print-mesh", "coloured-3mf"}
+
+
+def _figure_materials(self: Any, piece: dict[str, Any], *, same_order: bool = False):
+    """Find the first articulated material on each branch, ignoring visual references."""
+    pending = [piece]
+    seen = {piece["id"]}
+    while pending:
+        current = pending.pop()
+        for relation in _parents(current["derives_from"]):
+            pid = relation["piece"]
+            if relation["role"] != "material" or pid in seen:
+                continue
+            seen.add(pid)
+            row = self.db.one("SELECT * FROM agora_pieces WHERE id=? AND space_id=?", (pid, self.space_id))
+            if not row or (same_order and row["order_id"] != piece["order_id"]):
+                continue
+            if row["kind"] in ARTICULATED_KINDS:
+                yield dict(row)
+            else:
+                pending.append(row)
+
+
+def _is_blocking(self: Any, piece: dict[str, Any]) -> bool:
+    return piece["kind"] == "blocking" or bool(self.db.one(
+        "SELECT 1 FROM agora_draft_pieces WHERE piece_id=? AND anchor='blocking'", (piece["id"],),
+    ))
+
+
 def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[str, Any]:
     out = dict(row)
     for key, default in (("previews", []), ("decisions", []), ("keep", [])):
@@ -564,6 +594,8 @@ def _piece_dict(self: Any, row: dict[str, Any], *, full: bool = False) -> dict[s
     # kept: this revision's bytes are in the store; unverified: only the file on disk, checked against the print
     out["bytes"] = "" if not out["path"] else "kept" if out.get("stored") and os.path.isfile(out["stored"]) else "unverified"
     out["view"] = view_of(out)
+    if row["kind"] in FIGURE_KINDS and any(_is_blocking(self, source) for source in _figure_materials(self, row)):
+        out["test_pose"] = True
     out["defects_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_piece_defects WHERE piece_id=? AND status='open'",
                                              (row["id"],), 0) or 0)
     if full:
@@ -709,7 +741,8 @@ def _decision_artifact(piece):
     return {"title": piece["title"], "media": media, "path": file,
             "filename": os.path.basename(piece["path"]) if file else None,
             "previews": [_decision_view(piece, index) for index in range(len(piece.get("previews") or []))],
-            "image": preview, "url": piece.get("url") if media == "web" else None}
+            "image": preview, "url": piece.get("url") if media == "web" else None,
+            **({"test_pose": True} if piece.get("test_pose") else {})}
 
 
 def pending_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:

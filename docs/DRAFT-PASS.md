@@ -129,9 +129,17 @@ HTTP: `GET /api/agora/draft_passes`, `GET /api/agora/draft_anchors`, `POST /api/
 ### Figure from a registered frame
 
 Use `hub_agora_draft_figure_request` with the order ID, the registered image ID
-in `frame_piece`, and seconds into the aligned take. Pass `model_piece` when an
-order has multiple articulated GLBs. The result pins both revisions and gives
-`freeze_arguments` for baking the articulated GLB at 24 fps with print size and a 2 mm wall for the blocking's paper. Record the model as
-material and the image as a reference using the returned `derives_from`. If
-there is no articulated model, the tool asks for one before creating any job.
-The figure job checks the closed mesh, transferred colours and sliced layers.
+in `frame_piece`, and seconds into the aligned take. The Hub follows material
+links from the frame through its take to the articulated GLB in the order.
+When those links do not identify a single usable model, it returns
+`model_choices` (ID, title and revision) and waits for an explicit
+`model_piece`. If none is available, register an animated GLB first.
+
+The result pins both revisions and gives `freeze_arguments` for baking the
+articulated GLB at 24 fps with print size and a 2 mm wall for the blocking's
+paper. Keep the returned `derives_from` when registering the posed mesh, then
+register the pose as material of the closed mesh and that mesh as material of
+the 3MF. Register articulated stand-ins as `blocking` or attach them to the
+draft variant's blocking anchor. Their derived figures carry the **Test pose**
+label on the piece and on the decision card. The figure job checks the closed
+mesh, transferred colours and sliced layers.

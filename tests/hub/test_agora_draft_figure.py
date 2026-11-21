@@ -34,7 +34,7 @@ def test_paused_take_queues_pinned_figure_without_deciding_and_can_undo(tmp_path
         assert stale["status"] == 409 and stale["error_code"] == "variant_changed"
         request["signature"] = shown["variants"][0]["signature"]
         queued = call("draft_figure_request", request)
-        assert queued["frame"] == 24
+        assert queued["frame"] == 24 and queued["test_pose"]
         duplicate = call("draft_figure_request", request)
         assert duplicate["existing"] and duplicate["task_id"] == queued["task_id"]
         job = call("job", {"task_id": queued["task_id"]})["job"]
@@ -47,7 +47,7 @@ def test_paused_take_queues_pinned_figure_without_deciding_and_can_undo(tmp_path
         server.server_close()
 
 
-def test_registered_frame_uses_order_model_and_reports_missing_model(tmp_path):
+def test_registered_frame_follows_take_or_waits_for_model_selection(tmp_path):
     hub = make_hub(tmp_path)
     server = serve(hub)
     token = Path(hub.config.token_file).read_text(encoding="utf-8").strip()
@@ -62,24 +62,57 @@ def test_registered_frame_uses_order_model_and_reports_missing_model(tmp_path):
     try:
         order = call("order_create", {**agent, "title": "Map pass", "folder": str(tmp_path)})["order"]
         args = {**agent, "order_id": order["id"]}
-        for name in ("frame.png", "relief.glb", "pose.glb", "second.glb"):
-            (tmp_path / name).write_bytes(name.encode())
-        still = call("piece_add", {**args, "title": "Still", "kind": "image", "path": "frame.png"})["piece"]
-        relief = call("piece_add", {**args, "title": "Relief", "kind": "mesh", "path": "relief.glb"})["piece"]
+
+        def add(file, kind, parents=(), **kwargs):
+            (tmp_path / file).write_bytes(file.encode())
+            return call("piece_add", {**args, "title": file, "kind": kind, "path": file,
+                                      "derives_from": list(parents), **kwargs})["piece"]
+
+        other_take = add("other.mp4", "video")
+        still = add("frame.png", "image", [other_take["id"]])
+        relief = add("relief.glb", "mesh")
         request = {**args, "frame_piece": still["id"], "seconds": 0.625}
         assert call("draft_figure_request", request, 400)["error_code"] == "articulated_model_required"
         assert call("draft_figure_request", {**request, "model_piece": relief["id"]}, 400)["error_code"] == "articulated_model_required"
-        model = call("piece_add", {**args, "title": "Rigged", "kind": "rigged_model", "path": "pose.glb"})["piece"]
-        queued = call("draft_figure_request", request)
+
+        model = add("pose.glb", "blocking")
+        needs_choice = call("draft_figure_request", request, 400)
+        assert needs_choice["error_code"] == "articulated_model_confirmation_required"
+        assert needs_choice["model_choices"] == [{"id": model["id"], "title": "pose.glb", "revision": 1}]
+        assert not call("order", args)["order"]["plan"]
+        queued = call("draft_figure_request", {**request, "model_piece": model["id"]})
         assert queued["freeze_arguments"] == {"source": model["stored"], "source_sha256": model["sha256"],
                                               "frame": 15, "fps": 24,
                                               "print_size_mm": 216, "sheet_wall_mm": 2.0}
         assert queued["derives_from"] == [{"piece": model["id"], "role": "material"},
-                                         {"piece": still["id"], "role": "reference"}]
-        assert call("draft_figure_request", request)["freeze_arguments"] == queued["freeze_arguments"]
-        second = call("piece_add", {**args, "title": "Second", "kind": "rigged_model", "path": "second.glb"})["piece"]
-        assert call("draft_figure_request", request, 400)["error_code"] == "articulated_model_ambiguous"
-        assert call("draft_figure_request", {**request, "model_piece": second["id"]})["derives_from"][0]["piece"] == second["id"]
+                                          {"piece": still["id"], "role": "reference"}]
+        assert queued["test_pose"]
+        assert (call("draft_figure_request", {**request, "model_piece": model["id"]})["task_id"]
+                == queued["task_id"])
+
+        second = add("second.glb", "rigged_model")
+        ambiguous = call("draft_figure_request", request, 400)
+        assert ambiguous["error_code"] == "articulated_model_ambiguous"
+        assert [p["id"] for p in ambiguous["model_choices"]] == [model["id"], second["id"]]
+
+        take = add("take.mp4", "video", [second["id"], {"piece": model["id"], "role": "reference"}])
+        linked = add("linked.png", "image", [take["id"]])
+        traced = call("draft_figure_request", {**request, "frame_piece": linked["id"]})
+        assert traced["derives_from"][0] == {"piece": second["id"], "role": "material"}
+        assert traced["freeze_arguments"]["source_sha256"] == second["sha256"]
+        assert not traced["test_pose"]
+        assert call("draft_figure_request", {**request, "frame_piece": linked["id"]})["task_id"] == traced["task_id"]
+
+        posed = add("posed.glb", "posed-figure-mesh", queued["derives_from"], task_id=queued["task_id"])
+        closed = add("closed.stl", "closed-print-mesh", [posed["id"]])
+        coloured = add("figure.3mf", "coloured-3mf", [closed["id"]])
+        actual = add("production.glb", "posed-figure-mesh", traced["derives_from"])
+        assert all(p.get("test_pose") for p in (posed, closed, coloured))
+        assert not actual.get("test_pose")
+        call("gate_open", {**args, "title": "Figures", "piece_ids": [coloured["id"], actual["id"]]})
+        decision = call("pending_decisions", {})["rows"][0]
+        assert [p.get("test_pose", False) for p in decision["artifacts"]] == [True, False]
+        assert call("order", args)["order"]["gates"][0]["decisions"] == []
     finally:
         server.shutdown()
         server.server_close()
