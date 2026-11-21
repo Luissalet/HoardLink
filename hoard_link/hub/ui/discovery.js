@@ -37,6 +37,10 @@
   window.HubDiscovery = {
     description(app, spanish) { const e=entry(app); return e ? e[spanish ? 1 : 2] : app.purpose || app.name; },
     launchMessage(app, spanish) {
+      const isolated = app.family?.isolated_instance?.unsupported;
+      if (isolated?.en && isolated?.es && app.launch_reason === `${isolated.en} ${isolated.es}`) {
+        return spanish ? isolated.es : isolated.en;
+      }
       const missing=/manifest.*launch|no.*launch hint|no process launch/i.test(app.launch_reason || '');
       return spanish ? (missing?'El inicio desde el Hub no está configurado. Abre Gestionar → Detalles para consultar la configuración.':'No se puede iniciar con la configuración actual. Abre Gestionar → Detalles para consultar el motivo.') : (missing?'Starting from the Hub is not configured. Open Manage → Details to review the configuration.':'This app cannot start with its current configuration. Open Manage → Details to review the reason.');
     },

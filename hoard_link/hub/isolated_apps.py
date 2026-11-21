@@ -55,9 +55,49 @@ def _failure(message, status=400):
     return {"ok": False, "status": status, "error": message}
 
 
+def _manifest_isolation(app):
+    descriptor = app.family.get("isolated_instance")
+    return descriptor if isinstance(descriptor, dict) else {}
+
+
+def _unsupported_reason(app):
+    unavailable = _manifest_isolation(app).get("unsupported")
+    if isinstance(unavailable, dict) and all(
+        isinstance(unavailable.get(lang), str) and unavailable[lang].strip() for lang in ("en", "es")
+    ):
+        return f"{unavailable['en']} {unavailable['es']}"
+    return ""
+
+
+def _isolation_reason(app):
+    return _unsupported_reason(app) or app.launch_reason or "No headless launcher. No hay un lanzador sin ventana."
+
+
+def _manifest_launcher(descriptor):
+    argv = descriptor.get("argv", [])
+    env = descriptor.get("env", {})
+    data_subdir = descriptor.get("data_subdir", "data")
+    if not isinstance(argv, list) or not all(isinstance(arg, str) for arg in argv):
+        return False
+    if not isinstance(env, dict) or not all(
+        re.fullmatch(r"[A-Z][A-Z0-9_]*", key) and isinstance(value, str) for key, value in env.items()
+    ):
+        return False
+    if (not isinstance(data_subdir, str) or not re.fullmatch(r"[\w-]+", data_subdir)):
+        return False
+    for field in ("data_env", "port_env", "token_env"):
+        name = descriptor.get(field)
+        if field in descriptor and (not isinstance(name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", name)):
+            return False
+    return (bool(descriptor.get("data_env")) or any("{DATA_DIR}" in arg for arg in argv)) and (
+        bool(descriptor.get("port_env")) or any("{PORT}" in arg for arg in argv)
+    )
+
+
 def _headless_launcher(app):
     """Identify a native launcher whose profile and display can be controlled."""
-    if not app.launch or not app.launchable:
+    descriptor = _manifest_isolation(app)
+    if "unsupported" in descriptor or not app.launch or not app.launchable:
         return None
     if app.id == "writer":
         if not _writer_source(app):
@@ -73,8 +113,7 @@ def _headless_launcher(app):
         return None
     if app.kind == "window-app":
         return None
-    descriptor = app.family.get("isolated_instance")
-    if isinstance(descriptor, dict) and descriptor.get("data_env") and descriptor.get("port_env"):
+    if _manifest_launcher(descriptor):
         return "manifest"
     module = _SERVICE_MODULES.get(app.id) or _ENV_MODULES.get(app.id)
     if module and "-m" in app.launch.argv:
@@ -87,6 +126,7 @@ def _headless_launcher(app):
 def _headless_app(app, folder, ports, config, launcher):
     port = ports[0]
     url = f"http://127.0.0.1:{port}"
+    data_path = folder
     token = folder / "mcp-token"
     spec = app.launch
     argv = spec.argv
@@ -114,14 +154,24 @@ def _headless_app(app, folder, ports, config, launcher):
         if app.id == "coase":
             changes["COASE_HOST"] = "127.0.0.1"
     else:
-        descriptor = app.family["isolated_instance"]
-        changes = {descriptor["data_env"]: str(folder), descriptor["port_env"]: str(port)}
-        if descriptor.get("token_env"):
-            changes[descriptor["token_env"]] = str(token)
-    env = {**spec.env, **changes, "PORT_STRICT": "1", "HOARD_NO_BROWSER": "1",
-           "HOARD_HUB_URL": config.url, "HOARD_HUB_DATA_DIR": config.data_dir,
-           "HOARD_HUB_TOKEN_FILE": None}
-    return replace(app, url=url, data_dir=str(folder), token_file=str(token), kind="app",
+        descriptor = _manifest_isolation(app)
+        if "data_subdir" in descriptor:
+            data_path = folder / descriptor["data_subdir"]
+        token = data_path / "mcp-token"
+        values = {"INSTANCE_DIR": str(folder), "DATA_DIR": str(data_path), "PORT": str(port),
+                  "TOKEN_FILE": str(token)}
+
+        def expand(template):
+            return re.sub(r"\{(INSTANCE_DIR|DATA_DIR|PORT|TOKEN_FILE)\}", lambda match: values[match[1]], template)
+
+        argv = [expand(arg) for arg in descriptor["argv"]] if "argv" in descriptor else argv
+        changes = {key: expand(value) for key, value in descriptor.get("env", {}).items()}
+        for field, value in (("data_env", data_path), ("port_env", port), ("token_env", token)):
+            if field in descriptor:
+                changes[descriptor[field]] = str(value)
+    env = {**spec.env, "HOARD_TOKEN_FILE": None, **changes, "PORT_STRICT": "1", "HOARD_NO_BROWSER": "1",
+           "HOARD_HUB_URL": config.url, "HOARD_HUB_DATA_DIR": config.data_dir, "HOARD_HUB_TOKEN_FILE": None}
+    return replace(app, url=url, data_dir=str(data_path), token_file=str(token), kind="app",
                    runtime_url_file="", launch=replace(spec, argv=argv, env=env,
                                                         readiness_url=url + app.health_path, port_argument=""))
 
@@ -140,7 +190,7 @@ def isolated_catalog(apps, config):
     for app in apps:
         launcher = _headless_launcher(app) if re.fullmatch(r"[a-zA-Z0-9_-]+", app.id) else None
         if not launcher:
-            reason = app.launch_reason or "No headless launcher. No hay un lanzador sin ventana."
+            reason = _isolation_reason(app)
             rows.append(replace(app, url="", data_dir="", token_file="", runtime_url_file="",
                                 launch=None, launchable=False, launch_reason=reason))
             continue
@@ -210,7 +260,7 @@ class IsolatedApps:
         folder = Path(self.hub.config.data_dir).resolve() / "isolated-apps" / ident
         kind = _headless_launcher(launcher)
         if not kind:
-            return _failure(launcher.launch_reason or "No headless launcher. No hay un lanzador sin ventana.", 409)
+            return _failure(_isolation_reason(launcher), 409)
         folder.mkdir(parents=True)
         ports = _free_ports(3 if kind == "writer" else 1)
         app = _headless_app(launcher, folder, ports, self.hub.config, kind)

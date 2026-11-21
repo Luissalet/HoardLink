@@ -57,8 +57,8 @@ The same operations are available as `hub_start_app`, `hub_app_tools`, `hub_call
 The Hub discovers the tokens where the apps generate them. Opening an app from this Hub returns its URL
 for a headless browser, including the renderer URL for Writer. The catalog shows a launch reason when an
 app has no compatible headless launcher.
-Use the source checkout for Writer and the native module hints or isolated manifest declarations for the
-other apps. Machine-local `launch_overrides` apply to the normal Hub.
+Use the source checkout for Writer and the stock app manifests for the other apps. Machine-local
+`launch_overrides` apply to the normal Hub.
 
 ### Extra instances of an app
 
@@ -77,4 +77,16 @@ other apps. Machine-local `launch_overrides` apply to the normal Hub.
 The worktree must have its own dependencies. Writer's native development launcher accepts separate bridge and renderer
 ports and a hidden window. Its QA profile starts with the agent bridge enabled and generates its own token. Other apps
 can declare `x-family.isolated_instance` with `data_env`, `port_env`, and optional `token_env` for their own headless
-launcher. Its code must write the token in the isolated folder. Nothing starts the registered installation.
+launcher. If the launcher needs command-line flags, `argv` replaces its arguments while keeping the executable
+and working directory from the normal launch hint. `argv` and optional `env` values can use `{DATA_DIR}`,
+`{PORT}`, `{TOKEN_FILE}` and `{INSTANCE_DIR}`. Specify the data folder and port through variables or arguments.
+Set `data_subdir` to put the app data in a subfolder of its instance, for example when the launcher also needs
+a separate folder for shared files. Apps with the HTTP agent contract write their bearer token to
+`{TOKEN_FILE}`. A launcher that requires shared hardware or data can give its reason in
+`unsupported.en` and `unsupported.es`.
+
+Run `python -m pytest tests/hub/test_instances.py` with `HOARD_HUB_ROOTS` pointing at the family
+checkouts to verify their declarations. With the app dependencies installed, set
+`HOARD_HUB_START_CATALOG_TEST=1` to test starting and stopping each app under a temporary profile.
+Use `hub.cmd --data-dir <isolated-hub-data> start <app>` to check a single app and
+`call <app> <tool>` to check the agent contract.
