@@ -568,7 +568,7 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
         assert one["plan"]["baseline_files"] == [extra]
         assert {row["file"] for row in one["baseline"]["failures"].values()} == {extra, "tests/test_feature.py"}
         assert two["plan"]["base"] == one["merge_commit"]
-        assert two["plan"]["baseline_files"] == [extra, "tests/test_feature.py"]
+        assert two["plan"]["baseline_files"] == ["tests/test_feature.py", extra]
         assert two["app_reload"][0]["state"] == "reloaded"
         assert [(row["app"], row["state"], row["reason_code"]) for row in two["app_reload"][1:]] == [
             (name, "deferred", "desktop_in_use") for name in ("desktop", "browser")]
