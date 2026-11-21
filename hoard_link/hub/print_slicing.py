@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from uuid import uuid4
 
-from . import agora_orders, print_gcode
+from . import agora_orders, print_colours, print_gcode
 
 
 _LOG_LEVEL = re.compile(r"(?:\[(warning|warn|error|fatal)\]\s*|^\s*(warning|warn|error|fatal)\s*:\s*)(.+)", re.I)
@@ -142,6 +142,17 @@ def run(agora, source, artifact, executable, version, args):
             diagnostics.append({"severity": "error", "code": "slicer_output", "message": str(len(outputs)), "count": 1})
         gcode = outputs[0] if exit_code == 0 and len(outputs) == 1 else None
         measures = print_gcode.measure(gcode) if gcode else None
+        colour_check = None
+        try:
+            colour_check = print_colours.read(pinned)
+        except ValueError:
+            diagnostics.append({"severity": "error", "code": "filament_colours_unreadable", "message": "", "count": 1})
+        if measures and colour_check:
+            colour_check = print_colours.compare(colour_check, measures["filaments"])
+            if colour_check["differences"]:
+                changes = ", ".join(f'{row["slot"]} · {row["expected"] or "—"} → {row["actual"] or "—"}'
+                                    for row in colour_check["differences"])
+                diagnostics.append({"severity": "error", "code": "filament_colours_mismatch", "message": changes, "count": 1})
         if measures and (not measures["layers"] or not measures["filaments"] or measures["estimated_seconds"] is None
                          or measures["support_mm3"] is None or measures["filament_changes"] is None):
             diagnostics.append({"severity": "error", "code": "slicer_unmeasured", "message": "", "count": 1})
@@ -155,7 +166,7 @@ def run(agora, source, artifact, executable, version, args):
                   "source_piece": source["id"], "source_revision": source["revision"], "source_sha256": source["sha256"],
                   "plate": int(actual_plate[1]) if actual_plate else selected_plate,
                   "arrange": arrange, "expected_filaments": expected_filaments, "require_support": require_support,
-                  "exit_code": exit_code, "diagnostics": diagnostics, "measures": measures,
+                  "exit_code": exit_code, "diagnostics": diagnostics, "measures": measures, "colour_check": colour_check,
                   "profiles": {"machine": machine_record, "process": process_record, "filaments": [record for _, record in slots]},
                   "gcode": gcode.name if gcode else None, "gcode_sha256": _hash(gcode) if gcode else None}
         receipt.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -204,6 +215,8 @@ def defect_note(diagnostic):
               "slicer_unmeasured": "Mediciones de laminado incompletas / Incomplete slicing measurements",
               "slicer_result": "Resultado del laminador ilegible / Unreadable slicer result",
               "filaments_missing": "Filamentos usados frente a los esperados / Used versus expected filaments",
+              "filament_colours_mismatch": "Color por ranura del 3MF → G-code / 3MF → G-code slot colours",
+              "filament_colours_unreadable": "Paleta 3MF ilegible / Unreadable 3MF palette",
               "support_missing": "No se han medido los soportes requeridos / Required supports were not measured"}
     label, message = labels.get(diagnostic["code"]), diagnostic["message"]
     return f"{label}: {message}" if label and message else label or message

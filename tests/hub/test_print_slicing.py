@@ -46,6 +46,7 @@ def test_measures_net_support_extrusion_and_separate_filament_times(tmp_path):
     assert [(f["colour"], f["material_g"], f["deposition_seconds"]) for f in report["filaments"]] == [
         ("#D24734", 0.03, 2.0), ("#285BD4", 0.02, 0.5),
     ]
+    assert [(f["model_deposition"], f["model_filament_mm"]) for f in report["filaments"]] == [(True, 1), (False, 0)]
     path.write_text(GCODE + "; total filament change = 3\n; COLOR_CHANGE,T0\n", encoding="utf-8")
     assert print_gcode.measure(path)["filament_changes"] == 4
     path.write_text("G1 X1 E3 F100\n", encoding="utf-8")
@@ -125,3 +126,74 @@ def test_slice_records_defects_in_order_and_undoes_them_together(served, tmp_pat
     for token in result["undo"]:
         assert call("hub_agora_order_undo", **actor, token=token)["ok"]
     assert not call("hub_agora_job", space_id=actor["space_id"], task_id=jobs["slice"])["job"]["defects"]
+
+
+@pytest.mark.parametrize("case", ["matched", "swapped", "tower_and_support", "unreadable"])
+def test_slice_compares_painted_slots_and_undoes_colour_defect(served, tmp_path, monkeypatch, case):
+    hub, url = served
+    headers = {"Authorization": f"Bearer {hub.token}"}
+    actor = {"agent": "codex-slice-test", "space_id": "ecosystem"}
+
+    def call(name, **args):
+        status, body = _http(f"{url}/api/agent/tools/{name}", {**actor, **args}, headers)
+        assert status == 200, body
+        return body["result"]
+
+    order = call("hub_agora_order_create", title="Print painted figure", words="Check the filament colours")["order"]
+    task_id = call("hub_agora_plan_set", order_id=order["id"], jobs=[
+        {"key": "slice", "title": "Slice", "station": "vulcan", "produces": ["gcode"]},
+    ])["keys"]["slice"]
+    mesh = tmp_path / "source.3mf"
+    expected = [{"slot": 1, "colour": "#D24734", "faces": 1}, {"slot": 2, "colour": "#285BD4", "faces": 2}]
+    palette = "invalid" if case == "unreadable" else json.dumps(expected)
+    with ZipFile(mesh, "w") as archive:
+        archive.writestr("3D/3dmodel.model", f"""
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+                   xmlns:nikias="urn:nikias-hoard:print-colour:1">
+                <metadata name="nikias:PaintedSlots">{palette}</metadata><resources/>
+            </model>""")
+    source = call("hub_agora_piece_add", order_id=order["id"], kind="coloured-3mf", path=str(mesh),
+                  title="Painted 3MF")["piece"]
+    gcode = GCODE + "\n; FEATURE: Prime tower\nG1 X50 E4\n"
+    if case != "tower_and_support":
+        gcode += "; FEATURE: Inner wall\nG1 X60 E5\n"
+    if case == "swapped":
+        gcode = gcode.replace("#D24734;#285BD4", "#285BD4;#D24734")
+
+    def launch(command, **options):
+        out = Path(command[command.index("--outputdir") + 1])
+        (out / "plate_1.gcode").write_text(gcode, encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(local_programs, "discover", lambda *a, **kw: [{"id": "orcaslicer", "path": "test"}])
+    monkeypatch.setattr(print_slicing.subprocess, "run", launch)
+    presets = {}
+    for kind in ("machine", "process", "filament"):
+        path = tmp_path / f"{kind}.json"
+        path.write_text(json.dumps({"type": kind}), encoding="utf-8")
+        presets[kind] = str(path)
+    result = call("hub_print_slice", piece_id=source["id"], task_id=task_id, machine=presets["machine"],
+                  process=presets["process"], filaments=[presets["filament"]] * 2, expected_filaments=2)
+    piece = result["piece"]
+    report = piece["slice_report"]
+    assert result["gcode_generated"] and len(report["measures"]["filaments"]) == 2
+    assert result["checks_clear"] == (case == "matched")
+    assert piece["defects_open"] == (0 if case == "matched" else 1)
+    if case == "unreadable":
+        assert report["diagnostics"][0]["code"] == "filament_colours_unreadable"
+    else:
+        check = report["colour_check"]
+        assert check["expected"] == expected
+        if case == "swapped":
+            assert check["differences"] == [
+                {"slot": 1, "expected": "#D24734", "actual": "#285BD4"},
+                {"slot": 2, "expected": "#285BD4", "actual": "#D24734"},
+            ]
+            assert "2 · #285BD4 → #D24734" in piece["defects"][0]["note"]
+        elif case == "tower_and_support":
+            assert check["differences"] == [{"slot": 2, "expected": "#285BD4", "actual": None}]
+        else:
+            assert not check["differences"]
+    for token in result["undo"]:
+        assert call("hub_agora_order_undo", token=token)["ok"]
+    assert not call("hub_agora_job", task_id=task_id)["job"]["defects"]

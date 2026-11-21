@@ -13,6 +13,8 @@ _SUMMARY = re.compile(r"(?:filament used \[(mm|cm3|g)\]|(filament_diameter|filam
 _TIME = re.compile(r"(?:total estimated time:|estimated printing time \(normal mode\)\s*=)\s*([^;]+)", re.I)
 _SUPPORT = {"support", "support material", "support interface", "support material interface", "support transition", "support material transition"}
 _NON_DEPOSITION = {"custom", "mixed", "none"}
+_MODEL_DEPOSITION = {"outer wall", "inner wall", "overhang wall", "sparse infill", "internal solid infill",
+                     "top surface", "bottom surface", "bridge", "internal bridge", "gap infill", "ironing"}
 
 
 def _numbers(raw, divider=","):
@@ -50,6 +52,7 @@ class _Toolpaths:
         self.feature = ""
         self.tool = 0
         self.support = defaultdict(float)
+        self.model = defaultdict(float)
         self.duration = defaultdict(float)
         self.has_features = False
         self.changes = self.manual_changes = self.layers = 0
@@ -103,6 +106,8 @@ class _Toolpaths:
         self.last_deposition_tool = self.tool
         if self.feature in _SUPPORT:
             self.support[self.tool] += net
+        if self.feature in _MODEL_DEPOSITION:
+            self.model[self.tool] += net
         if self.feed > 0:
             self.duration[self.tool] += _distance(start, end, opcode, params) * 60. / self.feed
 
@@ -131,11 +136,12 @@ def measure(path: Path) -> dict:
     material = {unit: _numbers(summary[unit]) if unit in summary else [] for unit in ("mm", "cm3", "g")}
     diameters = _numbers(summary.get("filament_diameter", ""))
     colours = [re.search(r"#[0-9a-fA-F]{6}\b", item) for item in re.split("[;,]", summary.get("filament_colour", ""))]
-    slots = set(track.duration) | set(track.support) | set(range(max(map(len, material.values()))))
+    deposited = track.duration.keys() | track.support.keys() | track.model.keys()
+    slots = deposited | set(range(max(map(len, material.values()))))
     rows = []
     for slot in sorted(slots):
         amounts = {key: values[slot] if slot < len(values) else None for key, values in material.items()}
-        if not any(amounts.values()) and slot not in track.duration and slot not in track.support:
+        if not any(amounts.values()) and slot not in deposited:
             continue
         diameter = diameters[slot] if slot < len(diameters) else None
         length = track.support.get(slot, 0.)
@@ -143,6 +149,7 @@ def measure(path: Path) -> dict:
         colour = colours[slot] if slot < len(colours) else None
         rows.append({"slot": slot + 1, "colour": colour[0] if colour else None,
                      "material_mm": amounts["mm"], "material_cm3": amounts["cm3"], "material_g": amounts["g"],
+                     "model_deposition": slot in track.model, "model_filament_mm": round(track.model.get(slot, 0.), 3),
                      "deposition_seconds": round(track.duration[slot], 1) if slot in track.duration else None,
                      "support_mm3": support if track.has_features else None})
     volumes = [row["support_mm3"] for row in rows]
