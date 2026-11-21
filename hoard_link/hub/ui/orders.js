@@ -232,6 +232,7 @@
       const cap = el("figcaption");
       const line = el("div", "ord-piece-line");
       line.append(el("b", "", piece.title), pill(label(KIND, piece.kind), "kind"));
+      if (piece.test_pose) line.append(pill(tr("Pose de prueba", "Test pose"), "kind"));
       cap.append(line);
       if (piece.path) {
         const download = !["video", "audio", "pdf", "text"].includes(piece.view);
@@ -401,6 +402,7 @@
       const cap = el("figcaption");
       const line = el("div", "ord-piece-line");
       line.append(el("b", "", p.title), pill(label(PIECE_STATE, p.status), "state-" + p.status));
+      if (p.test_pose) line.append(pill(tr("Pose de prueba", "Test pose"), "kind"));
       cap.append(line, el("small", "ord-muted", label(KIND, p.kind) + (p.revision > 1 ? tr(` · revisión ${p.revision}`, ` · revision ${p.revision}`) : "") +
         (p.station ? " · " + p.station : "") + (p.model ? " · " + p.model : "")));
       const named = role => (p.derivation || []).filter(d => d.role === role).map(d => byId[d.piece]?.title || "#" + d.piece).join(", ");

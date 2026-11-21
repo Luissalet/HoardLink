@@ -127,6 +127,7 @@ function artifactList(pieces, options, tr, heading) {
     const views = piece.previews?.length ? piece.previews : piece.image ? [piece.image] : [];
     if (views.length) item.append(pieceViews(views, options, tr));
     if (piece.title !== heading || !views.length) item.append(node('span', '', piece.title));
+    if (piece.test_pose) item.append(node('span', '', tr('Pose de prueba', 'Test pose')));
     const playerType = ['video', 'audio'].includes(piece.media) ? piece.media : null;
     const download = !['video', 'audio', 'pdf', 'text'].includes(piece.media);
     const label = download ? tr('Descargar pieza', 'Download piece') : tr('Abrir pieza', 'Open piece');
