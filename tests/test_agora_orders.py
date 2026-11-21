@@ -18,6 +18,12 @@ def person(**kw):
     return {"agent": PERSON, "_person": True, **kw}
 
 
+def check_for_gate(agora, *pieces):
+    for piece in pieces:
+        agora.piece_check({"agent": "claude", "piece_id": piece["id"], "note": "Reviewed the test piece.",
+                           "keep": [{"id": k["id"], "state": "ok"} for k in piece["keep"]]})
+
+
 def cartographer(ag, folder):
     """The scene's order, a plan of four jobs (two in parallel after the sheet) and its pieces."""
     for name in ("lamina.png", "hoja.png", "malla.glb", "giro-0.png", "giro-1.png", "modelo.blend", "render.png"):
@@ -65,6 +71,7 @@ def test_order_plan_is_made_of_agora_tasks_with_dependencies(agora, tmp_path):
 def test_keep_unblocks_the_next_jobs_without_finishing_the_predecessor(agora, tmp_path):
     order, keys, pieces = cartographer(agora, tmp_path)
     agora.task_update(person(task_id=keys["mesh"], status="blocked"))
+    check_for_gate(agora, pieces["hoja"])
     gate = agora.gate_open({"agent": "claude", "order_id": order["id"],
                             "piece_ids": [pieces["hoja"]["id"]]})["gate"]
 
@@ -92,6 +99,7 @@ def test_final_cancellation_releases_a_root_using_the_earlier_keep(agora, tmp_pa
     order, _, pieces = cartographer(agora, tmp_path)
     task_id = agora.plan_set({"agent": "claude", "order_id": order["id"],
                               "jobs": [{"key": "next", "title": "New pass"}]})["keys"]["next"]
+    check_for_gate(agora, pieces["lamina"], pieces["hoja"])
     gate = agora.gate_open({"agent": "claude", "order_id": order["id"],
                             "piece_ids": [pieces["lamina"]["id"], pieces["hoja"]["id"]]})["gate"]
     keep = agora.gate_decide(person(gate_id=gate["id"], piece_id=pieces["lamina"]["id"],
@@ -124,6 +132,7 @@ def test_check_marks_details_and_defect_goes_back_to_its_job(agora, tmp_path):
 
 def test_gate_keep_fixes_reference_and_cancel_returns_and_stales(agora, tmp_path):
     order, keys, pieces = cartographer(agora, tmp_path)
+    check_for_gate(agora, pieces["lamina"], pieces["hoja"], pieces["malla"])
     gate = agora.gate_open({"agent": "claude", "order_id": order["id"],
                             "piece_ids": [pieces["lamina"]["id"], pieces["hoja"]["id"]]})["gate"]
     mesh_gate = agora.gate_open({"agent": "claude", "order_id": order["id"], "piece_ids": [pieces["malla"]["id"]]})["gate"]
@@ -144,7 +153,7 @@ def test_gate_keep_fixes_reference_and_cancel_returns_and_stales(agora, tmp_path
     assert sorted(out["decided"][0]["stale"]) == sorted([pieces["modelo"]["id"], pieces["render"]["id"]])
     full = agora.order({"order_id": order["id"]})["order"]
     state = {p["title"]: p["status"] for p in full["piece_list"]}
-    assert state == {"Lámina": "kept", "Hoja": "provisional", "Malla": "cancelled", "Modelo": "stale", "Render": "stale"}
+    assert state == {"Lámina": "kept", "Hoja": "checked", "Malla": "cancelled", "Modelo": "stale", "Render": "stale"}
     assert agora._task_row(keys["mesh"])["status"] == "changes"   # back to its station
     # the order still waits for the sheet's gate
     assert full["status"] == "waiting" and full["gates_open"] == 1
@@ -184,6 +193,7 @@ def test_undo_puts_back_each_write(agora, tmp_path):
     again = agora.order({"order_id": order["id"]})["order"]
     lamina = next(p for p in again["piece_list"] if p["id"] == pieces["lamina"]["id"])
     assert lamina["checks"] == [] and all(k["state"] == "pending" for k in lamina["keep"])
+    check_for_gate(agora, pieces["hoja"])
     gate = agora.gate_open({"agent": "claude", "order_id": order["id"], "piece_ids": [pieces["hoja"]["id"]]})
     assert agora.order({"order_id": order["id"]})["order"]["status"] == "waiting"
     agora.order_undo({"agent": "claude", "token": gate["undo"]})
@@ -330,6 +340,7 @@ def _carried(piece, hoja, malla):
 def test_a_correction_of_the_same_piece_keeps_its_details_unchecked(agora, tmp_path):
     """The workshop fixes only the floor and delivers the mesh again with supersedes, without repeating keep or parents."""
     order, add, hoja, malla = _sheet_and_mesh(agora, tmp_path)
+    check_for_gate(agora, malla)
     gate = agora.gate_open({"agent": "claude", "order_id": order["id"], "piece_ids": [malla["id"]]})["gate"]
     agora.gate_decide(person(gate_id=gate["id"], decision="keep", note="vale"))
     r2 = add(kind="mesh", title="Malla sin suelo", path="malla-suelo.glb", supersedes=malla["id"])
@@ -423,6 +434,7 @@ def test_reference_use_survives_a_cancel_and_material_use_does_not(agora, tmp_pa
                            "path": "rig.blend", "derives_from": [{"piece": pieces["malla"]["id"], "role": "reference"},
                                                                  {"piece": pieces["hoja"]["id"], "role": "reference"}]})["piece"]
     assert rig["provenance"] == "known" and {d["role"] for d in rig["derivation"]} == {"reference"}
+    check_for_gate(agora, pieces["malla"])
     gate = agora.gate_open({"agent": "claude", "order_id": order["id"], "piece_ids": [pieces["malla"]["id"]]})["gate"]
     out = agora.gate_decide(person(gate_id=gate["id"], decision="cancel", note="bulto"))
     stale = out["decided"][0]["stale"]
@@ -451,6 +463,7 @@ def test_piece_can_use_material_and_references_from_another_order_in_its_space(a
     foreign = other.order_create(person(title="Other space", words="Isolated."))["order"]
     with pytest.raises(AgoraError, match="no piece"):
         other.piece_add({**args, "order_id": foreign["id"], "derives_from": [sheet["id"]]})
+    check_for_gate(agora, sheet)
     gate = agora.gate_open({"agent": "claude", "order_id": source["id"], "piece_ids": [sheet["id"]]})["gate"]
     result = agora.gate_decide(person(gate_id=gate["id"], decision="cancel"))["decided"][0]
     assert material["id"] in result["stale"] and reference["id"] not in result["stale"]
@@ -514,6 +527,7 @@ def test_a_piece_whose_file_changed_without_a_copy_is_not_decided(agora, tmp_pat
     (tmp_path / "big.glb").write_bytes(b"A")
     big = agora.piece_add({"agent": "claude", "order_id": order["id"], "kind": "mesh", "title": "Grande", "path": "big.glb"})["piece"]
     assert big["bytes"] == "unverified"
+    check_for_gate(agora, big)
     gate = agora.gate_open({"agent": "claude", "order_id": order["id"], "piece_ids": [big["id"]]})["gate"]
     (tmp_path / "big.glb").write_bytes(b"B")
     with pytest.raises(AgoraError) as changed:

@@ -21,6 +21,7 @@ def test_pending_decisions_counts_each_gate_once_in_its_space(tmp_path):
     (tmp_path / 'report.txt').write_text('Report', encoding='utf-8')
     piece = root.piece_add({'agent': 'builder', 'order_id': order['id'], 'title': 'Report file',
                             'kind': 'text', 'path': 'report.txt'})['piece']
+    root.piece_check({'agent': 'builder', 'piece_id': piece['id'], 'note': 'Reviewed the test report.'})
     gate = root.gate_open({'agent': 'builder', 'order_id': order['id'], 'title': 'Read report',
                            'piece_ids': [piece['id']]})['gate']
     server = serve(hub)

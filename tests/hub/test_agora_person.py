@@ -111,6 +111,7 @@ def test_configured_person_at_the_http_and_agent_boundaries(tmp_path):
         (tmp_path / "fixture.txt").write_text("Synthetic piece", encoding="utf-8")
         piece = ag.piece_add({"agent": AGENT, "order_id": order["id"], "title": "Fixture", "kind": "text",
                               "path": "fixture.txt"})["piece"]
+        ag.piece_check({"agent": AGENT, "piece_id": piece["id"], "note": "Reviewed the test piece."})
         gate = ag.gate_open({"agent": AGENT, "order_id": order["id"], "title": "Fixture gate",
                              "piece_ids": [piece["id"]]})["gate"]
         decision = {"gate_id": gate["id"], "decision": "keep"}

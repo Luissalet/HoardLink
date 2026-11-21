@@ -110,6 +110,8 @@ def test_registered_frame_follows_take_or_waits_for_model_selection(tmp_path):
         actual = add("production.glb", "posed-figure-mesh", traced["derives_from"])
         assert all(p.get("test_pose") for p in (posed, closed, coloured))
         assert not actual.get("test_pose")
+        for piece in (coloured, actual):
+            call("piece_check", {**agent, "piece_id": piece["id"], "note": "Reviewed the test figure."})
         call("gate_open", {**args, "title": "Figures", "piece_ids": [coloured["id"], actual["id"]]})
         decision = call("pending_decisions", {})["rows"][0]
         assert [p.get("test_pose", False) for p in decision["artifacts"]] == [True, False]

@@ -20,6 +20,7 @@ def test_production_decision_survives_the_inbox_cursor_until_its_order_thread_is
     order = studio.order_create({"agent": "producer", "title": "Sample order"})["order"]
     piece = studio.piece_add({"agent": opener, "order_id": order["id"], "title": "First piece",
                               "kind": "document", "url": "https://example.test/draft"})["piece"]
+    studio.piece_check({"agent": opener, "piece_id": piece["id"], "note": "Reviewed the test document."})
     gate = studio.gate_open({"agent": opener, "order_id": order["id"], "title": "First gate",
                              "piece_ids": [piece["id"]]})["gate"]
     saved = studio.gate_decide({"agent": studio.person_id, "_person": True, "gate_id": gate["id"],

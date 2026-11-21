@@ -14,6 +14,7 @@ def test_home_opens_decision_before_measures_and_keeps_focus(tmp_path):
     (tmp_path / "draft.txt").write_text("Draft for review", encoding="utf-8")
     piece = agora.piece_add({"agent": "builder", "order_id": order["id"], "title": "Draft", "kind": "text",
                             "path": "draft.txt"})["piece"]
+    agora.piece_check({"agent": "builder", "piece_id": piece["id"], "note": "Reviewed the test draft."})
     gate = agora.gate_open({"agent": "builder", "order_id": order["id"], "title": "Review the draft",
                            "piece_ids": [piece["id"]]})["gate"]
     server = serve(hub)
