@@ -76,6 +76,13 @@ def ancestor(repo, older, newer):
     return git(repo, "merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
 
 
+def resolve_commit(repo, ref):
+    result = git(repo, "rev-parse", "--verify", ref + "^{commit}", check=False)
+    if result.returncode:
+        raise IntegrationError(f"{repo.name}: submitted commit {ref} is missing or ambiguous. Check the local delivery refs.")
+    return result.stdout.decode("ascii").strip()
+
+
 def delivery_repositories(agora, task, repo_hint=None):
     """Associate every submitted commit with the registered branch that contains it."""
     refs = task.get("commits") or []
@@ -97,8 +104,9 @@ def delivery_repositories(agora, task, repo_hint=None):
             continue
         commits = [ref for ref in refs if tip.startswith(ref.lower()) or ancestor(repo, ref, tip)]
         found[repo] = (name, commits)
-    if found and set(refs) - {ref for _, commits in found.values() for ref in commits}:
-        raise IntegrationError("Some submitted commits do not belong to a registered delivery branch")
+    if found and (missing := set(refs) - {ref for _, commits in found.values() for ref in commits}):
+        raise IntegrationError("Register the repositories and restore the submitted branch tips for: "
+                               + ", ".join(sorted(missing)))
     return found
 
 
@@ -172,9 +180,13 @@ def worktree(repo, path, commit):
 
 def merge_candidate(work, head):
     subject = git_text(work, "show", "-s", "--format=%s", head)
+    base = git_text(work, "rev-parse", "HEAD")
     git(work, "-c", "user.name=Luissalet", "-c", "user.email=luissalet@users.noreply.github.com",
         "merge", "--no-ff", "--no-edit", "--no-gpg-sign", "-m", f"Merge delivery: {subject}", head)
-    return git_text(work, "rev-parse", "HEAD")
+    merge, *parents = git_text(work, "rev-list", "--parents", "-n", "1", "HEAD").split()
+    if parents != [base, head]:
+        raise IntegrationError("The delivery did not produce a two-parent merge. Refresh the plan against main.")
+    return merge
 
 
 def discard_delivery_caches(work):
@@ -223,10 +235,11 @@ def foreign(repo, delta):
         raise IntegrationError("The destination has unresolved index entries")
     dirty = set(paths(git(repo, "diff", "HEAD", "--name-only", "--no-renames", "-z").stdout))
     dirty.update(paths(git(repo, "diff", "--cached", "--name-only", "--no-renames", "-z").stdout))
-    untracked = paths(git(repo, "ls-files", "--others", "--directory", "-z").stdout)
+    untracked = paths(git(repo, "ls-files", "--others", "-z").stdout)
     blocked = [name for name in untracked if any(overlaps(name.rstrip("/"), item) for item in delta)]
     if blocked:
-        raise IntegrationError("Untracked or ignored files overlap the merge: " + ", ".join(blocked))
+        raise IntegrationError("Untracked or ignored files overlap the merge. Move them aside and retry: "
+                               + ", ".join(blocked))
     names = sorted(name for name in dirty if any(overlaps(name, item) for item in delta))
     return names, patch(repo, names, staged=True), patch(repo, names)
 
@@ -268,7 +281,8 @@ def move_checkout(repo, old, new, scratch, record):
             try:
                 restored = replay(copy, staged, unstaged, names)
             except IntegrationError as exc:
-                raise IntegrationError(f"Foreign changes conflict on {', '.join(names)}: {exc}") from exc
+                raise IntegrationError(f"Foreign changes conflict on {', '.join(names)}. "
+                                       f"Resolve that overlap in the destination and retry: {exc}") from exc
         (scratch / "parked-index.patch").write_bytes(staged)
         (scratch / "parked-worktree.patch").write_bytes(unstaged)
         (scratch / "restored-index.patch").write_bytes(restored[0])
@@ -276,7 +290,7 @@ def move_checkout(repo, old, new, scratch, record):
     idle_checkout(repo)
     if (git_text(repo, "symbolic-ref", "HEAD") != branch or
             git_text(repo, "rev-parse", "HEAD") != old or foreign(repo, delta) != original):
-        raise IntegrationError("The destination changed while preparing the merge")
+        raise IntegrationError("The destination changed while preparing the merge. Refresh the plan and retry.")
     record("prepared_checkout", {"before": old, "after": new, "parked": names})
     if names:
         git(repo, "restore", "--source=" + old, "--staged", "--worktree", "--", *names)

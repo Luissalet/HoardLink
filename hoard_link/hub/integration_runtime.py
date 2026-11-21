@@ -7,6 +7,21 @@ from subprocess import TimeoutExpired
 from . import integration_git as git
 
 
+def pending_reloads(repo, base, commit, build, apps):
+    pending = [{"target": app["app"], "action": "reload_app", "reason": app.get("reason")}
+               for app in apps if app["state"] == "deferred"]
+    delta = git.changed(repo, base, commit)
+    if any(path.startswith("hoard_link/hub/") and path.endswith(".py") for path in delta):
+        pending.append({"target": "hub", "action": "restart_hub_when_idle"})
+    if any(path.startswith("shell/") for path in delta):
+        pending.append({"target": "hub_desktop", "action": "reopen_hub_window"})
+    if build and build.get("native"):
+        pending.append({"target": "agora_desktop", "action": "reopen_native_console"})
+    if build and build["destination"] == "static/studio":
+        pending.append({"target": "studio", "action": "verify_spark_deployment", "sha256": build["sha256"]})
+    return pending
+
+
 class IntegrationRuntime:
     def __init__(self, repo):
         self.repo = repo

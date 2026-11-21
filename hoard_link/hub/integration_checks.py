@@ -84,6 +84,7 @@ def combine(results):
     failures = {(f"{root}/{key}" if len(results) > 1 else key): info
                 for root, row in results.items() for key, info in row["failures"].items()}
     result = {"counts": counts, "failures": failures, "roots": results}
+    result["elapsed_seconds"] = round(sum(row.get("elapsed_seconds", 0) for row in results.values()), 3)
     errors = [f"{root}: {row['runner_error']}" for root, row in results.items() if row.get("runner_error")]
     if errors:
         result["runner_error"] = "\n".join(errors)

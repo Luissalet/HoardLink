@@ -21,11 +21,11 @@ from . import integration_checks as checks
 from . import integration_frontend as frontend
 from . import integration_git as repo_git
 from . import integration_receipt
-from .agora import AgoraError, SpaceError, normalize_resource
+from .agora import DEFAULT_LOCK_TTL_S, AgoraError, SpaceError, normalize_resource
 from .config import REPO_DIR
 from .facets import Facet
 from .integration_closure import closure_snapshot, restore_closure
-from .integration_runtime import IntegrationRuntime
+from .integration_runtime import IntegrationRuntime, pending_reloads
 
 
 API = "/api/integration"
@@ -75,6 +75,23 @@ def declared_repository_tests(repo, tip, paths, name, repositories):
                               if scoped or file in tracked))
 
 
+def validate_test_declarations(found, branch, paths):
+    if not paths:
+        return
+    names = [name for name, _ in found.values()]
+    assigned = set()
+    for repo, (name, _) in found.items():
+        tracked = repo_git.tracked(repo, repo_git.branch_tip(repo, branch))
+        for path in paths:
+            for file, scoped in repository_tests([path], name, names):
+                if file in tracked:
+                    assigned.add(path)
+                elif scoped:
+                    raise repo_git.IntegrationError(f"{name}: declared test is absent from the delivery: {file}")
+    if missing := set(paths) - assigned:
+        raise repo_git.IntegrationError("Declared tests absent from all delivery branches: " + ", ".join(sorted(missing)))
+
+
 def submission_summary(agora, task):
     revision = task["submission_revision"]
     submitted = task.get("reviewed_commits") if task.get("status") == "done" else None
@@ -90,27 +107,24 @@ def submission_summary(agora, task):
     return ""
 
 
-def delivery_tests(args, summary):
-    declared = submission_tests(summary)
-    if declared:
-        return declared, True
+def extra_tests(args):
     provided = args.get("test_paths", [])
     if not isinstance(provided, list):
         raise repo_git.IntegrationError("test_paths must be a list of tracked pytest files")
-    return list(dict.fromkeys(repo_git.test_path(file) for file in provided)), False
+    return list(dict.fromkeys(repo_git.test_path(file) for file in provided))
 
 
-def delivery_contract(repo, branch, commits, files):
-    if not files:
+def delivery_contract(repo, branch, commits, files, *, require_tests=True):
+    if require_tests and not files:
         raise repo_git.IntegrationError("Add Test-Paths with the path of a tracked pytest file")
     tip = repo_git.branch_tip(repo, branch)
     if not commits or any(not re.fullmatch(r"[0-9a-fA-F]{7,64}", item) for item in commits):
         raise repo_git.IntegrationError("The delivery needs commit hashes")
-    resolved = [repo_git.git_text(repo, "rev-parse", "--verify", commit + "^{commit}") for commit in commits]
+    resolved = [repo_git.resolve_commit(repo, commit) for commit in commits]
     if tip not in resolved or not all(repo_git.ancestor(repo, commit, tip) for commit in resolved):
-        raise repo_git.IntegrationError("The named branch must point to the submitted head and contain its commits")
-    if set(files) - repo_git.tracked(repo, tip):
-        raise repo_git.IntegrationError("A declared test file is absent from the delivery")
+        raise repo_git.IntegrationError(f"{repo.name}: restore {branch} to the submitted head and check its commits")
+    if missing := set(files) - repo_git.tracked(repo, tip):
+        raise repo_git.IntegrationError("Test files absent from the delivery: " + ", ".join(sorted(missing)))
     return tip
 
 
@@ -124,6 +138,7 @@ def enforce_submission(agora, task, snap, summary):
             if len(found) > 1:
                 names = [name for name, _ in found.values()]
                 paths = submission_tests(summary, scoped=True)
+                validate_test_declarations(found, snap["branch"], paths)
                 for repo, (name, commits) in found.items():
                     tip = repo_git.branch_tip(repo, snap["branch"])
                     delivery_contract(repo, snap["branch"], commits,
@@ -133,7 +148,7 @@ def enforce_submission(agora, task, snap, summary):
         repo = agora.repo_lookup(name) if agora.repo_lookup and name else None
         if repo is None:
             raise repo_git.IntegrationError("An integration task needs a registered repository")
-        files = submission_tests(summary)
+        files = [file for file, _ in repository_tests(submission_tests(summary, scoped=True), name, [name])]
         delivery_contract(repo, snap["branch"], snap["commits"], files)
     except repo_git.IntegrationError as exc:
         raise AgoraError(str(exc), 422, error_code="integration_contract") from exc
@@ -191,8 +206,9 @@ class IntegrationFacet(Facet):
 
     def start(self):
         self.runtime = IntegrationRuntime(REPO_DIR)
-        running = {"queued", "waiting_for_suite_slot", "testing_main", "testing_candidate", "testing_inference",
-                   "integrating", "prepared_checkout", "moved_checkout", "restored_checkout", "publishing_frontend", "checking_live_case",
+        running = {"queued", "waiting_for_merge_lock", "waiting_for_suite_slot", "testing_main",
+                   "testing_candidate", "testing_inference", "integrating", "prepared_checkout",
+                   "moved_checkout", "restored_checkout", "publishing_frontend", "checking_live_case",
                    "saving_baseline", "cleaning_delivery", "delivery_retained", "worktree_removed", "branch_removed",
                    "processing_repositories"}
         for path in self.root.glob("*/receipt.json"):
@@ -235,19 +251,18 @@ class IntegrationFacet(Facet):
         if target not in ("main", "master"):
             raise repo_git.IntegrationError("The registered repository must have its main or master branch checked out")
         base = repo_git.git_text(repo, "rev-parse", "HEAD")
+        paths = submission_tests(summary, scoped=True)
         if repositories:
-            # Files in legacy deliveries were listed without a repository prefix.
-            # Include every declared test tracked on each delivery branch.
             declared = declared_repository_tests(repo, repo_git.branch_tip(repo, task["branch"]),
-                                                 submission_tests(summary, scoped=True), repo_name, repositories)
-            from_submission = bool(declared)
-            if not declared:
-                declared, _ = delivery_tests(args, "")
+                                                 paths, repo_name, repositories)
         else:
-            declared, from_submission = delivery_tests(args, summary)
-        if not declared:
-            raise repo_git.IntegrationError(f"{repo_name}: provide tracked pytest files in test_paths or test_paths_by_repo")
-        head = delivery_contract(repo, task["branch"], commits, declared)
+            declared = [file for file, _ in repository_tests(paths, repo_name, [repo_name])]
+        extra = extra_tests(args)
+        live = args.get("live_test") or submission_live_test(summary, repo_name, repositories)
+        live_file = repo_git.test_path(live.split("::", 1)[0]) if live else None
+        test_paths = list(dict.fromkeys(declared + extra))
+        head = delivery_contract(repo, task["branch"], commits, test_paths + ([live_file] if live else []),
+                                 require_tests=False)
         fork = repo_git.git_text(repo, "merge-base", base, head)
         delta = repo_git.changed(repo, fork, head)
         if repo_git.ancestor(repo, head, base):
@@ -255,24 +270,40 @@ class IntegrationFacet(Facet):
         config = checks.config_at(repo, base)
         # A submission cannot disable main's configured contract files or silently move them into inference.
         tracked = repo_git.tracked(repo, head) | repo_git.tracked(repo, base)
-        files = checks.tests_for(delta, tracked, declared, config)
-        live = args.get("live_test") or submission_live_test(summary, repo_name, repositories)
-        if live and repo_git.test_path(live.split("::", 1)[0]) not in files["contract"]:
-            raise repo_git.IntegrationError("The live case needs a test file in the contract selection")
+        machine = "spark" if args.get("spark_repo") else "local"
+        previous = read_json(self._baseline(repo), {}).get(machine, {})
+        known_files = {row.get("file") for row in previous.get("failures", {}).values()} & tracked
+        try:
+            files = checks.tests_for(delta, tracked, set(test_paths) | known_files | ({live_file} if live else set()),
+                                     config)
+        except repo_git.IntegrationError as exc:
+            raise repo_git.IntegrationError(f"{repo_name}: {exc}. Pass tracked pytest files in "
+                                            "test_paths or test_paths_by_repo.") from exc
+        if live and live_file not in files["contract"]:
+            raise repo_git.IntegrationError(f"{repo_name}: choose a live test outside the inference lane")
         return {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
                       "branch": task["branch"], "commits": commits, "delta": sorted(delta), "tests": files, "live_test": live,
-                      "test_paths": declared, "test_paths_source": "submission" if from_submission else "integrator",
+                      "live_mode": "focused" if live else "contract",
+                      "test_paths": test_paths, "test_paths_source": (
+                          "submission_and_integrator" if declared and extra else
+                          "submission" if declared else "integrator" if extra else "affected"),
+                      "baseline_files": sorted(known_files),
                       "contract_timeout_seconds": checks.contract_timeout(config),
                       "test_roots": checks.test_roots(files["contract"] + files["inference"], tracked)}
 
     def _deliveries(self, agora, task, args, *, inspect=False):
         found = (repo_git.delivery_repositories(agora, task, args.get("repo"))
-                 if len(task["commits"]) > 1 else {})
+                 if len(task["commits"]) > 1 or not task["repo"] else {})
         if len(found) < 2:
-            name = (task["repo"] or args.get("repo") or repo_git.delivery_repository(
-                agora, task, summary=submission_summary(agora, task)))
+            name = next(iter(found.values()))[0] if found else (
+                task["repo"] or args.get("repo") or repo_git.delivery_repository(
+                    agora, task, summary=submission_summary(agora, task)))
             if not name or not (location := agora.repo_lookup(name)):
-                raise repo_git.IntegrationError("The delivery needs a repository registered in the Hub")
+                raise repo_git.IntegrationError("Register the repository and restore the local delivery branch, "
+                                                "or pass its registered name as repo")
+            if (hint := args.get("repo")) and (not (other := agora.repo_lookup(hint))
+                                               or Path(other).resolve() != Path(location).resolve()):
+                raise repo_git.IntegrationError(f"{hint}: no submitted branch in this repository")
             local = self._repository_args(args, name, [name])
             repo = Path(location).resolve()
             plan = self._delivery(agora, task, local, repo, (name, task["commits"]))
@@ -282,6 +313,11 @@ class IntegrationFacet(Facet):
         if hint and first not in found:
             raise repo_git.IntegrationError(f"{hint}: no submitted branch in this repository")
         names = [name for name, _ in found.values()]
+        if not first and any(key in args for key in ("live_test", "test_paths", "spark_repo")):
+            raise repo_git.IntegrationError("For several repositories, pass repo with a single override "
+                                            "or use live_tests, test_paths_by_repo and spark_repos.")
+        validate_test_declarations(found, task["branch"],
+                                   submission_tests(submission_summary(agora, task), scoped=True))
         plans = []
         for repo, entry in sorted(found.items(), key=lambda item: (item[0] != first, item[1][0].casefold())):
             if inspect and first and repo != first:
@@ -332,6 +368,8 @@ class IntegrationFacet(Facet):
         return {"ok": True, "plan": plan, "baseline": read_json(self._baseline(repo), {}),
                 "plans": [plan for _, plan, _ in deliveries], "repositories": names,
                 "missing_live_tests": [plan["repo_ref"] for _, plan, _ in deliveries if not plan["live_test"]],
+                "post_merge_checks": {plan["repo_ref"]: plan["live_test"] or plan["tests"]["contract"]
+                                      for _, plan, _ in deliveries},
                 "nearby_deliveries": [dict(row) for row in nearby],
                 "runtime": self.runtime.status() if self.runtime else None}
 
@@ -347,9 +385,6 @@ class IntegrationFacet(Facet):
             if existing := self.active.get(key):
                 return self.status({"id": existing})
         deliveries, _ = self._deliveries(agora, task, args)
-        if merge and (missing := [plan["repo_ref"] for _, plan, _ in deliveries if not plan["live_test"]]):
-            raise repo_git.IntegrationError("Supply the focused live_test that reproduces the original case for: "
-                                            + ", ".join(missing))
         _, plan, _ = deliveries[0]
         with self.lock:
             if existing := self.active.get(key):
@@ -403,12 +438,16 @@ class IntegrationFacet(Facet):
                 report = self._record_path(receipt).parent / f"{lane}-{ref}-{root_index}-{batch_index}.xml"
                 key = f"{root} [{batch_index + 1}]" if len(files) > checks.BATCH_SIZE else root
                 try:
+                    started = time.monotonic()
                     results[key] = checks.suite(self.hub, repo, work, batch, report, lane, base=base, ref=ref,
                                                 remote=remote, empty_ok=empty_ok or len(groups) > 1 or not batch,
                                                 timeout=timeout)
+                    results[key]["elapsed_seconds"] = round(time.monotonic() - started, 3)
                 except TimeoutExpired as exc:
                     receipt["test_timeout"] = {"group": key, "commit": ref[:12], "seconds": timeout}
-                    raise repo_git.IntegrationError(f"{lane} tests in {key} at {ref[:12]} exceeded {timeout} s") from exc
+                    raise repo_git.IntegrationError(
+                        f"{lane} tests in {key} at {ref[:12]} exceeded {timeout} s. "
+                        f"Adjust {checks.CONFIG} on main or narrow the test selection.") from exc
         return checks.combine(results)
 
     def _repository_turn(self, run):
@@ -418,6 +457,27 @@ class IntegrationFacet(Facet):
             if paths & self.queue[run]:
                 return False
         return False
+
+    def _merge_locks(self, agora, agent, run, repos, receipt, update):
+        resources = sorted({normalize_resource(f"merge:{repo.name}") for repo in repos})
+        deadline = time.monotonic() + 1800
+        while run not in self.cancelled:
+            with agora.db.tx():
+                existing = {row["resource"] for row in agora._live_locks() if row["owner"] == agent}
+                # Replan only after acquiring the same locks used by manual integrators.
+                got = agora._acquire(agent, resources, None, DEFAULT_LOCK_TTL_S, f"Integration {run}")
+            if got["ok"]:
+                receipt.pop("waiting_for", None)
+                return [resource for resource in resources if resource not in existing]
+            if time.monotonic() >= deadline:
+                owners = ", ".join(f"{row['resource']} ({row['owner']})" for row in got["conflicts"])
+                raise repo_git.IntegrationError(f"Wait for these merge locks and retry: {owners}")
+            if receipt.get("waiting_for") != got["conflicts"]:
+                receipt["waiting_for"] = got["conflicts"]
+                update("waiting_for_merge_lock")
+            with self.queue_changed:
+                self.queue_changed.wait_for(lambda: run in self.cancelled, timeout=1)
+        return []
 
     def _work(self, args, receipt):
         run = receipt["id"]
@@ -439,6 +499,12 @@ class IntegrationFacet(Facet):
                 update("cancelled")
                 return
             agora, _, task = self._snapshot(args, merge=receipt["merge"])
+            if receipt["merge"]:
+                locks = self._merge_locks(agora, agent, run, self.queue[run], receipt, update)
+                if run in self.cancelled:
+                    update("cancelled")
+                    return
+                _, _, task = self._snapshot(args, merge=True)
             deliveries, _ = self._deliveries(agora, task, args)
             if {repo for repo, _, _ in deliveries} != self.queue[run]:
                 raise repo_git.IntegrationError("The registered delivery repositories changed while queued")
@@ -451,14 +517,6 @@ class IntegrationFacet(Facet):
                 repo, _, local = deliveries[0]
                 self._work_repo(local, repo, task, receipt)
                 return
-            if receipt["merge"]:
-                resources = sorted({normalize_resource(f"merge:{repo.name}") for repo, _, _ in deliveries})
-                with agora.db.tx():
-                    existing = {row["resource"] for row in agora._live_locks()}
-                    got = agora._acquire(agent, resources, None, 900, f"Integration {run}")
-                    if not got["ok"]:
-                        raise repo_git.IntegrationError(f"Merge lock held by {got['conflicts'][0]['owner']}")
-                    locks = [resource for resource in resources if resource not in existing]
             for (repo, _, local), row in zip(deliveries, group):
                 self._record_path(row).parent.mkdir()
                 self._work_repo(local, repo, task, row, progress=lambda state: update(
@@ -482,13 +540,15 @@ class IntegrationFacet(Facet):
             receipt["error"] = str(exc)
             update("needs_attention" if group and any(r.get("merge_commit") for r in group) else "failed")
         finally:
-            if locks:
-                agora.unlock({"agent": agent, "resources": locks})
-            with self.queue_changed:
-                self.active.pop((receipt["space_id"], receipt["task_id"]), None)
-                self.queue.pop(run, None)
-                self.cancelled.discard(run)
-                self.queue_changed.notify_all()
+            try:
+                if locks:
+                    agora.unlock({"agent": agent, "resources": locks})
+            finally:
+                with self.queue_changed:
+                    self.active.pop((receipt["space_id"], receipt["task_id"]), None)
+                    self.queue.pop(run, None)
+                    self.cancelled.discard(run)
+                    self.queue_changed.notify_all()
 
     def _work_repo(self, args, repo, task, receipt, *, progress=None):
         run = receipt["id"]
@@ -498,8 +558,6 @@ class IntegrationFacet(Facet):
         base, head = plan["base"], plan["head"]
         remote = args.get("spark_repo")
         agent = receipt["agent"]
-        merge_resource = normalize_resource(f"merge:{repo.name}")
-        took_lock = False
 
         def update(state, details=None):
             receipt["state"] = state
@@ -527,9 +585,10 @@ class IntegrationFacet(Facet):
                 proposed = self._run_checks(repo, candidate, tests, receipt, base=base, ref=merged, remote=remote)
                 receipt["comparison"] = comparison = checks.compare(main, proposed)
                 if main.get("runner_error") or proposed.get("runner_error"):
-                    raise repo_git.IntegrationError("Main or candidate could not collect or set up its tests")
+                    raise repo_git.IntegrationError("Open the comparison to check the pytest collection or setup "
+                                                    "error, then fix the test environment and retry.")
                 if proposed["counts"]["passed"] + proposed["counts"]["failed"] == 0:
-                    raise repo_git.IntegrationError("No contract test actually ran")
+                    raise repo_git.IntegrationError("No contract test ran. Select a pytest file outside the inference lane.")
                 if args.get("inference"):
                     update("testing_inference")
                     receipt["inference"] = {
@@ -552,12 +611,6 @@ class IntegrationFacet(Facet):
                     update("cancelled")
                     return
                 self._snapshot(args, merge=True)
-                with agora.db.tx():
-                    existing = next((row for row in agora._live_locks() if row["resource"] == merge_resource), None)
-                    got = agora._acquire(agent, [merge_resource], None, 900, f"Integration {run}")
-                    if not got["ok"]:
-                        raise repo_git.IntegrationError(f"Merge lock held by {got['conflicts'][0]['owner']}")
-                    took_lock = existing is None
                 if repo_git.branch_tip(repo, plan["branch"]) != head:
                     raise repo_git.IntegrationError("Delivery branch changed after its tests")
                 if build:
@@ -572,14 +625,18 @@ class IntegrationFacet(Facet):
                         frontend.publish_frontend(repo, build, folder)
                         build["published"] = True
                     self._reload_apps(agora, repo, agent, receipt, "app_reload")
+                    receipt["reload_pending"] = pending_reloads(repo, base, merged, build, receipt["app_reload"])
                     update("checking_live_case")
                     if any(result["state"] == "failed" for result in receipt["app_reload"]):
                         raise repo_git.IntegrationError("A running app did not come back ready after integration")
+                    live = plan["live_test"]
                     with repo_git.worktree(repo, folder / "live", merged) as live_tree:
-                        receipt["live"] = self._run_checks(repo, live_tree, [plan["live_test"]], receipt,
+                        receipt["live"] = self._run_checks(repo, live_tree, [live] if live else tests, receipt,
                                                            base=base, ref=merged, lane="live", remote=remote)
-                    if receipt["live"]["failures"] or not receipt["live"]["counts"]["passed"]:
-                        raise repo_git.IntegrationError("The post-merge case failed")
+                    result = receipt["live"]
+                    failures = result["failures"] if live else checks.compare(proposed, result)["new"]
+                    if result.get("runner_error") or failures or not result["counts"]["passed"]:
+                        raise repo_git.IntegrationError("The post-merge check failed. Inspect the live test results before retrying.")
                 except Exception as exc:
                     self._undo_merge(path, receipt, agora, repo, agent)
                     receipt["error"] = f"{exc}. The previous checkout was restored."
@@ -588,9 +645,7 @@ class IntegrationFacet(Facet):
                 prev_baseline = read_json(self._baseline(repo), {})
                 receipt["previous_baseline"] = prev_baseline
                 lane = receipt["machine"]
-                previous = prev_baseline.get(lane, {}).get("failures", {})
-                known = {key: row for key, row in previous.items() if row.get("file") not in tests}
-                known.update({key: {**row, "checked_at_commit": merged} for key, row in proposed["failures"].items()})
+                known = {key: {**row, "checked_at_commit": merged} for key, row in proposed["failures"].items()}
                 record = {"repo": plan["repo"], "commit": merged, "machine": receipt["machine"],
                           "tests": tests, "failures": known, "run": run}
                 receipt["baseline"] = record
@@ -603,9 +658,6 @@ class IntegrationFacet(Facet):
             receipt["error"] = str(exc)
             moved = any(event["state"] == "moved_checkout" for event in receipt["events"])
             update("needs_attention" if moved else "failed")
-        finally:
-            if took_lock:
-                agora.unlock({"agent": agent, "resources": [merge_resource]})
 
     def _reload_apps(self, agora, repo, agent, receipt, field):
         results = receipt[field] = []
@@ -724,7 +776,7 @@ class IntegrationFacet(Facet):
             raise AgoraError("Only the worker that ran the integration can undo it", 403)
         with self.lock:
             if receipt["id"] in self.active.values():
-                if receipt["state"] in ("queued", "waiting_for_suite_slot", "testing_main", "testing_candidate",
+                if receipt["state"] in ("queued", "waiting_for_merge_lock", "waiting_for_suite_slot", "testing_main", "testing_candidate",
                                         "testing_inference"):
                     self.cancelled.add(receipt["id"])
                     self.queue_changed.notify_all()
@@ -824,6 +876,8 @@ class IntegrationFacet(Facet):
             write_json_atomic(path, receipt)
         if "app_reload" in receipt:
             self._reload_apps(agora, repo, agent, receipt, "undo_app_reload")
+            receipt["reload_pending"] = pending_reloads(repo, receipt["merge_commit"], plan["base"],
+                                                        build, receipt["undo_app_reload"])
             write_json_atomic(path, receipt)
         if cleanup.get("removed_branch"):
             branch = repo_git.git(repo, "show-ref", "--verify", "--hash", "refs/heads/" + plan["branch"], check=False)
@@ -872,9 +926,11 @@ class IntegrationFacet(Facet):
         return {**{key: row[key] for key in ("id", "task_id", "space_id", "revision", "state", "machine", "created")},
                 "repo": ", ".join(child["plan"]["repo"] for child in row.get("repositories", [row])),
                 "repositories": [{"repo": child["plan"]["repo"], "state": child["state"],
-                                  "cleanup": child.get("cleanup")} for child in row.get("repositories", [])],
+                                  "cleanup": child.get("cleanup"),
+                                  "reload_pending": child.get("reload_pending", [])}
+                                 for child in row.get("repositories", [])],
                 "branch": row["plan"]["branch"],
-                "cleanup": row.get("cleanup")}
+                "cleanup": row.get("cleanup"), "reload_pending": row.get("reload_pending", [])}
 
     @staticmethod
     def _safe(method):
@@ -891,11 +947,11 @@ class IntegrationFacet(Facet):
         delivery = {"task_id": {"type": "integer"}, "revision": {"type": "integer"},
                     "space_id": text, "agent": text, "repo": text,
                     "test_paths": {"type": "array", "items": text,
-                                   "description": "Tracked pytest files when the submission has no Test-Paths."},
+                                   "description": "Add tracked pytest files to the submission and affected tests."},
                     "test_paths_by_repo": {"type": "object", "additionalProperties": {"type": "array", "items": text}}}
-        delivery.update(live_test=text, live_tests={"type": "object", "additionalProperties": text})
-        write = {**delivery, "merge": {"type": "boolean"}, "inference": {"type": "boolean"},
-                 "spark_repo": text, "spark_repos": {"type": "object", "additionalProperties": text}}
+        delivery.update(live_test=text, live_tests={"type": "object", "additionalProperties": text},
+                        spark_repo=text, spark_repos={"type": "object", "additionalProperties": text})
+        write = {**delivery, "merge": {"type": "boolean"}, "inference": {"type": "boolean"}}
         return [{"name": "hub_integration_" + key, "description": description,
                  "inputSchema": {"type": "object", "properties": props, "required": required,
                                  "additionalProperties": False}, "annotations": {"readOnlyHint": read}}

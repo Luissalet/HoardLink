@@ -8,6 +8,7 @@
   document.head.append(stylesheet);
   const labels = {
     queued: ["En cola", "Queued"],
+    waiting_for_merge_lock: ["Esperando el bloqueo de fusión", "Waiting for the merge lock"],
     waiting_for_suite_slot: ["Esperando turno de pruebas", "Waiting for test slot"],
     testing_main: ["Probando la rama principal", "Testing main"],
     testing_candidate: ["Probando la entrega", "Testing the delivery"],
@@ -75,10 +76,14 @@
       }
     }
     if (receipt.live) {
-      const passed = receipt.live.counts.passed;
-      content.push(el("p", "", passed
-        ? t(ctx, "Caso de origen comprobado tras la fusión", "Original case passed after integration")
-        : t(ctx, "Falló el caso de origen", "Original case failed")));
+      const passed = receipt.live.counts.passed &&
+        (receipt.state === "integrated" || receipt.state === "undone");
+      const focused = receipt.plan.live_mode !== "contract";
+      content.push(el("p", "", focused
+        ? (passed ? t(ctx, "Caso de origen comprobado tras la fusión", "Original case passed after integration")
+                  : t(ctx, "Caso de origen ejecutado tras la fusión", "Original case ran after integration"))
+        : (passed ? t(ctx, "Pruebas focales repetidas tras la fusión", "Focused tests passed again after integration")
+                  : t(ctx, "Pruebas focales ejecutadas tras la fusión", "Focused tests ran after integration"))));
     }
     const reloads = receipt.undo_app_reload ?? receipt.app_reload ?? [];
     for (const app of reloads) {
@@ -86,6 +91,22 @@
       content.push(el("p", "", t(ctx,
         `Se ha aplazado la recarga de ${app.app} mientras está en uso en el escritorio.`,
         `Reloading ${app.app} was deferred while it is in use on the desktop.`)));
+    }
+    const actions = {
+      restart_hub_when_idle: ["Reinicia el Hub cuando no haya trabajadores ejecutándose.",
+                              "Restart the Hub when no workers are running."],
+      reopen_hub_window: ["Cierra y vuelve a abrir la ventana del Hub.", "Close and reopen the Hub window."],
+      reopen_native_console: ["Cierra y vuelve a abrir la consola de escritorio.",
+                              "Close and reopen the desktop console."],
+      verify_spark_deployment: ["Comprueba el despliegue de Studio en la Spark.",
+                                "Verify the Studio deployment on the Spark."],
+    };
+    for (const item of receipt.reload_pending ?? []) {
+      if (item.action === "reload_app" &&
+          reloads.some(app => app.app === item.target && app.reason_code === "desktop_in_use")) continue;
+      content.push(el("p", "", item.action === "reload_app"
+        ? t(ctx, `Recarga pendiente de ${item.target}.`, `Reload pending for ${item.target}.`)
+        : t(ctx, ...actions[item.action])));
     }
     if (receipt.merge_commit) {
       const commit = el("p", "", t(ctx, "Commit de fusión ", "Merge commit "));
@@ -108,8 +129,8 @@
     if (receipt.error) {
       const timeout = receipt.test_timeout;
       const message = timeout ? t(ctx,
-        `Las pruebas de ${timeout.group} en ${timeout.commit} superaron el límite de ${timeout.seconds} s.`,
-        `Tests in ${timeout.group} at ${timeout.commit} exceeded the ${timeout.seconds} s limit.`) : receipt.error;
+        `Las pruebas de ${timeout.group} en ${timeout.commit} superaron el límite de ${timeout.seconds} s. Ajusta el plazo del repositorio o acota las pruebas.`,
+        `Tests in ${timeout.group} at ${timeout.commit} exceeded the ${timeout.seconds} s limit. Adjust the repository budget or narrow the test selection.`) : receipt.error;
       const error = el("p", "muted", message);
       error.style.overflowWrap = "anywhere";
       content.push(error);
