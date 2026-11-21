@@ -12,6 +12,51 @@ from ._hub_fakes import make_hub, serve
 from .test_agora_checkpoints import evidence_path
 
 
+@pytest.mark.parametrize("width,height", [(1280, 800), (390, 844)])
+def test_agora_conversation_actions_follow_language(tmp_path, width, height):
+    browser_api = pytest.importorskip("playwright.sync_api")
+    hub = make_hub(tmp_path, [])
+    hub.config.agent_watch = {"enabled": False}
+    server = serve(hub)
+    try:
+        thread = hub.facet("agora").agora.thread_open({
+            "agent": "test-agent", "title": "QA locale", "body": "QA message", "kind": "note",
+        })["thread"]["id"]
+        with browser_api.sync_playwright() as p:
+            browser = p.chromium.launch(channel="chrome", headless=True)
+            try:
+                page = browser.new_page(locale="en-GB", viewport={"width": width, "height": height})
+                errors = []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                page.goto(f"{hub.config.url.rstrip('/')}/#agora-{thread}")
+                tab = page.locator("#tab-agora")
+                message = tab.locator(".ag-detail").get_by_text("QA message", exact=True)
+                draft = tab.locator(".ag-compose textarea")
+                draft.fill("QA draft")
+                expect = browser_api.expect
+                for index, (lang, task, conversation, manage, back) in enumerate((
+                    ("en", "+ New task", "+ New thread", "Manage space", "← Back"),
+                    ("es", "+ Nueva tarea", "+ Nueva conversación", "Gestionar espacio", "← Volver"),
+                    ("en", "+ New task", "+ New thread", "Manage space", "← Back"),
+                )):
+                    if index:
+                        page.locator("#btn-lang").click()
+                    expect(page.locator("html")).to_have_attribute("lang", lang)
+                    expect(message).to_be_visible()
+                    expect(tab.locator(".tab-tools button").nth(0)).to_have_text(task)
+                    expect(tab.locator(".tab-tools button").nth(1)).to_have_text(conversation)
+                    expect(tab.locator(".ag-space-actions summary")).to_have_text(manage)
+                    expect(tab.locator(".ag-dhead button")).to_have_text(back)
+                    expect(draft).to_have_value("QA draft")
+                    page.evaluate("window.scrollTo(0, 0)")
+                    page.screenshot(path=str(evidence_path(tmp_path, f"agora-locale-{width}-{lang}.png")))
+                assert not errors, errors
+            finally:
+                browser.close()
+    finally:
+        server.shutdown()
+
+
 @pytest.mark.parametrize("width,height,language", [(1280, 720, "es"), (390, 844, "en")])
 def test_agora_tab_unread_filters_keyboard_errors_and_layout(tmp_path, width, height, language):
     browser_api = pytest.importorskip("playwright.sync_api")

@@ -2,6 +2,8 @@
 
 Ágora has a complete workspace in its own Windows window, and a full browser view at `/agora/` on the local Hub. The existing Hub tab, task histories, revisions, locks, decisions, CLI and MCP remain available. It uses the same Python Hub service; the desktop window is Rust/Tauri with a React/TypeScript interface. There is no data migration into a second coordination system.
 
+In the Hub tab, the top bar's language button changes the conversation's **New task**, **New thread** and **Manage space** controls between English and Spanish while the conversation stays open.
+
 The left rail contains Claude, Codex, Cursor and Faustus. Each provider exposes a discovered model catalog and its supported reasoning settings, shared quota observations and child-worker states. Unavailable catalogs and quota readings remain unknown. Quotas belong to account pools, not individual chats; adding a helper does not add capacity. Expired readings retain their provenance and show unknown percentages.
 
 ## Quotas: where each reading comes from
