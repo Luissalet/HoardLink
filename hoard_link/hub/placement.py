@@ -440,6 +440,16 @@ class Placement:
         choices[current["name"]] = current
         return choices
 
+    def spark_hosts(self) -> set[str]:
+        """Network addresses and aliases from the Sparks inventory."""
+        nodes = [DEFAULT_NODE, *self._configured_sparks(), self.state()["node"]]
+        return {
+            value.strip().rstrip(".").casefold()
+            for node in nodes
+            for value in (node.get("api_host"), node.get("host"), node.get("ssh"))
+            if isinstance(value, str) and value.strip()
+        }
+
     def _prometheus_ssh_config(self) -> str:
         """Write Prometheus's own SSH configuration without changing ~/.ssh/config on the Spark."""
         lines = ["# written by the Hoard Hub (placement): how Prometheus reaches the Sparks from here", ""]
