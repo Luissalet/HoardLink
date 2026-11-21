@@ -524,57 +524,111 @@ def draft_anchors(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             "anchors": anchors, "guides": {k: v for k, v in guides.items() if v}, "derives_from": derives}
 
 
+def _figure_source(self: Any, order_id: int, model_piece: Any) -> dict[str, Any]:
+    """Find one available articulated GLB in this order, or ask the worker to supply it."""
+    if model_piece is None:
+        candidates = [dict(p) for p in self.db.query(
+            "SELECT * FROM agora_pieces WHERE order_id=? AND kind IN ('rigged_model', 'rigged-model', "
+            "'articulated-model', 'blocking') AND status NOT IN ('cancelled', 'stale') ORDER BY id",
+            (order_id,),
+        )]
+        replaced = {piece["supersedes"] for piece in candidates}
+        candidates = [p for p in candidates if p["id"] not in replaced]
+    else:
+        piece = orders._piece_row(self, model_piece)
+        if piece["order_id"] != order_id:
+            raise _err("Choose a model from this order. / Elige un modelo de esta orden.", 404)
+        candidates = [piece] if piece["kind"] in {"rigged_model", "rigged-model", "articulated-model", "blocking"} else []
+    candidates = [p for p in candidates if p["status"] not in ("cancelled", "stale") and p["sha256"]
+                  and Path(p["path"]).suffix.lower() == ".glb" and orders._piece_dict(self, p)["exists"]]
+    if not candidates:
+        raise _err("Create or register an animated GLB for this order first. / "
+                   "Crea o registra primero un GLB animado para esta orden.",
+                   409, error_code="articulated_model_required")
+    if len(candidates) > 1:
+        raise _err("Choose model_piece for the matching take. / Indica el model_piece de la toma.",
+                   409, error_code="articulated_model_ambiguous")
+    return candidates[0]
+
+
 def draft_figure_request(self: Any, a: dict[str, Any]) -> dict[str, Any]:
-    """Queue an evaluated print pose from a paused take, with its pinned blocking."""
+    """Queue a print pose from a paused variant or a registered reference frame."""
     seconds = a.get("seconds")
     size_mm = a.get("size_mm", 216)
+    from_frame = a.get("frame_piece") is not None
     if (isinstance(seconds, bool) or not isinstance(seconds, (float, int))
-            or not 0 <= seconds <= 4 or not math.isfinite(seconds)):
-        raise _err("Choose a time from 0 to 4 seconds. / Elige un instante entre 0 y 4 segundos.")
+            or not math.isfinite(seconds) or not 0 <= seconds <= (100_000 / 24 if from_frame else 4)):
+        raise _err("Choose a time within the take. / Elige un instante dentro de la toma.")
     if isinstance(size_mm, bool) or not isinstance(size_mm, (float, int)) or not 10 <= size_mm <= 2000:
         raise _err("Choose 10 to 2000 mm. / Elige un tamaño de 10 a 2000 mm.")
     frame = math.floor(seconds * 24 + 0.5)
-    video_id = orders._int(a.get("take_piece"), "take_piece")
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     with self.db.tx():
-        row = _variant_row(self, a.get("variant_id"))
-        draft = _pass_row(self, row["pass_id"])
-        if draft["status"] != "shown" or row["status"] != "ready":
-            raise _err("This variant is no longer waiting. / Esta variante ya no está pendiente.", 409)
-        variant = _variant_dict(self, row)
-        if variant["signature"] != a.get("signature"):
-            raise _err("The variant has changed. / La variante ha cambiado.", 409, error_code="variant_changed")
-        take = next((p for p in variant["pieces"] if p["id"] == video_id and p["anchor"] == "animatic"), None)
-        blocking = [p for p in variant["pieces"] if p["anchor"] == "blocking" and
-                    Path(p.get("path", "")).suffix.lower() == ".glb"]
-        if not take or Path(take.get("path", "")).suffix.lower() not in {".mp4", ".webm", ".mov", ".m4v"}:
-            raise _err("Choose a take attached to this variant. / Elige una toma de esta variante.")
-        if len(blocking) != 1 or not blocking[0].get("sha256") or not take.get("sha256"):
-            raise _err("The variant needs one registered blocking GLB. / La variante necesita un GLB de bloqueo registrado.")
-        source = blocking[0]
-        signature = hashlib.sha256(json.dumps([row["id"], video_id, take["sha256"], source["id"],
+        if from_frame:
+            if any(a.get(key) is not None for key in ("variant_id", "take_piece", "signature")):
+                raise _err("Use frame_piece or a paused variant. / Usa frame_piece o una variante pausada.")
+            order = orders._order_row(self, a.get("order_id"))
+            reference = orders._piece_dict(self, orders._piece_row(self, a["frame_piece"]))
+            if (reference["order_id"] != order["id"] or reference["view"] != "image" or not reference["sha256"]
+                    or not reference["exists"] or reference["status"] in ("cancelled", "stale")):
+                raise _err("Choose a registered frame image from this order. / Elige un fotograma registrado de esta orden.")
+            source = _figure_source(self, order["id"], a.get("model_piece"))
+            variant_id, title = None, order["title"]
+        else:
+            row = _variant_row(self, a.get("variant_id"))
+            draft = _pass_row(self, row["pass_id"])
+            if draft["status"] != "shown" or row["status"] != "ready":
+                raise _err("This variant is no longer waiting. / Esta variante ya no está pendiente.", 409)
+            variant = _variant_dict(self, row)
+            if variant["signature"] != a.get("signature"):
+                raise _err("The variant has changed. / La variante ha cambiado.", 409, error_code="variant_changed")
+            video_id = orders._int(a.get("take_piece"), "take_piece")
+            reference = next((p for p in variant["pieces"] if p["id"] == video_id and p["anchor"] == "animatic"), None)
+            if not reference or Path(reference.get("path", "")).suffix.lower() not in {".mp4", ".webm", ".mov", ".m4v"}:
+                raise _err("Choose a take attached to this variant. / Elige una toma de esta variante.")
+            blocking = [p for p in variant["pieces"] if p["anchor"] == "blocking" and
+                        Path(p.get("path", "")).suffix.lower() == ".glb"]
+            if len(blocking) != 1 or not blocking[0].get("sha256") or not reference.get("sha256"):
+                raise _err("Create and register one animated blocking GLB for this variant. / "
+                           "Crea y registra un GLB de bloqueo animado para esta variante.",
+                           409, error_code="articulated_model_required")
+            source = blocking[0]
+            order = {"id": row["order_id"]}
+            variant_id, title = row["id"], variant["title"]
+        signature = hashlib.sha256(json.dumps([variant_id, reference["id"], reference["sha256"], source["id"],
                                                source["sha256"], frame, float(size_mm)]).encode()).hexdigest()
         branch = "figure-" + signature[:24]
         existing = self.db.one("SELECT task_id FROM agora_order_jobs WHERE order_id=? AND branch=? AND removed=0",
-                               (row["order_id"], branch))
+                               (order["id"], branch))
+        derivation = [{"piece": source["id"], "role": "material"}, {"piece": reference["id"], "role": "reference"}]
+        stored = source.get("stored")
+        frozen = {"source": stored if stored and Path(stored).is_file() else source["path"],
+                  "source_sha256": source["sha256"], "frame": frame, "fps": 24}
+        if from_frame:
+            frozen.update(print_size_mm=size_mm, sheet_wall_mm=2.0)
+        result = {"ok": True, "frame": frame, "freeze_arguments": frozen, "derives_from": derivation}
         if existing:
-            return {"ok": True, "task_id": existing["task_id"], "frame": frame, "existing": True, "undo": None}
+            return {**result, "task_id": existing["task_id"], "existing": True, "undo": None}
         plan = orders.plan_set(self, {
-            "order_id": row["order_id"], "agent": agent, "_person": bool(a.get("_person")),
-            "jobs": [{"key": "figure", "title": f"Figura de {variant['title']} · f{frame} · {size_mm:g} mm",
+            "order_id": order["id"], "agent": agent, "_person": bool(a.get("_person")),
+            "jobs": [{"key": "figure", "title": f"Figura de {title} · f{frame} · {size_mm:g} mm",
                       "station": "phidias", "branch": branch, "skill": "studio-figure-print-and-slice",
-                      "inputs": [source["id"], video_id], "produces": ["posed-figure-mesh", "closed-print-mesh"],
+                      "inputs": [source["id"], reference["id"]],
+                      "produces": ["posed-figure-mesh", "closed-print-mesh", "coloured-3mf"],
                       "body": (
-                          f"Toma #{video_id} r{take['revision']} ({take['sha256']}), {seconds:g} s. "
-                          f"Evalúa el GLB de bloqueo #{source['id']} r{source['revision']} con "
+                          f"Referencia visual #{reference['id']} r{reference['revision']} "
+                          f"({reference['sha256']}), {seconds:g} s. "
+                          f"Evalúa el GLB articulado #{source['id']} r{source['revision']} con "
                           f"blocking_freeze (frame={frame}, fps=24, source_sha256={source['sha256']}). "
-                          f"Registra el GLB estático como pieza derivada, con su recibo y agarres. Importa su "
-                          f"piece_id y SHA-256 con print_import (size_mm={size_mm:g}). Ajusta el presupuesto "
-                          f"de caras para la comprobación de impresión, esculpe, cierra y exporta el 3MF. "
-                          f"Si hay cuerpos separados por huecos pequeños, mide los huecos antes de usar bridge_gap_mm."),
-                      "check": "Coteja los agarres en frontal y tres cuartos, mide el 3MF y abre el laminado."}],
+                          "Registra la pose estática con el GLB articulado como material y la imagen o toma como referencia. "
+                          f"Importa el piece_id y SHA-256 de la pose con print_import (size_mm={size_mm:g}). "
+                          "Esculpe, cierra y mide la pared. Colorea en Nikias desde el GLB posado y coteja la paleta "
+                          "con la referencia visual. Registra el 3MF y las vistas del laminado. "
+                          "Si quedan cuerpos separados, mide los huecos antes de usar bridge_gap_mm."),
+                      "check": ("Coteja los agarres frontal y a tres cuartos, la pared de al menos 0,8 mm, "
+                                "los colores de la referencia y el laminado.")}],
         })
-    return {"ok": True, "task_id": plan["keys"]["figure"], "frame": frame, "undo": plan["undo"]}
+    return {**result, "task_id": plan["keys"]["figure"], "undo": plan["undo"]}
 
 
 OPERATIONS = {"draft_pass_open": draft_pass_open, "draft_pass_note_set": draft_pass_note_set,
@@ -637,12 +691,16 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "note": {"type": "string", "maxLength": 20000}}, ["agent", "pass_id"])},
         {"name": "hub_agora_draft_figure_request",
          "description": "Queue a figure from a paused take. / Encarga una figura de una toma pausada.\n"
-                        "Pins the take and the variant's blocking GLB." + undo,
+                        "Use order_id and frame_piece for a registered frame, with model_piece if there are "
+                        "several articulated GLBs. Usa el fotograma registrado como referencia de la pose." + undo,
          "inputSchema": schema({"agent": agent_prop, "variant_id": {"type": "integer", "minimum": 1},
                                 "take_piece": {"type": "integer", "minimum": 1}, "signature": {"type": "string"},
-                                "seconds": {"type": "number", "minimum": 0, "maximum": 4},
+                                "order_id": order_id,
+                                "frame_piece": {"type": "integer", "minimum": 1},
+                                "model_piece": {"type": "integer", "minimum": 1},
+                                "seconds": {"type": "number", "minimum": 0, "maximum": 100_000 / 24},
                                 "size_mm": {"type": "number", "minimum": 10, "maximum": 2000}},
-                               ["agent", "variant_id", "take_piece", "signature", "seconds"])},
+                               ["agent", "seconds"])},
         {"name": "hub_agora_draft_passes", "read": True,
          "description": "Draft passes of an order with variants, pieces by anchor, measures against the baseline and "
                         "decisions; without order_id, those waiting for the person (all_spaces for every space).",
