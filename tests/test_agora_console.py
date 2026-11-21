@@ -2147,6 +2147,92 @@ def test_legacy_faustus_receipt_reuses_session_and_replaces_old_time_limit(tmp_p
     assert "--no-timeout" in command and "--timeout" not in command
 
 
+def test_completed_codex_worker_resumes_exact_session_with_follow_up(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    session_id = "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+    worktree = tmp_path / "isolated worktree"
+    worktree.mkdir()
+    (worktree / ".git").write_text("gitdir: ../metadata", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    day = sessions / "2026" / "11" / "21"
+    day.mkdir(parents=True)
+    (day / f"rollout-fixture-{session_id}.jsonl").write_text(json.dumps({
+        "type": "session_meta", "payload": {"id": session_id, "cwd": str(worktree)},
+    }), encoding="utf-8")
+    log = tmp_path / "completed.jsonl"
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,result,session_id,log_path,"
+                   "created_at,updated_at) VALUES('worker','codex','codex-fixture','model','low','task','completed',"
+                   "'Previous report',?,?,1,1)", (session_id, str(log)))
+    monkeypatch.setattr("hoard_link.hub.agora_console.resolve_paths", lambda: {"codex_sessions": sessions})
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.setattr(facet, "_codex_executable", lambda: "codex-test.exe")
+    launches = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs: (
+        launches.append((command, kwargs)) or SimpleNamespace(pid=17)))
+    monkeypatch.setattr(facet, "_monitor_worker", lambda *args: None)
+
+    assert facet._worker_rows()[0]["can_continue"]
+    tool = facet.handlers()["hub_agora_console_worker"]
+    result = tool({"action": "continue", "worker_id": "worker", "actor": "codex-reviewer",
+                   "message": "Corrige los puntos de la revisión."})
+    assert result["ok"] and result["session_id"] == session_id and result["worker_id"] == "worker"
+    command, options = launches[0]
+    assert command[:3] == ["codex-test.exe", "exec", "resume"]
+    assert command[-2] == session_id and "Corrige los puntos de la revisión." in command[-1]
+    assert "--worktree" not in command and options["cwd"] == str(worktree)
+    assert facet._worker_rows()[0]["result"] == "Previous report"
+    assert result["undo"]["arguments"]["action"] == "stop"
+    assert tool({"action": "continue", "worker_id": "worker"})["status"] == 409
+    assert len(launches) == 1
+
+
+def test_missing_worker_session_offers_replacement_with_context_and_lock_handover(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    original, caller = "codex-fixture", "codex-reviewer"
+    task = store.task_add({"agent": original, "title": "Replace fixture"})["task"]
+    store.task_claim({"agent": original, "task_id": task["id"], "locks": ["path:qa/draft.txt"]})
+    store.task_submit({"agent": original, "task_id": task["id"], "summary": "Initial delivery", "reviewer": caller})
+    store.task_review({"agent": caller, "task_id": task["id"], "verdict": "changes", "body": "Revise the draft.",
+                       "expected_submission_revision": 1})
+    from hoard_link.hub.agora_ranks import set_rank
+    set_rank(store, original, "support", caller, "ecosystem")
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,result,session_id,log_path,"
+                   "created_at,updated_at) VALUES('worker','codex',?,'model','low','Previous assignment','completed',"
+                   "'Previous result','no-session',?,1,1)", (original, str(tmp_path / "old.jsonl")))
+    assert facet.worker({"action": "continue", "worker_id": "worker"}, caller)["reason"] == "missing_session"
+
+    started = []
+    def launch(args, actor, *, worker_id):
+        started.append((args, actor, worker_id))
+        with facet._db() as db:
+            db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,created_at,updated_at) "
+                       "VALUES(?,'codex','codex-new','model','low',?,'running',1,1)", (worker_id, args["task"]))
+        return {"ok": True, "worker": {"state": "running"}}
+
+    monkeypatch.setattr(facet, "_create_worker", launch)
+    monkeypatch.setattr(facet, "_start_replacement_handoff", lambda *_: None)
+    options = {"action": "replace", "worker_id": "worker", "task_id": task["id"], "message": "Make the requested correction."}
+    first = facet.worker(options, caller)
+    assert first["ok"] and first["handover"]["state"] == "waiting_for_worker"
+    assert facet.worker(options, caller)["worker_id"] == first["worker_id"]
+    assert len(started) == 1 and started[0][1] == caller
+    prompt = started[0][0]["task"]
+    assert all(text in prompt for text in ("Previous assignment", "Previous result", options["message"], f"#{task['id']}"))
+    assert store.task({"task_id": task["id"]})["task"]["owner"] == original
+    store.heartbeat({"agent": "codex-new", "state": "working"})
+    facet._replacement_handoff("worker")
+
+    after = store.task({"task_id": task["id"]})
+    assert after["task"]["owner"] == "codex-new"
+    assert after["task"]["status"] == "changes" and after["task"]["submission_revision"] == 1
+    assert [lock["owner"] for lock in after["locks"]] == ["codex-new"]
+    finished = facet.worker(options, caller)["handover"]
+    assert finished["state"] == "transferred" and finished["undo_handover"]["arguments"]["to_agent"] == original
+
+
 def test_recovery_adopts_only_the_recorded_runtime_process(tmp_path, monkeypatch):
     from hoard_link.hub import procs
     facet = _facet(tmp_path)
