@@ -52,6 +52,8 @@ export function renderPrintSliceCard(report, tr) {
         slicer_unmeasured: tr("Mediciones de laminado incompletas", "Incomplete slicing measurements"),
         slicer_result: tr("Resultado del laminador ilegible", "Unreadable slicer result"),
         filaments_missing: tr("Filamentos usados frente a los esperados", "Used versus expected filaments"),
+        filament_colours_mismatch: tr("Colores por ranura del 3MF → G-code", "3MF → G-code slot colours"),
+        filament_colours_unreadable: tr("Paleta 3MF ilegible", "Unreadable 3MF palette"),
         support_missing: tr("No se han medido los soportes requeridos", "Required supports were not measured"),
       };
       list.append(element("li", [label, descriptions[code], message, count > 1 ? `×${count}` : ""].filter(Boolean).join(" · ")));
