@@ -2809,8 +2809,8 @@ class AgoraConsoleFacet(Facet):
             source = db.execute("SELECT agent_id,replacement FROM workers WHERE id=?", (worker_id,)).fetchone()
         replacement = json.loads(source["replacement"])
         target_id = replacement["worker_id"]
-        detail = "The replacement did not check in. / El relevo no envió un latido."
-        while not self._recovery_stop.is_set() and time.time() < replacement["started_at"] + 180:
+        detail = "The replacement has no launch receipt. / No consta el arranque del relevo."
+        while not self._recovery_stop.is_set():
             with self._db_lock, self._db() as db:
                 target = db.execute("SELECT * FROM workers WHERE id=?", (target_id,)).fetchone()
                 if target is None:
