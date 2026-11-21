@@ -53,7 +53,7 @@ REVIEW_MIGRATION = """
         UNIQUE(space_id, task_id, submission_revision));
 """
 
-_HEX = re.compile(r"^[0-9a-fA-F]{7,40}$")
+_HEX = re.compile(r"[0-9a-fA-F]{7,64}")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$")
 _FIELD = "\x1f"
 
@@ -81,6 +81,10 @@ def _git(root: Path, *args: str, timeout: float = 30.0) -> subprocess.CompletedP
 
 def _text(raw: bytes) -> str:
     return (raw or b"").decode("utf-8", errors="replace")
+
+
+def is_commit_hash(ref: str) -> bool:
+    return _HEX.fullmatch(ref) is not None
 
 
 def parse_patch(text: str) -> list[dict[str, Any]]:
@@ -184,8 +188,6 @@ _CACHE = _DiffCache()
 
 
 def _roots(ag: Any, repo: str) -> list[Path]:
-    if not repo:
-        raise _err("the task has no repo: its commits have nowhere to be read from", 409)
     agora = _ag()
     primary = ag.repo_lookup(repo) if ag.repo_lookup else None
     try:
@@ -198,7 +200,7 @@ def commit_diff(roots: list[Path], commit: str) -> dict[str, Any]:
     """One commit read from the first checkout that has it: ``{sha, short, subject, author, date, files, stats}``
     or ``{sha, error}`` when no registered checkout knows it."""
     sha = str(commit or "").strip()
-    if not _HEX.match(sha):
+    if not is_commit_hash(sha):
         return {"sha": sha, "short": sha[:10], "error": "not a commit hash"}
     last = ""
     for root in roots:
@@ -208,7 +210,7 @@ def commit_diff(roots: list[Path], commit: str) -> dict[str, Any]:
             return hit
         try:
             res = _git(root, "show", "--no-color", "--no-ext-diff", "-M", "--first-parent", "-m", "--unified=3",
-                       f"--format=%H{_FIELD}%an{_FIELD}%aI{_FIELD}%s", sha, "--")
+                       f"--format=%H{_FIELD}%an{_FIELD}%aI{_FIELD}%s", f"{sha}^{{commit}}", "--")
         except (OSError, subprocess.TimeoutExpired) as exc:
             last = str(exc)
             continue
@@ -230,11 +232,65 @@ def commit_diff(roots: list[Path], commit: str) -> dict[str, Any]:
 
 
 def _task_diff(ag: Any, task: dict[str, Any]) -> list[dict[str, Any]]:
-    commits = [str(c) for c in (task.get("commits") or [])][:MAX_COMMITS]
+    from .integration_git import repository_commit_index
+
+    commits = task["commits"][:MAX_COMMITS]
     if not commits:
         raise _err(f"task {task['id']} lists no commits: submit it with its commit hashes to review the diff", 409)
-    roots = _roots(ag, str(task.get("repo") or ""))
-    return [commit_diff(roots, c) for c in commits]
+    names = task["repositories"]
+    assigned = {ref: name for name, refs in task["commits_by_repo"].items() for ref in refs}
+    # A legacy single-repository task already tells us where to look.
+    if len(names) == 1 and not assigned:
+        roots = _roots(ag, names[0])
+        return [{**commit_diff(roots, ref), "repo": names[0]} for ref in commits]
+
+    unassigned = [ref for ref in commits if ref not in assigned and is_commit_hash(ref)]
+    matches: dict[str, list[str]] = {}
+    roots_by_name: dict[str, list[Path]] = {}
+    if unassigned:
+        if names:
+            roots_by_name = {name: _registered_roots(ag, name) for name in names}
+            entries = [{"name": name, "path": roots[0]} for name, roots in roots_by_name.items() if roots]
+        else:
+            entries = getattr(ag, "registered_repositories", lambda: [])()
+        matches = repository_commit_index(entries, unassigned)
+
+    def read(name: str, ref: str) -> dict[str, Any]:
+        if name not in roots_by_name:
+            roots_by_name[name] = _registered_roots(ag, name)
+        return {**commit_diff(roots_by_name[name], ref), "repo": name}
+
+    result = []
+    for ref in commits:
+        candidates = [assigned[ref]] if ref in assigned else matches.get(ref, [])
+        if len(candidates) == 1:
+            result.append(read(candidates[0], ref))
+            continue
+        # A shared commit has the same diff everywhere. An abbreviated hash can instead match different commits.
+        reads = [item for name in candidates if not (item := read(name, ref)).get("error")]
+        if reads and len({item["sha"] for item in reads}) == 1:
+            result.append({**reads[0], "repository_candidates": [item["repo"] for item in reads]})
+            continue
+        error = ("hash matches different commits; submit the full hash and its repository" if reads else
+                 "no registered checkout has this commit")
+        result.append({"sha": ref, "short": ref[:10], "repo": None, "error": error,
+                       "repository_candidates": candidates})
+    if all(item.get("error") for item in result):
+        hashes = ", ".join(item["short"] for item in result)
+        raise _err(f"No commit can be resolved for task {task['id']} ({hashes}). "
+                   "Make the commits available in a registered repository and submit with commits_by_repo "
+                   "or --repo-commits to identify it.", 409, error_code="delivery_repository_unresolved",
+                   commits=result)
+    return result
+
+
+def _registered_roots(ag: Any, name: str) -> list[Path]:
+    try:
+        return _roots(ag, name)
+    except _ag().AgoraError as exc:
+        if exc.status != 404:
+            raise
+        return []
 
 
 def _find_line(commit: dict[str, Any], path: str, side: str, number: int) -> Optional[dict[str, Any]]:
@@ -332,6 +388,8 @@ def review_diff(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     comments = _comments(self, task)
     guide = _guide_row(self, task)
     return {"ok": True, "task_id": task["id"], "title": task["title"], "repo": task.get("repo"),
+            "repositories": list(dict.fromkeys(name for c in commits if not c.get("error")
+                                               for name in c.get("repository_candidates", [c["repo"]]))),
             "status": task["status"], "owner": task.get("owner"), "reviewer": task.get("reviewer"),
             "submission_revision": int(task.get("submission_revision") or 0), "commits": shown,
             "comments": comments, "has_guide": guide is not None,
@@ -610,7 +668,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
     task = {"type": "integer"}
     return [
         {"name": "hub_agora_review_diff", "read": True,
-         "description": "The diff of a task's submission (its repo and commit hashes), commit by commit: files, hunks "
+         "description": "The diff of a task's submission by repository and commit: files, hunks "
                         "and lines with their old/new numbers, plus the line comments already left. Narrow it with "
                         "commit and path; summary_only returns just the per-file counts; max_lines caps the lines "
                         "of each file. A comment is anchored on (commit, path, side, line) of this diff.",
