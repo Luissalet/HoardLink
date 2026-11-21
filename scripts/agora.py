@@ -741,7 +741,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--set", action="append")
     s = sub.add_parser("claim"); s.add_argument("task", type=int); s.add_argument("--lock", action="append"); s.add_argument("--ttl", type=int); s.add_argument("--force", action="store_true")
     s = sub.add_parser("update"); s.add_argument("task", type=int); texts(s, "note"); s.add_argument("--status"); s.add_argument("--branch")
-    s.add_argument("--repo", action="append", help="sustituye los repositorios; repetible, vacío para quitarlos")
+    repos = s.add_mutually_exclusive_group()
+    repos.add_argument("--repo", action="append", help="sustituye los repositorios; repetible, vacío para quitarlos")
+    repos.add_argument("--undo-repo", type=int, metavar="REVISIÓN", help="deshace el último cambio de repositorios")
     s.add_argument("--paths", action="append"); s.add_argument("--lock", action="append")
     s = sub.add_parser("submit"); s.add_argument("task", type=int); texts(s, "summary"); s.add_argument("--commits", action="append"); s.add_argument("--branch"); s.add_argument("--reviewer")
     s.add_argument("--repo-commits", action="append", metavar="REPO=HASH,HASH",
@@ -990,9 +992,20 @@ def main(argv: list[str] | None = None) -> int:
             body["branch"] = a.branch
         if a.repo is not None:
             body["repositories"] = a.repo
+        if a.undo_repo is not None:
+            body["undo_repository_revision"] = a.undo_repo
         if a.paths:
             body["paths"] = csv(a.paths)
         r = call("POST", "/api/agora/task_update", body)
+        if r.get("ok") and (a.repo is not None or a.undo_repo is not None):
+            task = r.get("task") or {}
+            expected = list(dict.fromkeys(name.strip().casefold() for name in a.repo or [] if name.strip()))
+            expected_primary = expected[0] if expected else ""
+            stored = [name.casefold() for name in task.get("repositories", [task["repo"]] if task.get("repo") else [])]
+            primary = (task.get("repo") or "").casefold()
+            if ((a.repo is not None and (stored != expected or primary != expected_primary))
+                    or (a.undo_repo is not None and "undo" not in r)):
+                r = {**r, "ok": False, "error": "El Hub no guardó el cambio de repositorios. Comprueba su versión."}
     elif c == "submit":
         body = {"agent": ag, "task_id": a.task, "summary": text_arg(a, "summary") or "",
                 "commits": csv(a.commits), "branch": a.branch, "reviewer": a.reviewer}
@@ -1000,11 +1013,13 @@ def main(argv: list[str] | None = None) -> int:
             if a.commits:
                 p.error("usa --commits o --repo-commits")
             by_repo = {}
+            names = {}
             for group in a.repo_commits:
                 repo, sep, refs = group.partition("=")
                 if not sep or not repo.strip():
                     p.error("--repo-commits necesita REPO=HASH,HASH")
-                by_repo.setdefault(repo.strip(), []).extend(csv([refs]))
+                name = names.setdefault(repo.strip().casefold(), repo.strip())
+                by_repo.setdefault(name, []).extend(csv([refs]))
             body["commits_by_repo"] = by_repo
         if getattr(a, "blocks_file", None):
             try:
@@ -1013,6 +1028,13 @@ def main(argv: list[str] | None = None) -> int:
             except (OSError, ValueError) as exc:
                 p.error(f"--blocks-file necesita JSON UTF-8 válido: {exc}")
         r = call("POST", "/api/agora/task_submit", body)
+        if r.get("ok") and a.repo_commits:
+            stored = (r.get("task") or {}).get("commits_by_repo")
+            groups = {name.casefold(): refs for name, refs in (stored or {}).items()}
+            if stored is None or any(groups.get(name.casefold(), []) != [ref.lower() for ref in refs]
+                                     for name, refs in by_repo.items()):
+                r = {**r, "ok": False, "error": "El Hub no guardó los commits por repositorio. "
+                     "Comprueba su versión y lee la revisión de la tarea antes de volver a entregar."}
     elif c == "review":
         body = {"agent": ag, "task_id": a.task, "verdict": a.verdict, "body": text_arg(a, "body") or "",
                 "expected_submission_revision": a.revision}
@@ -1393,6 +1415,8 @@ def main(argv: list[str] | None = None) -> int:
             print("ok · " + json.dumps(brief, ensure_ascii=False))
         if c in ("retitle", "amend", "withdraw") and r.get("undo_token"):
             print(f"  Deshacer: undo {a.thread} --token {r['undo_token']}")
+        if c == "update" and r.get("undo"):
+            print(f"  Deshacer: update {a.task} --undo-repo {r['undo']['arguments']['undo_repository_revision']}")
         if c == "escalate" and r.get("asked"):      # by rank, a question may go to another agent before the person
             print("  la pregunta ha ido a: " + ", ".join(r["asked"]) + ("" if r.get("reached_person") else " (por rango; llega a la persona si la suben)"))
         if r.get("stays_resolved"):

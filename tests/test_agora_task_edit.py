@@ -94,6 +94,42 @@ def test_text_versions_keep_original_and_intermediate_values_with_actor(store):
     assert history[2]['author'] == 'editor' and history[2]['created'] == store.clock()
 
 
+def test_repository_updates_record_history_and_undo_only_the_current_change(store):
+    task = add(store, claim=True)
+    args = {'agent': 'builder', 'task_id': task['id']}
+    first = store.task_update({**args, 'repo': 'First'})
+    second = store.task_update({**args, 'repositories': ['Second', 'First'], 'branch': 'work'})
+    with pytest.raises(AgoraError, match='belongs to'):
+        store.task_update({**args, 'agent': 'other', 'repo': 'Wrong'})
+    with pytest.raises(AgoraError, match='belongs to'):
+        store.task_update({**second['undo']['arguments'], 'agent': 'other'})
+    with pytest.raises(AgoraError, match='changed'):
+        store.task_update(first['undo']['arguments'])
+    assert 'undo' not in store.task_update({**args, 'repositories': ['Second', 'First'], 'status': 'in_progress'})
+    undone = store.task_update(second['undo']['arguments'])['task']
+    assert (undone['repo'], undone['repositories'], undone['branch'], undone['status']) == (
+        'First', ['First'], 'work', 'in_progress')
+    with pytest.raises(AgoraError, match='changed'):
+        store.task_update(second['undo']['arguments'])
+    cleared = store.task_update({**args, 'repositories': []})
+    assert cleared['task']['repo'] == '' and cleared['task']['repositories'] == []
+    history = store.task(args)['edits']
+    assert [(edit['kind'], edit['after']['repositories']) for edit in history] == [
+        ('created', []), ('repository_update', ['First']), ('repository_update', ['Second', 'First']),
+        ('repository_undo', ['First']), ('repository_update', [])]
+    assert history[2]['before']['repo'] == 'First' and history[2]['author'] == 'builder'
+    assert history[3]['before']['repo'] == 'Second'
+
+
+def test_repository_update_repairs_a_legacy_primary_mismatch(store):
+    task = add(store, repo='Current', claim=True)
+    store.db.execute('UPDATE tasks SET repo=? WHERE id=?', ('Old', task['id']))
+    result = store.task_update({'agent': 'builder', 'task_id': task['id'], 'repo': 'Current'})
+    assert result['task']['repo'] == 'Current'
+    assert result['task']['repositories'] == ['Current']
+    assert store.task_update(result['undo']['arguments'])['task']['repo'] == 'Old'
+
+
 def test_preexisting_tasks_receive_truthful_baseline_on_schema_upgrade(tmp_path):
     from hoard_link.sqlkit import Database
     from hoard_link.hub.agora import MIGRATIONS

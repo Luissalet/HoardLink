@@ -1,5 +1,6 @@
 """Observed submission revisions across real HTTP, CLI, stdio MCP and browser."""
 from contextlib import ExitStack
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -29,6 +30,29 @@ def create(ag):
     return task["id"]
 
 
+def test_cli_reports_a_hub_that_ignored_repository_arguments(monkeypatch, capsys):
+    path = Path(__file__).resolve().parents[2] / "scripts" / "agora.py"
+    spec = importlib.util.spec_from_file_location("agora_cli_repository", path)
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    calls = []
+
+    def legacy_hub(method, path, body):
+        calls.append((path, body))
+        return {"ok": True, "task": {"id": 42, "repo": "", "commits": ["aaaa1111"], "submission_revision": 2}}
+
+    monkeypatch.setattr(cli, "call", legacy_hub)
+    prefix = ["--as", "builder", "--json"]
+    assert cli.main([*prefix, "update", "42", "--repo", "Demo"]) == 1
+    assert calls[-1][1]["repositories"] == ["Demo"]
+    assert not json.loads(capsys.readouterr().out)["ok"]
+    assert cli.main([*prefix, "submit", "42", "--summary", "Changes", "--repo-commits", "Demo=bbbb2222",
+                     "--repo-commits", "demo=cccc3333", "--repo-commits", "Other=dddd4444"]) == 1
+    assert calls[-1][1]["commits_by_repo"] == {"Demo": ["bbbb2222", "cccc3333"], "Other": ["dddd4444"]}
+    refused = json.loads(capsys.readouterr().out)
+    assert not refused["ok"] and refused["task"]["submission_revision"] == 2
+
+
 def test_http_cli_and_stdio_mcp_bind_observed_revision(tmp_path):
     with ExitStack() as cleanup:
         hub = make_hub(tmp_path, [])
@@ -50,7 +74,7 @@ def test_http_cli_and_stdio_mcp_bind_observed_revision(tmp_path):
         assert refusal["current_commits"] == ["bbbb2222"]
         assert ag.task({"task_id": task_id}) == before
         root = Path(__file__).resolve().parents[2]
-        env = dict(os.environ, HOARD_HUB_URL=base, HOARD_HUB_TOKEN_FILE=str(hub.config.token_file),
+        env = dict(os.environ, AGORA_SPACE="ecosystem", HOARD_HUB_URL=base, HOARD_HUB_TOKEN_FILE=str(hub.config.token_file),
                    HOARD_HUB_DATA_DIR=str(hub.config.data_dir), HOARD_HUB_AUTOSTART="0", PYTHONPATH=str(root))
 
         def cli(*args):
