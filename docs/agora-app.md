@@ -71,11 +71,34 @@ The right pane shows pending tasks and recent completed work, with the actual gl
 
 ## Run and build
 
-From a source checkout, install dependencies with `npm ci` in `apps/agora`, then run `npm run desktop:build`. Start the native window with `scripts/start-agora.ps1`. Use `-Build` to build first or `-Web` to open a browser write session. The Hub must already be running. For a custom Hub data directory, set `HOARD_HUB_DATA_DIR` in the environment before starting the console so its launcher can read that installation's credential. The shell relays `/api/agora/` requests to a loopback Hub through a fixed interface.
+On Windows, open the Ágora shortcut. If an older console asks you to reopen it after an update, close it and
+open the same shortcut again. The Hub must already be running. The native bridge opens a write session when
+the console loads and renews it if the Hub rejects a stale session. The bridge keeps the credential and
+session in the native process and relays only `/api/agora/` routes to the loopback Hub.
+
+From a source checkout, `scripts/start-agora.ps1 -Build` builds and opens the new executable. `-Web` opens
+the browser console with a write session. For a custom Hub data directory, set `HOARD_HUB_DATA_DIR` before
+starting the console. The standard Windows shortcut targets `apps/agora/bin/hoard-agora.exe` in the installation.
+See [the integration station](INTEGRATION.md) for native rebuild and publication.
 
 For development, `npm run dev` in `apps/agora` starts the local UI on port 62840 and proxies Hub reads. Use the native console or the built `/agora` page on the Hub origin to test writes. `AGORA_HUB_URL` can select a different loopback QA Hub. Tests use a separate Hub data directory and synthetic messages, preferences, workers and quotas. The native application contains self-hosted fonts and bundled frontend assets.
 
 Build output and installed local binaries are generated files. Source distributions require the build step for `/agora/`; a missing build produces an explicit error rather than an empty console.
+
+## Where write sessions come from
+
+| Surface | Write session |
+|---|---|
+| Windows Ágora shortcut and native launcher | The native process reads its local launcher credential and exchanges a ticket on load. The older installed console keeps reading and shows the reopen notice when a write is attempted. |
+| Hub desktop shortcut and window | The main process issues the single-use ticket to the Hub page. The fallback WebView and Chromium launches receive the ticket from the launcher. |
+| Hub browser launcher, `-Web`, **Open in browser**, and **Hoard Hub** or **Open order** from the native console | Each launcher opens the destination with a fresh ticket. The browser consumes it and keeps the session in that profile. |
+| Hub's Ágora tab and **Open full console** | The Hub page and console use the same origin and session storage within their browser profile. |
+| Programs and the purchase-to-inventory page | These Hub pages share that session and can acquire one from the Hub window or its browser handoff. |
+| Windows and browser tabs for other apps opened by the Hub | Each app serves its own page and uses its own API. The Hub's write session is scoped to the Hub origin. |
+| Studio's native Ágora and pending decisions | Studio forwards writes from the signed-in person's API through the relay. Production decisions use the dedicated relay credential. |
+| Studio's Live panel and its separate window | The embedded or standalone live view reads activity and task details. It has no person write actions. |
+| Studio's Development panel and its **Open in a separate window** link | The link redirects to the Hub console without a ticket. The separate window can reuse a Hub session in the same profile. A cross-site frame depends on session storage for that frame, which may be partitioned. In a fresh profile both can read, and the signed-in Studio Ágora and pending decisions remain available for writes. |
+| Direct Hub URLs and links in notifications | They reuse an existing session for that Hub origin and profile. A fresh profile can read until it opens the Hub through a launcher. |
 
 ## Validation boundaries
 

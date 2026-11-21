@@ -2,11 +2,26 @@ import {invoke, isTauri} from '@tauri-apps/api/core';
 export const spaceId = new URLSearchParams(location.search).get('space_id') || 'ecosystem';
 export const embedded = new URLSearchParams(location.search).get('embedded') === '1';
 export const hubUrl = 'http://127.0.0.1:8810/?space_id=' + encodeURIComponent(spaceId) + '#agora';
+export const lang = (new URLSearchParams(location.search).get('lang') ||
+  localStorage.getItem('hub.lang') || navigator.language).toLowerCase().startsWith('es') ? 'es' : 'en';
+
+async function native<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  try {
+    return await invoke<T>(command, {...args,lang});
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+export async function openWriteSession(): Promise<void> {
+  if (isTauri()) await native('open_write_session');
+}
+
 export async function openHub(event:{preventDefault:()=>void}, decision?: string){
-  if(isTauri()){event.preventDefault();await invoke('open_hub',{spaceId,decision});}
+  if(isTauri()){event.preventDefault();await native('open_hub',{spaceId,decision});}
 }
 export async function previewSource(path: string): Promise<string> {
-  return isTauri() ? (await invoke<{image: string}>('hub_request', {path, body: null})).image : path;
+  return isTauri() ? (await native<{image: string}>('hub_request', {path, body: null})).image : path;
 }
 export async function api<T=any>(path:string,body?:unknown):Promise<T>{
   if(path.startsWith('/api/agora/') && spaceId !== 'ecosystem') {
@@ -14,7 +29,7 @@ export async function api<T=any>(path:string,body?:unknown):Promise<T>{
     else body={space_id:spaceId,...(body as Record<string,unknown>)};
   }
   let data:any;
-  if(isTauri()) data=await invoke('hub_request',{path,body:body===undefined?null:body});
+  if(isTauri()) data=await native('hub_request',{path,body:body===undefined?null:body});
   else {const response=await fetch(path,{headers:body===undefined?{}:{'Content-Type':'application/json'},method:body===undefined?'GET':'POST',body:body===undefined?undefined:JSON.stringify(body)});data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error || `Error ${response.status}`),{code:data.code});}
   if(data.ok===false)throw new Error(data.error || 'No se pudo completar la operación');
   return data as T;

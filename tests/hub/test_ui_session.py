@@ -1,5 +1,7 @@
 """A browser session comes from the local launcher and stays separate from tools."""
 
+from http.client import HTTPConnection
+import json
 from urllib.parse import parse_qs, urlsplit
 
 from hoard_link.hub import ui_session
@@ -42,6 +44,39 @@ def test_launcher_tickets_require_local_credential_and_are_single_use(tmp_path):
         assert http(endpoint, event, {**browser, ui_session.SESSION_HEADER: session["session"]})[1]["event"]["source"] == "ui"
         assert http(endpoint, event, agent)[1]["event"]["source"] == "hub"
     finally:
+        server.shutdown()
+        server.server_close()
+        hub.close()
+
+
+def test_outdated_native_console_gets_a_visible_error_without_a_write(tmp_path):
+    hub = make_hub(tmp_path)
+    server = serve(hub)
+    path = "/api/agora/console/color"
+    headers = {"Origin": hub.config.url, "Sec-Fetch-Site": "same-origin", "Accept": "*/*",
+               "Content-Type": "application/json"}
+    body = {"leader_id": "codex", "color": "#112233"}
+    colors = hub.facet("agora_console")._colors
+    connection = HTTPConnection("127.0.0.1", hub.config.port, timeout=5)
+    try:
+        before = colors()
+        for language, notice in (
+            (None, "Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir la consola del Ágora."),
+            ("en-GB", "This window is from an earlier version. Close it and reopen the Agora console."),
+        ):
+            request_headers = {**headers, **({"Accept-Language": language} if language else {})}
+            connection.request("POST", path, json.dumps(body), request_headers)
+            result = connection.getresponse()
+            assert result.status == 200
+            assert json.loads(result.read()) == {"ok": False, "code": "hub_ui_session_required", "error": notice}
+        for additional in ({"Sec-Fetch-Mode": "cors"}, {"User-Agent": "HoardAgora"},
+                           {"X-Hoard-Person": "faustus-studio"}, {ui_session.SESSION_HEADER: "invalid"}):
+            connection.request("POST", path, json.dumps(body), {**headers, **additional})
+            result = connection.getresponse()
+            assert result.status == 403 and json.loads(result.read())["code"] == "hub_ui_session_required"
+        assert colors() == before
+    finally:
+        connection.close()
         server.shutdown()
         server.server_close()
         hub.close()

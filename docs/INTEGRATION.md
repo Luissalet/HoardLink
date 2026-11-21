@@ -74,6 +74,16 @@ After a successful run, the station can remove a delivery worktree containing on
 `dist`, dependencies in `node_modules`, TypeScript build metadata and Python bytecode. Tracked changes, other
 ignored files, untracked files or linked entries retain the worktree.
 
+On Windows, changes to `apps/agora/src-tauri`, the console's web build inputs, or the Hub's session endpoints
+and console launcher trigger `npm run desktop:build -- -- --locked` on the same merge candidate. The native
+build produces the console's browser bundle and the executable. Integration publishes both before the live
+case. It updates `apps/agora/bin/hoard-agora.exe`, the target of the existing Windows shortcut. The receipt
+records the executable's SHA-256 under `frontend_build.native`. A running console keeps its loaded version
+until the person closes it and opens it again. Integration never closes that window. If Windows is holding the
+old executable open, the station renames it before placing the new one and removes the retired file on a later
+update. Rollback and undo restore the prior browser assets and executable. Use a Windows integration host with
+Node, Rust and the MSVC build tools to publish the native console.
+
 For a manual integration, use Agora `done` with the published merge hashes and the verification note in
 `--result-file`. An agent other than the owner can close the approved delivery this way. The Hub checks that
 each merge is on a registered mainline, merges the approved tip, has the clean Git merge tree, and together

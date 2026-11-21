@@ -1,4 +1,4 @@
-"""Build the Agora browser surfaces from the exact integration candidate."""
+"""Build and publish the coordination surfaces from the exact integration candidate."""
 
 from __future__ import annotations
 
@@ -8,8 +8,12 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from ..atomic import write_bytes_atomic
+from ..atomic import tmp_path_for, write_bytes_atomic
 from .integration_git import IntegrationError
+
+
+WINDOWS = os.name == "nt"
+SESSION_INPUTS = {"hoard_link/hub/ui_session.py", "hoard_link/hub/server.py", "scripts/start-agora.ps1"}
 
 
 def prepare_frontend(candidate: Path, paths: set[str], folder: Path):
@@ -21,8 +25,11 @@ def prepare_frontend(candidate: Path, paths: set[str], folder: Path):
                       "hoard_link/hub/ui/production_decisions_data.js",
                       "hoard_link/hub/ui/production_decisions_data.d.ts"}
     studio_inputs = {"package.json", "package-lock.json", "vite.config.ts", "tsconfig.json"}
-    if (candidate / "apps/agora/package.json").is_file() and (
-            paths & console_inputs or any(path.startswith("apps/agora/src/") for path in paths)):
+    console_changed = bool(paths & console_inputs or any(path.startswith("apps/agora/src/") for path in paths))
+    native_changed = bool(paths & SESSION_INPUTS or any(path.startswith("apps/agora/src-tauri/") for path in paths))
+    desktop = WINDOWS and (candidate / "apps/agora/src-tauri/Cargo.toml").is_file() and (
+        console_changed or native_changed)
+    if (candidate / "apps/agora/package.json").is_file() and (console_changed or desktop):
         workdir, destination, entry = candidate / "apps/agora", "apps/agora/dist", "index.html"
     elif (candidate / "studio/src/screens/agora/AgoraApp.tsx").is_file() and (
             paths & studio_inputs or any(path.startswith("studio/") for path in paths)):
@@ -30,30 +37,58 @@ def prepare_frontend(candidate: Path, paths: set[str], folder: Path):
     else:
         return None
 
-    npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+    npm = shutil.which("npm.cmd" if WINDOWS else "npm")
     if not npm:
-        raise IntegrationError("The browser build needs npm on the integration host")
+        raise IntegrationError("The frontend build needs npm on the integration host")
     output = folder / "frontend-output"
     log = folder / "frontend-build.log"
+    target = workdir / "src-tauri/target"
+    build_args = ("run", "desktop:build", "--", "--", "--locked") if desktop else (
+        "run", "build", "--", "--outDir", str(output))
     with log.open("wb") as stream:
-        for args in (("ci", "--no-audit", "--no-fund"), ("run", "build", "--", "--outDir", str(output))):
+        for args in (("ci", "--no-audit", "--no-fund"), build_args):
             try:
+                env = {**os.environ, "CARGO_TARGET_DIR": str(target)} if desktop else None
                 result = subprocess.run([npm, *args], cwd=workdir, stdout=stream, stderr=subprocess.STDOUT,
-                                        timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                        env=env, timeout=1800 if desktop else 600,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except (OSError, subprocess.TimeoutExpired) as error:
-                raise IntegrationError(f"Browser build failed for {destination}. See {log}") from error
+                raise IntegrationError(f"Frontend build failed for {destination}. See {log}") from error
             if result.returncode:
-                raise IntegrationError(f"Browser build failed for {destination} ({result.returncode}). See {log}")
+                raise IntegrationError(f"Frontend build failed for {destination} ({result.returncode}). See {log}")
+    if desktop:
+        if not (workdir / "dist" / entry).is_file():
+            raise IntegrationError(f"Desktop build produced no {entry}. See {log}")
+        shutil.move(workdir / "dist", output)
     if not (output / entry).is_file():
         raise IntegrationError(f"Browser build produced no {entry}. See {log}")
-    return {"destination": destination, "entry": entry,
-            "sha256": hashlib.sha256((output / entry).read_bytes()).hexdigest(), "log": str(log)}
+    build = {"destination": destination, "entry": entry,
+             "sha256": hashlib.sha256((output / entry).read_bytes()).hexdigest(), "log": str(log)}
+    if desktop:
+        binary = target / "release/hoard-agora.exe"
+        if not binary.is_file():
+            raise IntegrationError(f"Desktop build produced no {binary.name}. See {log}")
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        native_output = folder / "native-output"
+        native_output.mkdir()
+        shutil.move(binary, native_output / binary.name)
+        build["native"] = {"destination": "apps/agora/bin", "entry": binary.name, "sha256": digest}
+    return build
+
+
+def _publications(build: dict):
+    yield build, "frontend"
+    if "native" in build:
+        yield build["native"], "native"
 
 
 def prepare_publication(repo: Path, build: dict, folder: Path):
     """Save any files the new build will replace before the first write."""
-    output = folder / "frontend-output"
-    backup = folder / "frontend-previous"
+    for build, name in _publications(build):
+        _prepare_files(repo, build, folder / f"{name}-output", folder / f"{name}-previous")
+
+
+def _prepare_files(repo: Path, build: dict, output: Path, backup: Path):
     target = repo / build["destination"]
     files = sorted(p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file())
     files.remove(build["entry"])
@@ -70,18 +105,62 @@ def prepare_publication(repo: Path, build: dict, folder: Path):
     build["files"] = changed
 
 
+def _retire_native(path: Path) -> Path:
+    # A running Windows executable can be renamed even when it cannot be replaced.
+    retired = tmp_path_for(path.with_suffix(".retired.exe"))
+    path.rename(retired)
+    return retired
+
+
+def _discard_retired(path: Path):
+    try:
+        path.unlink(missing_ok=True)
+    except PermissionError:
+        # It can be removed by the next native update once the old window closes.
+        pass
+
+
+def _activate_native(path: Path, content: bytes):
+    for retired in path.parent.glob(path.with_suffix(".retired.exe").name + ".*.tmp"):
+        _discard_retired(retired)
+    staged = tmp_path_for(path)
+    write_bytes_atomic(staged, content)
+    try:
+        try:
+            staged.replace(path)
+        except PermissionError:
+            if not path.is_file():
+                raise
+            retired = _retire_native(path)
+            try:
+                staged.replace(path)
+            except OSError:
+                retired.replace(path)
+                raise
+            _discard_retired(retired)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
 def publish_frontend(repo: Path, build: dict, folder: Path):
     # Publish hashed dependencies first and keep the previous ones for tabs still using them.
-    target = repo / build["destination"]
-    for filename in build["files"]:
-        write_bytes_atomic(target / filename, (folder / "frontend-output" / filename).read_bytes())
+    for artifact, name in _publications(build):
+        target = repo / artifact["destination"]
+        for filename in artifact["files"]:
+            publish = _activate_native if name == "native" else write_bytes_atomic
+            publish(target / filename, (folder / f"{name}-output" / filename).read_bytes())
 
 
 def restore_frontend(repo: Path, build: dict, folder: Path):
-    target = repo / build["destination"]
-    for filename in reversed(build["files"]):
-        previous = folder / "frontend-previous" / filename
-        if previous.is_file():
-            write_bytes_atomic(target / filename, previous.read_bytes())
-        else:
-            (target / filename).unlink(missing_ok=True)
+    for artifact, name in reversed(list(_publications(build))):
+        target = repo / artifact["destination"]
+        for filename in reversed(artifact["files"]):
+            previous = folder / f"{name}-previous" / filename
+            path = target / filename
+            if previous.is_file():
+                publish = _activate_native if name == "native" else write_bytes_atomic
+                publish(path, previous.read_bytes())
+            elif name == "native" and path.is_file():
+                _discard_retired(_retire_native(path))
+            else:
+                path.unlink(missing_ok=True)
