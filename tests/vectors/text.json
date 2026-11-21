@@ -15,7 +15,7 @@
   {"fn": "safe_filename", "args": ["Canción ñ.mp3"], "expect": "Canción ñ.mp3"},
   {"fn": "clamp_text", "args": ["uno dos tres cuatro cinco", 14], "expect": "uno dos tres…"},
   {"fn": "clamp_text", "args": ["corto", 14], "expect": "corto"},
-  {"fn": "normalize_email", "args": ["Luis <Luis.Mas+facturas@GoogleMail.com>"], "expect": "useras@gmail.com"},
+  {"fn": "normalize_email", "args": ["Analyst <Case.Worker+receipts@GoogleMail.com>"], "expect": "caseworker@gmail.com"},
   {"fn": "normalize_email", "args": ["mailto:Ana+x@empresa.es"], "expect": "ana@empresa.es"},
   {"fn": "normalize_email", "args": ["no es un correo"], "expect": ""},
   {"fn": "normalize_phone", "args": ["612 34 56 78"], "expect": "+34612345678"},
