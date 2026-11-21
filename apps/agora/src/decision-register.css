@@ -1,0 +1,76 @@
+.register-trigger {flex-shrink: 0;}
+.register-dialog {
+  width: min(680px, calc(100% - 24px));
+  max-height: min(86dvh, 760px);
+  padding: 0;
+  border: 1px solid #625a48;
+  border-radius: 10px;
+  color: inherit;
+  background: var(--surface);
+}
+.register-dialog[open] {display: flex; flex-direction: column;}
+.register-dialog::backdrop {background: #090804b3;}
+.register-dialog header, .register-dialog nav {
+  display: flex;
+  align-items: center;
+  padding-inline: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.register-dialog header {justify-content: space-between; gap: 12px; padding-block: 12px;}
+.register-dialog h2 {font-size: 21px; font-weight: 600;}
+.register-dialog nav {gap: 18px;}
+.register-dialog nav button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 10px 2px;
+}
+.register-dialog nav [aria-pressed="true"] {border-bottom-color: var(--accent); color: var(--accent);}
+.register-content {padding: 16px 20px 24px; overflow: auto; overflow-wrap: anywhere; min-height: 110px;}
+.register-content h3 {margin: 12px 0; font-size: 19px; font-weight: 600;}
+.register-list, .register-messages, .register-history ol {list-style: none; padding: 0; margin: 0;}
+.register-list > li + li, .register-messages > li + li {border-top: 1px solid var(--line);}
+.register-list li, .register-messages li {padding-block: 10px;}
+.register-list li > button {text-align: start;}
+.register-content button:not(.primary) {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+}
+.register-content button:not(.primary):hover:not(:disabled) {border-color: var(--accent);}
+.register-content p {white-space: pre-wrap; margin: 7px 0;}
+.register-content small {color: var(--muted);}
+.register-text > strong, .register-history p > span {display: block; font-size: 13px; color: var(--muted);}
+.register-actions {display: flex; gap: 8px; flex-wrap: wrap; margin-block: 12px;}
+.register-form {border-block: 1px solid var(--line); padding-block: 12px;}
+.register-form label, .register-error {display: grid; gap: 8px; justify-items: start;}
+.register-form input, .register-form textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #625a48;
+  border-radius: 5px;
+  background: #1c1a14;
+  color: inherit;
+}
+.register-form textarea {resize: vertical; min-height: 104px;}
+.register-history {margin: 12px 0; padding: 8px 0;}
+.register-history summary {cursor: pointer; color: var(--accent);}
+.register-history ol {border-inline-start: 1px solid var(--line); margin-top: 10px; padding-inline-start: 12px;}
+.register-history li {padding-bottom: 10px;}
+.register-history small {display: block;}
+.register-error {color: #efd1bd; margin-bottom: 10px;}
+@media (max-width: 460px) {
+  .register-dialog header, .register-dialog nav, .register-content {padding-inline: 14px;}
+  .register-trigger.icon-button {padding-inline: 5px;}
+}
+.register-lookup {display: flex; align-items: end; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;}
+.register-lookup label {display: grid; gap: 4px; font-size: 13px; color: var(--muted);}
+.register-lookup input {
+  width: 9ch;
+  padding: 6px 8px;
+  border: 1px solid #625a48;
+  border-radius: 5px;
+  background: #1c1a14;
+  color: inherit;
+}
