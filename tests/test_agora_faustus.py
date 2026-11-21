@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from contextlib import nullcontext
@@ -35,6 +36,45 @@ def test_missing_or_moving_placement_does_not_use_stale_pc_service(tmp_path, sta
 def test_pc_service_keeps_existing_health_contract(tmp_path):
     facet = _facet(tmp_path)
     assert agora_faustus.service(facet.hub) == facet.hub.faustus_status()
+
+
+def test_studio_apprentice_name_can_be_reopened_but_not_used_in_parallel(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    name = agora_faustus.APPRENTICE
+    monkeypatch.setattr(facet, "_taken_names", lambda: {name, "faustus-other"})
+    assert facet._worker_name_problem("faustus", name)[0] == 409
+    facet.space_id = "estudio"
+    assert facet._worker_name_problem("faustus", name) == (0, "")
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,created_at,updated_at) "
+                   "VALUES('worker','faustus',?,'model','','task','starting',1,1)", (name,))
+    assert facet._worker_name_problem("faustus", name)[0] == 409
+    with facet._db() as db:
+        db.execute("UPDATE workers SET state='completed' WHERE id='worker'")
+    assert facet._worker_name_problem("faustus", name) == (0, "")
+    assert facet._worker_name_problem("faustus", "faustus-other")[0] == 409
+
+
+def test_tutor_instinct_remembers_own_studio_message_and_returns_undo(tmp_path):
+    facet = _facet(tmp_path)
+    facet.space_id = "estudio"
+    messages = {42: {"author": "tutor", "kind": "comment", "body": "State the view.", "thread_id": 18}}
+    db = SimpleNamespace(one=lambda sql, params: messages.get(params[0]) if "FROM messages m" in sql else None)
+    agora = SimpleNamespace(db=db, person_id="person", space_id="estudio")
+    agora.for_space = lambda sid: agora
+    facet.hub.agora = agora
+    call = {"action": "remember", "message_id": 42, "trigger": "When checking a piece"}
+    handler = facet.handlers_local()[agora_faustus.TUTOR_TOOL]
+    assert handler({**call, "actor": "other"})["status"] == 403
+    assert handler({**call, "actor": "tutor", "message_id": 99})["status"] == 404
+    saved = handler({**call, "actor": "tutor"})
+    assert saved["ok"] and saved["agent"] == agora_faustus.APPRENTICE
+    assert handler({**call, "actor": "tutor"})["ok"]
+    folder = agora_faustus.worker_data(facet, agora_faustus.APPRENTICE) / "instincts" / "agora-tutor"
+    lesson, = folder.iterdir()
+    assert json.loads(lesson.read_text(encoding="utf-8"))["action"] == "State the view."
+    assert handler(saved["undo"]["arguments"])["status"] == "forgotten"
+    assert not list(folder.iterdir())
 
 
 def test_placed_session_request_uses_spark_address(tmp_path, monkeypatch):
@@ -109,7 +149,7 @@ def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeyp
 
 def test_stop_targets_recorded_instance_even_after_placement_changes(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
-    facet._processes["worker"] = SimpleNamespace()
+    facet._processes["worker"] = SimpleNamespace(pid=None)
     with facet._db() as db:
         db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,session_id,faustus_url,created_at,updated_at) "
                    "VALUES('worker','faustus','model','','task','running','child','http://127.0.0.1:58200',1,1)")

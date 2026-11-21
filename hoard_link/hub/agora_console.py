@@ -2192,7 +2192,15 @@ class AgoraConsoleFacet(Facet):
         if named:
             row = {**provider["catalog"][0], "id": model, "name": model}
         # The rank: the one asked for; else the one the person chose for sessions of this model here; else the usual.
+        from .agora_faustus import APPRENTICE
+
         rank = self._worker_rank(rank_asked or self._model_ranks().get(leader_id, {}).get(model, ""), actor, by_person)
+        if agent_id == APPRENTICE:
+            agora = self._agora()
+            retained_rank = agora_ranks.ranks_in(agora, self.space_id).get(agent_id, "support") if agora else "support"
+            if not by_person and agora and agora_ranks.level(agora, actor) < agora_ranks.LEVEL[retained_rank]:
+                return {"ok": False, "status": 403, "error": "The apprentice's rank exceeds the caller's."}
+            rank = rank_asked if by_person and rank_asked else retained_rank
         executable = self._codex_executable() if leader_id == "codex" else None
         claude_executable = shutil.which("claude") if leader_id == "claude" else None
         cursor_runtime = Path(r"E:\Development\IA\Agents\cursor\runtime\dist-package")
@@ -2895,10 +2903,14 @@ class AgoraConsoleFacet(Facet):
 
     def _continue_worker(self, worker_id: str, automatic: bool = False,
                          previous_process: Optional[subprocess.Popen[str]] = None, message: str = "") -> dict[str, Any]:
-        with self._db_lock, self._db() as db:
+        from .agora_faustus import APPRENTICE
+
+        with _STARTING_LOCK, self._db_lock, self._db() as db:
             row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
             if row is None:
                 return {"ok": False, "status": 404, "error": "unknown worker"}
+            if row["agent_id"] == APPRENTICE and self._apprentice_busy(except_worker=worker_id):
+                return {"ok": False, "status": 409, "error": "The studio apprentice already has an active worker."}
             if row["resume_issue"] and row["replacement"] == "{}":
                 return self._resume_unavailable(row)
             if (not self._worker_can_continue(row)
@@ -3510,9 +3522,32 @@ class AgoraConsoleFacet(Facet):
                          "letter or a digit")
         if not name.startswith(leader_id + "-"):
             return 400, f"name must start with {leader_id}-, so the server shows it among that provider's agents"
+        from .agora_faustus import APPRENTICE, STUDIO
+
+        if name == APPRENTICE:
+            if self.space_id != STUDIO:
+                return 409, "The apprentice identity belongs to estudio."
+            if self._apprentice_busy():
+                return 409, "The studio apprentice already has an active worker."
+            return 0, ""
         if name in self._taken_names():
             return 409, f"{name} is already the name of an agent: choose another"
         return 0, ""
+
+    def _apprentice_busy(self, *, except_worker: str = "") -> bool:
+        from . import procs
+        from .agora_faustus import APPRENTICE
+
+        if APPRENTICE in _STARTING_NAMES:
+            return True
+        with self._db_lock, self._db() as db:
+            rows = db.execute(
+                "SELECT state,runtime_pid,runtime_started_at FROM workers WHERE agent_id=? AND id<>?",
+                (APPRENTICE, except_worker)).fetchall()
+        return any(row["state"] in ("starting", "running", "stopping") or (
+            row["runtime_pid"] and row["runtime_started_at"] is not None
+            and procs.proc_info(row["runtime_pid"]).created_at == row["runtime_started_at"]
+        ) for row in rows)
 
     def _worker_rank(self, wanted: str, actor: str, by_person: bool = False) -> str:
         """The rank a new session gets: the one asked for when the person starts it; when an agent does, that one
@@ -3688,7 +3723,18 @@ class AgoraConsoleFacet(Facet):
 
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
+        from .agora_faustus import TUTOR_TOOL
+
         tools = [
+            {"name": TUTOR_TOOL,
+             "description": "Keep your studio thread correction as an apprentice instinct (remember), or undo it (forget). / Guarda tu corrección como instinto del aprendiz o deshazla.",
+             "inputSchema": {"type": "object", "properties": {
+                 "action": {"enum": ["remember", "forget"]},
+                 "message_id": {"type": "integer", "minimum": 1},
+                 "trigger": {"type": "string", "maxLength": 200},
+                 "actor": {"type": "string", "maxLength": 64}},
+                 "required": ["action", "message_id", "actor"], "additionalProperties": False},
+             "annotations": {"readOnlyHint": False}},
             {"name": "hub_agora_console_overview", "description": "Read the Agora team console: live provider catalogs where the official local interface exposes them, shared quota pools, child workers and canonical group messages. console_turns carry a liveness class per finished turn (completed, advanced, plan_only, empty_response, blocked, failed, needs_followup) with its reasons, and the root_turn_id/continuation_n of automatic continuations. Catalogs may be unavailable; no model call is made.",
              "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
@@ -3740,6 +3786,8 @@ class AgoraConsoleFacet(Facet):
 
     def handlers_local(self):
         # The scoped view's implementation, without a second scope dispatch.
+        from .agora_faustus import TUTOR_TOOL, tutor_instinct
+
         def write(method, args):
             values = dict(args)
             values.pop("_person", None)
@@ -3752,6 +3800,7 @@ class AgoraConsoleFacet(Facet):
             'hub_agora_console_preferences': lambda a: write(self.set_preferences, a),
             'hub_agora_console_color': lambda a: write(self.set_color, a),
             'hub_agora_console_worker': lambda a: write(self.worker, a),
+            TUTOR_TOOL: lambda a: write(lambda args, actor: tutor_instinct(self, args, actor), a),
             agora_worker_profiles.TOOL: lambda a: agora_worker_profiles.view(self),
             agora_auto_review.TOOL: lambda a: agora_auto_review.status(self),
         }

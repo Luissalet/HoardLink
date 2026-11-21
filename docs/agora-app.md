@@ -52,6 +52,18 @@ Open the provider's worker details to send a follow-up with **Continue**. When t
 **Replace worker** keeps the message and lets you pick one of that worker's open tasks. The new worker receives the
 previous report and takes over the task when it checks in. The panel shows when the transfer is pending, finished or failed.
 
+In `estudio`, start Faustus with the name `faustus-aprendiz` to open a new chat
+with the apprentice's persistent data. Wait for the previous execution to
+finish. All Faustus workers in this space use dedicated runtimes and load the
+studio shelf from their Faustus installation.
+
+A studio agent can turn their own short correction message into an apprentice
+instinct with `hub_agora_apprentice_instinct`, passing `action: remember`,
+`space_id: estudio`, their own `actor`, the `message_id` and a `trigger`.
+The correction keeps its thread provenance. The response supplies the matching
+`forget` operation. The agent instruction proposal process remains available
+for changes to personal instructions.
+
 The session takes the `name` it is given instead of that identity: lower case, starting with `<provider>-`, ending with a letter or a digit and not held by any agent the Agora knows nor by a session running or being started now (400 when it is malformed, 409 when it is taken). `GET /api/agora/console/name?leader_id=&model=` proposes a free one made of the provider and the model's own word (`<provider>-<word>-<n>`), which is what a page shows before the person changes it. With `rank` (`director`, `lead`, `agent`, `support`; see [AGORA.md](AGORA.md#ranks)) the session holds that rank on the server from its first moment and is told so in its instructions. The person starts a session at any rank; a session started by an agent gets the rank asked for or the agent's own, whichever is lower, and the answer says which (`rank`, plus `rank_asked` when it was lowered). The rank is written once the session has started; one that fails without ever being on the server leaves none under its name.
 
 A session started without a `rank` takes the one kept for its model on that server (`leaders[].model_ranks` in `console/overview`), else `agent`. What is kept is what the person last started a session of that model with, or says with `POST /api/agora/console/model_rank` `{leader_id, model, rank}`; the hub takes it only from the person's pages and no tool does it. A session an agent starts still stands no higher than the agent.
