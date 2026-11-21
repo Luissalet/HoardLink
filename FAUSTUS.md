@@ -12,7 +12,9 @@ Home brings each decision awaiting the person into view. Orders and draft passes
 global production measures, which appear at the foot of Orders. See [studio admission](docs/STUDIO-ADMISSION.md).
 The pending list in the Hub and each Agora space shares `hub_agora_pending_decisions`, which returns open
 order gates, early passes and counts per space. The person can inspect the pieces, enlarge images, and decide
-with a note in the list. The choice enters the space's production record. The Hub desktop window gets a write
+with a note in the list. The choice enters the space's production record. Keeping an output releases eligible
+next jobs with the person's note. The Orders page can undo the last choice made on that page while its
+affected work is still current. The Hub desktop window gets a write
 session on load and can restore it in place. A desktop window from an earlier version can still display decisions
 and asks the person to close and reopen the Hub to restore writes. The native Agora console opens its own
 write session, and the local launcher and desktop browser handoff give the browser a fresh ticket. Studio

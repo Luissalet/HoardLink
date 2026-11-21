@@ -60,6 +60,31 @@ def test_order_plan_is_made_of_agora_tasks_with_dependencies(agora, tmp_path):
     # pieces inherit the details to keep and know where they are
     assert [k["detail"] for k in pieces["hoja"]["keep"]] == ["tubo a la izquierda", "al mapa le falta una esquina"]
     assert pieces["malla"]["view"] == "turntable" and pieces["lamina"]["view"] == "image" and pieces["lamina"]["exists"]
+
+
+def test_keep_unblocks_the_next_jobs_without_finishing_the_predecessor(agora, tmp_path):
+    order, keys, pieces = cartographer(agora, tmp_path)
+    agora.task_update(person(task_id=keys["mesh"], status="blocked"))
+    gate = agora.gate_open({"agent": "claude", "order_id": order["id"],
+                            "piece_ids": [pieces["hoja"]["id"]]})["gate"]
+
+    outcome = agora.gate_decide(person(gate_id=gate["id"], decision="keep", note="Conserva la esquina"))
+    assert set(outcome["ready_jobs"]) == {keys["mesh"], keys["video"]}
+    assert agora._task_row(keys["sheet"])["status"] == "open"
+    assert agora._task_row(keys["mesh"])["status"] == "open"
+    assert agora._task_row(keys["mesh"])["waiting_on"] == []
+    assert agora._task_row(keys["rig"])["waiting_on"] == [keys["mesh"]]
+    for key, recipient in (("mesh", "codex-volumen"), ("video", "claude")):
+        messages = agora._messages(agora._task_row(keys[key])["thread_id"])
+        assert messages[-1]["mentions"] == [recipient]
+        assert "Conserva la esquina" in messages[-1]["body"]
+    with pytest.raises(AgoraError) as refused:
+        agora.order_undo({"agent": "claude", "token": outcome["undo"]})
+    assert refused.value.status == 403
+    agora.order_undo(person(token=outcome["undo"]))
+    assert agora._task_row(keys["mesh"])["status"] == "blocked"
+    assert agora._task_row(keys["mesh"])["waiting_on"] == [keys["sheet"]]
+    assert agora.gate_decide(person(gate_id=gate["id"], decision="keep"))["ready_jobs"] == outcome["ready_jobs"]
     assert pieces["malla"]["station"] == "vulcan"
 
 

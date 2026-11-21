@@ -242,6 +242,7 @@ ALTER TABLE tasks ADD COLUMN repositories TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE tasks ADD COLUMN commits_by_repo TEXT NOT NULL DEFAULT '{}';
 """)
 MIGRATIONS.append(agora_decision_history.MIGRATION)
+MIGRATIONS.append(agora_orders.DECISION_HANDOFF_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -1030,7 +1031,7 @@ class Agora:
         deps = self.db.query("SELECT t.id, t.title, t.status, t.owner FROM agora_task_deps d JOIN tasks t ON t.id=d.blocker_id "
                              "WHERE d.task_id=? ORDER BY t.id", (d["id"],))
         d["blocked_by"] = [{"id": r["id"], "title": r["title"], "status": r["status"], "owner": r["owner"]} for r in deps]
-        d["waiting_on"] = [r["id"] for r in deps if r["status"] not in DEP_CLEAR]
+        d["waiting_on"] = agora_orders.waiting_on(self, d["id"], deps)
         d["dependents"] = [r["task_id"] for r in self.db.query(
             "SELECT task_id FROM agora_task_deps WHERE blocker_id=? ORDER BY task_id", (d["id"],))]
         d["activity"] = self._task_activity(d, volatile=False)
@@ -2583,8 +2584,9 @@ class Agora:
         row = self.db.one("SELECT status FROM tasks WHERE id=?", (int(blocker_id),))
         if row is None or row["status"] in DEP_CLEAR:
             return
-        self.db.execute("DELETE FROM agora_dep_wakeups WHERE task_id IN "
-                        "(SELECT task_id FROM agora_task_deps WHERE blocker_id=?)", (int(blocker_id),))
+        for dep in self.db.query("SELECT task_id FROM agora_task_deps WHERE blocker_id=?", (int(blocker_id),)):
+            if blocker_id in self._task_row(dep["task_id"])["waiting_on"]:
+                self.db.execute("DELETE FROM agora_dep_wakeups WHERE task_id=?", (dep["task_id"],))
 
     def _apply_deps(self, agent: str, task: dict[str, Any], *, add: list[int], remove: list[int],
                     replace: Optional[list[int]]) -> dict[str, list[int]]:
@@ -4376,7 +4378,7 @@ class AgoraFacet(Facet):
         args.pop("_person", None)
         # The optional Studio marker alone is not proof of the person's authority for these edits.
         person_surface = self._person_surface(req)
-        if op in agora_decision_history.WRITE_OPS:
+        if op in agora_decision_history.WRITE_OPS or op == "order_undo":
             person_surface = person_surface and agora_person.can_decide(self.hub, req)
         if person_surface:
             args.setdefault("agent", self.agora.person_id)

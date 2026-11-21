@@ -119,11 +119,17 @@ ORDERS_MIGRATION = """
         op TEXT NOT NULL, changes TEXT NOT NULL, created REAL NOT NULL, undone REAL);
 """
 
+DECISION_HANDOFF_MIGRATION = """
+    CREATE TABLE agora_order_discarded_jobs (task_id INTEGER PRIMARY KEY, variant_id INTEGER NOT NULL);
+"""
+
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #: Tables a journal entry may restore, with their key column.
 _KEYS = {"agora_orders": "id", "agora_order_jobs": "task_id", "agora_pieces": "id", "agora_piece_checks": "id",
          "agora_piece_defects": "id", "agora_gates": "id", "agora_gate_pieces": None,
          "agora_order_budgets": "order_id", "agora_order_attempts": "id"}
+_KEYS.update({"agora_order_discarded_jobs": "task_id", "agora_order_decisions": "id",
+              "tasks": "id", "locks": "resource", "messages": "id", "agora_dep_wakeups": "key"})
 
 
 def _ag() -> Any:
@@ -414,12 +420,16 @@ class _Journal:
     def created(self, table: str, key: Any, *, where: Optional[dict[str, Any]] = None) -> None:
         self.rows.append({"table": table, "where": where or {_KEYS[table]: key}, "row": None})
 
+    @property
+    def decision(self) -> bool:
+        return self.op in ("gate_decide", "draft_decide")
+
     def save(self) -> Optional[str]:
         if self.agent == _person_id(self.ag) and not self.undo_for_person:
             return None
         if not (self.rows or self.created_tasks or self.task_status or self.task_deps or self.task_metadata):
             return None
-        if any(change["table"] in ("agora_order_budgets", "agora_order_attempts") for change in self.rows):
+        if self.decision or any(change["table"] in ("agora_order_budgets", "agora_order_attempts") for change in self.rows):
             for change in self.rows:
                 table, cond = change["table"], change["where"]
                 sql = " AND ".join(f"{key}=?" for key in cond)
@@ -441,6 +451,9 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         entry = self.db.one("SELECT * FROM agora_order_journal WHERE token=?", (token,))
         if not entry or entry["space_id"] != self.space_id:
             raise _err(f"no write with undo token {token} in space {self.space_id}", 404)
+        decision = entry["op"] in ("gate_decide", "draft_decide")
+        if decision and (not a.get("_person") or agent != _person_id(self)):
+            raise _err("Only the person's page can undo a production decision", 403)
         if entry["undone"]:
             raise _err(f"that write was already undone", 409)
         changes = _load(entry["changes"], {})
@@ -450,11 +463,14 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 raise _err("The task's station or repository changed since this write", 409)
         for change in changes.get("rows") or []:
             table, cond = change["table"], change["where"]
-            if table != "agora_gates" and "after" not in change:
-                continue
-            if table == "agora_gates" and self.db.one(
+            if not decision and table == "agora_gates" and self.db.one(
                     "SELECT 1 FROM agora_order_decisions WHERE gate_id=?", (cond["id"],)):
                 raise _err("A person has already decided a piece in this gate", 409)
+            if not decision and table in ("agora_draft_passes", "agora_draft_variants"):
+                key = "pass_id" if table == "agora_draft_passes" else "id"
+                if self.db.one(f"SELECT 1 FROM agora_draft_variants WHERE {key}=? AND status IN ('kept','discarded')",
+                               (cond["id"],)):
+                    raise _err("A person has already decided a variant in this draft pass", 409)
             if "after" in change and table in _KEYS:
                 sql = " AND ".join(f"{key}=?" for key in cond)
                 current = self.db.one(f"SELECT * FROM {table} WHERE {sql}", tuple(cond.values()))
@@ -463,16 +479,24 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                     after = {**after, "dossier": "{}"}
                 if (dict(current) if current else None) != after:
                     raise _err("The order changed since this write", 409)
+            if table == "locks" and change["row"] and change["row"]["expires"] > _now(self):
+                lock = change["row"]
+                if any(_ag().conflicts(lock["resource"], other["resource"]) for other in self.db.query(
+                        "SELECT resource FROM locks WHERE expires>?", (_now(self),))):
+                    raise _err("A released task lock has been taken since this decision", 409)
         for change in reversed(changes.get("rows") or []):
             table, cond, row = change["table"], change["where"], change["row"]
             if table not in _KEYS:
                 continue
             sql = " AND ".join(f"{k}=?" for k in cond)
-            self.db.execute(f"DELETE FROM {table} WHERE {sql}", tuple(cond.values()))
-            if row:
+            if row is None or table == "locks":
+                self.db.execute(f"DELETE FROM {table} WHERE {sql}", tuple(cond.values()))
+            if row and (table != "locks" or row["expires"] > _now(self)):
                 cols = list(row)
-                self.db.execute(f"INSERT INTO {table}({', '.join(cols)}) VALUES({', '.join('?' for _ in cols)})",
-                                tuple(row[c] for c in cols))
+                updated = self.db.execute(f"UPDATE {table} SET {', '.join(f'{c}=?' for c in cols)} WHERE {sql}",
+                                          (*row.values(), *cond.values()))
+                if not updated.rowcount:
+                    self.db.insert(table, row)
         for item in changes.get("task_deps") or []:
             if item["task_id"] not in (changes.get("created_tasks") or []):
                 self._apply_deps(agent, self._task_row(item["task_id"]), add=[], remove=[], replace=item["blockers"])
@@ -634,6 +658,90 @@ def _job_dict(self: Any, row: dict[str, Any]) -> dict[str, Any]:
     out["defects_open"] = int(self.db.scalar("SELECT COUNT(*) FROM agora_piece_defects WHERE task_id=? AND status='open'",
                                              (row["task_id"],), 0) or 0)
     return out
+
+
+def waiting_on(self: Any, task_id: int, deps: list) -> list[int]:
+    """An order can accept a predecessor's output while that task's review is still open."""
+    dep_clear = _ag().DEP_CLEAR
+    default = [d["id"] for d in deps if d["status"] not in dep_clear]
+    if not deps:
+        return default
+    job = self.db.one("SELECT order_id, inputs FROM agora_order_jobs WHERE task_id=? AND removed=0", (task_id,))
+    if not job:
+        return default
+    order_id = job["order_id"]
+    inputs = set(_load(job["inputs"], []))
+    blockers = [d["id"] for d in deps]
+    marks = ",".join("?" for _ in blockers)
+    required: dict[int, list[str]] = {}
+    kept = set()
+    for piece in self.db.query(f"SELECT id, task_id, status FROM agora_pieces WHERE order_id=? AND task_id IN ({marks})",
+                               (order_id, *blockers)):
+        if piece["id"] in inputs:
+            required.setdefault(piece["task_id"], []).append(piece["status"])
+        if piece["status"] == "kept":
+            kept.add(piece["task_id"])
+    discarded = {r["task_id"] for r in self.db.query(
+        f"SELECT d.task_id FROM agora_order_discarded_jobs d JOIN agora_order_jobs j ON j.task_id=d.task_id "
+        f"WHERE j.order_id=? AND d.task_id IN ({marks})", (order_id, *blockers))}
+    return [d["id"] for d in deps
+            if (d["status"] not in dep_clear or d["id"] in discarded)
+            and not (d["id"] in kept and all(s == "kept" for s in required.get(d["id"], [])))]
+
+
+def _job_recipient(self: Any, order: dict, job: dict, fallback: str) -> list[str]:
+    who = job["task"]["owner"] or job["assignee"].get("agent") or order["created_by"]
+    if who == _person_id(self):
+        who = self.db.scalar("SELECT created_by FROM tasks WHERE id=?", (job["task_id"],), "")
+    return [who or fallback] if (who or fallback) and (who or fallback) != _person_id(self) else []
+
+
+def _handoff(self: Any, journal: _Journal, order: dict, pieces: list[dict], note: str,
+             *, opened_by: str, resumed: bool, variant: Optional[dict] = None) -> list[int]:
+    """Release the next jobs and leave the accepted inputs in their task threads."""
+    kept = {p["id"] for p in pieces if p["status"] == "kept"}
+    producers = {p["task_id"] for p in pieces if p["id"] in kept and p["task_id"]}
+    variant_jobs = {tid for row in self.db.query("SELECT jobs FROM agora_draft_variants WHERE order_id=?", (order["id"],))
+                    for tid in _load(row["jobs"], [])}
+    # Existing plans can start the next pass at a root, with no explicit after or input.
+    pieces_by_job = {r["task_id"] for r in self.db.query(
+        "SELECT DISTINCT task_id FROM agora_pieces WHERE order_id=? AND task_id IS NOT NULL", (order["id"],))}
+    rejected = {r["id"] for r in self.db.query(
+        "SELECT id FROM agora_pieces WHERE order_id=? AND status IN ('cancelled','stale')", (order["id"],))}
+    names = ", ".join(f"#{p['id']} «{p['title']}»" for p in pieces if p["id"] in kept)
+    accepted = f"la variante «{variant['title']}»" if variant else names
+    if variant and names:
+        accepted += f" ({names})"
+    if not accepted or order_budget.hold_reason(self, order["id"]):
+        return []
+    text = (f"Trabajo listo en la orden #{order['id']} «{order['title']}». La persona ha conservado {accepted}."
+            + (f"\nNota: {note}" if note else ""))
+    ready = []
+    for job in _plan(self, order["id"]):
+        tid, task = job["task_id"], job["task"]
+        if (job["removed"] or not task or tid in variant_jobs or tid in producers
+                or task["status"] not in ("open", "blocked", "claimed", "changes") or rejected.intersection(job["inputs"])):
+            continue
+        relevant = (producers.intersection(job["after"]) or kept.intersection(job["inputs"])
+                    or (resumed and not job["after"] and not job["inputs"] and tid not in pieces_by_job))
+        if not relevant:
+            continue
+        task = self._task_row(tid)
+        if task["waiting_on"]:
+            continue
+        journal.before("tasks", tid)
+        if task["status"] == "blocked":
+            self.db.execute("UPDATE tasks SET status=?, updated=? WHERE id=?",
+                            ("claimed" if task["owner"] else "open", _now(self), tid))
+        if job["after"]:
+            key = self._dep_key(task)
+            journal.before("agora_dep_wakeups", key)
+            self.db.execute("INSERT OR IGNORE INTO agora_dep_wakeups(key, task_id, created) VALUES(?,?,?)",
+                            (key, tid, _now(self)))
+        mid = self._msg(task["thread_id"], journal.agent, "system", text, _job_recipient(self, order, job, opened_by))
+        journal.created("messages", mid)
+        ready.append(tid)
+    return ready
 
 
 def _plan(self: Any, order_id: int) -> list[dict[str, Any]]:
@@ -1323,9 +1431,15 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
                     + (f"\nEsperado: {expected}" if expected else "") + (f"\nObservado: {observed}" if observed else "")
                     + (f"\nPrueba: {evidence}" if evidence else "")
                     + f"\nDetalle: hub_agora_job con task_id {target}.")
-            self._msg(int(task["thread_id"]), agent, "comment", text, [task["owner"]] if task.get("owner") else [])
+            mid = self._msg(int(task["thread_id"]), agent, "system" if journal.decision else "comment",
+                            text, [task["owner"]] if task.get("owner") else [])
+            if journal.decision:
+                journal.created("messages", mid)
             if task["status"] in ("review", "approved", "done"):
-                journal.task_status.append({"task_id": target, "status": task["status"]})
+                if journal.decision:
+                    journal.before("tasks", target)
+                else:
+                    journal.task_status.append({"task_id": target, "status": task["status"]})
                 self.db.execute("UPDATE tasks SET status='changes', updated=? WHERE id=?", (_now(self), target))
     return did
 
@@ -1466,7 +1580,8 @@ def _close_if_done(self: Any, journal: _Journal, gate_id: int) -> None:
         self.db.execute("UPDATE agora_gates SET status='decided', closed=? WHERE id=?", (_now(self), gate_id))
         order_id = self.db.scalar("SELECT order_id FROM agora_gates WHERE id=?", (gate_id,))
         if (not order_budget.hold_reason(self, order_id)
-                and not self.db.scalar("SELECT COUNT(*) FROM agora_gates WHERE order_id=? AND status='open'", (order_id,), 0)):
+                and not self.db.one("SELECT 1 FROM agora_gates WHERE order_id=? AND status='open'", (order_id,))
+                and not self.db.one("SELECT 1 FROM agora_draft_passes WHERE order_id=? AND status='shown'", (order_id,))):
             _set_status(self, order_id, "producing", journal, only_from=("waiting",))
 
 
@@ -1499,7 +1614,7 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                            "kept; the station has to register it again before it can be decided", 409,
                            error_code="piece_changed", piece_id=pid)
         order_row = _order_row(self, gate["order_id"])
-        journal = _Journal(self, agent, "gate_decide")
+        journal = _Journal(self, agent, "gate_decide", undo_for_person=True)
         alternatives = []
         for pid in in_gate:
             p = self.db.one("SELECT id, kind, title, status FROM agora_pieces WHERE id=?", (pid,))
@@ -1511,9 +1626,11 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         result = []
         for pid in targets:
             piece = _piece_row(self, pid)
+            journal.before("agora_pieces", pid)
             did = self.db.insert("agora_order_decisions", {
                 "order_id": order_row["id"], "gate_id": gate["id"], "piece_id": pid, "space_id": self.space_id,
                 "decision": decision, "note": note, "situation": _dump(situation), "created": _now(self)})
+            journal.created("agora_order_decisions", did)
             stale: list[int] = []
             if decision == "keep":
                 self.db.execute("UPDATE agora_pieces SET status='kept', updated=? WHERE id=?", (_now(self), pid))
@@ -1523,9 +1640,16 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 stale = _stale_below(self, journal, pid)
             result.append({"piece_id": pid, "decision_id": did, "stale": stale})
         _close_if_done(self, journal, gate["id"])
+        ready = []
+        if decision == "keep":
+            resumed = order_row["status"] == "waiting" and _order_row(self, order_row["id"])["status"] == "producing"
+            ready = _handoff(self, journal, order_row, [_piece_row(self, pid) for pid in targets], note,
+                             opened_by=gate["opened_by"], resumed=resumed)
+        token = journal.save()
     self._bump("agora.order.decided", {"order_id": order_row["id"], "gate_id": gate["id"], "decision": decision,
                                        "pieces": targets})
-    return {"ok": True, "decided": result, "gate": _gate_dict(self, _gate_row(self, gate["id"]))}
+    return {"ok": True, "decided": result, "gate": _gate_dict(self, _gate_row(self, gate["id"])),
+            "ready_jobs": ready, "undo": token}
 
 
 # ---- files ------------------------------------------------------------------------------------------------
