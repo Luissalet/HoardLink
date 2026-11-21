@@ -14,9 +14,11 @@ The pending list in the Hub and each Agora space shares `hub_agora_pending_decis
 order gates, early passes and counts per space. The person can inspect the pieces, enlarge images, and decide
 with a note in the list. The choice enters the space's production record. The Hub desktop window gets a write
 session on load and can restore it in place. A desktop window from an earlier version can still display decisions
-and asks the person to close and reopen the Hub to restore writes. The local launcher opens a write session in a
-regular browser. Studio choices use the existing relay credential. The browser integration step compiles changed console and
-Studio assets from the reviewed merge. See [production orders](docs/ORDERS.md) and [integration](docs/INTEGRATION.md).
+and asks the person to close and reopen the Hub to restore writes. The native Agora console opens its own
+write session, and the local launcher and desktop browser handoff give the browser a fresh ticket. Studio
+choices use the dedicated relay credential. Integration compiles changed console and Studio assets from the
+reviewed merge and rebuilds the Windows console when its sources or session protocol change.
+See [production orders](docs/ORDERS.md) and [integration](docs/INTEGRATION.md).
 
 ## Live Agora activity
 

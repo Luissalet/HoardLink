@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -128,12 +129,20 @@ def _hidden_shell_command(exe, bootstrap, shell_main, debug_port, url, profile):
     bootstrap.mkdir()
     (bootstrap / "package.json").write_text('{"main":"start.cjs"}', encoding="utf-8")
     (bootstrap / "start.cjs").write_text(f"""
-const {{ app, BaseWindow }} = require('electron');
+const {{ app, BaseWindow, Menu, shell }} = require('electron');
 app.commandLine.appendSwitch('remote-debugging-port', '{debug_port}');
 app.commandLine.appendSwitch('lang', 'en-GB');
 app.on('second-instance', () => console.log('Second launch reached the existing process'));
 BaseWindow.prototype.show = function () {{}};
 BaseWindow.prototype.focus = function () {{}};
+if (process.argv.includes('--test-open-browser')) {{
+  const build = Menu.buildFromTemplate.bind(Menu);
+  Menu.buildFromTemplate = template => {{
+    const action = template.find(item => item.label === 'Abrir en el navegador');
+    return action ? {{ popup: () => action.click() }} : build(template);
+  }};
+  shell.openExternal = url => require('node:fs').writeFileSync(require('node:path').join(__dirname, 'browser-url'), url);
+}}
 if (process.argv.includes('--test-window-close')) {{
   const fs = require('node:fs');
   const signal = require('node:path').join(__dirname, 'close');
@@ -309,13 +318,14 @@ def _previous_shell(tmp_path):
 
 
 @contextmanager
-def _hidden_shell(pw, exe, bootstrap, main, url, profile):
+def _hidden_shell(pw, exe, bootstrap, main, url, profile, *, capture_browser=False):
     debug_port = free_port()
     cmd = _hidden_shell_command(exe, bootstrap, main, debug_port, url, profile)
     env = {key: value for key, value in os.environ.items() if key != "ELECTRON_RUN_AS_NODE"}
     log_path = bootstrap / "shell.log"
     with log_path.open("wb") as log:
-        process = subprocess.Popen([*cmd, "--test-window-close"], env=env, stdout=log, stderr=subprocess.STDOUT)
+        flags = ["--test-window-close"] + (["--test-open-browser"] if capture_browser else [])
+        process = subprocess.Popen([*cmd, *flags], env=env, stdout=log, stderr=subprocess.STDOUT)
     try:
         browser = _shell_context(pw, debug_port, log_path)
         yield browser
@@ -377,10 +387,20 @@ def test_previous_hub_shell_can_read_and_reopening_restores_writes(tmp_path, mon
                 playwright.expect(page.locator(decision_selector)).to_be_visible()
                 page.screenshot(path=str(tmp_path / "previous-window-es.png"))
 
-            with _hidden_shell(pw, exe, tmp_path / "current", SHELL_MAIN, thread_url, profile) as browser:
+            launch = tmp_path / "current"
+            with _hidden_shell(pw, exe, launch, SHELL_MAIN, thread_url, profile, capture_browser=True) as browser:
                 page = _shell_page(browser.contexts[0], url)
                 page.wait_for_function("localStorage.getItem('hub.ui.session')")
                 playwright.expect(page.locator(".hub-session-recovery")).to_have_count(0)
+                bar = next(tab for tab in browser.contexts[0].pages if tab.url.startswith("file:"))
+                bar.evaluate("hoardBar.menu(0, 0)")
+                opened = launch / "browser-url"
+                assert wait_for(opened.is_file, timeout=5)
+                target = urlsplit(opened.read_text(encoding="utf-8"))
+                handoff = parse_qs(target.fragment)
+                assert handoff["view"] == [f"agora-{thread['id']}"]
+                assert (target.scheme, target.netloc) == ("http", urlsplit(url).netloc)
+                assert http(url + ui_session.SESSION_PATH, {"ticket": handoff["hub-session"][0]})[0] == 200
                 form = page.locator(".ag-detail .ag-compose")
                 form.locator("textarea").fill("After reopening")
                 with page.expect_response(lambda result: result.url.endswith("/api/agora/post")) as posted:

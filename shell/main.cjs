@@ -71,27 +71,44 @@ function isHubPage(url) {
   try {
     const page = new URL(url);
     const pathname = page.pathname.replace(/\/+$/, '') || '/';
-    return page.origin === origin && ['/', '/agora', '/programs'].includes(pathname);
+    const hubPage = ['/', '/agora', '/programs'].includes(pathname) || /^\/purchases\/\d+\/home$/.test(pathname);
+    return page.origin === origin && hubPage;
   } catch { return false; }
 }
 
-if (hubLaunch) {
+async function hubTicket() {
   // The launcher gives the Hub <data>/profiles/_hub. A direct shell launch uses the repository default.
   const hubData = path.basename(dataDir) === '_hub' && path.basename(path.dirname(dataDir)) === 'profiles'
     ? path.resolve(dataDir, '..', '..') : path.resolve(__dirname, '..', 'data');
-  ipcMain.handle('hoard:hub-session-ticket', async ({ sender, senderFrame }) => {
+  try {
+    const key = (await fs.promises.readFile(path.join(hubData, 'hub-ui-launch-token'), 'utf8')).trim();
+    const response = await fetch(hubLaunch, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(3000),
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    if (response.ok) return (await response.json()).ticket || null;
+  } catch { /* The page can request a session again when the Hub is available. */ }
+  return null;
+}
+
+if (hubLaunch) {
+  ipcMain.handle('hoard:hub-session-ticket', ({ sender, senderFrame }) => {
     if (!view || sender !== view.webContents || !senderFrame || senderFrame !== sender.mainFrame
         || !isHubPage(senderFrame.url)) return null;
-    try {
-      const key = (await fs.promises.readFile(path.join(hubData, 'hub-ui-launch-token'), 'utf8')).trim();
-      const response = await fetch(hubLaunch, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(3000),
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: '{}',
-      });
-      if (response.ok) return (await response.json()).ticket || null;
-    } catch { /* The page can request a session again when the Hub is available. */ }
-    return null;
+    return hubTicket();
   });
+}
+
+async function openInBrowser(url) {
+  if (isHubPage(url)) {
+    const ticket = await hubTicket();
+    if (ticket) {
+      const page = new URL(url);
+      page.hash = new URLSearchParams({ 'hub-session': ticket, view: page.hash.slice(1) }).toString();
+      url = page.href;
+    }
+  }
+  return shell.openExternal(url);
 }
 
 function refreshHubSession() {
@@ -201,7 +218,7 @@ function menuTemplate() {
     { label: 'Reducir', accelerator: 'Ctrl+-', click: () => zoom(-0.1) },
     { label: 'Tamaño real', accelerator: 'Ctrl+0', click: () => zoom(0) },
     { type: 'separator' },
-    { label: 'Abrir en el navegador', click: () => shell.openExternal(wc.getURL() || appUrl) },
+    { label: 'Abrir en el navegador', click: () => openInBrowser(wc.getURL() || appUrl) },
     { label: 'Copiar dirección', click: () => require('electron').clipboard.writeText(wc.getURL() || appUrl) },
     { label: 'Siempre encima', type: 'checkbox', checked: win.isAlwaysOnTop(), click: (i) => win.setAlwaysOnTop(i.checked) },
     { label: 'Herramientas de desarrollo', accelerator: 'Ctrl+Shift+I', click: () => wc.toggleDevTools() },
