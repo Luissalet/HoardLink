@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import agora_orders as orders
+from . import agora_order_references
 from . import order_figure_lineage
 
 PASS_STATES = ("drafting", "shown", "decided")
@@ -560,11 +561,14 @@ def draft_anchors(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     if not oid:
         raise _err("give order_id or the task_id of one of its jobs")
     order_row = orders._order_row(self, oid)
+    references = agora_order_references.reference_packets(self, order_row)
+    reference_links = [{"piece": ref["piece"], "role": "reference"} for ref in references]
     kept = self.db.one("SELECT v.* FROM agora_draft_variants v JOIN agora_draft_passes p ON p.id=v.pass_id "
                        "WHERE v.order_id=? AND v.status='kept' ORDER BY p.id DESC, v.id DESC LIMIT 1", (oid,))
     if not kept:
         waiting = self.db.scalar("SELECT COUNT(*) FROM agora_draft_passes WHERE order_id=? AND status='shown'", (oid,), 0)
         return {"ok": True, "order_id": oid, "variant": None,
+                "required_references": references, "derives_from": reference_links,
                 "waiting": bool(waiting),
                 "note": "La pasada 0 espera la decisión de la persona en la puerta temprana." if waiting else
                         "Esta orden no tiene ninguna variante conservada."}
@@ -579,9 +583,12 @@ def draft_anchors(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     guides["other"] = {slug: items for slug, items in anchors.items() if slug not in known}
     derives = [{"piece": p["id"], "role": "material" if p["anchor"] in GUIDES["split"] else "reference",
                 "note": f"pasada 0 · variante «{variant['key']}» · {p['anchor'] or 'pieza'}"} for p in variant["pieces"]]
+    linked = {link["piece"] for link in derives}
+    derives.extend(link for link in reference_links if link["piece"] not in linked)
     return {"ok": True, "order_id": oid, "order_title": order_row["title"],
             "variant": {k: variant[k] for k in ("id", "pass_id", "key", "title", "idea", "measures", "decision_note")},
-            "anchors": anchors, "guides": {k: v for k, v in guides.items() if v}, "derives_from": derives}
+            "anchors": anchors, "guides": {k: v for k, v in guides.items() if v},
+            "required_references": references, "derives_from": derives}
 
 
 def _figure_source(self: Any, reference: dict[str, Any], model_piece: Any) -> dict[str, Any]:
@@ -794,7 +801,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
          "inputSchema": schema({"order_id": order_id, "status": {"type": "string", "enum": list(PASS_STATES)},
                                 "all_spaces": {"type": "boolean"}}, [])},
         {"name": "hub_agora_draft_anchors", "read": True,
-         "description": "What the expensive pass starts from: the kept variant's pieces by anchor, the guide for "
-                        "image, video and split, and the derives_from to pass to hub_agora_piece_add.",
+         "description": "Start the expensive pass with required_references (kept revisions from this and cited orders), "
+                        "the draft guides for image, video and split, and derives_from for hub_agora_piece_add.",
          "inputSchema": schema({"order_id": order_id, "task_id": {"type": "integer", "minimum": 1}}, [])},
     ]

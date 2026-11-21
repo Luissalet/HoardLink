@@ -38,6 +38,7 @@ import secrets
 import shutil
 from typing import Any, Optional
 
+from . import agora_order_references
 from . import order_budget
 from . import order_destinations, order_dossier, order_figure_lineage
 
@@ -215,7 +216,7 @@ def _kind(value: Any, what: str = "kind") -> str:
     return kind
 
 
-def _refs(value: Any) -> list[dict[str, str]]:
+def _refs(value: Any) -> list[dict[str, Any]]:
     if value in (None, ""):
         return []
     if not isinstance(value, list) or len(value) > 50:
@@ -231,6 +232,8 @@ def _refs(value: Any) -> list[dict[str, str]]:
             if ref.get(key):
                 clean[key] = _txt(ref[key], limit, f"refs.{key}")
         clean = {k: v for k, v in clean.items() if v}
+        if "order_id" in ref:
+            clean["order_id"] = _int(ref["order_id"], "refs.order_id")
         if clean:
             out.append(order_dossier.ref_receipt(clean, _err))
     return out
@@ -994,6 +997,7 @@ def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                         "ORDER BY id DESC LIMIT 1", (p["id"],))
         p["kept_note"] = (d["note"] if d else "") or ""
     out["references"] = kept
+    out["required_references"] = agora_order_references.reference_packets(self, order_row)
     active = {task_id: entry for task_id, entry in plan.items() if not entry["removed"] or task_id == tid}
     upstream = list(order_destinations.predecessors(active, tid))[1:]
     candidates = []
@@ -1172,7 +1176,8 @@ def plan_set(self: Any, a: dict[str, Any], *, undo_for_person: bool = False) -> 
                     lines.append("Entrega: " + ", ".join(_load(fields["produces"], [])))
                 if inputs:
                     lines.append("Piezas de entrada: " + ", ".join(f"#{p}" for p in inputs))
-                lines.append("El encargo entero, con las piezas que conservó la persona: hub_agora_job con este task_id.")
+                lines.append("Lee el encargo con hub_agora_job y este task_id. Usa sus required_references como "
+                             "entradas del puesto y registra las que usaste en derives_from.")
                 body = _txt(raw.get("body"), 20000, "body")
                 assignee = _assignee(raw.get("assignee"))
                 added = self.task_add({"agent": agent, "_person": bool(a.get("_person")), "title": title,
@@ -1275,7 +1280,7 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             content_same = (prev["sha256"] == sha) if path else (prev["source_rev"] == source_rev)
             if content_same and (not path or sha) and _parents(prev["derives_from"]) == derivation:
                 return {"ok": True, "existing": True, "undo": None,
-                        "piece": _piece_dict(self, _piece_row(self, prev["id"]), full=True)}
+                        "piece": agora_order_references.registered_piece(self, order_row, _piece_row(self, prev["id"]))}
         if same and not supersedes:
             supersedes = int(same[0]["id"])
         if supersedes:
@@ -1356,7 +1361,8 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         self.db.execute("UPDATE agora_orders SET updated=? WHERE id=?", (now, oid))
         token = journal.save()
     self._bump("agora.order.piece", {"order_id": oid, "piece_id": pid, "kind": kind, "by": agent})
-    return {"ok": True, "piece": _piece_dict(self, _piece_row(self, pid), full=True), "undo": token}
+    return {"ok": True, "piece": agora_order_references.registered_piece(self, order_row, _piece_row(self, pid)),
+            "undo": token}
 
 
 def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
@@ -1400,7 +1406,9 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 anchor_changed = True
             item.update({"state": state, "by": agent, "check_rev": int(piece["revision"]),
                          **{k: _txt(mark.get(k), 1000, f"keep.{k}") for k in ("note", "how", "evidence") if mark.get(k)}})
-            clean.append({"id": item["id"], "detail": item["detail"], "state": state,
+            comparison = ({"comparisons": agora_order_references.check_comparisons(self, piece, mark)}
+                          if "comparisons" in mark else {})
+            clean.append({"id": item["id"], "detail": item["detail"], "state": state, **comparison,
                           **{k: item[k] for k in ("note", "how", "evidence", "anchor") if k in item}})
         cid = self.db.insert("agora_piece_checks", {"piece_id": piece["id"], "space_id": self.space_id, "agent": agent,
                                                     "ok": 1 if ok else 0, "note": note, "keep": _dump(clean),
@@ -1538,6 +1546,7 @@ def gate_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if not p or p["order_id"] != order_row["id"]:
                 raise _err(f"piece #{pid} is not a piece of order #{order_row['id']}", 404)
         title = _txt(a.get("title"), 200, "title") or f"Puerta de «{order_row['title']}»"
+        agora_order_references.validate_gate_references(self, order_row, ids)
         journal = _Journal(self, agent, "gate_open")
         gid = self.db.insert("agora_gates", {"order_id": order_row["id"], "space_id": self.space_id, "title": title,
                                              "note": _txt(a.get("note"), TEXT_MAX, "note"), "status": "open",
@@ -1843,6 +1852,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
     texts = {"type": "array", "items": {"type": "string", "maxLength": 300}, "maxItems": 60}
     ref = {"type": "object", "properties": {**{k: {"type": "string", "maxLength": 1000} for k in
                                                ("app", "object", "place", "path", "url", "note")},
+                                             "order_id": order_id,
                                              **order_dossier.MATERIAL_PROPERTIES}, "additionalProperties": False}
     kind = {"type": "string", "maxLength": 40, "description": "Piece kind: " + ", ".join(PIECE_KINDS) + " or another short slug."}
     undo = " Returns undo: pass it to hub_agora_order_undo to put back what it changed."
@@ -1897,7 +1907,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "jobs": {"type": "array", "items": job_item, "maxItems": 60}, "remove": ids}, ["agent", "order_id"])},
         {"name": "hub_agora_job", "read": True,
          "description": "Everything to start a job (task_id): the order's dossier, station and check, "
-                        "input pieces, destination requirements, pinned details, kept references, defects and an "
+                        "input pieces, destination requirements, pinned details, required_references kept in this and "
+                        "cited orders, defects and an "
                         "earlier kept piece of each kind it delivers.",
          "inputSchema": schema({"task_id": {"type": "integer", "minimum": 1}}, ["task_id"])},
         {"name": "hub_agora_piece_add",
@@ -1905,7 +1916,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                         "url, or app + object + place (+ source_rev); previews (e.g. turntable frames); task_id of the "
                         "job that made it, model, derives_from (pieces in this space, role: material|reference) and keep (the "
                         "order's details by default). Files get a content print: the same output again returns the "
-                        "same piece; a changed file at the same path is its next revision." + undo,
+                        "same piece; a changed file at the same path is its next revision. Warns about omitted "
+                        "required reference lineage." + undo,
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "kind": kind,
                                 "title": {"type": "string", "maxLength": 200}, "path": {"type": "string", "maxLength": 1000},
                                 "url": {"type": "string", "maxLength": 2000}, "app": {"type": "string", "maxLength": 300},
@@ -1933,6 +1945,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                                         "detail": {"type": "string", "maxLength": 300}, "ok": {"type": "boolean"},
                                                         "state": {"type": "string", "enum": list(DETAIL_STATES[1:])},
                                                         "anchor": order_destinations.ANCHOR_SCHEMA,
+                                                        "comparisons": agora_order_references.COMPARISONS,
                                                         "how": {"type": "string", "maxLength": 1000},
                                                         "evidence": {"type": "string", "maxLength": 1000},
                                                         "note": {"type": "string", "maxLength": 1000}}}}},
