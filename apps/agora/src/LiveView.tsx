@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { api, spaceId, type Task, type Message } from "./api";
+import { DeliveryDiff } from "./DeliveryDiff";
 import { LoopPanel, LoopRing, TurnSteps, loopBrief, loopFacts, phaseLabel, type Loop } from "./LoopRing";
 import "./live.css";
 
@@ -54,7 +55,7 @@ type FileRow = {
 type Snapshot = {
   now: number;
   space: { id: string; title: string };
-  tasks: (Task & { progress?: string; loop?: Loop | null })[];
+  tasks: (Task & { progress?: string; loop?: Loop | null; updated?: number })[];
   messages: Message[];
   files: FileRow[];
   actors: Actor[];
@@ -168,7 +169,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
   const [points, setPoints] = useState<Record<string, CursorPoint>>({});
   const [hostTheme, setHostTheme] = useState<CSSProperties>({});
   const [taskDetail, setTaskDetail] = useState<{
-    task: Task;
+    task: Task & { commits?: string[]; submission_revision?: number };
     messages: Message[];
   } | null>(null);
   const [channel, setChannel] = useState("general");
@@ -765,6 +766,14 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
             </button>
           </header>
           <h3>{taskDetail.task.title}</h3>
+          {!!taskDetail.task.commits?.length && (
+            <DeliveryDiff
+              key={taskDetail.task.id}
+              taskId={taskDetail.task.id}
+              version={data?.tasks.find((task) => task.id === taskDetail.task.id)?.updated ??
+                taskDetail.task.submission_revision}
+            />
+          )}
           {(() => {
             const owner = data?.actors.find((a) => a.id === taskDetail.task.owner);
             return owner?.loop ? (
