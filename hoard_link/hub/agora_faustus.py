@@ -52,7 +52,7 @@ def tutor_instinct(console: Any, args: dict, actor: str) -> dict:
     if action == "forget":
         target.unlink(missing_ok=True)
         return {**receipt, "status": "forgotten"}
-    trigger = str(args.get("trigger") or "").strip()
+    trigger = " ".join(str(args.get("trigger") or "").split())
     correction = " ".join(message["body"].split())
     if not (1 <= len(trigger) <= 200 and 1 <= len(correction) <= 300):
         return {"ok": False, "status": 400,
