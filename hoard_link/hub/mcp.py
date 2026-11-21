@@ -124,7 +124,7 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
                 wait = min(1830.0, max(90.0, float((args or {}).get("timeout_s") or 300.0) + 15.0))
             except (TypeError, ValueError):
                 wait = 315.0
-        elif name == "hub_call_app" or (name == CALL and args.get("app")):
+        elif name in ("hub_call_app", "hub_print_slice") or (name == CALL and args.get("app")):
             # Match the app-call contract's existing 1..900s budget, plus
             # transport grace; losing observation must not cause a re-POST.
             try:
