@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
-from . import agora_auto_review, agora_liveness, agora_ranks, agora_worker_profiles
+from . import agora_auto_review, agora_liveness, agora_ranks, agora_worker_processes, agora_worker_profiles
 from . import work_admission
 from .agora import AgoraError, FINAL
 from .agora_capacity import codex_executable, codex_observation
@@ -76,6 +76,7 @@ SIGN_IN_REFUSED_TTL_S = 15 * 60
 #: Providers whose runner starts a model that lists no effort levels without one. The others always pass one.
 NO_EFFORT_LEADERS = ("claude", "faustus")
 IDLE_WORKER_STATES = ("completed", "failed", "incomplete", "stopped", "unknown")
+ORPHAN_BUSY = "The original worker process is still alive. / El proceso original del trabajador sigue vivo."
 RESUME_ISSUES = {
     "missing_session": "The original session is missing. / No se encuentra la sesión original.",
     "missing_workspace": "The original workspace is missing. / No se encuentra la carpeta de trabajo original.",
@@ -259,6 +260,7 @@ class AgoraConsoleFacet(Facet):
             if "agent_id" not in columns:
                 db.execute("ALTER TABLE workers ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''")
             for name, declaration in (("launch_command", "TEXT NOT NULL DEFAULT ''"), ("launch_cwd", "TEXT NOT NULL DEFAULT ''"),
+                                      ("process_started_at", "REAL"), ("launched_by", "TEXT NOT NULL DEFAULT ''"),
                                       ("retry_count", "INTEGER NOT NULL DEFAULT 0"), ("runtime_endpoint", "TEXT NOT NULL DEFAULT ''"),
                                       ("runtime_pid", "INTEGER"), ("runtime_started_at", "REAL"),
                                       ("template", "TEXT NOT NULL DEFAULT ''"),
@@ -721,6 +723,8 @@ class AgoraConsoleFacet(Facet):
     def _worker_rows(self) -> list[dict[str, Any]]:
         with self._db_lock, self._db() as db:
             rows = db.execute("SELECT * FROM workers ORDER BY created_at DESC LIMIT 100").fetchall()
+            orphans = self._orphan_workers(db)
+        rows = [row for row, _ in orphans.values()] + [row for row in rows if row["id"] not in orphans]
         workers = []
         for row in rows:
             worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
@@ -729,6 +733,9 @@ class AgoraConsoleFacet(Facet):
             worker["resume_issue"] = row["resume_issue"]
             worker["replacement"] = self._public_replacement(replacement)
             worker["retry_count"] = row["retry_count"]
+            if row["id"] in orphans:
+                worker["orphan_process"] = orphans[row["id"]][1]
+                worker["can_continue"] = False
             if row["parent_id"] == "faustus" and row["state"] == "running" and row["log_path"]:
                 path = Path(row["log_path"])
                 worker.update(self._runner_metrics(path))
@@ -738,6 +745,27 @@ class AgoraConsoleFacet(Facet):
                     pass
             workers.append(worker)
         return workers
+
+    def _orphan_process(self, row: Any) -> Optional[dict[str, Any]]:
+        if row["state"] == "starting":
+            return None
+        managed = self._processes.get(row["id"])
+        if (row["state"] in ("running", "paused", "stopping") and managed is not None
+                and managed.pid == row["pid"]):
+            return None
+        directory = Path(self.hub.config.data_dir).resolve() / "agora-console" / "workers"
+        return agora_worker_processes.observe(row, directory)
+
+    def _orphan_workers(self, db: sqlite3.Connection) -> dict[str, tuple[sqlite3.Row, dict[str, Any]]]:
+        pids = agora_worker_processes.live_pids()
+        found = {}
+        for row in db.execute("SELECT * FROM workers WHERE pid IS NOT NULL AND log_path<>''"):
+            if row["pid"] not in pids:
+                continue
+            orphan = self._orphan_process(row)
+            if orphan is not None:
+                found[row["id"]] = row, orphan
+        return found
 
     def _console_sessions(self) -> list[dict[str, Any]]:
         with self._db_lock, self._db() as db:
@@ -762,6 +790,9 @@ class AgoraConsoleFacet(Facet):
                        (time.time(),))
             db.execute("UPDATE leader_sessions SET state='unknown', detail='Hub restarted; session state needs reconciliation before another turn.', updated_at=? WHERE state='working'",
                        (time.time(),))
+            orphans = self._orphan_workers(db)
+        if orphans:
+            logger.info("Recovered %d live orphan worker processes in %s", len(orphans), self.space_id)
 
     @staticmethod
     def _original_worker_running(row: Any) -> bool:
@@ -770,6 +801,8 @@ class AgoraConsoleFacet(Facet):
         if not pid or not procs.pid_running(pid):
             return False
         started = procs.proc_info(pid).created_at
+        if row["process_started_at"] is not None and started is not None:
+            return started == row["process_started_at"]
         return started is None or row["created_at"] - 1 <= started <= row["updated_at"]
 
     def _start_worker_recovery(self) -> None:
@@ -825,9 +858,9 @@ class AgoraConsoleFacet(Facet):
             detail += " " + " ".join(verification["issues"])
         with self._db_lock, self._db() as db:
             updated = db.execute("UPDATE workers SET state=?,outcome=?,detail=?,result=?,session_id=?,workspace=?,"
-                                 "verification=?,updated_at=? WHERE id=? AND state='unknown'",
+                                 "verification=?,updated_at=? WHERE id=? AND state='unknown' AND outcome=?",
                                  (state, outcome, detail, result[:20000], worker["session_id"], worker["workspace"],
-                                  json.dumps(verification), time.time(), worker["id"])).rowcount
+                                  json.dumps(verification), time.time(), worker["id"], worker["outcome"])).rowcount
         if not updated:
             return
         self._record("worker", worker["id"], state, detail)
@@ -2360,8 +2393,10 @@ class AgoraConsoleFacet(Facet):
             return {"ok": False, "status": 503, "error": f"Could not start {leader_id.title()} worker: {type(exc).__name__}"}
         self._processes[worker_id] = process
         with self._db_lock, self._db() as db:
-            db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,created_at,updated_at) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?)",
-                       (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id, model_source, now, now))
+            db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,"
+                       "created_at,updated_at,process_started_at,launched_by) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?,?,?)",
+                       (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id,
+                        model_source, now, time.time(), agora_worker_processes.started_at(process.pid), actor))
             if template:
                 db.execute("UPDATE workers SET template=? WHERE id=?", (template, worker_id))
             if leader_id == "claude":
@@ -2714,8 +2749,9 @@ class AgoraConsoleFacet(Facet):
         with self._db_lock, self._db() as db:
             self._processes[row["id"]] = process
             db.execute("UPDATE workers SET state='running',pid=?,log_path=?,workspace=?,detail=?,outcome='unverified',"
-                       "process_exit_code=NULL,updated_at=? WHERE id=?",
-                       (process.pid, str(log_path), str(cwd), detail, time.time(), row["id"]))
+                       "process_exit_code=NULL,process_started_at=?,updated_at=? WHERE id=?",
+                       (process.pid, str(log_path), str(cwd), detail, agora_worker_processes.started_at(process.pid),
+                        time.time(), row["id"]))
         return self._resumed_worker(row, process, result_path, detail)
 
     def _resumed_worker(self, row: Any, process: subprocess.Popen[str], result_path: Path, detail: str) -> dict[str, Any]:
@@ -2737,8 +2773,10 @@ class AgoraConsoleFacet(Facet):
             if row is None:
                 return {"ok": False, "status": 404, "error": "Unknown worker. / Trabajador desconocido."}
             if (not row["resume_issue"] or row["state"] not in IDLE_WORKER_STATES
-                    or worker_id in self._processes or (row["state"] == "unknown" and self._original_worker_running(row))):
+                    or worker_id in self._processes):
                 return {"ok": False, "status": 409, "error": "Replace an idle worker after its original session is found unavailable. / Crea un relevo cuando el trabajador esté libre y su sesión no esté disponible."}
+            if self._orphan_process(row) or (row["state"] == "unknown" and self._original_worker_running(row)):
+                return {"ok": False, "status": 409, "error": ORPHAN_BUSY}
             try:
                 task = agora._task_row(args.get("task_id"))
             except AgoraError as exc:
@@ -2867,8 +2905,8 @@ class AgoraConsoleFacet(Facet):
                     or self._processes.get(worker_id) not in (None, previous_process)
                     or (automatic and row["retry_count"])):
                 return {"ok": False, "status": 409, "error": "The worker is not idle or is already being replaced. / El trabajador no está libre o ya tiene un relevo."}
-            if row["state"] == "unknown" and self._original_worker_running(row):
-                return {"ok": False, "status": 409, "error": "The original runner is still alive"}
+            if self._orphan_process(row) or (row["state"] == "unknown" and self._original_worker_running(row)):
+                return {"ok": False, "status": 409, "error": ORPHAN_BUSY}
             db.execute("UPDATE workers SET state='starting',retry_count=retry_count+?,updated_at=? WHERE id=?",
                        (int(automatic), time.time(), worker_id))
             self._processes.pop(worker_id, None)
@@ -2951,9 +2989,10 @@ class AgoraConsoleFacet(Facet):
             resume_command[resume_command.index("-p") + 1] = ""
             db.execute("UPDATE workers SET state='running',pid=?,log_path=?,faustus_url=?,detail=?,"
                        "runtime_pid=?,runtime_started_at=?,launch_command=?,launch_cwd=?,"
-                       "outcome='unverified',process_exit_code=NULL,updated_at=? WHERE id=?",
+                       "outcome='unverified',process_exit_code=NULL,process_started_at=?,updated_at=? WHERE id=?",
                        (process.pid, str(log_path), base_url, detail, runtime.get("pid"), runtime.get("created_at"),
-                        json.dumps(resume_command), cwd, time.time(), worker_id))
+                        json.dumps(resume_command), cwd, agora_worker_processes.started_at(process.pid),
+                        time.time(), worker_id))
         return self._resumed_worker(row, process, result_path, detail)
 
     def _monitor_worker(self, worker_id: str, process: subprocess.Popen[str], result_path: Path) -> None:
@@ -3233,9 +3272,44 @@ class AgoraConsoleFacet(Facet):
             pass
         return session_id, final_text, workspace
 
+    def _stop_orphan(self, args: dict[str, Any], actor: str) -> dict[str, Any]:
+        from . import procs
+
+        worker_id = str(args.get("worker_id") or "")
+        confirmed = args.get("confirm_process")
+        if (not isinstance(confirmed, dict) or type(confirmed.get("pid")) is not int
+                or type(confirmed.get("started_at")) not in (int, float)):
+            return {"ok": False, "status": 400, "error": "Confirm the displayed process before stopping it. / Confirma el proceso mostrado antes de detenerlo."}
+        with self._db_lock:
+            with self._db() as db:
+                row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
+            if row is None:
+                return {"ok": False, "status": 404, "error": "Unknown worker. / Trabajador desconocido."}
+            parent = row["parent_id"]
+            directors = {parent, row["launched_by"], CONSOLE_IDENTITIES.get(parent),
+                         next((agent for provider, _, agent in LEADERS if provider == parent), None)}
+            if actor != self.person_id and actor not in directors - {"", None}:
+                return {"ok": False, "status": 403, "error": "The operator or the worker’s directing agent must confirm. / Debe confirmar la persona o el agente que dirige al trabajador."}
+            orphan = self._orphan_process(row)
+            if orphan is None or any(confirmed[key] != orphan[key] for key in ("pid", "started_at")):
+                return {"ok": False, "status": 409, "error": "The process has changed or exited. Refresh the console. / El proceso ha cambiado o ha terminado. Actualiza la consola."}
+            stopped = procs.terminate_tree(orphan["pid"], created_at=orphan["started_at"], exact_identity=True)
+            if not stopped["ok"]:
+                return {"ok": False, "status": 409, "error": "Could not stop the process. / No se ha podido detener el proceso.", "stop": stopped}
+            with self._db() as db:
+                # An explicit stop also prevents restart recovery from continuing
+                # this interrupted turn after its runner disappears.
+                db.execute("UPDATE workers SET outcome='hub_restart_stopping' WHERE id=? AND state='unknown' "
+                           "AND outcome='hub_restart'", (worker_id,))
+            self._record("worker_process", worker_id, "stopped", f"PID {orphan['pid']}; confirmed by {actor}.")
+            return {"ok": True, "worker_id": worker_id, "stop": stopped,
+                    "undo": None, "irreversible": True}
+
     def _stop_worker(self, worker_id: str) -> dict[str, Any]:
         with self._db_lock, self._db() as db:
             worker = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
+            if worker is not None and self._orphan_process(worker):
+                return {"ok": False, "status": 409, "error": "Confirm the orphan process to stop it. / Confirma el proceso huérfano para detenerlo."}
         if worker is not None and worker["parent_id"] == "faustus" and worker["session_id"] and worker["state"] in ("running", "unknown", "stopping"):
             base_url = worker["faustus_url"]
             if not base_url and worker["log_path"]:
@@ -3296,7 +3370,11 @@ class AgoraConsoleFacet(Facet):
             return self._create_worker(args, actor)
         if action in ("register", "heartbeat", "finish"):
             return self._external_worker(args, action, actor)
+        if action == "stop_orphan":
+            return self._stop_orphan(args, actor)
         if action == "reconcile":
+            if not any(key in args for key in ("leader_id", "session_id", "confirm_idle")):
+                return {"ok": True, "orphans": [row for row in self._worker_rows() if "orphan_process" in row]}
             leader_id = str(args.get("leader_id") or "").strip().lower()
             session_id = str(args.get("session_id") or "").strip()
             if leader_id not in ("codex", "cursor") or not session_id or args.get("confirm_idle") is not True:
@@ -3320,7 +3398,7 @@ class AgoraConsoleFacet(Facet):
             return self._continue_worker(str(args.get("worker_id") or ""), message=message.strip())
         if action in ("stop", "cancel"):
             return self._stop_worker(str(args.get("worker_id") or ""))
-        return {"ok": False, "status": 400, "error": "action must be create, stop, continue, replace, register, heartbeat, finish or reconcile"}
+        return {"ok": False, "status": 400, "error": "action must be create, stop, stop_orphan, continue, replace, register, heartbeat, finish or reconcile"}
 
     def _external_worker(self, args: dict[str, Any], action: str, actor: str) -> dict[str, Any]:
         worker_id = str(args.get("worker_id") or "").strip()
@@ -3632,10 +3710,12 @@ class AgoraConsoleFacet(Facet):
             {"name": agora_auto_review.TOOL, "description": "Read automatic reviews and corrections with their task revisions, worker states and reasons for waiting.",
              "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
-            {"name": "hub_agora_console_worker", "description": "Start or stop a console worker. Continue an idle worker in its original session with a follow-up message. If the session is unavailable, replace starts a new worker with the prior report and hands task_id over after its heartbeat. Models without effort levels start without one. Also register external workers or reconcile an ambiguous leader session.",
+            {"name": "hub_agora_console_worker", "description": "Start, stop, continue or replace a console worker, or register an external worker. Reconcile without leader fields lists live orphan processes. Stop an orphan with stop_orphan and its exact confirm_process from the listing; the directing agent must confirm this irreversible stop. Reconcile with leader fields still confirms an ambiguous leader session.",
              "inputSchema": {"type": "object", "properties": {
-                 "action": {"type": "string", "enum": ["create", "stop", "register", "heartbeat", "finish", "reconcile", "continue", "replace"]},
+                 "action": {"type": "string", "enum": ["create", "stop", "stop_orphan", "register", "heartbeat", "finish", "reconcile", "continue", "replace"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
+                 "confirm_process": {"type": "object", "properties": {"pid": {"type": "integer"}, "started_at": {"type": "number"}},
+                                     "required": ["pid", "started_at"], "additionalProperties": False},
                  "message": {"type": "string", "maxLength": 4000, "description": "Follow-up instruction for continue or replace."},
                  "task_id": {"type": "integer", "minimum": 1, "description": "Task to transfer with replace. It must belong to the original worker."},
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},

@@ -319,9 +319,11 @@ def find_app_process(app: App, listeners: Optional[dict[int, int]] = None) -> Op
     return proc_info(pid, [port])
 
 
-def terminate_tree(pid: int, grace_s: float = STOP_GRACE_S, *, created_at: Optional[float] = None) -> dict[str, Any]:
+def terminate_tree(pid: int, grace_s: float = STOP_GRACE_S, *, created_at: Optional[float] = None,
+                   exact_identity: bool = False) -> dict[str, Any]:
     """Terminate ``pid`` and its descendants. Refuses protected pids and a
-    pid whose creation time no longer matches ``created_at`` (recycled)."""
+    pid whose creation time no longer matches ``created_at`` (recycled).
+    Use ``exact_identity`` with an OS timestamp from an explicit confirmation."""
     if pid in _protected_pids():
         return {"ok": False, "error": "refusing to stop the hub itself or one of its ancestors"}
     ps = _psutil()
@@ -335,10 +337,12 @@ def terminate_tree(pid: int, grace_s: float = STOP_GRACE_S, *, created_at: Optio
         return {"ok": False, "error": str(exc)}
     if created_at is not None:
         try:
-            if abs(root.create_time() - created_at) > 2.0:
+            tolerance = 0 if exact_identity else 2.0
+            if abs(root.create_time() - created_at) > tolerance:
                 return {"ok": False, "error": "pid was recycled since it was listed; refresh and try again"}
         except Exception:  # noqa: BLE001
-            pass
+            if exact_identity:
+                return {"ok": False, "error": "could not verify the process start time"}
     family = [root]
     try:
         family += root.children(recursive=True)

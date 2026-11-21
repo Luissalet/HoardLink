@@ -234,6 +234,18 @@ request, subject to the usual Agora rules. The API can choose another provider a
 After a Hub restart, running workers are re-identified from their stored process and runtime, and finished ones are
 reconciled from their run receipts.
 
+The console flags live worker processes that have outlasted their managed turn, including older receipts outside the
+recent list. The worker's card keeps the turn state and shows the process PID, age, assignment and latest recorded
+activity from the worker log or result file. A missing activity timestamp is shown as unknown. Use **Stop process**
+and confirm to terminate the displayed process and its children. The turn's receipt and session files are kept.
+
+For agents, `hub_agora_console_overview` adds `orphan_process` to affected workers, and
+`hub_agora_console_worker` with `action: reconcile` and no leader fields lists just those workers for the
+selected space. The directing agent can call `action: stop_orphan` with `worker_id` and
+`confirm_process: {pid, started_at}` from that listing. The Hub checks that the exact process is still an orphan
+before it signals it. Process termination is irreversible. The separate leader reconciliation still takes
+`leader_id`, `session_id` and `confirm_idle: true`.
+
 ### Space profiles, assignments and automatic review
 
 Open **Space profile** in the space's [team console](/agora). Edit the permanent rules, project context, folders

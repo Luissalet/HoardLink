@@ -44,18 +44,32 @@ const workerText=lang==='es'?{
  missingReceipt:'The receipt does not identify the original session.',replaceHint:'You can start a replacement with the previous report and hand over a task.',
 };
 const workerStatus:Record<string,string>={running:'Running',starting:'Starting',stopping:'Stopping',stopped:'Stopped',completed:'Delivery verified',incomplete:'Incomplete delivery',failed:'Interrupted',unknown:'Unknown',unavailable:'Unavailable'};
-type WorkerAction='stop'|'continue'|'replace';
+const orphanLabel=tr('Proceso huérfano activo','Live orphan process');
+const workerDate=new Intl.DateTimeFormat(tr('es-ES','en-GB'),{dateStyle:'short',timeStyle:'short'});
+function workerAge(seconds:number){
+ const [unit,count]:[string,number]=seconds>=86400?['day',seconds/86400]:seconds>=3600?['hour',seconds/3600]:
+  seconds>=60?['minute',seconds/60]:['second',seconds];
+ return new Intl.NumberFormat(tr('es-ES','en-GB'),{style:'unit',unit,unitDisplay:'long'}).format(Math.floor(count));
+}
+function orphanSummary(count:number){
+ return count===1?tr('1 proceso huérfano activo','1 live orphan process'):
+  tr(`${count} procesos huérfanos activos`,`${count} live orphan processes`);
+}
+type WorkerAction='stop'|'stop_orphan'|'continue'|'replace';
 
 function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];busy:boolean;
  control:(worker:Worker,action:WorkerAction,message?:string,taskId?:number)=>Promise<void>}){
  const [open,setOpen]=useState(false),[message,setMessage]=useState(''),[taskId,setTaskId]=useState(0);
  const [error,setError]=useState<{action:WorkerAction;text:string}>();
+ const [confirmStop,setConfirmStop]=useState<Worker['orphan_process']>();
  const form=useRef<HTMLTextAreaElement>(null);
+ const orphan=worker.orphan_process;
+ const confirming=orphan&&confirmStop?.pid===orphan.pid&&confirmStop.started_at===orphan.started_at;
  const handover=worker.replacement;
  const replacementActive=handover?.state==='waiting_for_worker'||handover?.state==='transferred';
  const owned=tasks.filter(task=>task.owner===worker.agent_id&&!['done','dropped'].includes(task.state));
- const replace=Boolean(worker.resume_issue)&&!replacementActive;
- const canWrite=worker.can_continue||(replace&&owned.length>0);
+ const replace=!orphan&&Boolean(worker.resume_issue)&&!replacementActive;
+ const canWrite=!orphan&&(worker.can_continue||(replace&&owned.length>0));
  const issue=worker.resume_issue==='missing_workspace'?workerText.missingWorkspace:worker.resume_issue==='missing_receipt'?workerText.missingReceipt:workerText.unavailable;
  const pickedTask=owned.some(task=>task.id===taskId)?taskId:owned.length===1?owned[0].id:0;
  useEffect(()=>{if(open&&canWrite)form.current?.focus();},[open,canWrite]);
@@ -64,7 +78,8 @@ function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];bu
   setError(undefined);
   try{
    await control(worker,action,message,action==='replace'?pickedTask:undefined);
-   if(action!=='stop'){setOpen(false);setMessage('');}
+   if(action==='stop_orphan')setConfirmStop(undefined);
+   if(action==='continue'||action==='replace'){setOpen(false);setMessage('');}
   }catch(err){setError({action,text:(err as Error).message});}
  }
 
@@ -73,6 +88,11 @@ function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];bu
   <p>{worker.model} · {worker.effort||workerText.defaultEffort}</p>
   <p>{lang==='es'?status(worker.state):workerStatus[worker.state]||worker.state}{worker.outcome==='unverified'&&` · ${workerText.pending}`}</p>
   <p>{worker.task}</p>
+  {orphan&&<>
+   <p role="status"><strong>{orphanLabel}</strong>{` · PID ${orphan.pid} · ${workerAge(orphan.age_seconds)}`}</p>
+   <p>{tr('Última actividad registrada','Last recorded activity')} {orphan.last_activity_at==null?
+    tr('Sin datos','Unknown'):workerDate.format(orphan.last_activity_at*1000)}</p>
+  </>}
   {worker.workspace&&<p>{workerText.workspace} {worker.workspace}</p>}
   {worker.faustus_url&&<p>Faustus {worker.faustus_url}</p>}
   {worker.tool_success_count!==undefined&&<p>{workerText.tools(worker.tool_success_count,worker.tool_failure_count||0)}</p>}
@@ -82,8 +102,16 @@ function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];bu
   {handover?.state==='transferred'&&handover.task_id&&<p role="status">{workerText.transferred(handover.task_id)}</p>}
   {handover?.state==='failed'&&handover.detail&&<p role="alert">{handover.detail}</p>}
   {error&&(!worker.resume_issue||error.action!=='continue')&&<p role="alert">{error.text}</p>}
-  {(worker.state==='running'||(worker.parent_id==='faustus'&&worker.state==='unknown'))&&
+  {!orphan&&(worker.state==='running'||(worker.parent_id==='faustus'&&worker.state==='unknown'))&&
    <button className="model-selector" disabled={busy} onClick={()=>void act('stop')}>{workerText.stop}</button>}
+  {orphan&&(confirming?<div>
+   <p>{tr('Se terminará este proceso y sus procesos hijos. Esta acción no se puede deshacer.',
+    'This process and its child processes will be terminated. This action cannot be undone.')}</p>
+   <button className="primary" disabled={busy} onClick={()=>void act('stop_orphan')}>{tr('Confirmar detención','Confirm stop')}</button>{' '}
+   <button className="icon-button" disabled={busy} onClick={()=>setConfirmStop(undefined)}>{workerText.cancel}</button>
+  </div>:<button className="model-selector" disabled={busy} onClick={()=>setConfirmStop(orphan)}>
+   {tr('Detener proceso','Stop process')}
+  </button>)}
   {canWrite&&!open&&<button className="model-selector" disabled={busy} onClick={()=>setOpen(true)}>{replace?workerText.replace:workerText.continue}</button>}
   {canWrite&&open&&<form onSubmit={event=>{event.preventDefault();void act(replace?'replace':'continue');}}>
    <label>{workerText.message}<textarea ref={form} value={message} maxLength={4000} onChange={event=>setMessage(event.target.value)}/></label>
@@ -147,7 +175,9 @@ export default function App(){
   if(busyWorker)return;
   setBusyWorker(worker.id);
   try{
-   const result=await api('/api/agora/console/worker',{action,worker_id:worker.id,message,task_id:taskId});
+   const orphan=worker.orphan_process;
+   const confirm_process=action==='stop_orphan'&&orphan?{pid:orphan.pid,started_at:orphan.started_at}:undefined;
+   const result=await api('/api/agora/console/worker',{action,worker_id:worker.id,message,task_id:taskId,confirm_process});
    if(result.state)setWorkers(previous=>previous.map(item=>item.id===worker.id?{...item,state:result.state,can_continue:false}:item));
   }finally{await refresh();setBusyWorker('');}
  }
@@ -158,7 +188,10 @@ export default function App(){
  if(live)return <LiveView onClose={()=>setLive(false)}/>;
  if(profileOpen)return <WorkerProfile onClose={()=>{setProfileOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLButtonElement>('.worker-profile-trigger')?.focus());}}/>;
  return <div className={`app ${panel?'':'panel-hidden'} ${embedded?'app--embedded':''}`}><header className="topbar">{embedded?<span className="space-context" title={spaces.find(v=>v.id===spaceId)?.title||spaceId}>Ágora · {spaces.find(v=>v.id===spaceId)?.title||spaceId}</span>:(<label className="space-selector">Ágora<select aria-label="Ágora" value={spaceId} onChange={e=>switchSpace(e.target.value)}>{spaces.length?spaces.map(v=><option key={v.id} value={v.id}>{v.title}</option>):<option value={spaceId}>{spaceId==='ecosystem'?'Ecosistema':spaceId}</option>}</select></label>)}<a className="brand" href="#"><span className="brand-mark"><Users size={23}/></span><h1>Ágora</h1></a><span className="workspace-name">Faustus & Hoards</span><button className="icon-button live-toggle" aria-label="En directo" title="En directo" onClick={()=>setLive(true)}><Activity size={17}/><span>En directo</span></button><WorkerProfileButton onClick={()=>setProfileOpen(true)}/><DecisionRegister/><span className="connection"><i className={connection==='Hub conectado'?'online':''}/>{connection}</span><a className="hub-link" href={hubUrl} target="_blank" rel="noreferrer" onClick={e=>{void openHub(e).catch(error=>setError(error.message));}}>Hoard Hub <ArrowUpRight size={14}/></a><button className="icon-button" onClick={()=>{setError('');void refresh();}} aria-label="Actualizar"><RefreshCw size={17}/></button><button className="icon-button" onClick={()=>setPanel(!panel)} aria-label={panel?'Ocultar tareas':'Mostrar tareas'}>{panel?<PanelRightClose size={18}/>:<PanelRightOpen size={18}/>}</button></header>
- <aside className="roster"><div className="section-heading"><h2>Equipo</h2><span>4 líderes</span><span className="roster-mobile-hint">Desliza para ver todos</span></div><DecisionButton count={decisions.state?.rows.length} open={decisionsOpen} toggle={()=>setDecisionsOpen(value=>!value)}/><div className="leader-list">{leaders.map(l=><section className="leader" key={l.id}><div className="leader-heading"><span className={`avatar ${l.id}`} style={{'--c':l.color||defaultColors[l.id]} as React.CSSProperties}>{l.name.slice(0,1)}</span><div><h3>{l.name}</h3>{(!l.live_state||status(l.state)!==liveText(l.live_state))&&<span title={l.detail} className={`state ${l.state}`}><i/>{status(l.state)}</span>}</div><label className="swatch" title={`Color de ${l.name} en el chat`} style={{'--c':l.color||defaultColors[l.id]} as React.CSSProperties}><input type="color" aria-label={`Color de ${l.name} en el chat`} value={l.color||defaultColors[l.id]} onChange={e=>void pickColor(l,e.target.value)}/></label><button className="icon-button add-helper" aria-label={`Crear ayudante de ${l.name}`} onClick={()=>configure(l,true)}><Plus size={16}/></button></div><Live leader={l}/><button className="model-selector" onClick={()=>configure(l)} aria-label={`Configurar modelo de ${l.name}`}><span>{l.model||'Consultar modelos'}{l.effort&&<small>{l.effort}</small>}</span><ChevronDown size={14}/></button>{workers.some(w=>w.parent_id===l.id)&&<button className="worker-summary-control" onClick={()=>setWorkerLeader(l)} aria-label={workerText.view(l.name)}>{workerText.summary(workers.filter(w=>w.parent_id===l.id).length)}</button>}<Quota provider={usage.find(p=>p.provider_id===l.id)}/>{l.id==='codex'&&codexQuotaFailed&&<CodexQuotaNotice/>}{workers.filter(w=>w.parent_id===l.id).map(w=><div className="worker" key={w.id}><span className="branch"/><div><strong>{w.id}</strong><span>{status(w.state)} · {w.model}</span><p>{w.task}</p>{w.result&&<details><summary>Resultado</summary><p>{w.result}</p></details>}</div></div>)}</section>)}</div><footer className="roster-footer"><span className="local-dot"/>Trabajo local<span>Los ayudantes comparten la cuota de su proveedor.</span></footer></aside>
+ <aside className="roster"><div className="section-heading"><h2>Equipo</h2><span>4 líderes</span><span className="roster-mobile-hint">Desliza para ver todos</span></div><DecisionButton count={decisions.state?.rows.length} open={decisionsOpen} toggle={()=>setDecisionsOpen(value=>!value)}/><div className="leader-list">{leaders.map(l=>{
+ const children=workers.filter(w=>w.parent_id===l.id);
+ const orphans=children.filter(w=>w.orphan_process).length;
+ return <section className="leader" key={l.id}><div className="leader-heading"><span className={`avatar ${l.id}`} style={{'--c':l.color||defaultColors[l.id]} as React.CSSProperties}>{l.name.slice(0,1)}</span><div><h3>{l.name}</h3>{(!l.live_state||status(l.state)!==liveText(l.live_state))&&<span title={l.detail} className={`state ${l.state}`}><i/>{status(l.state)}</span>}</div><label className="swatch" title={`Color de ${l.name} en el chat`} style={{'--c':l.color||defaultColors[l.id]} as React.CSSProperties}><input type="color" aria-label={`Color de ${l.name} en el chat`} value={l.color||defaultColors[l.id]} onChange={e=>void pickColor(l,e.target.value)}/></label><button className="icon-button add-helper" aria-label={`Crear ayudante de ${l.name}`} onClick={()=>configure(l,true)}><Plus size={16}/></button></div><Live leader={l}/><button className="model-selector" onClick={()=>configure(l)} aria-label={`Configurar modelo de ${l.name}`}><span>{l.model||'Consultar modelos'}{l.effort&&<small>{l.effort}</small>}</span><ChevronDown size={14}/></button>{children.length>0&&<button className="worker-summary-control" onClick={()=>setWorkerLeader(l)} aria-label={workerText.view(l.name)+(orphans?' · '+orphanSummary(orphans):'')}>{workerText.summary(children.length)}{orphans>0&&<> · <strong>{orphanSummary(orphans)}</strong></>}</button>}<Quota provider={usage.find(p=>p.provider_id===l.id)}/>{l.id==='codex'&&codexQuotaFailed&&<CodexQuotaNotice/>}{children.map(w=><div className="worker" key={w.id}><span className="branch"/><div><strong>{w.id}</strong><span>{w.orphan_process?orphanLabel:status(w.state)} · {w.model}</span><p>{w.task}</p>{w.result&&<details><summary>Resultado</summary><p>{w.result}</p></details>}</div></div>)}</section>;})}</div><footer className="roster-footer"><span className="local-dot"/>Trabajo local<span>Los ayudantes comparten la cuota de su proveedor.</span></footer></aside>
  <main className="conversation"><div className="conversation-head"><div><h2>{tr('Trabajo compartido', 'Shared work')}</h2></div><div className="participants" aria-label="Claude, Codex, Cursor y Faustus">{initial.map(l=><span key={l.id} className={`mini-avatar ${l.id}`} title={l.name}>{l.name[0]}</span>)}</div></div><ProductionDecisions data={decisions} open={decisionsOpen}/>{error&&<div className="error" role="alert"><span>{error}</span><button className="icon-button" onClick={()=>setError('')} aria-label={tr('Cerrar aviso', 'Dismiss notice')}><X size={15}/></button></div>}<div className="messages" role="log" aria-label={tr('Mensajes de equipo', 'Team messages')} aria-live="polite">{messages.length===0?<div className="empty"><MessageSquare size={30}/><h3>{tr('Una conversación para todo el equipo', 'Team conversation')}</h3><p>{tr('El mensaje se guarda en el Ágora y llega a los responsables que elijas.', 'The message is saved in the Agora and sent to the leaders you select.')}</p></div>:messages.map(m=>person&&m.agent===person.id?<article className="message human" aria-label={person.name} key={m.id}><div className="message-content"><div className="message-body bubble">{m.body}</div><div className="message-meta"><time>{time(m.created||m.ts)}</time>{m.kind&&m.kind!=='comment'&&<span>{m.kind}</span>}</div></div></article>:<article className={`message agent ${providerOf(m.agent)?'provider':''}`} key={m.id} style={colorOf(m.agent)?{'--c':colorOf(m.agent)} as React.CSSProperties:undefined}><span className={`message-avatar ${m.agent?.split('-')[0]||''}`}>{(m.agent||m.author||'?')[0].toUpperCase()}</span><div className="message-content"><div className="message-meta"><strong>{m.agent||m.author}</strong><time>{time(m.created||m.ts)}</time>{m.kind&&m.kind!=='comment'&&<span>{m.kind}</span>}</div><div className="message-body">{m.body}</div></div></article>)}<div ref={messageEnd}/></div><div className="composer-wrap"><div className="composer"><label className="recipient">{tr('Para', 'To')} <select aria-label={tr('Destinatarios del mensaje', 'Message recipients')} value={recipient} onChange={e=>setRecipient(e.target.value)}><option value="all">{tr('Todo el equipo', 'Entire team')}</option>{initial.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label><textarea maxLength={20000} aria-label={tr('Mensaje al equipo', 'Message to the team')} placeholder={tr('¿Qué vamos a hacer?', 'What are we working on?')} value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();void send();}}}/><div className="composer-actions"><span>{tr('Ctrl + Intro para enviar', 'Ctrl + Enter to send')}</span><button className="primary" disabled={sending||!draft.trim()} onClick={send}>{sending ? tr('Enviando…', 'Sending…') : tr('Enviar', 'Send')}<Send size={15}/></button></div></div><p className="composer-note">{tr('La entrega y la ejecución se muestran por separado. Un agente sin conexión conserva su encargo.', 'Delivery and execution are shown separately. Agents keep their assignments while offline.')}</p></div></main>
  {panel&&<aside className="operations"><div className="section-heading"><h2>{tr('Trabajo', 'Work')}</h2><a href={hubUrl} target="_blank" rel="noreferrer" onClick={e=>{void openHub(e).catch(error=>setError(error.message));}} aria-label="Abrir todas las operaciones"><ArrowUpRight size={16}/></a></div><div className="task-tabs"><button className={tab==='pending'?'active':''} onClick={()=>setTab('pending')}>Pendiente <span>{pending.length}</span></button><button className={tab==='done'?'active':''} onClick={()=>setTab('done')}>Finalizado</button></div><label className="search"><Search size={15}/><input aria-label="Buscar tareas" placeholder="Buscar tarea, agente, proyecto…" value={filter} onChange={e=>setFilter(e.target.value)}/></label><div className="task-list">{(tab==='pending'?pending:tasks.filter(t=>t.state==='done')).map(t=><button className="task-row" key={t.id} onClick={()=>openTask(t)}><span className="task-number">#{t.id}{['review','approved'].includes(t.state)?<GitPullRequest size={13}/>:t.state==='done'?<CheckCircle2 size={13}/>:<Clock3 size={13}/>}</span><strong>{t.title}</strong><span className="task-meta">{t.repo||'Equipo'}<span>{status(t.state||t.status||'')}</span></span><small>{t.owner||'Sin asignar'}</small>{t.waiting_on?.length?<small className="task-deps">Espera a {t.waiting_on.map(i=>'#'+i).join(', ')}</small>:null}</button>)}</div><div className="operations-footer"><span><CheckCircle2 size={14}/>{counts.done??'—'} hechas</span><a href={hubUrl} target="_blank" rel="noreferrer" onClick={e=>{void openHub(e).catch(error=>setError(error.message));}}>Hilos, decisiones y bloqueos <ArrowUpRight size={13}/></a></div></aside>}
  {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" onClick={e=>e.stopPropagation()}><button className="icon-button dialog-close" onClick={()=>setSelected(null)} aria-label="Cerrar"><X size={19}/></button><span className="dialog-meta">{selected.name}</span><h2 id="dialog-title">{helper?'Crear ayudante':'Modelo del líder'}</h2><p>{helper?'El ayudante tiene su propia sesión. El modelo del líder se mantiene.':'Se aplicará al siguiente turno de este líder.'}</p><label>Modelo<select aria-label="Modelo" value={model} onChange={e=>{setModel(e.target.value);setEffort('');}}>{selected.catalog?.length?selected.catalog.map(m=><option key={m.id} value={m.id}>{m.name||m.id}</option>):<option value="">No hay catálogo disponible</option>}</select></label><label>Razonamiento<select aria-label="Razonamiento" value={effort} onChange={e=>setEffort(e.target.value)}><option value="">Predeterminado del proveedor</option>{selected.catalog?.find(m=>m.id===model)?.efforts?.map(v=><option value={v} key={v}>{v}</option>)}</select></label>{helper&&<WorkerAssignment templates={templates} mode={template} setMode={setTemplate} task={assignment} setTask={setAssignment}/>}{selected.detail&&<p className="dialog-note">{selected.detail}</p>}<button className="primary" disabled={busy||!model||(helper&&!assignment.trim())} onClick={save}>{busy?'Guardando…':helper?'Crear ayudante':'Guardar modelo'}</button></section></div>}
