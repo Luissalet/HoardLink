@@ -84,6 +84,7 @@ def combine(results):
     failures = {(f"{root}/{key}" if len(results) > 1 else key): info
                 for root, row in results.items() for key, info in row["failures"].items()}
     result = {"counts": counts, "failures": failures, "roots": results}
+    result["elapsed_seconds"] = round(sum(row.get("elapsed_seconds", 0) for row in results.values()), 3)
     errors = [f"{root}: {row['runner_error']}" for root, row in results.items() if row.get("runner_error")]
     if errors:
         result["runner_error"] = "\n".join(errors)
@@ -137,7 +138,9 @@ def report_result(exit_code, report, output, *, paths=None, empty_ok=False):
             # Pytest's message contains the assertion and exception. Tracebacks include
             # checkout paths and line numbers, which can differ between the two trees.
             details = _stable_message(failure.get("message", ""), paths or {})
-            failures[key] = {"signature": hashlib.sha256(details.encode()).hexdigest(), "file": case.get("file"),
+            file = case.get("file")
+            failures[key] = {"signature": hashlib.sha256(details.encode()).hexdigest(),
+                             "file": file.replace("\\", "/") if file else None,
                              "message": details[:500]}
         elif case.find("skipped") is not None:
             counts["skipped"] += 1

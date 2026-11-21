@@ -1,8 +1,8 @@
 # Integration station
 
 The Hub's integration station takes a `code_branch` and produces `integrated_code`. It compares focused tests on
-the main checkout's committed tree and on the exact proposed merge, runs the original case after merging, and
-leaves a receipt in System → Integrations. The Agora task stays approved until the original case passes.
+the main checkout's committed tree and on the exact proposed merge. The Agora task stays approved until the
+post-merge check passes. The results and pending reloads appear in System → Integrations.
 
 ## Prepare a delivery
 
@@ -20,14 +20,16 @@ Live-Test: tests/hub/test_integration.py::test_integrate_and_undo_exact_approved
 
 Agora returns incomplete integration submissions to the worker before publishing a review request. The station
 reads `Test-Paths` from the submitted revision, including after handover. The line accepts pytest files
-separated by commas or whitespace following each `.py` path. Use commas in new submissions. When a historic
-submission has no line, the integrator can pass a `test_paths`
-array to plan or run. Those files must be tracked in the delivered commit and may be existing tests.
+separated by commas or whitespace following each `.py` path. Use commas in new submissions. The integrator can
+add existing tests with `test_paths` or `test_paths_by_repo`. Each file must be tracked in the delivered commit.
+Historic deliveries without declarations use the affected tests if the station can infer them.
 For a multirepository task, prefix each path with the registered repository name, for example
 `Test-Paths: First Repo/tests/test_first.py, Second Repo/tests/test_second.py`. Existing unqualified paths
-are matched to branch contents. `test_paths_by_repo` supplies paths for repositories without declared tests.
+are matched to branch contents. A path absent from every delivery branch is reported by name.
 Use one `Live-Test:` line for each repository's focused case. Prefix each line's path with the registered repository
-name in multirepository deliveries. Plans report `missing_live_tests` for repositories still awaiting a focused case.
+name in multirepository deliveries. Plans report `missing_live_tests` for repositories without an explicit case
+and `post_merge_checks` for the planned test selection. When there is no explicit case, the station repeats
+the selected contract on the merged tree and checks for failures relative to the tested candidate.
 
 ## Tools
 
@@ -41,14 +43,14 @@ each repository. This also works for a single repository. Use `spark_repos` to s
 | Tool | Operation |
 |---|---|
 | `hub_integration_plan` | Resolve the submitted head and list affected test files and repositories missing a live case. |
-| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora. Use the submitted `Live-Test:` or pass `live_test` or `live_tests` for an explicit override. |
+| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora after the post-merge check. The submitted `Live-Test:`, `live_test` or `live_tests` selects a narrower check. |
 | `hub_integration_status` | Read a receipt and its current state by `id`. |
 | `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo`, merge `commit` and `reason`. A correction returns the undo call. |
 | `hub_integration_undo` | Cancel a queued or testing run. For a completed merge, restore the previous checkout, baseline and task state while the recorded head and revision still match. |
 
 The owner or a higher-ranked agent can integrate the exact approved revision. The assigned reviewer can plan and
-compare a delivery without merging it. The integrator holds the repository's Agora merge lock during the checkout
-change and finish. A finish records the exact approved revision and merged commit in the original task thread and
+compare a delivery without merging it. Integrations wait for the repository's Agora merge lock and resolve the
+mainline, selections and test budget again once they hold it. A finish records the exact approved revision and merged commit in the original task thread and
 releases its locks. A multirepository run keeps the task open until all repositories pass. Its common receipt
 contains each comparison, live case, merge hash and cleanup. On a regression, the station attempts to restore
 any repositories it already moved. The receipt's undo restores completed repositories in reverse order.
@@ -60,7 +62,9 @@ before checking the original case. Running apps that open their own desktop wind
 window are left running. The receipt records `desktop_in_use` and System → Integrations shows the deferral.
 `app_reload` also records readiness and other deferral reasons, including app leases and work in progress.
 A reload failure triggers checkout rollback. Undo applies the same rules and records `undo_app_reload`.
-Apps stopped before integration retain their on-demand startup behavior.
+Apps stopped before integration retain their on-demand startup behavior. The receipt's `reload_pending` lists
+deferred app reloads, a Hub restart after workers have stopped, desktop windows that need reopening and Studio
+deployments to verify on the Spark. It describes the state at completion of the run.
 
 When browser source or its build inputs change, the station uses `npm ci` and `npm run build` on the exact
 merge candidate before moving the registered checkout. It publishes the console under `apps/agora/dist` and
@@ -123,7 +127,9 @@ one are grouped by their top-level directory. Groups larger than 40 files run in
 imports. Matching test identities and assertion signatures within a group are known failures. The signature
 normalizes Python object addresses and the checkout, pytest and isolated Hub data paths for that run.
 A changed signature is a new failure. Each repository and runner retains its own baseline
-after integration. A receipt carries group and aggregate results, the baseline commit and the original case result.
+after integration. Files with known failures are included in later comparisons while tracked. The new baseline
+records failures observed on the new mainline, so repaired or removed failures drop out. The receipt includes
+the elapsed seconds per group, aggregate results, the baseline commit and the post-merge result.
 
 The default lane excludes `inference`, `live_model` and `gpu` markers and any inference file in the map.
 Pass `inference: true` to run that lane explicitly after arranging the model/GPU resources required by the tests.
@@ -141,7 +147,8 @@ proposed diff via SSH, and removes that worktree when finished. Local and Spark 
 
 The station first rehearses the merge in an isolated worktree. When the target checkout has overlapping edits, it
 rehearses the staged and unstaged layers separately and journals the patches before moving the target branch.
-An overlap it cannot replay leaves the checkout in place. Changes outside the overlap stay in the working checkout.
+An overlap it cannot replay leaves the checkout in place and identifies the conflicting paths. Changes outside
+the overlap stay in the working checkout.
 The original case runs in a fresh checkout after the move. A failed case returns the target to the earlier commit.
 
 Every integration creates a merge commit, including when the delivery descends directly from main. Its subject

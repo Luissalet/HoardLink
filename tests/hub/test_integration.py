@@ -13,11 +13,16 @@ from hoard_link.hub import integration_git as git
 from hoard_link.hub.agora import Agora, AgoraError
 from hoard_link.hub.agora_ranks import set_rank
 from hoard_link.hub.integration import INTEGRATION_TOKEN, IntegrationFacet, delivery_contract, submission_tests
-from hoard_link.hub.integration_runtime import IntegrationRuntime
+from hoard_link.hub.integration_runtime import IntegrationRuntime, pending_reloads
 from hoard_link.hub.production import ProductionFacet
 
 
 LINES = "\n".join(f"line {i}" for i in range(60)) + "\n"
+
+
+def wait_for_runs(facet):
+    with facet.queue_changed:
+        facet.queue_changed.wait_for(lambda: not facet.active)
 
 
 def write(repo, name, text):
@@ -144,6 +149,16 @@ def test_ignored_untracked_file_in_the_way_is_never_replaced(delivery, tmp_path)
     assert git.git_text(repo, "rev-parse", "HEAD") == base
 
 
+def test_unrelated_untracked_sibling_does_not_block_new_file(delivery, tmp_path):
+    repo, base, _, branch = delivery
+    write(repo, "new/private.tmp", "owner data\n")
+    write(branch, "new/feature.txt", "delivery\n")
+    head = commit(branch, "Add file", "new/feature.txt")
+    git.move_checkout(repo, base, head, tmp_path, lambda *_: None)
+    assert (repo / "new/private.tmp").read_text() == "owner data\n"
+    assert (repo / "new/feature.txt").read_text() == "delivery\n"
+
+
 def test_delivery_contract_requires_a_named_tip_and_tracked_test(delivery):
     repo, _, head, _ = delivery
     path = "tests/test_feature.py"
@@ -189,6 +204,20 @@ def test_runtime_keeps_the_revision_loaded_at_startup(delivery):
     merge = git.merge_candidate(repo, head)
     assert running.status() == {"loaded_commit": base, "main_commit": merge, "stale": True}
     assert IntegrationRuntime(repo).status()["stale"] is False
+
+
+def test_receipt_lists_reload_actions(delivery):
+    repo, base, _, branch = delivery
+    files = ("hoard_link/hub/server.py", "shell/main.cjs")
+    for name in files:
+        write(branch, name, "changed\n")
+    head = commit(branch, "Update running surfaces", *files)
+    apps = [{"app": "window", "state": "deferred"}, {"app": "service", "state": "reloaded"}]
+    assert [row["action"] for row in pending_reloads(repo, base, head,
+        {"destination": "apps/agora/dist", "native": {"entry": "console.exe"}}, apps)] == [
+            "reload_app", "restart_hub_when_idle", "reopen_hub_window", "reopen_native_console"]
+    assert pending_reloads(repo, base, head, {"destination": "static/studio", "sha256": "build"}, [])[-1] == {
+        "target": "studio", "action": "verify_spark_deployment", "sha256": "build"}
 
 
 def test_test_environment_excludes_parent_hub_settings(monkeypatch):
@@ -435,9 +464,7 @@ def test_integrate_and_undo_exact_approved_delivery(delivery, tmp_path, monkeypa
                            "expected_submission_revision": 1, "body": "Reviewed exact branch."})
         result = facet.run(args)
         run = result["receipt"]["id"]
-        deadline = time.monotonic() + 35
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert len(receipt["comparison"]["known"]) == 1
         assert receipt["comparison"]["new"] == {}
@@ -489,8 +516,10 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
 
     def checks_with_pause(*args, **kwargs):
         if not first_started.is_set():
-            first_started.set()
-            assert release.wait(10)
+            with facet.queue_changed:
+                first_started.set()
+                facet.queue_changed.notify_all()
+            release.wait()
         return original(*args, **kwargs)
 
     monkeypatch.setattr(facet, "_run_checks", checks_with_pause)
@@ -511,21 +540,39 @@ def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tm
         assert facet.inspect(next_args)["missing_live_tests"] == [repo.name]
         next_args["live_tests"] = {repo.name: case}
         assert facet.inspect(next_args)["plan"]["live_test"] == case
+        resource = f"merge:{repo.name}"
+        assert agora.lock({"agent": "manual", "resources": [resource]})["ok"]
         first_id = facet.run({**first, "live_test": case})["receipt"]["id"]
-        assert first_started.wait(10)
+        while facet.active and facet.status({"id": first_id})["receipt"]["state"] == "queued":
+            time.sleep(0.05)
+        assert facet.status({"id": first_id})["receipt"]["state"] == "waiting_for_merge_lock"
+        extra = "tests/test_still_known.py"
+        write(repo, extra, "def test_known_on_main(): assert False\n")
+        advanced = commit(repo, "Advance main under manual lock", extra)
+        write_json_atomic(facet._baseline(repo), {"local": {"commit": advanced, "failures": {
+            "previous-test": {"file": extra.replace("/", "\\"), "signature": "old"},
+            "missing-test": {"file": "deleted.py"}
+        }}})
+        agora.unlock({"agent": "manual", "resources": [resource]})
+        with facet.queue_changed:
+            facet.queue_changed.wait_for(lambda: first_started.is_set() or not facet.active)
+        assert first_started.is_set()
         second_id = facet.run(next_args)["receipt"]["id"]
         assert facet.status({"id": second_id})["receipt"]["state"] == "queued"
         release.set()
-        deadline = time.monotonic() + 45
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         one, two = (facet.status({"id": run})["receipt"] for run in (first_id, second_id))
         assert one["state"] == "integrated", one
         assert two["state"] == "integrated", two
+        assert one["plan"]["base"] == advanced
+        assert one["plan"]["baseline_files"] == [extra]
+        assert {row["file"] for row in one["baseline"]["failures"].values()} == {extra, "tests/test_feature.py"}
         assert two["plan"]["base"] == one["merge_commit"]
+        assert two["plan"]["baseline_files"] == ["tests/test_feature.py", extra]
         assert two["app_reload"][0]["state"] == "reloaded"
         assert [(row["app"], row["state"], row["reason_code"]) for row in two["app_reload"][1:]] == [
             (name, "deferred", "desktop_in_use") for name in ("desktop", "browser")]
+        assert [row["target"] for row in two["reload_pending"]] == ["desktop", "browser"]
         assert reloaded == [one["merge_commit"], two["merge_commit"]]
         undo = facet.undo({"id": second_id, "agent": "owner"})["receipt"]
         assert undo["undo_app_reload"][0]["state"] == "reloaded"
@@ -562,8 +609,10 @@ def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, 
         args = {"agent": "owner", "task_id": task["id"]}
         agora.task_claim(args)
         paths = f"tests/test_feature.py, tests/test_station.py, {file}"
-        summary = (f"Test-Paths: {paths}\nLive-Test: {first.name}/tests/test_feature.py::test_new\n"
-                   f"Live-Test: {second.name}/{file}::test_other")
+        summary = f"Test-Paths: {paths}\nLive-Test: {first.name}/tests/test_feature.py::test_new"
+        with pytest.raises(AgoraError, match="tests/test_missing.py"):
+            agora.task_submit({**args, "branch": "delivery", "commits": [head[:12], second_head],
+                               "summary": summary + "\nTest-Paths: tests/test_missing.py"})
         agora.task_submit({**args, "branch": "delivery", "commits": [head[:12], second_head], "summary": summary})
         agora.task_review({**args, "agent": "reviewer", "verdict": "approve",
                            "expected_submission_revision": 1, "body": "Reviewed both branches."})
@@ -571,16 +620,15 @@ def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, 
         selected = facet.inspect({**args, "repo": second.name})
         assert selected["plan"]["commits"] == [second_head]
         assert set(selected["repositories"]) == set(repos)
+        assert selected["missing_live_tests"] == [second.name]
+        assert selected["post_merge_checks"][second.name] == [file]
         plans = facet.inspect(args)["plans"]
         assert [p["head"] for p in plans] == [head, second_head]
         assert plans[0]["test_paths"] == ["tests/test_feature.py", "tests/test_station.py"]
         assert "tests/test_station.py" in plans[0]["tests"]["contract"]
-        assert [p["live_test"] for p in plans] == ["tests/test_feature.py::test_new", file + "::test_other"]
-        assert facet.inspect(args)["missing_live_tests"] == []
+        assert [p["live_test"] for p in plans] == ["tests/test_feature.py::test_new", None]
         run = facet.run({**args, "merge": True})["receipt"]["id"]
-        deadline = time.monotonic() + 35
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert len(receipt["repositories"]) == 2
         if regression:
@@ -588,6 +636,7 @@ def test_multi_repository_delivery_has_one_receipt_and_undo(delivery, tmp_path, 
             assert receipt["repositories"][0]["state"] == "rolled_back"
         else:
             assert receipt["state"] == "integrated", receipt
+            assert receipt["repositories"][1]["live"]["counts"]["passed"] == 2
             merges = [row["merge_commit"] for row in receipt["repositories"]]
             assert git.git_text(first, "rev-list", "--parents", "-n", "1", "HEAD").split() == [merges[0], base, head]
             assert git.git_text(second, "rev-list", "--parents", "-n", "1", "HEAD").split() == [
@@ -633,13 +682,9 @@ def test_integration_infers_repo_batches_tests_and_reports_retained_delivery(del
         assert plan["repo_ref"] == repo.name and plan["base"] == main
         assert len(plan["tests"]["contract"]) == 42
         assert facet.inspect({**args, "revision": 1})["missing_live_tests"] == [repo.name]
-        with pytest.raises(git.IntegrationError, match="for: " + repo.name):
-            facet.run({**args, "revision": 1, "merge": True})
         run = facet.run({**args, "revision": 1, "merge": True,
                           "live_test": f"{paths[-1]}::test_delivery"})["receipt"]["id"]
-        deadline = time.monotonic() + 55
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert receipt["state"] == "integrated", receipt
         assert receipt["comparison"]["candidate"]["counts"]["passed"] == 42
@@ -705,21 +750,17 @@ def test_transferred_delivery_compares_independent_conftests(delivery, tmp_path,
         agora.handover({"agent": "author", "from_agent": "author", "to_agent": "integrator",
                         "tasks": [task["id"]], "reason": "Hand over the approved revision."})
         args.update(agent="integrator", revision=2)
-        if not declared:
-            with pytest.raises(git.IntegrationError, match="provide tracked pytest"):
-                facet.inspect(args)
-            with pytest.raises(git.IntegrationError, match="Invalid pytest path"):
-                facet.inspect({**args, "test_paths": ["../test_api.py"]})
+        assert facet.inspect(args)["plan"]["tests"]["contract"]
+        with pytest.raises(git.IntegrationError, match="Invalid pytest path"):
+            facet.inspect({**args, "test_paths": ["../test_api.py"]})
         plan = facet.inspect({**args, "test_paths": ["tests/test_api.py"]})["plan"]
         assert plan["contract_timeout_seconds"] == 600
-        assert plan["test_paths"] == [test_path if declared else "tests/test_api.py"]
-        assert plan["test_paths_source"] == ("submission" if declared else "integrator")
+        assert plan["test_paths"] == ([test_path, "tests/test_api.py"] if declared else ["tests/test_api.py"])
+        assert plan["test_paths_source"] == ("submission_and_integrator" if declared else "integrator")
         assert plan["tests"]["contract"] == [test_path, "tests/test_api.py", "tests/test_feature.py"]
         run = facet.run({**args, "test_paths": ["tests/test_api.py"], "merge": True,
                          "live_test": f"{test_path}::test_api"})["receipt"]["id"]
-        deadline = time.monotonic() + 35
-        while facet.active and time.monotonic() < deadline:
-            time.sleep(0.05)
+        wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert receipt["state"] == "integrated", receipt
         assert receipt["comparison"]["roots"]["editing_tests"]["candidate"]["counts"]["passed"] == 1
