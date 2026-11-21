@@ -655,8 +655,11 @@ class IntegrationFacet(Facet):
                     self._finish(agora, args, repo, task, receipt, update)
                 update("integrated")
         except Exception as exc:
-            receipt["error"] = str(exc)
             moved = any(event["state"] == "moved_checkout" for event in receipt["events"])
+            if not moved and cancelled():
+                update("cancelled")
+                return
+            receipt["error"] = str(exc)
             update("needs_attention" if moved else "failed")
 
     def _reload_apps(self, agora, repo, agent, receipt, field):

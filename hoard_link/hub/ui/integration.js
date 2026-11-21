@@ -102,11 +102,13 @@
                                 "Verify the Studio deployment on the Spark."],
     };
     for (const item of receipt.reload_pending ?? []) {
-      if (item.action === "reload_app" &&
-          reloads.some(app => app.app === item.target && app.reason_code === "desktop_in_use")) continue;
-      content.push(el("p", "", item.action === "reload_app"
-        ? t(ctx, `Recarga pendiente de ${item.target}.`, `Reload pending for ${item.target}.`)
-        : t(ctx, ...actions[item.action])));
+      if (item.action === "reload_app") {
+        if (!reloads.some(app => app.app === item.target && app.reason_code === "desktop_in_use")) {
+          content.push(el("p", "", t(ctx, `Recarga pendiente de ${item.target}.`, `Reload pending for ${item.target}.`)));
+        }
+      } else if (actions[item.action]) {
+        content.push(el("p", "", t(ctx, ...actions[item.action])));
+      }
     }
     if (receipt.merge_commit) {
       const commit = el("p", "", t(ctx, "Commit de fusión ", "Merge commit "));
