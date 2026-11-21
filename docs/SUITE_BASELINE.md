@@ -67,7 +67,9 @@ for that repository. The registry lock prevents concurrent runs using that
 file. If a run is killed, check the PID in the adjacent `.lock` file and
 remove the lock only after the process and its tests have exited.
 
-Counts come from JUnit test cases. Suite and group elements are containers.
+Counts come from JUnit test cases. For pytest, when the failure, error and
+skip totals agree with the case records, the runner also counts successful
+subtests that pytest included only in its suite total.
 If a case has multiple outcomes, a setup or teardown error takes precedence
 and each failure or error diagnostic is retained. A complete clean run exits
 with status 0. A measured failure, startup error, missing report or

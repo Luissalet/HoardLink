@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from scripts.suite_baseline import junit
+
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "suite_baseline.py"
 
@@ -42,6 +44,21 @@ def pytest_batch(name, selector):
             "--junitxml={report}", "--basetemp={artifacts}/tmp", "-k", selector,
         ],
     }
+
+
+def test_pytest_junit_includes_passed_subtests_in_its_suite_total(tmp_path):
+    report = tmp_path / "junit.xml"
+    report.write_text(
+        '<testsuites name="pytest tests"><testsuite tests="5" failures="1" errors="0" skipped="1">'
+        '<testcase name="with_subtests"/><testcase name="failed"><failure/></testcase>'
+        '<testcase name="skipped"><skipped/></testcase></testsuite></testsuites>',
+        encoding="utf-8",
+    )
+
+    counts, issues = junit(report)
+
+    assert counts == {"tests": 5, "passed": 3, "failed": 1, "errors": 0, "skipped": 1}
+    assert [issue["case"] for issue in issues] == ["failed"]
 
 
 def test_reports_exact_command_results_and_revision_across_batches(tmp_path):

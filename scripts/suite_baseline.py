@@ -58,6 +58,18 @@ def junit(path):
         counts[outcome] += 1
     if not counts["tests"]:
         raise ValueError("JUnit report contains no test cases")
+    if root.get("name") == "pytest tests":
+        suite = root.find("testsuite")
+        if suite is not None and all(
+            int(suite.get(attribute, "-1")) == counts[outcome]
+            for attribute, outcome in (("failures", "failed"), ("errors", "errors"), ("skipped", "skipped"))
+        ):
+            # Pytest can include successful unittest subtests in its totals
+            # without writing separate testcase elements for them.
+            extra_passes = int(suite.get("tests", "0")) - counts["tests"]
+            if extra_passes > 0:
+                counts["tests"] += extra_passes
+                counts["passed"] += extra_passes
     return counts, issues
 
 
