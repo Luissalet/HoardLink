@@ -66,6 +66,8 @@
     locks: { es: "Bloqueos", en: "Locks" }, no_locks: { es: "Nada bloqueado.", en: "Nothing locked." },
     none: { es: "Nada.", en: "Nothing." },
     new_task: { es: "Nueva tarea", en: "New task" }, new_thread: { es: "Nueva conversación", en: "New thread" },
+    manage_space: { es: "Gestionar espacio", en: "Manage space" },
+    classic_project: { es: "Vista clásica del proyecto", en: "Classic project view" },
     title: { es: "Título", en: "Title" }, body: { es: "Detalle", en: "Details" }, repo: { es: "Repositorio", en: "Repository" },
     paths: { es: "Rutas (separadas por comas)", en: "Paths (comma separated)" }, prio: { es: "Prioridad", en: "Priority" },
     mention: { es: "Para (ids de agente, separados por comas)", en: "For (agent ids, comma separated)" }, create: { es: "Crear", en: "Create" },
@@ -857,7 +859,7 @@
         b.disabled = stale; voteButtons.push(b); row.appendChild(b);
       }
     }
-    ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send.click(); });
+    ta.onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send.click(); };
     wrap.appendChild(ta); wrap.appendChild(row);
     return wrap;
   }
@@ -903,7 +905,7 @@
       if (!next?.ok || next.next_after_id <= page.next_after_id) break;
       timelinePages.push(next);
     }
-    const sig = JSON.stringify([(r.messages || []).length, task && task.status, task && task.submission_revision, task && task.commits, thread.status,
+    const sig = JSON.stringify([H.ctx.lang(), (r.messages || []).length, task && task.status, task && task.submission_revision, task && task.commits, thread.status,
       cp && cp.revision, task && task.activity && task.activity.state,
       r.timeline && r.timeline.last_event_id,
       lockStatus && [lockStatus.owner, lockStatus.missing, lockStatus.conflicts, lockStatus.owner_changed]]);
@@ -1178,7 +1180,7 @@
       const forms = el("div"); formsBox = forms;
       const nt = el("button", "small", "+ " + t("new_task")); nt.onclick = () => taskForm(forms);
       const nth = el("button", "small", "+ " + t("new_thread")); nth.onclick = () => threadForm(forms);
-      const full = el("a", "small", L({ es: "Vista clásica del proyecto", en: "Classic project view" }));
+      const full = el("a", "small", t("classic_project"));
       full.dataset.agSpaceLink = '';
       full.href = "/agora/?space_id=" + encodeURIComponent(activeSpace); full.target = "_blank"; full.rel = "noopener";
       full.onclick = () => { full.href = "/agora/?space_id=" + encodeURIComponent(activeSpace); };
@@ -1197,7 +1199,8 @@
       const ns = el('button', 'small', t('new_space')); ns.onclick = () => spaceForm();
       const renameSpace = el('button', 'small ghost', t('rename_space')); renameSpace.onclick = () => spaceForm(true);
       const management = el('details', 'ag-space-actions');
-      management.appendChild(el('summary', '', L({es:'Gestionar espacio', en:'Manage space'})));
+      const managementLabel = el('summary', '', t('manage_space'));
+      management.appendChild(managementLabel);
       const managementActions = el('div', 'ag-row');
       managementActions.append(ns, renameSpace, full); management.appendChild(managementActions);
       spacesBar.append(spaceLabel, management); box.appendChild(spacesBar);
@@ -1235,6 +1238,20 @@
       splitBox.appendChild(mainBox);
       detailBox = el("div", "ag-detail"); detailBox.hidden = true; splitBox.appendChild(detailBox);
       box.appendChild(splitBox);
+      H.ctx.bus.addEventListener('lang', () => {
+        nt.textContent = "+ " + t("new_task");
+        nth.textContent = "+ " + t("new_thread");
+        managementLabel.textContent = t("manage_space");
+        ns.textContent = t("new_space");
+        renameSpace.textContent = t("rename_space");
+        full.textContent = t("classic_project");
+        spaceLabel.firstChild.nodeValue = t("space");
+        spacePicker.setAttribute("aria-label", t("space"));
+        search.placeholder = t("filter_ph");
+        search.setAttribute("aria-label", search.placeholder);
+        kindSel.setAttribute("aria-label", t("kind_all"));
+        for (const option of kindSel.options) option.textContent = t(option.value ? "k_" + option.value : "kind_all");
+      });
       showProductionDecisions(activeSpace);
       skeleton(agentsBox, 2, true); skeleton(boardBox, 4, true); skeleton(threadsBox, 4);
       window.matchMedia("(min-width: 1200px)").addEventListener("change", () => showDetail(!detailBox.hidden));
