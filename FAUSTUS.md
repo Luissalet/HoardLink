@@ -239,6 +239,9 @@ cancels the exact native run. After an interruption the console attempts one
 automatic continuation when it confirms the original session is idle. The
 worker receipt also offers **Continuar** for that same session and workspace
 (`action: continue` over HTTP and MCP).
+The console lists verified live orphan worker processes separately from the turn's
+outcome, with the assignment, process age and last recorded activity. The person
+or directing agent can confirm termination of the displayed process.
 
 Managed workers are told to commit changes and submit their Agora task. The
 console checks the submission against the commits named in the submit: they are
