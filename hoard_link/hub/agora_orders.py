@@ -549,8 +549,14 @@ def _order_dict(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _with_dossier(order: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+def _app_references(self: Any, refs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    resolve = getattr(self, "order_app_references", None)
+    return resolve(refs) if resolve and any(ref.get("app") for ref in refs) else []
+
+
+def _with_dossier(self: Any, order: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     order["dossier"] = order_dossier.dossier(order, _load(row["dossier"], {}))
+    order["app_references"] = _app_references(self, order["refs"])
     return order
 
 
@@ -916,7 +922,7 @@ def order(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """One order whole: its words and references, the plan with each job's task state, every piece with its
     checks and defects, the gates and the person's decisions."""
     row = _order_row(self, a.get("order_id"))
-    out = _with_dossier(_summary(self, row), row)
+    out = _with_dossier(self, _summary(self, row), row)
     oid = row["id"]
     out["plan"] = _plan(self, oid)
     pieces = {int(r["id"]): _piece_dict(self, dict(r), full=True) for r in
@@ -980,6 +986,7 @@ def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     order_row = _order_row(self, row["order_id"])
     data = _order_dict(order_row)
     out["dossier"] = order_dossier.dossier(data, _load(order_row["dossier"], {}))
+    out["app_references"] = _app_references(self, data["refs"])
     out["order"] = {k: v for k, v in data.items() if k in
                     ("id", "title", "words", "refs", "deliverables", "keep", "folder", "status", "deadline", "template")}
     reason = order_budget.hold_reason(self, order_row["id"])
@@ -1056,7 +1063,7 @@ def order_create(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         token = journal.save()
     self._bump("agora.order.created", {"order_id": oid, "title": title, "by": agent})
     row = _order_row(self, oid)
-    return {"ok": True, "order": _with_dossier(_summary(self, row), row), "undo": token}
+    return {"ok": True, "order": _with_dossier(self, _summary(self, row), row), "undo": token}
 
 
 def order_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
@@ -1112,7 +1119,7 @@ def order_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         token = journal.save()
     self._bump("agora.order.updated", {"order_id": row["id"], "by": agent, "fields": sorted(fields)})
     row = _order_row(self, row["id"])
-    return {"ok": True, "order": _with_dossier(_summary(self, row), row), "undo": token}
+    return {"ok": True, "order": _with_dossier(self, _summary(self, row), row), "undo": token}
 
 
 def _set_status(self: Any, order_id: int, status: str, journal: _Journal, *, only_from: tuple[str, ...]) -> None:
@@ -1222,7 +1229,9 @@ def plan_set(self: Any, a: dict[str, Any], *, undo_for_person: bool = False) -> 
         self.db.execute("UPDATE agora_orders SET updated=? WHERE id=?", (_now(self), oid))
         token = journal.save()
     self._bump("agora.order.plan", {"order_id": oid, "by": agent, "jobs": touched, "removed": remove})
-    return {"ok": True, "plan": _plan(self, oid), "keys": keys, "undo": token}
+    refs = _load(_order_row(self, oid)["refs"], [])
+    return {"ok": True, "plan": _plan(self, oid), "app_references": _app_references(self, refs),
+            "keys": keys, "undo": token}
 
 
 # ---- writing: pieces, checks and defects --------------------------------------------------------------------
@@ -1894,12 +1903,12 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
          "inputSchema": schema({"status": {"type": "string", "enum": list(ORDER_STATES)}, "all_spaces": {"type": "boolean"},
                                 "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
         {"name": "hub_agora_order", "read": True,
-         "description": "One order whole: the person's words and references, the plan with each job's task state, every "
+         "description": "One order whole: the person's words, references and live app checks, the plan with each job's task state, every "
                         "piece with checks, defects and what derives from it, the gates and the decisions.",
          "inputSchema": schema({"order_id": order_id}, ["order_id"])},
         {"name": "hub_agora_order_create",
          "description": "Create an order with starting materials (refs), deliverables, details to keep and an optional "
-                        "dossier (audience, constraints, native context)." + undo,
+                        "dossier (audience, constraints, native context). Reports live app reference checks." + undo,
          "inputSchema": schema({"agent": agent_prop, "title": {"type": "string", "maxLength": 200},
                                 "words": {"type": "string", "maxLength": TEXT_MAX}, "refs": {"type": "array", "items": ref, "maxItems": 50},
                                 "dossier": order_dossier.DOSSIER_INPUT,
@@ -1916,14 +1925,14 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_plan_set",
          "description": "Compose or recompose an order's plan. Each new job becomes an Ágora task of the space with its "
                         "station, input pieces, kinds to deliver, check and assignee; after sets what it waits for "
-                        "(parallel branches wait on the same job). task_id changes a job; remove drops jobs." + undo,
+                        "(parallel branches wait on the same job). task_id changes a job; remove drops jobs. "
+                        "Reports live app reference checks." + undo,
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id,
                                 "jobs": {"type": "array", "items": job_item, "maxItems": 60}, "remove": ids}, ["agent", "order_id"])},
         {"name": "hub_agora_job", "read": True,
          "description": "Everything to start a job (task_id): the order's dossier, station and check, "
                         "input pieces, destination requirements, pinned details, required_references kept in this and "
-                        "cited orders, defects and an "
-                        "earlier kept piece of each kind it delivers.",
+                        "cited orders, live app reference checks, defects and an earlier kept piece of each kind it delivers.",
          "inputSchema": schema({"task_id": {"type": "integer", "minimum": 1}}, ["task_id"])},
         {"name": "hub_agora_piece_add",
          "description": "Register a piece of an order: kind, title, path (relative to the order's folder or absolute), "

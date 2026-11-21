@@ -359,6 +359,19 @@
   }
 
   // ---- orders ------------------------------------------------------------------------------------------
+  function appReferenceChecks(order) {
+    if (!order.app_references?.length) return null;
+    const list = el("ul");
+    for (const ref of order.app_references) {
+      const source = [ref.app, ref.object, ref.place].filter(Boolean).join(" · ");
+      const item = el("li", "");
+      item.append(el("span", "", source),
+        el("div", ref.status === "resolved" ? "ord-muted" : "ord-warn", tr(ref.es, ref.en)));
+      list.append(item);
+    }
+    return list;
+  }
+
   function planTable(order) {
     const plan = (order.plan || []).filter(j => !j.removed);
     if (!plan.length) return el("p", "ord-muted", tr("Aún sin plan: quien dirige lo compone con hub_agora_plan_set.", "No plan yet: whoever leads composes it with hub_agora_plan_set."));
@@ -490,7 +503,10 @@
     fact(tr("Plantilla", "Template"), order.template);
     fact(tr("Carpeta", "Folder"), order.folder);
     if (facts.children.length) box.append(facts);
-    box.append(el("h4", "", tr("Plan", "Plan")), planTable(order));
+    box.append(el("h4", "", tr("Plan", "Plan")));
+    const referenceChecks = appReferenceChecks(order);
+    if (referenceChecks) box.append(referenceChecks);
+    box.append(planTable(order));
     box.append(el("h4", "", tr("Piezas", "Pieces")), pieceGrid(order));
     const dl = decisionList(order);
     if (window.HubOrderReceipts) box.append(window.HubOrderReceipts(order));

@@ -204,6 +204,8 @@ with the audience, constraints, starting material fingerprints and any context c
 `hub_agora_job` delivers it with the worker's brief. Orders can select a [native source dossier](docs/order-intake.md)
 in the form. Plans record the station and repository on the job, and `hub_order_metrics` groups returns and median
 task durations by station and repository. Construction tasks can be attributed to the repository in their delivery.
+`hub_agora_order`, `hub_agora_plan_set` and `hub_agora_job` report live app reference checks. The Orders
+plan shows which references were found, which are missing, and which could not be verified.
 The [integration station](docs/INTEGRATION.md) compares focused tests against the committed main branch, preserves
 overlapping Git changes, creates a merge commit for each repository, verifies the merged case and closes the
 approved delivery in the Agora.
