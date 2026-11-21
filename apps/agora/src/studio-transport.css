@@ -18,3 +18,8 @@ html[data-studio-write] .app {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
+
+.studio-console-status a {
+  color: inherit;
+  text-decoration: underline;
+}

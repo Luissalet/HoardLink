@@ -4,7 +4,7 @@ import {useCallback,useEffect,useRef,useState} from 'react';
 import {decisionHeading,decisionUrl,loadHistory,loadPending,type DecisionRecord,type PendingDecision} from '../../../hoard_link/hub/ui/production_decisions_data.js';
 import {renderDecisionCards} from '../../../hoard_link/hub/ui/production_decisions_card.js';
 import {api,lang,openHub,previewSource} from './api';
-import {inStudio,studioPiece} from './studioTransport';
+import {inStudio,studioOrderBase,studioPiece} from './studioTransport';
 
 const es = lang === 'es';
 const tr = (spanish: string, english: string) => es ? spanish : english;
@@ -58,9 +58,10 @@ export function ProductionDecisions({data, open}: {data: ReturnType<typeof usePr
         if (inStudio) return studioPiece(path, media);
         return media === 'image' ? previewSource(path) : isTauri() || media === 'web' ? null : path;
       },
-      orderHref: row => inStudio
-        ? '/api/hoard/agora/open?' + new URLSearchParams({space_id: row.space, decision: row.key})
-        : decisionUrl(row),
+      orderHref: row => {
+        if (!inStudio) return decisionUrl(row);
+        return studioOrderBase ? studioOrderBase + decisionUrl(row) : null;
+      },
       openOrder: (event, row) => void openHub(event, row.key).catch(error => setOpeningError(error.message)),
       post: (operation, body) => api('/api/agora/' + operation, body),
       refresh,
