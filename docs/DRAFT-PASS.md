@@ -64,7 +64,7 @@ an empty list when it only needs to register existing pieces. Omitting `template
 | `draft_gate_open` | an agent | Shows the pass to the person once every variant is ready. The order waits. |
 | `draft_decide` | only the person's pages | `variant_id`, `decision` `keep` or `cancel`, `note` and `signature` (the variant's signature as the page showed it). Keeping one discards the others still undecided, with a note that says which one was kept. |
 | `draft_passes` | read | The passes of an order, or (no `order_id`) those waiting for the person (`all_spaces`). Each variant with its pieces by anchor, measures and decision note; totals against the baseline. |
-| `draft_anchors` | read | For `order_id` or the `task_id` of one of its jobs: the kept variant, its pieces by anchor, the guides and the `derives_from` to pass to `piece_add`. |
+| `draft_anchors` | read | For `order_id` or `task_id`: the kept variant, its guides, [required references](ORDER-REFERENCES.md), and the `derives_from` to pass to `piece_add`. |
 
 Anchors are short slugs. Those the guides know: `depth`, `normals`, `composition`, `blocking_color` (image),
 `keyframe_start`, `keyframe_end`, `keyframe`, `animatic` (video), `blocking`, `parts` (splitting the model) and
