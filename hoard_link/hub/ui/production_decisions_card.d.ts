@@ -1,5 +1,7 @@
 import type {PendingDecision} from './production_decisions_data.js';
 
+export function registerDecisionPieceOpener(openPiece: (path: string, filename: string | null) => Promise<string | null>): void;
+
 export function renderDecisionCards(container: HTMLElement, rows: PendingDecision[], options: {
   lang: string;
   source(path: string, media: string): string | null | Promise<string | null>;
