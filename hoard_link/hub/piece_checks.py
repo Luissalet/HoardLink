@@ -320,6 +320,14 @@ def gate_advisories(agora, pieces, gate_note):
     """Expose pending checks or a recorded result in the ordinary Orders gate."""
     output = []
     for piece in pieces:
+        if piece["kind"] in ("gcode", "slice-report"):
+            from .print_slicing import advisory, report_for_piece
+
+            report = report_for_piece(agora, piece)
+            if report is not None:
+                output.append({"piece_id": piece["id"], "title": piece["title"], "profile": "slicing",
+                               "note": f"{piece['title']} · {advisory(report)}"})
+            continue
         profile = TYPE_PROFILES.get(piece["kind"])
         if not profile:
             continue

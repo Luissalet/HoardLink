@@ -1,5 +1,6 @@
 import {decisionHeading, decisionUrl, loadHistory, loadPending} from './production_decisions_data.js';
 import {renderDecisionCards} from './production_decisions_card.js';
+import {renderPrintSliceCard} from './print_slice_card.js';
 
 const {api, el, lang, bus} = window.HubFacets.ctx;
 const tr = (es, en) => lang() === 'es' ? es : en;
@@ -18,6 +19,40 @@ function heading(title) {
   const wrapper = el('div', 'hub-section-heading');
   wrapper.append(el('h2', '', title));
   return wrapper;
+}
+
+function slicePieces(row) {
+  const artifacts = row.artifacts ?? row.variants?.flatMap(variant => variant.artifacts ?? []) ?? [];
+  return artifacts.flatMap(piece => {
+    const id = /^\/api\/agora\/piece_file\/(\d+)$/.exec(piece.path || '')?.[1];
+    return id && /(?:\.gcode$|^receipt\.json$)/i.test(piece.filename || '') ? [{id, title: piece.title}] : [];
+  });
+}
+
+async function loadSliceReports(pieces) {
+  const ids = new Set(pieces.flat().map(piece => piece.id));
+  if (!ids.size) return {};
+  const query = new URLSearchParams();
+  for (const id of ids) query.append('piece', id);
+  const answer = await api('/api/programs/print-slice-reports?' + query);
+  return answer?.reports ?? {};
+}
+
+function renderSliceReports(cards, pieces, reports) {
+  for (const [index, card] of [...cards.children].entries()) {
+    const previous = card.querySelector(':scope > .production-card__slicing');
+    const items = pieces[index].filter(piece => reports[piece.id]);
+    if (!items.length) {
+      previous?.remove();
+      continue;
+    }
+    const section = el('section', 'production-card__slicing');
+    for (const piece of items) {
+      section.append(el('h4', '', piece.title), renderPrintSliceCard(reports[piece.id], tr));
+    }
+    if (previous) previous.replaceWith(section);
+    else card.firstElementChild.after(section);
+  }
 }
 
 export function watchPendingCount(space, count) {
@@ -71,6 +106,9 @@ export function mount(root, space, {archive = false, count, hideEmpty = false, d
         ? tr('No se han podido consultar todas las decisiones pendientes.', 'Some pending decisions could not be loaded.')
         : state.rows.length ? '' : tr('No tienes decisiones pendientes.', 'You have no pending decisions.');
       message.hidden = !message.textContent;
+      const pieces = state.rows.map(slicePieces);
+      const reports = await loadSliceReports(pieces).catch(() => null);
+      if (reports && current()) renderSliceReports(cards, pieces, reports);
     };
     const refreshHistory = async () => {
       if (!archive) return;

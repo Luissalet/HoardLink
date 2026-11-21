@@ -332,9 +332,23 @@ class LocalPrograms(Facet):
                 **({"undo": {"tool": "hub_program_register", "arguments":
                     {key: row[key] for key in ("name", "path", "version", "headless")}}} if row else {})}
 
+    def slice(self, args):
+        from .print_slicing import slice_piece
+
+        program = next((row for row in self.list_programs({})["programs"]
+                        if row["id"] == "orcaslicer" and row["path"]), None)
+        if not program:
+            return {"ok": False, "error": "OrcaSlicer is not installed / OrcaSlicer no está instalado"}
+        return slice_piece(self.hub, program, args)
+
     def get(self, req):
         if req.path == API:
             return self.list_programs({"refresh": req.q_bool("refresh")})
+        if req.path == f"{API}/print-slice-reports":
+            from .print_slicing import reports_for_pieces
+
+            agora = self.hub.facet("agora").agora
+            return {"ok": True, "reports": reports_for_pieces(agora, req.query.get("piece", []))}
         return None
 
     def post(self, req):
@@ -361,6 +375,17 @@ class LocalPrograms(Facet):
              "Returns undo / Devuelve cómo deshacer.",
              {"version": {"type": ["string", "null"]}, "expected_version": {"type": ["string", "null"]}},
              ["version"], False),
+            ("hub_print_slice", "Slice a registered 3MF plate, record G-code, estimates and defects, and return undo. "
+             "Lamina una placa 3MF registrada, anota G-code, estimaciones y defectos y devuelve cómo deshacer.",
+             {"agent": text, "space_id": text, "piece_id": {"type": "integer", "minimum": 1},
+              "task_id": {"type": "integer", "minimum": 1}, "machine": text, "process": text,
+              "filaments": {"type": "array", "items": text, "minItems": 1},
+              "expected_filaments": {"type": "integer", "minimum": 1},
+              "require_support": {"type": "boolean"},
+              "plate": {"type": "integer", "minimum": 1}, "arrange": {"type": "boolean"},
+              "timeout_s": {"type": "integer", "minimum": 1, "maximum": 900},
+              "title": text, "supersedes": {"type": "integer", "minimum": 1}},
+             ["agent", "piece_id", "task_id", "machine", "process", "filaments"], False),
         ]
         return [{"name": name, "description": description, "annotations": {"readOnlyHint": read},
                  "inputSchema": {"type": "object", "properties": props, "required": required,
@@ -369,4 +394,5 @@ class LocalPrograms(Facet):
 
     def handlers(self):
         return {"hub_programs": self.list_programs, "hub_program_register": self.register,
-                "hub_program_undo": self.undo, "hub_vulcan_blender_set": self.set_vulcan_blender}
+                "hub_program_undo": self.undo, "hub_vulcan_blender_set": self.set_vulcan_blender,
+                "hub_print_slice": self.slice}
