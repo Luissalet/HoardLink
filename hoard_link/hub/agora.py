@@ -63,6 +63,7 @@ from . import agora_threads
 from . import agora_work
 from . import agora_orders
 from . import agora_drafts
+from . import agora_decision_history
 from . import agora_person
 from . import agora_debate
 from . import agora_review
@@ -240,6 +241,7 @@ MIGRATIONS.append("""
 ALTER TABLE tasks ADD COLUMN repositories TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE tasks ADD COLUMN commits_by_repo TEXT NOT NULL DEFAULT '{}';
 """)
+MIGRATIONS.append(agora_decision_history.MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -996,7 +998,7 @@ class Agora:
         row = self.db.one("SELECT * FROM threads WHERE id=? AND space_id=?", (tid, self.space_id))
         if row is None:
             raise AgoraError(f"no thread {tid}", 404)
-        return dict(row)
+        return agora_decision_history.thread_state(dict(row))
 
     def _task_dict(self, row: Any, *, full_checkpoint: bool = False) -> dict[str, Any]:
         d = dict(row)
@@ -3044,6 +3046,22 @@ class Agora:
         return {"ok": True, "thread": self._thread_row(th["id"])}
 
     @_space_operation
+    def thread_retitle(self, a: dict[str, Any]) -> dict[str, Any]:
+        return agora_decision_history.edit(self, a, "thread_retitle")
+
+    @_space_operation
+    def decision_amend(self, a: dict[str, Any]) -> dict[str, Any]:
+        return agora_decision_history.edit(self, a, "decision_amend")
+
+    @_space_operation
+    def decision_withdraw(self, a: dict[str, Any]) -> dict[str, Any]:
+        return agora_decision_history.edit(self, a, "decision_withdraw")
+
+    @_space_operation
+    def decision_history_undo(self, a: dict[str, Any]) -> dict[str, Any]:
+        return agora_decision_history.undo(self, a)
+
+    @_space_operation
     def threads(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         a = a or {}
         where, params = ["t.space_id=?"], [self.space_id]
@@ -3089,7 +3107,10 @@ class Agora:
 
     @_space_operation
     def thread(self, a: dict[str, Any]) -> dict[str, Any]:
-        th = self._thread_row(a.get("thread_id"))
+        with self.db.tx(immediate=False):
+            th = self._thread_row(a.get("thread_id"))
+            history = agora_decision_history.histories(self, [th["id"]]).get(th["id"], [])
+            msgs = self._messages(th["id"])
         seen_before = None
         if a.get("agent"):
             reader = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
@@ -3097,13 +3118,13 @@ class Agora:
             ack = self.db.one("SELECT upto FROM acks WHERE agent=? AND thread_id=?", (reader, th["id"]))
             seen_before = max(int(ack["upto"]) if ack else 0, self.space_store.read_upto(self.space_id, reader))
             if not a.get("peek"):       # a peek only looks: the read mark stays where it was
-                self._ack(reader, th["id"])
+                if msgs:
+                    self._ack(reader, th["id"], msgs[-1]["id"])
         stances: dict[str, str] = {}
-        msgs = self._messages(th["id"])
         for m in msgs:
             if m["kind"] in ("agree", "disagree", "proposal"):
                 stances[m["author"]] = m["kind"]
-        out = {"ok": True, "thread": th, "messages": msgs, "stances": stances,
+        out = {"ok": True, "thread": th, "messages": msgs, "stances": stances, "history": history,
                "task": self._task_row(th["task_id"]) if th.get("task_id") else None}
         agora_router.decorate(self, msgs)           # who the router chose for a message of the person
         agora_work.decorate(self, msgs)             # the tools an agent used for a message, and its routine
@@ -3167,11 +3188,18 @@ class Agora:
     def decisions(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """The space's recorded thread resolutions and production decisions."""
         limit = max(1, min(int((a or {}).get("limit") or 50), 500))
-        rows = self.db.query("SELECT id, title, kind, resolution, resolved_by, updated, space_id FROM threads "
-                             "WHERE status='resolved' AND kind<>'task' AND space_id=? ORDER BY updated DESC LIMIT ?",
-                             (self.space_id, limit))
+        with self.db.tx(immediate=False):
+            rows = self.db.query(
+                "SELECT id, title, kind, status, resolution, resolved_by, updated, space_id FROM threads "
+                "WHERE status='resolved' AND kind<>'task' AND space_id=? ORDER BY updated DESC, id DESC LIMIT ?",
+                (self.space_id, limit),
+            )
+            entries = [agora_decision_history.thread_state(dict(row)) for row in rows]
+            history = agora_decision_history.histories(self, [row["id"] for row in entries], decisions_only=True)
+        for row in entries:
+            row["history"] = history.get(row["id"], [])
         production = agora_orders.order_decisions(self, {"limit": limit})["decisions"]
-        return {"ok": True, "decisions": [dict(r) for r in rows], "production_decisions": production}
+        return {"ok": True, "decisions": entries, "production_decisions": production}
 
     # -- inbox ---------------------------------------------------------------------------------------------------
 
@@ -3370,7 +3398,7 @@ class Agora:
             bump(t.get("owner"), "done")
         decisions = [dict(r) for r in self.db.query(
             "SELECT id, title, resolution, resolved_by, updated FROM threads WHERE status='resolved' AND kind<>'task' "
-            "AND updated>=? AND space_id=? ORDER BY updated", (since, self.space_id))]
+            "AND resolution IS NOT NULL AND updated>=? AND space_id=? ORDER BY updated", (since, self.space_id))]
         waiting = {
             "reviews": [self._task_dict(r) for r in self.db.query("SELECT * FROM tasks WHERE status='review' AND space_id=? "
                                                                  "ORDER BY submitted_at", (self.space_id,))],
@@ -3677,6 +3705,7 @@ TOOLS: list[dict[str, Any]] = [
                              "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
 ]
 TOOLS.extend(agora_debate.tools(_schema, _A))
+TOOLS.extend(agora_decision_history.tools(_schema, _A, _THREAD))
 TOOLS.extend(agora_review.tools(_schema, _A))
 TOOLS.extend(agora_channels.tools(_schema, _A))
 
@@ -3700,7 +3729,8 @@ TOOLS.extend([
 
 _WRITE_OPS = ("space_create", "space_update", "checkpoint", "heartbeat", "sync", "task_add", "task_edit", "task_claim", "task_update", "task_submit", "task_review", "task_done",
               "task_release", "handover", "lock", "unlock", "thread_open", "post", "resolve", "escalate", "reopen", "read", "ack",
-              "usage_report", "orphan_sweep", "task_deps", *agora_debate.WRITE_OPS, *agora_review.WRITE_OPS, *agora_channels.WRITE_OPS)
+              "usage_report", "orphan_sweep", "task_deps", *agora_decision_history.WRITE_OPS,
+              *agora_debate.WRITE_OPS, *agora_review.WRITE_OPS, *agora_channels.WRITE_OPS)
 
 
 def _observed(rec: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -4312,7 +4342,11 @@ class AgoraFacet(Facet):
             return {"ok": False, "status": 403, "error": "Only the person's page can decide a production gate"}
         args = dict(req.body or {})
         args.pop("_person", None)
-        if caller == "ui" or self._person_surface(req):
+        # The optional Studio marker alone is not proof of the person's authority for these edits.
+        person_surface = self._person_surface(req)
+        if op in agora_decision_history.WRITE_OPS:
+            person_surface = person_surface and agora_person.can_decide(self.hub, req)
+        if person_surface:
             args.setdefault("agent", self.agora.person_id)
             args["_person"] = str(args.get("agent", "")).strip().lower() == self.agora.person_id
         if op == "checkpoint":
@@ -4382,6 +4416,7 @@ class AgoraFacet(Facet):
             "hub_agora_thread": wrap(self._thread), "hub_agora_thread_recent": wrap(ag.thread_recent),
             "hub_agora_decisions": wrap(ag.decisions), "hub_agora_threads": wrap(ag.threads),
             "hub_agora_ack": wrap(ag.ack), "hub_agora_digest": wrap(self._digest),
+            **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_decision_history.WRITE_OPS},
             "hub_agora_watch": wrap(self._watch_view), "hub_agora_watch_bind": wrap(self._watch_bind),
             "hub_agora_live": wrap(self._live), "hub_agora_practices": wrap(self._practices),
             **{f"hub_agora_{op}": wrap(getattr(ag, op)) for op in agora_debate.OPERATIONS},
