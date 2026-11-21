@@ -1,11 +1,48 @@
 """Heartbeat metadata and renewal are independent; selection is exact, not a grant."""
 import pytest
 from hoard_link.hub.agora import AgoraError
+from hoard_link.hub.agora_ranks import set_rank
 from .test_agora import ag
 
 
 def expiries(ag):
     return {row['resource']:row['expires'] for row in ag.locks({})['locks']}
+
+
+def test_production_decision_survives_the_inbox_cursor_until_its_order_thread_is_opened(ag):
+    ag.space_create({"agent": "producer", "id": "studio", "title": "Studio"})
+    studio = ag.for_space("studio")
+    foreman, director, opener = "worker-capataz", "director", "editor"
+    for agent in (foreman, director, opener):
+        studio.heartbeat({"agent": agent})
+    set_rank(studio, director, "director", studio.person_id)
+    ag.fake_clock.t += 86_400  # the recipients do not need a live session
+    order = studio.order_create({"agent": "producer", "title": "Sample order"})["order"]
+    piece = studio.piece_add({"agent": opener, "order_id": order["id"], "title": "First piece",
+                              "kind": "document", "url": "https://example.test/draft"})["piece"]
+    gate = studio.gate_open({"agent": opener, "order_id": order["id"], "title": "First gate",
+                             "piece_ids": [piece["id"]]})["gate"]
+    saved = studio.gate_decide({"agent": studio.person_id, "_person": True, "gate_id": gate["id"],
+                                "decision": "keep", "note": "Kept the corner"})
+
+    message, = studio.inbox({"agent": foreman})["production_decisions"]
+    again = studio.inbox({"agent": foreman, "since_id": message["id"]})
+    assert not again["messages"] and again["production_decisions"] == [message]
+    assert set(message["mentions"]) == {"producer", foreman, director, opener}
+    assert message["body"].startswith("DECIDIDO") and "First gate" in message["body"]
+    assert "First piece" in message["body"] and "Kept the corner" in message["body"]
+    order = studio.order({"order_id": order["id"]})["order"]
+    assert message["thread_id"] == order["thread_id"]
+    assert studio.heartbeat({"agent": foreman})["production_decisions"] == [message]
+    assert not ag.inbox({"agent": foreman})["production_decisions"]
+    assert ag.inbox({"agent": foreman, "all_spaces": True})["production_decisions"][0]["space_id"] == "studio"
+    meta, = studio.inbox({"agent": foreman, "metadata_only": True})["production_decisions"]
+    assert "body" not in meta and meta["body_chars"] == len(message["body"])
+    studio.thread({"agent": foreman, "thread_id": message["thread_id"]})
+    assert not studio.heartbeat({"agent": foreman})["production_decisions"]
+    assert studio.heartbeat({"agent": director})["production_decisions"] == [message]
+    studio.order_undo({"agent": studio.person_id, "_person": True, "token": saved["undo"]})
+    assert not studio.heartbeat({"agent": director})["production_decisions"]
 
 
 def test_selected_heartbeat_records_state_and_renews_only_exact_owned_live_resources(ag):

@@ -510,6 +510,17 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             result["ready_jobs"] = orders._handoff(
                 self, journal, order_row, [orders._piece_row(self, p["id"]) for p in current["pieces"]], note,
                 opened_by=opener, resumed=resumed, variant=variant)
+        outcomes = []
+        for choice in rows:
+            if choice["id"] != result["kept"] and choice["id"] not in result["discarded"]:
+                continue
+            pieces = self.db.query("SELECT p.id, p.title FROM agora_draft_pieces l JOIN agora_pieces p ON p.id=l.piece_id "
+                                   "WHERE l.variant_id=? ORDER BY l.position, p.id", (choice["id"],))
+            names = ", ".join(f"#{p['id']} «{p['title']}»" for p in pieces)
+            label = f"«{choice['title']}»" + (f" ({names})" if names else "")
+            outcomes.append(("Conservada" if choice["id"] == result["kept"] else "Descartada", label))
+        orders._decision_notice(self, journal, order_row, f"Pasada 0 #{draft['id']} «{draft['title']}»",
+                                [draft["opened_by"], draft["shown_by"]], outcomes, note)
         token = journal.save()
     self._bump("agora.order.decided", {"order_id": draft["order_id"], "draft_pass": draft["id"], "decision": decision,
                                        "variant": variant["id"]})

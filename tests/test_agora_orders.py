@@ -88,6 +88,21 @@ def test_keep_unblocks_the_next_jobs_without_finishing_the_predecessor(agora, tm
     assert pieces["malla"]["station"] == "vulcan"
 
 
+def test_final_cancellation_releases_a_root_using_the_earlier_keep(agora, tmp_path):
+    order, _, pieces = cartographer(agora, tmp_path)
+    task_id = agora.plan_set({"agent": "claude", "order_id": order["id"],
+                              "jobs": [{"key": "next", "title": "New pass"}]})["keys"]["next"]
+    gate = agora.gate_open({"agent": "claude", "order_id": order["id"],
+                            "piece_ids": [pieces["lamina"]["id"], pieces["hoja"]["id"]]})["gate"]
+    keep = agora.gate_decide(person(gate_id=gate["id"], piece_id=pieces["lamina"]["id"],
+                                    decision="keep", note="Keep the fold"))
+    assert task_id not in keep["ready_jobs"]
+    cancel = agora.gate_decide(person(gate_id=gate["id"], decision="cancel", note="Replace this"))
+    assert task_id in cancel["ready_jobs"]
+    message = agora._messages(agora._task_row(task_id)["thread_id"])[-1]
+    assert "Keep the fold" in message["body"] and "Replace this" not in message["body"]
+
+
 def test_check_marks_details_and_defect_goes_back_to_its_job(agora, tmp_path):
     order, keys, pieces = cartographer(agora, tmp_path)
     hoja = pieces["hoja"]["id"]

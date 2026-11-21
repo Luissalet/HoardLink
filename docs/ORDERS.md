@@ -72,6 +72,10 @@ On the Orders page, **Undo last decision** sends the decision's `undo` token to 
 pieces, gate, task states and generated messages. The person's page is required for that token. If a task,
 piece or another affected row has moved on, the request returns a conflict and leaves it intact.
 
+Each decision also posts a notice in the order's Agora thread. The order exposes its `thread_id` once
+that thread exists. The space's direction, foreman and gate opener receive the outcome and note through
+their inbox and heartbeat. [See how the notice is delivered and acknowledged](AGORA.md#production-orders-pieces-and-the-persons-gate).
+
 `job` (task id) is what a worker reads to start: the order's dossier; the station and
 check; the input pieces; the pieces the person kept in this order with their notes (they fix the look); the defects sent
 back to this job; and an earlier kept piece of each kind it delivers, from another order.

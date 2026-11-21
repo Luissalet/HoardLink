@@ -123,6 +123,11 @@ DECISION_HANDOFF_MIGRATION = """
     CREATE TABLE agora_order_discarded_jobs (task_id INTEGER PRIMARY KEY, variant_id INTEGER NOT NULL);
 """
 
+DECISION_NOTICE_MIGRATION = """
+    CREATE TABLE agora_order_threads (order_id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL UNIQUE);
+    CREATE INDEX messages_production_decisions ON messages(thread_id, id) WHERE kind='production_decision';
+"""
+
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #: Tables a journal entry may restore, with their key column.
 _KEYS = {"agora_orders": "id", "agora_order_jobs": "task_id", "agora_pieces": "id", "agora_piece_checks": "id",
@@ -697,8 +702,12 @@ def _job_recipient(self: Any, order: dict, job: dict, fallback: str) -> list[str
 
 
 def _handoff(self: Any, journal: _Journal, order: dict, pieces: list[dict], note: str,
-             *, opened_by: str, resumed: bool, variant: Optional[dict] = None) -> list[int]:
+             *, opened_by: str, resumed: bool, variant: Optional[dict] = None,
+             gate_id: Optional[int] = None) -> list[int]:
     """Release the next jobs and leave the accepted inputs in their task threads."""
+    if ((not pieces and not resumed) or order["status"] in ("delivered", "cancelled")
+            or order_budget.hold_reason(self, order["id"])):
+        return []
     kept = {p["id"] for p in pieces if p["status"] == "kept"}
     producers = {p["task_id"] for p in pieces if p["id"] in kept and p["task_id"]}
     variant_jobs = {tid for row in self.db.query("SELECT jobs FROM agora_draft_variants WHERE order_id=?", (order["id"],))
@@ -712,7 +721,14 @@ def _handoff(self: Any, journal: _Journal, order: dict, pieces: list[dict], note
     accepted = f"la variante «{variant['title']}»" if variant else names
     if variant and names:
         accepted += f" ({names})"
-    if not accepted or order_budget.hold_reason(self, order["id"]):
+    if not accepted and resumed and gate_id is not None:
+        # The final click can be a cancellation after another piece of this gate was kept.
+        prior = self.db.one(
+            "SELECT p.id, p.title, d.note FROM agora_order_decisions d JOIN agora_pieces p ON p.id=d.piece_id "
+            "WHERE d.gate_id=? AND d.decision='keep' AND p.status='kept' ORDER BY d.id DESC LIMIT 1", (gate_id,))
+        if prior:
+            accepted, note = f"#{prior['id']} «{prior['title']}»", prior["note"]
+    if not accepted:
         return []
     text = (f"Trabajo listo en la orden #{order['id']} «{order['title']}». La persona ha conservado {accepted}."
             + (f"\nNota: {note}" if note else ""))
@@ -774,6 +790,7 @@ def _gate_dict(self: Any, row: dict[str, Any], pieces: Optional[dict[int, dict[s
 def _summary(self: Any, row: dict[str, Any]) -> dict[str, Any]:
     out = _order_dict(row)
     oid = row["id"]
+    out["thread_id"] = self.db.scalar("SELECT thread_id FROM agora_order_threads WHERE order_id=?", (oid,))
     jobs = self.db.query("SELECT j.task_id, t.status FROM agora_order_jobs j LEFT JOIN tasks t ON t.id=j.task_id "
                          "WHERE j.order_id=? AND j.removed=0", (oid,))
     out["jobs"] = {"total": len(jobs), "done": sum(1 for j in jobs if j["status"] in ("done", "approved")),
@@ -1585,6 +1602,32 @@ def _close_if_done(self: Any, journal: _Journal, gate_id: int) -> None:
             _set_status(self, order_id, "producing", journal, only_from=("waiting",))
 
 
+def _decision_notice(self: Any, journal: _Journal, order: dict, gate_label: str, opened_by: list[str],
+                     outcomes: list[tuple[str, str]], note: str) -> None:
+    """An order has one conversation for its decisions, including orders made before decision notices."""
+    thread_id = self.db.scalar("SELECT thread_id FROM agora_order_threads WHERE order_id=?", (order["id"],))
+    title = f"Orden #{order['id']} «{order['title']}»"
+    if thread_id is None:
+        now = _now(self)
+        thread_id = self.db.insert("threads", {
+            "title": title, "kind": "note", "status": "open", "created_by": journal.agent,
+            "space_id": self.space_id, "created": now, "updated": now})
+        self.db.insert("agora_order_threads", {"order_id": order["id"], "thread_id": thread_id})
+    members = self.db.query(
+        "SELECT m.agent, r.rank FROM coordination_members m LEFT JOIN agora_ranks r "
+        "ON r.space_id=m.space_id AND r.agent=m.agent WHERE m.space_id=? ORDER BY m.agent", (self.space_id,))
+    leads = [m["agent"] for m in members
+             if m["rank"] in ("director", "lead") or m["agent"].endswith(("-capataz", "-foreman"))]
+    creator = self.space_store.get(self.space_id)["created_by"]
+    recipients = list(dict.fromkeys(a for a in [*leads, *opened_by, creator]
+                                    if a and a not in (_person_id(self), journal.agent, "system")))
+    lines = [f"DECIDIDO · {title} · {gate_label}", *(f"{action}: {subject}" for action, subject in outcomes)]
+    if note:
+        lines.append(f"Nota: {note}")
+    mid = self._msg(thread_id, journal.agent, "production_decision", "\n".join(lines), recipients)
+    journal.created("messages", mid)
+
+
 def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """The person's decision on a gate: keep or cancel, with an optional note, for every undecided piece of the gate
     or only for piece_id. Only the person's own pages may call it."""
@@ -1640,11 +1683,12 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 stale = _stale_below(self, journal, pid)
             result.append({"piece_id": pid, "decision_id": did, "stale": stale})
         _close_if_done(self, journal, gate["id"])
-        ready = []
-        if decision == "keep":
-            resumed = order_row["status"] == "waiting" and _order_row(self, order_row["id"])["status"] == "producing"
-            ready = _handoff(self, journal, order_row, [_piece_row(self, pid) for pid in targets], note,
-                             opened_by=gate["opened_by"], resumed=resumed)
+        resumed = order_row["status"] == "waiting" and _order_row(self, order_row["id"])["status"] == "producing"
+        ready = _handoff(self, journal, order_row, [_piece_row(self, pid) for pid in targets] if decision == "keep" else [],
+                         note, opened_by=gate["opened_by"], resumed=resumed, gate_id=gate["id"])
+        selection = ", ".join(f"#{p['id']} «{p['title']}»" for p in alternatives if p["id"] in targets)
+        _decision_notice(self, journal, order_row, f"Puerta #{gate['id']} «{gate['title']}»", [gate["opened_by"]],
+                         [("Conservado" if decision == "keep" else "Cancelado", selection)], note)
         token = journal.save()
     self._bump("agora.order.decided", {"order_id": order_row["id"], "gate_id": gate["id"], "decision": decision,
                                        "pieces": targets})

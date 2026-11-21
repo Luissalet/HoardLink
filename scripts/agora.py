@@ -345,10 +345,25 @@ def print_progress(tasks: list[dict]) -> None:
               f"latido: {when(activity.get('heartbeat_at'))} · señal orientativa; no cambia el estado")
 
 
+def print_production_decisions(r: dict) -> set[int]:
+    shown = set()
+    for message in r.get("production_decisions", []):
+        body = str(message.get("body") or "").splitlines()
+        if body:
+            print(f"  {body[0]} (hilo {message['thread_id']})")
+            for line in body[1:]:
+                print(f"    {line}")
+        else:
+            print(f"  DECIDIDO · {message['thread_title']} (hilo {message['thread_id']})")
+        shown.add(message["id"])
+    return shown
+
+
 def print_inbox(r: dict) -> None:
     c = r.get("counts", {})
     print(f"Buzón de {r.get('agent')}: {c.get('messages', 0)} mensajes ({c.get('for_you', 0)} para ti), "
           f"{c.get('reviews', 0)} revisiones pendientes, {c.get('changes', 0)} cambios pedidos, {c.get('escalated', 0)} escalados")
+    decisions_shown = print_production_decisions(r)
     for t in r.get("reviews", []):
         print(f"  REVISAR  #{t['id']} {t['title']} (de {t.get('owner')}, rama {t.get('branch') or '-'}, commits {', '.join(t.get('commits') or []) or '-'})")
     for t in r.get("changes", []):
@@ -368,6 +383,8 @@ def print_inbox(r: dict) -> None:
     for q in r.get("out_of_quota") or []:
         print(f"  SIN CUOTA {q.get('note') or q.get('agent')}: no le pases trabajo ni revisiones")
     for m in r.get("messages", []):
+        if m["id"] in decisions_shown:
+            continue
         mark = "→" if m.get("for_you") else " "
         where = f"tarea #{m['task_id']}" if m.get("thread_kind") == "task" else f"hilo {m['thread_id']}"
         print(f"{mark} [{where} · {m['thread_kind']}] {m['author']} ({m['kind']}, {when(m['created'])}) — {m.get('thread_title')}")
@@ -1407,6 +1424,7 @@ def main(argv: list[str] | None = None) -> int:
         i = r.get("inbox") or {}
         print(f"ok · latido de {r.get('agent')} · buzón: {i.get('messages', 0)} mensajes ({i.get('for_you', 0)} para ti), "
               f"{i.get('reviews', 0)} revisiones, {i.get('changes', 0)} cambios, {i.get('pending', 0)} menciones sin ver")
+        print_production_decisions(r)
     else:
         brief = r.get("task") or r.get("thread") or {k: v for k, v in r.items() if k != "ok"}
         if isinstance(brief, dict) and "id" in brief:
