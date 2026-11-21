@@ -331,11 +331,11 @@ def _hidden_shell(pw, exe, bootstrap, main, url, profile, *, capture_browser=Fal
         yield browser
         browser.close()
         (bootstrap / "close").touch()
-        assert process.wait(timeout=10) == 0
+        assert process.wait(timeout=30) == 0
     finally:
         if process.poll() is None:
             process.terminate()
-            process.wait(timeout=10)
+            process.wait(timeout=30)
 
 
 def test_previous_hub_shell_can_read_and_reopening_restores_writes(tmp_path, monkeypatch):

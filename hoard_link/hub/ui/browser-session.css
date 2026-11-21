@@ -24,6 +24,10 @@
   font: inherit;
 }
 
+.hub-workspace:has(#hub-content > .hub-session-upgrade) > .top {
+  background: var(--bg);
+}
+
 #hub-content > .hub-session-upgrade {
   position: static;
   transform: none;
