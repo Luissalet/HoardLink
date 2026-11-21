@@ -134,6 +134,8 @@ def health(app: App, listeners: Optional[dict[int, int]] = None) -> Health:
     """``listeners`` (from :func:`listening_pids`) short-circuits the HTTP
     probe when nothing listens on the port at all: on Windows a connection
     to a closed loopback port can take the whole timeout to fail."""
+    if not app.url:
+        return Health("down", detail=app.launch_reason)
     if listeners is not None and app.port is not None and app.port not in listeners:
         return Health("down", detail=f"nothing listens on port {app.port}")
     status, body = fetch_json(app.health_url())
@@ -388,7 +390,11 @@ def start_app(app: App, logs_dir: str, *, wait: bool = True) -> dict[str, Any]:
     log_path = os.path.join(logs_dir, f"{app.id}.log")
     spec = app.launch
     env = dict(os.environ)
-    env.update(spec.env)
+    for key, value in spec.env.items():
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
     env.setdefault("PYTHONUNBUFFERED", "1")
     cmd = [spec.executable] + list(spec.argv)
     try:

@@ -31,6 +31,37 @@ process is stopped. The manifest's shelf settings and the person's shelf selecti
 
 ## Isolated app instances
 
+### A separate Hub
+
+Start the Hub from its checkout with an unused port, a private data directory and roots containing the
+app manifests. Select the Writer source checkout as one of the roots and prepare its own Node dependencies.
+For example, on Windows:
+
+```powershell
+python -m hoard_link.hub --port 18910 --data-dir 'E:\QA\studio-hub' --roots "E:\Apps;E:\Worktrees\writer"
+```
+
+The alternate port and data directory select headless operation automatically. The Hub starts compatible
+apps on their own loopback ports with data and tokens in `<hub-data>/apps/<id>`. Writer uses three ports for
+its bridge, renderer and media service and uses that folder as its Electron profile. Keep the data
+directory and port assignments together to keep Writer's renderer origin and library across restarts.
+If an assigned port is busy, stop only the instance that owns it or choose fresh Hub data for a separate test.
+
+```powershell
+hub.cmd --data-dir 'E:\QA\studio-hub' start writer
+hub.cmd --data-dir 'E:\QA\studio-hub' tools writer
+hub.cmd --data-dir 'E:\QA\studio-hub' stop writer
+```
+
+The same operations are available as `hub_start_app`, `hub_app_tools`, `hub_call_app` and `hub_stop_app`.
+The Hub discovers the tokens where the apps generate them. Opening an app from this Hub returns its URL
+for a headless browser, including the renderer URL for Writer. The catalog shows a launch reason when an
+app has no compatible headless launcher.
+Use the source checkout for Writer and the native module hints or isolated manifest declarations for the
+other apps. Machine-local `launch_overrides` apply to the normal Hub.
+
+### Extra instances of an app
+
 `hub_isolated_app` and `POST /api/instances/isolated` take the same fields:
 
 - `{action: "start", app, worktree}` creates a fresh data folder below the current Hub's data directory, chooses

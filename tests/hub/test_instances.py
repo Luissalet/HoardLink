@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -10,7 +11,11 @@ import urllib.request
 import pytest
 
 from hoard_link.hub import tools
+from hoard_link.hub.config import HubConfig
+from hoard_link.hub.core import Hub
 from hoard_link.hub.server import make_server
+
+from .conftest import free_port, write_manifest
 
 
 def _http(url, body=None, headers=None):
@@ -89,3 +94,80 @@ def test_instances_over_http_and_as_tools(hub, qa_dir):
     assert tools.call(hub, "hub_instance_add", {"app": "fake", "data_dir": str(qa_dir)})["ok"]
     assert tools.call(hub, "hub_instance_list", {})["instances"][0]["token_present"]
     assert tools.call(hub, "hub_instance_remove", {"app": "fake"})["removed"] == 1
+
+
+def test_private_catalog_starts_without_desktop_or_token_copy(tmp_path, fake_app, monkeypatch):
+    app_root = tmp_path / "apps"
+    app_port, _ = fake_app
+    script = tmp_path / "isolated.py"
+    script.write_text("""
+import json
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+assert os.environ["HOARD_NO_BROWSER"] == "1"
+assert "HOARD_HUB_TOKEN_FILE" not in os.environ
+Path(os.environ["FAKE_TOKEN_FILE"]).write_text("private-fake", encoding="utf-8")
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(json.dumps({"service": "fake-hoard"}).encode())
+
+HTTPServer(("127.0.0.1", int(os.environ["FAKE_PORT"])), Handler).serve_forever()
+""", encoding="utf-8")
+    launch = {"executable": sys.executable, "argv": [str(script)], "env": {"FAKE_PORT": str(app_port)}}
+    book = write_manifest(app_root / "fake", "fake", app_port, launch=launch, extra={
+        "x-family": {"isolated_instance": {"data_env": "FAKE_DATA", "port_env": "FAKE_PORT",
+                                            "token_env": "FAKE_TOKEN_FILE"}}})
+    normal_token = book / "data" / "mcp-token"
+    normal_token.parent.mkdir()
+    normal_token.write_text("real-fake", encoding="utf-8")
+    write_manifest(app_root / "desktop", "desktop", app_port, launch={**launch, "opens_window": True})
+    data = tmp_path / "hub"
+    config = HubConfig.load(env={"HOARD_HUB_DATA_DIR": str(data), "HOARD_HUB_PORT": str(free_port()),
+                                 "HOARD_HUB_ROOTS": str(app_root), "HOARD_HUB_JOBS": "0"})
+    monkeypatch.setenv("HOARD_HUB_TOKEN_FILE", str(normal_token))
+    from hoard_link.hub import desktop
+
+    def fail_on_desktop(*args, **kwargs):
+        pytest.fail("the isolated Hub invoked the desktop")
+
+    monkeypatch.setattr(desktop, "open_window", fail_on_desktop)
+    monkeypatch.setattr(desktop, "open_in_browser", fail_on_desktop)
+    monkeypatch.setattr(desktop, "close_windows", fail_on_desktop)
+    hub = Hub(config)
+    try:
+        assert hub.token_owner("real-fake") is None
+        assert not hub.start("desktop")["ok"]
+        assert hub.get("desktop").url == ""
+        opened = hub.open("fake", mode="browser")
+        assert opened["ok"] and opened["ready"] and opened["mode"] == "headless", opened
+        assert hub.get("fake").port != app_port
+        assert hub.token_owner("private-fake") == "fake"
+        hub.rescan()
+        assert hub.get("fake").url == opened["url"]
+        assert hub.stop("fake")["ok"]
+        assert _http(f"http://127.0.0.1:{app_port}/api/health")[0] == 200
+    finally:
+        hub.close()
+
+
+def test_isolated_command_rejects_shared_data_and_never_opens_hub(tmp_path, monkeypatch):
+    from hoard_link.hub import __main__ as cli
+
+    tested = tmp_path / "hub"
+    port = free_port()
+    monkeypatch.delenv("HOARD_HUB_DATA_DIR", raising=False)
+    monkeypatch.delenv("HOARD_HUB_ISOLATED_CATALOG", raising=False)
+    assert cli.main(["--port", str(port)]) == 2
+    tested.mkdir()
+    marker = tested / "url"
+    marker.write_text("http://127.0.0.1:8810", encoding="utf-8")
+    assert cli.main(["--port", str(port), "--data-dir", str(tested)]) == 2
+    monkeypatch.setattr(cli, "_already_running", lambda url: True)
+    monkeypatch.setattr(cli, "_open_own_window", lambda *a: pytest.fail("opened the Hub"))
+    marker.write_text(f"http://127.0.0.1:{port}", encoding="utf-8")
+    assert cli.main(["--port", str(port), "--data-dir", str(tested), "--browser"]) == 0

@@ -150,6 +150,9 @@ class Hub:
     def close(self) -> None:
         from . import facets as _facets
         _facets.close_all(getattr(self, "facets", []))
+        if self.config.isolated:
+            for app_id in list(self._spawned):
+                self.stop(app_id)
         try:
             self.placement.link.stop()
         except Exception:  # noqa: BLE001
@@ -212,10 +215,14 @@ class Hub:
             faustus_python=self.config.faustus_python,
             icon_dirs=self.config.icon_dirs,
             exclude_ids=self.config.exclude_ids + [SERVICE, "hoardhub"],
-            launch_overrides=self._launch_overrides(),
+            launch_overrides=None if self.config.isolated else self._launch_overrides(),
         )
-        self.ports.restore(apps)
         with self._lock:
+            if self.config.isolated:
+                from .isolated_apps import isolated_catalog
+                apps = isolated_catalog(apps, self.config)
+            else:
+                self.ports.restore(apps)
             self._apps = {a.id: a for a in apps}
         return apps
 
@@ -355,7 +362,8 @@ class Hub:
                 res = self._await_ready(app, pending) if wait else {"ok": True, "already": True, "pid": pending,
                                                                        "detail": "already starting"}
             else:
-                allocation = self.ports.prepare(app, self.apps, self.config.port)
+                allocation = (self._prepare_isolated_start(app) if self.config.isolated
+                              else self.ports.prepare(app, self.apps, self.config.port))
                 if not allocation.get("ok"):
                     return dict(allocation, app=app_id)
                 launch_app = app
@@ -363,7 +371,7 @@ class Hub:
                     renderer = programs.vulcan_blender_env()
                     if renderer:
                         launch_app = replace(app, launch=replace(app.launch, env={**app.launch.env, **renderer}))
-                if app_id == "writer" and app.launch:
+                if app_id == "writer" and app.launch and not self.config.isolated:
                     launch_app = replace(app, launch=replace(app.launch, env={
                         **app.launch.env, "HOARD_HUB_URL": self.config.url,
                         "HOARD_HUB_DATA_DIR": self.config.data_dir,
@@ -388,6 +396,29 @@ class Hub:
         if res.get("ok") and not res.get("already"):
             self._safe_emit("hub.app.started", {"app": app_id, "pid": res.get("pid"), "ready": res.get("ready")})
         return res
+
+    def _prepare_isolated_start(self, app: App) -> dict[str, Any]:
+        if not app.launchable or not app.launch:
+            return {"ok": False, "error": app.launch_reason}
+        with self._lock:
+            spawned = self._spawned.get(app.id)
+            created = self._spawned_created.get(app.id)
+        if spawned and created is not None and procs.proc_info(spawned).created_at == created:
+            return {"ok": True}
+        ports = [app.port]
+        if app.id == "writer":
+            ports.extend(int(app.launch.env[key]) for key in ("WH_RENDERER_PORT", "MEDIA_DOWNLOADER_PORT"))
+        busy = set(ports).intersection(procs.listening_pids())
+        if busy:
+            port = min(busy)
+            return {"ok": False, "error": f"Isolated port {port} is busy. El puerto aislado {port} está ocupado."}
+        if app.id == "writer":
+            from .isolated_apps import prepare_writer_profile
+            try:
+                prepare_writer_profile(app)
+            except OSError as exc:
+                return {"ok": False, "error": f"Could not prepare the profile. No se pudo preparar el perfil: {exc}"}
+        return {"ok": True}
 
     def _safe_emit(self, type: str, data: dict[str, Any]) -> None:
         try:
@@ -461,10 +492,12 @@ class Hub:
             if tracked.created_at is not None and abs(tracked.created_at - created) < .01:
                 proc = tracked  # stop the launcher too, including a server still booting
                 owned = True
+        if self.config.isolated and not owned:
+            return {"ok": True, "app": app_id, "detail": "No process started by this Hub."}
         if proc is None:
             desktop.close_windows(app_id, self.config.profiles_dir)
             return {"ok": True, "app": app_id, "detail": "not running"}
-        if h.state == "foreign":
+        if h.state == "foreign" and not (self.config.isolated and owned):
             return {"ok": False, "app": app_id, "error": "refusing: " + h.detail}
         if h.state == "down" and not owned:
             # Something listens but does not answer: only stop it when it is
@@ -477,7 +510,8 @@ class Hub:
         res["app"] = app_id
         res["pid"] = proc.pid
         # Its windows are pointless without the server behind them.
-        desktop.close_windows(app_id, self.config.profiles_dir)
+        if not self.config.isolated:
+            desktop.close_windows(app_id, self.config.profiles_dir)
         if res.get("ok"):
             with self._lock:
                 self._inflight.pop(app_id, None)
@@ -548,6 +582,16 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        if self.config.isolated:
+            url = app.url
+            if app.id == "writer" and app.launch:
+                url = f"http://127.0.0.1:{app.launch.env['WH_RENDERER_PORT']}"
+            if autostart:
+                result = self.start(app_id, wait=True, automatic=automatic)
+                return {**result, "mode": "headless", "url": url} if result.get("ok") else result
+            if app.url and procs.health(app).state == "healthy":
+                return {"ok": True, "app": app_id, "mode": "headless", "url": url}
+            return {"ok": False, "app": app_id, "error": "The isolated app is stopped. La aplicación aislada está parada."}
         remote = self.placement.remote_app(app_id)
         if remote is not None and remote["url"]:
             # Running on the Spark: open it there (its tailnet address) instead of starting a second copy here.
@@ -594,6 +638,8 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        if self.config.isolated:
+            return {"ok": True, "path": app.folder, "mode": "headless"}
         return desktop.open_folder(app.folder)
 
     def open_repo_folder(self, name: str) -> dict[str, Any]:
@@ -601,6 +647,8 @@ class Hub:
         rec, candidates = self.repos.find(name)
         if rec is None:
             return {"ok": False, "error": f"unknown repo: {name}", "candidates": candidates}
+        if self.config.isolated:
+            return {"ok": True, "path": rec["path"], "repo": rec["name"], "mode": "headless"}
         res = desktop.open_folder(rec["path"])
         res["repo"] = rec["name"]
         return res
@@ -744,6 +792,8 @@ class Hub:
         shelf = self.facet("skills")
         if shelf is not None and tool in ("skills_list", "skill_read"):
             return shelf.proxy_read(app, tool, args)
+        if not app.url:
+            return {"ok": False, "app": app_id, "error": app.launch_reason, "status": 409}
         given = reason if isinstance(reason, str) and reason.strip() else args.get("reason")
         if not (isinstance(given, str) and given.strip()) and caller != "hub-tool":
             given = default_call_reason(agent if agent and agent != caller else caller)
@@ -758,6 +808,8 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        if not app.url:
+            return {"ok": False, "app": app_id, "error": app.launch_reason, "status": 409}
         return contract.app_tools(app)
 
     def token_owner(self, token: str) -> Optional[str]:
