@@ -82,6 +82,10 @@ occlusion tracking: a window launched by a background process is not given
 the foreground, and with occlusion tracking on it was treated as hidden and
 never painted (a blank window with only the caption buttons).
 
+An older Hub window can still read conversations and show pending decisions.
+The notice above the page title scrolls with the page. Close that window and
+reopen the Hub to restore writes.
+
 ## Profiles
 
 `POST /api/profiles/<name>/patch` and MCP `hub_profile_patch` update only the

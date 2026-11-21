@@ -361,41 +361,64 @@ def test_previous_hub_shell_can_read_and_reopening_restores_writes(tmp_path, mon
     thread_url = f"{url}/#agora-{thread['id']}"
     profile = Path(hub.config.profiles_dir) / "_hub"
     server = serve(hub)
+    ready_timeout = 30_000
     try:
         with playwright.sync_playwright() as pw:
             with _hidden_shell(pw, exe, tmp_path / "old", prior_main, thread_url, profile) as browser:
                 context = browser.contexts[0]
                 page = _shell_page(context, url)
+                page.set_default_timeout(ready_timeout)
+                page.wait_for_load_state("domcontentloaded")
                 bar = next(tab for tab in context.pages if tab.url.startswith("file:"))
                 with page.expect_navigation():
                     bar.evaluate("hoardBar.reload()")
                 assert page.evaluate("window.hoardWindow.shell") == "hoard-window"
                 assert page.evaluate("typeof window.hoardHubSession") == "undefined"
                 notice = page.locator(".hub-session-recovery")
-                playwright.expect(notice).to_have_text(
-                    "This window is from an earlier version. Close it and reopen the Hub.")
-                playwright.expect(page.get_by_text("Available before reopening", exact=True)).to_be_visible()
-                assert notice.evaluate("(element) => getComputedStyle(element.parentElement).position") == "sticky"
-                heading = page.locator("#hub-page-title").bounding_box()
-                box = notice.bounding_box()
-                assert box["y"] + box["height"] <= heading["y"]
-                page.screenshot(path=str(tmp_path / "previous-window-en.png"))
-                page.locator("#btn-lang").click()
-                playwright.expect(notice).to_have_text(
-                    "Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir el Hub.")
+                page.get_by_text("Available before reopening", exact=True).wait_for()
+                languages = {
+                    "en": "This window is from an earlier version. Close it and reopen the Hub.",
+                    "es": "Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir el Hub.",
+                }
+                cdp = context.new_cdp_session(page)
+                for width in (1280, 390):
+                    cdp.send("Emulation.setDeviceMetricsOverride", {
+                        "width": width, "height": 823, "deviceScaleFactor": 1, "mobile": False,
+                    })
+                    for lang, message in languages.items():
+                        if page.locator("html").get_attribute("lang") != lang:
+                            page.locator("#btn-lang").click()
+                        playwright.expect(notice).to_have_text(message, timeout=ready_timeout)
+                        # A sticky notice used to cover the heading as the document scrolled.
+                        for scroll in (0, 60):
+                            geometry = notice.evaluate("""(notice, scroll) => {
+                                window.scrollTo(0, scroll);
+                                const box = notice.getBoundingClientRect();
+                                const title = document.getElementById('hub-page-title').getBoundingClientRect();
+                                return { width: innerWidth, y: scrollY, left: box.left, right: box.right,
+                                         bottom: box.bottom, titleTop: title.top };
+                            }""", scroll)
+                            assert (geometry["width"], geometry["y"]) == (width, scroll)
+                            assert 0 <= geometry["left"] < geometry["right"] <= width
+                            assert geometry["bottom"] <= geometry["titleTop"], geometry
+                            if scroll == 0:
+                                page.screenshot(path=str(tmp_path / f"previous-window-{width}-{lang}.png"))
+                cdp.send("Emulation.clearDeviceMetricsOverride")
+                cdp.detach()
                 page.get_by_role("link", name="Tus decisiones pendientes").click()
-                playwright.expect(page.locator(decision_selector)).to_be_visible()
+                page.locator(decision_selector).wait_for()
                 page.screenshot(path=str(tmp_path / "previous-window-es.png"))
 
             launch = tmp_path / "current"
             with _hidden_shell(pw, exe, launch, SHELL_MAIN, thread_url, profile, capture_browser=True) as browser:
                 page = _shell_page(browser.contexts[0], url)
+                page.set_default_timeout(ready_timeout)
                 page.wait_for_function("localStorage.getItem('hub.ui.session')")
-                playwright.expect(page.locator(".hub-session-recovery")).to_have_count(0)
+                playwright.expect(page.locator(".hub-session-recovery")).to_have_count(0, timeout=ready_timeout)
                 bar = next(tab for tab in browser.contexts[0].pages if tab.url.startswith("file:"))
                 bar.evaluate("hoardBar.menu(0, 0)")
                 opened = launch / "browser-url"
-                assert wait_for(opened.is_file, timeout=5)
+                assert wait_for(opened.is_file, timeout=ready_timeout / 1000)
                 target = urlsplit(opened.read_text(encoding="utf-8"))
                 handoff = parse_qs(target.fragment)
                 assert handoff["view"] == [f"agora-{thread['id']}"]

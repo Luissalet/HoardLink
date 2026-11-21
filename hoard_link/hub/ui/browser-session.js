@@ -63,8 +63,9 @@
       translate();
       new MutationObserver(translate).observe(document.documentElement, { attributes: true, attributeFilter: ["lang"] });
       notice.classList.add("hub-session-upgrade");
-      const toolbar = document.querySelector(".hub-workspace > .top");
-      (toolbar || document.body).append(notice);
+      const content = document.getElementById("hub-content");
+      if (content) content.prepend(notice);
+      else document.body.append(notice);
       return;
     }
     const spanish = isSpanish();

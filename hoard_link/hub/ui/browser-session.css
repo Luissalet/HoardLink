@@ -24,14 +24,11 @@
   font: inherit;
 }
 
-.hub-workspace > .top:has(> .hub-session-upgrade) {
-  flex-wrap: wrap;
-}
-
-.top > .hub-session-upgrade {
+#hub-content > .hub-session-upgrade {
   position: static;
   transform: none;
-  flex-basis: 100%;
+  width: auto;
   max-width: none;
+  margin-bottom: .75rem;
   box-shadow: none;
 }
