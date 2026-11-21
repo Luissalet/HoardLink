@@ -97,7 +97,7 @@ Build output and installed local binaries are generated files. Source distributi
 | Windows and browser tabs for other apps opened by the Hub | Each app serves its own page and uses its own API. The Hub's write session is scoped to the Hub origin. |
 | Studio's native Ágora and pending decisions | Studio forwards writes from the signed-in person's API through the relay. Production decisions use the dedicated relay credential. |
 | Studio's Live panel and its separate window | The embedded or standalone live view reads activity and task details. It has no person write actions. |
-| Studio's Development panel and its **Open in a separate window** link | The link redirects to the Hub console without a ticket. The separate window can reuse a Hub session in the same profile. A cross-site frame depends on session storage for that frame, which may be partitioned. In a fresh profile both can read, and the signed-in Studio Ágora and pending decisions remain available for writes. |
+| Studio's Development panel and its **Open in a separate window** link | Both open on the Studio origin and relay requests to the Hub. A current Studio administrator session enables messages and decisions. If Studio runs without sign-in, Development is read-only and links to **Your pending decisions** in Studio. The channel in the same space remains available for messages. Decision cards offer **Open order** when Studio can direct the browser to the Hub. |
 | Direct Hub URLs and links in notifications | They reuse an existing session for that Hub origin and profile. A fresh profile can read until it opens the Hub through a launcher. |
 
 ## Validation boundaries
