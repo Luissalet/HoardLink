@@ -429,9 +429,11 @@ def _discard_jobs(self: Any, journal: Any, order: dict, variants: list[dict], di
             journal.before("tasks", tid)
             why = (f"Trabajo descartado en la pasada 0 «{variant['title']}» de la orden #{order['id']}."
                    + (f"\nNota: {note}" if note else ""))
+            prior = self.db.scalar("SELECT result FROM tasks WHERE id=?", (tid,), "")
+            result = f"{prior}\n\n{why}" if prior else why
             now = orders._now(self)
             self.db.execute("UPDATE tasks SET status='dropped', result=?, updated=?, closed_at=? WHERE id=?",
-                            (why, now, now, tid))
+                            (result, now, now, tid))
             for lock in self.db.query("SELECT resource FROM locks WHERE task_id=?", (tid,)):
                 journal.before("locks", lock["resource"])
             self.db.execute("DELETE FROM locks WHERE task_id=?", (tid,))

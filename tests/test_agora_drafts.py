@@ -93,6 +93,7 @@ def test_keep_starts_the_full_pass_and_drops_unfinished_alternatives(agora, tmp_
         {"key": "later", "title": "Full pass take", "after": ["first"]},
     ]})["keys"]
     agora.task_claim({"agent": "worker", "task_id": b["jobs"][0], "locks": ["path:synthetic/draft"]})
+    agora.db.execute("UPDATE tasks SET result=? WHERE id=?", ("Prior result", b["jobs"][0]))
     gate = agora.draft_gate_open({"agent": "producer", "pass_id": opened["draft_pass"]["id"]})
     outcome = decide(agora, a["id"], "keep", "Conserva el giro")
 
@@ -101,12 +102,13 @@ def test_keep_starts_the_full_pass_and_drops_unfinished_alternatives(agora, tmp_
     assert agora._task_row(jobs["wrong"])["waiting_on"] == [b["jobs"][0]]
     discarded = agora._task_row(b["jobs"][0])
     assert discarded["status"] == "dropped" and discarded["owner"] == "worker"
-    assert "Conserva el giro" in discarded["result"]
+    assert discarded["result"].startswith("Prior result") and "Conserva el giro" in discarded["result"]
     assert agora.locks({"check": "path:synthetic/draft"})["free"]
     with pytest.raises(AgoraError):
         agora.order_undo({"agent": "producer", "token": gate["undo"]})
     agora.order_undo(person(token=outcome["undo"]))
     assert agora._task_row(b["jobs"][0])["status"] == "claimed"
+    assert agora._task_row(b["jobs"][0])["result"] == "Prior result"
     assert not agora.locks({"check": "path:synthetic/draft"})["free"]
     assert agora.draft_passes({"order_id": order["id"]})["draft_passes"][0]["status"] == "shown"
 
