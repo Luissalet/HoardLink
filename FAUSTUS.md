@@ -6,6 +6,12 @@ The Hub forwards optional agent and session identifiers from the worker CLI, MCP
 HTTP tool calls. Apps with a write journal record that identity and session for review and undo.
 See [the agent command reference](docs/worker-cli.md).
 
+Faustus workers can find Hub tools through `lookup_tools` using their exact MCP IDs in
+`query` or `names`. For production work, use `hub_piece_validate` to check a piece,
+`hub_piece_validate_record` to save the result with its undo, and `hub_eyes_look` and
+`hub_eyes_get` for visual review. The same connector exposes orders, production
+stations, app tools and receipts. It handles authentication for native calls.
+
 ## Production decisions
 
 Home brings each decision awaiting the person into view. Orders and draft passes load independently of the

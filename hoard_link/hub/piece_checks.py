@@ -259,7 +259,7 @@ class PieceChecksFacet(Facet):
         actor = {"agent": string, "language": {"enum": ["en", "es"]}}
         file = {**properties, "path": string, "kind": string}
         return [
-            _tool("hub_piece_validate", "Check a piece against its requirements. Comprueba los requisitos de una pieza.",
+            _tool("hub_piece_validate", "Check a piece against its requirements. Comprobar los requisitos de una pieza.",
                   file),
             _tool("hub_piece_validate_record", "Check and record an order piece. Comprueba y anota una pieza de una orden.",
                   {**properties, **actor}, ("piece_id",), read=False),
