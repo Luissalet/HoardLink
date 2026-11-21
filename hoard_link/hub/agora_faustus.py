@@ -157,6 +157,24 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
         raise
 
 
+def reactivate_apprentice_binding(console: Any, base: str, session: str) -> None:
+    """Continuing an older apprentice chat hands its identity back to that chat."""
+    path = "/api/coordination/" + session
+    status, data = console._faustus_session_request("GET", path, base_url=base)
+    binding = data.get("binding") if isinstance(data, dict) else None
+    if status != 200 or not isinstance(binding, dict) or binding.get("actor") != APPRENTICE:
+        raise RuntimeError("Faustus did not confirm the apprentice chat binding.")
+    if binding.get("active"):
+        return
+    fields = {key: binding[key] for key in ("id", "connector_id", "space_id", "actor",
+              "operations", "resources", "repos", "thread_ids")}
+    fields.update(active=True, expected_revision=binding["revision"])
+    status, data = console._faustus_session_request("PUT", path, fields, base_url=base)
+    confirmed = data.get("binding") if isinstance(data, dict) else None
+    if status != 200 or not isinstance(confirmed, dict) or not confirmed.get("active"):
+        raise RuntimeError("Faustus could not reactivate the apprentice chat binding.")
+
+
 def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, model: str) -> dict:
     data = worker_data(console, agent)
     data.mkdir(parents=True, exist_ok=True)

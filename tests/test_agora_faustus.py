@@ -77,6 +77,24 @@ def test_tutor_instinct_remembers_own_studio_message_and_returns_undo(tmp_path):
     assert not list(folder.iterdir())
 
 
+def test_resuming_apprentice_reactivates_the_exact_saved_binding(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    binding = {"id": "previous", "actor": agora_faustus.APPRENTICE, "active": False, "revision": 2,
+               "space_id": "estudio", "connector_id": "agora", "operations": ["poll"], "thread_ids": [1],
+               "resources": [], "repos": []}
+    calls = []
+
+    def request(method, path, fields=None, *, base_url=""):
+        assert path == "/api/coordination/previous-chat" and base_url == "http://127.0.0.1:58200"
+        calls.append((method, fields))
+        return 200, {"binding": binding if method == "GET" else {**binding, "active": True}}
+
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+    agora_faustus.reactivate_apprentice_binding(facet, "http://127.0.0.1:58200", "previous-chat")
+    assert calls == [("GET", None), ("PUT", {key: value for key, value in binding.items() if key != "revision"}
+                                             | {"active": True, "expected_revision": 2})]
+
+
 def test_placed_session_request_uses_spark_address(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     monkeypatch.setattr(agora_faustus, "service", lambda hub: {

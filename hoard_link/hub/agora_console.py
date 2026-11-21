@@ -2903,7 +2903,7 @@ class AgoraConsoleFacet(Facet):
 
     def _continue_worker(self, worker_id: str, automatic: bool = False,
                          previous_process: Optional[subprocess.Popen[str]] = None, message: str = "") -> dict[str, Any]:
-        from .agora_faustus import APPRENTICE
+        from .agora_faustus import APPRENTICE, STUDIO, reactivate_apprentice_binding
 
         with _STARTING_LOCK, self._db_lock, self._db() as db:
             row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
@@ -2977,6 +2977,8 @@ class AgoraConsoleFacet(Facet):
             if not any(isinstance(session, dict) and session.get("id") == row["session_id"] for session in sessions):
                 self._close_worker_runtime(worker_id)
                 return self._resume_unavailable(row, "missing_session")
+            if self.space_id == STUDIO and row["agent_id"] == APPRENTICE:
+                reactivate_apprentice_binding(self, base_url, row["session_id"])
             command[command.index("--url") + 1] = base_url
             command[command.index("-p") + 1] = prompt + "\n\nPrior stop: " + row["detail"]
             with log_path.open("w", encoding="utf-8") as log:
