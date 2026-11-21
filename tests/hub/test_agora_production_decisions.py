@@ -119,3 +119,77 @@ def test_pending_queue_opens_exact_gate_and_uses_the_production_record(tmp_path)
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_gate_shows_registered_views_and_keeps_the_original_file_accessible(tmp_path):
+    playwright = pytest.importorskip("playwright.sync_api")
+    images = pytest.importorskip("PIL.Image")
+    hub = make_hub(tmp_path)
+    agora = hub.facet("agora").agora
+    order = agora.order_create({"agent": "builder", "title": "Model and notes", "words": "Model a stair",
+                                "folder": str(tmp_path)})["order"]
+    for i, color in enumerate(("brown", "yellow")):
+        images.new("RGB", (16 + i, 12), color).save(tmp_path / f"view-{i}.png")
+    piece_ids = []
+    for name, previews in [("Stair.stl", ["view-0.png"]), ("Notes.docx", ["view-0.png", "view-1.png"])]:
+        (tmp_path / name).write_bytes(name.encode())
+        piece = agora.piece_add({"agent": "builder", "order_id": order["id"], "kind": "document",
+                                "title": name, "path": name, "previews": previews})["piece"]
+        piece_ids.append(piece["id"])
+    gate = agora.gate_open({"agent": "builder", "order_id": order["id"], "title": "Review the stair",
+                            "piece_ids": piece_ids})["gate"]
+    server = serve(hub)
+    try:
+        with playwright.sync_playwright() as runtime:
+            try:
+                browser = runtime.chromium.launch(channel="chrome", headless=True)
+            except playwright.Error as error:
+                if "not found" in str(error).lower() or "executable doesn't exist" in str(error).lower():
+                    pytest.skip("Installed Chrome is required for the headless browser test")
+                raise
+            page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-GB")
+            page.goto(hub.config.url + "/#hub/pending_decisions")
+            card = page.locator(f'.production-card[data-decision="gate-{gate["id"]}"]')
+            stair = card.get_by_role("listitem").filter(has_text="Stair.stl")
+            doc = card.get_by_role("listitem").filter(has_text="Notes.docx")
+            playwright.expect(stair.locator("img")).to_have_js_property("naturalWidth", 16)
+            doc.get_by_role("button", name="View 2").click()
+            playwright.expect(doc.locator("img")).to_have_js_property("naturalWidth", 17)
+            playwright.expect(doc.get_by_role("button", name="View 2")).to_have_attribute("aria-pressed", "true")
+            zoom = doc.get_by_role("button", name="Enlarge · Notes.docx · 2")
+            zoom.click()
+            playwright.expect(doc.get_by_role("dialog")).to_be_visible()
+            page.keyboard.press("Escape")
+            playwright.expect(zoom).to_be_focused()
+            with page.expect_download() as download:
+                doc.get_by_role("link", name="Download piece · Notes.docx").click()
+            assert download.value.suggested_filename == "Notes.docx"
+            assert download.value.path().read_bytes() == b"Notes.docx"
+            card.get_by_role("link", name="Open order").click()
+            full_gate = page.locator(f'[data-gate="{gate["id"]}"]')
+            full_stair = full_gate.locator(f'[data-piece="{piece_ids[0]}"]')
+            playwright.expect(full_stair.locator("img")).to_have_js_property("naturalWidth", 16)
+            playwright.expect(full_stair.get_by_role("link", name="Download piece · Stair.stl")).to_be_visible()
+
+            doc_path = f"/api/agora/piece_file/{piece_ids[1]}"
+            page.route(f"**{doc_path}?relay=1", lambda route: route.fulfill(
+                body=b"Notes.docx", headers={"Content-Type": "application/octet-stream",
+                                            "Content-Disposition": 'attachment; filename="piece-2"'}))
+            page.evaluate("""async path => {
+                const {renderDecisionCards} = await import('/ui/production_decisions_card.js');
+                const container = document.createElement('div');
+                document.body.append(container);
+                renderDecisionCards(container, [{key: 'relay-test', title: 'Relayed file', artifacts: [
+                    {title: 'Notes.docx', filename: 'Notes.docx', path, media: 'file'},
+                ]}], {lang: 'en', source: path => path + '?relay=1'});
+            }""", doc_path)
+            relayed = page.locator('[data-decision="relay-test"]')
+            with page.expect_download() as download:
+                relayed.get_by_role("link", name="Download piece · Notes.docx").click()
+            assert download.value.suggested_filename == "Notes.docx"
+            assert download.value.path().read_bytes() == b"Notes.docx"
+            browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        hub.close()

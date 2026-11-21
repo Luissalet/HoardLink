@@ -40,7 +40,8 @@ def test_pending_decisions_counts_each_gate_once_in_its_space(tmp_path):
         assert report['pieces'] == ['Report file']
         assert report['image'] is None
         assert report['artifacts'] == [{'title': 'Report file', 'media': 'text',
-                                        'path': f"/api/agora/piece_file/{piece['id']}", 'url': None, 'image': None}]
+                                        'path': f"/api/agora/piece_file/{piece['id']}", 'url': None, 'image': None,
+                                        'filename': 'report.txt', 'previews': []}]
         status, scoped = http(url + '?space_id=test-studio', headers=headers)
         assert status == 200
         assert scoped['rows'] == [draft]

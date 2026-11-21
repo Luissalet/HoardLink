@@ -33,6 +33,7 @@
   const label = (map, key) => (map[key] ? tr(map[key][0], map[key][1]) : key);
   const fileUrl = (piece, i) => `/api/agora/piece_file/${piece.id}` + (i === undefined ? "" : `?preview=${i}`);
   const baseName = p => String(p || "").split(/[\\/]/).pop();
+  const imageFile = piece => /\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(piece.path);
 
   let root = null, page = null, data = null, lastSig = "", spaces = [], busy = false, opened = new Set(), details = new Map(), timers = [];
   let composeView = null, composeKey = "";
@@ -44,25 +45,56 @@
 
   // ---- previews ------------------------------------------------------------------------------------------
   function preview(piece, big) {
+    if (!piece.previews?.length || piece.view === "web") return originalPreview(piece, big);
+    const views = el("div", "ord-media ord-media-turntable" + (big ? " big" : ""));
+    renderViews(views, piece, big && piece.view === "turntable");
+    if (["mesh", "turntable", "file", "object"].includes(piece.view)
+        || (piece.view === "image" && !imageFile(piece))) return views;
+    const stack = el("div");
+    stack.append(views, originalPreview(piece, big));
+    return stack;
+  }
+
+  function renderViews(box, piece, auto) {
+    const frames = piece.previews.map((_, i) => {
+      const image = el("img");
+      image.alt = piece.previews.length === 1 ? piece.title : `${piece.title} · ${i + 1}`;
+      image.loading = "lazy";
+      image.src = fileUrl(piece, i);
+      return image;
+    });
+    box.append(...frames);
+    if (frames.length === 1) return;
+    const bar = el("div", "ord-turn");
+    let at = 0;
+    const show = index => {
+      at = index % frames.length;
+      frames.forEach((frame, i) => {
+        frame.hidden = i !== at;
+        bar.children[i].setAttribute("aria-pressed", String(i === at));
+      });
+    };
+    frames.forEach((_, i) => {
+      const button = el("button", "ghost small", String(i + 1));
+      button.type = "button";
+      button.setAttribute("aria-label", tr(`Vista ${i + 1}`, `View ${i + 1}`));
+      button.onclick = () => { auto = false; show(i); };
+      bar.append(button);
+    });
+    box.append(bar);
+    show(0);
+    if (auto) timers.push(setInterval(() => { if (auto) show(at + 1); }, 1100));
+  }
+
+  function originalPreview(piece, big) {
     const box = el("div", "ord-media ord-media-" + piece.view + (big ? " big" : ""));
     const missing = () => { box.replaceChildren(el("p", "ord-media-note", tr("El fichero no está en su sitio: ", "The file is not where it was: ") + baseName(piece.path))); };
     if (piece.path && !piece.exists && piece.view !== "web") { missing(); return box; }
     const img = (src, alt) => { const i = el("img"); i.src = src; i.alt = alt || piece.title; i.loading = "lazy"; i.onerror = missing; return i; };
     switch (piece.view) {
       case "image":
-        box.append(img(piece.previews?.length && !/\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(piece.path) ? fileUrl(piece, 0) : fileUrl(piece)));
+        box.append(img(fileUrl(piece)));
         break;
-      case "turntable": {
-        const frames = piece.previews.map((_, i) => img(fileUrl(piece, i), `${piece.title} · ${i + 1}`));
-        frames.forEach((f, i) => { f.hidden = i !== 0; box.append(f); });
-        const bar = el("div", "ord-turn");
-        let at = 0, auto = big;
-        const show = i => { at = (i + frames.length) % frames.length; frames.forEach((f, k) => { f.hidden = k !== at; }); [...bar.children].forEach((b, k) => b.setAttribute("aria-pressed", String(k === at))); };
-        frames.forEach((_, i) => { const b = el("button", "ghost small", String(i + 1)); b.type = "button"; b.title = tr("Vista ", "View ") + (i + 1); b.onclick = () => { auto = false; show(i); }; bar.append(b); });
-        box.append(bar); show(0);
-        if (big && frames.length > 1) timers.push(setInterval(() => { if (auto) show(at + 1); }, 1100));
-        break;
-      }
       case "video": { const v = el("video"); v.src = fileUrl(piece); v.controls = true; v.preload = "metadata"; v.muted = true; box.append(v); break; }
       case "audio": { const a = el("audio"); a.src = fileUrl(piece); a.controls = true; a.preload = "none"; box.append(a); break; }
       case "web": {
@@ -81,7 +113,7 @@
           box.replaceChildren(f);
         };
         if (piece.previews?.length) {
-          box.append(img(fileUrl(piece, 0)));
+          renderViews(box, piece, false);
           const b = el("button", "ghost small ord-live", tr("Ver funcionando", "See it working"));
           b.type = "button"; b.onclick = live; box.append(b);
         } else live();
@@ -110,8 +142,7 @@
         box.append(el("p", "ord-media-note", [piece.app, piece.object, piece.place].filter(Boolean).join(" · ")));
         break;
       default:
-        if (piece.previews?.length) box.append(img(fileUrl(piece, 0)));
-        else box.append(el("p", "ord-media-note", baseName(piece.path)));
+        box.append(el("p", "ord-media-note", baseName(piece.path)));
     }
     return box;
   }
@@ -202,6 +233,17 @@
       const line = el("div", "ord-piece-line");
       line.append(el("b", "", piece.title), pill(label(KIND, piece.kind), "kind"));
       cap.append(line);
+      if (piece.path) {
+        const download = !["video", "audio", "pdf", "text"].includes(piece.view);
+        const label = download ? tr("Descargar pieza", "Download piece") : tr("Abrir pieza", "Open piece");
+        const original = el("a", "", label);
+        original.href = fileUrl(piece);
+        original.target = "_blank";
+        original.rel = "noopener noreferrer";
+        original.setAttribute("aria-label", `${label} · ${piece.title}`);
+        if (download) original.download = baseName(piece.path);
+        cap.append(original);
+      }
       const meta = [piece.station, piece.agent, piece.model].filter(Boolean).join(" · ");
       if (meta) cap.append(el("small", "ord-muted", meta));
       const kl = keepList(piece); if (kl) cap.append(kl);

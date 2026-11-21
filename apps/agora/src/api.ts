@@ -1,4 +1,5 @@
 import {invoke, isTauri} from '@tauri-apps/api/core';
+import {registerDecisionPieceOpener} from '../../../hoard_link/hub/ui/production_decisions_card.js';
 export const spaceId = new URLSearchParams(location.search).get('space_id') || 'ecosystem';
 export const embedded = new URLSearchParams(location.search).get('embedded') === '1';
 export const hubUrl = 'http://127.0.0.1:8810/?space_id=' + encodeURIComponent(spaceId) + '#agora';
@@ -11,6 +12,10 @@ async function native<T>(command: string, args: Record<string, unknown> = {}): P
   } catch (error) {
     throw error instanceof Error ? error : new Error(String(error));
   }
+}
+
+if (isTauri()) {
+  registerDecisionPieceOpener((path, filename) => native('open_piece', {path, filename}));
 }
 
 export async function openWriteSession(): Promise<void> {

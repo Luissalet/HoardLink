@@ -117,6 +117,11 @@ working» loads it in a sandboxed frame without the page's origin, so it cannot 
 `data:` addresses, so `defer`, `async` and modules keep their timing), PDF (a browser without a PDF viewer, such as a
 headless Chromium build, gets a note and a link to open the file instead of a blank frame), text — and its details to
 keep with their state and where each was set.
+Registered views are available even when there is only one mesh view or the original is an editable document.
+The pending decision cards and the order gate also link to the original file. Downloads use the registered filename.
+Select a numbered view when a
+piece has several. In the pending list, select the image to enlarge it. The desktop console saves downloadable
+pieces in Downloads and gives each copy a distinct name.
 The person writes an optional note and presses **Keep** or **Cancel**; **Decide separately** splits a piece into a gate of
 its own (`gate_split`).
 
@@ -153,7 +158,7 @@ Writes (`POST /api/agora/<operation>` with a bearer token, or from the page): th
 | Tool | Does |
 |---|---|
 | `hub_agora_orders` | Orders of a space (or all), with counts, thumbnails and the gates waiting for the person |
-| `hub_agora_pending_decisions` | The pending gates and early passes, with previews and a count per space |
+| `hub_agora_pending_decisions` | Pending gates and early passes, with registered previews and original filenames per artifact and a count per space |
 | `hub_agora_order` | One order: words, refs, plan with task states, pieces with checks and defects, gates, decisions |
 | `hub_agora_order_create` / `hub_agora_order_update` | Write an order / change it |
 | `hub_agora_plan_set` | Compose or recompose the plan |

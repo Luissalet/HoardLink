@@ -1,5 +1,10 @@
 const stylesheet = new URL('./production_decisions_card.css?no-inline', import.meta.url).href;
 const mounted = new WeakMap();
+let nativePieceOpener;
+
+export function registerDecisionPieceOpener(openPiece) {
+  nativePieceOpener = openPiece;
+}
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -63,24 +68,108 @@ function imagePreview(piece, options, tr) {
   return open;
 }
 
+function pieceViews(views, options, tr) {
+  if (views.length === 1) return imagePreview(views[0], options, tr);
+  const gallery = node('div', 'production-card__gallery');
+  const screen = node('div', '');
+  const controls = node('div', 'production-card__views');
+  const show = index => {
+    const view = views[index];
+    screen.replaceChildren(imagePreview({...view, title: `${view.title} · ${index + 1}`}, options, tr));
+    for (const [i, control] of [...controls.children].entries()) {
+      control.setAttribute('aria-pressed', String(i === index));
+    }
+  };
+  views.forEach((_, index) => {
+    const control = button(String(index + 1));
+    control.setAttribute('aria-label', tr(`Vista ${index + 1}`, `View ${index + 1}`));
+    control.addEventListener('click', () => show(index));
+    controls.append(control);
+  });
+  gallery.append(screen, controls);
+  show(0);
+  return gallery;
+}
+
+function relayDownload(original, filename, tr) {
+  const status = node('p', 'production-card__status');
+  status.role = 'status';
+  let pending = false;
+  original.addEventListener('click', async event => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    if (pending) return;
+    pending = true;
+    status.textContent = tr('Descargando…', 'Downloading…');
+    try {
+      const response = await fetch(original.href);
+      if (!response.ok) throw new Error(String(response.status));
+      const url = URL.createObjectURL(await response.blob());
+      const download = node('a', '');
+      download.href = url;
+      download.download = filename;
+      download.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      status.textContent = '';
+    } catch {
+      status.textContent = tr('No se ha podido descargar el fichero.', 'The file could not be downloaded.');
+    } finally {
+      pending = false;
+    }
+  });
+  return status;
+}
+
 function artifactList(pieces, options, tr, heading) {
   const list = node('ul', 'production-card__pieces');
   for (const piece of pieces) {
     const item = node('li', '');
-    if (piece.image) item.append(imagePreview(piece.image, options, tr));
-    if (piece.title !== heading || !piece.image) item.append(node('span', '', piece.title));
-    if (piece.path && piece.media !== 'image') {
-      Promise.resolve(options.source(piece.path, piece.media)).then(src => {
+    const views = piece.previews?.length ? piece.previews : piece.image ? [piece.image] : [];
+    if (views.length) item.append(pieceViews(views, options, tr));
+    if (piece.title !== heading || !views.length) item.append(node('span', '', piece.title));
+    const playerType = ['video', 'audio'].includes(piece.media) ? piece.media : null;
+    const download = !['video', 'audio', 'pdf', 'text'].includes(piece.media);
+    const label = download ? tr('Descargar pieza', 'Download piece') : tr('Abrir pieza', 'Open piece');
+    if (piece.path && nativePieceOpener) {
+      const open = button(label);
+      open.setAttribute('aria-label', `${label} · ${piece.title}`);
+      const status = node('p', 'production-card__status');
+      status.role = 'status';
+      open.onclick = async () => {
+        open.disabled = true;
+        status.textContent = download ? tr('Descargando…', 'Downloading…') : tr('Abriendo…', 'Opening…');
+        try {
+          const filename = download ? piece.filename || `piece-${piece.path.split('/').pop()}` : null;
+          const saved = await nativePieceOpener(piece.path, filename);
+          status.textContent = saved ? tr(`Guardada en Descargas como ${saved}.`, `Saved in Downloads as ${saved}.`) : '';
+        } catch {
+          status.textContent = download ? tr('No se ha podido descargar el fichero.', 'The file could not be downloaded.')
+            : tr('No se ha podido abrir el fichero.', 'The file could not be opened.');
+        } finally {
+          open.disabled = false;
+        }
+      };
+      item.append(open, status);
+    } else if (piece.path) {
+      const media = ['image', 'web'].includes(piece.media) ? 'file' : piece.media;
+      Promise.resolve(options.source(piece.path, media)).then(src => {
         if (!src) return;
-        if (src.startsWith('/') && ['video', 'audio'].includes(piece.media)) {
-          const player = node(piece.media, '');
+        if (src.startsWith('/') && playerType) {
+          const player = node(playerType, '');
           player.src = src;
           player.preload = 'none';
           player.controls = true;
           player.setAttribute('aria-label', piece.title);
           item.append(player);
         }
-        item.append(link(tr('Abrir pieza', 'Open piece'), src));
+        const original = link(label, src);
+        original.setAttribute('aria-label', `${label} · ${piece.title}`);
+        if (download) original.download = piece.filename ?? '';
+        item.append(original);
+        if (download && piece.filename && src !== piece.path && original.origin === location.origin) {
+          // A relay's Content-Disposition can override the registered filename on the link.
+          item.append(relayDownload(original, piece.filename, tr));
+        }
       }).catch(() => {});
     }
     const url = piece.url && webUrl(piece.url);

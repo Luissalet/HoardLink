@@ -1,6 +1,7 @@
 type Api = (path: string) => Promise<unknown>;
 type Preview = {path: string; title: string};
-type Artifact = {title: string; media: string; path: string | null; image: Preview | null; url: string | null};
+type Artifact = {title: string; media: string; path: string | null; image: Preview | null; url: string | null;
+  filename?: string | null; previews?: Preview[]};
 
 export type PendingDecision = {
   key: string;

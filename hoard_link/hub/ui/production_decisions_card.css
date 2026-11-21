@@ -71,6 +71,10 @@
   aspect-ratio: 16 / 10;
   object-fit: contain;
 }
+.production-card__gallery { inline-size: 100%; max-inline-size: 560px; }
+.production-card__views { display: flex; flex-wrap: wrap; gap: .35rem; margin-block-start: .35rem; }
+.production-card__views button { min-inline-size: 44px; }
+.production-card__views button[aria-pressed="true"] { border-color: currentColor; font-weight: 650; }
 .production-card__dialog {
   max-inline-size: min(96vw, 94rem);
   max-block-size: 94vh;

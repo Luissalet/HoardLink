@@ -2,8 +2,12 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::{Client, StatusCode, Url};
 use serde_json::{json, Value};
-use std::{path::PathBuf, time::Duration};
-use tauri::{async_runtime::Mutex, State};
+use std::{
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::Duration,
+};
+use tauri::{async_runtime::Mutex, Manager, State};
 
 const SESSION_HEADER: &str = "X-Hoard-UI-Session";
 const SESSION_REQUIRED: &str = "hub_ui_session_required";
@@ -24,11 +28,21 @@ fn decision_key(value: &str) -> bool {
 }
 
 fn piece_preview(path: &str) -> bool {
-    let Some(piece) = path.strip_prefix("/api/agora/piece_file/") else {
+    let Some((id, index)) = path.split_once('?') else {
+        return piece_file(path);
+    };
+    piece_file(id) && index.strip_prefix("preview=").is_some_and(digits)
+}
+
+fn piece_file(path: &str) -> bool {
+    let Some(id) = path.strip_prefix("/api/agora/piece_file/") else {
         return false;
     };
-    let id = piece.strip_suffix("?preview=0").unwrap_or(piece);
-    !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit())
+    digits(id)
+}
+
+fn digits(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|c| c.is_ascii_digit())
 }
 
 fn hub_origin(base: &str) -> Result<Url, String> {
@@ -261,13 +275,101 @@ async fn open_hub(
     Ok(())
 }
 
+fn download_name(filename: &str) -> Option<&Path> {
+    let path = Path::new(filename);
+    if path.file_name()?.to_str()? != filename
+        || filename
+            .chars()
+            .any(|c| c.is_control() || r#"\/:*?"<>|"#.contains(c))
+        || filename.ends_with(['.', ' '])
+    {
+        return None;
+    }
+    Some(path)
+}
+
+fn save_download(
+    mut file: tempfile::NamedTempFile,
+    directory: &Path,
+    name: &Path,
+) -> io::Result<String> {
+    let stem = name.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = name
+        .extension()
+        .map(|ext| format!(".{}", ext.to_string_lossy()))
+        .unwrap_or_default();
+    let mut index = 0;
+    loop {
+        let filename = if index == 0 {
+            name.to_string_lossy().into_owned()
+        } else {
+            format!("{stem} ({index}){ext}")
+        };
+        match file.persist_noclobber(directory.join(&filename)) {
+            Ok(_) => return Ok(filename),
+            Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
+                file = error.file;
+                index += 1;
+            }
+            Err(error) => return Err(error.error),
+        }
+    }
+}
+
+#[tauri::command]
+async fn open_piece(
+    hub: State<'_, Result<Hub, String>>,
+    app: tauri::AppHandle,
+    path: String,
+    filename: Option<String>,
+) -> Result<Option<String>, String> {
+    if !piece_file(&path) {
+        return Err("Invalid production piece path".into());
+    }
+    let hub = hub.inner().as_ref().map_err(Clone::clone)?;
+    let url = format!("{}{path}", hub.origin);
+    let Some(filename) = filename else {
+        std::process::Command::new("explorer.exe")
+            .arg(url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(None);
+    };
+    let name = download_name(&filename).ok_or("Invalid file name")?;
+    let directory = app
+        .path()
+        .download_dir()
+        .map_err(|error| error.to_string())?;
+    let mut response = hub
+        .client
+        .get(&url)
+        .header("Origin", &hub.origin)
+        .header("Sec-Fetch-Site", "same-origin")
+        .send()
+        .await
+        .and_then(|reply| reply.error_for_status())
+        .map_err(|error| error.to_string())?;
+    let mut file =
+        tempfile::NamedTempFile::new_in(&directory).map_err(|error| error.to_string())?;
+    while let Some(bytes) = response.chunk().await.map_err(|error| error.to_string())? {
+        file.write_all(&bytes).map_err(|error| error.to_string())?;
+    }
+    file.as_file()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    save_download(file, &directory, name)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Hub::new())
         .invoke_handler(tauri::generate_handler![
             open_write_session,
             hub_request,
-            open_hub
+            open_hub,
+            open_piece
         ])
         .run(tauri::generate_context!())
         .expect("Could not start the coordination window");
@@ -275,7 +377,10 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{decision_key, hub_origin, piece_preview, valid_agora_path};
+    use super::{
+        decision_key, download_name, hub_origin, piece_preview, save_download, valid_agora_path,
+    };
+    use std::io::Write;
 
     #[test]
     fn relay_stays_inside_coordination_routes() {
@@ -309,6 +414,33 @@ mod tests {
         assert!(!decision_key("gate-10#agora"));
         assert!(piece_preview("/api/agora/piece_file/12"));
         assert!(piece_preview("/api/agora/piece_file/12?preview=0"));
+        assert!(piece_preview("/api/agora/piece_file/12?preview=3"));
+        assert!(!piece_preview("/api/agora/piece_file/12?preview="));
+        assert!(!piece_preview(
+            "/api/agora/piece_file/12?preview=3&inline=1"
+        ));
         assert!(!piece_preview("/api/agora/piece_file/12/index.html"));
+    }
+
+    #[test]
+    fn downloads_keep_the_original_extension_and_leave_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = download_name("Informe ñ.docx").unwrap();
+        std::fs::write(dir.path().join(name), b"existing").unwrap();
+        let mut file = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        file.write_all(b"revision").unwrap();
+        let saved = save_download(file, dir.path(), name).unwrap();
+        assert_eq!(saved, "Informe ñ (1).docx");
+        assert_eq!(std::fs::read(dir.path().join(saved)).unwrap(), b"revision");
+        assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), b"existing");
+        for bad in [
+            "../report.docx",
+            r"..\report.docx",
+            r"C:\report.docx",
+            "build:report",
+            "report.",
+        ] {
+            assert!(download_name(bad).is_none(), "{bad}");
+        }
     }
 }

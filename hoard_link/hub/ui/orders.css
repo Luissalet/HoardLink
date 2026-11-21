@@ -32,6 +32,7 @@
 .ord-media.big { aspect-ratio: 16 / 10; }
 .ord-media { min-height: 0; overflow: hidden; }
 .ord-media > img, .ord-media > video, .ord-media > iframe { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.ord-media > img[hidden] { display: none; }
 .ord-media-web > img { object-fit: cover; object-position: top; }
 .ord-media > iframe { border: 0; background: #fff; }
 .ord-media audio { width: 92%; }
@@ -39,9 +40,10 @@
 .ord-media-text { place-items: stretch; }
 .ord-text { position: absolute; inset: 0; margin: 0; padding: 12px; overflow: auto; max-height: 100%; font: 12px/1.5 var(--mono, ui-monospace, monospace); color: var(--text); white-space: pre-wrap; }
 .ord-live { position: absolute; right: 8px; bottom: 8px; background: rgba(20, 18, 14, .82); }
-.ord-turn { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 4px; }
-.ord-turn button { padding: 2px 8px; background: rgba(20, 18, 14, .78); }
+.ord-turn { position: absolute; inset-inline: 8px; bottom: 8px; display: flex; gap: 4px; overflow-x: auto; }
+.ord-turn button { flex: none; padding: 2px 8px; background: rgba(20, 18, 14, .78); }
 .ord-turn button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.ord-media-web .ord-turn ~ .ord-live { top: 8px; bottom: auto; }
 
 .ord-keep { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 3px; font-size: var(--hub-fs-1, 12px); }
 .ord-keep li { display: grid; grid-template-columns: 8px 1fr auto; gap: 7px; align-items: center; color: var(--text); }
