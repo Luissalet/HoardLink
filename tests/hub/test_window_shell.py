@@ -377,6 +377,7 @@ def test_previous_hub_shell_can_read_and_reopening_restores_writes(tmp_path, mon
                 assert page.evaluate("window.hoardWindow.shell") == "hoard-window"
                 assert page.evaluate("typeof window.hoardHubSession") == "undefined"
                 notice = page.locator(".hub-session-recovery")
+                title = page.locator("#hub-page-title")
                 page.get_by_text("Available before reopening", exact=True).wait_for()
                 languages = {
                     "en": "This window is from an earlier version. Close it and reopen the Hub.",
@@ -391,25 +392,26 @@ def test_previous_hub_shell_can_read_and_reopening_restores_writes(tmp_path, mon
                         if page.locator("html").get_attribute("lang") != lang:
                             page.locator("#btn-lang").click()
                         playwright.expect(notice).to_have_text(message, timeout=ready_timeout)
+                        playwright.expect(title).to_be_visible(timeout=ready_timeout)
                         # A sticky notice used to cover the heading as the document scrolled.
+                        notice_bottoms = []
                         for scroll in (0, 60):
                             geometry = notice.evaluate("""(notice, scroll) => {
-                                window.scrollTo(0, scroll);
+                                window.scrollTo({top: scroll, behavior: 'instant'});
                                 const box = notice.getBoundingClientRect();
                                 const title = document.getElementById('hub-page-title').getBoundingClientRect();
                                 return { width: innerWidth, y: scrollY, left: box.left, right: box.right,
                                          bottom: box.bottom, titleTop: title.top };
                             }""", scroll)
-                            assert (geometry["width"], geometry["y"]) == (width, scroll)
-                            assert 0 <= geometry["left"] < geometry["right"] <= width
-                            assert geometry["bottom"] <= geometry["titleTop"], geometry
-                            if scroll == 0:
-                                page.screenshot(path=str(tmp_path / f"previous-window-{width}-{lang}.png"))
+                            assert (geometry["width"], geometry["y"]) == (width, scroll), (lang, geometry)
+                            assert 0 <= geometry["left"] < geometry["right"] <= width, (lang, geometry)
+                            assert geometry["bottom"] <= geometry["titleTop"], (lang, geometry)
+                            notice_bottoms.append(geometry["bottom"])
+                        assert notice_bottoms[0] - notice_bottoms[1] == pytest.approx(60), (lang, width, notice_bottoms)
                 cdp.send("Emulation.clearDeviceMetricsOverride")
                 cdp.detach()
                 page.get_by_role("link", name="Tus decisiones pendientes").click()
                 page.locator(decision_selector).wait_for()
-                page.screenshot(path=str(tmp_path / "previous-window-es.png"))
 
             launch = tmp_path / "current"
             with _hidden_shell(pw, exe, launch, SHELL_MAIN, thread_url, profile, capture_browser=True) as browser:
