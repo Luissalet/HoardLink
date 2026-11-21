@@ -14,8 +14,8 @@ The window is native (pywebview) when that package is installed, else a
 Chromium ``--app`` window, else a browser tab. With ``exit_with_window``
 (the default) the hub stops when its own window is closed; the apps it
 started keep running, on purpose — the hub is a remote control, not a
-parent. A second launch while one hub is already listening just opens
-another window on the running one.
+parent. A second launch of the desktop Hub opens another window on the
+running one. A Hub with its own port and data is headless.
 """
 
 from __future__ import annotations
@@ -26,10 +26,11 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 from . import DEFAULT_PORT, HUB_VERSION, SERVICE
-from .config import HubConfig
+from .config import REPO_DIR, HubConfig
 from .core import Hub
 from .lease_remote import RemoteLeaseArbiter
 from . import autostart, desktop, procs, ui_session
@@ -141,6 +142,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.port:
         env["HOARD_HUB_PORT"] = str(args.port)
     cfg = HubConfig.load(env=env)
+    if cfg.isolated:
+        try:
+            recorded_url = Path(cfg.url_file).read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            recorded_url = ""
+        except (OSError, UnicodeError) as exc:
+            print(f"Could not read the Hub URL. No se pudo leer la URL del Hub: {exc}", file=sys.stderr)
+            return 2
+        if (cfg.port == DEFAULT_PORT or recorded_url == f"http://127.0.0.1:{DEFAULT_PORT}"
+                or Path(cfg.data_dir).resolve() == (REPO_DIR / "data").resolve()):
+            print("An isolated Hub needs its own port and data folder. "
+                  "El Hub aislado necesita su propio puerto y carpeta de datos.", file=sys.stderr)
+            return 2
+        args.no_window = True
     log_kwargs: dict = {}
     if sys.stderr is None:  # pythonw (the login autostart): no console, log to a file
         os.makedirs(cfg.logs_dir, exist_ok=True)
@@ -149,7 +164,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s", **log_kwargs)
 
     if _already_running(cfg.url):
-        print(f"hoard-hub already running at {cfg.url}; opening a window on it")
+        print(f"hoard-hub already running at {cfg.url}")
+        if cfg.isolated and recorded_url != cfg.url:
+            print("This port belongs to another Hub. Este puerto pertenece a otro Hub.", file=sys.stderr)
+            return 2
         if args.profile:
             res = _start_profile_remote(cfg.url, args.profile)
             print(f"profile {args.profile}: {'started' if res.get('ok') else res.get('error')}")
@@ -171,6 +189,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         server = make_server(hub)
     except OSError as exc:
         print(f"cannot listen on {cfg.url}: {exc}", file=sys.stderr)
+        hub.close()
         return 2
     hub.write_url_file()
     thread = threading.Thread(target=server.serve_forever, name="hoard-hub-http", daemon=True)
@@ -191,6 +210,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             pass
         finally:
             server.shutdown()
+            server.server_close()
+            hub.close()
         return 0
 
     use_native = (args.native or desktop.hub_window_native_available()) and not args.browser

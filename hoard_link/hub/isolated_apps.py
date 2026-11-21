@@ -1,7 +1,9 @@
 """Manage explicitly isolated, headless app processes owned by this Hub."""
 from __future__ import annotations
 
+import json
 import os
+import re
 import secrets
 import socket
 from contextlib import ExitStack
@@ -10,29 +12,154 @@ from pathlib import Path
 from threading import RLock
 
 from .. import proc
+from ..atomic import write_json_atomic
 from . import contract
-from .registry import MANIFEST_NAME, App, read_manifest
+from .registry import MANIFEST_NAME, App, _writer_source, read_manifest
+
+# These shipped entry points accept the shared service flags. Older manifests
+# for them predate the isolated_instance declaration.
+_SERVICE_MODULES = {
+    "cicero": ("cicero_hoard", "CICERO"),
+    "nikias": ("nikias_hoard", "NIKIAS"),
+    "phidias": ("phidias_hoard", "PHIDIAS"),
+    "prospero": ("prosperos_hoard", "PROSPERO"),
+    "vulcan": ("vulcan", "VULCAN"),
+}
+_ENV_MODULES = {
+    "coase": ("coase_hoard", "COASE_PROFILE_DIR", "COASE_PORT", "COASE_TOKEN_FILE"),
+    "hypatia": ("hypatia", "HYPATIA_DATA_DIR", "HYPATIA_PORT", None),
+}
 
 
 @dataclass
 class RunningInstance:
     app: App
     folder: Path
-    launcher: App
-    extra_ports: tuple[int, ...]
+    ports: tuple[int, ...]
     process: object = None
 
 
-def _free_ports(count):
+def _free_ports(count, *, exclude=()):
     with ExitStack() as stack:
-        sockets = [stack.enter_context(socket.socket()) for _ in range(count)]
-        for sock in sockets:
+        ports = []
+        while len(ports) < count:
+            sock = stack.enter_context(socket.socket())
             sock.bind(("127.0.0.1", 0))
-        return tuple(sock.getsockname()[1] for sock in sockets)
+            port = sock.getsockname()[1]
+            if port not in exclude:
+                ports.append(port)
+        return tuple(ports)
 
 
 def _failure(message, status=400):
     return {"ok": False, "status": status, "error": message}
+
+
+def _headless_launcher(app):
+    """Identify a native launcher whose profile and display can be controlled."""
+    if not app.launch or not app.launchable:
+        return None
+    if app.id == "writer":
+        if not _writer_source(app):
+            return None
+        try:
+            script = Path(app.folder) / "scripts" / "dev-desktop.mjs"
+            main = Path(app.folder) / "electron" / "main.ts"
+            if ("WH_RENDERER_PORT" in script.read_text(encoding="utf-8")
+                    and "WH_HEADLESS" in main.read_text(encoding="utf-8")):
+                return "writer"
+        except OSError:
+            pass
+        return None
+    if app.kind == "window-app":
+        return None
+    descriptor = app.family.get("isolated_instance")
+    if isinstance(descriptor, dict) and descriptor.get("data_env") and descriptor.get("port_env"):
+        return "manifest"
+    module = _SERVICE_MODULES.get(app.id) or _ENV_MODULES.get(app.id)
+    if module and "-m" in app.launch.argv:
+        index = app.launch.argv.index("-m")
+        if app.launch.argv[index + 1:index + 2] == [module[0]]:
+            return "service" if app.id in _SERVICE_MODULES else "env"
+    return None
+
+
+def _headless_app(app, folder, ports, config, launcher):
+    port = ports[0]
+    url = f"http://127.0.0.1:{port}"
+    token = folder / "mcp-token"
+    spec = app.launch
+    argv = spec.argv
+    changes = {}
+    if launcher == "writer":
+        token = folder / "aibridge" / "token"
+        changes = {key: None for key in os.environ if key.startswith("WH_")}
+        changes.update(WH_HEADLESS="1", WH_USER_DATA_DIR=str(folder), WH_AIBRIDGE_PORT=str(port),
+                       WH_RENDERER_PORT=str(ports[1]), MEDIA_DOWNLOADER_PORT=str(ports[2]))
+        argv = [argv[0], "--hub"]
+    elif launcher == "service":
+        module, prefix = _SERVICE_MODULES[app.id]
+        # Keep interpreter flags such as -I. Replace service flags that may
+        # contain the installed data path, a fixed port or browser options.
+        argv = [*argv[:argv.index("-m")], "-m", module, "--port", str(port),
+                "--data-dir", str(folder), "--no-browser"]
+        changes = {prefix + "_DATA_DIR": str(folder), prefix + "_PORT": str(port),
+                   prefix + "_TOKEN_FILE": str(token)}
+    elif launcher == "env":
+        module, data_env, port_env, token_env = _ENV_MODULES[app.id]
+        argv = [*argv[:argv.index("-m")], "-m", module]
+        changes = {data_env: str(folder), port_env: str(port)}
+        if token_env:
+            changes[token_env] = str(token)
+        if app.id == "coase":
+            changes["COASE_HOST"] = "127.0.0.1"
+    else:
+        descriptor = app.family["isolated_instance"]
+        changes = {descriptor["data_env"]: str(folder), descriptor["port_env"]: str(port)}
+        if descriptor.get("token_env"):
+            changes[descriptor["token_env"]] = str(token)
+    env = {**spec.env, **changes, "PORT_STRICT": "1", "HOARD_NO_BROWSER": "1",
+           "HOARD_HUB_URL": config.url, "HOARD_HUB_DATA_DIR": config.data_dir,
+           "HOARD_HUB_TOKEN_FILE": None}
+    return replace(app, url=url, data_dir=str(folder), token_file=str(token), kind="app",
+                   runtime_url_file="", launch=replace(spec, argv=argv, env=env,
+                                                        readiness_url=url + app.health_path, port_argument=""))
+
+
+def prepare_writer_profile(app):
+    config = Path(app.data_dir) / "aibridge" / "config.json"
+    if not config.exists():
+        config.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(config, {"enabled": True, "writesEnabled": True})
+
+
+def isolated_catalog(apps, config):
+    """Give every launchable app its own data, token, and stable loopback ports."""
+    rows = []
+    assigned = {config.port}
+    for app in apps:
+        launcher = _headless_launcher(app) if re.fullmatch(r"[a-zA-Z0-9_-]+", app.id) else None
+        if not launcher:
+            reason = app.launch_reason or "No headless launcher. No hay un lanzador sin ventana."
+            rows.append(replace(app, url="", data_dir="", token_file="", runtime_url_file="",
+                                launch=None, launchable=False, launch_reason=reason))
+            continue
+        folder = Path(config.data_dir) / "apps" / app.id
+        marker = folder / "ports.json"
+        count = 3 if launcher == "writer" else 1
+        try:
+            ports = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            ports = []
+        if (not isinstance(ports, list) or len(ports) != count
+                or any(type(port) is not int or not 1024 <= port <= 65535 for port in ports)
+                or len(set(ports)) != count or assigned.intersection(ports)):
+            ports = _free_ports(count, exclude=assigned)
+            folder.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(marker, ports)
+        assigned.update(ports)
+        rows.append(_headless_app(app, folder, ports, config, launcher))
+    return rows
 
 
 class IsolatedApps:
@@ -43,25 +170,12 @@ class IsolatedApps:
         self._rows = {}
 
     def _launch(self, ident, row):
-        spec = row.launcher.launch
+        spec = row.app.launch
         folder = row.folder
         app = row.app
         if app.id == "writer":
-            config = folder / "aibridge" / "config.json"
-            config.parent.mkdir(parents=True, exist_ok=True)
-            if not config.exists():
-                config.write_text('{"enabled":true,"writesEnabled":true}', encoding="utf-8")
-            changes = {key: None for key in os.environ if key.startswith("WH_")}
-            changes.update(WH_HEADLESS=1, WH_USER_DATA_DIR=folder, WH_AIBRIDGE_PORT=app.port,
-                           WH_RENDERER_PORT=row.extra_ports[0], MEDIA_DOWNLOADER_PORT=row.extra_ports[1])
-        else:
-            descriptor = row.launcher.family["isolated_instance"]
-            changes = {descriptor["data_env"]: folder, descriptor["port_env"]: app.port}
-            if descriptor.get("token_env"):
-                changes[descriptor["token_env"]] = app.token_file
-        env = proc.build_env(**{**spec.env, **changes, "HOARD_HUB_URL": self.hub.config.url,
-                                "HOARD_HUB_DATA_DIR": self.hub.config.data_dir,
-                                "HOARD_HUB_TOKEN_FILE": None})
+            prepare_writer_profile(app)
+        env = proc.build_env(**spec.env)
         accepted = self.instances.add(app.id, token_file=app.token_file, label=f"Isolated {ident}")
         if not accepted["ok"]:
             return accepted
@@ -94,32 +208,19 @@ class IsolatedApps:
             return _failure("The worktree has no launch manifest for this app")
         ident = secrets.token_hex(12)
         folder = Path(self.hub.config.data_dir).resolve() / "isolated-apps" / ident
-        if app_id == "writer":
-            script = root / "scripts" / "dev-desktop.mjs"
-            try:
-                compatible = ("WH_RENDERER_PORT" in script.read_text(encoding="utf-8") and
-                              "WH_HEADLESS" in (root / "electron" / "main.ts").read_text(encoding="utf-8"))
-            except OSError:
-                compatible = False
-            if not compatible:
-                return _failure("This worktree needs the native headless profile and separate renderer port", 409)
-            token = folder / "aibridge" / "token"
-        else:
-            descriptor = launcher.family.get("isolated_instance")
-            if (not isinstance(descriptor, dict) or not descriptor.get("data_env") or not descriptor.get("port_env")
-                    or launcher.kind == "window-app"):
-                return _failure("The app does not declare a headless isolated launcher", 409)
-            token = folder / "mcp-token"
+        kind = _headless_launcher(launcher)
+        if not kind:
+            return _failure(launcher.launch_reason or "No headless launcher. No hay un lanzador sin ventana.", 409)
         folder.mkdir(parents=True)
-        port, *extra_ports = _free_ports(3 if app_id == "writer" else 1)
-        app = replace(launcher, url=f"http://127.0.0.1:{port}", data_dir=str(folder), token_file=str(token))
-        return self._launch(ident, RunningInstance(app, folder, launcher, tuple(extra_ports)))
+        ports = _free_ports(3 if kind == "writer" else 1)
+        app = _headless_app(launcher, folder, ports, self.hub.config, kind)
+        return self._launch(ident, RunningInstance(app, folder, ports))
 
     @staticmethod
     def _describe(ident, row):
         return {"id": ident, "app": row.app.id, "data_dir": str(row.folder), "url": row.app.url,
-                "log": str(row.folder / "process.log"), "renderer_port": row.extra_ports[0] if row.extra_ports else None,
-                "media_port": row.extra_ports[1] if row.extra_ports else None,
+                "log": str(row.folder / "process.log"), "renderer_port": row.ports[1] if len(row.ports) > 1 else None,
+                "media_port": row.ports[2] if len(row.ports) > 1 else None,
                 "state": "running" if row.process and row.process.poll() is None else "stopped"}
 
     def manage(self, args):

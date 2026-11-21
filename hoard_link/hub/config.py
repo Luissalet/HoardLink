@@ -98,6 +98,7 @@ class HubConfig:
     exit_with_window: bool = True
     language: str = "auto"         # auto | en | es
     isolated_catalog: bool = False  # QA: serve local UI without probing Faustus and shared backends
+    isolated: bool = field(default=False, init=False)  # derived at launch from the selected port and data
     lease_headroom_mb: int = 256   # VRAM kept free on every GPU when granting leases
     # GPU lease settings: {"protected_gpus": [0, 1]} keeps those GPUs out of every "any" request (only a
     # request that names them gets them). Empty by default: nothing is protected until it is set.
@@ -136,6 +137,7 @@ class HubConfig:
     def _payload(self):
         value = asdict(self)
         value.pop('data_dir', None)
+        value.pop('isolated', None)
         return value
 
     @property
@@ -277,7 +279,7 @@ class HubConfig:
                 raw = {}
             if isinstance(raw, dict):
                 for key, value in raw.items():
-                    if key in cfg.__dataclass_fields__ and key != "data_dir":
+                    if key in cfg.__dataclass_fields__ and key not in ("data_dir", "isolated"):
                         setattr(cfg, key, value)
         if env.get("HOARD_HUB_PORT"):
             try:
@@ -300,6 +302,8 @@ class HubConfig:
             cfg.language = env["HOARD_HUB_LANGUAGE"]
         if env.get("HOARD_HUB_ISOLATED_CATALOG") in ("1", "true", "yes", "on"):
             cfg.isolated_catalog = True
+        cfg.isolated = (cfg.isolated_catalog or cfg.port != DEFAULT_PORT
+                        or Path(cfg.data_dir).resolve() != (REPO_DIR / "data").resolve())
         if cfg.isolated_catalog:
             cfg.faustus_urls = []
         if env.get("HOARD_HUB_BACKUP_DIR"):

@@ -44,7 +44,7 @@ class LaunchSpec:
     cwd: str
     readiness_url: Optional[str]
     readiness_timeout_s: float = 30.0
-    env: dict[str, str] = field(default_factory=dict)
+    env: dict[str, Optional[str]] = field(default_factory=dict)
     port_argument: str = ""  # explicit manifest opt-in; never guess launch CLI support
 
     def to_dict(self) -> dict[str, Any]:
