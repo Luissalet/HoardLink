@@ -242,11 +242,24 @@ class _HubHandler(BaseHTTPRequestHandler):
     def _ui_proof(self) -> bool:
         return self._browser_origin() and self.ui_sessions.accepts(self.headers.get(ui_session.SESSION_HEADER, ""))
 
-    def _ui_denied(self) -> None:
-        spanish = self.headers.get("Accept-Language", "").lower().startswith("es")
-        error = ("Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir el Hub."
-                 if spanish else "This window is from an earlier version. Close it and reopen the Hub.")
-        return self._json({"ok": False, "code": "hub_ui_session_required", "error": error}, 403)
+    def _ui_denied(self, path: str = "") -> None:
+        legacy_console = (path.startswith("/api/agora/")
+                          and self.headers.get("Origin") == self.hub.config.url
+                          and self.headers.get("Sec-Fetch-Site") == "same-origin"
+                          and self.headers.get("Accept") == "*/*"
+                          and all(header not in self.headers for header in (
+                              "Sec-Fetch-Mode", "User-Agent", "Authorization", ui_session.SESSION_HEADER,
+                              "X-Hoard-Person")))
+        spanish = self.headers.get("Accept-Language", "es" if legacy_console else "").lower().startswith("es")
+        if legacy_console:
+            error = ("Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir la consola del Ágora."
+                     if spanish else "This window is from an earlier version. Close it and reopen the Agora console.")
+        else:
+            error = ("Esta ventana es de una versión anterior. Ciérrala y vuelve a abrir el Hub."
+                     if spanish else "This window is from an earlier version. Close it and reopen the Hub.")
+        # The old native bridge rejected with a bare string on HTTP errors. Its page
+        # only displayed the message when the JSON reply reached its own error handler.
+        return self._json({"ok": False, "code": "hub_ui_session_required", "error": error}, 200 if legacy_console else 403)
 
     def _ui_session_post(self, path: str) -> None:
         body = self._read_body()
@@ -690,7 +703,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 self._read_body(max(MAX_BODY, AGORA_BIG_BODIES.get(path, 0)))
             except ValueError:
                 self.close_connection = True
-            return self._ui_denied()
+            return self._ui_denied(path)
         if path == "/api/link/copilot":
             return self._copilot()
         if path == "/api/copilot/proxy":

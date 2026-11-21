@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {Activity,ArrowUpRight,ChevronDown,MessageSquare,PanelRightClose,PanelRightOpen,Plus,RefreshCw,Search,Send,Users,X,CheckCircle2,GitPullRequest,Clock3} from 'lucide-react';
-import {api,openHub,spaceId,embedded,hubUrl,Leader,LiveState,Message,Task,Worker,providerNames} from './api';
+import {api,openHub,openWriteSession,spaceId,embedded,hubUrl,Leader,LiveState,Message,Task,Worker,providerNames} from './api';
 import {LiveView} from './LiveView';
 import {DecisionButton,ProductionDecisions,useProductionDecisions} from './ProductionDecisions';
 import {CodexQuotaNotice,loadWorkerProfile,WorkerAssignment,WorkerProfile,WorkerProfileButton,WorkerTemplates} from './WorkerProfile';
@@ -26,6 +26,7 @@ export default function App(){
  const [leaders,setLeaders]=useState(initial),[usage,setUsage]=useState<any[]>([]),[workers,setWorkers]=useState<Worker[]>([]),[messages,setMessages]=useState<Message[]>([]),[tasks,setTasks]=useState<Task[]>([]),[counts,setCounts]=useState<any>({}),[error,setError]=useState(''),[sending,setSending]=useState(false),[draft,setDraft]=useState(()=>localStorage.getItem(spaceId==='ecosystem'?'agora-draft':'agora-draft:'+spaceId)||''),[recipient,setRecipient]=useState('all'),[panel,setPanel]=useState(()=>window.innerWidth>900),[tab,setTab]=useState('pending'),[filter,setFilter]=useState(''),[selected,setSelected]=useState<Leader|null>(null),[helper,setHelper]=useState(false),[model,setModel]=useState(''),[effort,setEffort]=useState(''),[assignment,setAssignment]=useState(''),[busy,setBusy]=useState(false),[workerLeader,setWorkerLeader]=useState<Leader|null>(null),[thread,setThread]=useState<any>(null),[reply,setReply]=useState(''),[connection,setConnection]=useState('Conectando'),[busyWorker,setBusyWorker]=useState('');
  const messageEnd=useRef<HTMLDivElement>(null),lastId=useRef<number>(0),workThread=useRef<number>(spaceId==='ecosystem'?32:0);
  const [spaces,setSpaces]=useState<{id:string;title:string}[]>([]);
+ useEffect(()=>{void openWriteSession().catch(error=>setError(error.message));},[]);
  useEffect(()=>{api("/api/agora/spaces").then(d=>setSpaces(d.spaces||[])).catch(()=>{});},[]);
  function switchSpace(id:string){localStorage.setItem(spaceId==='ecosystem'?'agora-draft':'agora-draft:'+spaceId,draft);const url=new URL(location.href);url.searchParams.set("space_id",id);location.assign(url);}
 

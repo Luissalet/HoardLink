@@ -3,9 +3,9 @@ import {isTauri} from '@tauri-apps/api/core';
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {decisionHeading,decisionUrl,loadHistory,loadPending,type DecisionRecord,type PendingDecision} from '../../../hoard_link/hub/ui/production_decisions_data.js';
 import {renderDecisionCards} from '../../../hoard_link/hub/ui/production_decisions_card.js';
-import {api,openHub,previewSource} from './api';
+import {api,lang,openHub,previewSource} from './api';
 
-const es = (localStorage.getItem('hub.lang') || navigator.language).startsWith('es');
+const es = lang === 'es';
 const tr = (spanish: string, english: string) => es ? spanish : english;
 
 export function useProductionDecisions(open: boolean) {
