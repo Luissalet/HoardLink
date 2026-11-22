@@ -27,7 +27,9 @@ kept. The Hub checks when a gate is decided, when a plan job closes and at start
 the delivery and notifies the foreman, directors and other recipients of production notices.
 `hub_agora_orders` and `hub_agora_order` expose
 `delivered_at` (Unix seconds) and `delivery_reason` (`final_gate_kept`) for automatic deliveries.
-New plan work or a new gate reopens an automatically delivered order.
+Adding plan work, returning a job to a pending state, or opening a gate or draft pass reopens an automatically
+delivered order. Its conversation keeps the delivery notice and records why the order reopened for the same
+recipients. Undoing a write removes the notices that write created.
 
 An order is written from the Hub's page (Orders → New order), by a tool from a Faustus chat or an agent, or by any Hoard
 over `POST /api/agora/order_create` with its bearer token and `refs` pointing at the selection it was made on.

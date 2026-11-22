@@ -56,10 +56,13 @@ def test_final_gate_delivers_and_decision_undo_restores_waiting(agora):
     assert row["delivered_at"] > 0
     for recipient in ("claude-capataz", "claude"):
         inbox = agora.inbox({"agent": recipient, "peek": True})
-        assert sum(m["body"].startswith("ENTREGADA / DELIVERED") for m in inbox["production_decisions"]) == 1
+        notices = [m for m in inbox["production_decisions"] if m["body"].startswith("ENTREGADA / DELIVERED")]
+        assert len(notices) == 1
+        thread_id = notices[0]["thread_id"]
     agora.order_undo(person(token=decision["undo"]))
     row = delivered_order(agora, order)
     assert row["status"] == "waiting" and row["delivered_at"] is None
+    assert not agora.thread({"thread_id": thread_id})["messages"]
     assert not agora.inbox({"agent": "claude-capataz", "peek": True})["production_decisions"]
 
 
@@ -91,7 +94,9 @@ def test_approved_job_is_pending_and_reopened_job_clears_automatic_delivery(agor
     row = delivered_order(agora, order)
     assert row["status"] == "producing" and row["delivered_at"] is None
     inbox = agora.inbox({"agent": "claude-capataz", "peek": True})
-    assert all(not m["body"].startswith("ENTREGADA / DELIVERED") for m in inbox["production_decisions"])
+    assert any(m["body"].startswith("ENTREGADA / DELIVERED") for m in inbox["production_decisions"])
+    assert any(m["body"].startswith("REABIERTA / REOPENED") and f"Job #{job} is pending again." in m["body"]
+               for m in inbox["production_decisions"])
 
 
 def test_adding_a_job_reopens_an_automatic_delivery_and_can_be_undone(agora):
@@ -99,11 +104,21 @@ def test_adding_a_job_reopens_an_automatic_delivery_and_can_be_undone(agora):
     close_job(agora, job)
     agora.gate_decide(person(gate_id=gate, decision="keep"))
     delivered_at = delivered_order(agora, order)["delivered_at"]
+    inbox = agora.inbox({"agent": "claude-capataz", "peek": True})
+    original = next(m for m in inbox["production_decisions"] if m["body"].startswith("ENTREGADA / DELIVERED"))
+    thread = {"thread_id": original["thread_id"]}
     followup = agora.plan_set({"agent": "claude", "order_id": order, "jobs": [{"title": "Add a map legend"}]})
     assert delivered_order(agora, order)["status"] == "producing"
+    notices = [m for m in agora.thread(thread)["messages"] if m["kind"] == "production_decision"]
+    decision, delivered, reopened = notices
+    assert delivered["id"] == original["id"] and delivered["body"] == original["body"]
+    assert reopened["id"] > delivered["id"] and reopened["mentions"] == delivered["mentions"]
+    assert reopened["author"] == "system" and reopened["body"].startswith("REABIERTA / REOPENED")
+    assert "Se ha añadido trabajo al plan. / New work was added to the plan." in reopened["body"]
     agora.order_undo({"agent": "claude", "token": followup["undo"]})
     row = delivered_order(agora, order)
     assert row["status"] == "delivered" and row["delivered_at"] == delivered_at
+    assert agora.thread(thread)["messages"] == [decision, delivered]
 
 
 def test_mixed_last_gate_delivers_when_the_last_click_cancels_an_alternative(agora):

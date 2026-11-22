@@ -220,13 +220,14 @@ def draft_pass_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         order_row = orders._order_row(self, a.get("order_id"))
         oid = order_row["id"]
         journal = orders._Journal(self, agent, "draft_pass_open")
-        orders._reopen_delivered_order(self, order_row, journal)
         now = orders._now(self)
         title = orders._txt(a.get("title"), 200, "title") or f"Pasada 0 de «{order_row['title']}»"
         pid = self.db.insert("agora_draft_passes", {
             "order_id": oid, "space_id": self.space_id, "title": title, "note": orders._txt(a.get("note"), orders.TEXT_MAX, "note"),
             "status": "drafting", "baseline": orders._dump(baseline), "opened_by": agent, "created": now})
         journal.created("agora_draft_passes", pid)
+        orders._reopen_delivered_order(self, order_row,
+                                       f"Se ha abierto la pasada #{pid}. / Draft pass #{pid} was opened.", journal)
         made = []
         for i, (v, key) in enumerate(zip(variants, keys)):
             jobs: list[int] = []

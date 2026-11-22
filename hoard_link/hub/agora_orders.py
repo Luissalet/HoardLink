@@ -1181,7 +1181,7 @@ def maybe_deliver(self: Any, order_id: int, journal: Optional[_Journal] = None) 
                     (_dump(delivery), now, order_id))
 
 
-def _reopen_delivered_order(self: Any, order: dict, journal: Optional[_Journal] = None) -> None:
+def _reopen_delivered_order(self: Any, order: dict, reason: str, journal: Optional[_Journal] = None) -> None:
     if order["status"] != "delivered":
         return
     delivery = _load(order["auto_delivery"], {})
@@ -1189,10 +1189,18 @@ def _reopen_delivered_order(self: Any, order: dict, journal: Optional[_Journal] 
         return
     if journal is not None:
         journal.before("agora_orders", order["id"])
-        journal.before("messages", delivery["message_id"])
     self.db.execute("UPDATE agora_orders SET status=?, auto_delivery='{}', updated=? WHERE id=?",
                     (delivery["previous_status"], _now(self), order["id"]))
-    self.db.execute("DELETE FROM messages WHERE id=?", (delivery["message_id"],))
+    notice = self.db.one("SELECT thread_id, mentions FROM messages WHERE id=?", (delivery["message_id"],))
+    if notice:
+        thread_id, recipients = notice["thread_id"], _load(notice["mentions"], [])
+    else:
+        thread_id, recipients = _notice_target(self, order, [], "system")
+    title = f"Orden / Order #{order['id']} «{order['title']}»"
+    message_id = self._msg(thread_id, "system", "production_decision",
+                           f"REABIERTA / REOPENED · {title}\n{reason}", recipients)
+    if journal is not None:
+        journal.created("messages", message_id)
 
 
 def job_status_changed(self: Any, task_id: int, status: str, journal: Optional[_Journal] = None) -> None:
@@ -1203,7 +1211,9 @@ def job_status_changed(self: Any, task_id: int, status: str, journal: Optional[_
     if status in _ag().FINAL:
         maybe_deliver(self, order_id, journal)
     else:
-        _reopen_delivered_order(self, _order_row(self, order_id), journal)
+        _reopen_delivered_order(self, _order_row(self, order_id),
+                                f"El trabajo #{task_id} vuelve a estar pendiente. / Job #{task_id} is pending again.",
+                                journal)
 
 
 def reconcile_deliveries(self: Any) -> None:
@@ -1311,7 +1321,8 @@ def plan_set(self: Any, a: dict[str, Any], *, undo_for_person: bool = False) -> 
                 self._system(task, f"{agent} quita este trabajo del plan de la orden #{oid}.", agent)
         if touched:
             if journal.created_tasks:
-                _reopen_delivered_order(self, order_row, journal)
+                _reopen_delivered_order(self, order_row,
+                                        "Se ha añadido trabajo al plan. / New work was added to the plan.", journal)
             _set_status(self, oid, "producing", journal, only_from=("open",))
         journal.before("agora_orders", oid)
         self.db.execute("UPDATE agora_orders SET updated=? WHERE id=?", (_now(self), oid))
@@ -1668,7 +1679,7 @@ def gate_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         for i, pid in enumerate(ids):
             self.db.insert("agora_gate_pieces", {"gate_id": gid, "piece_id": pid, "position": i})
             journal.created("agora_gate_pieces", None, where={"gate_id": gid, "piece_id": pid})
-        _reopen_delivered_order(self, order_row, journal)
+        _reopen_delivered_order(self, order_row, f"Se ha abierto la puerta #{gid}. / Gate #{gid} was opened.", journal)
         _set_status(self, order_row["id"], "waiting", journal, only_from=("open", "producing"))
         token = journal.save()
     self._bump("agora.order.gate", {"order_id": order_row["id"], "gate_id": gid, "pieces": ids, "by": agent})
