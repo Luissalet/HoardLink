@@ -45,8 +45,13 @@ or restores reuse. A different revision can be declared separately. Use `turn` b
 `material` is `neutral` (clay, to read shape), `color` (its textures or vertex colours) or
 `both`; a model without colours of its own says so in `warnings`. `pose` is `{action, frame}` or
 `{bones: {name: [x, y, z]}}` in degrees; `facts` lists bones and actions. The camera is orthographic and the same for
-every view; `resolved.camera` holds it in absolute numbers. Rendered by Blender in the background (`workbench`, or
-`eevee`).
+every view; `resolved.camera` holds it in absolute numbers. Blender renders in the background with Workbench by
+default. Colour views of GLB and glTF models that combine vertex colours and textures use Eevee to show both in
+the same image. Neutral views keep the requested engine. If a mixed model is rendered in Workbench, `warnings`
+reports that the colour view omits vertex colours. Each look records the Blender version
+(`resolved.blender_version`), the requested engine (`resolved.engine`) and the effective engine for each
+material mode (`resolved.material_engines`). The Hub finds Blender through `HOARD_HUB_BLENDER`, then `PATH`,
+then the highest numbered installation in the standard Windows program folders.
 
 **3MF.** The Hub uses trimesh and its 3MF dependencies to read the build, then renders its geometry in Blender.
 The preview follows the build transforms and converts the declared unit to metres. Print materials and colour
