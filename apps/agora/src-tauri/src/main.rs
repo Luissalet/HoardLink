@@ -45,8 +45,24 @@ fn digits(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|c| c.is_ascii_digit())
 }
 
-fn hub_origin(base: &str) -> Result<Url, String> {
-    let url = Url::parse(base).map_err(|_| "Dirección del Hub no válida")?;
+enum HubInitError {
+    InvalidOrigin,
+    NonLocalOrigin,
+    Client(reqwest::Error),
+}
+
+impl HubInitError {
+    fn message(&self, lang: &str) -> String {
+        match self {
+            Self::InvalidOrigin => text(lang, "Dirección del Hub no válida", "Invalid Hub address").into(),
+            Self::NonLocalOrigin => text(lang, "El Hub debe estar en una dirección local", "The Hub must use a local address").into(),
+            Self::Client(error) => error.to_string(),
+        }
+    }
+}
+
+fn hub_origin(base: &str) -> Result<Url, HubInitError> {
+    let url = Url::parse(base).map_err(|_| HubInitError::InvalidOrigin)?;
     if url.scheme() != "http"
         || !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
         || !url.username().is_empty()
@@ -55,7 +71,7 @@ fn hub_origin(base: &str) -> Result<Url, String> {
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err("El Hub debe estar en una dirección local".into());
+        return Err(HubInitError::NonLocalOrigin);
     }
     Ok(url)
 }
@@ -76,12 +92,20 @@ fn launch_key_path() -> Option<PathBuf> {
     None
 }
 
-fn session_error(lang: &str) -> &'static str {
+fn text(lang: &str, es: &'static str, en: &'static str) -> &'static str {
     if lang == "en" {
-        "The write session could not be opened. Reopen the Agora console."
+        en
     } else {
-        "No se ha podido abrir la sesión de escritura. Vuelve a abrir la consola del Ágora."
+        es
     }
+}
+
+fn session_error(lang: &str) -> &'static str {
+    text(
+        lang,
+        "No se ha podido abrir la sesión de escritura. Vuelve a abrir la consola del Ágora.",
+        "The write session could not be opened. Reopen the Agora console.",
+    )
 }
 
 struct Hub {
@@ -91,7 +115,7 @@ struct Hub {
 }
 
 impl Hub {
-    fn new() -> Result<Self, String> {
+    fn new() -> Result<Self, HubInitError> {
         let base =
             std::env::var("AGORA_HUB_URL").unwrap_or_else(|_| "http://127.0.0.1:8810".into());
         let origin = hub_origin(&base)?.origin().ascii_serialization();
@@ -101,7 +125,7 @@ impl Hub {
             .user_agent("HoardAgora")
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map_err(|error| error.to_string())?;
+            .map_err(HubInitError::Client)?;
         Ok(Self {
             client,
             origin,
@@ -163,25 +187,25 @@ impl Hub {
 
 #[tauri::command]
 async fn open_write_session(
-    hub: State<'_, Result<Hub, String>>,
+    hub: State<'_, Result<Hub, HubInitError>>,
     lang: String,
 ) -> Result<(), String> {
-    let hub = hub.inner().as_ref().map_err(Clone::clone)?;
+    let hub = hub.inner().as_ref().map_err(|error| error.message(&lang))?;
     hub.session(&lang, None).await.map(|_| ())
 }
 
 // Only local coordination routes are relayed. Proofs and launcher credentials stay in this process.
 #[tauri::command]
 async fn hub_request(
-    hub: State<'_, Result<Hub, String>>,
+    hub: State<'_, Result<Hub, HubInitError>>,
     path: String,
     body: Option<Value>,
     lang: String,
 ) -> Result<Value, String> {
     if !valid_agora_path(&path) {
-        return Err("Ruta de coordinación no válida".into());
+        return Err(text(&lang, "Ruta de coordinación no válida", "Invalid coordination path").into());
     }
-    let hub = hub.inner().as_ref().map_err(Clone::clone)?;
+    let hub = hub.inner().as_ref().map_err(|error| error.message(&lang))?;
     let url = format!("{}{path}", hub.origin);
     let mut proof = match &body {
         Some(_) => Some(hub.session(&lang, None).await?),
@@ -203,7 +227,9 @@ async fn hub_request(
             .header("Accept-Language", language)
             .send()
             .await
-            .map_err(|_| "No se puede conectar con el Hub local".to_string())?;
+            .map_err(|_| {
+                text(&lang, "No se puede conectar con el Hub local", "Could not connect to the local Hub")
+            })?;
         let status = response.status();
         if body.is_none() && status.is_success() && piece_preview(&path) {
             let mime = match response
@@ -215,7 +241,9 @@ async fn hub_request(
                     t @ ("image/png" | "image/jpeg" | "image/webp" | "image/gif" | "image/bmp"
                     | "image/avif" | "image/svg+xml"),
                 ) => t.to_owned(),
-                _ => return Err("El Hub no devolvió una imagen".into()),
+                _ => {
+                    return Err(text(&lang, "El Hub no devolvió una imagen", "The Hub did not return an image").into());
+                }
             };
             let bytes = response.bytes().await.map_err(|e| e.to_string())?;
             return Ok(
@@ -225,7 +253,9 @@ async fn hub_request(
         let value: Value = response
             .json()
             .await
-            .map_err(|_| "El Hub devolvió una respuesta no válida".to_string())?;
+            .map_err(|_| {
+                text(&lang, "El Hub devolvió una respuesta no válida", "The Hub returned an invalid response")
+            })?;
         if status.is_success() {
             return Ok(value);
         }
@@ -239,7 +269,7 @@ async fn hub_request(
         }
         return Err(value["error"]
             .as_str()
-            .unwrap_or("La operación falló")
+            .unwrap_or(text(&lang, "La operación falló", "The operation failed"))
             .into());
     }
     unreachable!()
@@ -247,19 +277,19 @@ async fn hub_request(
 
 #[tauri::command]
 async fn open_hub(
-    hub: State<'_, Result<Hub, String>>,
+    hub: State<'_, Result<Hub, HubInitError>>,
     space_id: Option<String>,
     decision: Option<String>,
     lang: String,
 ) -> Result<(), String> {
-    let hub = hub.inner().as_ref().map_err(Clone::clone)?;
-    let mut url = hub_origin(&hub.origin)?;
+    let hub = hub.inner().as_ref().map_err(|error| error.message(&lang))?;
+    let mut url = hub_origin(&hub.origin).map_err(|error| error.message(&lang))?;
     if let Some(id) = space_id {
         url.query_pairs_mut().append_pair("space_id", &id);
     }
     let view = if let Some(key) = decision {
         if !decision_key(&key) {
-            return Err("Enlace a decisión no válido".into());
+            return Err(text(&lang, "Enlace a decisión no válido", "Invalid decision link").into());
         }
         url.query_pairs_mut().append_pair("decision", &key);
         "hub/orders"
@@ -271,7 +301,7 @@ async fn open_hub(
     std::process::Command::new("explorer.exe")
         .arg(url.as_str())
         .spawn()
-        .map_err(|_| "No se puede abrir Hoard Hub".to_string())?;
+        .map_err(|_| text(&lang, "No se puede abrir Hoard Hub", "Could not open Hoard Hub"))?;
     Ok(())
 }
 
@@ -318,15 +348,16 @@ fn save_download(
 
 #[tauri::command]
 async fn open_piece(
-    hub: State<'_, Result<Hub, String>>,
+    hub: State<'_, Result<Hub, HubInitError>>,
     app: tauri::AppHandle,
     path: String,
     filename: Option<String>,
+    lang: String,
 ) -> Result<Option<String>, String> {
     if !piece_file(&path) {
-        return Err("Invalid production piece path".into());
+        return Err(text(&lang, "Ruta de pieza de producción no válida", "Invalid production piece path").into());
     }
-    let hub = hub.inner().as_ref().map_err(Clone::clone)?;
+    let hub = hub.inner().as_ref().map_err(|error| error.message(&lang))?;
     let url = format!("{}{path}", hub.origin);
     let Some(filename) = filename else {
         std::process::Command::new("explorer.exe")
@@ -335,7 +366,8 @@ async fn open_piece(
             .map_err(|error| error.to_string())?;
         return Ok(None);
     };
-    let name = download_name(&filename).ok_or("Invalid file name")?;
+    let name = download_name(&filename)
+        .ok_or_else(|| text(&lang, "Nombre de fichero no válido", "Invalid file name"))?;
     let directory = app
         .path()
         .download_dir()
