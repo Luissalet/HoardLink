@@ -1406,6 +1406,11 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             raise _err("say where the piece is: path (a file), url, or app with object and place")
         task_id = _int(a.get("task_id"), "task_id", required=False)
         station = _txt(a.get("station"), 120, "station")
+        if "_worker_task_id" in a:
+            task = self._task_row(a["_worker_task_id"])
+            if task_id != task["id"] or task["owner"] != agent:
+                raise _err("Claim the production task before registering its piece. "
+                           "/ Reclama la tarea de producción antes de registrar su pieza.", 403)
         if task_id:
             job_row = self.db.one("SELECT * FROM agora_order_jobs WHERE task_id=?", (task_id,))
             if not job_row or job_row["order_id"] != oid:
@@ -1434,9 +1439,12 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         if same and not supersedes:
             supersedes = int(same[0]["id"])
         if supersedes:
-            old = self.db.one("SELECT order_id, revision FROM agora_pieces WHERE id=?", (supersedes,))
+            old = self.db.one("SELECT order_id, task_id, revision FROM agora_pieces WHERE id=?", (supersedes,))
             if not old or old["order_id"] != oid:
                 raise _err(f"piece #{supersedes} is not a piece of order #{oid}", 404)
+            if "_worker_task_id" in a and old["task_id"] != task_id:
+                raise _err("The previous piece belongs to another production task. "
+                           "/ La pieza anterior pertenece a otra tarea de producción.", 403)
             revision = int(old["revision"]) + 1
         decisions: list[int] = []
         inherited: list[dict[str, Any]] = []

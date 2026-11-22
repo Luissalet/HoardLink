@@ -150,7 +150,17 @@ class PieceChecksFacet(Facet):
         if args.get("space_id"):
             agora = agora.for_space(args["space_id"])
         row = agora_orders._piece_row(agora, args["piece_id"])
-        source = (_registered_path(agora, row, args.get("_worker_read_files")) if row["path"] else row["url"])
+        worker_files = args.get("_worker_read_files")
+        worker_output = args.get("_worker_output_path")
+        if args.get("task_id") is not None and args["task_id"] != row["task_id"]:
+            raise ValueError("Piece does not belong to this task. / La pieza no pertenece a esta tarea.")
+        if worker_output is not None:
+            task = agora._task_row(args["task_id"])
+            if (not row["path"] or Path(row["path"]) != Path(worker_output)
+                    or task["owner"] != args.get("agent") or row["agent"] != args.get("agent")):
+                raise ValueError("Use a registered output of your task. / Usa una salida registrada de tu tarea.")
+            worker_files = [*(worker_files or []), row["stored"]]
+        source = (_registered_path(agora, row, worker_files) if row["path"] else row["url"])
         return agora, row, source
 
     def validate(self, args):
@@ -283,7 +293,12 @@ class PieceChecksFacet(Facet):
             _tool("hub_piece_validate", "Check a piece against its requirements. Comprobar los requisitos de una pieza.",
                   file),
             _tool("hub_piece_validate_record", "Check and record an order piece. Comprueba y anota una pieza de una orden.",
-                  {**properties, **actor}, ("piece_id",), read=False),
+                  {**properties, **actor,
+                   "task_id": {"type": "integer", "minimum": 1},
+                   "output_path": {**string, "description":
+                                   "Scoped worker: absolute declared output path of this piece. "
+                                   "Trabajador confinado: ruta absoluta declarada de la salida de esta pieza."}},
+                  ("piece_id",), read=False),
             _tool("hub_piece_gate_checked", "Show technical checks on a gate. Muestra las comprobaciones en la puerta.",
                   {"pieces": {"type": "array", "items": {"type": "object", "properties": properties,
                                                        "required": ["piece_id"], "additionalProperties": False}},
