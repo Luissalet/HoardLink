@@ -1467,8 +1467,10 @@ class AgoraConsoleFacet(Facet):
         for worker in workers:
             observed = agents.get(worker.get("agent_id")) or {}
             worker.update({key: observed.get(key) for key in ("declared_model", "declared_effort", "declared_at")})
+        foreman = self.hub.facet("agora_foreman") if hasattr(self.hub, "facet") else None
         return {"ok": True, "thread_id": self.thread_id, "leaders": leaders,
                 "person": self.hub.config.person_profile,
+                "foreman": foreman.status({"space_id": self.space_id}).get("foreman") if foreman else None,
                 "agents": list(agents.values()), "workers": workers, "quota_pools": usage.get("providers", []),
                 "capacity_observations": {"codex": codex_observation()},
                 "activity": activity, "messages": messages, "console_turns": console_turns,

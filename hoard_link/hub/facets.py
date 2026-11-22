@@ -62,6 +62,7 @@ FACET_MODULES = (
     # console routes that it does not recognize.
     "agora_console",
     "agora",
+    "agora_foreman",
     "order_receipts",
     "integration",
     "coordination",
