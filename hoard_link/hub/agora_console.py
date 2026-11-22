@@ -118,7 +118,7 @@ class AgoraConsoleFacet(Facet):
         self._capacity_reporter_started = False
 
     def start(self) -> None:
-        """Start the read-only Codex quota reporter bound to this Hub instance."""
+        """Start console services and the enabled quota reporters for this Hub."""
         agora = self._agora()
         if agora is not None and hasattr(agora, 'space_store'):
             from .order_budget import setup
@@ -137,17 +137,23 @@ class AgoraConsoleFacet(Facet):
         token_file = str(getattr(config, "token_file", "") or "")
         if not (hub_url and data_dir and token_file) or "PYTEST_CURRENT_TEST" in os.environ:
             return
+        repo_root = Path(__file__).resolve().parents[2]
+        isolated = (getattr(config, "isolated", False) or getattr(config, "isolated_catalog", False)
+                    or Path(data_dir).resolve() != (repo_root / "data").resolve())
+        polling = os.environ.get("HOARD_AGORA_QUOTA_POLLING", "0" if isolated else "1")
+        if polling.strip().lower() not in ("1", "true", "yes", "on"):
+            return
+        publication = {
+            "repo_root": repo_root,
+            "env": {
+                "HOARD_HUB_URL": hub_url,
+                "HOARD_HUB_DATA_DIR": data_dir,
+                "HOARD_HUB_TOKEN_FILE": token_file,
+            },
+        }
         try:
             from .agora_capacity import start_codex_capacity_reporter
 
-            publication = {
-                "repo_root": Path(__file__).resolve().parents[2],
-                "env": {
-                    "HOARD_HUB_URL": hub_url,
-                    "HOARD_HUB_DATA_DIR": data_dir,
-                    "HOARD_HUB_TOKEN_FILE": token_file,
-                },
-            }
             start_codex_capacity_reporter(interval_seconds=90, reporter_kwargs=publication)
             self._capacity_reporter_started = True
         except Exception:

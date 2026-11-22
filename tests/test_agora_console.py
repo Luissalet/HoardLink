@@ -77,6 +77,43 @@ def _facet(tmp_path):
     return facet
 
 
+@pytest.mark.parametrize("settings,polling,account_usage,readers", [
+    ({}, None, None, ["codex", "account"]),
+    ({"HOARD_HUB_ISOLATED_CATALOG": "1"}, None, None, []),
+    ({"HOARD_HUB_DATA_DIR": "private"}, None, None, []),
+    ({"HOARD_HUB_PORT": "62841"}, None, None, []),
+    ({"HOARD_HUB_DATA_DIR": "private"}, "1", None, ["codex", "account"]),
+    ({"HOARD_HUB_DATA_DIR": "private"}, "invalid", "1", []),
+    ({"HOARD_HUB_DATA_DIR": "private"}, "1", "0", ["codex"]),
+    ({}, "0", None, []),
+])
+def test_quota_reporters_follow_hub_isolation(tmp_path, monkeypatch, settings, polling, account_usage, readers):
+    from hoard_link.hub import agora_capacity, agora_capacity_accounts
+    from hoard_link.hub.config import HubConfig
+
+    facet = _facet(tmp_path)
+    env = dict(settings)
+    if "HOARD_HUB_DATA_DIR" in env:
+        env["HOARD_HUB_DATA_DIR"] = str(tmp_path / "private")
+    facet.hub.config = HubConfig.load(tmp_path / "hub.json", env=env)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST")
+    for name, value in (("HOARD_AGORA_QUOTA_POLLING", polling), ("HOARD_AGORA_ACCOUNT_USAGE", account_usage)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    starts = []
+    monkeypatch.setattr(agora_capacity, "start_codex_capacity_reporter", lambda **kw: starts.append("codex"))
+    monkeypatch.setattr(agora_capacity_accounts, "start_account_capacity_reporter", lambda **kw: starts.append("account"))
+    monkeypatch.setattr(agora_capacity, "stop_codex_capacity_reporter", lambda: None)
+    monkeypatch.setattr(agora_capacity_accounts, "stop_account_capacity_reporter", lambda: None)
+    try:
+        facet.start()
+        assert starts == readers
+    finally:
+        facet.close()
+
+
 def test_orphan_workers_are_reconciled_without_changing_finished_receipts(tmp_path, monkeypatch):
     from hoard_link.hub import procs
 

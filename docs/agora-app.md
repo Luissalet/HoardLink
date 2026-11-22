@@ -15,7 +15,7 @@ The console reads every provider's quota where its own client does, the way unif
 - **Cursor**: `GET https://cursor.com/api/usage-summary` with the Cursor app's session, read from its `state.vscdb` opened read-only, every 2 min: the two quotas included in the plan as the dashboard shows them, *Cursor models* (Auto, Composer, Grok) and *Other models*, plus on-demand spend when enabled; they reset at the end of the billing cycle.
 - **Faustus**: local models have no account quota; spend caps are reported by Faustus itself.
 
-`HOARD_AGORA_ACCOUNT_USAGE=0` turns the Claude/Cursor readers off. A network failure publishes nothing, so the last real reading stays until it goes stale; bars show the percentage used, with what is left and the reset underneath.
+An isolated Hub (isolated catalogue, separate data directory or alternate port) starts with automatic quota polling off. Set `HOARD_AGORA_QUOTA_POLLING=1` on that Hub process to opt in, or `=0` to turn polling off on a standard installation. `HOARD_AGORA_ACCOUNT_USAGE=0` still turns the Claude/Cursor readers off independently. A network failure publishes nothing, so the last real reading stays until it goes stale; bars show the percentage used, with what is left and the reset underneath.
 
 ## Live state of each leader
 
