@@ -142,3 +142,43 @@ def test_video_check_uses_a_registered_preview(studio, tmp_path):
     found = compare(studio, clip, sheet, preview=0)["piece"]["checks"][0]["keep"][0]["comparisons"][0]
     assert found["result"]["file_url"].endswith("?preview=0")
     assert gate(studio, order, clip)["gate"]["status"] == "open"
+
+
+def test_job_comparison_uses_registered_revisions_and_views(studio, tmp_path):
+    order = make_order(studio, tmp_path)
+    view = tmp_path / "detail.png"
+    Image.new("RGB", (8, 8), "blue").save(view)
+    old = make_piece(studio, order, "candidate", color="red", previews=[str(view)])
+    Image.new("RGB", (8, 8), "green").save(view)
+    current = make_piece(studio, order, "candidate", color="white", previews=[str(view)])
+    first = make_piece(studio, order, "first", color="black")
+    plan = studio.plan_set({"agent": "producer", "order_id": order["id"], "jobs": [
+        {"key": "check", "title": "Check changes", "inputs": [current["id"], first["id"]]},
+    ]})
+    task = {"task_id": plan["keys"]["check"]}
+    compared, standalone = studio.job(task)["job"]["revision_comparisons"]
+    assert compared["status"] == "available"
+    for side, piece, file_color, view_color in (
+        ("previous", old, (255, 0, 0), (0, 0, 255)),
+        ("current", current, (255, 255, 255), (0, 128, 0)),
+    ):
+        receipt = compared[side]
+        assert (receipt["piece_id"], receipt["revision"]) == (piece["id"], piece["revision"])
+        assert receipt["path"] == piece["stored"]
+        assert receipt["previews"] == [{"preview": 0, "path": piece["previews_stored"][0]}]
+        with Image.open(receipt["path"]) as image:
+            assert image.getpixel((0, 0)) == file_color
+        with Image.open(receipt["previews"][0]["path"]) as image:
+            assert image.getpixel((0, 0)) == view_color
+    assert standalone["current"]["piece_id"] == first["id"]
+    assert standalone["previous"] is None and standalone["status"] == "missing"
+    assert standalone["label"]["es"] == "sin referencia anterior"
+
+    # Neither the current original nor its latest detail can stand in for the lost predecessor.
+    Path(old["stored"]).unlink()
+    Path(old["previews_stored"][0]).unlink()
+    compared = studio.job(task)["job"]["revision_comparisons"][0]
+    assert compared["status"] == "unavailable"
+    assert compared["previous"] == {"piece_id": old["id"], "revision": 1, "path": None,
+                                    "previews": [{"preview": 0, "path": None}]}
+    assert compared["label"]["en"] == "no previous reference"

@@ -124,8 +124,9 @@ def proposed_files(console: Any, task_id: int | None) -> dict:
     store = Path(agora_orders._store_dir(agora)).resolve()
     inputs = set(agora_orders._load(job["inputs"], []))
     files, folders, suggestions = set(), set(), set()
-    rows = agora.db.query("SELECT id, path, stored, previews, previews_stored, status FROM agora_pieces "
+    rows = agora.db.query("SELECT id, path, stored, previews, previews_stored, status, supersedes FROM agora_pieces "
                           "WHERE order_id=? AND space_id=?", (job["order_id"], console.space_id))
+    inputs.update({row["supersedes"] for row in rows if row["id"] in inputs and row["supersedes"]})
     for row in rows:
         if row["id"] not in inputs and row["status"] != "kept":
             continue

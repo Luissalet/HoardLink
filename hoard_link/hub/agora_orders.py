@@ -987,9 +987,49 @@ def order_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "decisions": _decisions(self, oid, limit)}
 
 
+def _revision_files(self: Any, piece: dict[str, Any]) -> dict[str, Any]:
+    def registered_path(preview: int | None = None) -> str | None:
+        try:
+            return piece_file(self, piece["id"], preview=preview)
+        except _ag().AgoraError as exc:
+            if exc.status not in (404, 409):
+                raise
+            return None
+
+    # Old records can name a preview without a snapshot or a recorded digest.
+    # Such a path alone cannot establish what the preview looked like then.
+    snapshots = _load(piece["previews_stored"], [])
+    previews = [{"preview": index, "path": registered_path(index) if index < len(snapshots) and snapshots[index] else None}
+                for index, _ in enumerate(_load(piece["previews"], []))]
+    return {"piece_id": piece["id"], "revision": piece["revision"],
+            "path": registered_path() if piece["path"] else None, "previews": previews}
+
+
+def revision_comparisons(self: Any, job_row: Any) -> list[dict[str, Any]]:
+    """Pair each explicit job input with the exact revision it replaces."""
+    comparisons = []
+    for pid in _load(job_row["inputs"], []):
+        piece = self.db.one("SELECT * FROM agora_pieces WHERE id=? AND order_id=? AND space_id=?",
+                            (pid, job_row["order_id"], self.space_id))
+        if not piece:
+            continue
+        previous = None
+        if piece["supersedes"]:
+            previous = self.db.one("SELECT * FROM agora_pieces WHERE id=? AND order_id=? AND space_id=?",
+                                   (piece["supersedes"], job_row["order_id"], self.space_id))
+        before = _revision_files(self, previous) if previous else None
+        available = before and (before["path"] or any(view["path"] for view in before["previews"]))
+        entry = {"current": _revision_files(self, piece), "previous": before,
+                 "status": "available" if available else "unavailable" if piece["supersedes"] else "missing"}
+        if not available:
+            entry["label"] = {"es": "sin referencia anterior", "en": "no previous reference"}
+        comparisons.append(entry)
+    return comparisons
+
+
 def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """What a worker needs to start a job: the order's words and details to keep, the station and how the output is
-    checked, the input pieces (where they are, what they derive from), the pieces the person kept in this order (they
+    checked, the input pieces and their previous revisions, the pieces the person kept in this order (they
     fix the look), the defects sent back to this job, and an earlier kept piece of each kind it must deliver."""
     tid = _int(a.get("task_id"), "task_id")
     row = self.db.one("SELECT * FROM agora_order_jobs WHERE task_id=?", (tid,))
@@ -1012,6 +1052,7 @@ def job(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         if p:
             inputs.append(_piece_dict(self, dict(p)))
     out["input_pieces"] = inputs
+    out["revision_comparisons"] = revision_comparisons(self, row)
     kept = [_piece_dict(self, dict(p)) for p in
             self.db.query("SELECT * FROM agora_pieces WHERE order_id=? AND status='kept' ORDER BY id", (row["order_id"],))]
     for p in kept:
@@ -2039,7 +2080,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "jobs": {"type": "array", "items": job_item, "maxItems": 60}, "remove": ids}, ["agent", "order_id"])},
         {"name": "hub_agora_job", "read": True,
          "description": "Everything to start a job (task_id): the order's dossier, station and check, "
-                        "input pieces, destination requirements, pinned details, required_references kept in this and "
+                        "input pieces and their revision_comparisons, destination requirements, pinned details, required_references kept in this and "
                         "cited orders, live app reference checks, defects and an earlier kept piece of each kind it delivers.",
          "inputSchema": schema({"task_id": {"type": "integer", "minimum": 1}}, ["task_id"])},
         {"name": "hub_agora_piece_add",

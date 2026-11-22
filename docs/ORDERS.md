@@ -198,6 +198,15 @@ when a piece names them or they sit in the piece's folder, and only to the famil
 
 Writes (`POST /api/agora/<operation>` with a bearer token, or from the page): the operations above.
 
+For a revision check, select **Check pieces / Comprobar piezas** in the console and link the production task
+when starting a Faustus worker. Agents can use `hub_agora_console_worker` with `template: "check"` and
+`task_id`. The assignment and `hub_agora_job` include the same `revision_comparisons` for the job's direct inputs.
+Each entry pairs `current` and `previous` by the registered `supersedes` link, with piece IDs, revision numbers,
+verified local file paths and numbered preview paths. Dedicated workers receive read access to the retained copies.
+`missing` means no predecessor was recorded. `unavailable` means no file or view can establish its content.
+When the previous view needed for a detail is absent or cannot be inspected, the report says
+“no previous reference” / «sin referencia anterior» and records what the current piece shows.
+
 | Tool | Does |
 |---|---|
 | `hub_agora_orders` | Orders of a space (or all), with counts, thumbnails and the gates waiting for the person |

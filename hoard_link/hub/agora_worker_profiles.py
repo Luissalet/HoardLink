@@ -18,6 +18,18 @@ TEMPLATES = {
         "en": {"label": "Probe", "hint": "What scenario to run and what artifacts to hand off"},
         "instructions": "Run the scenario through the available tools. For each station report input, output, how you inspected it and any reproducible obstacle. Keep code changes out of a probe unless the assignment explicitly asks for them.",
     },
+    "check": {
+        "es": {"label": "Comprobar piezas", "hint": "Qué piezas hay que comprobar y qué detalles deben verse"},
+        "en": {"label": "Check pieces", "hint": "Which pieces to inspect and which details to verify"},
+        "instructions": (
+            "Inspect the requested details. To say what changed, open the current and previous revisions and "
+            "compare the same detail in equivalent views. Cite both revisions and the crop or measurement "
+            "that supports each change. If the previous detail cannot be checked, write «sin referencia anterior» "
+            "or 'no previous reference' in that row and describe only what you observed in the current revision. "
+            "When an order task is linked, use its revision_comparisons from hub_agora_job. "
+            "Report the checks in the task thread. Leave decisions to the person."
+        ),
+    },
     "review": {
         "es": {"label": "Revisar", "hint": "Qué entrega hay que revisar y qué debe demostrar"},
         "en": {"label": "Review", "hint": "Which submission to review and what it must demonstrate"},

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from types import SimpleNamespace
 
@@ -29,7 +30,9 @@ def test_space_profile_is_readable_editable_and_scoped(tmp_path):
         assert "4006" in starter["profile"]["rules"]
         assert "cartógrafa" not in starter["profile"]["context"]
         assert starter["profile"]["auto_review"] is False
-        assert set(starter["templates"]) == {"build", "probe", "review", "integrate"}
+        assert set(starter["templates"]) == {"build", "probe", "check", "review", "integrate"}
+        assert starter["templates"]["check"]["es"]["label"] == "Comprobar piezas"
+        assert starter["templates"]["check"]["en"]["label"] == "Check pieces"
         assert starter["templates"]["review"]["es"]["label"] == "Revisar"
         assert starter["templates"]["review"]["en"]["label"] == "Review"
         args = {"space_id": "estudio", "expected_revision": 0, "profile": {
@@ -78,6 +81,39 @@ def test_manual_runner_receives_rules_context_paths_and_selected_template(tmp_pa
         assert result["worker"]["created_at"] <= time.time()
         assert len(calls) == 1
         assert console.worker({"leader_id": "codex", "model": "small", "template": "undefined", "task": "test"})["status"] == 400
+
+        view = agora.for_space("estudio")
+        order = view.order_create({"agent": "producer", "title": "Check a piece"})["order"]["id"]
+        path = tmp_path / "piece.txt"
+        preview = tmp_path / "detail.png"
+
+        def register(content):
+            path.write_text(content, encoding="utf-8")
+            preview.write_bytes(content.encode())
+            return view.piece_add({"agent": "producer", "order_id": order, "kind": "text",
+                                   "title": "Candidate", "path": str(path), "previews": [str(preview)]})["piece"]
+
+        old = register("old")
+        current = register("current")
+        first_path = tmp_path / "first.txt"
+        first_path.write_text("standalone", encoding="utf-8")
+        first = view.piece_add({"agent": "producer", "order_id": order, "kind": "text",
+                                "title": "First version", "path": str(first_path)})["piece"]
+        task_id = view.plan_set({"agent": "producer", "order_id": order, "jobs": [
+            {"key": "check", "title": "Compare", "inputs": [current["id"], first["id"]]},
+        ]})["keys"]["check"]
+        args = {"leader_id": "codex", "model": "small", "template": "check", "task": "Compare changes"}
+        assert console.worker({**args, "task_id": task_id})["ok"]
+        prompt = calls[1][0][-1]
+        payload = prompt.split("revision_comparisons:\n", 1)[1].split("\n\nTask:", 1)[0]
+        assert json.loads(payload) == view.job({"task_id": task_id})["job"]["revision_comparisons"]
+        assert "sin referencia anterior" in payload
+        proposal = console.worker({"action": "propose_files", "task_id": task_id})["file_scope"]
+        assert set(proposal["read_files"]) == {
+            old["stored"], *old["previews_stored"], current["stored"], *current["previews_stored"], first["stored"],
+        }
+        assert console.worker(args)["ok"]
+        assert "Sin referencia anterior aportada por la consola." in calls[2][0][-1]
     finally:
         root.close()
         agora.close()
