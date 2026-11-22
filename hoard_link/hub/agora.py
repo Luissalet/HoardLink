@@ -4204,6 +4204,12 @@ class AgoraFacet(Facet):
         p = req.path
         if not p.startswith("/api/agora"):
             return None
+        from . import agora_lessons
+
+        if p == agora_lessons.ROUTE:
+            if req.caller() not in ("hub", "faustus"):
+                return {"ok": False, "status": 401, "error": "The Hub or Faustus bearer token is required."}
+            return agora_lessons.list_lessons(self.hub.config.data_dir)
         q = {k: v[0] for k, v in req.query.items() if v}
         ag = self.agora
         if p == "/api/agora/person":
@@ -4379,6 +4385,20 @@ class AgoraFacet(Facet):
         p = req.path
         if not p.startswith("/api/agora/"):
             return None
+        from . import agora_lessons
+
+        if p in (agora_lessons.ROUTE + "/withdraw", agora_lessons.ROUTE + "/undo"):
+            if req.caller() not in ("hub", "faustus"):
+                return {"ok": False, "status": 401, "error": "The Hub or Faustus bearer token is required."}
+            data_dir = self.hub.config.data_dir
+            body = req.body or {}
+            if p.endswith("/undo"):
+                return agora_lessons.undo(data_dir, body.get("token"))
+            message_id = body.get("message_id")
+            if type(message_id) is not int or not 1 <= message_id < 2**63:
+                return {"ok": False, "status": 400, "error": "Choose a lesson by its message ID."}
+            token = agora_lessons.change(data_dir, message_id, None)
+            return {"ok": True, "message_id": message_id, "undo": token}
         op = p[len("/api/agora/"):].strip("/")
         if op == "person":
             if not self._person_surface(req):

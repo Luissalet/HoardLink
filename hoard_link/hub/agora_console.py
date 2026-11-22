@@ -3731,16 +3731,21 @@ class AgoraConsoleFacet(Facet):
     @classmethod
     def tools(cls) -> list[dict[str, Any]]:
         from .agora_faustus import TUTOR_TOOL
+        from .agora_lessons import CORRECTION_LIMIT, TRIGGER_LIMIT
 
         tools = [
             {"name": TUTOR_TOOL,
-             "description": "Keep your studio thread correction as an apprentice instinct (remember), or undo it (forget). / Guarda tu corrección como instinto del aprendiz o deshazla.",
+             "description": (f"Teach Faustus from your own studio message, up to {CORRECTION_LIMIT} characters. "
+                             "Use a library skill for longer lessons. List, withdraw or undo a lesson. / "
+                             f"Enseña a Faustus con un mensaje propio del estudio de hasta {CORRECTION_LIMIT} caracteres. "
+                             "Usa una skill de la biblioteca para lecciones más largas. Consulta, retira o deshaz una lección."),
              "inputSchema": {"type": "object", "properties": {
-                 "action": {"enum": ["remember", "forget"]},
+                 "action": {"enum": ["remember", "list", "forget", "undo"]},
                  "message_id": {"type": "integer", "minimum": 1},
-                 "trigger": {"type": "string", "maxLength": 200},
+                 "trigger": {"type": "string", "maxLength": TRIGGER_LIMIT},
+                 "token": {"type": "string", "description": "Undo token returned by a changed lesson."},
                  "actor": {"type": "string", "maxLength": 64}},
-                 "required": ["action", "message_id", "actor"], "additionalProperties": False},
+                 "required": ["action", "actor"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
             {"name": "hub_agora_console_overview", "description": "Read the Agora team console: live provider catalogs where the official local interface exposes them, shared quota pools, child workers and canonical group messages. console_turns carry a liveness class per finished turn (completed, advanced, plan_only, empty_response, blocked, failed, needs_followup) with its reasons, and the root_turn_id/continuation_n of automatic continuations. Catalogs may be unavailable; no model call is made.",
              "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},

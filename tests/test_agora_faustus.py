@@ -7,8 +7,9 @@ from contextlib import nullcontext
 
 import pytest
 
-from hoard_link.hub import agora_faustus
-from hoard_link.hub import faustus_endpoint_key
+from hoard_link.hub import agora_faustus, agora_lessons, faustus_endpoint_key
+from hoard_link.hub.agora import AgoraFacet
+from hoard_link.hub.facets import Request
 from tests.test_agora_console import _facet
 
 
@@ -61,7 +62,8 @@ def test_studio_apprentice_name_can_be_reopened_but_not_used_in_parallel(tmp_pat
 def test_tutor_instinct_remembers_own_studio_message_and_returns_undo(tmp_path):
     facet = _facet(tmp_path)
     facet.space_id = "estudio"
-    messages = {42: {"author": "tutor", "kind": "comment", "body": "State the view.", "thread_id": 18}}
+    messages = {42: {"author": "tutor", "kind": "comment", "body": "State the view.", "thread_id": 18},
+                43: {"author": "tutor", "kind": "comment", "body": "a" * 301, "thread_id": 18}}
     db = SimpleNamespace(one=lambda sql, params: messages.get(params[0]) if "FROM messages m" in sql else None)
     agora = SimpleNamespace(db=db, person_id="person", space_id="estudio")
     agora.for_space = lambda sid: agora
@@ -70,14 +72,41 @@ def test_tutor_instinct_remembers_own_studio_message_and_returns_undo(tmp_path):
     handler = facet.handlers_local()[agora_faustus.TUTOR_TOOL]
     assert handler({**call, "actor": "other"})["status"] == 403
     assert handler({**call, "actor": "tutor", "message_id": 99})["status"] == 404
+    assert "300" in handler({**call, "actor": "tutor", "message_id": 43})["error"]
     saved = handler({**call, "actor": "tutor"})
     assert saved["ok"] and saved["agent"] == agora_faustus.APPRENTICE
-    assert handler({**call, "actor": "tutor"})["ok"]
+    assert handler({**call, "actor": "tutor"})["undo"] == saved["undo"]
+    lesson, = handler({"action": "list", "actor": "tutor"})["lessons"]
+    assert (lesson["action"], lesson["author"], lesson["thread_id"]) == ("State the view.", "tutor", 18)
+    assert handler({**saved["undo"]["arguments"], "actor": "other"})["status"] == 403
+    assert handler(saved["undo"]["arguments"])["status"] == "undone"
+    assert not agora_lessons.list_lessons(facet.hub.config.data_dir)["lessons"]
+
+
+def test_shared_lesson_routes_withdraw_and_restore_a_legacy_record(tmp_path):
+    facet = _facet(tmp_path)
+    agora = SimpleNamespace(hub=facet.hub)
     folder = agora_faustus.worker_data(facet, agora_faustus.APPRENTICE) / "instincts" / "agora-tutor"
-    lesson, = folder.iterdir()
-    assert json.loads(lesson.read_text(encoding="utf-8"))["action"] == "State the view."
-    assert handler(saved["undo"]["arguments"])["status"] == "forgotten"
-    assert not list(folder.iterdir())
+    folder.mkdir(parents=True)
+    lesson = {"author": "tutor", "thread_id": 18, "message_id": 42, "trigger": "When checking",
+              "action": "State the view.", "created": 20}
+    (folder / "42.json").write_text(json.dumps(lesson), encoding="utf-8")
+
+    def request(operation="", body=None, caller="hub"):
+        method = "GET" if body is None else "POST"
+        req = Request(method, agora_lessons.ROUTE + operation, {}, body or {}, lambda: caller,
+                      lambda: caller == "hub")
+        return (AgoraFacet.get if body is None else AgoraFacet.post)(agora, req)
+
+    assert request(caller=None)["status"] == 401
+    assert request()["lessons"] == [lesson]
+    assert request("/withdraw", {"message_id": 42}, caller=None)["status"] == 401
+    withdrawal = request("/withdraw", {"message_id": 42})
+    assert withdrawal["undo"] and not request()["lessons"]
+    assert request("/withdraw", {"message_id": 42}) == withdrawal
+    assert request("/undo", {"token": withdrawal["undo"]})["ok"]
+    assert request()["lessons"] == [lesson]
+    assert request("/undo", {"token": withdrawal["undo"]})["status"] == 409
 
 
 def test_resuming_apprentice_reactivates_the_exact_saved_binding(tmp_path, monkeypatch):
@@ -194,8 +223,10 @@ def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("resume", [False, True])
-def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, monkeypatch, resume):
+@pytest.mark.parametrize("space", ["ecosystem", "estudio"])
+def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, monkeypatch, resume, space):
     facet = _facet(tmp_path)
+    facet.space_id = space
     key = "synthetic-key"
     launches = []
     requests = []
@@ -218,7 +249,9 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     monkeypatch.setattr(facet, "_faustus_session_request", request)
     runtime = agora_faustus.start_pc(facet, "faustus-qa", tmp_path, "python", "http://models.example/v1",
                                      "model", api_key="" if resume else key, resume=resume)
-    command, _ = launches[0]
+    command, env = launches[0]
+    assert env["FAUSTUS_AGORA_WORKER_SPACE"] == space
+    assert ("--agora-studio" in command) == (space == "estudio")
     assert command[command.index("--endpoint-url") + 1] == ("" if resume else "http://models.example/v1")
     assert command[command.index("--api-key") + 1] == ""
     assert key not in repr(launches) and key not in repr(runtime)

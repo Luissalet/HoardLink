@@ -8,13 +8,10 @@ the credential from the Faustus installation supplying the catalog.
 from __future__ import annotations
 
 import hashlib
-import json
 import ntpath
-import os
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -31,18 +28,23 @@ def worker_data(console: Any, agent: str) -> Path:
 
 
 def tutor_instinct(console: Any, args: dict, actor: str) -> dict:
-    """Keep one explicitly selected, attributed studio correction in the apprentice store."""
-    from . import agora_ranks
+    """Teach Faustus with an attributed studio correction."""
+    from . import agora_lessons, agora_ranks
 
     if console.space_id != STUDIO:
         return {"ok": False, "status": 404, "error": "Apprentice instincts belong to estudio."}
     action = args.get("action")
-    message_id = args.get("message_id")
-    if action not in ("remember", "forget") or type(message_id) is not int or message_id < 1:
-        return {"ok": False, "status": 400, "error": "Choose remember or forget and a positive message_id."}
+    data_dir = console.hub.config.data_dir
+    if action == "list":
+        return agora_lessons.list_lessons(data_dir)
     agora = console._agora()
     if actor == APPRENTICE or agora_ranks.level(agora, actor) < agora_ranks.LEVEL["agent"]:
         return {"ok": False, "status": 403, "error": "A studio agent or higher must teach the apprentice."}
+    if action == "undo":
+        return agora_lessons.undo(data_dir, args.get("token"), author=actor)
+    message_id = args.get("message_id")
+    if action not in ("remember", "forget") or type(message_id) is not int or not 1 <= message_id < 2**63:
+        return {"ok": False, "status": 400, "error": "Choose remember or forget and a positive message_id."}
     message = agora.db.one(
         "SELECT m.author, m.kind, m.body, m.thread_id FROM messages m "
         "JOIN threads t ON t.id=m.thread_id WHERE m.id=? AND t.space_id=?", (message_id, STUDIO))
@@ -50,32 +52,24 @@ def tutor_instinct(console: Any, args: dict, actor: str) -> dict:
         return {"ok": False, "status": 404, "error": "Studio correction message not found."}
     if actor != message["author"]:
         return {"ok": False, "status": 403, "error": "Use a correction you authored in the studio."}
-    folder = worker_data(console, APPRENTICE) / "instincts" / "agora-tutor"
-    target = folder / f"{message_id}.json"
-    receipt = {"ok": True, "message_id": message_id, "thread_id": message["thread_id"], "agent": APPRENTICE}
-    if action == "forget":
-        target.unlink(missing_ok=True)
-        return {**receipt, "status": "forgotten"}
-    trigger = " ".join(str(args.get("trigger") or "").split())
-    correction = " ".join(message["body"].split())
-    if not (1 <= len(trigger) <= 200 and 1 <= len(correction) <= 300):
-        return {"ok": False, "status": 400,
-                "error": "Use a trigger of 1–200 characters and a correction message of 1–300 characters."}
-    folder.mkdir(parents=True, exist_ok=True)
-    record = {"author": actor, "message_id": message_id, "thread_id": message["thread_id"],
-              "trigger": trigger, "action": correction, "created": time.time()}
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=folder, suffix=".tmp",
-                                     delete=False) as stream:
-        temporary = Path(stream.name)
-        try:
-            json.dump(record, stream, ensure_ascii=False)
-            stream.close()
-            os.replace(temporary, target)
-        finally:
-            temporary.unlink(missing_ok=True)
-    return {**receipt, "status": "remembered",
-            "undo": {"tool": TUTOR_TOOL, "arguments": {"space_id": STUDIO, "actor": actor,
-                       "action": "forget", "message_id": message_id}}}
+    record = None
+    if action == "remember":
+        trigger = " ".join(str(args.get("trigger") or "").split())
+        correction = " ".join(message["body"].split())
+        if not (1 <= len(trigger) <= agora_lessons.TRIGGER_LIMIT
+                and 1 <= len(correction) <= agora_lessons.CORRECTION_LIMIT):
+            return {"ok": False, "status": 400, "error": (
+                f"Use a trigger of 1–{agora_lessons.TRIGGER_LIMIT} characters and a correction of "
+                f"1–{agora_lessons.CORRECTION_LIMIT} characters. Publish longer lessons as library skills.")}
+        record = {"author": actor, "message_id": message_id, "thread_id": message["thread_id"],
+                  "trigger": trigger, "action": correction, "created": time.time()}
+    token = agora_lessons.change(data_dir, message_id, record)
+    receipt = {"ok": True, "message_id": message_id, "thread_id": message["thread_id"], "agent": APPRENTICE,
+               "status": "remembered" if record else "forgotten", "undo": None}
+    if token:
+        receipt["undo"] = {"tool": TUTOR_TOOL, "arguments": {"space_id": STUDIO, "actor": actor,
+                           "action": "undo", "token": token}}
+    return receipt
 
 
 def service(hub: Any) -> dict[str, Any]:
@@ -199,6 +193,7 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
         port = listener.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     env = console._runner_env()
+    env["FAUSTUS_AGORA_WORKER_SPACE"] = console.space_id
     env["FAUSTUS_APP_ROOT"] = str(root)
     env["FAUSTUS_AGORA_HUB_PYTHON"] = sys.executable
     env["FAUSTUS_AGORA_HUB_ROOT"] = str(Path(__file__).resolve().parents[2])
