@@ -88,6 +88,9 @@ def combine(results):
     errors = [f"{root}: {row['runner_error']}" for root, row in results.items() if row.get("runner_error")]
     if errors:
         result["runner_error"] = "\n".join(errors)
+        if all(row.get("case_errors") for row in results.values() if row.get("runner_error")):
+            result["case_errors"] = [f"{root}/{case}" if len(results) > 1 else case
+                                     for root, row in results.items() for case in row.get("case_errors", [])]
     return result
 
 
@@ -126,13 +129,14 @@ def report_result(exit_code, report, output, *, paths=None, empty_ok=False):
         raise IntegrationError(f"Test runner exited {exit_code}: {output[-3500:]}")
     counts = {"passed": 0, "failed": 0, "skipped": 0}
     failures = {}
-    errors = False
+    errors = []
     for case in ET.fromstring(report).iter("testcase"):
         key = case.get("classname", "") + "::" + case.get("name", "")
         failure = case.find("failure")
         if failure is None:
             failure = case.find("error")
-            errors = errors or failure is not None
+            if failure is not None:
+                errors.append(key)
         if failure is not None:
             counts["failed"] += 1
             # Pytest's message contains the assertion and exception. Tracebacks include
@@ -149,6 +153,8 @@ def report_result(exit_code, report, output, *, paths=None, empty_ok=False):
     result = {"counts": counts, "failures": failures}
     if exit_code == 2 or errors:
         result["runner_error"] = output[-3500:]
+        if exit_code == 1:
+            result["case_errors"] = errors
     return result
 
 

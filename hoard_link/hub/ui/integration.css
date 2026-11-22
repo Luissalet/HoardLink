@@ -23,3 +23,32 @@
 #tab-integration details p:first-child {
   margin-top: 0;
 }
+
+.integration-suite-baseline {
+  margin-block-end: 28px;
+}
+
+.integration-suite-baseline h3 {
+  margin-block: 0 8px;
+}
+
+.integration-baseline-tests {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 8px;
+}
+
+.integration-baseline-tests dl {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 24px;
+  row-gap: 4px;
+  margin-block: 4px 0;
+  font-size: var(--hub-fs-2);
+}
+
+.integration-baseline-tests dd {
+  margin: 0;
+}

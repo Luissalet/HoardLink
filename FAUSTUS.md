@@ -229,6 +229,9 @@ fast-forward with the published merge, recording who verified it and why. The st
 gates to their existing interface.
 Failure comparisons normalize temporary paths and Python object addresses. Integration receipts flag deferred
 reloads when a desktop app is running or has a Hub window open.
+`hub_integration_suite_failures` reads the measured failures for all repositories or one repository.
+For repositories with baseline measurements, a new failure in the submitted focal tests blocks closure.
+Recorded failures remain visible in the receipt and the task's closing message.
 `hub_modules`
 and `hub_module_set` use declared native module switches and return an undo
 request for a change. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any

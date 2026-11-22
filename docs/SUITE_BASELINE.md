@@ -95,3 +95,25 @@ override the default completion codes 0 and 1 if its harness documents
 different nonzero codes for complete runs with failures. A selected batch can
 succeed while its repository still has pending batches. Inspect the registry
 for that distinction and use the saved log and XML for triage.
+
+## Baseline failures in the Hub
+
+System → Integrations shows the recorded failures by repository. Agents can read
+the same records with `hub_integration_suite_failures`, optionally passing a
+repository name in `repo`.
+
+Set `HOARD_HUB_SUITE_BASELINE` to the external registry JSON and, optionally,
+`HOARD_HUB_SUITE_COMPARISON` to the published/local comparison CSV. The standard
+development layout discovers `Research/_qa/lineabase/lineabase.json` and
+`Research/_qa/publicado3733/comparativa.csv` in an ancestor of the Hub checkout.
+Isolated Hub instances use explicit paths. The Hub stores the last imported
+snapshot under its own data directory and reads updated receipts as they arrive.
+Reading the baseline does not run tests.
+
+The registry's batch start time dates each failure observation. A conclusive
+local comparison updates the matching historical case and its commit, or clears
+it when the test passes. Skipped, absent and blocked cases retain the historical
+observation. A partial suite can also include failures from older batches
+confirmed by the comparison associated with that suite. Dates absent from the
+receipts are shown as undated. A partial suite appears as an incomplete measurement
+even if some of its batches produced results.

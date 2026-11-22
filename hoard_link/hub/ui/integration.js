@@ -101,13 +101,31 @@
       content.push(el("p", "", t(ctx,
         `Pruebas superadas · Principal ${main.counts.passed} · Entrega ${candidate.counts.passed}`,
         `Main: ${main.counts.passed} passed. Delivery: ${candidate.counts.passed} passed.`)));
-      content.push(el("p", "", t(ctx,
-        `${Object.keys(known).length} fallos conocidos · ${Object.keys(regressions).length} fallos nuevos`,
-        `${Object.keys(known).length} known failures · ${Object.keys(regressions).length} new failures`)));
-      if (Object.keys(regressions).length) {
+      const knownCount = Object.keys(known).length;
+      const regressionCount = Object.keys(regressions).length;
+      const knownLabel = knownCount === 1 ? t(ctx, "1 fallo conocido", "1 known failure")
+        : t(ctx, `${knownCount} fallos conocidos`, `${knownCount} known failures`);
+      const regressionLabel = regressionCount === 1 ? t(ctx, "1 fallo nuevo", "1 new failure")
+        : t(ctx, `${regressionCount} fallos nuevos`, `${regressionCount} new failures`);
+      content.push(el("p", "", `${knownLabel} · ${regressionLabel}`));
+      const otherRegressions = Object.keys(regressions).filter(test =>
+        !receipt.closure_baseline?.new.some(focal => test === focal || test.endsWith(`/${focal}`)));
+      if (otherRegressions.length) {
         const list = el("ul");
-        for (const test of Object.keys(regressions)) list.append(el("li", "", test));
+        for (const test of otherRegressions) list.append(el("li", "", test));
         content.push(list);
+      }
+    }
+    if (receipt.closure_baseline) {
+      const {known, new: regressions} = receipt.closure_baseline;
+      for (const [cases, label] of [
+        [known, t(ctx, "Fallos de la línea base", "Baseline failures")],
+        [regressions, t(ctx, "Fallos nuevos en las pruebas focales", "New failures in focused tests")],
+      ]) {
+        if (!cases.length) continue;
+        const list = el("ul");
+        for (const test of cases) list.append(el("li", "", test));
+        content.push(el("h4", "", label), list);
       }
     }
     content.push(...dependencyNotes(ctx, receipt.dependencies,
@@ -183,6 +201,73 @@
     target.replaceChildren(...content);
   }
 
+  function renderBaseline(ctx, rows, open) {
+    const {el} = ctx;
+    const section = el("section", "integration-suite-baseline");
+    section.append(el("h3", "", t(ctx, "Fallos de la línea base", "Baseline failures")));
+    if (!rows) {
+      section.append(el("p", "muted", t(ctx,
+        "No se pudo consultar la línea base.", "Could not load the baseline.")));
+      return section;
+    }
+    const repos = rows.filter(row => row.failures.length || !["passed", "failed"].includes(row.status));
+    if (!repos.length) {
+      section.append(el("p", "muted", rows.length
+        ? t(ctx, "No hay fallos registrados.", "No recorded failures.")
+        : t(ctx, "Todavía no hay mediciones de referencia.", "No baseline measurements yet.")));
+      return section;
+    }
+    const dateFormat = new Intl.DateTimeFormat(t(ctx, "es-ES", "en-GB"), {
+      dateStyle: "medium", timeStyle: "short",
+    });
+    const date = value => {
+      if (!value) return el("span", "", t(ctx, "Sin fecha", "Undated"));
+      const time = el("time", "", dateFormat.format(new Date(value)));
+      time.dateTime = value;
+      return time;
+    };
+    const list = el("div", "hub-project-list");
+    for (const row of repos) {
+      const details = el("details", "hub-project-row");
+      details.dataset.id = `baseline:${row.repo}`;
+      details.open = open.has(details.dataset.id);
+      const count = row.failures.length;
+      const label = count === 1 ? t(ctx, "1 fallo", "1 failure")
+        : t(ctx, `${count} fallos`, `${count} failures`);
+      const partial = !["passed", "failed"].includes(row.status);
+      const status = partial ? t(ctx, "Medición incompleta", "Incomplete measurement") : label;
+      const summary = el("summary", "", `${row.repo} · ${partial && count ? `${label} · ` : ""}${status}`);
+      const body = el("div");
+      if (count) {
+        const tests = el("ul", "integration-baseline-tests");
+        for (const failure of row.failures) {
+          const item = el("li");
+          const meta = el("dl");
+          for (const [name, value] of [
+            ["Commit", el("code", "", failure.commit)],
+            [t(ctx, "Primer fallo observado", "First observed failure"), date(failure.first_seen)],
+            [t(ctx, "Último fallo observado", "Last observed failure"), date(failure.last_seen)],
+          ]) {
+            const field = el("div");
+            const answer = el("dd");
+            answer.append(value);
+            field.append(el("dt", "muted", name), answer);
+            meta.append(field);
+          }
+          item.append(el("code", "", failure.test), meta);
+          tests.append(item);
+        }
+        body.append(tests);
+      } else if (row.commit) {
+        body.append(el("code", "", row.commit));
+      }
+      details.append(summary, body);
+      list.append(details);
+    }
+    section.append(list);
+    return section;
+  }
+
   let root;
   let lastRows;
   let generation = 0;
@@ -196,14 +281,18 @@
       lastRows = undefined;
     }
     try {
-      const result = await ctx.api(api);
+      const [result, baseline] = await Promise.all([
+        ctx.api(api),
+        ctx.api(`${api}?suite_baseline=1`).catch(() => null),
+      ]);
       if (id !== generation) return;
       if (!result.ok) throw new Error();
-      const rows = JSON.stringify([result.receipts, result.runtime]);
+      const repositories = baseline?.ok ? baseline.repositories : null;
+      const rows = JSON.stringify([result.receipts, result.runtime, repositories]);
       if (rows === lastRows) return;
       lastRows = rows;
       const open = new Set([...root.querySelectorAll("details[open]")].map(row => row.dataset.id));
-      const messages = [];
+      const messages = [renderBaseline(ctx, repositories, open)];
       if (result.runtime?.stale) {
         const loaded = result.runtime.loaded_commit.slice(0, 12);
         const main = result.runtime.main_commit.slice(0, 12);
