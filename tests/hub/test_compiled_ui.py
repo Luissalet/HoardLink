@@ -96,6 +96,32 @@ def test_declared_vite_layout_and_real_http_match(demo):
     assert stale["fingerprint"] != row["fingerprint"]
 
 
+def test_console_requires_matching_served_html_as_well_as_assets(demo):
+    commit(demo.repo, {
+        ".gitignore": b"/apps/agora/dist/\n",
+        "apps/agora/vite.config.ts": b"export default {}",
+        "apps/agora/index.html": b"<title>Latest</title>",
+    }, INITIAL + 20)
+    root = demo.repo / "apps/agora/dist"
+    build(root, b"same script", INITIAL + 30)
+    output = INDEX.replace(b"<head>", b"<head><title>Latest</title>")
+    write(root / "index.html", output)
+    os.utime(root / "index.html", (INITIAL + 30, INITIAL + 30))
+
+    served = demo.served / "agora"
+    build(served, b"same script", INITIAL + 30)
+    rendered = output.replace(b'"/assets/', b'"/agora/assets/').replace(
+        b"<head>", b'<head><script src="/ui/browser-session.js"></script><base href="/agora/">',
+    )
+    installed = served / "index.html"
+    write(installed, rendered.replace(b"<title>Latest", b"<title>Earlier"))
+
+    app = AppUI("hoardhub", "Hoard Hub", demo.repo, (demo.url,))
+    assert _status(app)["reason"] == "mismatch"
+    write(installed, rendered)
+    assert _status(app)["state"] == "current"
+
+
 def test_missing_unknown_and_tracked_artifacts(demo):
     (demo.output / "index.html").unlink()
     assert _status(demo.app)["state"] == "missing"

@@ -176,8 +176,6 @@ def _entry_assets(build: Build, body: bytes) -> dict[str, str]:
         path = unquote(parts.path)
         if path.startswith(prefix):
             relative, served_path = path[len(prefix):], parts.path
-        elif build.method == "hub_console" and path.startswith("/assets/"):
-            relative, served_path = path[1:], prefix + parts.path[1:]
         elif not path.startswith("/"):
             relative, served_path = path.removeprefix("./"), urljoin(build.route, parts.path)
         else:
@@ -213,11 +211,7 @@ def _runtime(app: AppUI, build: Build, body: bytes, assets: dict[str, str],
         try:
             served = _read_url(url, build.route)
             served_hash = sha256(served).hexdigest()
-            if build.method == "hub_console":
-                matched = bool(assets) and _entry_assets(build, served) == assets
-            else:
-                matched = served == body
-            if matched and all(_read_url(url, route) == contents[path] for path, route in assets.items()):
+            if served == body and all(_read_url(url, route) == contents[path] for path, route in assets.items()):
                 return "matched", served_hash
             state = "mismatch"
         except (OSError, ValueError):
@@ -300,7 +294,12 @@ def _inspect(app: AppUI, build: Build) -> dict:
         entry = _within(folder, build.entry)
         before = entry.stat()
         body = _read_file(entry)
-        assets = _entry_assets(build, body)
+        expected_entry = body
+        if build.method == "hub_console":
+            from .agora_console import render_console_index
+
+            expected_entry = render_console_index(body)
+        assets = _entry_assets(build, expected_entry)
         contents = {name: _read_file(_within(folder, name)) for name in sorted(assets)}
         after = entry.stat()
         if (after.st_ino, after.st_mtime_ns, after.st_size) != (before.st_ino, before.st_mtime_ns, before.st_size):
@@ -318,7 +317,7 @@ def _inspect(app: AppUI, build: Build) -> dict:
     except (OSError, IntegrationError, TypeError, ValueError, KeyError, TimeoutExpired):
         return _state(row, "unverified", "receipt")
     row.update(behind_by=len(pending), behind_since=min((date for _, date in pending), default=None))
-    row["served"], row["served_entry_sha256"] = _runtime(app, build, body, assets, contents)
+    row["served"], row["served_entry_sha256"] = _runtime(app, build, expected_entry, assets, contents)
     if pending:
         return _state(row, "behind", "behind")
     if row["served"] != "matched":

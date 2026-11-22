@@ -18,7 +18,8 @@ response have distinct results.
 
 - For the Hub itself, the console reads `apps/agora/dist/index.html` at
   `/agora/`. The inputs include the console sources and the shared production
-  decision files it imports.
+  decision files it imports. The check compares the complete HTML response
+  after applying the same URL and browser-session markup as the console.
 - Faustus declares `static/studio` in its Vite configuration. The Hub checks
   `/static/studio/studio.js` on its configured local service.
 - Other registered applications can declare their output in the
