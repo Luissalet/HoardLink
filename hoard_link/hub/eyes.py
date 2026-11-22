@@ -301,6 +301,14 @@ class EyesFacet(Facet):
         except (ValueError, render.EyesError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
         opts = self._options(merged, previous, piece["kind"])
+        if "resources" in args:
+            resources = args["resources"]
+            if (previous or piece["kind"] != "mesh" or Path(piece["source"]).suffix.lower() not in {".glb", ".blend"}
+                    or not isinstance(resources, list) or len(resources) > 32
+                    or any(not isinstance(p, str) or not Path(p).is_absolute() for p in resources)):
+                return {"ok": False, "error": "Use up to 32 resources with an explicit GLB or BLEND / "
+                                              "Indica hasta 32 recursos con un GLB o BLEND expl\u00edcito."}
+            opts["resources"] = resources
         if piece["kind"] == "mesh":
             axis = args.get("front_axis")
             if axis is not None:
@@ -457,6 +465,9 @@ class EyesFacet(Facet):
                   "describe or keep asks the Sparks vision model, with a deadline and partial answers. same_as "
                   "repeats a look on a new revision and adds a before/after comparison. Undo: hub_eyes_forget.",
                   {"path": {"type": "string", "description": "File or folder of the piece."},
+                   "resources": {"type": "array", "maxItems": 32, "items": {"type": "string"},
+                                 "description": "For GLB or BLEND: absolute paths to declared external resources. "
+                                                "BLEND uses the isolated renderer when configured."},
                    "url": {"type": "string", "description": "Web page address."},
                    "app": {"type": "object", "description": "{app, tool, arguments}: an app object seen through "
                                                             "its own view tool."},

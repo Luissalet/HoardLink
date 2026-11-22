@@ -16,7 +16,10 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import stat
 import shutil
+import struct
 import subprocess
 import tempfile
 import threading
@@ -26,6 +29,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import unquote
 
 KINDS = ("image", "video", "mesh", "web", "document", "game")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
@@ -332,6 +336,142 @@ def look_video(source: str, out: Path, opts: dict[str, Any]) -> dict[str, Any]:
 
 # -- meshes (Blender) ----------------------------------------------------------------------------------------------
 
+def _stage_glb(source: Path, scratch: Path, resources: list[str]) -> Path:
+    """Stage one glTF 2 binary and its declared local dependencies for Blender."""
+    if source.suffix.lower() != ".glb":
+        raise EyesError("Resource-scoped rendering requires a GLB file. / Este renderizado requiere un fichero GLB.")
+    target = scratch / "piece" / source.name
+    target.parent.mkdir()
+    shutil.copyfile(source, target)
+    try:
+        with target.open("rb") as stream:
+            magic, version, length, json_size, chunk = struct.unpack("<4sIII4s", stream.read(20))
+            if (magic != b"glTF" or version != 2 or length != target.stat().st_size or chunk != b"JSON"
+                    or not 0 < json_size <= min(length - 20, 32 * 1024 ** 2)):
+                raise ValueError("invalid GLB header")
+            document = json.loads(stream.read(json_size))
+        if not isinstance(document, dict):
+            raise ValueError("invalid GLB document")
+    except (OSError, ValueError, struct.error, RecursionError) as exc:
+        raise EyesError("Invalid GLB dependency manifest. / Manifiesto de dependencias GLB no v\u00e1lido.") from exc
+
+    approved = {Path(value).resolve() for value in resources}
+    staged = set()
+    pending = [document]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            pending.extend(node.values())
+            if "uri" not in node:
+                continue
+            uri = node["uri"]
+            if isinstance(uri, str) and uri.startswith("data:"):
+                continue
+            decoded = unquote(uri) if isinstance(uri, str) else ""
+            parts = decoded.split("/")
+            if (any(part in ("", ".", "..") or part.endswith((".", " ")) for part in parts)
+                    or any(c in decoded for c in "\\:?#%\0")):
+                raise EyesError("GLB resources must use relative local paths. / Usa rutas locales relativas en el GLB.")
+            relative = Path(*parts)
+            resource = source.parent / relative
+            resolved = resource.resolve()
+            if (resolved not in approved or resource != resolved or not resource.is_file()
+                    or resource == source):
+                raise EyesError("Declare every external GLB resource. / Declara cada recurso externo del GLB.")
+            if relative not in staged:
+                dest = target.parent / relative
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(resource, dest)
+                staged.add(relative)
+    return target
+
+
+def _stage_blend(source: Path, scratch: Path, resources: list[str]) -> Path:
+    """Keep Blender's relative paths and stage only declared inputs."""
+    target = scratch / "piece" / source.name
+    target.parent.mkdir()
+    shutil.copyfile(source, target)
+    for value in resources:
+        resource = Path(value)
+        try:
+            relative = resource.relative_to(source.parent)
+        except ValueError as exc:
+            raise EyesError("BLEND resources must be under the model folder. / "
+                            "Los recursos del BLEND deben estar en la carpeta del modelo.") from exc
+        if (resource != resource.resolve() or not resource.is_file()
+                or resource == source or ".." in relative.parts):
+            raise EyesError("Use declared BLEND resource files. / Usa ficheros de recursos declarados del BLEND.")
+        dest = target.parent / relative
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(resource, dest)
+    return target
+
+
+def _render_isolated_blend(source: Path, out: Path, scratch: Path, spec: dict, timeout: float) -> bytes:
+    """Render in a local image with no network and no host data outside the staging area."""
+    image = os.environ.get("HOARD_EYES_BLENDER_SANDBOX_IMAGE", "").strip()
+    docker = find_program("docker")
+    if not image or not docker or image.startswith("-"):
+        raise EyesError("No isolated BLEND renderer is configured. Use a declared GLB export. / "
+                        "No hay un renderizador aislado de BLEND configurado. Usa un GLB declarado.")
+    result_dir = scratch / "render"
+    result_dir.mkdir()
+    script = Path(__file__).with_name("eyes_blender.py")
+    # Restrict the output mount to a new staging directory. Validate its
+    # reported paths before copying any generated view to the Hub's store.
+    spec_file = scratch / "mesh-spec.json"
+    spec_file.write_text(json.dumps({**spec, "source": f"/piece/{source.name}", "out": "/render"}),
+                         encoding="utf-8")
+
+    def mount(local: Path, destination: str, *, readonly: bool = True) -> str:
+        return f"type=bind,source={local},target={destination}" + (",readonly" if readonly else "")
+
+    name = "hoard-eyes-" + secrets.token_hex(12)
+    args = [docker, "run", "--rm", "--name", name, "--pull", "never", "--network", "none", "--read-only",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "65534:65534",
+            "--pids-limit", "256", "--memory", "4g", "--cpus", "2",
+            "--env", "HOME=/tmp", "--env", "LIBGL_ALWAYS_SOFTWARE=1", "--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777",
+            "--mount", mount(source.parent, "/piece"),
+            "--mount", mount(script, "/eyes.py"), "--mount", mount(spec_file, "/spec.json"),
+            "--mount", mount(result_dir, "/render", readonly=False),
+            "--entrypoint", "timeout", image, str(max(1, int(timeout) - 5)),
+            "xvfb-run", "-a", "blender", "-b", "--factory-startup", "--disable-autoexec",
+            "--python", "/eyes.py", "--", "/spec.json"]
+    try:
+        proc = _run(args, timeout)
+    finally:
+        # A timed-out client leaves its container running until Docker stops it.
+        try:
+            _run([docker, "rm", "-f", name], 10)
+        except EyesError:
+            pass
+
+    if proc.returncode:
+        raise EyesError("Isolated BLEND render failed / Fall\u00f3 el renderizado aislado de BLEND: "
+                        + (proc.stderr or proc.stdout).decode("utf-8", "replace")[-500:])
+    line = next((line for line in reversed(proc.stdout.splitlines()) if line.startswith(b"EYES_RESULT ")), None)
+    if line is None:
+        return proc.stdout
+    result = json.loads(line[len(b"EYES_RESULT "):])
+    if not result.get("ok"):
+        return line
+    for view in result.get("views", []):
+        filename = str(view.get("path", "")).removeprefix("/render/")
+        path = result_dir / filename
+        if not re.fullmatch(r"[a-z0-9_-]+[.]png", filename):
+            raise EyesError("Invalid isolated render output path.")
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            raise EyesError("Invalid isolated render output file.")
+        target = out / filename
+        shutil.copyfile(path, target)
+        view["path"] = str(target)
+    return ("EYES_RESULT " + json.dumps(result)).encode("utf-8")
+
+
 def look_mesh(source: str, out: Path, opts: dict[str, Any], timeout: float = 600.0) -> dict[str, Any]:
     names = list(opts.get("views") or DEFAULT_MESH_VIEWS)
     unknown = [n for n in names if n not in MESH_VIEWS]
@@ -352,24 +492,35 @@ def look_mesh(source: str, out: Path, opts: dict[str, Any], timeout: float = 600
         "up": opts.get("up") or "z", "pose": opts.get("pose") or None, "camera": opts.get("camera") or None,
         "engine": opts.get("engine") or "workbench",
     }
-    blender = _need("blender")
     source_is_3mf = Path(source).suffix.lower() == ".3mf"
-    with tempfile.TemporaryDirectory(prefix="hub-eyes-mesh-") as scratch:
-        if source_is_3mf:
-            from .eyes_3mf import to_glb
+    scoped = "resources" in opts
+    isolated_blend = scoped and Path(source).suffix.lower() == ".blend"
+    with tempfile.TemporaryDirectory(prefix="hub-eyes-mesh-") as temp:
+        scratch = Path(temp)
+        if isolated_blend:
+            staged = _stage_blend(Path(spec["source"]), scratch, opts["resources"])
+            output = _render_isolated_blend(staged, out, scratch, spec, timeout)
+        else:
+            if source_is_3mf:
+                from .eyes_3mf import to_glb
 
-            target = Path(scratch) / "piece.glb"
-            unit = to_glb(source, target)
-            spec["source"] = str(target)
-        spec_path = Path(scratch) / "mesh-spec.json"
-        spec_path.write_text(json.dumps(spec), encoding="utf-8")
-        script = Path(__file__).with_name("eyes_blender.py")
-        proc = _run([blender, "-b", "--factory-startup", "--python", str(script), "--", str(spec_path)], timeout)
-    text = proc.stdout.decode("utf-8", "replace")
+                target = scratch / "piece.glb"
+                unit = to_glb(source, target)
+                spec["source"] = str(target)
+            if scoped:
+                spec["source"] = str(_stage_glb(Path(spec["source"]), scratch, opts["resources"]))
+            spec_path = scratch / "mesh-spec.json"
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+            script = Path(__file__).with_name("eyes_blender.py")
+            command = [_need("blender"), "-b", "--factory-startup"]
+            if scoped:
+                command.append("--disable-autoexec")
+            proc = _run([*command, "--python", str(script), "--", str(spec_path)], timeout)
+            output = proc.stdout or proc.stderr
+    text = output.decode("utf-8", "replace")
     line = next((l for l in reversed(text.splitlines()) if l.startswith("EYES_RESULT ")), None)
     if line is None:
-        tail = (proc.stderr.decode("utf-8", "replace") or text)[-600:]
-        raise EyesError(f"Blender did not render the model (exit {proc.returncode}): {tail}")
+        raise EyesError(f"Blender did not render the model: {text[-600:]}")
     result = json.loads(line[len("EYES_RESULT "):])
     if not result.get("ok"):
         raise EyesError(result.get("error") or "Blender failed")

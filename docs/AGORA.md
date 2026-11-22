@@ -214,9 +214,9 @@ recorded as a `liveness` entry in the console activity log.
 ### Console workers: no wall clock, no silent endings
 
 A worker started from the console (Codex, Claude, Cursor or a Faustus child) runs until it finishes. A Faustus child
-is launched without a total deadline (`--no-timeout`) and without a cap on approval continuations (`--max-legs 0`);
-the only guard is an inactivity watchdog on the turn's real events (keepalives do not count), 3600 s by default and
-set with `HOARD_AGORA_WORKER_IDLE_SECONDS`. Stop cancels the exact active run.
+is launched without a total deadline (`--no-timeout`). The inactivity watchdog observes real turn events,
+ignores keepalives and defaults to 3600 seconds. Configure it with `HOARD_AGORA_WORKER_IDLE_SECONDS`.
+Stop cancels the exact active run.
 
 The Faustus console offers models from local endpoints whose URL host matches a registered Sparks address or
 alias in the placement inventory. The endpoint name is the display label. Launches keep the selected endpoint
@@ -228,6 +228,53 @@ installation's SQLite store. If Faustus runs on a Spark, the read uses the SSH c
 placement. The Hub verifies the catalog fingerprint before configuring the child's key over its loopback API.
 Faustus stores it in the child's encrypted endpoint store. Continuing a child after its runtime stops reuses
 its stored endpoint and credentials. After rotating a key, launch a new child so its session uses the new key.
+
+**Dedicated Faustus workers on the PC** launch in automatic approval mode (`auto`).
+The runner leaves approval cards for the person and records the mode and the file scope
+in its console receipt. File tools can write inside the space's workspace and the
+declared output folders. They can also read declared input folders and the copies
+of pieces attached to the production task. A file outside those paths is rejected.
+The person’s own runtime uses its own settings.
+
+In **Create worker**, link a production task to see its input pieces and kept references.
+Their stored copies are available for reading. Select suggested asset folders if the
+worker needs their originals, and enter output folders separately. Folder entries
+use absolute local paths, one per line. On the agent surface, call
+`hub_agora_console_worker` with `action: "propose_files"` and `task_id` to preview.
+For `action: "create"` with `leader_id: "faustus"`, pass the same `task_id` and optional
+`file_scope: {"read_paths": [...], "write_paths": [...]}`. A continued worker keeps
+the scope from its original receipt. The saved Hub connector binds the worker's identity. Use `coordination_heartbeat`
+to report presence and `coordination_post` with the task's thread ID and the report
+body to publish there. Use `hub_agora_order` to read a production order and
+`hub_piece_validate` to check a piece. Pass absolute paths inside the scope to
+`hub_eyes_look` for images, PDFs, GLBs and BLENDs. For a mesh with external buffers,
+textures or libraries, pass their declared absolute paths in `resources`. Use
+relative links within the model's folder or pack resources in the model. The Hub
+stages the model and the necessary declared files for render.
+
+For scoped BLEND views, set `HOARD_EYES_BLENDER_SANDBOX_IMAGE` in the Hub service
+to a trusted local Linux container image with Blender, Xvfb, xauth, Mesa software
+rendering and `timeout`. For example, build the image from a directory containing
+this Dockerfile:
+
+```dockerfile
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends blender libgl1-mesa-dri xvfb xauth \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+The worker's BLEND views use CPU rendering in an ephemeral container with network
+disabled, staged inputs mounted read-only and a separate render output. If the
+container renderer is unavailable, the worker receives a specific error and can
+request a declared GLB export.
+
+Use `inspect_image` to crop, rotate, zoom and view declared images. Its `measure`
+action returns numeric rows for regional RGB and luminance (`statistics`),
+registered pixel differences outside exclusion polygons (`difference`), and
+four-corner rectification of a source and reference (`homography`). Save a table
+with `write_file` in a declared output or post it through the connector. Python and
+Bash remain listed and return a bilingual refusal while the worker lacks a backend
+with network disabled and mounts restricted to its declared files.
 
 Every managed worker is told to commit its work and `submit` its task. When its process ends, the console checks the
 outcome against the Agora: task status, submission revision and uncommitted changes in the delivery's worktrees.

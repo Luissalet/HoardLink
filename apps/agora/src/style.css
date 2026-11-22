@@ -60,3 +60,11 @@ input::placeholder,textarea::placeholder{color:#bebbb4;opacity:1}.quota-label st
 .console-decision-history article {padding:7px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere;}
 .console-decision-history article p {white-space:pre-wrap;}
 @media(max-width:640px){.console-decisions{padding:8px 16px;max-height:28vh;}.roster{max-height:275px;}}
+
+.worker-file-scope,.worker-file-proposal{display:grid;gap:9px;min-width:0}
+.worker-file-scope{margin-bottom:14px}
+.dialog .worker-file-scope label{margin-bottom:0}
+.dialog .worker-file-scope textarea{min-height:60px}
+.worker-file-proposal p{font-size:13px;color:var(--muted)}
+.worker-file-action{width:100%;text-align:left;overflow-wrap:anywhere;border:1px solid var(--line);border-radius:6px;background:#1c1a14;color:inherit;padding:7px 9px;font-size:13px}
+.worker-file-action:hover:not(:disabled){border-color:var(--accent)}

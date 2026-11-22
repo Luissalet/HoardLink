@@ -13,6 +13,9 @@ const status=(value:string)=>labels[value]||value;
 // Colour per provider (Agora #239): outlines that leader's messages and avatar. Saved in the Hub so
 // the browser and the desktop app agree; these are the defaults until the person picks one.
 export const defaultColors:Record<string,string>={claude:'#d97757',codex:'#10a37f',cursor:'#7aa2f7',faustus:'#d0545b'};
+type WorkerFileProposal={read_files:string[];read_paths:string[];asset_folders:string[]};
+const parsePathList=(paths:string)=>paths.split(/\r?\n/).map(path=>path.trim()).filter(Boolean);
+
 const providerOf=(agent?:string)=>{const head=(agent||'').split('-')[0];return head in defaultColors?head:'';};
 const time=(value?:number)=>value?new Date(value*1000).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}):'';
 // Live state of the leader's CLI (task #264), read by the Hub from that CLI's own session files.
@@ -99,6 +102,7 @@ function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];bu
   </>}
   {worker.workspace&&<p>{workerText.workspace} {worker.workspace}</p>}
   {worker.faustus_url&&<p>Faustus {worker.faustus_url}</p>}
+  {worker.tool_approval_mode==='auto'&&<p>{tr('Aprobación automática · Ficheros limitados al encargo', 'Automatic approval · Files limited to the assignment')}</p>}
   {worker.tool_success_count!==undefined&&<p>{workerText.tools(worker.tool_success_count,worker.tool_failure_count||0)}</p>}
   {detail&&<p>{detail}</p>}
   {worker.resume_issue&&<p role="status">{issue} {replace&&(owned.length?workerText.replaceHint:workerText.noTask)}</p>}
@@ -135,6 +139,8 @@ export default function App(){
  const [person,setPerson]=useState<{id:string;name:string}>();
  const [decisionsOpen,setDecisionsOpen]=useState(false);
  const decisions=useProductionDecisions(decisionsOpen);
+ const [fileJob,setFileJob]=useState(''),[readPaths,setReadPaths]=useState(''),[writePaths,setWritePaths]=useState('');
+ const [fileProposal,setFileProposal]=useState<{task:string;files:WorkerFileProposal}|null>(null);
  const [leaders,setLeaders]=useState(initial),[usage,setUsage]=useState<any[]>([]),[workers,setWorkers]=useState<Worker[]>([]),[messages,setMessages]=useState<Message[]>([]),[tasks,setTasks]=useState<Task[]>([]),[counts,setCounts]=useState<any>({}),[error,setError]=useState(''),[sending,setSending]=useState(false),[draft,setDraft]=useState(()=>localStorage.getItem(spaceId==='ecosystem'?'agora-draft':'agora-draft:'+spaceId)||''),[recipient,setRecipient]=useState('all'),[panel,setPanel]=useState(()=>window.innerWidth>900),[tab,setTab]=useState('pending'),[filter,setFilter]=useState(''),[selected,setSelected]=useState<Leader|null>(null),[helper,setHelper]=useState(false),[model,setModel]=useState(''),[effort,setEffort]=useState(''),[assignment,setAssignment]=useState(''),[busy,setBusy]=useState(false),[workerLeader,setWorkerLeader]=useState<Leader|null>(null),[thread,setThread]=useState<any>(null),[reply,setReply]=useState(''),[connection,setConnection]=useState(tr('Conectando', 'Connecting')),[busyWorker,setBusyWorker]=useState('');
  const messageEnd=useRef<HTMLDivElement>(null),lastId=useRef<number>(0),workThread=useRef<number>(spaceId==='ecosystem'?32:0);
  const [spaces,setSpaces]=useState<{id:string;title:string}[]>([]);
@@ -185,8 +191,29 @@ export default function App(){
    if(result.state)setWorkers(previous=>previous.map(item=>item.id===worker.id?{...item,state:result.state,can_continue:false}:item));
   }finally{await refresh();setBusyWorker('');}
  }
- function configure(l:Leader,child=false){setSelected(l);setHelper(child);setModel(l.model||l.catalog?.[0]?.id||'');setEffort(l.effort||'');setAssignment('');setTemplate('');if(child&&!templates)void loadWorkerProfile().then(r=>setTemplates(r.templates)).catch(()=>{});}
- async function save(){if(!selected)return;setBusy(true);setError('');try{await api(helper?'/api/agora/console/worker':'/api/agora/console/preferences',helper?{leader_id:selected.id,model,effort,task:assignment,...(template?{template}:{})}:{leader_id:selected.id,model,effort});setSelected(null);await refresh();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
+ function configure(l:Leader,child=false){setSelected(l);setHelper(child);setModel(l.model||l.catalog?.[0]?.id||'');setEffort(l.effort||'');setAssignment('');setTemplate('');setFileJob('');setReadPaths('');setWritePaths('');setFileProposal(null);if(child&&!templates)void loadWorkerProfile().then(r=>setTemplates(r.templates)).catch(()=>{});}
+ async function previewWorkerFiles(){
+  const task=fileJob;
+  if(!task)return;
+  setBusy(true);setError('');
+  try{
+   const result=await api<{file_scope:WorkerFileProposal}>('/api/agora/console/worker',{action:'propose_files',task_id:Number(task)});
+   setFileProposal({task,files:result.file_scope});
+  }catch(e){setError((e as Error).message);}finally{setBusy(false);}
+ }
+ async function save(){
+  if(!selected)return;
+  setBusy(true);setError('');
+  const files=selected.id==='faustus'?{
+   ...(fileJob?{task_id:Number(fileJob)}:{}),
+   ...(readPaths.trim()||writePaths.trim()?{file_scope:{read_paths:parsePathList(readPaths),write_paths:parsePathList(writePaths)}}:{})
+  }:{};
+  try{
+   await api(helper?'/api/agora/console/worker':'/api/agora/console/preferences',
+    helper?{leader_id:selected.id,model,effort,task:assignment,...(template?{template}:{}),...files}:{leader_id:selected.id,model,effort});
+   setSelected(null);await refresh();
+  }catch(e){setError((e as Error).message);}finally{setBusy(false);}
+ }
  async function openTask(task:Task){setError('');try{const detail=await api(`/api/agora/tasks/${task.id}`);setThread(await api(`/api/agora/threads/${detail.task.thread_id}`));}catch(e){setError((e as Error).message);}}
  const pending=tasks.filter(t=>!['done','dropped'].includes(t.state||t.status||'')).filter(t=>`${t.title} ${t.owner} ${t.repo} ${t.id}`.toLowerCase().includes(filter.toLowerCase()));
  if(live)return <LiveView onClose={()=>setLive(false)}/>;
@@ -198,7 +225,33 @@ export default function App(){
  return <section className="leader" key={l.id}><div className="leader-heading"><span className={`avatar ${l.id}`} style={{'--c':l.color||defaultColors[l.id]} as React.CSSProperties}>{l.name.slice(0,1)}</span><div><h3>{l.name}</h3>{(!l.live_state||status(l.state)!==liveText(l.live_state))&&<span title={l.detail} className={`state ${l.state}`}><i/>{status(l.state)}</span>}</div><label className="swatch" title={`Color de ${l.name} en el chat`} style={{'--c':l.color||defaultColors[l.id]} as React.CSSProperties}><input type="color" aria-label={`Color de ${l.name} en el chat`} value={l.color||defaultColors[l.id]} onChange={e=>void pickColor(l,e.target.value)}/></label><button className="icon-button add-helper" aria-label={`Crear ayudante de ${l.name}`} onClick={()=>configure(l,true)}><Plus size={16}/></button></div><Live leader={l}/><button className="model-selector" onClick={()=>configure(l)} aria-label={`Configurar modelo de ${l.name}`}><span>{l.model||'Consultar modelos'}{l.effort&&<small>{l.effort}</small>}</span><ChevronDown size={14}/></button>{children.length>0&&<button className="worker-summary-control" onClick={()=>setWorkerLeader(l)} aria-label={workerText.view(l.name)+(orphans?' · '+orphanSummary(orphans):'')}>{workerText.summary(children.length)}{orphans>0&&<> · <strong>{orphanSummary(orphans)}</strong></>}</button>}<Quota provider={usage.find(p=>p.provider_id===l.id)}/>{l.id==='codex'&&codexQuotaFailed&&<CodexQuotaNotice/>}{children.map(w=><div className="worker" key={w.id}><span className="branch"/><div><strong>{w.id}</strong><span>{w.orphan_process?orphanLabel:(deliveryWarningLabel(w) ?? status(w.state))} · {w.model}</span><p>{w.task}</p>{w.result&&<details><summary>Resultado</summary><p>{w.result}</p></details>}</div></div>)}</section>;})}</div><footer className="roster-footer"><span className="local-dot"/>Trabajo local<span>Los ayudantes comparten la cuota de su proveedor.</span></footer></aside>
  <main className="conversation"><div className="conversation-head"><div><h2>{tr('Trabajo compartido', 'Shared work')}</h2></div><div className="participants" aria-label="Claude, Codex, Cursor y Faustus">{initial.map(l=><span key={l.id} className={`mini-avatar ${l.id}`} title={l.name}>{l.name[0]}</span>)}</div></div><ProductionDecisions data={decisions} open={decisionsOpen}/>{error&&<div className="error" role="alert"><span>{error}</span><button className="icon-button" onClick={()=>setError('')} aria-label={tr('Cerrar aviso', 'Dismiss notice')}><X size={15}/></button></div>}<div className="messages" role="log" aria-label={tr('Mensajes de equipo', 'Team messages')} aria-live="polite">{messages.length===0?<div className="empty"><MessageSquare size={30}/><h3>{tr('Una conversación para todo el equipo', 'Team conversation')}</h3><p>{tr('El mensaje se guarda en el Ágora y llega a los responsables que elijas.', 'The message is saved in the Agora and sent to the leaders you select.')}</p></div>:messages.map(m=>person&&m.agent===person.id?<article className="message human" aria-label={person.name} key={m.id}><div className="message-content"><div className="message-body bubble">{m.body}</div><div className="message-meta"><time>{time(m.created||m.ts)}</time>{m.kind&&m.kind!=='comment'&&<span>{m.kind}</span>}</div></div></article>:<article className={`message agent ${providerOf(m.agent)?'provider':''}`} key={m.id} style={colorOf(m.agent)?{'--c':colorOf(m.agent)} as React.CSSProperties:undefined}><span className={`message-avatar ${m.agent?.split('-')[0]||''}`}>{(m.agent||m.author||'?')[0].toUpperCase()}</span><div className="message-content"><div className="message-meta"><strong>{m.agent||m.author}</strong><time>{time(m.created||m.ts)}</time>{m.kind&&m.kind!=='comment'&&<span>{m.kind}</span>}</div><div className="message-body">{m.body}</div></div></article>)}<div ref={messageEnd}/></div><div className="composer-wrap"><div className="composer"><label className="recipient">{tr('Para', 'To')} <select aria-label={tr('Destinatarios del mensaje', 'Message recipients')} value={recipient} onChange={e=>setRecipient(e.target.value)}><option value="all">{tr('Todo el equipo', 'Entire team')}</option>{initial.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label><textarea maxLength={20000} aria-label={tr('Mensaje al equipo', 'Message to the team')} placeholder={tr('¿Qué vamos a hacer?', 'What are we working on?')} value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();void send();}}}/><div className="composer-actions"><span>{tr('Ctrl + Intro para enviar', 'Ctrl + Enter to send')}</span><button className="primary" disabled={sending||!draft.trim()} onClick={send}>{sending ? tr('Enviando…', 'Sending…') : tr('Enviar', 'Send')}<Send size={15}/></button></div></div><p className="composer-note">{tr('La entrega y la ejecución se muestran por separado. Un agente sin conexión conserva su encargo.', 'Delivery and execution are shown separately. Agents keep their assignments while offline.')}</p></div></main>
  {panel&&<aside className="operations"><div className="section-heading"><h2>{tr('Trabajo', 'Work')}</h2><a href={hubUrl} target="_blank" rel="noreferrer" onClick={e=>{void openHub(e).catch(error=>setError(error.message));}} aria-label="Abrir todas las operaciones"><ArrowUpRight size={16}/></a></div><div className="task-tabs"><button className={tab==='pending'?'active':''} onClick={()=>setTab('pending')}>Pendiente <span>{pending.length}</span></button><button className={tab==='done'?'active':''} onClick={()=>setTab('done')}>Finalizado</button></div><label className="search"><Search size={15}/><input aria-label="Buscar tareas" placeholder="Buscar tarea, agente, proyecto…" value={filter} onChange={e=>setFilter(e.target.value)}/></label><div className="task-list">{(tab==='pending'?pending:tasks.filter(t=>t.state==='done')).map(t=><button className="task-row" key={t.id} onClick={()=>openTask(t)}><span className="task-number">#{t.id}{['review','approved'].includes(t.state)?<GitPullRequest size={13}/>:t.state==='done'?<CheckCircle2 size={13}/>:<Clock3 size={13}/>}</span><strong>{t.title}</strong><span className="task-meta">{t.repo||'Equipo'}<span>{status(t.state||t.status||'')}</span></span><small>{t.owner||'Sin asignar'}</small>{t.waiting_on?.length?<small className="task-deps">Espera a {t.waiting_on.map(i=>'#'+i).join(', ')}</small>:null}</button>)}</div><div className="operations-footer"><span><CheckCircle2 size={14}/>{counts.done??'—'} hechas</span><a href={hubUrl} target="_blank" rel="noreferrer" onClick={e=>{void openHub(e).catch(error=>setError(error.message));}}>Hilos, decisiones y bloqueos <ArrowUpRight size={13}/></a></div></aside>}
- {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" onClick={e=>e.stopPropagation()}><button className="icon-button dialog-close" onClick={()=>setSelected(null)} aria-label="Cerrar"><X size={19}/></button><span className="dialog-meta">{selected.name}</span><h2 id="dialog-title">{helper?'Crear ayudante':'Modelo del líder'}</h2><p>{helper?'El ayudante tiene su propia sesión. El modelo del líder se mantiene.':'Se aplicará al siguiente turno de este líder.'}</p><label>Modelo<select aria-label="Modelo" value={model} onChange={e=>{setModel(e.target.value);setEffort('');}}>{selected.catalog?.length?selected.catalog.map(m=><option key={m.id} value={m.id}>{m.name||m.id}</option>):<option value="">No hay catálogo disponible</option>}</select></label><label>Razonamiento<select aria-label="Razonamiento" value={effort} onChange={e=>setEffort(e.target.value)}><option value="">Predeterminado del proveedor</option>{selected.catalog?.find(m=>m.id===model)?.efforts?.map(v=><option value={v} key={v}>{v}</option>)}</select></label>{helper&&<WorkerAssignment templates={templates} mode={template} setMode={setTemplate} task={assignment} setTask={setAssignment}/>}{selected.detail&&<p className="dialog-note">{selected.detail}</p>}<button className="primary" disabled={busy||!model||(helper&&!assignment.trim())} onClick={save}>{busy?'Guardando…':helper?'Crear ayudante':'Guardar modelo'}</button></section></div>}
+ {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" onClick={e=>e.stopPropagation()}><button className="icon-button dialog-close" onClick={()=>setSelected(null)} aria-label={tr('Cerrar', 'Close')}><X size={19}/></button><span className="dialog-meta">{selected.name}</span><h2 id="dialog-title">{helper?tr('Crear ayudante','Create worker'):tr('Modelo del líder','Leader model')}</h2><p>{helper?tr('El ayudante tendrá su propia sesión.','The worker will have its own session.'):tr('Se aplicará al siguiente turno de este líder.','Applies on the leader’s next turn.')}</p><label>{tr('Modelo', 'Model')}<select aria-label={tr('Modelo', 'Model')} value={model} onChange={e=>{setModel(e.target.value);setEffort('');}}>{selected.catalog?.length?selected.catalog.map(m=><option key={m.id} value={m.id}>{m.name||m.id}</option>):<option value="">{tr("No hay catálogo disponible", "Model catalog unavailable")}</option>}</select></label><label>{tr('Razonamiento','Reasoning')}<select aria-label={tr('Razonamiento','Reasoning')} value={effort} onChange={e=>setEffort(e.target.value)}><option value="">{tr("Predeterminado del proveedor","Provider default")}</option>{selected.catalog?.find(m=>m.id===model)?.efforts?.map(v=><option value={v} key={v}>{v}</option>)}</select></label>{helper&&<WorkerAssignment templates={templates} mode={template} setMode={setTemplate} task={assignment} setTask={setAssignment}/>}{helper&&selected.id==='faustus'&&<div className="worker-file-scope">
+  <label>{tr('Tarea de producción (opcional)', 'Production task (optional)')}
+   <select value={fileJob} onChange={e=>{setFileJob(e.target.value);setFileProposal(null);}}>
+    <option value="">{tr('Sin tarea vinculada', 'No linked task')}</option>
+    {tasks.map(t=><option key={t.id} value={t.id}>#{t.id} {t.title}</option>)}
+   </select>
+  </label>
+  {fileJob&&<button type="button" className="worker-file-action" disabled={busy} onClick={()=>void previewWorkerFiles()}>
+   {tr('Ver piezas y carpetas propuestas', 'View suggested pieces and folders')}
+  </button>}
+  {fileProposal?.task===fileJob&&<div className="worker-file-proposal">
+   <p>{tr('Copias de piezas con permiso de lectura', 'Piece copies with read access')} ({fileProposal.files.read_files.length})</p>
+   {fileProposal.files.asset_folders.map(path=><button className="worker-file-action" key={path} type="button"
+     disabled={parsePathList(readPaths).includes(path)}
+     onClick={()=>setReadPaths(current=>[...parsePathList(current),path].join('\n'))}>
+     {tr('Añadir a lectura', 'Add to read access')} · {path}
+    </button>)}
+  </div>}
+  <label>{tr('Carpetas de lectura', 'Read folders')}
+   <textarea rows={2} value={readPaths} onChange={e=>setReadPaths(e.target.value)}
+    placeholder={tr('Una ruta absoluta por línea', 'One absolute path per line')}/>
+  </label>
+  <label>{tr('Carpetas de salida', 'Output folders')}
+   <textarea rows={2} value={writePaths} onChange={e=>setWritePaths(e.target.value)}
+    placeholder={tr('Una ruta absoluta por línea', 'One absolute path per line')}/>
+  </label>
+ </div>}{selected.detail&&<p className="dialog-note">{selected.detail}</p>}<button className="primary" disabled={busy||!model||(helper&&!assignment.trim())} onClick={save}>{busy?tr('Guardando…','Saving…'):helper?tr('Crear ayudante','Create worker'):tr('Guardar modelo','Save model')}</button></section></div>}
  {workerLeader&&<div className="modal-backdrop" onClick={()=>setWorkerLeader(null)}>
   <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="worker-dialog-title" onClick={event=>event.stopPropagation()}>
    <button className="icon-button dialog-close" onClick={()=>setWorkerLeader(null)} aria-label={workerText.close}><X size={19}/></button>

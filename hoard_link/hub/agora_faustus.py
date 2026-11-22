@@ -8,7 +8,9 @@ the credential from the Faustus installation supplying the catalog.
 from __future__ import annotations
 
 import hashlib
+import json
 import ntpath
+import os
 import socket
 import subprocess
 import sys
@@ -21,6 +23,12 @@ from .faustus_endpoint_key import read_endpoint_key
 STUDIO = "estudio"
 APPRENTICE = "faustus-aprendiz"
 TUTOR_TOOL = "hub_agora_apprentice_instinct"
+WORKER_APPROVAL_MODE = "auto"
+DECLARED_PATHS = {
+    "type": "object", "additionalProperties": False,
+    "properties": {key: {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 1024}}
+                   for key in ("read_paths", "write_paths")},
+}
 
 
 def worker_data(console: Any, agent: str) -> Path:
@@ -72,6 +80,78 @@ def tutor_instinct(console: Any, args: dict, actor: str) -> dict:
     return receipt
 
 
+def _declared_paths(raw: Any) -> dict[str, list[str]]:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict) or set(raw) - DECLARED_PATHS["properties"].keys():
+        raise ValueError("Use read_paths and write_paths. / Usa read_paths y write_paths.")
+    out = {}
+    for key in ("read_paths", "write_paths"):
+        values = raw.get(key, [])
+        if not isinstance(values, list) or len(values) > 32:
+            raise ValueError("Use up to 32 folders per access type. / Indica hasta 32 carpetas por tipo de acceso.")
+        paths = []
+        for value in values:
+            if not isinstance(value, str) or len(value) > 1024 or "\0" in value:
+                raise ValueError("Use absolute local folders. / Indica carpetas locales con su ruta absoluta.")
+            path = Path(value.strip())
+            if not path.is_absolute() or path == Path(path.anchor) or path.drive.startswith("\\"):
+                raise ValueError("Use absolute local folders. / Indica carpetas locales con su ruta absoluta.")
+            path = Path(ntpath.normpath(path) if path.drive else os.path.normpath(path))
+            if path == Path(path.anchor) or (path.exists() and not path.is_dir()):
+                raise ValueError("Declare a folder instead of a file or drive. / Declara una carpeta concreta.")
+            paths.append(str(path))
+        out[key] = list(dict.fromkeys(paths))
+    return out
+
+
+def proposed_files(console: Any, task_id: int | None) -> dict:
+    """Find revision-backed files recorded for this job, without opening any app."""
+    from . import agora_orders
+
+    empty = {"read_files": [], "read_paths": [], "asset_folders": []}
+    if task_id is None:
+        return empty
+    if type(task_id) is not int or task_id <= 0:
+        raise ValueError("Use a positive task ID. / Indica un identificador de tarea positivo.")
+    agora = console._agora()
+    if agora is None or not agora.db.one("SELECT id FROM tasks WHERE id=? AND space_id=?", (task_id, console.space_id)):
+        raise ValueError("Task is not in this space. / La tarea no pertenece a este espacio.")
+    job = agora.db.one("SELECT order_id, inputs FROM agora_order_jobs WHERE task_id=? AND space_id=? AND removed=0",
+                       (task_id, console.space_id))
+    if not job:
+        return empty
+    store = Path(agora_orders._store_dir(agora)).resolve()
+    inputs = set(agora_orders._load(job["inputs"], []))
+    files, folders, suggestions = set(), set(), set()
+    rows = agora.db.query("SELECT id, path, stored, previews, previews_stored, status FROM agora_pieces "
+                          "WHERE order_id=? AND space_id=?", (job["order_id"], console.space_id))
+    for row in rows:
+        if row["id"] not in inputs and row["status"] != "kept":
+            continue
+        for original in [row["path"], *agora_orders._load(row["previews"], [])]:
+            if original and Path(original).is_absolute():
+                suggestions.add(str(Path(original).parent))
+        for value in [row["stored"], *agora_orders._load(row["previews_stored"], [])]:
+            if not value:
+                continue
+            path = Path(value)
+            if not path.is_file() or not path.resolve().is_relative_to(store):
+                continue
+            files.add(str(path))
+            if path.parent.parent == store / "sites":
+                folders.add(str(path.parent))
+    return {"read_files": sorted(files), "read_paths": sorted(folders), "asset_folders": sorted(suggestions)}
+
+
+def file_scope(workspace: str, declared: Any = None, proposal: dict | None = None) -> dict:
+    roots = _declared_paths(declared)
+    proposal = proposal or {}
+    return {"workspace": workspace,
+            "read_paths": list(dict.fromkeys(roots["read_paths"] + proposal.get("read_paths", []))),
+            "write_paths": roots["write_paths"], "read_files": proposal.get("read_files", [])}
+
+
 def service(hub: Any) -> dict[str, Any]:
     """Read the same location as /api/placement, without starting anything."""
     placement = getattr(hub, "placement", None)
@@ -88,7 +168,8 @@ def service(hub: Any) -> dict[str, Any]:
     return hub.faustus_status()
 
 
-def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | None, str]:
+def prepare(console: Any, agent: str, model: dict, effort: str, *,
+            declared_paths: Any = None, task_id: int | None = None) -> tuple[dict | None, str]:
     """Create an independent native project/session when no local controller owns one."""
     root, python = console.hub.faustus_runtime.installation()
     if root is None or python is None:
@@ -96,7 +177,8 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
     root = Path(root)
     agora = console._agora()
     space = agora.space_store.get(console.space_id) if hasattr(agora, "space_store") else None
-    workspace = str((space or {}).get("workspace") or root.parent)
+    configured_workspace = (space or {}).get("workspace")
+    workspace = str(configured_workspace or root.parent)
     if (ntpath.splitdrive(workspace)[0] or console.space_id == STUDIO) and not Path(workspace).is_dir():
         return None, "The space's PC workspace directory is unavailable."
     target = service(console.hub)
@@ -105,7 +187,16 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
     base = str(target.get("url") or "").rstrip("/")
     endpoint_id = str(model["endpoint_id"])
     runtime = None
-    if (target.get("remote") or console.space_id == STUDIO) and Path(workspace).is_dir():
+    dedicated = target.get("remote") or console.space_id == STUDIO
+    if not dedicated and (declared_paths is not None or task_id is not None):
+        return None, "File scope requires a dedicated PC worker. / El ámbito de ficheros requiere un trabajador aislado en el PC."
+    if dedicated:
+        if not configured_workspace:
+            # The installation's parent is not a worker workspace. Use an
+            # empty private directory, with no access to its runtime data.
+            workspace = str(worker_data(console, agent) / "work")
+            Path(workspace).mkdir(parents=True, exist_ok=True)
+        scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
         status, endpoints = console._faustus_session_request("GET", "/api/model-endpoints", base_url=base)
         endpoint = next((row for row in endpoints if row.get("id") == endpoint_id and row.get("is_enabled")), None) if status == 200 and isinstance(endpoints, list) else None
         if not endpoint or not str(endpoint.get("base_url") or "").startswith(("http://", "https://")):
@@ -121,7 +212,7 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
                     "Faustus Settings → Added Models. / No se encontró la credencial del endpoint seleccionado. "
                     "Añade o actualiza su clave API en Ajustes de Faustus → Modelos añadidos."
                 )
-        runtime = start_pc(console, agent, root, python, endpoint["base_url"], model["model_id"], api_key=api_key)
+        runtime = start_pc(console, agent, root, python, endpoint["base_url"], model["model_id"], file_scope=scope, api_key=api_key)
         base, endpoint_id = runtime["url"], "headless"
     try:
         def request(method, path, fields=None):
@@ -151,15 +242,20 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
             status, saved = request("PATCH", "/api/session/" + session, {"reasoning_effort": effort})
             if status != 200 or not isinstance(saved, dict) or saved.get("reasoning_effort") != effort:
                 raise RuntimeError("Faustus did not confirm the worker effort")
+        thread_ids = [console.thread_id]
+        if task_id is not None:
+            task = agora.db.one("SELECT thread_id FROM tasks WHERE id=? AND space_id=?", (task_id, console.space_id))
+            if task and task["thread_id"] and task["thread_id"] not in thread_ids:
+                thread_ids.append(task["thread_id"])
         status, saved = request("PUT", "/api/coordination/" + session, {"connector_id": connector["id"],
             "actor": agent, "space_id": console.space_id, "active": True,
             "operations": ["poll", "detail", "task", "board", "heartbeat", "add", "claim", "checkpoint", "post", "submit", "review", "done", "lock", "unlock"],
-            "resources": [], "repos": [], "thread_ids": [console.thread_id]})
+            "resources": [], "repos": [], "thread_ids": thread_ids})
         binding = saved.get("binding") if isinstance(saved, dict) else None
         if status != 200 or not binding or binding.get("actor") != agent or binding.get("project_id") != project["id"]:
             raise RuntimeError("Faustus did not confirm the worker coordination identity")
         return {"session_id": session, "project_id": project["id"], "workspace": workspace,
-                "url": base, "runtime": runtime}, ""
+                "url": base, "runtime": runtime, "coordination_threads": thread_ids}, ""
     except Exception:
         if runtime:
             stop_pc(runtime)
@@ -185,7 +281,7 @@ def reactivate_apprentice_binding(console: Any, base: str, session: str) -> None
 
 
 def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, model: str, *,
-             api_key: str = "", resume: bool = False) -> dict:
+             file_scope: dict, api_key: str = "", resume: bool = False) -> dict:
     data = worker_data(console, agent)
     data.mkdir(parents=True, exist_ok=True)
     with socket.socket() as listener:
@@ -201,7 +297,9 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     command = [str(python), "-X", "utf8", str(root / "integrations" / "harbor" / "serve_headless.py"),
                "--port", str(port), "--data", str(data), "--endpoint-url", "" if resume else endpoint,
                "--model", model, "--api-key", "",
-               "--hub-url", str(console.hub.config.url)]
+               "--hub-url", str(console.hub.config.url),
+               "--settings", json.dumps({"tool_approval_mode": WORKER_APPROVAL_MODE}),
+               "--agora-file-scope", json.dumps(file_scope)]
     if console.space_id == STUDIO:
         command.extend(["--agora-studio", agent])
     with (data / "server.log").open("a", encoding="utf-8") as log:
@@ -210,7 +308,8 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     from . import procs
     from .contract import _get
     runtime = {"url": base, "process": process, "data": str(data), "endpoint": endpoint,
-               "pid": process.pid, "created_at": procs.proc_info(process.pid).created_at}
+               "pid": process.pid, "created_at": procs.proc_info(process.pid).created_at,
+               "file_scope": file_scope, "tool_approval_mode": WORKER_APPROVAL_MODE}
     try:
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:

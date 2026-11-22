@@ -444,7 +444,7 @@ def test_mesh_views_and_repeatable_camera(eyes: EyesFacet, tmp_path: Path) -> No
     assert again["compare"]["pairs"] == 2
 
 
-def _colour_glb(path: Path, sources: tuple[str, ...]) -> None:
+def _colour_glb(path: Path, sources: tuple[str, ...], *, external_texture: Path | None = None) -> None:
     binary = bytearray()
     gltf = {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": list(range(len(sources)))}],
             "nodes": [], "meshes": [], "accessors": [], "bufferViews": []}
@@ -470,7 +470,13 @@ def _colour_glb(path: Path, sources: tuple[str, ...]) -> None:
         uv = add_accessor(struct.pack("<12f", *(v + 0.5 for point in quad for v in point)), 5126, "VEC2")
         png = io.BytesIO()
         Image.new("RGB", (2, 2), (0, 255, 0)).save(png, format="PNG")
-        gltf.update(images=[{"bufferView": add_view(png.getvalue()), "mimeType": "image/png"}],
+        if external_texture:
+            external_texture.parent.mkdir(exist_ok=True)
+            external_texture.write_bytes(png.getvalue())
+            image_source = {"uri": external_texture.relative_to(path.parent).as_posix()}
+        else:
+            image_source = {"bufferView": add_view(png.getvalue()), "mimeType": "image/png"}
+        gltf.update(images=[image_source],
                     textures=[{"source": 0}],
                     materials=[{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 0}}])
 
@@ -655,3 +661,67 @@ def test_rigged_model_poses_without_the_importers_bone_shapes(eyes: EyesFacet, t
     assert out["facts"]["dimensions_m"][2] == pytest.approx(2 ** 0.5, abs=0.05)
     assert out["resolved"]["pose"]["bones"] == {"brazo": [0.0, 0.0, 45.0]}
     assert any("nope" in w for w in out["warnings"])
+
+
+@pytest.mark.skipif(not eyes_render.find_program("blender"), reason="Blender not installed")
+def test_scoped_glb_renders_its_declared_texture(eyes, tmp_path):
+    glb = tmp_path / "colours.glb"
+    texture = tmp_path / "textures" / "green.png"
+    _colour_glb(glb, ("texture",), external_texture=texture)
+    args = {"path": str(glb), "material": "color", "views": ["front"], "size": 128, "wait_s": 120}
+    denied = eyes.look({**args, "resources": []})
+    assert denied["status"] == "failed" and "Declare every external GLB resource" in denied["error"]
+    allowed = eyes.look({**args, "resources": [str(texture)]})
+    assert allowed["status"] == "done" and allowed["facts"]["textures"] == 1, allowed
+    with Image.open(allowed["views"][0]["path"]) as photo:
+        red, green, blue = photo.convert("RGB").getpixel((64, 64))
+        assert green > max(red, blue) + 60
+
+
+def test_scoped_blend_without_renderer_refuses_without_host_blender(eyes, tmp_path, monkeypatch):
+    monkeypatch.delenv("HOARD_EYES_BLENDER_SANDBOX_IMAGE", raising=False)
+    source = tmp_path / "model.blend"
+    source.write_bytes(b"placeholder")
+    monkeypatch.setattr(eyes_render, "_run", lambda *a, **kw: pytest.fail("renderer started"))
+    result = eyes.look({"path": str(source), "resources": [], "wait_s": 10})
+    assert result["status"] == "failed"
+    assert "No isolated BLEND renderer is configured" in result["error"]
+
+
+def test_scoped_blend_stages_only_declared_files_and_mounts_read_only(tmp_path, monkeypatch):
+    source = tmp_path / "assets" / "model.blend"
+    linked = source.parent / "linked" / "library.blend"
+    linked.parent.mkdir(parents=True)
+    for path in (source, linked, source.parent / "unlisted.blend"):
+        path.write_bytes(b"placeholder")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    staged = eyes_render._stage_blend(source, scratch, [str(linked)])
+    assert {p.relative_to(staged.parent).as_posix() for p in staged.parent.rglob("*.blend")} == {
+        "model.blend", "linked/library.blend"}
+
+    monkeypatch.setenv("HOARD_EYES_BLENDER_SANDBOX_IMAGE", "fixture:local")
+    monkeypatch.setattr(eyes_render, "find_program", lambda name: "docker")
+    calls = []
+
+    def mock_run(args, timeout):
+        calls.append((args, timeout))
+        if args[1] == "rm":
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        (scratch / "render" / "front-neutral.png").write_bytes(b"fixture view")
+        result = {"ok": True, "views": [{"path": "/render/front-neutral.png"}]}
+        return SimpleNamespace(returncode=0, stderr=b"",
+                               stdout=("EYES_RESULT " + json.dumps(result)).encode())
+
+    monkeypatch.setattr(eyes_render, "_run", mock_run)
+    result = eyes_render._render_isolated_blend(staged, out, scratch, {}, 40)
+    args = calls[0][0]
+    assert args[args.index("--network") + 1] == "none"
+    assert args[args.index("--pull") + 1] == "never"
+    assert "--read-only" in args and "--disable-autoexec" in args
+    assert [arg.split(",target=")[1] for arg in args if arg.startswith("type=bind,")] == [
+        "/piece,readonly", "/eyes.py,readonly", "/spec.json,readonly", "/render"]
+    assert calls[1][0] == ["docker", "rm", "-f", args[args.index("--name") + 1]]
+    assert json.loads(result.removeprefix(b"EYES_RESULT "))["views"][0]["path"] == str(out / "front-neutral.png")

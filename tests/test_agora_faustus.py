@@ -213,7 +213,8 @@ def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeyp
     assert result["url"] == runtime["url"] and result["runtime"] is runtime
     args, kwargs = starts[0]
     assert args[-2:] == ("http://model.example/v1", "deepseek-v4.1-flash")
-    assert kwargs == {"api_key": key if key_status == "matched" else ""}
+    assert kwargs == {"api_key": key if key_status == "matched" else "",
+                      "file_scope": agora_faustus.file_scope(str(tmp_path))}
     creation = next(row for row in calls if row[1] == "/api/session")
     assert creation[2]["endpoint_id"] == "headless"
     binding = next(row[2] for row in calls if row[1] == "/api/coordination/child")
@@ -248,10 +249,14 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     monkeypatch.setattr("hoard_link.hub.contract._get", lambda *args: (200, {"service": "faustus"}))
     monkeypatch.setattr(facet, "_faustus_session_request", request)
     runtime = agora_faustus.start_pc(facet, "faustus-qa", tmp_path, "python", "http://models.example/v1",
-                                     "model", api_key="" if resume else key, resume=resume)
+                                     "model", file_scope=agora_faustus.file_scope(str(tmp_path)),
+                                     api_key="" if resume else key, resume=resume)
     command, env = launches[0]
     assert env["FAUSTUS_AGORA_WORKER_SPACE"] == space
     assert ("--agora-studio" in command) == (space == "estudio")
+    assert json.loads(command[command.index("--agora-file-scope") + 1]) == runtime["file_scope"]
+    assert json.loads(command[command.index("--settings") + 1]) == {"tool_approval_mode": "auto"}
+    assert runtime["tool_approval_mode"] == "auto"
     assert command[command.index("--endpoint-url") + 1] == ("" if resume else "http://models.example/v1")
     assert command[command.index("--api-key") + 1] == ""
     assert key not in repr(launches) and key not in repr(runtime)
@@ -394,3 +399,51 @@ def test_unconfirmed_stop_does_not_claim_cancellation(tmp_path, monkeypatch):
                         (200, {"runs": {"child": "run-1"}}) if args[0] == "GET" else (200, {"stopped": False}))
     assert facet.worker({"action": "stop", "worker_id": "worker"})["ok"] is False
     assert facet._worker_rows()[0]["state"] == "running"
+
+
+def test_proposes_only_the_job_inputs_and_kept_snapshots(tmp_path):
+    from hoard_link.hub.agora import Agora
+
+    facet = _facet(tmp_path)
+    facet.space_id = "estudio"
+    source = tmp_path / "assets"
+    source.mkdir()
+    file = source / "brief.txt"
+    file.write_text("a brief", encoding="utf-8")
+    another = source / "another.txt"
+    another.write_text("unrelated", encoding="utf-8")
+    store = Agora(tmp_path / "agora.db")
+    try:
+        store.space_create({"agent": "codex-qa", "id": "estudio", "title": "Studio"})
+        view = store.for_space("estudio")
+        facet.hub.agora = view
+        order = view.order_create({"agent": "codex-qa", "title": "Public QA", "words": "Read the input"})["order"]
+        first = view.piece_add({"agent": "codex-qa", "order_id": order["id"], "title": "Input",
+                               "kind": "text", "path": str(file)})["piece"]
+        second = view.piece_add({"agent": "codex-qa", "order_id": order["id"], "title": "Unrelated",
+                                "kind": "text", "path": str(another)})["piece"]
+        tid = view.plan_set({"agent": "codex-qa", "order_id": order["id"], "jobs": [
+            {"key": "check", "title": "Check the brief", "inputs": [first["id"]]}]})["keys"]["check"]
+        reply = facet.worker({"action": "propose_files", "task_id": tid})
+        assert reply["ok"]
+        scope = reply["file_scope"]
+        assert [Path(p).read_text(encoding="utf-8") for p in scope["read_files"]] == ["a brief"]
+        assert not scope["read_paths"] and scope["asset_folders"] == [str(source)]
+        assert str(another) not in scope["read_files"]
+        assert facet.worker({"action": "propose_files", "task_id": tid + 100})["status"] == 400
+        assert facet.worker({"action": "propose_files", "task_id": True})["status"] == 400
+        assert first["id"] != second["id"]
+    finally:
+        store.close()
+
+
+def test_validates_separate_file_grants(tmp_path):
+    read = tmp_path / "assets"
+    write = tmp_path / "output"
+    scope = agora_faustus.file_scope(str(tmp_path), {"read_paths": [str(read), str(read)],
+                                                     "write_paths": [str(write)]})
+    assert scope == {"workspace": str(tmp_path), "read_paths": [str(read)], "write_paths": [str(write)], "read_files": []}
+    for invalid in ({"read_paths": "assets"}, {"write_paths": ["relative"]},
+                    {"workspace": str(tmp_path)}, {"write_paths": [str(tmp_path.anchor)]}):
+        with pytest.raises(ValueError):
+            agora_faustus.file_scope(str(tmp_path), invalid)
