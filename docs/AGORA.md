@@ -264,21 +264,26 @@ when it has no code repository. The direct task claim, progress and submission
 tools also run without confirmation after reading external context if their
 `space_id`, `task_id` and `agent` match the launch. For a job of an order, the
 worker can register a file in its output roots with `hub_agora_piece_add` and
-record an image or spreadsheet check with `hub_piece_validate_record`. Include the same
-task, space and agent, the returned piece ID and its absolute `output_path`
-in the check. The Hub validates the stored revision and checks who owns the
-task. Other jobs, spaces and opening gates keep their existing approval checks.
+record an image or spreadsheet check with `hub_piece_validate_record`. Include
+the same task and space, the returned piece ID and its absolute `output_path`.
+The worker may omit `agent` to use its launch identity. The Hub checks who owns
+the task and validates the stored revision. Other jobs, spaces and opening
+gates keep their existing approval checks.
 People decide gates in their decision pages.
 
-List any declared read or write folder with `ls` or `glob`. To read the
-contents of a file in an output folder, declare read access to that folder too.
+List any declared read or write folder with `ls` or `glob`. For a local check on
+an image or XLSX in a write folder, use `hub_piece_validate` with the absolute
+`path` and the corresponding `image` or `spreadsheet` profile. General file
+reading in that folder requires a read grant.
 
 For a dedicated production task, include `apps` in `file_scope`. It maps app
 IDs to exact tool IDs. Example:
 `"apps":{"nightingale":["data_ingest","data_export","data_export_undo"]}`.
-Use `hub_call_app` with the declared app, tool and arguments. Use `lookup_tools` to load its
-schema if the current turn omits it. File ingest accepts a declared CSV or TSV and a dataset alias. Flat export accepts the
-same alias and an explicit output file. The worker uses its own dataset
+Use `hub_call_app` with the declared app, tool and arguments. Use `lookup_tools`
+to load its schema if the current turn omits it. Scope errors identify missing
+or unexpected argument names. File ingest accepts a declared CSV or TSV and a
+dataset alias. Flat export accepts the same alias and an explicit output file.
+The worker uses its own dataset
 namespace. Export undo uses the token returned to that worker. Before launch,
 the Hub reads the app's Data module state. If the module is off or its state
 cannot be confirmed, the launch is rejected with a message in English and Spanish.
