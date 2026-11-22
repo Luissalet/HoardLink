@@ -219,13 +219,12 @@ The Faustus console offers models from local endpoints whose URL host matches a 
 alias in the placement inventory. The endpoint name is the display label. Launches keep the selected endpoint
 and model ID.
 
-For a protected endpoint, provision `HOARD_HUB_FAUSTUS_ENDPOINT_KEYS` in the Hub service environment as a
-JSON object mapping exact endpoint IDs to their API keys. The Hub consumes it at startup. Before creating the
-child's session it matches the selected endpoint's credential fingerprint, when available, and configures the
-key over the new runtime's loopback API. Faustus stores it in the child's encrypted endpoint store. The key
-stays out of worker arguments, worker environments, and catalog responses. Continuing a child after its runtime
-stops reuses its stored endpoint and credentials. After rotating a key, launch a new child with the updated Hub
-configuration so its session uses the new key.
+For a protected endpoint, add or update its API key in **Settings → Added Models** in the Faustus instance
+that supplies the catalog. The Hub reads the matching encrypted record by endpoint ID and URL from that
+installation's SQLite store. If Faustus runs on a Spark, the read uses the SSH connection configured for
+placement. The Hub verifies the catalog fingerprint before configuring the child's key over its loopback API.
+Faustus stores it in the child's encrypted endpoint store. Continuing a child after its runtime stops reuses
+its stored endpoint and credentials. After rotating a key, launch a new child so its session uses the new key.
 
 Every managed worker is told to commit its work and `submit` its task. When its process ends, the console checks the
 outcome against the Agora: task status, submission revision and uncommitted changes in the worker's folder. A clean

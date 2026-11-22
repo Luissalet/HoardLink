@@ -30,7 +30,6 @@ from .linkchat import LinkService
 from .repos import RepoMonitor, RepoSettings
 from .rules import RuleEngine
 from .faustus import FaustusRuntime
-from .agora_faustus import load_endpoint_keys
 
 BACKENDS_CACHE_S = 8.0
 FAUSTUS_CACHE_S = 6.0
@@ -51,7 +50,6 @@ def default_call_reason(caller: str) -> str:
 class Hub:
     def __init__(self, config: Optional[HubConfig] = None, *, gpu_fn: Optional[Callable[[], list[Any]]] = None):
         self.config = config or HubConfig.load()
-        self.faustus_endpoint_keys = load_endpoint_keys()
         self._apps: dict[str, App] = {}
         self._lock = threading.RLock()
         # Starts in flight: app id -> (pid, spawned at). A start that is not

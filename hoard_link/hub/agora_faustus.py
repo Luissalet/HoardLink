@@ -2,7 +2,8 @@
 
 The main Faustus address follows placement. A Spark cannot execute Windows
 paths, so an explicit worker launch starts a separate, headless PC runtime
-with its own data and the selected Sparks endpoint. No user data is copied.
+with its own data and the selected Sparks endpoint. Protected endpoints use
+the credential from the Faustus installation supplying the catalog.
 """
 from __future__ import annotations
 
@@ -18,22 +19,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .faustus_endpoint_key import read_endpoint_key
+
 STUDIO = "estudio"
 APPRENTICE = "faustus-aprendiz"
 TUTOR_TOOL = "hub_agora_apprentice_instinct"
-ENDPOINT_KEYS_ENV = "HOARD_HUB_FAUSTUS_ENDPOINT_KEYS"
-
-
-def load_endpoint_keys() -> dict[str, str]:
-    """Read Hub-only credentials before any worker can inherit them."""
-    try:
-        keys = json.loads(os.environ.pop(ENDPOINT_KEYS_ENV, "{}"))
-    except ValueError:
-        return {}
-    if not isinstance(keys, dict):
-        return {}
-    return {endpoint: key.strip() for endpoint, key in keys.items()
-            if isinstance(key, str) and key.strip()}
 
 
 def worker_data(console: Any, agent: str) -> Path:
@@ -128,14 +118,15 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
             return None, "The selected Sparks endpoint is unavailable for the PC worker."
         api_key = ""
         if endpoint.get("has_key"):
-            api_key = console.hub.faustus_endpoint_keys.get(endpoint_id, "")
-            if not api_key:
-                return None, ("The Hub has no credential for the selected endpoint. / "
-                              "El Hub no tiene la credencial del endpoint seleccionado.")
-            fingerprint = endpoint.get("api_key_fingerprint")
-            if fingerprint and hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8] != fingerprint:
-                return None, ("The Hub credential does not match the selected endpoint. / "
-                              "La credencial del Hub no coincide con la del endpoint seleccionado.")
+            placement = console.hub.placement if target.get("remote") else None
+            api_key = read_endpoint_key(root, python, endpoint_id, endpoint["base_url"], placement=placement)
+            fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
+            if not api_key or fingerprint != endpoint.get("api_key_fingerprint"):
+                return None, (
+                    "No matching credential for the selected endpoint. Add or update its API key in "
+                    "Faustus Settings → Added Models. / No se encontró la credencial del endpoint seleccionado. "
+                    "Añade o actualiza su clave API en Ajustes de Faustus → Modelos añadidos."
+                )
         runtime = start_pc(console, agent, root, python, endpoint["base_url"], model["model_id"], api_key=api_key)
         base, endpoint_id = runtime["url"], "headless"
     try:
