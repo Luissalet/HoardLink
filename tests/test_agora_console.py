@@ -194,6 +194,7 @@ def test_capacity_reporter_starts_with_this_hub_configuration(tmp_path, monkeypa
                         lambda: stopped.append(True))
     monkeypatch.setattr("hoard_link.hub.agora_capacity_accounts.start_account_capacity_reporter", lambda **_: None)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("HOARD_AGORA_QUOTA_POLLING", "1")
     monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:8810")
 
     facet = _facet(tmp_path)

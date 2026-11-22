@@ -696,8 +696,10 @@ The Codex reporter finds the installed CLI on `PATH` or in the Windows desktop i
 `account/rateLimits/read`. A missing quota window stays unknown. The team console reports a failed observation
 in `capacity_observations.codex` with a timestamp and a reason code.
 
-Automatic quota polling defaults to off for isolated Hub instances. Set `HOARD_AGORA_QUOTA_POLLING=1` to enable it
-on the selected instance. See [the console quota readers](agora-app.md#quotas-where-each-reading-comes-from).
+Automatic quota polling starts by default on the standard Hub (installation `data/`, port 8810, regular catalogue).
+An isolated catalogue, alternate port or separate data directory defaults polling to off, including a deliberate
+`--data-dir` change. Set `HOARD_AGORA_QUOTA_POLLING=1` to opt in on that instance.
+See [the console quota readers](agora-app.md#quotas-where-each-reading-comes-from).
 
 When the Claude quota reader finds an expired access token or a 401, the reporter lets the installed CLI attempt
 its native sign-in refresh with a bounded, tool-free diagnostic. It then retries the quota read. A repeated
