@@ -8,6 +8,7 @@ import App from './App';
 import {LiveView} from './LiveView';
 import {lang} from './locale';
 import './style.css';
+import './console-header.css';
 const liveOnly = new URLSearchParams(location.search).get('view') === 'live';
 document.documentElement.lang = lang;
 createRoot(document.getElementById('root')!).render(<React.StrictMode>{liveOnly ? <LiveView/> : <App/>}</React.StrictMode>);

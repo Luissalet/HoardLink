@@ -108,6 +108,25 @@ def test_console_renders_localised_chrome_and_quota(tmp_path, monkeypatch, lang,
             expect(quota.get_by_text(copy["stale"], exact=False)).to_be_visible()
             page.screenshot(path=tmp_path / f"quota-{lang}.png")
 
+            page.set_viewport_size({"width": 390, "height": 920})
+            header = page.locator(".topbar")
+            space = header.locator(".space-selector")
+            expect(space.locator("option:checked")).to_have_text(copy["space"])
+            label = space.bounding_box()
+            select = space.locator("select").bounding_box()
+            brand = header.locator(".brand").bounding_box()
+            assert select["width"] >= 160
+            assert label["x"] + label["width"] <= brand["x"]
+            assert brand["x"] + brand["width"] <= 390
+
+            show_tasks = "Mostrar tareas" if lang == "es" else "Show tasks"
+            header.get_by_role("button", name=show_tasks).click()
+            drawer = page.locator(".operations").bounding_box()
+            bar = header.bounding_box()
+            assert drawer["y"] == pytest.approx(bar["y"] + bar["height"])
+            assert drawer["x"] + drawer["width"] <= 390
+            page.set_viewport_size({"width": 1440, "height": 1000})
+
             page.get_by_role("button", name=copy["live"], exact=True).click()
             expect(page.get_by_role("heading", name=copy["board"], exact=True)).to_be_visible()
             expect(page.get_by_role("heading", name=copy["files"], exact=True)).to_be_visible()

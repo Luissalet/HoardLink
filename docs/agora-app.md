@@ -6,6 +6,8 @@ In the Hub tab, the top bar's language button changes the conversation's **New t
 
 The left rail contains Claude, Codex, Cursor and Faustus. Each provider exposes a discovered model catalog and its supported reasoning settings, shared quota observations and child-worker states. Unavailable catalogs and quota readings remain unknown. Quotas belong to account pools, not individual chats; adding a helper does not add capacity. Expired readings retain their provenance and show unknown percentages.
 
+On narrow screens, the standalone console gives the space selector and wordmark their own row. The console actions and connection status sit below them, and the tasks drawer starts below the full header.
+
 ## Quotas: where each reading comes from
 
 The console reads every provider's quota where its own client does, the way unified usage trackers such as CodexBar do. The Hub starts the readers; each publishes through `usage-report` as `<provider>-capacity`, hashes the account identity into an opaque pool key and never stores or logs a token.
