@@ -15,6 +15,7 @@ import pytest
 
 from hoard_link.hub.agora_console import AgoraConsoleFacet, THREAD_ID
 from hoard_link.hub.facets import FACET_MODULES, Request
+from hoard_link.hub.placement import Placement
 from hoard_link.hub.tools import call
 
 
@@ -366,16 +367,35 @@ def test_codex_runner_falls_back_to_the_installed_app_binary(tmp_path, monkeypat
     assert AgoraConsoleFacet._codex_executable() == str(executable)
 
 
-def test_faustus_catalog_only_exposes_the_active_sparks_provider(tmp_path, monkeypatch):
+def test_faustus_catalog_selects_local_models_by_sparks_host(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
+    inventory = tmp_path / "prometheus"
+    (inventory / "data").mkdir(parents=True)
+    (inventory / "data" / "settings.json").write_text(json.dumps({"nodes": [
+        {"name": "Spark 1", "ssh": "Spark-One", "host": "192.0.2.11"},
+        {"name": "Spark 4", "ssh": "Spark-Four", "host": "192.0.2.24", "api_host": "192.0.2.14"},
+    ]}), encoding="utf-8")
+    facet.hub.get = lambda app_id: SimpleNamespace(folder=inventory) if app_id == "prometheus" else None
+    facet.hub.placement = Placement(facet.hub)
+    assert {"spark-one", "192.0.2.14", "192.0.2.24"} <= facet.hub.placement.spark_hosts()
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "mcp-token").write_text("local-test-token", encoding="utf-8")
     replies = iter([
         (200, {"items": [
-            {"endpoint_id": "pc-local", "endpoint_name": "127.0.0.1:11434", "models": ["qwen-local"]},
-            {"endpoint_id": "spark-main", "endpoint_name": "Sparks · glm53", "models": ["glm-flash"]},
+            {"endpoint_id": "pc-local", "endpoint_name": "Sparks lookalike", "models": ["pc-model"],
+             "url": "http://127.0.0.1:11434/v1/chat/completions", "category": "local"},
+            {"endpoint_id": "cloud", "endpoint_name": "Cloud", "models": ["cloud-model"],
+             "url": "https://spark-one/v1/chat/completions", "category": "api"},
+            {"endpoint_id": "bad-url", "endpoint_name": "Invalid URL", "models": ["invalid"],
+             "url": "http://[", "category": "local"},
+            {"endpoint_id": "spark-main", "endpoint_name": "Sparks · glm53", "models": ["glm-flash"],
+             "url": "http://SPARK-ONE.:8080/v1/chat/completions", "category": "local"},
+            {"endpoint_id": "spark-vision", "endpoint_name": "Vision - Spark 4", "models": [],
+             "models_extra": ["vision-flash"], "url": "http://192.0.2.14:30001/v1/chat/completions",
+             "category": "local"},
         ]}),
         (200, {"levels": ["low", "high"], "default": "high", "source": "verified template"}),
+        (200, {"levels": []}),
     ])
     seen = []
     def get(url, token, timeout):
@@ -386,7 +406,8 @@ def test_faustus_catalog_only_exposes_the_active_sparks_provider(tmp_path, monke
     provider = facet._faustus_status()
 
     assert provider["state"] == "available"
-    assert [row["id"] for row in provider["catalog"]] == ["spark-main::glm-flash"]
+    assert [row["id"] for row in provider["catalog"]] == ["spark-main::glm-flash", "spark-vision::vision-flash"]
+    assert provider["catalog"][1]["name"] == "Vision - Spark 4: vision-flash"
     assert provider["catalog"][0]["efforts"] == ["low", "high"]
     assert seen[0][0] == "http://127.0.0.1:7000/api/models?background=false"
     assert seen[0][1] == "local-test-token"

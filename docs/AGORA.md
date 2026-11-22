@@ -215,6 +215,10 @@ is launched without a total deadline (`--no-timeout`) and without a cap on appro
 the only guard is an inactivity watchdog on the turn's real events (keepalives do not count), 3600 s by default and
 set with `HOARD_AGORA_WORKER_IDLE_SECONDS`. Stop cancels the exact active run.
 
+The Faustus console offers models from local endpoints whose URL host matches a registered Sparks address or
+alias in the placement inventory. The endpoint name is the display label. Launches keep the selected endpoint
+and model ID.
+
 Every managed worker is told to commit its work and `submit` its task. When its process ends, the console checks the
 outcome against the Agora: task status, submission revision and uncommitted changes in the worker's folder. A clean
 exit with no submission, or with pending changes, is recorded as `incomplete` ("Entrega incompleta"), not `completed`,

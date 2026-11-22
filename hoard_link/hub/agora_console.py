@@ -29,7 +29,7 @@ from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 from . import agora_auto_review, agora_liveness, agora_ranks, agora_worker_processes, agora_worker_profiles
 from . import work_admission
@@ -613,13 +613,17 @@ class AgoraConsoleFacet(Facet):
             return {"state": "unverified", "detail": f"Faustus model catalog request failed: {type(exc).__name__}.", "catalog": []}
         if status != 200 or not isinstance(models, dict) or not isinstance(models.get("items"), list):
             return {"state": "unverified", "detail": f"Faustus is healthy, but its model catalog returned HTTP {status}.", "catalog": []}
+        placement = getattr(self.hub, "placement", None)
+        spark_hosts = placement.spark_hosts() if placement is not None else set()
         catalog: list[dict[str, Any]] = []
         for endpoint in models["items"]:
-            if not isinstance(endpoint, dict):
+            if not isinstance(endpoint, dict) or endpoint.get("category") != "local":
                 continue
-            # The Agora Faustus leader targets its running Sparks GLM
-            # endpoint. Keep PC-local model pools outside this catalog.
-            if not str(endpoint.get("endpoint_name") or "").strip().lower().startswith("sparks"):
+            try:
+                url = urlsplit(str(endpoint.get("url") or ""))
+            except ValueError:
+                continue
+            if url.scheme not in {"http", "https"} or (url.hostname or "").rstrip(".").casefold() not in spark_hosts:
                 continue
             endpoint_id = str(endpoint.get("endpoint_id") or "").strip()
             if not endpoint_id:
