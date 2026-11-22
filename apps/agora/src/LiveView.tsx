@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { api, spaceId, type Task, type Message } from "./api";
+import { locale, messageBody, spaceTitle, tr } from "./locale";
 import { DeliveryDiff } from "./DeliveryDiff";
 import { LoopPanel, LoopRing, TurnSteps, loopBrief, loopFacts, phaseLabel, type Loop } from "./LoopRing";
 import "./live.css";
@@ -63,24 +64,24 @@ type Snapshot = {
 };
 type CursorPoint = { x: number; y: number; width: number; hidden: boolean };
 const columns = [
-  { id: "open", label: "Por hacer", states: ["open"] },
+  { id: "open", label: tr("Por hacer", "To do"), states: ["open"] },
   {
     id: "working",
-    label: "En curso",
+    label: tr("En curso", "In progress"),
     states: ["claimed", "in_progress", "changes", "blocked"],
   },
-  { id: "review", label: "En revisión", states: ["review", "approved"] },
-  { id: "done", label: "Finalizado", states: ["done", "dropped"] },
+  { id: "review", label: tr("En revisión", "In review"), states: ["review", "approved"] },
+  { id: "done", label: tr("Finalizado", "Completed"), states: ["done", "dropped"] },
 ];
 const states: Record<string, string> = {
-  working: "Trabajando",
-  tool: "Herramienta",
-  waiting: "Esperando",
-  stale: "Sin señal reciente",
-  idle: "En reposo",
+  working: tr("Trabajando", "Working"),
+  tool: tr("Herramienta", "Using a tool"),
+  waiting: tr("Esperando", "Waiting"),
+  stale: tr("Sin señal reciente", "No recent signal"),
+  idle: tr("En reposo", "Idle"),
 };
 const clock = (value: number) =>
-  new Date(value * 1000).toLocaleTimeString("es-ES", {
+  new Date(value * 1000).toLocaleTimeString(locale, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -131,7 +132,7 @@ function AgentCursor({
       data-agent={actor.id}
       data-resting={resting || undefined}
       data-hidden={point.hidden || undefined}
-      aria-label={`Sesión de ${actor.name}`}
+      aria-label={tr(`Sesión de ${actor.name}`, `${actor.name} session`)}
       onClick={onSelect}
       style={
         {
@@ -396,7 +397,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
   const fresh = (at: number) => at > firstSnapshot.current;
   const groups = new Map<string, FileRow[]>();
   for (const file of [...(data?.files || [])].sort((a, b) => b.at - a.at)) {
-    const repo = (file.repo || "Sin repositorio observado").toLocaleLowerCase();
+    const repo = (file.repo || tr("Sin repositorio observado", "No observed repository")).toLocaleLowerCase();
     const rows = groups.get(repo) || [];
     rows.push(file);
     groups.set(repo, rows);
@@ -413,7 +414,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
   return (
     <main
       className="aglive"
-      aria-label="Ágora en directo"
+      aria-label={tr("Ágora en directo", "Live Agora")}
       data-testid="agora-live"
       style={hostTheme}
     >
@@ -422,41 +423,41 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
           <button
             className="icon-button"
             onClick={onClose}
-            aria-label="Volver a la conversación"
+            aria-label={tr("Volver a la conversación", "Back to conversation")}
           >
             <ArrowLeft size={18} />
           </button>
         )}
         <div>
-          <h1>En directo</h1>
-          <span>{data?.space.title || spaceId}</span>
+          <h1>{tr("En directo", "Live")}</h1>
+          <span>{spaceTitle(spaceId, data?.space.title)}</span>
         </div>
         <span className="aglive-connection" role="status">
           {error
-            ? "Conexión interrumpida"
+            ? tr("Conexión interrumpida", "Connection interrupted")
             : data
-              ? `Actualizado ${clock(data.now)}`
-              : "Conectando…"}
+              ? tr(`Actualizado ${clock(data.now)}`, `Updated ${clock(data.now)}`)
+              : tr("Conectando…", "Connecting…")}
         </span>
         <button
           className="icon-button"
           onClick={() => setRetry((n) => n + 1)}
-          aria-label="Volver a conectar"
+          aria-label={tr("Volver a conectar", "Reconnect")}
         >
           <RefreshCw size={16} />
         </button>
       </header>
       {error && (
         <p className="aglive-error" role="alert">
-          {error}. Los datos visibles corresponden a la última lectura.
+          {error}. {tr("Los datos visibles corresponden a la última lectura.", "Showing the last available data.")}
         </p>
       )}
       {data?.watch_error && (
         <p className="aglive-error" role="status">
-          Observador sin datos · {data.watch_error}
+          {tr("Observador sin datos", "Observer data unavailable")} · {data.watch_error}
         </p>
       )}
-      <div className="aglive-team" aria-label="Agentes en directo">
+      <div className="aglive-team" aria-label={tr("Agentes en directo", "Live agents")}>
         {data?.actors.map((a) => (
           <div key={a.id}>
             <button
@@ -470,18 +471,18 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
               {a.name}
               <small>
                 {error || now - a.last_signal >= 60
-                  ? "En reposo"
+                  ? states.idle
                   : states[a.state] || a.state}
               </small>
             </button>
           </div>
         ))}
         {data && !data.actors.length && (
-          <p>Ningún agente activo en este servidor.</p>
+          <p>{tr("Ningún agente activo en este servidor.", "No active agents in this server.")}</p>
         )}
       </div>
       {data?.actors.some((a) => a.loop) && (
-        <div className="agloop-strip" aria-label="Bucle de cada agente">
+        <div className="agloop-strip" aria-label={tr("Bucle de cada agente", "Agent loops")}>
           {data.actors
             .filter((a) => a.loop)
             .map((a) => (
@@ -510,8 +511,8 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                 </div>
               ))}
           </div>
-          <section className="aglive-board" aria-label="Pizarra">
-            <h2>Pizarra</h2>
+          <section className="aglive-board" aria-label={tr("Pizarra", "Board")}>
+            <h2>{tr("Pizarra", "Board")}</h2>
             <div className="aglive-columns">
               {columns.map((col) => (
                 <section className="aglive-column" key={col.id}>
@@ -538,12 +539,12 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                             onClick={() => void openTask(t)}
                           >
                             <span>
-                              #{t.id} · {t.repo || "Equipo"}
+                              #{t.id} · {t.repo || tr("Equipo", "Team")}
                             </span>
                             <strong>{t.title}</strong>
                             <small>
-                              {t.owner || "Sin asignar"}
-                              {t.status === "blocked" ? " · Bloqueada" : ""}
+                              {t.owner || tr("Sin asignar", "Unassigned")}
+                              {t.status === "blocked" ? tr(" · Bloqueada", " · Blocked") : ""}
                             </small>
                             {t.progress && <small>{t.progress}</small>}
                             {t.loop && (
@@ -563,14 +564,14 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
             </div>
           </section>
           <div className="aglive-lower">
-            <section className="aglive-files" aria-label="Ficheros en uso">
+            <section className="aglive-files" aria-label={tr("Ficheros en uso", "Files in use")}>
               <h2>
                 <FileCode2 size={17} />
-                Ficheros en uso
+                {tr("Ficheros en uso", "Files in use")}
               </h2>
               {!groups.size && (
                 <p className="aglive-empty">
-                  Sin bloqueos de rutas ni herramientas observadas.
+                  {tr("Sin bloqueos de rutas ni herramientas observadas.", "No path locks or observed tools.")}
                 </p>
               )}
               {Array.from(groups, ([repo, files]) => (
@@ -587,10 +588,10 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                           <strong>{file.path}</strong>
                           <span>
                             {file.source === "lock"
-                              ? "Bloqueo"
+                              ? tr("Bloqueo", "Lock")
                               : file.source === "command"
-                                ? "Comando observado"
-                                : "Fichero observado"}
+                                ? tr("Comando observado", "Observed command")
+                                : tr("Fichero observado", "Observed file")}
                           </span>
                         </div>
                         <small>
@@ -612,14 +613,14 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                 </div>
               ))}
             </section>
-            <section className="aglive-channel" aria-label="Canal">
+            <section className="aglive-channel" aria-label={tr("Canal", "Channel")}>
               <header>
                 <h2>
                   <MessageSquare size={17} />
-                  Canal
+                  {tr("Canal", "Channel")}
                 </h2>
                 <select
-                  aria-label="Canal en directo"
+                  aria-label={tr("Canal en directo", "Live channel")}
                   value={channel}
                   onChange={(e) => setChannel(e.target.value)}
                 >
@@ -637,7 +638,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                 </select>
               </header>
               {data?.messages.length === 0 && (
-                <p className="aglive-empty">Sin mensajes en este canal.</p>
+                <p className="aglive-empty">{tr("Sin mensajes en este canal.", "No messages in this channel.")}</p>
               )}
               {[...(data?.messages || [])].reverse().map((m) => (
                 <div
@@ -652,7 +653,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
                     </div>
                     <p>
                       <ObservedText
-                        text={m.body}
+                        text={messageBody(m)}
                         fresh={fresh(m.created || 0)}
                       />
                     </p>
@@ -682,14 +683,14 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
       {actor && (
         <aside
           className="aglive-detail"
-          aria-label={`Detalle de ${actor.name}`}
+          aria-label={tr(`Detalle de ${actor.name}`, `${actor.name} details`)}
         >
           <header>
             <h2>{actor.name}</h2>
             <button
               className="icon-button"
               onClick={() => setSelected("")}
-              aria-label="Cerrar detalle"
+              aria-label={tr("Cerrar detalle", "Close details")}
             >
               <X size={17} />
             </button>
@@ -704,18 +705,18 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
           >
             <Crosshair size={16} />
             {following === actor.id
-              ? "Dejar de seguir"
-              : "Seguir a " + actor.name}
+              ? tr("Dejar de seguir", "Unfollow")
+              : tr(`Seguir a ${actor.name}`, `Follow ${actor.name}`)}
           </button>
           {actor.session ? (
             <>
-              <h3>Sesión observada</h3>
+              <h3>{tr("Sesión observada", "Observed session")}</h3>
               <p>{actor.session.title}</p>
               <p>
                 {actor.session.engine} ·{" "}
                 {actor.session.binding === "explicit"
-                  ? "Identidad asignada"
-                  : "Identidad inferida"}
+                  ? tr("Identidad asignada", "Assigned identity")
+                  : tr("Identidad inferida", "Inferred identity")}
               </p>
               <code>{actor.session.key}</code>
               <p>{actor.session.cwd}</p>
@@ -727,11 +728,11 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
               <p>{actor.session.last_text}</p>
             </>
           ) : (
-            <p>Sin sesión observada. La actividad procede del Ágora.</p>
+            <p>{tr("Sin sesión observada. La actividad procede del Ágora.", "No observed session. Activity comes from Agora.")}</p>
           )}
           {actor.loop && (
             <>
-              <h3>Bucle del agente</h3>
+              <h3>{tr("Bucle del agente", "Agent loop")}</h3>
               <LoopRing loop={actor.loop} color={actor.color} size="lg" name={actor.name} live={!error && now - actor.last_signal < 60} />
               <p>{loopFacts(actor.loop, now)}</p>
               <LoopPanel loop={actor.loop} />
@@ -753,13 +754,13 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
       {taskDetail && (
         <aside
           className="aglive-detail aglive-task-detail"
-          aria-label="Detalle de tarea"
+          aria-label={tr("Detalle de tarea", "Task details")}
         >
           <header>
             <h2>#{taskDetail.task.id}</h2>
             <button
               className="icon-button"
-              aria-label="Cerrar tarea"
+              aria-label={tr("Cerrar tarea", "Close task")}
               onClick={() => setTaskDetail(null)}
             >
               <X size={17} />
@@ -777,7 +778,7 @@ export function LiveView({ onClose }: { onClose?: () => void }) {
           {(() => {
             const owner = data?.actors.find((a) => a.id === taskDetail.task.owner);
             return owner?.loop ? (
-              <section aria-label={`Bucle de ${owner.name}`}>
+              <section aria-label={tr(`Bucle de ${owner.name}`, `${owner.name} loop`)}>
                 <LoopRing loop={owner.loop} color={owner.color} size="lg" name={owner.name} live={!error && now - owner.last_signal < 60} />
                 <p>
                   {owner.name} · {loopFacts(owner.loop, now)}

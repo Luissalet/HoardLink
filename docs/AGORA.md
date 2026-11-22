@@ -176,6 +176,11 @@ wait is capped at 60 s.
 
 ### Console turn liveness and automatic continuation
 
+The team console at `/agora/` uses `?lang=es` or `?lang=en`, then the saved Hub language or browser language.
+This setting applies to the team and quota cards, task panel, dialogs and Live view, including the built-in
+Production studio name and quota window labels. Task titles, messages, custom space names and other authored
+content retain their original wording.
+
 The team console (`hoard_link/hub/agora_console.py`) launches real provider CLI turns for the `codex` and `cursor`
 leaders (identities `codex-agora` / `cursor-agora`). A turn that ends with "next I will ..." without touching any task
 used to leave the leader idle until the next notification. When a turn finishes, the console now reads what that

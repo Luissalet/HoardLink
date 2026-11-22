@@ -318,6 +318,7 @@ def test_cursor_failed_run_is_error_with_exit_code(tmp_path):
     launch_state(tmp_path, status="failed", exit_code=1, error="boom")
     result = cursor(tmp_path)
     assert result["state"] == "error" and "(código 1)" in result["detail"] and "boom" not in json.dumps(result)
+    assert result["detail_i18n"] == {"es": result["detail"], "en": "The last run failed (exit code 1)."}
     launch_state(tmp_path, status="completed", exit_code=3)
     assert cursor(tmp_path)["state"] == "error"
 
@@ -404,6 +405,8 @@ def test_idle_expired_or_failed_leaders_with_open_tasks_are_flagged(tmp_path):
                                     faustus_native_session={"state": "idle"}, pid_alive=lambda pid: False)
     assert states["claude"]["state"] == "idle" and states["claude"]["idle_with_work"] is True
     assert states["claude"]["open_tasks"] == [1, 5] and "2 tarea(s) abierta(s)" in states["claude"]["detail"]
+    assert states["claude"]["detail_i18n"]["es"] == states["claude"]["detail"]
+    assert states["claude"]["detail_i18n"]["en"].endswith("Unattended open tasks: 2.")
     assert states["codex"]["state"] == "working" and states["codex"]["idle_with_work"] is False
     assert states["codex"]["open_tasks"] == [2]
     assert states["cursor"]["state"] == "error" and states["cursor"]["idle_with_work"] is False   # no open task

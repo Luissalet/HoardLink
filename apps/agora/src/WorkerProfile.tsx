@@ -1,6 +1,6 @@
 import {useEffect, useState} from 'react';
 import {ArrowLeft, Settings2} from 'lucide-react';
-import {api, spaceId} from './api';
+import {api, lang, spaceId} from './api';
 import './worker-profile.css';
 
 const profileRoute = '/api/agora/console/space-profile';
@@ -98,7 +98,6 @@ const copy = {
   },
 };
 
-const lang: Language = (new URLSearchParams(location.search).get('lang') || localStorage.getItem('hub.lang')) === 'en' ? 'en' : 'es';
 const words = copy[lang];
 const stateLabels: Record<string, string> = words.states;
 

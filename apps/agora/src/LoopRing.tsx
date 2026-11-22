@@ -1,4 +1,5 @@
 import { useId, useRef, type CSSProperties } from "react";
+import { lang, locale, tr } from "./locale";
 import "./loop.css";
 
 export type LoopStep = {
@@ -37,11 +38,11 @@ export type Loop = {
 };
 
 export const phaseLabel: Record<Loop["phase"], string> = {
-  plan: "Planear",
-  act: "Actuar",
-  observe: "Observar",
-  done: "Hecho",
-  idle: "En reposo",
+  plan: tr("Planear", "Plan"),
+  act: tr("Actuar", "Act"),
+  observe: tr("Observar", "Observe"),
+  done: tr("Hecho", "Done"),
+  idle: tr("En reposo", "Idle"),
 };
 type RingPhase = "plan" | "act" | "observe";
 /** Where each phase sits on the ring, in degrees from the x axis: plan at the top, then clockwise. */
@@ -51,19 +52,42 @@ const R = 50;
 const TAIL = 110;
 const stepLabel: Record<LoopStep["kind"], string> = {
   plan: "Plan",
-  tool: "Herramienta",
-  result: "Resultado",
+  tool: tr("Herramienta", "Tool"),
+  result: tr("Resultado", "Result"),
   commit: "Commit",
-  submit: "Entrega",
-  end: "Fin",
+  submit: tr("Entrega", "Submission"),
+  end: tr("Fin", "End"),
 };
 const stateLabel: Record<Practice["state"], string> = {
-  ok: "Cumplida",
-  fail: "Incumplida",
-  unknown: "Sin confirmar",
-  pending: "Falta",
+  ok: tr("Cumplida", "Met"),
+  fail: tr("Incumplida", "Unmet"),
+  unknown: tr("Sin confirmar", "Unconfirmed"),
+  pending: tr("Falta", "Pending"),
 };
 const mark: Record<Practice["state"], string> = { ok: "✓", fail: "✕", unknown: "?", pending: "·" };
+
+const stepText = new Map([["razona", "reasoning"], ["fin del turno", "end of turn"]]);
+const kindLabels: Record<WorkKind, string> = {
+  code: "Code", research: "Research", files: "Files and documents", ops: "Operations", chat: "Conversation",
+};
+const kindLabel = (loop: Loop) => lang === "en" && loop.kind ? kindLabels[loop.kind] ?? loop.kind_label : loop.kind_label;
+const practiceLabels = new Map(Object.entries({
+  tests: "Tests run", browser: "App checked in a browser",
+  docs: "Documentation updated (FAUSTUS.md / README / AGENTS.md)", commit: "Commit uses the required identity",
+  no_evidence: "Commit contains no evidence files", agora: "Delivery recorded in Agora (submit / done)",
+  sources_opened: "Sources opened and read", sources_cited: "Sources cited in the response",
+  dated: "Dates checked", verified: "Claims checked against sources", language: "Response in the requester’s language",
+  output_checked: "Output opened and checked", format: "Requested format used",
+  ran_ok: "Commands completed successfully", checked: "Result checked after running",
+  claim: "Task claimed with path locks",
+}));
+const toolLabels = new Map(Object.entries({
+  Leer: "Read", Escribir: "Write", Editar: "Edit", "Editar cuaderno": "Edit notebook", Parche: "Patch",
+  Listar: "List", "Buscar ficheros": "Find files", "Buscar en ficheros": "Search files",
+  "Buscar en la web": "Search the web", "Abrir URL": "Open URL", Navegador: "Browser",
+  Delegar: "Delegate", Tareas: "Tasks", Preguntar: "Ask", "Ver imagen": "View image",
+}));
+const toolLabel = (label: string) => lang === "en" ? toolLabels.get(label) ?? label.replace(/^Navegador · /, "Browser · ") : label;
 
 function point(r: number, deg: number): [number, number] {
   const rad = (deg * Math.PI) / 180;
@@ -115,7 +139,7 @@ export function LoopRing({
       data-phase={loop.phase}
       data-live={live && loop.phase !== "done" ? "true" : "false"}
       role="img"
-      aria-label={`Bucle: ${phaseLabel[loop.phase]} · vuelta ${loop.lap}`}
+      aria-label={tr(`Bucle: ${phaseLabel[loop.phase]} · vuelta ${loop.lap}`, `Loop: ${phaseLabel[loop.phase]} · lap ${loop.lap}`)}
       style={color ? ({ "--actor-color": color } as CSSProperties) : undefined}
     >
       <svg viewBox="0 0 120 120" aria-hidden="true">
@@ -145,7 +169,7 @@ export function LoopRing({
         <span className="agloop-centre">
           {size === "lg" && name && <span className="agloop-name">{name}</span>}
           <strong className="agloop-lap">{loop.phase === "done" ? "✓" : loop.lap || "·"}</strong>
-          <small>{loop.phase === "done" ? "Hecho" : "Vuelta"}</small>
+          <small>{loop.phase === "done" ? phaseLabel.done : tr("Vuelta", "Lap")}</small>
         </span>
       )}
       {size === "lg" &&
@@ -159,17 +183,18 @@ export function LoopRing({
 }
 
 const clock = (value: number) =>
-  new Date(value * 1000).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  new Date(value * 1000).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 const secs = (ms: number) => (ms < 10000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 1000)} s`);
 
 export function loopFacts(loop: Loop, now: number) {
   const parts = [phaseLabel[loop.phase]];
-  if (loop.tool) parts.push(loop.tool_title || loop.tool);
-  parts.push(`vuelta ${loop.lap || 0}`);
+  if (loop.tool) parts.push(toolLabel(loop.tool_title || loop.tool));
+  parts.push(tr(`vuelta ${loop.lap || 0}`, `lap ${loop.lap || 0}`));
   if (loop.turn_started_at && loop.phase !== "done") parts.push(`${Math.max(0, Math.round(now - loop.turn_started_at))} s`);
-  if (loop.tokens) parts.push(`${loop.tokens.toLocaleString("es-ES")} tokens`);
-  if (loop.kind_label) parts.push(loop.kind_label.toLowerCase());
+  if (loop.tokens) parts.push(`${loop.tokens.toLocaleString(locale)} tokens`);
+  const kind = kindLabel(loop);
+  if (kind) parts.push(kind.toLocaleLowerCase(locale));
   return parts.join(" · ");
 }
 
@@ -178,9 +203,10 @@ export function loopBrief(loop: Loop) {
   const s = loop.practices_summary;
   const total = s.ok + s.fail + s.open;
   const parts = [phaseLabel[loop.phase]];
-  if (loop.tool) parts.push(loop.tool_title || loop.tool);
-  if (loop.kind_label) parts.push(loop.kind_label.toLowerCase());
-  if (total) parts.push(`${s.ok}/${total} prácticas`);
+  if (loop.tool) parts.push(toolLabel(loop.tool_title || loop.tool));
+  const kind = kindLabel(loop);
+  if (kind) parts.push(kind.toLocaleLowerCase(locale));
+  if (total) parts.push(tr(`${s.ok}/${total} prácticas`, `${s.ok}/${total} practices`));
   return parts.join(" · ");
 }
 
@@ -189,23 +215,23 @@ function StepRow({ step }: { step: LoopStep }) {
   if (step.kind === "tool" && step.title) {
     what = (
       <span className="agloop-what">
-        <strong>{step.title}</strong>
+        <strong>{toolLabel(step.title)}</strong>
         {step.detail && <span>{step.detail}</span>}
       </span>
     );
   } else if (step.kind === "result" && step.title) {
-    const verdict = step.ok === false ? "✕ error" : step.ok ? "✓ ok" : "· terminada";
+    const verdict = step.ok === false ? "✕ error" : step.ok ? "✓ ok" : tr("· terminada", "· finished");
     what = (
       <span className="agloop-what">
         <b data-ok={step.ok === false ? "false" : step.ok ? "true" : undefined}>{verdict}</b>
         <span>
-          {step.title}
+          {toolLabel(step.title)}
           {step.ms !== undefined ? ` · ${secs(step.ms)}` : ""}
         </span>
       </span>
     );
   } else {
-    what = <span className="agloop-what">{step.label}</span>;
+    what = <span className="agloop-what">{lang === "en" ? stepText.get(step.label) ?? step.label : step.label}</span>;
   }
   return (
     <li data-kind={step.kind} data-ok={step.ok === false ? "false" : undefined}>
@@ -220,9 +246,10 @@ function StepRow({ step }: { step: LoopStep }) {
 export function LoopPanel({ loop }: { loop: Loop }) {
   const s = loop.practices_summary;
   const practices = loop.practices ?? [];
+  const kind = kindLabel(loop);
   return (
     <div className="agloop-panel" data-kind={loop.kind}>
-      <h3>Pasos</h3>
+      <h3>{tr("Pasos", "Steps")}</h3>
       {loop.steps?.length ? (
         <ol className="agloop-steps">
           {loop.steps.map((step, i) => (
@@ -230,21 +257,21 @@ export function LoopPanel({ loop }: { loop: Loop }) {
           ))}
         </ol>
       ) : (
-        <p className="aglive-empty">Sin pasos observados en este turno.</p>
+        <p className="aglive-empty">{tr("Sin pasos observados en este turno.", "No steps observed in this turn.")}</p>
       )}
       {practices.length > 0 ? (
         <>
           <h3>
-            Buenas prácticas a revisar{loop.kind_label ? ` · ${loop.kind_label}` : ""}
+            {tr("Buenas prácticas a revisar", "Practices to review")}{kind ? ` · ${kind}` : ""}
             <small>
-              {s.ok} cumplidas · {s.fail} incumplidas · {s.open} faltan
+              {tr(`${s.ok} cumplidas · ${s.fail} incumplidas · ${s.open} faltan`, `${s.ok} met · ${s.fail} unmet · ${s.open} open`)}
             </small>
           </h3>
           <ul className="agloop-practices">
             {practices.map((p) => (
               <li key={p.id} data-state={p.state} data-practice={p.id}>
                 <span aria-hidden="true">{mark[p.state]}</span>
-                <span>{p.label}</span>
+                <span>{lang === "en" ? practiceLabels.get(p.id) ?? p.label : p.label}</span>
                 <small>
                   {stateLabel[p.state]}
                   {p.evidence ? ` · ${p.evidence}` : ""}
@@ -254,7 +281,7 @@ export function LoopPanel({ loop }: { loop: Loop }) {
           </ul>
         </>
       ) : (
-        <p className="aglive-empty">{loop.kind_label || "Conversación"}: sin buenas prácticas que revisar en este turno.</p>
+        <p className="aglive-empty">{kind || tr("Conversación", "Conversation")} · {tr("Sin buenas prácticas que revisar en este turno.", "No practices to review in this turn.")}</p>
       )}
     </div>
   );
@@ -271,8 +298,8 @@ export function TurnSteps({ loop, now }: { loop: Loop; now: number }) {
       <span className="agloop-steps__bar" role="progressbar" aria-valuemin={0} aria-valuemax={calls} aria-valuenow={done}>
         <i style={{ inlineSize: `${Math.round((done / calls) * 100)}%` }} />
       </span>
-      {calls === 1 ? "1 paso" : `${calls} pasos`}
-      {minutes !== null ? ` · ${minutes < 1 ? "menos de 1 min" : `${minutes} min`}` : ""}
+      {calls === 1 ? tr("1 paso", "1 step") : tr(`${calls} pasos`, `${calls} steps`)}
+      {minutes !== null ? ` · ${minutes < 1 ? tr("menos de 1 min", "less than 1 min") : `${minutes} min`}` : ""}
     </span>
   );
 }
