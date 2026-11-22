@@ -67,6 +67,7 @@ function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];bu
  const [confirmStop,setConfirmStop]=useState<Worker['orphan_process']>();
  const form=useRef<HTMLTextAreaElement>(null);
  const orphan=worker.orphan_process;
+ const detail=worker.detail_i18n?.[lang] || worker.detail;
  const confirming=orphan&&confirmStop?.pid===orphan.pid&&confirmStop.started_at===orphan.started_at;
  const handover=worker.replacement;
  const replacementActive=handover?.state==='waiting_for_worker'||handover?.state==='transferred';
@@ -99,7 +100,7 @@ function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];bu
   {worker.workspace&&<p>{workerText.workspace} {worker.workspace}</p>}
   {worker.faustus_url&&<p>Faustus {worker.faustus_url}</p>}
   {worker.tool_success_count!==undefined&&<p>{workerText.tools(worker.tool_success_count,worker.tool_failure_count||0)}</p>}
-  {worker.detail&&<p>{worker.detail}</p>}
+  {detail&&<p>{detail}</p>}
   {worker.resume_issue&&<p role="status">{issue} {replace&&(owned.length?workerText.replaceHint:workerText.noTask)}</p>}
   {handover?.state==='waiting_for_worker'&&handover.task_id&&<p role="status">{workerText.waiting(handover.task_id)}</p>}
   {handover?.state==='transferred'&&handover.task_id&&<p role="status">{workerText.transferred(handover.task_id)}</p>}

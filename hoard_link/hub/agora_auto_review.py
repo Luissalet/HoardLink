@@ -70,13 +70,15 @@ def review_receipt(console: Any, worker: dict[str, Any]) -> dict[str, Any] | Non
                  and e["data"].get("agent") == worker["agent_id"] and (
                      not job or (e["data"].get("task_id") == job["task_id"]
                                  and e["data"].get("submission_revision") == job["revision"]))), None)
-    out: dict[str, Any] = {"task_ids": [], "workspaces": [], "issues": []}
+    out: dict[str, Any] = {"task_ids": [], "workspaces": [], "tasks": [], "issues": []}
     if vote:
         out.update(reviewed_task_id=vote["task_id"], reviewed_revision=vote["submission_revision"],
                    verdict=vote["verdict"])
     else:
         out["issues"] = [f"Falta el voto de revisión para #{job['task_id']} r{job['revision']}." if job
                          else "No consta ningún voto de revisión."]
+        out["issues_en"] = [f"The review vote for #{job['task_id']} r{job['revision']} is missing." if job
+                            else "No review vote is recorded."]
     return out
 
 

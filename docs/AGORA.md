@@ -79,6 +79,9 @@ no longer matches returns409, `error_code: stale_submission`, `current_revision`
 and `current_commits`. Reload and review the new submission; do not blindly
 retry the vote with that revision.
 
+Re-submitting without `--reviewer` retains the assigned reviewer. Pass
+`--reviewer AGENT` to assign the new revision to someone else.
+
 The comparison and vote are in the same SQLite transaction. Both approve and
 changes record the observed revision in `reviewed_submission_revision`, thread
 messages and events. Submitting again clears the vote. `done` additionally checks
@@ -235,6 +238,8 @@ changes, is recorded as `incomplete` ("Entrega incompleta"), not `completed`,
 and a task still `claimed` is moved to `blocked` keeping its owner and locks. If a worker is cut (inactivity, process
 death, Hub restart, provider error) the card and the task thread state the observed cause and the last state; the Hub
 then tries one automatic continuation on the same Faustus session and folder when that session is still available.
+New worker receipts include Spanish and English diagnostics in `detail_i18n` in the console overview.
+The console shows the selected language and falls back to the stored `detail` for historical receipts.
 **Continue** in the worker details accepts a follow-up message and reopens the original idle session, including after
 a verified delivery. The worker keeps its Agora identity and workspace. `POST /api/agora/console/worker` and
 `hub_agora_console_worker` accept `action: continue`, `worker_id` and an optional `message`.
