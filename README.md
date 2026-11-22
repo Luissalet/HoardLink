@@ -54,6 +54,7 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 
 **Run on: this PC or a Spark**
 - Faustus, Hermes and Prometheus can move to a DGX Spark and back, with incremental data copy, settings rewrite, health checks, a refusal to start them on the PC while they live on the Spark, and a one-click switch in the header. Remote state is polled in the background, and a reverse SSH tunnel keeps the Hub reachable from Faustus.
+- The selected node is stored in `placement.json` in the Hub data directory. For an installation that relied on the old implicit default and has no saved node, put its node in `placement-default.json` before starting the upgraded Hub. Use a JSON object with `name` (display name), `ssh` (SSH alias) and optionally `host` (network address). On startup, the Hub copies this node into `placement.json` only when a saved node is missing. With neither a saved node nor an installation default, choose an available node explicitly.
 - The Hub also relays each installed app's stdio MCP over HTTP so Faustus on a Spark can use apps on the PC or on a Spark.
 - Apps on the PC follow a moved app: the shared Python and Node commons (`hoard_link/where.py`, `hoard-commons/placement.js`) ask the Hub where Faustus answers, keep the answer for a few seconds and try the Spark address after the configured ones. The copilot relays use it, and the Link configuration offers it to apps (`LinkConfig.faustus_candidates()`, `faustus_origin()`).
 

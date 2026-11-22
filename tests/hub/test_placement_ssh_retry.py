@@ -29,6 +29,7 @@ class FakeHub:
 
 def _placement(tmp_path, monkeypatch):
     placement = pl.Placement(FakeHub(tmp_path / "data"))
+    placement._update(node={"name": "Studio node", "ssh": "studio-node"})
     monkeypatch.setattr(pl.time, "sleep", lambda _s: None)          # no real backoff in the tests
     return placement
 

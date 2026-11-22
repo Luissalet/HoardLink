@@ -12,7 +12,7 @@ import pytest
 
 from hoard_link.hub import tools
 from hoard_link.hub.agora import Agora, AgoraError, MIGRATIONS
-from hoard_link.hub.agora_debate import finding_status, guess_evidence_kind, normalize_evidence
+from hoard_link.hub.agora_debate import _LEGACY_PERSON_DISPOSITIONS, finding_status, guess_evidence_kind, normalize_evidence
 
 from ._hub_fakes import http, make_hub, serve, ui_headers, ui_url
 
@@ -140,6 +140,22 @@ def test_rounds_consensus_and_close_into_decision_log(ag):
         ag.debate_finding({"agent": "codex", "debate_id": did, "claim": "late"})
     assert e.value.status == 409
     assert ag.debate_list({"thread_id": tid})["debates"][0]["consensus"]["counts"]["verified"] == 2
+
+
+def test_closed_debate_reads_historical_person_dispositions(ag):
+    tid = _thread(ag)
+    did = ag.debate_open({"agent": "claude", "thread_id": tid, "participants": ["codex"]})["debate"]["id"]
+    finding = ag.debate_finding({"agent": "claude", "debate_id": did, "claim": "Choose a cache",
+                                "disposition": "needs_person"})["finding"]["id"]
+    ag.debate_verify({"agent": "codex", "finding_id": finding})
+    ag.debate_close({"agent": "claude", "debate_id": did, "outcome": "Keep the current cache"})
+    for legacy_key in _LEGACY_PERSON_DISPOSITIONS:
+        ag.db.execute("UPDATE agora_debate_findings SET disposition=? WHERE id=?", (legacy_key, finding))
+        view = ag.debate_show({"debate_id": did})
+        assert view["debate"]["status"] == "closed" and view["debate"]["decision_thread_id"] == tid
+        assert view["findings"][0]["disposition"] == "needs_person" and view["findings"][0]["status"] == "verified"
+        assert view["consensus"]["needs_person"] == [finding]
+        assert "Keep the current cache" in ag.decisions()["decisions"][0]["resolution"]
 
 
 def test_task_thread_close_opens_a_decision_thread(ag):
