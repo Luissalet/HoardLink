@@ -246,6 +246,7 @@ MIGRATIONS.append(agora_decision_history.MIGRATION)
 MIGRATIONS.append(agora_orders.DECISION_HANDOFF_MIGRATION)
 MIGRATIONS.append(agora_orders.DECISION_NOTICE_MIGRATION)
 MIGRATIONS.append(order_gate_readiness.MIGRATION)
+MIGRATIONS.append(agora_orders.DELIVERY_MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -871,6 +872,7 @@ class Agora:
         self._changed = threading.Condition()
         self._version = [0]
         self._space_sweeps: dict[str, float] = {}
+        agora_orders.reconcile_deliveries(self)
 
     @property
     def person_id(self) -> str:
@@ -2072,6 +2074,8 @@ class Agora:
                 if note:
                     self._msg(task['thread_id'], agent, 'comment', note,
                               [fields.get('owner') or task.get('owner')] if fields.get('owner') or task.get('owner') else [])
+                if 'status' in fields and (fields['status'] in FINAL or task['status'] in FINAL):
+                    agora_orders.job_status_changed(self, task['id'], fields['status'])
         self._bump('agora.task.edited', {'task_id': task['id'], 'agent': agent})
         if fields.get('status') in DEP_CLEAR:
             self._wake_dependents(task['id'])
@@ -2501,6 +2505,7 @@ class Agora:
             self._msg(int(task["thread_id"]), agent, "resolution", text)
             self.db.execute("UPDATE threads SET status='resolved', resolution=?, resolved_by=?, updated=? WHERE id=?",
                             (result or "done", agent, now, task["thread_id"]))
+            agora_orders.job_status_changed(self, task["id"], "done")
         self._bump("agora.task.done", {"task_id": task["id"], "agent": agent, "commits": commits,
                                        "reviewed": review_state in ("approved", "equivalent"), "review_state": review_state,
                                        "reviewed_commits": seen if review_state in ("approved", "equivalent") else []})
@@ -2532,6 +2537,8 @@ class Agora:
             else:
                 self._msg(int(task["thread_id"]), agent, "system" if not reason else "comment",
                           reason or f"{agent} suelta la tarea.")
+            if drop:
+                agora_orders.job_status_changed(self, task["id"], "dropped")
         self._bump("agora.task.released", {"task_id": task["id"], "agent": agent, "dropped": drop})
         res = {"ok": True, "task": self._task_row(task["id"])}
         if drop:

@@ -220,6 +220,7 @@ def draft_pass_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         order_row = orders._order_row(self, a.get("order_id"))
         oid = order_row["id"]
         journal = orders._Journal(self, agent, "draft_pass_open")
+        orders._reopen_delivered_order(self, order_row, journal)
         now = orders._now(self)
         title = orders._txt(a.get("title"), 200, "title") or f"Pasada 0 de «{order_row['title']}»"
         pid = self.db.insert("agora_draft_passes", {
@@ -524,6 +525,7 @@ def draft_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             outcomes.append(("Conservada" if choice["id"] == result["kept"] else "Descartada", label))
         orders._decision_notice(self, journal, order_row, f"Pasada 0 #{draft['id']} «{draft['title']}»",
                                 [draft["opened_by"], draft["shown_by"]], outcomes, note)
+        orders.maybe_deliver(self, draft["order_id"], journal)
         token = journal.save()
     self._bump("agora.order.decided", {"order_id": draft["order_id"], "draft_pass": draft["id"], "decision": decision,
                                        "variant": variant["id"]})

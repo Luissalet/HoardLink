@@ -129,6 +129,9 @@ DECISION_NOTICE_MIGRATION = """
     CREATE INDEX messages_production_decisions ON messages(thread_id, id) WHERE kind='production_decision';
 """
 
+DELIVERY_MIGRATION = "ALTER TABLE agora_orders ADD COLUMN auto_delivery TEXT NOT NULL DEFAULT '{}';"
+_DELIVERABLE_STATES = ("open", "producing", "waiting")
+
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #: Tables a journal entry may restore, with their key column.
 _KEYS = {"agora_orders": "id", "agora_order_jobs": "task_id", "agora_pieces": "id", "agora_piece_checks": "id",
@@ -489,8 +492,8 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 sql = " AND ".join(f"{key}=?" for key in cond)
                 current = self.db.one(f"SELECT * FROM {table} WHERE {sql}", tuple(cond.values()))
                 after = change["after"]
-                if table == "agora_orders" and after is not None and "dossier" not in after:
-                    after = {**after, "dossier": "{}"}
+                if table == "agora_orders" and after is not None:
+                    after = {"dossier": "{}", "auto_delivery": "{}", **after}
                 if (dict(current) if current else None) != after:
                     raise _err("The order changed since this write", 409)
             if table == "locks" and change["row"] and change["row"]["expires"] > _now(self):
@@ -506,6 +509,8 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if row is None or table == "locks":
                 self.db.execute(f"DELETE FROM {table} WHERE {sql}", tuple(cond.values()))
             if row and (table != "locks" or row["expires"] > _now(self)):
+                if table == "agora_orders":
+                    row = {"auto_delivery": "{}", **row}
                 cols = list(row)
                 updated = self.db.execute(f"UPDATE {table} SET {', '.join(f'{c}=?' for c in cols)} WHERE {sql}",
                                           (*row.values(), *cond.values()))
@@ -550,6 +555,9 @@ def _piece_row(self: Any, piece_id: Any) -> dict[str, Any]:
 def _order_dict(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out.pop("dossier", None)
+    delivery = _load(out.pop("auto_delivery", None), {})
+    out["delivered_at"] = delivery.get("at")
+    out["delivery_reason"] = delivery.get("reason")
     for key, default in (("refs", []), ("deliverables", []), ("keep", [])):
         out[key] = _load(row.get(key), default)
     return out
@@ -1115,6 +1123,8 @@ def order_update(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if status not in ORDER_STATES:
                 raise _err(f"status must be one of {', '.join(ORDER_STATES)}")
             fields["status"] = status
+            if status != row["status"] and row["auto_delivery"] != "{}":
+                fields["auto_delivery"] = "{}"
         if not fields:
             raise _err("nothing to change: give title, words, refs, dossier, deliverables, template, keep, folder, deadline or status")
         journal = _Journal(self, agent, "order_update")
@@ -1133,6 +1143,76 @@ def _set_status(self: Any, order_id: int, status: str, journal: _Journal, *, onl
     if row and row["status"] in only_from and row["status"] != status:
         journal.before("agora_orders", order_id)
         self.db.execute("UPDATE agora_orders SET status=?, updated=? WHERE id=?", (status, _now(self), order_id))
+
+
+def maybe_deliver(self: Any, order_id: int, journal: Optional[_Journal] = None) -> None:
+    """Check and record an automatic delivery in the transaction that changed the order or job."""
+    order = _order_row(self, order_id)
+    if order["status"] not in _DELIVERABLE_STATES:
+        return
+    jobs = self.db.one("SELECT COUNT(*) AS total, SUM(t.status IN (?,?)) AS closed "
+                       "FROM agora_order_jobs j LEFT JOIN tasks t ON t.id=j.task_id WHERE j.order_id=? AND j.removed=0",
+                       (*_ag().FINAL, order_id))
+    if not jobs["total"] or jobs["closed"] != jobs["total"]:
+        return
+    if (self.db.one("SELECT 1 FROM agora_gates WHERE order_id=? AND status='open'", (order_id,))
+            or self.db.one("SELECT 1 FROM agora_draft_passes WHERE order_id=? AND status<>'decided'", (order_id,))):
+        return
+    gate = self.db.one("SELECT id, opened_by FROM agora_gates WHERE order_id=? AND status='decided' "
+                       "ORDER BY closed DESC, id DESC LIMIT 1", (order_id,))
+    if not gate or not self.db.one(
+            "SELECT 1 FROM agora_order_decisions d JOIN agora_pieces p ON p.id=d.piece_id "
+            "WHERE d.gate_id=? AND d.decision='keep' AND p.status='kept'", (gate["id"],)):
+        return
+    if journal is not None:
+        journal.before("agora_orders", order_id)
+    title = f"Orden / Order #{order_id} «{order['title']}»"
+    thread_id, recipients = _notice_target(self, order, [gate["opened_by"]], "system")
+    message_id = self._msg(
+        thread_id, "system", "production_decision",
+        f"ENTREGADA / DELIVERED · {title}\n"
+        f"Trabajos cerrados y piezas conservadas en la última puerta #{gate['id']}. / "
+        f"All jobs closed and pieces kept at the final gate #{gate['id']}.", recipients)
+    if journal is not None:
+        journal.created("messages", message_id)
+    now = _now(self)
+    delivery = {"at": now, "reason": "final_gate_kept", "previous_status": order["status"], "message_id": message_id}
+    self.db.execute("UPDATE agora_orders SET status='delivered', auto_delivery=?, updated=? WHERE id=?",
+                    (_dump(delivery), now, order_id))
+
+
+def _reopen_delivered_order(self: Any, order: dict, journal: Optional[_Journal] = None) -> None:
+    if order["status"] != "delivered":
+        return
+    delivery = _load(order["auto_delivery"], {})
+    if not delivery:
+        return
+    if journal is not None:
+        journal.before("agora_orders", order["id"])
+        journal.before("messages", delivery["message_id"])
+    self.db.execute("UPDATE agora_orders SET status=?, auto_delivery='{}', updated=? WHERE id=?",
+                    (delivery["previous_status"], _now(self), order["id"]))
+    self.db.execute("DELETE FROM messages WHERE id=?", (delivery["message_id"],))
+
+
+def job_status_changed(self: Any, task_id: int, status: str, journal: Optional[_Journal] = None) -> None:
+    job = self.db.one("SELECT order_id FROM agora_order_jobs WHERE task_id=? AND removed=0", (task_id,))
+    if not job:
+        return
+    order_id = job["order_id"]
+    if status in _ag().FINAL:
+        maybe_deliver(self, order_id, journal)
+    else:
+        _reopen_delivered_order(self, _order_row(self, order_id), journal)
+
+
+def reconcile_deliveries(self: Any) -> None:
+    with self.db.tx():
+        rows = self.db.query(
+            "SELECT o.id, o.space_id FROM agora_orders o WHERE o.status IN (?,?,?) AND EXISTS "
+            "(SELECT 1 FROM agora_gates g WHERE g.order_id=o.id AND g.status='decided')", _DELIVERABLE_STATES)
+        for row in rows:
+            maybe_deliver(self.for_space(row["space_id"]), row["id"])
 
 
 def plan_set(self: Any, a: dict[str, Any], *, undo_for_person: bool = False) -> dict[str, Any]:
@@ -1230,6 +1310,8 @@ def plan_set(self: Any, a: dict[str, Any], *, undo_for_person: bool = False) -> 
                 self.db.execute("UPDATE tasks SET status='dropped', updated=? WHERE id=?", (_now(self), tid))
                 self._system(task, f"{agent} quita este trabajo del plan de la orden #{oid}.", agent)
         if touched:
+            if journal.created_tasks:
+                _reopen_delivered_order(self, order_row, journal)
             _set_status(self, oid, "producing", journal, only_from=("open",))
         journal.before("agora_orders", oid)
         self.db.execute("UPDATE agora_orders SET updated=? WHERE id=?", (_now(self), oid))
@@ -1488,6 +1570,8 @@ def _send_back(self: Any, journal: _Journal, piece: dict[str, Any], agent: str, 
                 else:
                     journal.task_status.append({"task_id": target, "status": task["status"]})
                 self.db.execute("UPDATE tasks SET status='changes', updated=? WHERE id=?", (_now(self), target))
+                if task["status"] == "done":
+                    job_status_changed(self, target, "changes", journal)
     return did
 
 
@@ -1584,6 +1668,7 @@ def gate_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         for i, pid in enumerate(ids):
             self.db.insert("agora_gate_pieces", {"gate_id": gid, "piece_id": pid, "position": i})
             journal.created("agora_gate_pieces", None, where={"gate_id": gid, "piece_id": pid})
+        _reopen_delivered_order(self, order_row, journal)
         _set_status(self, order_row["id"], "waiting", journal, only_from=("open", "producing"))
         token = journal.save()
     self._bump("agora.order.gate", {"order_id": order_row["id"], "gate_id": gid, "pieces": ids, "by": agent})
@@ -1640,15 +1725,13 @@ def _close_if_done(self: Any, journal: _Journal, gate_id: int) -> None:
             _set_status(self, order_id, "producing", journal, only_from=("waiting",))
 
 
-def _decision_notice(self: Any, journal: _Journal, order: dict, gate_label: str, opened_by: list[str],
-                     outcomes: list[tuple[str, str]], note: str) -> None:
-    """An order has one conversation for its decisions, including orders made before decision notices."""
+def _notice_target(self: Any, order: dict, opened_by: list[str], author: str) -> tuple[int, list[str]]:
+    """Use the same order conversation and recipient rules for production notices."""
     thread_id = self.db.scalar("SELECT thread_id FROM agora_order_threads WHERE order_id=?", (order["id"],))
-    title = f"Orden #{order['id']} «{order['title']}»"
     if thread_id is None:
         now = _now(self)
         thread_id = self.db.insert("threads", {
-            "title": title, "kind": "note", "status": "open", "created_by": journal.agent,
+            "title": f"Orden #{order['id']} «{order['title']}»", "kind": "note", "status": "open", "created_by": author,
             "space_id": self.space_id, "created": now, "updated": now})
         self.db.insert("agora_order_threads", {"order_id": order["id"], "thread_id": thread_id})
     members = self.db.query(
@@ -1658,7 +1741,14 @@ def _decision_notice(self: Any, journal: _Journal, order: dict, gate_label: str,
              if m["rank"] in ("director", "lead") or m["agent"].endswith(("-capataz", "-foreman"))]
     creator = self.space_store.get(self.space_id)["created_by"]
     recipients = list(dict.fromkeys(a for a in [*leads, *opened_by, creator]
-                                    if a and a not in (_person_id(self), journal.agent, "system")))
+                                    if a and a not in (_person_id(self), author, "system")))
+    return thread_id, recipients
+
+
+def _decision_notice(self: Any, journal: _Journal, order: dict, gate_label: str, opened_by: list[str],
+                     outcomes: list[tuple[str, str]], note: str) -> None:
+    thread_id, recipients = _notice_target(self, order, opened_by, journal.agent)
+    title = f"Orden #{order['id']} «{order['title']}»"
     lines = [f"DECIDIDO · {title} · {gate_label}", *(f"{action}: {subject}" for action, subject in outcomes)]
     if note:
         lines.append(f"Nota: {note}")
@@ -1727,6 +1817,7 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         selection = ", ".join(f"#{p['id']} «{p['title']}»" for p in alternatives if p["id"] in targets)
         _decision_notice(self, journal, order_row, f"Puerta #{gate['id']} «{gate['title']}»", [gate["opened_by"]],
                          [("Conservado" if decision == "keep" else "Cancelado", selection)], note)
+        maybe_deliver(self, order_row["id"], journal)
         token = journal.save()
     self._bump("agora.order.decided", {"order_id": order_row["id"], "gate_id": gate["id"], "decision": decision,
                                        "pieces": targets})
@@ -1905,7 +1996,7 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
          "inputSchema": schema({"all_spaces": {"type": "boolean"}}, [])},
         {"name": "hub_agora_orders", "read": True,
          "description": "Production orders of a space (all_spaces for every one): status, job and piece counts, "
-                        "thumbnails, and the gates waiting for the person's decision.",
+                        "thumbnails, pending gates, and the date and reason for automatic deliveries.",
          "inputSchema": schema({"status": {"type": "string", "enum": list(ORDER_STATES)}, "all_spaces": {"type": "boolean"},
                                 "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
         {"name": "hub_agora_order", "read": True,
