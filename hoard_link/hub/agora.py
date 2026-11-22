@@ -2486,6 +2486,24 @@ class Agora:
                 review_state = "exempt"
             else:
                 review_state = "unreviewed"
+            try:
+                baseline = (a.get("_closure_baseline", []) if integration else
+                            self.check_integration_closure(self, task, commits)
+                            if hasattr(self, "check_integration_closure") else [])
+            except IntegrationError as exc:
+                raise AgoraError(str(exc), 409, error_code="integration_test_evidence") from exc
+            if any(row["new"] for row in baseline):
+                failures = "; ".join(f"{row['repo']} ({', '.join(row['new'])})" for row in baseline if row["new"])
+                es = f"No se puede cerrar la integración. Fallos nuevos en las pruebas focales: {failures}"
+                en = f"Cannot close the integration. New failures in focused tests: {failures}"
+                raise AgoraError(f"{es}\n{en}", 409, error_code="integration_new_test_failures",
+                                 messages={"es": es, "en": en}, closure_baseline=baseline)
+            if missing := [row["repo"] for row in baseline if row.get("missing")]:
+                names = ", ".join(missing)
+                es = f"Falta comprobar las pruebas focales de esta revisión en Integraciones: {names}."
+                en = f"Check this revision's focused tests in Integrations before closing: {names}."
+                raise AgoraError(f"{es}\n{en}", 409, error_code="integration_test_evidence",
+                                 messages={"es": es, "en": en}, closure_baseline=baseline)
             if delegated:
                 undo = record_closure_undo(self, task, agent, now, commits, result)
             self.db.execute("UPDATE tasks SET status='done', commits=?, result=?, closed_at=?, updated=?, review_state=? "
@@ -2504,6 +2522,9 @@ class Agora:
             else:
                 note = ""
             text = (result or "Hecho.") + note
+            known = [f"{row['repo']} ({', '.join(row['known'])})" for row in baseline if row["known"]]
+            if known:
+                text += "\n\nFallos conocidos de la línea base / Known baseline failures: " + "; ".join(known)
             self._msg(int(task["thread_id"]), agent, "resolution", text)
             self.db.execute("UPDATE threads SET status='resolved', resolution=?, resolved_by=?, updated=? WHERE id=?",
                             (result or "done", agent, now, task["thread_id"]))
@@ -2512,6 +2533,8 @@ class Agora:
                                        "reviewed": review_state in ("approved", "equivalent"), "review_state": review_state,
                                        "reviewed_commits": seen if review_state in ("approved", "equivalent") else []})
         response = {"ok": True, "task": self._task_row(task["id"]), "unblocked": self._wake_dependents(task["id"])}
+        if baseline:
+            response["closure_baseline"] = baseline
         if undo:
             response["undo"] = undo
         return self._with_unseen(a, response)
@@ -3858,6 +3881,8 @@ class AgoraFacet(Facet):
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
         self.agora.registered_repositories = lambda: getattr(getattr(hub, "repos", None), "discover", lambda: [])()
+        self.agora.check_integration_closure = lambda agora, task, commits: (
+            facet.check_closure(agora, task, commits) if (facet := hub.facet("integration")) else [])
         if launcher := getattr(hub, "launcher", None):
             from .service_leases import comfy_repository
 

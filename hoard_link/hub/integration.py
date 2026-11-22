@@ -27,6 +27,7 @@ from .config import REPO_DIR
 from .facets import Facet
 from .integration_closure import closure_snapshot, restore_closure
 from .integration_runtime import IntegrationRuntime, pending_reloads
+from .suite_baseline import SuiteBaseline, closure_report, focal_failures, runner_failed
 
 
 API = "/api/integration"
@@ -197,6 +198,7 @@ class IntegrationFacet(Facet):
     def __init__(self, hub):
         super().__init__(hub)
         self.root = Path(hub.config.data_dir) / "integration"
+        self.suite_baseline = SuiteBaseline(hub.config.data_dir)
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="integration")
         self.lock = Lock()
         self.queue_changed = Condition(self.lock)
@@ -288,7 +290,7 @@ class IntegrationFacet(Facet):
         return {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
                       "branch": task["branch"], "commits": commits, "delta": sorted(delta), "tests": files, "live_test": live,
                       "live_mode": "focused" if live else "contract",
-                      "test_paths": test_paths, "test_paths_source": (
+                      "declared_tests": declared, "test_paths": test_paths, "test_paths_source": (
                           "submission_and_integrator" if declared and extra else
                           "submission" if declared else "integrator" if extra else "affected"),
                       "baseline_files": sorted(known_files),
@@ -590,7 +592,17 @@ class IntegrationFacet(Facet):
                 update("testing_candidate")
                 proposed = self._run_checks(repo, candidate, tests, receipt, base=base, ref=merged, remote=remote)
                 receipt["comparison"] = comparison = checks.compare(main, proposed)
-                if main.get("runner_error") or proposed.get("runner_error"):
+                baseline = self._measured_baseline(plan)
+                reds, main_reds = {}, {}
+                if baseline:
+                    reds = focal_failures(proposed, plan["declared_tests"], baseline)
+                    main_reds = focal_failures(main, plan["declared_tests"], baseline)
+                    receipt["closure_baseline"] = closure_report(baseline["repo"], reds)
+                    for key, (known, _) in reds.items():
+                        comparison["known"].pop(key, None)
+                        comparison["new"].pop(key, None)
+                        comparison["known" if known else "new"][key] = proposed["failures"][key]
+                if runner_failed(main, main_reds) or runner_failed(proposed, reds):
                     raise repo_git.IntegrationError("Open the comparison to check the pytest collection or setup "
                                                     "error, then fix the test environment and retry.")
                 if proposed["counts"]["passed"] + proposed["counts"]["failed"] == 0:
@@ -659,7 +671,16 @@ class IntegrationFacet(Facet):
                                                            base=base, ref=merged, lane="live", remote=remote)
                     result = receipt["live"]
                     failures = result["failures"] if live else checks.compare(proposed, result)["new"]
-                    if result.get("runner_error") or failures or not result["counts"]["passed"]:
+                    if baseline:
+                        reds = focal_failures(result, plan["declared_tests"], baseline)
+                        failures = {key: row for key, row in failures.items() if key not in reds}
+                        failures.update({key: result["failures"][key] for key, (known, _) in reds.items() if not known})
+                        after_merge = closure_report(baseline["repo"], reds)
+                        receipt["closure_baseline"]["known"] = sorted(
+                            set(receipt["closure_baseline"]["known"] + after_merge["known"]))
+                        receipt["closure_baseline"]["new"] = after_merge["new"]
+                    ran = result["counts"]["passed"] or (baseline and reds)
+                    if runner_failed(result, reds) or failures or not ran:
                         raise repo_git.IntegrationError("The post-merge check failed. Inspect the live test results before retrying.")
                 except Exception as exc:
                     self._undo_merge(path, receipt, agora, repo, agent)
@@ -777,7 +798,9 @@ class IntegrationFacet(Facet):
         result = agora.task_done({"agent": receipt["agent"], "task_id": task["id"], "result": note,
                                   "commits": [row["merge_commit"] for row in rows],
                                   "_integration": INTEGRATION_TOKEN,
-                                  "_integration_revision": receipt["revision"]})
+                                  "_integration_revision": receipt["revision"],
+                                  "_closure_baseline": [row["closure_baseline"] for row in rows
+                                                        if "closure_baseline" in row]})
         receipt["close_result"] = {key: result["task"][key] for key in ("commits", "result", "closed_at")}
 
     def _read_receipt(self, path):
@@ -791,6 +814,91 @@ class IntegrationFacet(Facet):
         receipt = self._read_receipt(self._path(args.get("id")))
         return {"ok": receipt is not None, "receipt": receipt,
                 "runtime": self.runtime.status() if self.runtime else None}
+
+    def suite_failures(self, args):
+        repo = args.get("repo")
+        if repo is not None and not isinstance(repo, str):
+            raise ValueError("Use a repository name / Usa un nombre de repositorio")
+        return {"ok": True, "repositories": self.suite_baseline.read(repo)}
+
+    def _measured_baseline(self, plan):
+        if plan["declared_tests"]:
+            for name in dict.fromkeys((plan["repo_ref"], plan["repo"])):
+                rows = self.suite_baseline.read(name)
+                if rows and rows[0]["measured"]:
+                    return rows[0]
+        return None
+
+    def check_closure(self, agora, task, commits):
+        """Use a Hub-run result for the exact content and revision being closed."""
+        if not commits or not task["submission_revision"] or not self.suite_baseline.read():
+            return []
+        paths = submission_tests(submission_summary(agora, task), scoped=True)
+        if not paths:
+            return []
+        receipts = []
+        for path in self.root.glob("*/receipt.json"):
+            row = read_json(path, {})
+            if (row.get("space_id"), row.get("task_id"), row.get("revision")) == (
+                    agora.space_id, task["id"], task["submission_revision"]):
+                receipts.extend(row.get("repositories", [row]))
+        groups = task["commits_by_repo"]
+        if not groups and len(task["commits"]) == 1 and task["repo"]:
+            groups = {task["repo"]: task["commits"]}
+        if not groups:
+            tested = {row["plan"]["repo_ref"]: row["plan"]["commits"] for row in receipts}
+            if {commit for refs in tested.values() for commit in refs} == set(task["commits"]):
+                groups = tested
+        found = {Path(root): (name, refs) for name, refs in groups.items()
+                 if agora.repo_lookup and (root := agora.repo_lookup(name))}
+        if not groups:
+            found = repo_git.delivery_repositories(agora, task)
+            if not found and task["repo"] and agora.repo_lookup and (root := agora.repo_lookup(task["repo"])):
+                found = {Path(root): (task["repo"], task["commits"])}
+        reports = []
+        names = [name for name, _ in found.values()]
+        for repo, (name, submitted) in found.items():
+            selected = repository_tests(paths, name, names)
+            if len(names) > 1 and any(not scoped for _, scoped in selected):
+                tracked = set().union(*(repo_git.tracked(repo, ref) for ref in submitted))
+                selected = [(file, scoped) for file, scoped in selected if scoped or file in tracked]
+            declared = [file for file, _ in selected]
+            baseline = self._measured_baseline({"repo": repo.name, "repo_ref": name, "declared_tests": declared})
+            if not baseline:
+                continue
+            revisions = set()
+            for ref in commits:
+                if re.fullmatch(r"[0-9a-fA-F]{7,64}", ref):
+                    revision = repo_git.git(repo, "rev-parse", "--verify", ref + "^{commit}", check=False)
+                    if not revision.returncode:
+                        revisions.add(revision.stdout.decode("ascii").strip())
+            tips = {ref for ref in revisions if not any(ref != other and repo_git.ancestor(repo, ref, other)
+                                                       for other in revisions)}
+            trees = {repo_git.git_text(repo, "rev-parse", ref + "^{tree}") for ref in tips}
+            for row in sorted(receipts, key=lambda item: item["created"], reverse=True):
+                plan = row["plan"]
+                candidate = row.get("comparison", {}).get("candidate")
+                if (plan["repo_ref"].casefold() != name.casefold() or set(plan["commits"]) != set(submitted)
+                        or not set(declared) <= set(plan["tests"]["contract"])
+                        or not candidate or not row.get("merge_commit")):
+                    continue
+                tree = repo_git.git(repo, "rev-parse", "--verify", row["merge_commit"] + "^{tree}", check=False)
+                if not tree.returncode and trees == {tree.stdout.decode("ascii").strip()}:
+                    reds = focal_failures(candidate, declared, baseline)
+                    invalid = runner_failed(candidate, reds)
+                    if live := row.get("live"):
+                        live_reds = focal_failures(live, declared, baseline)
+                        invalid = invalid or runner_failed(live, live_reds)
+                        reds.update(live_reds)
+                    report = closure_report(baseline["repo"], reds)
+                    if invalid or not (
+                            candidate["counts"]["passed"] + candidate["counts"]["failed"]):
+                        report["missing"] = True
+                    reports.append(report)
+                    break
+            else:
+                reports.append({"repo": baseline["repo"], "new": [], "known": [], "missing": True})
+        return reports
 
     def reconcile(self, args):
         path = self._path(args.get("id"))
@@ -959,6 +1067,8 @@ class IntegrationFacet(Facet):
             return None
         if run := req.q("id"):
             return self._safe(self.status)({"id": run})
+        if req.q("suite_baseline") == "1":
+            return self.suite_failures({"repo": req.q("repo")})
         if req.q("repo"):
             agora = self._agora({"space_id": req.q("space_id")})
             repo = agora.repo_lookup(req.q("repo"))
@@ -1016,6 +1126,8 @@ class IntegrationFacet(Facet):
                     ("run", "Check or integrate a delivery. Comprobar o fusionar una entrega.", write,
                      ["task_id", "revision", "agent"], False),
                     ("status", "Read an integration receipt. Ver un recibo de integración.", {"id": text}, ["id"], True),
+                    ("suite_failures", "Read measured test failures by repository. Ver los fallos de pruebas por repositorio.",
+                     {"repo": text}, [], True),
                     ("reconcile", "Record a verified merge and reason. Corregir un recibo con la fusión verificada y el motivo.",
                      {"id": text, "agent": text, "space_id": text, "repo": text, "commit": text, "reason": text,
                       "restore": {"type": "boolean"}}, ["id", "agent"], False),
@@ -1025,5 +1137,5 @@ class IntegrationFacet(Facet):
 
     def handlers(self):
         return {"hub_integration_" + key: self._safe(method) for key, method in
-                (("plan", self.inspect), ("run", self.run), ("status", self.status),
+                (("plan", self.inspect), ("run", self.run), ("status", self.status), ("suite_failures", self.suite_failures),
                  ("reconcile", self.reconcile), ("undo", self.undo))}
