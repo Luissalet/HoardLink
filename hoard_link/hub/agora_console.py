@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote, urlencode, urlsplit
 
+from . import agora_faustus
 from . import agora_auto_review, agora_liveness, agora_ranks, agora_worker_processes, agora_worker_profiles
 from . import work_admission
 from .agora import AgoraError, FINAL
@@ -269,6 +270,8 @@ class AgoraConsoleFacet(Facet):
                                       ("process_started_at", "REAL"), ("launched_by", "TEXT NOT NULL DEFAULT ''"),
                                       ("retry_count", "INTEGER NOT NULL DEFAULT 0"), ("runtime_endpoint", "TEXT NOT NULL DEFAULT ''"),
                                       ("runtime_pid", "INTEGER"), ("runtime_started_at", "REAL"),
+                                      ("tool_approval_mode", "TEXT NOT NULL DEFAULT ''"),
+                                      ("worker_file_scope", "TEXT NOT NULL DEFAULT ''"),
                                       ("template", "TEXT NOT NULL DEFAULT ''"),
                                       ("verification", "TEXT NOT NULL DEFAULT ''"),
                                       ("resume_issue", "TEXT NOT NULL DEFAULT ''"),
@@ -738,6 +741,9 @@ class AgoraConsoleFacet(Facet):
         workers = []
         for row in rows:
             worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
+            if row["tool_approval_mode"]:
+                worker["tool_approval_mode"] = row["tool_approval_mode"]
+                worker["file_scope"] = json.loads(row["worker_file_scope"])
             verification = json.loads(row["verification"] or "{}")
             if verification.get("warnings"):
                 worker["verification_warnings"] = verification["warnings"]
@@ -1752,12 +1758,14 @@ class AgoraConsoleFacet(Facet):
                         pass
                 handle.close()
 
-    def _prepare_faustus_worker_session(self, agent_id: str, model: dict[str, Any], effort: str
+    def _prepare_faustus_worker_session(self, agent_id: str, model: dict[str, Any], effort: str, **scope
                                        ) -> tuple[Optional[dict[str, Any]], str]:
         from .agora_faustus import prepare
         placement = getattr(self.hub, "placement", None)
         if self.space_id != "ecosystem" or (placement is not None and placement.state().get("location") == "sparks"):
-            return prepare(self, agent_id, model, effort)
+            return prepare(self, agent_id, model, effort, **scope)
+        if scope:
+            return None, "File scope requires a dedicated PC worker. / El ámbito de ficheros requiere un trabajador aislado en el PC."
         parent, detail = self._faustus_bound_session()
         if parent is None:
             return None, f"Faustus child setup failed at stage=parent_binding: {detail}"
@@ -2177,6 +2185,15 @@ class AgoraConsoleFacet(Facet):
             return {"ok": False, "status": 400, "error": "template must be build, probe, review or integrate"}
         if leader_id not in {row[0] for row in LEADERS} or not task or len(task) > MAX_TASK_CHARS:
             return {"ok": False, "status": 400, "error": f"leader_id and task (1-{MAX_TASK_CHARS} characters) are required"}
+        scope = {}
+        if leader_id == "faustus":
+            if "file_scope" in args:
+                scope["declared_paths"] = args["file_scope"]
+            if "task_id" in args:
+                scope["task_id"] = args["task_id"]
+        elif "file_scope" in args:
+            return {"ok": False, "status": 400,
+                    "error": "File scope applies to Faustus workers. / El ámbito de ficheros se aplica a trabajadores de Faustus."}
         agent_id = f"{leader_id}-worker-{worker_id[:8]}"
         # The session may come in under a name of its own choosing (the page proposes one and the person may change
         # it) and with a rank on this server. A rank is the person's to give: started by anyone else, the session
@@ -2348,7 +2365,9 @@ class AgoraConsoleFacet(Facet):
         else:
             setup_failed = False
             try:
-                faustus_session, setup_error = self._prepare_faustus_worker_session(agent_id, row, effort)
+                faustus_session, setup_error = self._prepare_faustus_worker_session(agent_id, row, effort, **scope)
+            except ValueError as exc:
+                return {"ok": False, "status": 400, "error": str(exc)}
             except Exception as exc:  # noqa: BLE001
                 # Native session setup is an external API boundary. Preserve a
                 # durable failed receipt instead of letting an exception escape
@@ -2380,8 +2399,12 @@ class AgoraConsoleFacet(Facet):
             python, root = faustus_installation[1], Path(faustus_installation[0])
             from .agora_faustus import service as placed_service
             base_url = str(faustus_session.get("url") or placed_service(self.hub).get("url") or "").rstrip("/")
-            if faustus_session.get("runtime"):
-                self._faustus_runtimes[worker_id] = faustus_session["runtime"]
+            runtime = faustus_session.get("runtime") or {}
+            if runtime:
+                self._faustus_runtimes[worker_id] = runtime
+            allowed = runtime.get("file_scope") or {}
+            if allowed:
+                prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(allowed, ensure_ascii=False)
             context = []
             agora = self._agora()
             try:
@@ -2399,7 +2422,9 @@ class AgoraConsoleFacet(Facet):
                        "--session", session_id, "--project-id", project_id, "--agent-id", agent_id,
                        "--model", model_id, *(["--effort", effort] if effort else []),
                        "--no-timeout", "--idle-timeout", str(self._worker_idle_seconds()),
-                       "--max-legs", "0", "--json", "--events", "all", "--approve"]
+                       "--max-legs", "0", "--json", "--events", "all"]
+            if not runtime:
+                command.append("--approve")
             if workspace:
                 command.extend(["--workspace", workspace])
             model_source = "installed Faustus runner + owner-verified native project child session"
@@ -2437,9 +2462,10 @@ class AgoraConsoleFacet(Facet):
                 resume_command = command.copy()
                 resume_command[resume_command.index("-p") + 1] = ""
                 db.execute("UPDATE workers SET faustus_url=?,workspace=?,runtime_endpoint=?,runtime_pid=?,"
-                           "runtime_started_at=?,launch_command=?,launch_cwd=? WHERE id=?",
+                           "runtime_started_at=?,launch_command=?,launch_cwd=?,tool_approval_mode=?,worker_file_scope=? WHERE id=?",
                            (base_url, workspace, runtime.get("endpoint", ""), runtime.get("pid"), runtime.get("created_at"),
-                            json.dumps(resume_command), str(worker_cwd), worker_id))
+                            json.dumps(resume_command), str(worker_cwd), runtime.get("tool_approval_mode", ""),
+                            json.dumps(runtime.get("file_scope") or {}), worker_id))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         # Its rank is written once the session exists: one that never started leaves none behind under its name.
         self._give_worker_rank(agent_id, rank, self.person_id if by_person else actor)
@@ -2883,10 +2909,16 @@ class AgoraConsoleFacet(Facet):
             prompt += "\n\nFollow-up from the console:\n" + message
         leader = str(args.get("leader_id") or row["parent_id"])
         same_model = leader == row["parent_id"] and not args.get("model")
+        scope = {}
+        if leader == "faustus" and row["worker_file_scope"] and row["tool_approval_mode"]:
+            previous = json.loads(row["worker_file_scope"])
+            scope = {"task_id": task["id"], "file_scope": args.get("file_scope") or {
+                key: previous[key] for key in ("read_paths", "write_paths")}}
         try:
             launched = self._create_worker({"leader_id": leader, "task": prompt, "rank": "support",
                                             "model": args.get("model") or (row["model"] if same_model else ""),
-                                            "effort": args.get("effort") or (row["effort"] if same_model else "")},
+                                            "effort": args.get("effort") or (row["effort"] if same_model else ""),
+                                            **scope},
                                            actor, worker_id=replacement["worker_id"])
         except Exception:
             self._finish_replacement(worker_id, replacement, "failed", "Replacement could not start. / No se pudo iniciar el relevo.")
@@ -2968,7 +3000,7 @@ class AgoraConsoleFacet(Facet):
 
     def _continue_worker(self, worker_id: str, automatic: bool = False,
                          previous_process: Optional[subprocess.Popen[str]] = None, message: str = "") -> dict[str, Any]:
-        from .agora_faustus import APPRENTICE, STUDIO, reactivate_apprentice_binding
+        from .agora_faustus import APPRENTICE, STUDIO, file_scope, reactivate_apprentice_binding
 
         with _STARTING_LOCK, self._db_lock, self._db() as db:
             row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
@@ -3003,6 +3035,8 @@ class AgoraConsoleFacet(Facet):
         self._adopt_worker_runtime(row)
         base_url = row["faustus_url"]
         session_busy = False
+        launch_scope = json.loads(row["worker_file_scope"] or "{}")
+        approval_mode = row["tool_approval_mode"]
         try:
             if not row["session_id"]:
                 return self._resume_unavailable(row, "missing_session")
@@ -3013,7 +3047,16 @@ class AgoraConsoleFacet(Facet):
                     or command[command.index("--agent-id") + 1] != row["agent_id"]):
                 self._close_worker_runtime(worker_id)
                 return self._resume_unavailable(row, "missing_receipt")
-            status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
+            if row["runtime_endpoint"] and not launch_scope:
+                # A legacy dedicated runtime had no scope. Reopen its saved
+                # session with the workspace grant, never continue it unscoped.
+                launch_scope = file_scope(row["workspace"])
+                self._close_worker_runtime(worker_id)
+                status, activity = 0, {}
+            else:
+                status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
+            if row["runtime_endpoint"] and "--approve" in command:
+                command.remove("--approve")
             runtime = self._faustus_runtimes.get(worker_id)
             runtime_process = runtime.get("process") if runtime else None
             runtime_alive = runtime is not None and (runtime_process is None or runtime_process.poll() is None)
@@ -3022,7 +3065,8 @@ class AgoraConsoleFacet(Facet):
                 from .agora_faustus import start_pc
                 model = command[command.index("--model") + 1]
                 runtime = start_pc(self, row["agent_id"], Path(cwd), command[0],
-                                   row["runtime_endpoint"], model, resume=True)
+                                   row["runtime_endpoint"], model, file_scope=launch_scope, resume=True)
+                approval_mode = runtime["tool_approval_mode"]
                 self._faustus_runtimes[worker_id] = runtime
                 base_url = runtime["url"]
                 status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
@@ -3045,6 +3089,8 @@ class AgoraConsoleFacet(Facet):
             if self.space_id == STUDIO and row["agent_id"] == APPRENTICE:
                 reactivate_apprentice_binding(self, base_url, row["session_id"])
             command[command.index("--url") + 1] = base_url
+            if launch_scope:
+                prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(launch_scope, ensure_ascii=False)
             command[command.index("-p") + 1] = prompt + "\n\nPrior stop: " + row["detail"]
             with log_path.open("w", encoding="utf-8") as log:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
@@ -3068,10 +3114,11 @@ class AgoraConsoleFacet(Facet):
             resume_command[resume_command.index("-p") + 1] = ""
             db.execute("UPDATE workers SET state='running',pid=?,log_path=?,faustus_url=?,detail=?,"
                        "runtime_pid=?,runtime_started_at=?,launch_command=?,launch_cwd=?,"
-                       "outcome='unverified',process_exit_code=NULL,process_started_at=?,updated_at=? WHERE id=?",
+                       "outcome='unverified',process_exit_code=NULL,process_started_at=?,updated_at=?,"
+                       "tool_approval_mode=?,worker_file_scope=? WHERE id=?",
                        (process.pid, str(log_path), base_url, detail, runtime.get("pid"), runtime.get("created_at"),
                         json.dumps(resume_command), cwd, agora_worker_processes.started_at(process.pid),
-                        time.time(), worker_id))
+                        time.time(), approval_mode, json.dumps(launch_scope), worker_id))
         return self._resumed_worker(row, process, result_path, detail)
 
     def _monitor_worker(self, worker_id: str, process: subprocess.Popen[str], result_path: Path) -> None:
@@ -3450,6 +3497,12 @@ class AgoraConsoleFacet(Facet):
         action = str(args.get("action") or "create").strip().lower()
         if action in ("create", "start"):
             return self._create_worker(args, actor)
+        if action == "propose_files":
+            from .agora_faustus import proposed_files
+            try:
+                return {"ok": True, "file_scope": proposed_files(self, args.get("task_id"))}
+            except ValueError as exc:
+                return {"ok": False, "status": 400, "error": str(exc)}
         if action in ("register", "heartbeat", "finish"):
             return self._external_worker(args, action, actor)
         if action == "stop_orphan":
@@ -3833,12 +3886,13 @@ class AgoraConsoleFacet(Facet):
              "annotations": {"readOnlyHint": True}},
             {"name": "hub_agora_console_worker", "description": "Start, stop, continue or replace a console worker, or register an external worker. Reconcile without leader fields lists live orphan processes. Stop an orphan with stop_orphan and its exact confirm_process from the listing; the directing agent must confirm this irreversible stop. Reconcile with leader fields still confirms an ambiguous leader session.",
              "inputSchema": {"type": "object", "properties": {
-                 "action": {"type": "string", "enum": ["create", "stop", "stop_orphan", "register", "heartbeat", "finish", "reconcile", "continue", "replace"]},
+                 "action": {"type": "string", "enum": ["create", "propose_files", "stop", "stop_orphan", "register", "heartbeat", "finish", "reconcile", "continue", "replace"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
                  "confirm_process": {"type": "object", "properties": {"pid": {"type": "integer"}, "started_at": {"type": "number"}},
                                      "required": ["pid", "started_at"], "additionalProperties": False},
                  "message": {"type": "string", "maxLength": 4000, "description": "Follow-up instruction for continue or replace."},
-                 "task_id": {"type": "integer", "minimum": 1, "description": "Task to transfer with replace. It must belong to the original worker."},
+                 "task_id": {"type": "integer", "minimum": 1, "description": "Job for Faustus file suggestions and its registered inputs, or task to transfer with replace."},
+                 "file_scope": agora_faustus.DECLARED_PATHS,
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},
                  "capability": {"enum": ["reasoning_high", "vision_strict", "fast_local"]},

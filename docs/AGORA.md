@@ -214,9 +214,9 @@ recorded as a `liveness` entry in the console activity log.
 ### Console workers: no wall clock, no silent endings
 
 A worker started from the console (Codex, Claude, Cursor or a Faustus child) runs until it finishes. A Faustus child
-is launched without a total deadline (`--no-timeout`) and without a cap on approval continuations (`--max-legs 0`);
-the only guard is an inactivity watchdog on the turn's real events (keepalives do not count), 3600 s by default and
-set with `HOARD_AGORA_WORKER_IDLE_SECONDS`. Stop cancels the exact active run.
+is launched without a total deadline (`--no-timeout`). The inactivity watchdog observes real turn events,
+ignores keepalives and defaults to 3600 seconds. Configure it with `HOARD_AGORA_WORKER_IDLE_SECONDS`.
+Stop cancels the exact active run.
 
 The Faustus console offers models from local endpoints whose URL host matches a registered Sparks address or
 alias in the placement inventory. The endpoint name is the display label. Launches keep the selected endpoint
@@ -228,6 +228,24 @@ installation's SQLite store. If Faustus runs on a Spark, the read uses the SSH c
 placement. The Hub verifies the catalog fingerprint before configuring the child's key over its loopback API.
 Faustus stores it in the child's encrypted endpoint store. Continuing a child after its runtime stops reuses
 its stored endpoint and credentials. After rotating a key, launch a new child so its session uses the new key.
+
+**Dedicated Faustus workers on the PC** launch in automatic approval mode (`auto`).
+The runner leaves approval cards for the person and records the mode and the file scope
+in its console receipt. File tools can write inside the space's workspace and the
+declared output folders. They can also read declared input folders and the copies
+of pieces attached to the production task. A file outside those paths is rejected.
+The person’s own runtime uses its own settings.
+
+In **Create worker**, link a production task to see its input pieces and kept references.
+Their stored copies are available for reading. Select suggested asset folders if the
+worker needs their originals, and enter output folders separately. Folder entries
+use absolute local paths, one per line. On the agent surface, call
+`hub_agora_console_worker` with `action: "propose_files"` and `task_id` to preview.
+For `action: "create"` with `leader_id: "faustus"`, pass the same `task_id` and optional
+`file_scope: {"read_paths": [...], "write_paths": [...]}`. A continued worker keeps
+the scope from its original receipt. Coordination and production checks remain
+available through its Hub connector. For local file arguments sent to the connector,
+use the absolute path inside the declared scope.
 
 Every managed worker is told to commit its work and `submit` its task. When its process ends, the console checks the
 outcome against the Agora: task status, submission revision and uncommitted changes in the delivery's worktrees.
