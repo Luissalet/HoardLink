@@ -332,7 +332,8 @@ def test_overview_lists_liveness_on_console_turns(console):
     console._provider_at = 10**9
     turns = {t["id"]: t for t in console.overview()["console_turns"]}
     assert turns["o1"]["liveness"] == "plan_only" and turns["o1"]["root_turn_id"] == "o1"
-    assert "liveness" in AgoraConsoleFacet.tools()[0]["description"]
+    tools = {tool["name"]: tool for tool in AgoraConsoleFacet.tools()}
+    assert "liveness" in tools["hub_agora_console_overview"]["description"]
 
 
 # -- review fixes: plan-only messages, completed beats blocked, no relaunch without quota -------------------------
