@@ -132,12 +132,12 @@ def test_live_browser_targets_follow_recovery_and_lifecycle(tmp_path, roots, wid
     evidence.mkdir(parents=True,exist_ok=True)
     try:
         with browser_api.sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(channel=os.environ.get("AGORA_TEST_BROWSER_CHANNEL"), headless=True)
             try:
                 page = browser.new_page(viewport={"width":width,"height":1000 if width>500 else 844},reduced_motion=motion)
                 errors = []
                 page.on("pageerror",lambda err:errors.append(str(err)))
-                page.goto(hub.config.url+"/agora/?view=live")
+                page.goto(hub.config.url+"/agora/?view=live&lang=es")
                 page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
                 browser_api.expect(page.locator(".aglive-cursor")).to_have_count(3)
                 browser_api.expect(page.locator(".aglive-file pre")).to_contain_text("+    return observed_state")

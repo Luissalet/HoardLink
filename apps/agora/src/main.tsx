@@ -6,6 +6,8 @@ import '@fontsource/source-sans-3/latin-700.css';
 import '@fontsource/cinzel/latin-600.css';
 import App from './App';
 import {LiveView} from './LiveView';
+import {lang} from './locale';
 import './style.css';
 const liveOnly = new URLSearchParams(location.search).get('view') === 'live';
+document.documentElement.lang = lang;
 createRoot(document.getElementById('root')!).render(<React.StrictMode>{liveOnly ? <LiveView/> : <App/>}</React.StrictMode>);
