@@ -43,7 +43,7 @@ each repository. This also works for a single repository. Use `spark_repos` to s
 | Tool | Operation |
 |---|---|
 | `hub_integration_plan` | Resolve the submitted head and list affected test files and repositories missing a live case. |
-| `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora after the post-merge check. Add `install_dependencies: true` to update stale dependencies before that check. The submitted `Live-Test:`, `live_test` or `live_tests` selects a narrower check. |
+| `hub_integration_run` | Compare main and delivery. With `merge: false`, it also checks a delivery that main already contains. With `merge: true`, integrate the approved revision and close it in Agora after the post-merge check. Add `install_dependencies: true` to update stale dependencies before that check. The submitted `Live-Test:`, `live_test` or `live_tests` selects a narrower check. |
 | `hub_integration_status` | Read a receipt and its current state by `id`. |
 | `hub_integration_suite_failures` | Read the measured suite failures and observation dates. Pass `repo` to filter by repository name. |
 | `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo`, merge `commit` and `reason`. A correction returns the undo call. |
@@ -64,6 +64,14 @@ The other selected tests retain the main-versus-delivery checks, including lost 
 For a manual closure, run the integration check for the submitted revision. Agora uses its
 receipt only when it covers the declared focal files and the tested tree matches the commits
 being closed. A collection failure or missing verification leaves the task open.
+
+A delivery that main already contains, merged by hand or before the station loaded, is checked with
+`hub_integration_run` and `merge: false`. The plan's `published_commit` is the first commit on main's
+first-parent history that contains the submitted tip, and `base` is the mainline commit before it. The station
+tests that exact tree against that base in isolated worktrees, so later commits on main and uncommitted changes
+in the registered checkout do not affect the result. The receipt shows the checked published commit. Close the task
+with Agora `done` and that commit: known failures in the declared tests are reported, a new one leaves the task
+open. The submitted branch must still exist, and `merge: true` still refuses a delivery already on main.
 
 Runs that share a target checkout wait in submission order and recompute their plans against the current mainline
 when their turn starts. After moving the registered checkout, the station checks its local dependencies before

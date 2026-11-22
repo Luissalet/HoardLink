@@ -541,7 +541,7 @@ def test_measured_baseline_guards_direct_done_and_automatic_merge(delivery, tmp_
 
 @pytest.mark.parametrize(("fast_forward", "new_failure"), [(False, False), (False, True), (True, False)])
 def test_check_published_delivery_for_manual_closure(delivery, tmp_path, monkeypatch, fast_forward, new_failure):
-    repo, base, _, branch = delivery
+    repo, base, first, branch = delivery
     path = "tests/test_feature.py"
     write(branch, path, "def test_known(): assert False, 'recorded failure'\n"
           f"def test_new(): assert {not new_failure}\n")
@@ -562,7 +562,7 @@ def test_check_published_delivery_for_manual_closure(delivery, tmp_path, monkeyp
         task_id = agora.task_add({"agent": "owner", "title": "Verify published feature", "repo": repo.name})["task"]["id"]
         args = {"agent": "owner", "task_id": task_id}
         agora.task_claim(args)
-        agora.task_submit({**args, "branch": "delivery", "commits": [head],
+        agora.task_submit({**args, "branch": "delivery", "commits": [first, head],
                            "summary": f"Test-Paths: {path}"})
         agora.task_review({**args, "agent": "reviewer", "verdict": "approve",
                            "expected_submission_revision": 1, "body": "Reviewed."})
@@ -584,16 +584,12 @@ def test_check_published_delivery_for_manual_closure(delivery, tmp_path, monkeyp
         with pytest.raises(git.IntegrationError, match="already present"):
             facet.run({**args, "revision": 1, "merge": True})
 
-        try:
-            run = facet.run({**args, "revision": 1, "merge": False})["receipt"]["id"]
-        except git.IntegrationError as error:
-            if str(error) != "The delivery is already present in the target":
-                raise
-            pytest.xfail("The runner rejects published deliveries")
+        assert facet.inspect({**args, "revision": 1})["plan"]["published_commit"] == published
+        run = facet.run({**args, "revision": 1, "merge": False})["receipt"]["id"]
         wait_for_runs(facet)
         receipt = facet.status({"id": run})["receipt"]
         assert receipt["state"] == ("regressions" if new_failure else "checked"), receipt
-        assert receipt["merge_commit"] == published
+        assert receipt["merge_commit"] == published == receipt["plan"]["published_commit"]
         assert receipt["plan"]["base"] == previous
         assert receipt["closure_baseline"]["known"] == ["tests.test_feature::test_known"]
         assert receipt["closure_baseline"]["new"] == (["tests.test_feature::test_new"] if new_failure else [])
