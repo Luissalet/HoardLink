@@ -48,14 +48,18 @@ except OSError:
 
 
 def placed_app(hub, app):
-    from .placement import APPS
+    from .placement import APPS, NO_NODE
     placement = getattr(hub, "placement", None)
     if placement is None or app.id not in APPS:
         return None
     state = placement.state()
     if (state.get("job") or {}).get("running"):
         raise ValueError("app placement is moving; reconnect after the move finishes")
-    return state if state.get("location") == "sparks" else None
+    if state.get("location") != "sparks":
+        return None
+    if not state.get("node"):
+        raise ValueError(NO_NODE)
+    return state
 
 
 def remote_values(app, manifest):

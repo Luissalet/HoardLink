@@ -145,15 +145,19 @@ def test_placed_legacy_resolution_still_matches_saved_pc_command(relay, placed):
     assert response.json()["app"]["id"] == "prometheus"
 
 
-def test_placement_transition_never_spawns_pc_bridge(relay, placed):
-    placed["job"]["running"] = True
-    with pytest.raises(ValueError, match="placement is moving"):
+@pytest.mark.parametrize(("changes", "error"), [
+    ({"job": {"running": True}}, "placement is moving"),
+    ({"node": None}, "No target Spark is configured"),
+])
+def test_unavailable_placement_never_spawns_pc_bridge(relay, placed, changes, error):
+    placed.update(changes)
+    with pytest.raises(ValueError, match=error):
         launch_spec(relay.hub, relay.app)
     with httpx.Client(trust_env=False) as client:
         response = client.post(relay.url + "/api/mcp/resolve", headers={"Authorization": "Bearer hub-secret"},
             json={"command": sys.executable, "args": [str(relay.root) + "/bridge.py"]})
     assert response.status_code == 422
-    assert "placement is moving" in response.json()["error"]
+    assert error in response.json()["error"]
     assert relay.facet._sessions == {}
 
 

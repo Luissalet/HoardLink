@@ -9,6 +9,8 @@ import sqlite3
 import threading
 import time
 
+import pytest
+
 from hoard_link.hub import placement_remote as pr
 
 
@@ -114,14 +116,72 @@ def _hub(tmp_path):
                          faustus_urls=["http://127.0.0.1:1"]))
 
 
+TEST_NODE = {"name": "Studio node", "ssh": "studio-node", "host": "192.0.2.10"}
+
+
+def test_empty_placement_does_not_invent_a_target(tmp_path):
+    hub = _hub(tmp_path)
+    try:
+        pl = hub.placement
+        status = pl.status()
+        assert status["location"] == "pc" and status["node"] is None and status["nodes"] == []
+        assert pl.state()["node"] is None and pl.spark_hosts() == set()
+        assert pl.switch("pc") == {"ok": True, "already": True, "location": "pc"}
+        assert pl.switch("sparks")["ok"] is False
+        assert pl._thread is None and not pl.path.exists()
+    finally:
+        hub.close()
+
+
+def test_installation_default_migrates_existing_state_once(tmp_path):
+    from hoard_link.hub.placement import Placement
+
+    data = tmp_path / "data"
+    data.mkdir()
+    state = data / "placement.json"
+    existing = {"location": "pc", "job": {"running": False}, "deployed": {"faustus": "current"}}
+    state.write_text(json.dumps(existing), encoding="utf-8")
+    seed = data / "placement-default.json"
+    seed.write_text(json.dumps(TEST_NODE), encoding="utf-8")
+    hub = _hub(tmp_path)
+    try:
+        assert json.loads(state.read_text(encoding="utf-8")) == {**existing, "node": TEST_NODE}
+        assert hub.placement.status()["nodes"] == [TEST_NODE["name"]]
+        seed.write_text(json.dumps({"name": "Other node", "ssh": "other-node"}), encoding="utf-8")
+        assert Placement(hub).state()["node"] == TEST_NODE
+        assert json.loads(state.read_text(encoding="utf-8")) == {**existing, "node": TEST_NODE}
+    finally:
+        hub.close()
+
+
+def test_missing_remote_node_keeps_local_start_blocked(tmp_path, monkeypatch):
+    hub = _hub(tmp_path)
+    try:
+        pl = hub.placement
+        pl._update(location="sparks", urls={"faustus": "https://studio-node.example.invalid/"})
+
+        def unexpected_probe():
+            pytest.fail("remote probe without a node")
+
+        monkeypatch.setattr(pl, "remote_health", unexpected_probe)
+        monkeypatch.setattr(pl, "_refresh_urls_later", unexpected_probe)
+        status = pl.status()
+        assert status["location"] == "sparks" and "remote" not in status
+        assert pl.remote_app("faustus")["state"] == "down"
+        assert pl.local_block("faustus")
+        assert pl.switch("pc")["ok"] is False and pl._thread is None
+    finally:
+        hub.close()
+
+
 def test_hub_refuses_local_starts_while_on_the_spark(tmp_path):
     hub = _hub(tmp_path)
     try:
         assert hub.placement.status()["location"] == "pc"
         assert hub.placement.local_block("faustus") is None
         hub.placement._refresh_remote_health = lambda: None                 # no SSH from the tests
-        hub.placement._update(location="sparks", urls={"faustus": "https://spark3.example.ts.net"})   # links known: no lookup
-        assert "Spark3" in hub.placement.local_block("hermes")
+        hub.placement._update(location="sparks", node=TEST_NODE, urls={"faustus": "https://studio-node.example.invalid"})
+        assert TEST_NODE["name"] in hub.placement.local_block("hermes")
         assert hub.placement.local_block("comfyui") is None            # other apps are not part of the stack
         res = hub.faustus_start()
         assert res["ok"] is False and res["placement"] is True
@@ -150,21 +210,27 @@ def test_switch_refuses_unknown_targets_and_a_second_move(tmp_path):
 def test_switch_uses_configured_node_and_retains_live_source(tmp_path, monkeypatch):
     hub = _hub(tmp_path)
     pl = hub.placement
-    monkeypatch.setattr(pl, "_configured_sparks", lambda: [{"name": "Spark4", "ssh": "Spark4Asus", "host": "spark4.local"}])
+    target = {"name": "Other node", "ssh": "other-node", "host": "192.0.2.11"}
+    monkeypatch.setattr(pl, "_configured_sparks", lambda: [target])
     seen = []
     monkeypatch.setattr(pl, "_run_switch", lambda to: seen.append((to, pl._node())))
     try:
-        assert "Spark4" in pl.status()["nodes"]
+        assert pl.status()["node"] is None and pl.status()["nodes"] == [target["name"]]
+        assert not pl.switch("sparks")["ok"]
         assert not pl.switch("sparks", "unconfigured")["ok"]
-        pl._update(deployed={"faustus": "old"}, location="sparks")
-        assert not pl.switch("sparks", "Spark4")["ok"]
-        assert pl._node() == "Spark3"
-        pl._update(location="pc")
-        assert pl.switch("sparks", "Spark4")["ok"]
+        assert pl.switch("sparks", target["name"])["ok"]
         pl._thread.join(timeout=2)
-        assert seen == [("sparks", "Spark4Asus")]
+        assert seen == [("sparks", target["ssh"])]
+        assert pl.state()["node"] == target
+        pl._update(node=TEST_NODE, deployed={"faustus": "old"}, location="sparks", job={"running": False})
+        assert not pl.switch("sparks", target["name"])["ok"]
+        assert pl._node() == TEST_NODE["ssh"]
+        pl._update(location="pc")
+        assert pl.switch("sparks", target["name"])["ok"]
+        pl._thread.join(timeout=2)
+        assert seen == [("sparks", target["ssh"])] * 2
         assert pl.state()["deployed"] == {}
-        assert pl.status()["job"]["node"] == "Spark4"
+        assert pl.status()["job"]["node"] == target["name"]
     finally:
         hub.close()
 
@@ -266,15 +332,15 @@ def test_apps_on_the_spark_show_its_state_where_and_tailnet_address(tmp_path):
         pl = hub.placement
         pl._refresh_remote_health = lambda: None
         assert pl.remote_app("hermes") is None                                   # on the PC: nothing changes
-        pl._update(location="sparks", urls={"hermes": "https://spark3.example.ts.net:5221/products/",
-                                            "faustus": "https://spark3.example.ts.net"})
+        pl._update(location="sparks", node=TEST_NODE, urls={"hermes": "https://studio-node.example.invalid:5221/products/",
+                                                           "faustus": "https://studio-node.example.invalid"})
         assert pl.remote_app("hermes")["state"] == "starting"                    # first answer not in yet
         pl._remote_health = {"checked": time.time(), "ok": True, "error": "", "apps": {
             "faustus": {"service": "active", "http": "200", "healthy": True},
             "hermes": {"service": "active", "http": "200", "healthy": True},
             "prometheus": {"service": "inactive", "http": "000", "healthy": False}}}
         hermes = pl.remote_app("hermes")
-        assert hermes["state"] == "running" and hermes["where"] == "Spark3" and hermes["url"].endswith(":5221/products/")
+        assert hermes["state"] == "running" and hermes["where"] == TEST_NODE["name"] and hermes["url"].endswith(":5221/products/")
         assert pl.remote_app("prometheus")["state"] == "down"
         assert pl.remote_app("comfyui") is None
         status = pl.status()
@@ -293,8 +359,8 @@ def test_opening_an_app_on_the_spark_opens_its_tailnet_address(tmp_path, monkeyp
     try:
         pl = hub.placement
         pl._refresh_remote_health = lambda: None
-        url = "https://spark3.example.ts.net:5205/"
-        pl._update(location="sparks", urls={"prometheus": url})
+        url = "https://studio-node.example.invalid:5205/"
+        pl._update(location="sparks", node=TEST_NODE, urls={"prometheus": url})
         pl._remote_health = {"checked": time.time(), "ok": True, "error": "", "apps": {
             "prometheus": {"service": "active", "http": "200", "healthy": True}}}
         from hoard_link.hub.registry import App
@@ -303,13 +369,13 @@ def test_opening_an_app_on_the_spark_opens_its_tailnet_address(tmp_path, monkeyp
                                           url="http://127.0.0.1:5205/", health_path="/api/health", expect_service=None,
                                           launchable=True)
         st = hub.app_status(hub.get("prometheus"), {}, {})
-        assert st["state"] == "running" and st["where"] == "Spark3" and st["url"] == url
+        assert st["state"] == "running" and st["where"] == TEST_NODE["name"] and st["url"] == url
         assert st["launchable"] is False and st["stoppable"] is False and st["process"] is None
         seen = {}
         monkeypatch.setattr(core.desktop, "open_in_browser", lambda u: seen.setdefault("url", u) and {"ok": True})
         monkeypatch.setattr(core.desktop, "start_app", lambda *a, **k: (_ for _ in ()).throw(AssertionError("started")), raising=False)
         res = hub.open("prometheus", mode="browser")
-        assert seen["url"] == url and res["where"] == "Spark3"
+        assert seen["url"] == url and res["where"] == TEST_NODE["name"]
     finally:
         hub.close()
 

@@ -68,6 +68,7 @@ def catalogue() -> list[dict[str, Any]]:
         {
             "name": "hub_placement_status",
             "description": "Where Faustus, Hermes and Prometheus run now: this PC or a Spark (never both).\n"
+                           "The current or default node is null when none is configured. Nodes lists selectable destinations. "
                            "Also the move in progress with its log, the tailnet links while they are on the Spark and what is "
                            "paused there, and whether each one is up there (remote: its user service and HTTP answer, checked every 30 s). "
                            "Keywords: dónde corre Faustus, Sparks, apagar el PC, ubicación, está en marcha en la Spark.",
@@ -79,6 +80,8 @@ def catalogue() -> list[dict[str, Any]]:
             "description": "Move Faustus, Hermes and Prometheus to the Spark (PC can be switched off) or back to this PC.\n"
                            "Stops them on one side, copies code and data, starts them on the other; takes minutes, follow it "
                            "with hub_placement_status. Set node to one of its nodes when moving from the PC to a Spark. "
+                           "An explicit node is required when there is no default. To undo a completed move to a Spark, "
+                           "call this tool with to=pc. "
                            "Keywords: ejecutar en las Sparks, volver al PC, mover Faustus.",
             "inputSchema": {"type": "object", "properties": {"to": {"type": "string", "enum": ["pc", "sparks"]},
                                                                "node": {"type": "string"}},

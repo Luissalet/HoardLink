@@ -311,7 +311,8 @@ body #hub-content { padding-bottom:76px; } /* room for the floating copilot butt
   border-radius: 999px; font-size: var(--hub-fs-3, 16px); font-weight: 700; color: var(--hoard-accent-ink, #111); background: var(--hoard-accent); }
 .placement-arrow .pa-go:hover:not(:disabled) { background: var(--hoard-accent-strong, var(--hoard-accent)); }
 .placement-arrow .pa-go:focus-visible { outline: 2px solid var(--hoard-accent); outline-offset: 2px; }
-.placement-arrow .pa-go:disabled { cursor: progress; }
+.placement-arrow .pa-go:disabled:not(.is-moving) { background: transparent; color: var(--hoard-text-dim); cursor: default; }
+.placement-arrow .pa-go:disabled.is-moving { cursor: progress; }
 .placement-arrow .pa-go.is-moving { animation: pa-pulse 1.1s ease-in-out infinite; }
 @keyframes pa-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .placement-arrow .pa-go.is-moving { animation: none; opacity: .6; } }

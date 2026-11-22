@@ -204,7 +204,8 @@ def test_the_placement_status_carries_the_link(tmp_path):
     try:
         assert "hub_link" not in hub.placement.status()                            # on the PC there is nothing to link
         hub.placement._refresh_remote_health = lambda: None
-        hub.placement._update(location="sparks", urls={"faustus": "https://spark3.example.ts.net"})
+        hub.placement._update(location="sparks", node={"name": "Studio node", "ssh": "studio-node"},
+                              urls={"faustus": "https://studio-node.example.invalid"})
         status = hub.placement.status()
         assert status["hub_link"] == {"wanted": False, "up": False, "since": None, "error": "", "port": pl.LINK_PORT,
                                       "node": "", "freed": ""}
@@ -270,6 +271,7 @@ def test_a_plain_ssh_step_hands_ssh_no_pipe_to_wait_on(tmp_path):
         return types.SimpleNamespace(returncode=0, stdout=b"ok\n", stderr=b"")
 
     placement = plp.Placement(FakeHub(tmp_path / "data"), runner=run)
+    placement._update(node={"name": "Studio node", "ssh": "studio-node"})
     assert placement._ssh("true") == "ok\n"
     assert calls[0]["stdin"] is subprocess.DEVNULL
     assert placement._ssh("cat > x", input="body") == "ok\n"

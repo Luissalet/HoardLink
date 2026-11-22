@@ -6,6 +6,10 @@
   const es = () => (document.documentElement.lang || "es").startsWith("es");
   const T = {
     run_on: ["Ejecutar en", "Run on"], pc: ["PC", "PC"], spark_target: ["Spark de destino", "Target Spark"],
+    spark: ["Spark", "Spark"], choose_spark: ["Elegir una Spark", "Choose a Spark"],
+    no_spark: ["No hay una Spark de destino configurada.", "No target Spark is configured."],
+    no_spark_short: ["Sin Spark configurada", "No Spark configured"],
+    no_default: ["No hay una Spark predeterminada.", "No default Spark is configured."],
     moving: ["Trasladando:", "Moving:"], on_spark: ["Faustus, Hermes y Prometheus corren en {node}. Puedes apagar el PC.", "Faustus, Hermes and Prometheus run on {node}. You can switch the PC off."],
     to_sparks_title: ["Pasar Faustus, Hermes y Prometheus a {node}", "Move Faustus, Hermes and Prometheus to {node}"],
     to_sparks_body: ["Los paro aquí, copio su código y sus datos a {node} y los arranco allí; nunca corren en los dos a la vez. Tarda unos minutos (la primera vez, más). Después puedes apagar el PC.",
@@ -57,6 +61,10 @@
     }, 2000);
   }
 
+  const canMove = (to) => Boolean(state.node || (to === "sparks" && state.location === "pc" && state.nodes?.length));
+  const missingNode = () => t(state.location === "pc" && state.nodes?.length ? "no_default" : "no_spark");
+  function confirmMove(to) { confirmTo = to; confirmNode = state.node || ""; render(); }
+
   // The two-way toggle.
   function toggle() {
     const job = state.job || {};
@@ -65,11 +73,11 @@
     const seg = el("span", "placement-seg");
     seg.setAttribute("role", "group"); seg.setAttribute("aria-label", t("run_on"));
     for (const to of ["pc", "sparks"]) {
-      const b = el("button", "ghost small" + (state.location === to ? " active" : ""), to === "pc" ? t("pc") : state.node);
+      const b = el("button", "ghost small" + (state.location === to ? " active" : ""), to === "pc" ? t("pc") : state.node || t("spark"));
       b.type = "button"; b.dataset.placementTo = to;
       b.setAttribute("aria-pressed", String(state.location === to));
-      b.disabled = !!job.running || (state.location === to && job.ok !== false);
-      b.onclick = () => { confirmTo = to; confirmNode = state.node; render(); };
+      b.disabled = !!job.running || !canMove(to) || (state.location === to && job.ok !== false);
+      b.onclick = () => confirmMove(to);
       seg.appendChild(b);
     }
     wrap.appendChild(seg);
@@ -77,22 +85,31 @@
     return wrap;
   }
 
-  // The quick switch: "PC ← Spark3" / "PC → Spark3". One click moves Faustus, Hermes and Prometheus to the other side
+  // The quick switch: one click moves Faustus, Hermes and Prometheus to the other side when a node is selected
   // (no confirmation); the arrow points where they go and pulses while they move.
   function arrow() {
     const wrap = el("span", "placement-arrow");
     if (!state) return wrap;
     const job = state.job || {};
-    const node = state.node || "Spark";
+    const node = state.node || (canMove("sparks") ? t("choose_spark") : t("no_spark_short"));
     const here = job.running ? job.to : state.location;
     const to = job.running ? job.to : (state.location === "sparks" ? "pc" : "sparks");
     const pc = el("span", "pa-end" + (here === "pc" ? " is-here" : ""), t("pc"));
     const sp = el("span", "pa-end" + (here === "sparks" ? " is-here" : ""), node);
     const b = el("button", "pa-go" + (job.running ? " is-moving" : ""), to === "pc" ? "\u2190" : "\u2192");
-    b.type = "button"; b.dataset.placementArrow = to; b.disabled = !!job.running;
-    b.title = job.running ? `${t("moving")} ${job.step || ""}` : (to === "sparks" ? t("to_sparks_title", { node }) : t("to_pc_title"));
+    b.type = "button"; b.dataset.placementArrow = to; b.disabled = !!job.running || !canMove(to);
+    b.title = job.running ? `${t("moving")} ${job.step || ""}` : !state.node ? (canMove(to) ? node : missingNode()) :
+      (to === "sparks" ? t("to_sparks_title", { node }) : t("to_pc_title"));
     b.setAttribute("aria-label", b.title);
-    b.onclick = (ev) => { ev.stopPropagation(); move(to); };
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      if (state.node) {
+        move(to);
+      } else {
+        window.location.hash = "#hub/home";
+        confirmMove(to);
+      }
+    };
     wrap.append(pc, b, sp);
     return wrap;
   }
@@ -101,26 +118,39 @@
   function panel() {
     const job = state.job || {};
     const box = el("div", "placement-panel");
-    if (confirmTo && !job.running) {
+    if (confirmTo && !job.running && canMove(confirmTo)) {
       box.classList.add("is-confirm");
       const title = el("h3");
       const body = el("p");
+      const go = el("button", "hub-btn hub-btn-primary primary", t("go")); go.type = "button"; go.dataset.placementConfirm = confirmTo;
       const updateCopy = () => {
-        title.textContent = confirmTo === "sparks" ? t("to_sparks_title", { node: confirmNode }) : t("to_pc_title");
-        body.textContent = confirmTo === "sparks" ? t("to_sparks_body", { node: confirmNode }) : t("to_pc_body");
+        if (confirmTo === "sparks") {
+          title.textContent = confirmNode ? t("to_sparks_title", { node: confirmNode }) : t("choose_spark");
+          body.textContent = confirmNode ? t("to_sparks_body", { node: confirmNode }) : t("no_default");
+          go.disabled = !confirmNode;
+        } else {
+          title.textContent = t("to_pc_title");
+          body.textContent = t("to_pc_body");
+        }
       };
-      updateCopy();
       box.append(title);
-      if (confirmTo === "sparks" && state.location === "pc" && state.nodes?.length > 1) {
+      if (confirmTo === "sparks" && state.location === "pc" && (!state.node || state.nodes?.length > 1)) {
         const label = el("label", null, t("spark_target") + " ");
         const select = el("select");
         select.dataset.placementNode = "";
+        if (!state.node) {
+          const empty = el("option", null, t("choose_spark"));
+          empty.value = "";
+          empty.disabled = true;
+          select.append(empty);
+        }
         for (const node of state.nodes) {
           const option = el("option", null, node);
           option.value = node;
           select.append(option);
         }
-        select.value = state.nodes.includes(confirmNode) ? confirmNode : state.node;
+        confirmNode = state.nodes.includes(confirmNode) ? confirmNode : state.node || "";
+        select.value = confirmNode;
         select.onchange = () => {
           confirmNode = select.value;
           updateCopy();
@@ -128,18 +158,21 @@
         label.append(select);
         box.append(label);
       }
+      updateCopy();
       box.append(body);
       if (confirmTo === "sparks") { box.appendChild(el("p", "muted", t("paused"))); box.appendChild(list(state.paused_on_spark)); }
       const row = el("div", "placement-actions");
-      const go = el("button", "hub-btn hub-btn-primary primary", t("go")); go.type = "button"; go.dataset.placementConfirm = confirmTo;
       go.onclick = () => move(confirmTo, confirmTo === "sparks" ? confirmNode : "");
       const no = el("button", "hub-btn ghost", t("cancel")); no.type = "button"; no.onclick = () => { confirmTo = null; render(); };
       row.append(go, no); box.appendChild(row);
       return box;
     }
+    if (!state.node) box.appendChild(el("p", "muted", missingNode()));
     if (state.location === "sparks" && !job.running) {
-      box.appendChild(el("p", null, t("on_spark", { node: state.node })));
-      box.appendChild(health());
+      if (state.node) {
+        box.appendChild(el("p", null, t("on_spark", { node: state.node })));
+        box.appendChild(health());
+      }
       const urls = state.urls || {};
       if (Object.keys(urls).length) {
         box.appendChild(el("p", "muted", t("links")));
@@ -149,11 +182,11 @@
           const a = el("a", null, url.replace(/^https:\/\//, "")); a.href = url; a.target = "_blank"; a.rel = "noopener"; li.appendChild(a); ul.appendChild(li);
         }
         box.appendChild(ul);
-      } else box.appendChild(el("p", "muted", t("no_links")));
+      } else if (state.node) box.appendChild(el("p", "muted", t("no_links")));
       box.appendChild(el("p", "muted", t("paused"))); box.appendChild(list(state.paused_on_spark));
       const row = el("div", "placement-actions");
       const upd = el("button", "hub-btn ghost", t("update")); upd.type = "button"; upd.title = t("update_hint");
-      upd.dataset.placementUpdate = "1"; upd.onclick = () => move("sparks");
+      upd.dataset.placementUpdate = "1"; upd.disabled = !state.node; upd.onclick = () => move("sparks");
       row.appendChild(upd); box.appendChild(row);
     }
     if (job.ok === false && !job.running) box.appendChild(el("p", "placement-error", `${t("failed")} ${job.error || ""}`));

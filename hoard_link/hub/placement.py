@@ -29,10 +29,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from ..atomic import read_json
 from . import placement_remote as pr
 
 APPS = ("faustus", "hermes", "prometheus")
-DEFAULT_NODE = {"ssh": "Spark3", "name": "Spark3", "host": "192.168.0.185"}
 STACK = "~/faustus-stack"
 SPARK_HOME = "/home/luissalet"
 SPARK_STACK = f"{SPARK_HOME}/faustus-stack"
@@ -79,6 +79,7 @@ HERMES_KEYS = [("data/native/products/data/tantalus.db", "notify.email.faustus_d
 HERMES_PATH_KEYS = [(db, key) for db, key, _ in HERMES_KEYS]
 PROMETHEUS_PATH_KEYS = ["recipes_dir"]
 MARKER = "placement-elsewhere.json"
+NO_NODE = "No hay una Spark de destino configurada. / No target Spark is configured."
 
 
 def _flags() -> int:
@@ -101,20 +102,31 @@ class Placement:
         # Faustus on the Spark keeps reaching this Hub (Agora, rooms, council) through a tunnel; started by the Hub's main.
         from .placement_link import HubLink
         self.link = HubLink(self)
+        seed = read_json(self.path.with_name("placement-default.json"))
+        self._default_node = seed if self._valid_node(seed) else None
         data = self.state()
-        if (data.get("job") or {}).get("running"):        # the Hub stopped mid-switch: say so instead of looking busy forever
+        migrated = data["node"] is None and self._default_node is not None
+        if migrated:
+            data["node"] = self._default_node
+        interrupted = (data.get("job") or {}).get("running")
+        if interrupted:        # the Hub stopped mid-switch: say so instead of looking busy forever
             data["job"].update(running=False, ok=False, step="error",
                                error="el Hub se cerró a mitad del traslado; vuelve a pulsar el botón para terminarlo")
+        if migrated or interrupted:
             self._save(data)
 
     # ================================================================================= state
+    @staticmethod
+    def _valid_node(node: Any) -> bool:
+        return (isinstance(node, dict) and isinstance(node.get("name"), str) and bool(node["name"].strip())
+                and isinstance(node.get("ssh"), str) and bool(node["ssh"].strip()))
+
     def state(self) -> dict[str, Any]:
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
+        saved = read_json(self.path)
+        data = saved if isinstance(saved, dict) else {}
         data.setdefault("location", "pc")
-        data.setdefault("node", dict(DEFAULT_NODE))
+        if not self._valid_node(data.get("node")):
+            data["node"] = None
         data.setdefault("job", {"running": False})
         return data
 
@@ -153,12 +165,14 @@ class Placement:
 
     def status(self) -> dict[str, Any]:
         data = self.state()
-        if data["location"] == "sparks" and not data.get("urls") and not (data.get("job") or {}).get("running"):
+        node = data["node"]
+        remote = node is not None and data["location"] == "sparks" and not (data.get("job") or {}).get("running")
+        if remote and not data.get("urls"):
             self._refresh_urls_later()
-        out = {"ok": True, "location": data["location"], "node": data["node"]["name"], "since": data.get("since"),
+        out = {"ok": True, "location": data["location"], "node": node["name"] if node else None, "since": data.get("since"),
                "job": data.get("job"), "apps": list(APPS), "urls": data.get("urls") or {},
-               "paused_on_spark": PAUSED_ON_SPARK, "nodes": list(self._placement_nodes(data["node"]))}
-        if data["location"] == "sparks" and not (data.get("job") or {}).get("running"):
+               "paused_on_spark": PAUSED_ON_SPARK, "nodes": list(self._placement_nodes(node))}
+        if remote:
             out["remote"] = self.remote_health()
             out["hub_link"] = self.link.status()
         else:
@@ -219,6 +233,9 @@ class Placement:
         data = self.state()
         if data["location"] != "sparks" or (data.get("job") or {}).get("running"):
             return None
+        if data["node"] is None:
+            return {"state": "down", "where": "Spark", "url": (data.get("urls") or {}).get(app_id) or "",
+                    "detail": NO_NODE, "checked": None}
         node = data["node"]["name"]
         health = self.remote_health()
         app = (health.get("apps") or {}).get(app_id)
@@ -241,6 +258,8 @@ class Placement:
             return None
         data = self.state()
         if data["location"] == "sparks":
+            if data["node"] is None:
+                return NO_NODE
             return f"{app_id} se está ejecutando en {data['node']['name']}; cámbialo desde el Hub (Ejecutar en: PC)."
         if (data.get("job") or {}).get("running"):
             return f"{app_id} se está trasladando ahora mismo; espera a que termine el cambio de ubicación."
@@ -248,7 +267,10 @@ class Placement:
 
     # ================================================================================= ssh plumbing
     def _node(self) -> str:
-        return self.state()["node"]["ssh"]
+        node = self.state()["node"]
+        if node is None:
+            raise PlacementError(NO_NODE)
+        return node["ssh"]
 
     def _ssh(self, command: str, timeout: float = 120, input: Optional[str] = None) -> str:
         # Bytes both ways: text mode on Windows would turn every "\n" sent into "\r\n" and read the Spark's UTF-8 as cp1252.
@@ -430,19 +452,21 @@ class Placement:
         nodes = data.get("nodes") if isinstance(data, dict) else None
         return [node for node in nodes if isinstance(node, dict)] if isinstance(nodes, list) else []
 
-    def _placement_nodes(self, current: dict[str, str]) -> dict[str, dict[str, str]]:
-        choices = {DEFAULT_NODE["name"]: dict(DEFAULT_NODE)}
+    def _placement_nodes(self, current: Optional[dict[str, str]]) -> dict[str, dict[str, str]]:
+        default = self._default_node
+        choices = {default["name"]: default} if default else {}
         for node in self._configured_sparks():
             alias = str(node.get("ssh") or "").strip()
             name = str(node.get("name") or alias).strip()
             if re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", alias) and name:
                 choices[name] = {"name": name, "ssh": alias, "host": str(node.get("host") or "").strip()}
-        choices[current["name"]] = current
+        if current is not None:
+            choices[current["name"]] = current
         return choices
 
     def spark_hosts(self) -> set[str]:
         """Network addresses and aliases from the Sparks inventory."""
-        nodes = [DEFAULT_NODE, *self._configured_sparks(), self.state()["node"]]
+        nodes = [self._default_node or {}, *self._configured_sparks(), self.state()["node"] or {}]
         return {
             value.strip().rstrip(".").casefold()
             for node in nodes
@@ -642,17 +666,20 @@ class Placement:
                 return {"ok": False, "error": "ya hay un traslado en marcha", "job": data["job"]}
             if node and to != "sparks":
                 return {"ok": False, "error": "solo se puede elegir una Spark al mover los servicios a una Spark"}
+            current = data["node"]
             if node:
-                target = self._placement_nodes(data["node"]).get(node)
+                target = self._placement_nodes(current).get(node)
                 if target is None:
                     return {"ok": False, "error": f"Spark no configurada: {node}"}
-                if target["ssh"] != data["node"]["ssh"]:
+                if current is None or target["ssh"] != current["ssh"]:
                     if data["location"] == "sparks":
                         return {"ok": False, "error": "vuelve al PC antes de elegir otra Spark"}
                     data.update(node=target, deployed={}, urls={})
                     self._remote_health = None
             if data["location"] == to == "pc" and (data.get("job") or {}).get("ok", True):
                 return {"ok": True, "already": True, "location": to}
+            if data["node"] is None:
+                return {"ok": False, "error": NO_NODE}
             # Already on the Spark: "move there" again brings the PC's newer code (and dependencies) over and restarts
             # only the apps whose code changed. Their data stays where it is.
             data["job"] = {"running": True, "to": to, "started": time.time(), "step": "preparando", "log": [], "error": ""}

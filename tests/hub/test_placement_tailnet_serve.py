@@ -32,6 +32,7 @@ class FakeHub:
 def _placement(tmp_path, answers):
     """A Placement whose SSH answers come from ``answers`` (command -> text, or an exception to raise)."""
     placement = pl.Placement(FakeHub(tmp_path / "data"))
+    placement._update(node={"name": "Studio node", "ssh": "studio-node"})
     calls = []
 
     def ssh(command, timeout=120, input=None):
