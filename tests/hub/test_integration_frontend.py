@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -29,13 +30,16 @@ def test_prepare_builds_only_when_frontend_inputs_change(tmp_path, monkeypatch, 
 
     monkeypatch.setattr(frontend.shutil, 'which', lambda _: 'npm')
     monkeypatch.setattr(frontend.subprocess, 'run', run)
-    assert frontend.prepare_frontend(tmp_path, {'docs/INTEGRATION.md'}, tmp_path) is None
-    build = frontend.prepare_frontend(tmp_path, {source}, tmp_path)
+    assert frontend.prepare_frontend(tmp_path, {'docs/INTEGRATION.md'}, tmp_path, revision="a" * 40) is None
+    build = frontend.prepare_frontend(tmp_path, {source}, tmp_path, revision="a" * 40)
     workdir = tmp_path / 'apps/agora' if marker.startswith('apps/') else tmp_path
     assert calls == [('ci', workdir), ('run', workdir)]
     assert build['destination'] == destination
     assert build['entry'] == entry
     assert len(build['sha256']) == 64
+    receipt = json.loads((tmp_path / 'frontend-output' / frontend.RECEIPT).read_text())
+    assert receipt['source_commit'] == 'a' * 40
+    assert receipt['entry_sha256'] == build['sha256']
 
 
 def test_failed_build_does_not_change_the_served_entry(tmp_path, monkeypatch):
@@ -47,7 +51,7 @@ def test_failed_build_does_not_change_the_served_entry(tmp_path, monkeypatch):
     monkeypatch.setattr(frontend.shutil, 'which', lambda _: 'npm')
     monkeypatch.setattr(frontend.subprocess, 'run', lambda cmd, **kw: CompletedProcess(cmd, 1))
     with pytest.raises(IntegrationError, match='frontend-build.log'):
-        frontend.prepare_frontend(tmp_path, {'apps/agora/src/App.tsx'}, tmp_path)
+        frontend.prepare_frontend(tmp_path, {'apps/agora/src/App.tsx'}, tmp_path, revision="a" * 40)
     assert served.read_text(encoding='utf-8') == 'original'
 
 
@@ -103,8 +107,8 @@ def test_native_build_updates_the_shortcut_target_and_can_be_undone(tmp_path, mo
     monkeypatch.setattr(frontend, 'WINDOWS', True)
     monkeypatch.setattr(frontend.shutil, 'which', lambda command: 'npm' if command == 'npm.cmd' else None)
     monkeypatch.setattr(frontend.subprocess, 'run', run)
-    assert frontend.prepare_frontend(candidate, {'docs/INTEGRATION.md'}, receipt) is None
-    build = frontend.prepare_frontend(candidate, {source}, receipt)
+    assert frontend.prepare_frontend(candidate, {'docs/INTEGRATION.md'}, receipt, revision="a" * 40) is None
+    build = frontend.prepare_frontend(candidate, {source}, receipt, revision="a" * 40)
     assert calls == [['ci', '--no-audit', '--no-fund'], ['run', 'desktop:build', '--', '--', '--locked']]
     assert build['native']['sha256'] == hashlib.sha256(b'new executable').hexdigest()
     assert shortcut.read_bytes() == b'previous executable'

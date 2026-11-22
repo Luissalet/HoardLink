@@ -8,7 +8,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from ..atomic import tmp_path_for, write_bytes_atomic
+from ..atomic import tmp_path_for, write_bytes_atomic, write_json_atomic
+from .compiled_ui import CONSOLE_INPUTS, RECEIPT, STUDIO_INPUTS
 from .integration_git import IntegrationError
 
 
@@ -16,23 +17,17 @@ WINDOWS = os.name == "nt"
 SESSION_INPUTS = {"hoard_link/hub/ui_session.py", "hoard_link/hub/server.py", "scripts/start-agora.ps1"}
 
 
-def prepare_frontend(candidate: Path, paths: set[str], folder: Path):
-    console_inputs = {"apps/agora/index.html", "apps/agora/package.json", "apps/agora/package-lock.json",
-                      "apps/agora/vite.config.ts", "apps/agora/tsconfig.json",
-                      "hoard_link/hub/ui/production_decisions_card.js",
-                      "hoard_link/hub/ui/production_decisions_card.css",
-                      "hoard_link/hub/ui/production_decisions_card.d.ts",
-                      "hoard_link/hub/ui/production_decisions_data.js",
-                      "hoard_link/hub/ui/production_decisions_data.d.ts"}
-    studio_inputs = {"package.json", "package-lock.json", "vite.config.ts", "tsconfig.json"}
-    console_changed = bool(paths & console_inputs or any(path.startswith("apps/agora/src/") for path in paths))
+def prepare_frontend(candidate: Path, paths: set[str], folder: Path, *, revision: str):
+    def touches(inputs):
+        return any(path == source or path.startswith(source + "/") for path in paths for source in inputs)
+
+    console_changed = touches(CONSOLE_INPUTS)
     native_changed = bool(paths & SESSION_INPUTS or any(path.startswith("apps/agora/src-tauri/") for path in paths))
     desktop = WINDOWS and (candidate / "apps/agora/src-tauri/Cargo.toml").is_file() and (
         console_changed or native_changed)
     if (candidate / "apps/agora/package.json").is_file() and (console_changed or desktop):
         workdir, destination, entry = candidate / "apps/agora", "apps/agora/dist", "index.html"
-    elif (candidate / "studio/src/screens/agora/AgoraApp.tsx").is_file() and (
-            paths & studio_inputs or any(path.startswith("studio/") for path in paths)):
+    elif (candidate / "studio/src/screens/agora/AgoraApp.tsx").is_file() and touches(STUDIO_INPUTS):
         workdir, destination, entry = candidate, "static/studio", "studio.js"
     else:
         return None
@@ -62,8 +57,11 @@ def prepare_frontend(candidate: Path, paths: set[str], folder: Path):
         shutil.move(workdir / "dist", output)
     if not (output / entry).is_file():
         raise IntegrationError(f"Browser build produced no {entry}. See {log}")
+    artifact = output / entry
     build = {"destination": destination, "entry": entry,
-             "sha256": hashlib.sha256((output / entry).read_bytes()).hexdigest(), "log": str(log)}
+             "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(), "log": str(log)}
+    write_json_atomic(output / RECEIPT, {"source_commit": revision,
+                                         "entry_sha256": build["sha256"], "built_at": artifact.stat().st_mtime})
     if desktop:
         binary = target / "release/hoard-agora.exe"
         if not binary.is_file():
