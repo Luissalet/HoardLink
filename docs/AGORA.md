@@ -246,6 +246,10 @@ For `action: "create"` with `leader_id: "faustus"`, pass the same `task_id` and 
 the scope from its original receipt. Coordination and production checks remain
 available through its Hub connector. For local file arguments sent to the connector,
 use the absolute path inside the declared scope.
+`hub_agora_order` returns the production order and `hub_piece_validate` checks a
+piece. Scoped workers can use `hub_eyes_look` with the absolute path of a
+declared image or PDF file. For image crops, grids or comparisons in the
+worker's conversation, use `inspect_image` with declared local paths.
 
 Every managed worker is told to commit its work and `submit` its task. When its process ends, the console checks the
 outcome against the Agora: task status, submission revision and uncommitted changes in the delivery's worktrees.
