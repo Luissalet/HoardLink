@@ -738,9 +738,12 @@ class AgoraConsoleFacet(Facet):
         workers = []
         for row in rows:
             worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
-            verification_warnings = json.loads(row["verification"] or "{}").get("warnings")
-            if verification_warnings:
-                worker["verification_warnings"] = verification_warnings
+            verification = json.loads(row["verification"] or "{}")
+            if verification.get("warnings"):
+                worker["verification_warnings"] = verification["warnings"]
+            detail_i18n = verification.get("detail_i18n")
+            if detail_i18n and detail_i18n["es"] == row["detail"]:
+                worker["detail_i18n"] = detail_i18n
             replacement = json.loads(row["replacement"])
             worker["can_continue"] = self._worker_can_continue(row)
             worker["resume_issue"] = row["resume_issue"]
@@ -853,26 +856,28 @@ class AgoraConsoleFacet(Facet):
             worker["workspace"] = self._worker_workspace(worker["parent_id"], worker["session_id"])
         verification = self._verify_worker_delivery(worker)
         summary = self._worker_summary(log_path)
-        state, outcome, detail = "failed", "hub_restart", "Turno interrumpido por el reinicio del Hub."
+        state, outcome = "failed", "hub_restart"
+        es, en = "Turno interrumpido por el reinicio del Hub.", "The Hub restart interrupted the turn."
         if worker["outcome"] == "hub_restart_stopping" or summary.get("stop") == "cancelled":
-            state, outcome, detail = "stopped", "cancelled", "Turno detenido antes de recuperar el Hub."
+            state, outcome = "stopped", "cancelled"
+            es, en = "Turno detenido antes de recuperar el Hub.", "The turn stopped before the Hub recovered."
         elif not verification["issues"]:
             if verification.get("verdict"):
-                state, outcome, detail = "completed", "reviewed", "Voto de revisión comprobado tras recuperar el Hub."
+                state, outcome = "completed", "reviewed"
+                es = "Voto de revisión comprobado tras recuperar el Hub."
+                en = "Review vote verified after the Hub recovered."
             else:
                 state, outcome = "completed", "submitted"
-                detail = ("Entrega registrada en el Ágora. / Delivery recorded in Agora." if verification.get("warnings")
-                          else "Entrega comprobada en el Ágora tras recuperar el Hub.")
+                es, en = self._submitted_detail(verification, recovered=True)
         elif summary.get("stop") == "answered":
-            state, outcome, detail = "incomplete", "incomplete", "El turno terminó durante el reinicio del Hub. Entrega incompleta."
+            state, outcome = "incomplete", "incomplete"
+            es = "El turno terminó durante el reinicio del Hub. Entrega incompleta."
+            en = "The turn ended during the Hub restart. Delivery incomplete."
         elif summary.get("stop") == "inactivity":
             outcome = "inactivity"
             minutes = (summary.get("idle_timeout") or self._worker_idle_seconds()) / 60
-            detail = f"Cortado por inactividad tras {minutes:g} min sin eventos del turno."
-        if verification["issues"]:
-            detail += " " + " ".join(verification["issues"])
-        if verification.get("warnings"):
-            detail += " " + " ".join(verification["warnings"])
+            es, en = self._inactivity_detail(minutes)
+        detail = self._delivery_detail(verification, es, en)
         with self._db_lock, self._db() as db:
             updated = db.execute("UPDATE workers SET state=?,outcome=?,detail=?,result=?,session_id=?,workspace=?,"
                                  "verification=?,updated_at=? WHERE id=? AND state='unknown' AND outcome=?",
@@ -2513,16 +2518,44 @@ class AgoraConsoleFacet(Facet):
                     continue
         return ""
 
+    @staticmethod
+    def _submitted_detail(verification: dict[str, Any], *, recovered: bool = False) -> tuple[str, str]:
+        if verification.get("warnings"):
+            return "Entrega registrada en el Ágora.", "Delivery recorded in Agora."
+        if recovered:
+            return "Entrega comprobada en el Ágora tras recuperar el Hub.", "Delivery verified in Agora after the Hub recovered."
+        return "Entrega comprobada en el Ágora.", "Delivery verified in Agora."
+
+    @staticmethod
+    def _inactivity_detail(minutes: float) -> tuple[str, str]:
+        return (f"Cortado por inactividad tras {minutes:g} min sin eventos del turno.",
+                f"Stopped for inactivity after {minutes:g} min without turn events.")
+
+    @staticmethod
+    def _delivery_detail(verification: dict[str, Any], es: str, en: str) -> str:
+        verification["detail_i18n"] = {
+            "es": " ".join([es, *verification["issues"], *verification.get("warnings", [])]),
+            "en": " ".join([en, *verification.get("issues_en", []), *verification.get("warnings_en", [])]),
+        }
+        return verification["detail_i18n"]["es"]
+
     def _verify_worker_delivery(self, worker: dict[str, Any]) -> dict[str, Any]:
         reviewed = agora_auto_review.review_receipt(self, worker)
         if reviewed is not None:
             return reviewed
         agora = self._agora()
         issues = []
+        issues_en = []
         warnings = []
+        warnings_en = []
         tasks = []
+
+        def issue(es: str, en: str) -> None:
+            issues.append(es)
+            issues_en.append(en)
+
         if not worker["agent_id"] or agora is None or not hasattr(agora, "tasks"):
-            issues.append("No se pudo comprobar la entrega en el Ágora.")
+            issue("No se pudo comprobar la entrega en el Ágora.", "Could not verify the delivery in Agora.")
         else:
             cursor = None
             while True:
@@ -2533,10 +2566,10 @@ class AgoraConsoleFacet(Facet):
                 if not cursor:
                     break
             if not tasks:
-                issues.append("No hay ninguna entrega del trabajador en el Ágora.")
+                issue("No hay ninguna entrega del trabajador en el Ágora.", "The worker has no delivery in Agora.")
             for task in tasks:
                 if task["status"] not in ("review", "approved", "done") or not task["submission_revision"]:
-                    issues.append(f"#{task['id']} sigue sin entregar.")
+                    issue(f"#{task['id']} sigue sin entregar.", f"#{task['id']} is still unsubmitted.")
 
         workspaces = set()
         recorded_root = ""
@@ -2549,9 +2582,9 @@ class AgoraConsoleFacet(Facet):
                 if root.returncode == 0:
                     recorded_root = root.stdout.strip()
                 elif (Path(workspace) / ".git").exists():
-                    issues.append(f"No se pudo verificar el estado Git de {workspace}.")
+                    issue(f"No se pudo verificar el estado Git de {workspace}.", f"Could not check Git status in {workspace}.")
             except (OSError, subprocess.SubprocessError):
-                issues.append(f"No se pudo verificar el estado Git de {workspace}.")
+                issue(f"No se pudo verificar el estado Git de {workspace}.", f"Could not check Git status in {workspace}.")
 
         repo_lookup = getattr(agora, "repo_lookup", None)
         has_repository_scope = False
@@ -2578,39 +2611,44 @@ class AgoraConsoleFacet(Facet):
                         if recorded_root and self._same_repository(recorded_root, repo):
                             workspaces.add(recorded_root)
                         elif not commits and not groups:
-                            issues.append(f"#{task['id']}: no se encontró la carpeta de la rama {branch}.")
+                            issue(f"#{task['id']}: no se encontró la carpeta de la rama {branch}.",
+                                  f"#{task['id']}: no worktree was found for branch {branch}.")
                 except (OSError, subprocess.SubprocessError):
-                    issues.append(f"#{task['id']}: no se pudo localizar la carpeta de la rama {branch}.")
+                    issue(f"#{task['id']}: no se pudo localizar la carpeta de la rama {branch}.",
+                          f"#{task['id']}: could not locate the worktree for branch {branch}.")
             if not groups and repo and commits:
                 groups = {repo_name: commits}
             for name, refs in groups.items():
                 target = repo if name.casefold() == repo_name.casefold() else (repo_lookup(name) if repo_lookup else None)
                 if not target:
-                    warnings.append(f"#{task['id']}: el repositorio {name} no está registrado. Sus commits quedan sin comprobar. "
-                                    f"Repository {name} is unregistered. Its commits could not be checked.")
+                    warnings.append(f"#{task['id']}: el repositorio {name} no está registrado. Sus commits quedan sin comprobar.")
+                    warnings_en.append(f"#{task['id']}: repository {name} is unregistered. Its commits could not be checked.")
                     continue
                 found, missing = self._locate_submitted_commits(target, refs)
                 workspaces.update(found)
                 if missing:
-                    issues.append(f"#{task['id']}: los commits {', '.join(m[:12] for m in missing)} no están en el "
-                                  f"repositorio {name}.")
+                    hashes = ", ".join(commit[:12] for commit in missing)
+                    issue(f"#{task['id']}: los commits {hashes} no están en el repositorio {name}.",
+                          f"#{task['id']}: commits {hashes} are missing from repository {name}.")
                 if recorded_root and self._same_repository(recorded_root, target):
                     workspaces.add(recorded_root)
             if not repo and not groups:
                 if recorded_root:
                     workspaces.add(recorded_root)
                 else:
-                    issues.append(f"#{task['id']}: no consta la carpeta de trabajo para comprobar los commits.")
+                    issue(f"#{task['id']}: no consta la carpeta de trabajo para comprobar los commits.",
+                          f"#{task['id']}: no worktree is recorded for checking the commits.")
         if not workspaces and recorded_root and not has_repository_scope:
             workspaces.add(recorded_root)
         for path in sorted(workspaces):
             try:
                 dirty = self._git_worker_info(path, "status", "--porcelain", "--untracked-files=normal", check=True)
                 if dirty.stdout.strip():
-                    issues.append(f"Hay cambios sin commit en {path}.")
+                    issue(f"Hay cambios sin commit en {path}.", f"There are uncommitted changes in {path}.")
             except (OSError, subprocess.SubprocessError):
-                issues.append(f"No se pudo verificar el estado Git de {path}.")
-        return {"issues": issues, "warnings": warnings, "tasks": [task["id"] for task in tasks]}
+                issue(f"No se pudo verificar el estado Git de {path}.", f"Could not check Git status in {path}.")
+        return {"issues": issues, "issues_en": issues_en, "warnings": warnings, "warnings_en": warnings_en,
+                "tasks": [task["id"] for task in tasks]}
 
     def _same_repository(self, path: Any, repo: Any) -> bool:
         """True when both folders belong to one repository (the checkout and its worktrees share a common git dir)."""
@@ -3078,34 +3116,31 @@ class AgoraConsoleFacet(Facet):
                 current = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
                 if current["state"] in ("stopping", "stopped") or cause == "cancelled":
                     state, outcome = "stopped", "cancelled"
-                    detail = f"{leader.title()}: turno detenido."
+                    es, en = f"{leader.title()}: turno detenido.", f"{leader.title()}: turn stopped."
                 elif cause == "inactivity":
                     state, outcome = "failed", "inactivity"
                     minutes = (summary.get("idle_timeout") or self._worker_idle_seconds()) / 60
-                    detail = f"Cortado por inactividad tras {minutes:g} min sin eventos del turno."
+                    es, en = self._inactivity_detail(minutes)
                 elif code or cause not in ("", "answered"):
                     state = "failed"
                     outcome = ("provider_error" if cause == "error" or (not cause and metrics["provider_error"])
                                else cause if cause not in ("", "answered") else "process_exit")
                     reason = summary.get("error") or metrics["provider_error"] or ""
-                    detail = f"{leader.title()}: turno interrumpido ({outcome}, salida {code}). {reason[:500]}".strip()
+                    es = f"{leader.title()}: turno interrumpido ({outcome}, salida {code}). {reason[:500]}".strip()
+                    en = f"{leader.title()}: turn interrupted ({outcome}, exit {code}). {reason[:500]}".strip()
                 elif benchmark:
                     state, outcome = "completed", "benchmarked"
-                    detail = "Prueba de skill terminada / Skill test finished."
+                    es, en = "Prueba de skill terminada.", "Skill test finished."
                 elif verification["issues"]:
                     state, outcome = "incomplete", "incomplete"
-                    detail = "Trabajo incompleto: " + " ".join(verification["issues"])
+                    es, en = "Trabajo incompleto:", "Incomplete work:"
                 elif verification.get("verdict"):
                     state, outcome = "completed", "reviewed"
-                    detail = "Voto de revisión comprobado en el Ágora."
+                    es, en = "Voto de revisión comprobado en el Ágora.", "Review vote verified in Agora."
                 else:
                     state, outcome = "completed", "submitted"
-                    detail = ("Entrega registrada en el Ágora. / Delivery recorded in Agora." if verification.get("warnings")
-                              else "Entrega comprobada en el Ágora.")
-                if state in ("failed", "stopped") and verification["issues"]:
-                    detail += " " + " ".join(verification["issues"])
-                if verification.get("warnings"):
-                    detail += " " + " ".join(verification["warnings"])
+                    es, en = self._submitted_detail(verification)
+                detail = self._delivery_detail(verification, es, en)
                 db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=?,workspace=?,process_exit_code=?,"
                            "outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,verification=?,resume_issue=?,updated_at=? WHERE id=?",
                            (state, result or worker["result"], detail, worker["session_id"], worker["workspace"], code, outcome,
@@ -3128,10 +3163,13 @@ class AgoraConsoleFacet(Facet):
                 self._retire_claude_worktree(worker, verification)
         except Exception:  # noqa: BLE001
             logger.exception("worker monitor failed for %s", worker_id)
+            verification = {"issues": []}
+            detail = self._delivery_detail(verification, "El proceso terminó, pero no se pudo verificar el resultado.",
+                                           "The process ended, but its result could not be verified.")
             with self._db_lock, self._db() as db:
-                db.execute("UPDATE workers SET state='failed',outcome='verification_error',detail=?,updated_at=? "
+                db.execute("UPDATE workers SET state='failed',outcome='verification_error',detail=?,verification=?,updated_at=? "
                            "WHERE id=? AND state IN ('running','stopping')",
-                           ("El proceso terminó, pero no se pudo verificar el resultado.", time.time(), worker_id))
+                           (detail, json.dumps(verification), time.time(), worker_id))
         finally:
             if self._processes.get(worker_id) is process:
                 try:

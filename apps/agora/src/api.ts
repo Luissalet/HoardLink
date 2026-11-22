@@ -41,7 +41,7 @@ export async function api<T=any>(path:string,body?:unknown):Promise<T>{
 }
 export type Model={id:string;name?:string;efforts?:string[]};
 export type OrphanProcess={pid:number;started_at:number;age_seconds:number;last_activity_at:number|null};
-export type Worker={id:string;parent_id:string;agent_id?:string;model?:string;state:string;task?:string;result?:string;effort?:string;outcome?:string;workspace?:string;faustus_url?:string;detail?:string;verification_warnings?:string[];tool_success_count?:number;tool_failure_count?:number;can_continue?:boolean;retry_count?:number;resume_issue?:string;orphan_process?:OrphanProcess;replacement?:{worker_id?:string;task_id?:number;state?:string;detail?:string}};
+export type Worker={id:string;parent_id:string;agent_id?:string;model?:string;state:string;task?:string;result?:string;effort?:string;outcome?:string;workspace?:string;faustus_url?:string;detail?:string;detail_i18n?:Partial<Record<"es"|"en",string>>;verification_warnings?:string[];tool_success_count?:number;tool_failure_count?:number;can_continue?:boolean;retry_count?:number;resume_issue?:string;orphan_process?:OrphanProcess;replacement?:{worker_id?:string;task_id?:number;state?:string;detail?:string}};
 export type LiveState={state:string;label?:string;last_activity_at?:string|null;source?:string;detail?:string;open_tasks?:number[];idle_with_work?:boolean};
 export type Leader={id:string;name:string;state:string;detail?:string;model?:string;effort?:string;catalog?:Model[];workers?:Worker[];color?:string|null;live_state?:LiveState|null;idle_with_work?:boolean};
 export type Message={id:number;agent?:string;author?:string;body:string;kind?:string;created?:number;ts?:number};

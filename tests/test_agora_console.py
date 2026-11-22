@@ -2182,12 +2182,53 @@ def test_managed_worker_checks_task_delivery_and_git(tmp_path, monkeypatch, lead
     facet._monitor_worker("test", SimpleNamespace(wait=lambda: 0), tmp_path / "no-result")
     worker = facet._worker_rows()[0]
     assert worker["state"] == expected
+    detail = worker["detail_i18n"]
+    assert worker["detail"] == detail["es"]
     task = store.task({"task_id": task_id})
     assert task["task"]["status"] == ("review" if submit else "blocked")
     if expected == "incomplete":
         expected_issue = "sin commit" if dirty else "sin entregar"
-        assert expected_issue in worker["detail"]
+        assert detail["es"].startswith("Trabajo incompleto:") and expected_issue in detail["es"]
+        assert detail["en"].startswith("Incomplete work:")
+        assert ("uncommitted changes" if dirty else "still unsubmitted") in detail["en"]
         assert expected_issue in task["messages"][-1]["body"]
+    else:
+        assert detail == {"es": "Entrega comprobada en el Ágora.", "en": "Delivery verified in Agora."}
+
+
+def test_worker_receipt_keeps_historical_text_and_ignores_superseded_translations(tmp_path):
+    facet = _facet(tmp_path)
+    detail = "Entrega original."
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,detail,created_at,updated_at)"
+                   " VALUES('test','codex','model','','task','completed',?,1,1)", (detail,))
+    worker = facet._worker_rows()[0]
+    assert worker["detail"] == detail and "detail_i18n" not in worker
+
+    with facet._db() as db:
+        db.execute("UPDATE workers SET state='running', detail=?, verification=? WHERE id='test'",
+                   ("Continuación en curso.", json.dumps({"detail_i18n": {"es": detail, "en": "Original delivery."}})))
+    worker = facet._worker_rows()[0]
+    assert worker["detail"] == "Continuación en curso." and "detail_i18n" not in worker
+
+
+def test_worker_delivery_verification_error_has_localized_receipt(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,created_at,updated_at)"
+                   " VALUES('test','codex','model','','task','running',1,1)")
+
+    def fail(_worker):
+        raise RuntimeError("Fixture failed to verify the delivery.")
+
+    monkeypatch.setattr(facet, "_verify_worker_delivery", fail)
+    facet._monitor_worker("test", SimpleNamespace(wait=lambda: 0), tmp_path / "no-result")
+    worker = facet._worker_rows()[0]
+    assert worker["outcome"] == "verification_error"
+    assert worker["detail_i18n"] == {
+        "es": "El proceso terminó, pero no se pudo verificar el resultado.",
+        "en": "The process ended, but its result could not be verified.",
+    }
 
 
 @pytest.mark.parametrize("restart", [False, True])
@@ -2238,6 +2279,7 @@ def test_interrupted_faustus_worker_continues_original_session_once(tmp_path, mo
     facet._monitor_worker("test", process, tmp_path / "no-result")
     worker = facet._worker_rows()[0]
     assert worker["state"] == "failed" and worker["can_continue"] and len(commands) == 1
+    assert "still unsubmitted" in worker["detail_i18n"]["en"]
 
 
 def test_faustus_checks_the_registered_task_branch_outside_the_space_workspace(tmp_path):
@@ -2428,10 +2470,14 @@ def test_managed_worker_checks_each_repository_in_a_grouped_delivery(tmp_path, s
     assert worker["state"] == expected
     if secondary == "unknown":
         assert "Second repo" in worker["detail"] and "no está registrado" in worker["detail"]
+        assert "repository Second repo is unregistered" in worker["detail_i18n"]["en"]
+        assert "is unregistered" not in worker["detail_i18n"]["es"]
+        assert "no está registrado" not in worker["detail_i18n"]["en"]
         warning, = worker["verification_warnings"]
         assert "Second repo" in warning
     elif secondary == "missing_commit":
         assert "ffffffffffff no están en el repositorio Second repo" in worker["detail"]
+        assert "ffffffffffff are missing from repository Second repo" in worker["detail_i18n"]["en"]
     else:
         assert "verification_warnings" not in worker
         (other_tree / "draft.txt").write_text("dirty", encoding="utf-8")
