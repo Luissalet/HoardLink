@@ -52,22 +52,33 @@ and `{repo}` is the worktree root. The optional batch `cwd` is relative to
 that root. Batch `env` values override repository `env` values, and a JSON
 `null` removes an inherited environment variable. Supply settings and paths
 here, since the expanded values are stored in the registry.
+Set these overrides per repository or batch. Use fresh data paths and reserved
+test ports. Preserve behavior exercised by the suite, such as event delivery
+or discovering the default companion address. Supply an isolated companion
+when a test exercises an available service.
 
 ```powershell
 python scripts/suite_baseline.py C:/qa/lineabase.json
 python scripts/suite_baseline.py C:/qa/lineabase.json --repo Example
 python scripts/suite_baseline.py C:/qa/lineabase.json --repo Example --batch integration
+python scripts/suite_baseline.py C:/qa/lineabase.json --repo Example --resume
 ```
 
 The runner executes one batch at a time and updates the JSON and Markdown as
 each batch finishes. A named batch can be rerun separately. Other results are
 retained when the commit and each result's batch definition still match.
 An invocation running all batches of a repository replaces the previous set
-for that repository. The registry lock prevents concurrent runs using that
+for that repository. `--resume` keeps completed batches with matching
+definitions from the exact same commit and reruns missing or incomplete ones.
+The registry lock prevents concurrent runs using that
 file. If a run is killed, check the PID in the adjacent `.lock` file and
 remove the lock only after the process and its tests have exited.
 
-Counts come from JUnit test cases. For pytest, when the failure, error and
+The Node reporter writes both individual test cases and aggregate counters
+into its JUnit XML. The runner uses those totals to include nested tests and
+records TODOs as skipped and cancellations as errors. A batch with zero
+tests is incomplete, including when the command exits successfully.
+For pytest, when the failure, error and
 skip totals agree with the case records, the runner also counts successful
 subtests that pytest included only in its suite total.
 If a case has multiple outcomes, a setup or teardown error takes precedence

@@ -15,6 +15,7 @@ from xml.etree import ElementTree
 
 
 COUNTS = ("tests", "passed", "failed", "errors", "skipped")
+NODE_TOTALS = {"tests", "suites", "pass", "fail", "cancelled", "skipped", "todo"}
 
 
 def git(cwd, *args):
@@ -35,13 +36,28 @@ def batch_definition(entry, batch):
 
 
 def junit(path):
-    root = ElementTree.parse(path).getroot()
+    parser = ElementTree.XMLParser(target=ElementTree.TreeBuilder(insert_comments=True))
+    root = ElementTree.parse(path, parser=parser).getroot()
     if root.tag not in {"testsuites", "testsuite"}:
         raise ValueError(f"Expected a JUnit report, got <{root.tag}>")
     counts = dict.fromkeys(COUNTS, 0)
     issues = []
+    # Node's reporter includes aggregate counters as direct XML comments.
+    # Individual cases may be directly below the root or nested under suites.
+    totals = {}
+    for comment in root:
+        if comment.tag is not ElementTree.Comment:
+            continue
+        key, _, value = (comment.text or "").strip().partition(" ")
+        if key in NODE_TOTALS and value.isdecimal():
+            totals[key] = int(value)
+    node_report = root.tag == "testsuites" and NODE_TOTALS <= totals.keys()
     for case in root.iter("testcase"):
         counts["tests"] += 1
+        if node_report and case.find("skipped") is not None:
+            # A Node todo can fail as expected without failing the run.
+            counts["skipped"] += 1
+            continue
         # A test can have both a call failure and a teardown error. Count the
         # case once and retain both diagnostics.
         outcome = "passed"
@@ -56,8 +72,16 @@ def junit(path):
                         "file": case.get("file"), "line": case.get("line"), "detail": diagnostic,
                     })
         counts[outcome] += 1
-    if not counts["tests"]:
+    if not counts["tests"] or (node_report and not totals["tests"]):
         raise ValueError("JUnit report contains no test cases")
+    if node_report:
+        counts = {
+            "tests": totals["tests"], "passed": totals["pass"], "failed": totals["fail"],
+            "errors": totals["cancelled"], "skipped": totals["skipped"] + totals["todo"],
+        }
+        if counts["tests"] != sum(counts[key] for key in COUNTS[1:]):
+            raise ValueError("Node JUnit totals are inconsistent")
+        return counts, issues
     if root.get("name") == "pytest tests":
         suite = root.find("testsuite")
         if suite is not None and all(
@@ -193,6 +217,8 @@ def markdown(entries):
             command = json.dumps(result["command"], ensure_ascii=False)
             lines.append(f"- {batch['name']} · {result['seconds']} s · código {result['exit_code']}")
             lines.append(f"  - `{command}`")
+            lines.append(f"  - Directorio · `{result['cwd']}`")
+            lines.append(f"  - Informe JUnit · `{result['report']}`")
             lines.append(f"  - Salida · `{result['log']}`")
             if result.get("problem"):
                 lines.append(f"  - {result['problem']}")
@@ -213,7 +239,7 @@ def save(path, entries):
         temporary.replace(destination)
 
 
-def run(path, repo_name, batch_name):
+def run(path, repo_name, batch_name, resume=False):
     entries = {}
     for entry in json.loads(path.read_text(encoding="utf-8-sig"))["repositories"]:
         name = entry["name"]
@@ -239,7 +265,7 @@ def run(path, repo_name, batch_name):
     failed = False
     for entry in selected:
         results = entry.setdefault("results", {})
-        if not batch_name:
+        if not batch_name and not resume:
             results.clear()
         previous_commit = entry.pop("commit", None)
         entry.pop("problem", None)
@@ -259,14 +285,20 @@ def run(path, repo_name, batch_name):
             for index, batch in enumerate(entry["batches"], start=1):
                 if batch_name and batch["name"] != batch_name:
                     continue
+                if resume and results.get(batch["name"], {}).get("status") in {"passed", "failed"}:
+                    continue
                 if "{report}" not in "".join(batch["command"]):
                     raise ValueError(f"Command must send JUnit output to {{report}}: {batch['name']}")
                 print(f"{entry['name']} / {batch['name']} / {commit[:12]}", flush=True)
                 artifacts = path.parent / "runs" / uuid4().hex / str(index)
                 artifacts.parent.mkdir(parents=True)
-                results[batch["name"]] = record_batch(batch, entry, cwd, artifacts)
-                if revision(cwd) != commit:
-                    raise ValueError("Worktree HEAD changed while tests were running")
+                attempt = results[batch["name"]] = record_batch(batch, entry, cwd, artifacts)
+                try:
+                    if revision(cwd) != commit:
+                        raise ValueError("Worktree HEAD changed while tests were running")
+                except (OSError, ValueError) as error:
+                    attempt.update(status="incomplete", problem=str(error))
+                    raise
                 summarize(entry)
                 save(path, entries)
         except (OSError, ValueError) as error:
@@ -288,9 +320,12 @@ def main():
     parser.add_argument("registry", type=Path, help="External JSON definition and result registry")
     parser.add_argument("--repo", help="Run one configured repository")
     parser.add_argument("--batch", help="Run one named batch (requires --repo)")
+    parser.add_argument("--resume", action="store_true", help="Keep completed batches at the same revision")
     args = parser.parse_args()
     if args.batch and not args.repo:
         parser.error("--batch requires --repo")
+    if args.batch and args.resume:
+        parser.error("--batch and --resume cannot be combined")
     path = args.registry.resolve()
     try:
         git(path.parent, "rev-parse", "--show-toplevel")
@@ -305,7 +340,7 @@ def main():
     except OSError as error:
         parser.error(str(error))
     try:
-        return run(path, args.repo, args.batch)
+        return run(path, args.repo, args.batch, args.resume)
     except (OSError, ValueError, KeyError, TypeError) as error:
         parser.error(str(error))
     finally:

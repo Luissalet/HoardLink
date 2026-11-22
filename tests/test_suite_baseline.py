@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from scripts.suite_baseline import junit
 
 
@@ -61,6 +63,49 @@ def test_pytest_junit_includes_passed_subtests_in_its_suite_total(tmp_path):
     assert [issue["case"] for issue in issues] == ["failed"]
 
 
+def test_node_junit_counts_nested_tests_and_ignores_expected_todo_failures(tmp_path):
+    report = tmp_path / "junit.xml"
+    report.write_text(
+        '<testsuites><testcase name="standalone"/><testcase name="later">'
+        '<skipped type="todo"/><failure message="expected"/></testcase>'
+        '<testsuite name="parent"><testcase name="child"><failure message="actual"/></testcase>'
+        '</testsuite><!-- tests 4 --><!-- suites 0 --><!-- pass 1 --><!-- fail 2 -->'
+        '<!-- cancelled 0 --><!-- skipped 0 --><!-- todo 1 --></testsuites>',
+        encoding="utf-8",
+    )
+
+    counts, issues = junit(report)
+
+    assert counts == {"tests": 4, "passed": 1, "failed": 2, "errors": 0, "skipped": 1}
+    assert [(issue["case"], issue["message"]) for issue in issues] == [("child", "actual")]
+
+
+@pytest.mark.parametrize("report_xml", [
+    '<testsuites><testsuite name="empty" tests="0"/></testsuites>',
+    '<testsuites><testcase name="runner"/><!-- tests 0 --><!-- suites 0 --><!-- pass 0 -->'
+    '<!-- fail 0 --><!-- cancelled 0 --><!-- skipped 0 --><!-- todo 0 --></testsuites>',
+])
+def test_empty_report_makes_a_successful_process_incomplete(tmp_path, report_xml):
+    repo = tmp_path / "example"
+    commit = create_repo(repo)
+    path = tmp_path / "registry.json"
+    path.write_text(json.dumps({"repositories": [{
+        "name": "Example", "cwd": str(repo), "ref": commit,
+        "batches": [{"name": "empty", "command": [
+            sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).write_text(sys.argv[2])",
+            "{report}", report_xml,
+        ]}],
+    }]}), encoding="utf-8")
+
+    result = invoke(path)
+
+    assert result.returncode == 1, result.stderr
+    entry = json.loads(path.read_text(encoding="utf-8"))["repositories"][0]
+    assert entry["status"] == "incomplete"
+    assert entry["results"]["empty"]["exit_code"] == 0
+    assert "no test cases" in entry["results"]["empty"]["problem"]
+
+
 def test_reports_exact_command_results_and_revision_across_batches(tmp_path):
     repo = tmp_path / "worktree with spaces"
     commit = create_repo(repo)
@@ -78,7 +123,7 @@ def test_reports_exact_command_results_and_revision_across_batches(tmp_path):
     assert first["counts"] == {"tests": 2, "passed": 1, "failed": 0, "errors": 0, "skipped": 1}
     assert first["commit"] == commit
 
-    result = invoke(path, "--repo", "Example", "--batch", "second")
+    result = invoke(path, "--repo", "Example", "--resume")
     assert result.returncode == 1, result.stderr
     registry = json.loads(path.read_text(encoding="utf-8"))
     entry = registry["repositories"][0]
