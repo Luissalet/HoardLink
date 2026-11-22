@@ -68,3 +68,16 @@ input::placeholder,textarea::placeholder{color:#bebbb4;opacity:1}.quota-label st
 .worker-file-proposal p{font-size:13px;color:var(--muted)}
 .worker-file-action{width:100%;text-align:left;overflow-wrap:anywhere;border:1px solid var(--line);border-radius:6px;background:#1c1a14;color:inherit;padding:7px 9px;font-size:13px}
 .worker-file-action:hover:not(:disabled){border-color:var(--accent)}
+.foreman-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.foreman-status strong { color: #ece9e1; }
+.foreman-warning { color: var(--accent); font-weight: 600; }
+.foreman-warning:empty { position: absolute; }
