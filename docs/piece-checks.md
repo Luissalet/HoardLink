@@ -12,16 +12,21 @@ Dedicated workers use declared local paths or retained revisions granted by
 an assignment. Validation by ID uses the declared retained copy. Declare any
 additional reference files before passing their absolute paths. For web checks,
 pass a declared ZIP. For spreadsheet checks, pass explicit sheet requirements.
-The Hub does not fetch remote links for a dedicated worker, so web citations in
-a document, deck or page stay `unmeasured`.
+The Hub does not reach the network for a dedicated worker. Web citations in a
+document, deck or page stay `unmeasured`, a web page is opened with every request
+outside its own local server aborted, and a deck that links external resources is
+not rendered (its rendered-text check stays `unmeasured`).
 
 Los trabajadores dedicados usan rutas locales declaradas o revisiones
 conservadas que autoriza el encargo. La validación por identificador usa la
 copia conservada y declarada. Declara los ficheros de referencia adicionales
 antes de pasar sus rutas absolutas. Para comprobar una web, usa un ZIP declarado.
 Para una hoja de cálculo, indica los requisitos de la hoja.
-El Hub no consulta enlaces remotos por un trabajador dedicado, así que las citas
-web de un documento, una presentación o una página quedan sin medir.
+El Hub no sale a la red por un trabajador dedicado. Las citas web de un
+documento, una presentación o una página quedan sin medir, una página web se abre
+con toda petición ajena a su propio servidor local abortada, y una presentación
+que enlaza recursos externos no se renderiza (su comprobación de texto
+renderizado queda sin medir).
 
 An executed request returns `ok: true` and a separate `verdict` of `pass`,
 `fail` or `unmeasured`. A measured defect takes precedence over a pending

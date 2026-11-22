@@ -190,8 +190,9 @@ class PieceChecksFacet(Facet):
             if worker_files is not None and profile == "spreadsheet" and "dataset" in requirements:
                 return {"ok": False, "error": "This worker cannot open an undeclared dataset. / Este trabajador no puede abrir un conjunto de datos sin declarar."}
             if worker_files is not None and profile in {"document", "slides", "web"}:
-                # The Hub must not fetch links on behalf of a confined worker.
-                requirements = {**requirements, "resolve_remote": False}
+                # The Hub must not reach the network on behalf of a confined worker: no link
+                # resolution, no remote requests from a rendered page, no remote deck resources.
+                requirements = {**requirements, "resolve_remote": False, "_offline": True}
             if profile == "spreadsheet":
                 requirements = {key: value for key, value in requirements.items() if not key.startswith("_")}
                 if "dataset" in requirements:

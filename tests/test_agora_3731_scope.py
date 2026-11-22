@@ -91,3 +91,104 @@ def test_confined_worker_document_check_never_fetches_links(tmp_path, monkeypatc
         assert scoped["ok"] and calls == []
         assert scoped["measures"]["citations"][0]["reason"] == "remote disabled"
         assert scoped["checks"][0]["verdict"] == "unmeasured"
+
+
+def _counting_server():
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/gif")
+            self.end_headers()
+            self.wfile.write(b"GIF89a")
+
+        do_HEAD = do_GET
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, hits
+
+
+def test_confined_worker_web_check_sends_no_request_outside_its_page_server(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+    from zipfile import ZipFile
+
+    import pytest
+
+    engine = Path(os.environ.get("VITRUVIUS_REPO", r"E:\Development\IA\Hoards\Faustusables\Vitruvius's Hoard"))
+    python = engine / "venv/Scripts/python.exe"
+    if not python.is_file():
+        pytest.skip("The installed page engine is unavailable")
+    outside, hits = _counting_server()
+    try:
+        remote = f"http://127.0.0.1:{outside.server_port}"
+        page = ('<!doctype html><html lang="en"><title>Fixture</title><body><p>Fixture</p>'
+                f'<img alt="" src="{remote}/image?secret=1"><link rel="stylesheet" href="{remote}/style.css">'
+                f'<script>fetch("{remote}/fetch?secret=2").catch(() => {{}});'
+                f'try {{ new WebSocket("ws://127.0.0.1:{outside.server_port}/socket"); }} catch (e) {{}}'
+                f'navigator.sendBeacon("{remote}/beacon", "secret");</script></body></html>')
+        site = tmp_path / "site.zip"
+        with ZipFile(site, "w") as archive:
+            archive.writestr("index.html", page)
+        hub_root = Path(__file__).resolve().parents[1]
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(hub_root), str(engine))), "PYTHONUTF8": "1"}
+
+        def run(requirements):
+            done = subprocess.run([str(python), "-m", "hoard_link.hub.piece_checks", "web", str(site),
+                                   json.dumps(requirements)], cwd=hub_root, env=env, capture_output=True,
+                                  encoding="utf-8", timeout=170)
+            assert done.returncode == 0, done.stderr[-800:]
+            return json.loads(done.stdout)
+
+        result = run({"viewports": [[800, 600]], "_offline": True})
+        assert result["measures"].get("viewports"), result
+        assert hits == []
+        # The control: the same page reaches the outside server when the Hub renders it for a person.
+        run({"viewports": [[800, 600]]})
+        assert any(path.startswith("/image") for path in hits), hits
+    finally:
+        outside.shutdown()
+        outside.server_close()
+
+
+def test_confined_worker_deck_with_external_resources_is_not_rendered(tmp_path, monkeypatch):
+    import pytest
+    from zipfile import ZipFile
+
+    from hoard_link.hub import piece_checks as checks
+    from hoard_link.hub import piece_checks_layout as layout
+
+    pptx = pytest.importorskip("pptx")
+    deck = pptx.Presentation()
+    deck.slides.add_slide(deck.slide_layouts[6])
+    plain = tmp_path / "plain.pptx"
+    deck.save(plain)
+    linked = tmp_path / "linked.pptx"
+    with ZipFile(plain) as source, ZipFile(linked, "w") as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "ppt/slides/_rels/slide1.xml.rels":
+                data = data.replace(b"</Relationships>", (
+                    b'<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                    b'relationships/image" Target="https://example.invalid/picture.png" TargetMode="External"/>'
+                    b"</Relationships>"))
+            target.writestr(item, data)
+    rendered = []
+    monkeypatch.setattr(layout, "_pdf_words", lambda path: rendered.append(path) or [layout._words("")])
+    for path, offline, expected in ((plain, True, 1), (linked, False, 1), (linked, True, 0)):
+        rendered.clear()
+        result = checks.run_checks(path, "slides", {"slide_count": 1, **({"_offline": True} if offline else {})})
+        assert len(rendered) == expected, (path.name, offline)
+    row = {entry["id"]: entry for entry in result["checks"]}["rendered-text"]
+    assert row["verdict"] == "unmeasured" and "external resources" in row["reason"]["en"]
