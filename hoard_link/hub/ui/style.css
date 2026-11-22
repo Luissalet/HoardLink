@@ -202,6 +202,7 @@ dialog pre { margin: 0; padding: 12px 14px; font-family: var(--mono); font-size:
 .family-body { background: var(--card); border-top: 1px solid var(--line); padding: 10px 22px 14px; max-height: 46vh; overflow: auto; }
 .tab-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .tab-tools input.narrow { min-width: 120px; }
+#backup-summary { overflow-wrap: anywhere; }
 .hint { color: var(--muted); font-size: var(--hub-fs-1, 12px); }
 .live { color: var(--green); font-size: var(--hub-fs-1, 12px); } .live.off { color: var(--red); }
 .events-list { font-family: var(--mono); font-size: var(--hub-fs-1, 12px); display: grid; grid-template-columns: max-content max-content max-content 1fr; gap: 2px 12px; align-items: baseline; }

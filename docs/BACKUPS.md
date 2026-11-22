@@ -5,6 +5,8 @@
 snapshot history or prevent inspection and verification of existing snapshots.
 Each error identifies its source and explains the configuration/path problem.
 The Backups tab displays the problem in English or Spanish alongside the history.
+The status summary wraps long storage paths on narrow screens so the full path
+and backup actions remain readable in the same panel.
 
 Atlas has two sources: its private metadata (`atlas`) and the configured shared
 originals (`atlas-files`). Selecting `atlas` includes both. Selecting
