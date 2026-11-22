@@ -601,6 +601,15 @@ that accepts `editable-report`.
   restores the previous state if the enabled flag still matches the change.
   The switch passes the current automatic setting to the native app. If the app
   resets that setting when it stops a module, the undo request restores it.
+- A restart of an app that declares `module_controls` (`hub_restart_app`, the Restart
+  button, an automation or a watchdog) reads its modules first and, once the app
+  answers again, switches on those that were on, with their automatic setting. Modules
+  that were off stay off. The result carries `modules`: `before`, `after`, `restored`
+  (each with an `undo` request), `failed` (the module and why, in `error` and
+  `error_es`) and a `message` in Spanish and English. A restart that fails to read or
+  restore a module still completes, and the screen shows the failure. An app that was
+  not running, or whose automatic restart is held back by work in progress, reports no
+  `modules`.
 
 Websites published by Mercator's publication station come back with the Hub
 through Mercator's keep-alive setting: see [website-publisher.md](website-publisher.md).

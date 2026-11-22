@@ -537,7 +537,8 @@
       const name = snapshot?.apps.find((a) => a.id === appId)?.name || appId;
       if (res.ok) {
         const extra = res.already ? t("already") : (res.ready === false ? t("not_ready") : (res.mode === "browser-tab" && action === "open" && body?.mode !== "browser" ? "tab" : ""));
-        toast(`${name}: ${okMsg}${extra ? " (" + extra + ")" : ""}`, "ok", res.error || "");
+        const report = res.modules, modules = report && (report.restored?.length || report.failed?.length) ? (report.message?.[lang] || report.message?.en || "") : "";
+        toast(`${name}: ${okMsg}${extra ? " (" + extra + ")" : ""}`, res.modules?.failed?.length ? "err" : "ok", res.error || modules);
       } else {
         toast(`${name}: ${res.error || "error"}`, "err", (res.log_tail || []).slice(-6).join("\n"));
       }
