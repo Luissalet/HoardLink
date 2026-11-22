@@ -1,0 +1,31 @@
+.compiled-ui-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr));
+  align-items: start;
+  gap: 0 1.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.compiled-ui-row {
+  min-width: 0;
+  padding: .9rem 0;
+  border-top: 1px solid var(--line);
+}
+.compiled-ui-row-head, .compiled-ui-dates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .25rem 1rem;
+}
+.compiled-ui-row-head { justify-content: space-between; }
+.compiled-ui-row h2 { margin: 0; font-size: 1rem; font-weight: 650; }
+.compiled-ui-state { color: var(--muted); font-weight: 600; }
+.compiled-ui-state[data-state="behind"], .compiled-ui-state[data-state="missing"] { color: var(--amber); }
+.compiled-ui-state[data-state="current"] { color: var(--green); }
+.compiled-ui-row p { margin: .3rem 0 0; }
+.compiled-ui-dates, .compiled-ui-details { margin-top: .35rem; color: var(--muted); }
+.compiled-ui-details summary { cursor: pointer; width: fit-content; }
+.compiled-ui-details dl { margin: .45rem 0 0; }
+.compiled-ui-details dt { font-weight: 600; }
+.compiled-ui-details dd { margin: 0 0 .4rem; overflow-wrap: anywhere; }
