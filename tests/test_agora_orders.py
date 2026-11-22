@@ -24,6 +24,166 @@ def check_for_gate(agora, *pieces):
                            "keep": [{"id": k["id"], "state": "ok"} for k in piece["keep"]]})
 
 
+def delivery_order(agora, title="Final map"):
+    order = agora.order_create({"agent": "claude", "title": title, "words": "Draw a map"})["order"]["id"]
+    job = agora.plan_set({"agent": "claude", "order_id": order, "jobs": [
+        {"key": "map", "title": "Draw the map"},
+    ]})["keys"]["map"]
+    piece = agora.piece_add({"agent": "claude", "order_id": order, "kind": "web", "title": "Map",
+                             "url": "https://example.com/map"})["piece"]
+    check_for_gate(agora, piece)
+    gate = agora.gate_open({"agent": "claude-capataz", "order_id": order, "piece_ids": [piece["id"]]})["gate"]["id"]
+    return order, job, gate
+
+
+def close_job(agora, job):
+    agora.task_claim({"agent": "claude", "task_id": job})
+    agora.task_done({"agent": "claude", "task_id": job})
+
+
+def delivered_order(agora, order):
+    return next(row for row in agora.orders({})["orders"] if row["id"] == order)
+
+
+def test_final_gate_delivers_and_decision_undo_restores_waiting(agora):
+    order, job, gate = delivery_order(agora)
+    close_job(agora, job)
+    assert delivered_order(agora, order)["status"] == "waiting"
+    decision = agora.gate_decide(person(gate_id=gate, decision="keep"))
+    row = delivered_order(agora, order)
+    assert row["status"] == "delivered"
+    assert row["delivery_reason"] == "final_gate_kept"
+    assert row["delivered_at"] > 0
+    for recipient in ("claude-capataz", "claude"):
+        inbox = agora.inbox({"agent": recipient, "peek": True})
+        notices = [m for m in inbox["production_decisions"] if m["body"].startswith("ENTREGADA / DELIVERED")]
+        assert len(notices) == 1
+        thread_id = notices[0]["thread_id"]
+    agora.order_undo(person(token=decision["undo"]))
+    row = delivered_order(agora, order)
+    assert row["status"] == "waiting" and row["delivered_at"] is None
+    assert not agora.thread({"thread_id": thread_id})["messages"]
+    assert not agora.inbox({"agent": "claude-capataz", "peek": True})["production_decisions"]
+
+
+@pytest.mark.parametrize("drop", [False, True])
+def test_last_job_delivers_after_keep(agora, drop):
+    order, job, gate = delivery_order(agora)
+    agora.gate_decide(person(gate_id=gate, decision="keep"))
+    assert delivered_order(agora, order)["status"] == "producing"
+    if drop:
+        agora.task_claim({"agent": "claude", "task_id": job})
+        agora.task_release({"agent": "claude", "task_id": job, "drop": True})
+    else:
+        close_job(agora, job)
+    assert delivered_order(agora, order)["status"] == "delivered"
+
+
+def test_approved_job_is_pending_and_reopened_job_clears_automatic_delivery(agora):
+    order, job, gate = delivery_order(agora)
+    args = {"agent": "claude", "task_id": job}
+    agora.task_claim(args)
+    submission = agora.task_submit({**args, "summary": "Map ready", "reviewer": "reviewer"})["task"]
+    agora.task_review({"agent": "reviewer", "task_id": job, "verdict": "approve", "body": "Reviewed the map.",
+                       "expected_submission_revision": submission["submission_revision"]})
+    agora.gate_decide(person(gate_id=gate, decision="keep"))
+    assert delivered_order(agora, order)["status"] == "producing"
+    closed = agora.task_done(args)["task"]
+    assert delivered_order(agora, order)["status"] == "delivered"
+    agora.task_edit({**args, "expected_etag": closed["etag"], "status": "open"})
+    row = delivered_order(agora, order)
+    assert row["status"] == "producing" and row["delivered_at"] is None
+    inbox = agora.inbox({"agent": "claude-capataz", "peek": True})
+    assert any(m["body"].startswith("ENTREGADA / DELIVERED") for m in inbox["production_decisions"])
+    assert any(m["body"].startswith("REABIERTA / REOPENED") and f"Job #{job} is pending again." in m["body"]
+               for m in inbox["production_decisions"])
+
+
+def test_adding_a_job_reopens_an_automatic_delivery_and_can_be_undone(agora):
+    order, job, gate = delivery_order(agora)
+    close_job(agora, job)
+    agora.gate_decide(person(gate_id=gate, decision="keep"))
+    delivered_at = delivered_order(agora, order)["delivered_at"]
+    inbox = agora.inbox({"agent": "claude-capataz", "peek": True})
+    original = next(m for m in inbox["production_decisions"] if m["body"].startswith("ENTREGADA / DELIVERED"))
+    thread = {"thread_id": original["thread_id"]}
+    followup = agora.plan_set({"agent": "claude", "order_id": order, "jobs": [{"title": "Add a map legend"}]})
+    assert delivered_order(agora, order)["status"] == "producing"
+    notices = [m for m in agora.thread(thread)["messages"] if m["kind"] == "production_decision"]
+    decision, delivered, reopened = notices
+    assert delivered["id"] == original["id"] and delivered["body"] == original["body"]
+    assert reopened["id"] > delivered["id"] and reopened["mentions"] == delivered["mentions"]
+    assert reopened["author"] == "system" and reopened["body"].startswith("REABIERTA / REOPENED")
+    assert "Se ha añadido trabajo al plan. / New work was added to the plan." in reopened["body"]
+    agora.order_undo({"agent": "claude", "token": followup["undo"]})
+    row = delivered_order(agora, order)
+    assert row["status"] == "delivered" and row["delivered_at"] == delivered_at
+    assert agora.thread(thread)["messages"] == [decision, delivered]
+
+
+def test_mixed_last_gate_delivers_when_the_last_click_cancels_an_alternative(agora):
+    order, job, gate = delivery_order(agora)
+    close_job(agora, job)
+    kept_piece = agora.order({"order_id": order})["order"]["piece_list"][0]["id"]
+    extra = agora.piece_add({"agent": "claude", "order_id": order, "kind": "web", "title": "Alternate map",
+                             "url": "https://example.com/alternate"})["piece"]
+    check_for_gate(agora, extra)
+    both = agora.gate_open({"agent": "claude", "order_id": order, "piece_ids": [kept_piece, extra["id"]]})["gate"]["id"]
+    agora.gate_decide(person(gate_id=gate, decision="keep"))
+    agora.gate_decide(person(gate_id=both, piece_id=kept_piece, decision="keep"))
+    assert delivered_order(agora, order)["status"] == "waiting"
+    agora.gate_decide(person(gate_id=both, piece_id=extra["id"], decision="cancel"))
+    assert delivered_order(agora, order)["status"] == "delivered"
+
+
+def test_an_earlier_keep_does_not_deliver_after_a_cancelled_final_gate(agora):
+    order, job, first_gate = delivery_order(agora)
+    last_piece = agora.piece_add({"agent": "claude", "order_id": order, "kind": "web", "title": "Final map",
+                                  "url": "https://example.com/final"})["piece"]
+    check_for_gate(agora, last_piece)
+    last_gate = agora.gate_open({"agent": "claude", "order_id": order, "piece_ids": [last_piece["id"]]})["gate"]["id"]
+    close_job(agora, job)
+    agora.gate_decide(person(gate_id=first_gate, decision="keep"))
+    agora.gate_decide(person(gate_id=last_gate, decision="cancel"))
+    assert delivered_order(agora, order)["status"] == "producing"
+
+
+def test_pending_draft_pass_blocks_delivery_even_without_more_jobs(agora):
+    order, job, gate = delivery_order(agora)
+    agora.draft_pass_open({"agent": "claude", "order_id": order, "variants": [{"key": "next", "title": "Next draft"}]})
+    close_job(agora, job)
+    agora.gate_decide(person(gate_id=gate, decision="keep"))
+    assert delivered_order(agora, order)["status"] == "producing"
+
+
+def test_startup_delivers_legacy_orders_once_without_touching_pending_orders(agora, tmp_path, monkeypatch):
+    ready, ready_job, ready_gate = delivery_order(agora)
+    pending_job, _, job_gate = delivery_order(agora, "Open job")
+    pending_gate, gate_job, _ = delivery_order(agora, "Open gate")
+    cancelled_gate, cancelled_job, last_gate = delivery_order(agora, "Cancelled gate")
+    for job in (ready_job, gate_job, cancelled_job):
+        close_job(agora, job)
+    with monkeypatch.context() as legacy:
+        legacy.setattr(agora_orders, "maybe_deliver", lambda *args, **kwargs: None, raising=False)
+        agora.gate_decide(person(gate_id=ready_gate, decision="keep"))
+        agora.gate_decide(person(gate_id=job_gate, decision="keep"))
+        agora.gate_decide(person(gate_id=last_gate, decision="cancel"))
+
+    for _ in range(2):
+        restarted = Agora(tmp_path / "agora.db")
+        try:
+            view = restarted.for_space("estudio")
+            row = delivered_order(view, ready)
+            assert row["status"] == "delivered" and row["delivered_at"] > 0
+            assert delivered_order(view, pending_job)["status"] == "producing"
+            assert delivered_order(view, pending_gate)["status"] == "waiting"
+            assert delivered_order(view, cancelled_gate)["status"] == "producing"
+            inbox = view.inbox({"agent": "claude-capataz", "peek": True})
+            assert sum(m["body"].startswith("ENTREGADA / DELIVERED") for m in inbox["production_decisions"]) == 1
+        finally:
+            restarted.close()
+
+
 def cartographer(ag, folder):
     """The scene's order, a plan of four jobs (two in parallel after the sheet) and its pieces."""
     for name in ("lamina.png", "hoja.png", "malla.glb", "giro-0.png", "giro-1.png", "modelo.blend", "render.png"):

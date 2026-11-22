@@ -18,9 +18,18 @@ note}`, for example a chapter of a Writer project or a file), `deliverables`, `t
 `produccion-visual`, `presentacion`, `software-web`), `keep` (details no piece may lose, such as «the tube on her left»),
 `folder` (where its files live; piece paths may be relative to it) and `deadline`.
 
-States: `open` → `producing` (it has a plan) → `waiting` (a gate is open) → back to `producing` when every gate is
-decided → `delivered`, or `cancelled` at any point. Opening and deciding gates moves the state; `order_update` sets it by
-hand.
+An order starts `open`, moves to `producing` when it has a plan and to `waiting` when a gate opens. Once the decisions
+are in, production can resume or the order can become `delivered`. `order_update` also sets the state by hand.
+
+The Hub delivers a planned order automatically when it has at least one active plan job, all those jobs are closed
+(`done` or `dropped`), no gate or draft pass is pending, and the last decided delivery gate has a piece that is still
+kept. The Hub checks when a gate is decided, when a plan job closes and at startup. The order's conversation records
+the delivery and notifies the foreman, directors and other recipients of production notices.
+`hub_agora_orders` and `hub_agora_order` expose
+`delivered_at` (Unix seconds) and `delivery_reason` (`final_gate_kept`) for automatic deliveries.
+Adding plan work, returning a job to a pending state, or opening a gate or draft pass reopens an automatically
+delivered order. Its conversation keeps the delivery notice and records why the order reopened for the same
+recipients. Undoing a write removes the notices that write created.
 
 An order is written from the Hub's page (Orders → New order), by a tool from a Faustus chat or an agent, or by any Hoard
 over `POST /api/agora/order_create` with its bearer token and `refs` pointing at the selection it was made on.

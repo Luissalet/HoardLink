@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
-from . import integration_git as git
+from . import agora_orders, integration_git as git
 
 
 def _commit(repo, ref):
@@ -84,6 +84,7 @@ def restore_closure(agora, task, before):
     thread = before["thread"]
     agora.db.execute("UPDATE threads SET status=?, resolution=?, resolved_by=?, updated=? WHERE id=?",
                      (thread["status"], thread["resolution"], thread["resolved_by"], now, task["thread_id"]))
+    agora_orders.job_status_changed(agora, task["id"], values["status"])
 
 
 def record_closure_undo(agora, task, agent, now, commits, result):
