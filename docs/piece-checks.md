@@ -14,10 +14,10 @@ additional reference files before passing their absolute paths. For web checks,
 pass a declared ZIP. For spreadsheet checks, pass explicit sheet requirements.
 
 Los trabajadores dedicados usan rutas locales declaradas o revisiones
-conservadas que autoriza el encargo. La validaci?n por identificador usa la
+conservadas que autoriza el encargo. La validación por identificador usa la
 copia conservada y declarada. Declara los ficheros de referencia adicionales
 antes de pasar sus rutas absolutas. Para comprobar una web, usa un ZIP declarado.
-Para una hoja de c?lculo, indica los requisitos de la hoja.
+Para una hoja de cálculo, indica los requisitos de la hoja.
 
 An executed request returns `ok: true` and a separate `verdict` of `pass`,
 `fail` or `unmeasured`. A measured defect takes precedence over a pending

@@ -14,6 +14,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,18 @@ DECLARED_PATHS = {
 
 def worker_data(console: Any, agent: str) -> Path:
     return Path(console.hub.config.data_dir).resolve() / "agora-console" / "faustus" / agent
+
+
+def new_worker_workspace(console: Any, agent: str) -> str:
+    parent = worker_data(console, agent) / "workspaces"
+    parent.mkdir(parents=True, exist_ok=True)
+    return tempfile.mkdtemp(prefix="work-", dir=parent)
+
+
+def owns_worker_workspace(console: Any, agent: str, workspace: str) -> bool:
+    path = Path(workspace)
+    return (path.parent == worker_data(console, agent) / "workspaces"
+            and path.name.startswith("work-") and path.is_dir())
 
 
 def tutor_instinct(console: Any, args: dict, actor: str) -> dict:
@@ -180,8 +193,6 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
     space = agora.space_store.get(console.space_id) if hasattr(agora, "space_store") else None
     configured_workspace = (space or {}).get("workspace")
     workspace = str(configured_workspace or root.parent)
-    if (ntpath.splitdrive(workspace)[0] or console.space_id == STUDIO) and not Path(workspace).is_dir():
-        return None, "The space's PC workspace directory is unavailable."
     target = service(console.hub)
     if not target.get("reachable"):
         return None, str(target.get("error") or "The placed Faustus service is unavailable.")
@@ -191,13 +202,9 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
     dedicated = target.get("remote") or console.space_id == STUDIO
     if not dedicated and (declared_paths is not None or task_id is not None):
         return None, "File scope requires a dedicated PC worker. / El ámbito de ficheros requiere un trabajador aislado en el PC."
+    if not dedicated and ntpath.splitdrive(workspace)[0] and not Path(workspace).is_dir():
+        return None, "The space's PC workspace directory is unavailable."
     if dedicated:
-        if not configured_workspace:
-            # The installation's parent is not a worker workspace. Use an
-            # empty private directory, with no access to its runtime data.
-            workspace = str(worker_data(console, agent) / "work")
-            Path(workspace).mkdir(parents=True, exist_ok=True)
-        scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
         status, endpoints = console._faustus_session_request("GET", "/api/model-endpoints", base_url=base)
         endpoint = next((row for row in endpoints if row.get("id") == endpoint_id and row.get("is_enabled")), None) if status == 200 and isinstance(endpoints, list) else None
         if not endpoint or not str(endpoint.get("base_url") or "").startswith(("http://", "https://")):
@@ -213,6 +220,8 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
                     "Faustus Settings → Added Models. / No se encontró la credencial del endpoint seleccionado. "
                     "Añade o actualiza su clave API en Ajustes de Faustus → Modelos añadidos."
                 )
+        workspace = new_worker_workspace(console, agent)
+        scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
         runtime = start_pc(console, agent, root, python, endpoint["base_url"], model["model_id"], file_scope=scope, api_key=api_key)
         base, endpoint_id = runtime["url"], "headless"
     try:
@@ -284,7 +293,8 @@ def reactivate_apprentice_binding(console: Any, base: str, session: str) -> None
 def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, model: str, *,
              file_scope: dict, api_key: str = "", resume: bool = False) -> dict:
     data = worker_data(console, agent)
-    data.mkdir(parents=True, exist_ok=True)
+    if not owns_worker_workspace(console, agent, file_scope["workspace"]):
+        raise ValueError("A private worker workspace is required. / Se requiere una carpeta de trabajo privada.")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -292,6 +302,10 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     env = console._runner_env()
     env["FAUSTUS_AGORA_WORKER_SPACE"] = console.space_id
     env["FAUSTUS_APP_ROOT"] = str(root)
+    secret_paths = [str(Path(console.hub.config.data_dir) / "hub.json"),
+                    *(str(data / name) for name in ("app.db", "app.db-wal", "app.db-shm"))]
+    secret_paths.extend(app.token_file for app in getattr(console.hub, "apps", []) if app.token_file)
+    env["FAUSTUS_AGORA_PROTECTED_PATHS"] = json.dumps(secret_paths)
     env["FAUSTUS_AGORA_HUB_PYTHON"] = sys.executable
     env["FAUSTUS_AGORA_HUB_ROOT"] = str(Path(__file__).resolve().parents[2])
     # On resume, leave the original endpoint and its encrypted credential in place.
