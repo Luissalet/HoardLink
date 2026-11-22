@@ -247,10 +247,26 @@ the scope from its original receipt. The saved Hub connector binds the worker's 
 to report presence and `coordination_post` with the task's thread ID and the report
 body to publish there. Use `hub_agora_order` to read a production order and
 `hub_piece_validate` to check a piece. Pass absolute paths inside the scope to
-`hub_eyes_look` for images, PDFs and GLBs. For a GLB with external buffers or textures,
-pass their declared absolute paths in `resources`, preserving the GLB's relative
-layout. The Hub stages the GLB and those referenced resources for render.
-Use a declared GLB export for a BLEND until a renderer can confine linked files.
+`hub_eyes_look` for images, PDFs, GLBs and BLENDs. For a mesh with external buffers,
+textures or libraries, pass their declared absolute paths in `resources`. Use
+relative links within the model's folder or pack resources in the model. The Hub
+stages the model and the necessary declared files for render.
+
+For scoped BLEND views, set `HOARD_EYES_BLENDER_SANDBOX_IMAGE` in the Hub service
+to a trusted local Linux container image with Blender, Xvfb, xauth, Mesa software
+rendering and `timeout`. For example, build the image from a directory containing
+this Dockerfile:
+
+```dockerfile
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends blender libgl1-mesa-dri xvfb xauth \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+The worker's BLEND views use CPU rendering in an ephemeral container with network
+disabled, staged inputs mounted read-only and a separate render output. If the
+container renderer is unavailable, the worker receives a specific error and can
+request a declared GLB export.
 
 Use `inspect_image` to crop, rotate, zoom and view declared images. Its `measure`
 action returns numeric rows for regional RGB and luminance (`statistics`),

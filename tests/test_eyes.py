@@ -676,3 +676,52 @@ def test_scoped_glb_renders_its_declared_texture(eyes, tmp_path):
     with Image.open(allowed["views"][0]["path"]) as photo:
         red, green, blue = photo.convert("RGB").getpixel((64, 64))
         assert green > max(red, blue) + 60
+
+
+def test_scoped_blend_without_renderer_refuses_without_host_blender(eyes, tmp_path, monkeypatch):
+    monkeypatch.delenv("HOARD_EYES_BLENDER_SANDBOX_IMAGE", raising=False)
+    source = tmp_path / "model.blend"
+    source.write_bytes(b"placeholder")
+    monkeypatch.setattr(eyes_render, "_run", lambda *a, **kw: pytest.fail("renderer started"))
+    result = eyes.look({"path": str(source), "resources": [], "wait_s": 10})
+    assert result["status"] == "failed"
+    assert "No isolated BLEND renderer is configured" in result["error"]
+
+
+def test_scoped_blend_stages_only_declared_files_and_mounts_read_only(tmp_path, monkeypatch):
+    source = tmp_path / "assets" / "model.blend"
+    linked = source.parent / "linked" / "library.blend"
+    linked.parent.mkdir(parents=True)
+    for path in (source, linked, source.parent / "unlisted.blend"):
+        path.write_bytes(b"placeholder")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    staged = eyes_render._stage_blend(source, scratch, [str(linked)])
+    assert {p.relative_to(staged.parent).as_posix() for p in staged.parent.rglob("*.blend")} == {
+        "model.blend", "linked/library.blend"}
+
+    monkeypatch.setenv("HOARD_EYES_BLENDER_SANDBOX_IMAGE", "fixture:local")
+    monkeypatch.setattr(eyes_render, "find_program", lambda name: "docker")
+    calls = []
+
+    def mock_run(args, timeout):
+        calls.append((args, timeout))
+        if args[1] == "rm":
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        (scratch / "render" / "front-neutral.png").write_bytes(b"fixture view")
+        result = {"ok": True, "views": [{"path": "/render/front-neutral.png"}]}
+        return SimpleNamespace(returncode=0, stderr=b"",
+                               stdout=("EYES_RESULT " + json.dumps(result)).encode())
+
+    monkeypatch.setattr(eyes_render, "_run", mock_run)
+    result = eyes_render._render_isolated_blend(staged, out, scratch, {}, 40)
+    args = calls[0][0]
+    assert args[args.index("--network") + 1] == "none"
+    assert args[args.index("--pull") + 1] == "never"
+    assert "--read-only" in args and "--disable-autoexec" in args
+    assert [arg.split(",target=")[1] for arg in args if arg.startswith("type=bind,")] == [
+        "/piece,readonly", "/eyes.py,readonly", "/spec.json,readonly", "/render"]
+    assert calls[1][0] == ["docker", "rm", "-f", args[args.index("--name") + 1]]
+    assert json.loads(result.removeprefix(b"EYES_RESULT "))["views"][0]["path"] == str(out / "front-neutral.png")

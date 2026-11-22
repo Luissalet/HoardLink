@@ -303,11 +303,11 @@ class EyesFacet(Facet):
         opts = self._options(merged, previous, piece["kind"])
         if "resources" in args:
             resources = args["resources"]
-            if (previous or piece["kind"] != "mesh" or Path(piece["source"]).suffix.lower() != ".glb"
+            if (previous or piece["kind"] != "mesh" or Path(piece["source"]).suffix.lower() not in {".glb", ".blend"}
                     or not isinstance(resources, list) or len(resources) > 32
                     or any(not isinstance(p, str) or not Path(p).is_absolute() for p in resources)):
-                return {"ok": False, "error": "Use up to 32 resources with an explicit GLB / "
-                                              "Indica hasta 32 recursos con un GLB expl\u00edcito."}
+                return {"ok": False, "error": "Use up to 32 resources with an explicit GLB or BLEND / "
+                                              "Indica hasta 32 recursos con un GLB o BLEND expl\u00edcito."}
             opts["resources"] = resources
         if piece["kind"] == "mesh":
             axis = args.get("front_axis")
@@ -466,8 +466,8 @@ class EyesFacet(Facet):
                   "repeats a look on a new revision and adds a before/after comparison. Undo: hub_eyes_forget.",
                   {"path": {"type": "string", "description": "File or folder of the piece."},
                    "resources": {"type": "array", "maxItems": 32, "items": {"type": "string"},
-                                 "description": "For GLB: absolute paths to declared external buffers or textures. "
-                                                "Stages the GLB and only these resources for rendering."},
+                                 "description": "For GLB or BLEND: absolute paths to declared external resources. "
+                                                "BLEND uses the isolated renderer when configured."},
                    "url": {"type": "string", "description": "Web page address."},
                    "app": {"type": "object", "description": "{app, tool, arguments}: an app object seen through "
                                                             "its own view tool."},
