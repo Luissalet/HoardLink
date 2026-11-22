@@ -253,6 +253,15 @@ and can withdraw on timeout or cancellation.
 
 ### Agent tools
 
+`hub_dojo` calls the Dojo of the active installation on the PC or the Spark.
+The bridge forwards the agent identity from the normal Hub tool connection
+(`HOARD_AGENT_ID` for the terminal or stdio client) and uses the Hub's service
+credential. Use `list` for exams and models, `launch` for an attempt, `mark`
+for a review, `round_import` for sourced history and `undo` with the returned
+token. The arguments follow the corresponding `dojo_<operation>` schemas.
+Station grade proposals can be submitted through the bridge. Applying one
+is done from Studio.
+
 `hub_lease_status` (read-only), `hub_lease_request`, `hub_lease_release`,
 in the same catalogue as the other hub tools (`/api/agent/*` and the stdio
 MCP bridge).
