@@ -76,6 +76,21 @@ def ancestor(repo, older, newer):
     return git(repo, "merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
 
 
+def first_mainline_inclusion(repo, main, head, submitted=()):
+    """Find the first-parent commit of ``main`` that brought in ``head`` and the mainline commit before it.
+
+    A merge commit is its own inclusion and its first parent is the previous mainline. A fast-forward puts the
+    delivery on the mainline itself, so the previous mainline is the parent of its oldest submitted commit."""
+    later = git_text(repo, "rev-list", "--first-parent", "--reverse", "--ancestry-path", f"{head}..{main}")
+    first = next(iter(later.splitlines()), head)
+    if first != head and (previous := git_text(repo, "rev-parse", first + "^1")) != head:
+        return first, previous
+    previous, own = head, {*submitted, head}
+    while previous in own:
+        previous = git_text(repo, "rev-parse", previous + "^1")
+    return head, previous
+
+
 def resolve_commit(repo, ref):
     result = git(repo, "rev-parse", "--verify", ref + "^{commit}", check=False)
     if result.returncode:

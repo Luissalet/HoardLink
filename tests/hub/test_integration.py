@@ -539,6 +539,78 @@ def test_measured_baseline_guards_direct_done_and_automatic_merge(delivery, tmp_
         agora.close()
 
 
+@pytest.mark.parametrize(("fast_forward", "new_failure"), [(False, False), (False, True), (True, False)])
+def test_check_published_delivery_for_manual_closure(delivery, tmp_path, monkeypatch, fast_forward, new_failure):
+    repo, base, first, branch = delivery
+    path = "tests/test_feature.py"
+    write(branch, path, "def test_known(): assert False, 'recorded failure'\n"
+          f"def test_new(): assert {not new_failure}\n")
+    head = commit(branch, "Deliver focal checks", path)
+    registry = tmp_path / "suite-registry.json"
+    write_json_atomic(registry, {"repositories": [{"name": repo.name, "commit": base, "status": "failed",
+        "results": {"focal": {"status": "failed", "started_at": "2026-11-21T12:00:00+00:00",
+                              "issues": [{"case": "tests.test_feature::test_known", "kind": "failure"}]}}}]})
+    monkeypatch.setenv("HOARD_HUB_SUITE_BASELINE", str(registry))
+    monkeypatch.delenv("HOARD_HUB_SUITE_COMPARISON", raising=False)
+    monkeypatch.setattr(checks, "SUITE_LOCK", tmp_path / "local-slot")
+    agora = Agora(tmp_path / "agora.db", repo_lookup=lambda name: repo if name == repo.name else None)
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)),
+                          facet=lambda name: SimpleNamespace(agora=agora))
+    facet = IntegrationFacet(hub)
+    agora.check_integration_closure = facet.check_closure
+    try:
+        task_id = agora.task_add({"agent": "owner", "title": "Verify published feature", "repo": repo.name})["task"]["id"]
+        args = {"agent": "owner", "task_id": task_id}
+        agora.task_claim(args)
+        agora.task_submit({**args, "branch": "delivery", "commits": [first, head],
+                           "summary": f"Test-Paths: {path}"})
+        agora.task_review({**args, "agent": "reviewer", "verdict": "approve",
+                           "expected_submission_revision": 1, "body": "Reviewed."})
+        if fast_forward:
+            git.git(repo, "merge", "--ff-only", head)
+            published = head
+            previous = base
+        else:
+            write(repo, "other.txt", "Earlier main-only work\n")
+            previous = commit(repo, "Advance main before integration", "other.txt")
+            published = git.merge_candidate(repo, head)
+        write(repo, path, "def test_later(): assert False, 'later regression'\n")
+        current = commit(repo, "Advance main after integration", path)
+        write(repo, path, "def test_uncommitted(): assert False\n")
+        closure = {**args, "commits": [published], "result": "Checked the published tree."}
+        with pytest.raises(AgoraError) as missing:
+            agora.task_done(closure)
+        assert missing.value.extra["error_code"] == "integration_test_evidence"
+        with pytest.raises(git.IntegrationError, match="already present"):
+            facet.run({**args, "revision": 1, "merge": True})
+
+        assert facet.inspect({**args, "revision": 1})["plan"]["published_commit"] == published
+        run = facet.run({**args, "revision": 1, "merge": False})["receipt"]["id"]
+        wait_for_runs(facet)
+        receipt = facet.status({"id": run})["receipt"]
+        assert receipt["state"] == ("regressions" if new_failure else "checked"), receipt
+        assert receipt["merge_commit"] == published == receipt["plan"]["published_commit"]
+        assert receipt["plan"]["base"] == previous
+        assert receipt["closure_baseline"]["known"] == ["tests.test_feature::test_known"]
+        assert receipt["closure_baseline"]["new"] == (["tests.test_feature::test_new"] if new_failure else [])
+        assert git.git_text(repo, "rev-parse", "HEAD") == current
+        assert (repo / path).read_text() == "def test_uncommitted(): assert False\n"
+        assert git.branch_tip(repo, "delivery") == head
+        assert agora._task_row(task_id)["status"] == "approved"
+        if new_failure:
+            with pytest.raises(AgoraError) as rejected:
+                agora.task_done(closure)
+            assert rejected.value.extra["error_code"] == "integration_new_test_failures"
+            assert agora._task_row(task_id)["status"] == "approved"
+        else:
+            closed = agora.task_done(closure)
+            assert closed["task"]["status"] == "done"
+            assert closed["closure_baseline"] == [receipt["closure_baseline"]]
+    finally:
+        facet.close()
+        agora.close()
+
+
 def test_same_repository_deliveries_wait_and_replan_on_the_new_main(delivery, tmp_path, monkeypatch):
     from threading import Event
 

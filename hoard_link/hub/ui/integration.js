@@ -170,7 +170,9 @@
       }
     }
     if (receipt.merge_commit) {
-      const commit = el("p", "", t(ctx, "Commit de fusión ", "Merge commit "));
+      const commit = el("p", "", receipt.plan?.published_commit
+        ? t(ctx, "Commit publicado comprobado ", "Checked published commit ")
+        : t(ctx, "Commit de fusión ", "Merge commit "));
       commit.append(el("code", "", receipt.merge_commit.slice(0, 12)));
       content.push(commit);
     }

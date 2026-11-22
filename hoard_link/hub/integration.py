@@ -267,13 +267,20 @@ class IntegrationFacet(Facet):
         test_paths = list(dict.fromkeys(declared + extra))
         head = delivery_contract(repo, task["branch"], commits, test_paths + ([live_file] if live else []),
                                  require_tests=False)
-        fork = repo_git.git_text(repo, "merge-base", base, head)
-        delta = repo_git.changed(repo, fork, head)
+        published = None
         if repo_git.ancestor(repo, head, base):
-            raise repo_git.IntegrationError("The delivery is already present in the target")
+            if args.get("merge"):
+                raise repo_git.IntegrationError("The delivery is already present in the target")
+            # Already on main (merged by hand or before this station loaded): check the tree main gained from it,
+            # against the mainline just before it, however far main has moved since.
+            published, base = repo_git.first_mainline_inclusion(
+                repo, base, head, {repo_git.resolve_commit(repo, item) for item in commits})
+        tested = published or head
+        fork = base if published else repo_git.git_text(repo, "merge-base", base, head)
+        delta = repo_git.changed(repo, fork, tested)
         config = checks.config_at(repo, base)
         # A submission cannot disable main's configured contract files or silently move them into inference.
-        tracked = repo_git.tracked(repo, head) | repo_git.tracked(repo, base)
+        tracked = repo_git.tracked(repo, tested) | repo_git.tracked(repo, base)
         machine = "spark" if args.get("spark_repo") else "local"
         previous = read_json(self._baseline(repo), {}).get(machine, {})
         # Older pytest receipts used the platform's native separator.
@@ -288,7 +295,7 @@ class IntegrationFacet(Facet):
         if live and live_file not in files["contract"]:
             raise repo_git.IntegrationError(f"{repo_name}: choose a live test outside the inference lane")
         return {"repo": repo.name, "repo_ref": repo_name, "base": base, "head": head, "target": target,
-                      "branch": task["branch"], "commits": commits, "delta": sorted(delta), "tests": files, "live_test": live,
+                      "published_commit": published, "branch": task["branch"], "commits": commits, "delta": sorted(delta), "tests": files, "live_test": live,
                       "live_mode": "focused" if live else "contract",
                       "declared_tests": declared, "test_paths": test_paths, "test_paths_source": (
                           "submission_and_integrator" if declared and extra else
@@ -582,8 +589,9 @@ class IntegrationFacet(Facet):
             agora = self._agora(args)
             slot = test_slot(checks.SUITE_LOCK, update, cancelled) if not remote else test_slot(
                 self.root / "remote-slot.json", update, cancelled)
-            with slot, repo_git.worktree(repo, folder / "candidate", base) as candidate:
-                merged = repo_git.merge_candidate(candidate, head)
+            published = plan.get("published_commit")
+            with slot, repo_git.worktree(repo, folder / "candidate", published or base) as candidate:
+                merged = published or repo_git.merge_candidate(candidate, head)
                 receipt["merge_commit"] = merged
                 tests = plan["tests"]["contract"]
                 update("testing_main")
@@ -1125,7 +1133,8 @@ class IntegrationFacet(Facet):
                 for key, description, props, required, read in [
                     ("plan", "Find affected tests. Ver pruebas afectadas.", delivery,
                      ["task_id", "revision", "agent"], True),
-                    ("run", "Check or integrate a delivery. Comprobar o fusionar una entrega.", write,
+                    ("run", "Check a delivery, including one already on main, or integrate it. "
+                     "Comprobar una entrega, también la ya fusionada, o integrarla.", write,
                      ["task_id", "revision", "agent"], False),
                     ("status", "Read an integration receipt. Ver un recibo de integración.", {"id": text}, ["id"], True),
                     ("suite_failures", "Read measured test failures by repository. Ver los fallos de pruebas por repositorio.",
