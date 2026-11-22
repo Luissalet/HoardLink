@@ -63,3 +63,31 @@ def test_bound_worker_checks_its_new_piece_and_refuses_pieces_from_other_tasks(t
         assert not facet.record({**args, "_worker_output_path": str(tmp_path / "other.png")})["ok"]
         Path(piece["stored"]).unlink()
         assert not facet.record(args)["ok"]
+
+
+def test_confined_worker_document_check_never_fetches_links(tmp_path, monkeypatch):
+    from zipfile import ZipFile
+
+    from hoard_link.hub import piece_checks_sources
+
+    calls = []
+    monkeypatch.setattr(piece_checks_sources, "_http",
+                        lambda url: calls.append(url) or {"target": url, "resolved": True, "status": 200})
+    path = tmp_path / "report.docx"
+    with ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml",
+                         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                         "<w:body><w:p><w:r><w:t>See https://example.test/source.</w:t></w:r></w:p></w:body></w:document>")
+    with closing(Agora(tmp_path / "agora.db")) as agora:
+        actor = "worker-fixture"
+        order = agora.order_create({"agent": actor, "title": "Fixture", "words": "Inspect a document."})["order"]
+        piece = agora.piece_add({"agent": actor, "order_id": order["id"], "title": "Report",
+                                 "kind": "document", "path": str(path)})["piece"]
+        facet = PieceChecksFacet(SimpleNamespace(facet=lambda name: SimpleNamespace(agora=agora)))
+        args = {"piece_id": piece["id"], "profile": "document"}
+        assert facet.validate(args)["checks"][0]["verdict"] == "pass" and calls == ["https://example.test/source"]
+        calls.clear()
+        scoped = facet.validate({**args, "_worker_read_files": [piece["stored"]], "requirements": {"resolve_remote": True}})
+        assert scoped["ok"] and calls == []
+        assert scoped["measures"]["citations"][0]["reason"] == "remote disabled"
+        assert scoped["checks"][0]["verdict"] == "unmeasured"
