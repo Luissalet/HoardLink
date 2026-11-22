@@ -2405,6 +2405,11 @@ class AgoraConsoleFacet(Facet):
             allowed = runtime.get("file_scope") or {}
             if allowed:
                 prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(allowed, ensure_ascii=False)
+                threads = faustus_session.get("coordination_threads") or [self.thread_id]
+                prompt += ("\nUse coordination_heartbeat for a heartbeat, hub_agora_order to read production orders, "
+                           f"and coordination_post (thread_id={threads[-1]}, body=your report) to publish your results. "
+                           "These tools use the worker's saved Hub connector. "
+                           "Use inspect_image for local measurements and write_file for result files.")
             context = []
             agora = self._agora()
             try:

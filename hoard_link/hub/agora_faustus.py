@@ -242,15 +242,20 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
             status, saved = request("PATCH", "/api/session/" + session, {"reasoning_effort": effort})
             if status != 200 or not isinstance(saved, dict) or saved.get("reasoning_effort") != effort:
                 raise RuntimeError("Faustus did not confirm the worker effort")
+        thread_ids = [console.thread_id]
+        if task_id is not None:
+            task = agora.db.one("SELECT thread_id FROM tasks WHERE id=? AND space_id=?", (task_id, console.space_id))
+            if task and task["thread_id"] and task["thread_id"] not in thread_ids:
+                thread_ids.append(task["thread_id"])
         status, saved = request("PUT", "/api/coordination/" + session, {"connector_id": connector["id"],
             "actor": agent, "space_id": console.space_id, "active": True,
             "operations": ["poll", "detail", "task", "board", "heartbeat", "add", "claim", "checkpoint", "post", "submit", "review", "done", "lock", "unlock"],
-            "resources": [], "repos": [], "thread_ids": [console.thread_id]})
+            "resources": [], "repos": [], "thread_ids": thread_ids})
         binding = saved.get("binding") if isinstance(saved, dict) else None
         if status != 200 or not binding or binding.get("actor") != agent or binding.get("project_id") != project["id"]:
             raise RuntimeError("Faustus did not confirm the worker coordination identity")
         return {"session_id": session, "project_id": project["id"], "workspace": workspace,
-                "url": base, "runtime": runtime}, ""
+                "url": base, "runtime": runtime, "coordination_threads": thread_ids}, ""
     except Exception:
         if runtime:
             stop_pc(runtime)
