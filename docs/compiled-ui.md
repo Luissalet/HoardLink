@@ -39,7 +39,7 @@ response have distinct results.
   ```
 
 - Otherwise the Hub reads literal Vite `root` and `build.outDir` from the
-  project root or a `client`, `frontend`, `web` or `ui` subdirectory. If Vite
+  project root or a `client`, `frontend`, `web`, `ui` or `apps/web` subdirectory. If Vite
   leaves them unset, its defaults are the project folder and `dist`. Vulcan's
   Hoard declares `root: 'client'` and `outDir: '../vulcan/static'`. Build roots
   from executable expressions require a manifest declaration. The Hub only

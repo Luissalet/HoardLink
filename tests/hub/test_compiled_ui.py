@@ -220,3 +220,11 @@ def test_selection_uses_existing_placement_without_polling_it(tmp_path):
     assert rows["faustus"].root == tmp_path
     config.isolated = True
     assert {app.id: app for app in facet.apps()}["faustus"].urls == ("http://127.0.0.1:2",)
+
+
+def test_nested_web_build_uses_the_config_directory(tmp_path):
+    write(tmp_path / "apps/web/vite.config.js", b"export default {build: {outDir: 'dist'}}")
+    build = _detect(AppUI("example", "Example", tmp_path, ()))
+    assert build.output == "apps/web/dist"
+    assert build.method == "apps/web/vite.config.js"
+    assert "apps/web/src" in build.inputs

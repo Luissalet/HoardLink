@@ -123,7 +123,7 @@ def _detect(app: AppUI) -> Build | None:
         output, based_at_config = _vite_value(config, "outDir", "dist")
         if based_at_config and output == "static/studio" and "entryFileNames: 'studio.js'" in config:
             return Build(output, STUDIO_INPUTS, "studio.js", "/static/studio/studio.js", "faustus_studio")
-    for folder in ("", "client", "frontend", "web", "ui"):
+    for folder in ("", "client", "frontend", "web", "ui", "apps/web"):
         for name in _VITE_NAMES:
             config_path = root / folder / name
             if not config_path.is_file():
