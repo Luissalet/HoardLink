@@ -259,6 +259,9 @@ The bridge forwards the agent identity from the normal Hub tool connection
 credential. Use `list` for exams and models, `launch` for an attempt, `mark`
 for a review, `round_import` for sourced history and `undo` with the returned
 token. The arguments follow the corresponding `dojo_<operation>` schemas.
+Use `compare` with `exam_id` and two `attempt_ids` from that revision to read
+checks, marks and the answer diff. Use `exam_key` with `exam_id` to read the
+teacher's answer key and deliberately missing input when recorded.
 Station grade proposals can be submitted through the bridge. Applying one
 is done from Studio.
 
