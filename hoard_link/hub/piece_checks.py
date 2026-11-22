@@ -13,6 +13,7 @@ import time
 from .. import proc
 from .facets import Facet
 from .piece_checks_sheet import check_sheet, dataset_requirements
+from .piece_checks_sources import worker_scope
 from .production import _tool
 
 PROFILES = {
@@ -211,6 +212,9 @@ class PieceChecksFacet(Facet):
             requirements = {**requirements, "sheet": True}
         if row and profile == "document" and worker_files is None:
             requirements = {**requirements, "_base": str(Path(row["path"]).parent)}
+        if worker_files is not None:
+            # Links and citations that come with the piece are followed only inside the worker's own scope.
+            requirements = {**requirements, "_scope": worker_scope(args)}
         engine = ENGINES.get(profile)
         result = (_engine(self.hub, engine, path, profile, requirements) if engine
                   else run_checks(path, profile, requirements, narrative=narrative))
@@ -248,7 +252,8 @@ class PieceChecksFacet(Facet):
             if not isinstance(piece, dict) or "piece_id" not in piece:
                 return {"ok": False, "error": "Each gate piece needs a piece_id."}
             result = self.validate({**piece, "space_id": args.get("space_id"),
-                                    "_worker_read_files": args.get("_worker_read_files")})
+                                    **{key: args.get(key) for key in (
+                                        "_worker_read_files", "_worker_read_paths", "_worker_write_paths")}})
             if not result.get("ok"):
                 return result
             results.append(result)

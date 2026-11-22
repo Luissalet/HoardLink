@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 from pathlib import Path
 import re
 from urllib.error import HTTPError
@@ -32,8 +33,45 @@ def _http(url):
             return {"target": url, "resolved": None, "error": str(exc)}
 
 
-def resolve(target, base, remote=True):
+def worker_scope(args):
+    """What a confined worker may have the Hub look at, or ``None`` for a caller that is not confined.
+
+    Exact files (granted revisions and the output it may write) and folders (declared read and write
+    paths). Whatever the worker puts in its own requirements never widens it.
+    """
+    if args.get("_worker_read_files") is None:
+        return None
+    files = [*args["_worker_read_files"], *([args["_worker_output_path"]] if args.get("_worker_output_path") else [])]
+    return {"files": files, "folders": [*(args.get("_worker_read_paths") or []), *(args.get("_worker_write_paths") or [])]}
+
+
+def _key(path):
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def in_scope(path, scope):
+    """Whether ``path`` is in ``scope``, judged from the text of the path alone (the disk is not asked)."""
+    here = _key(path)
+    if here in {_key(item) for item in scope.get("files", ())}:
+        return True
+    for folder in scope.get("folders", ()):
+        try:
+            if os.path.commonpath([here, _key(folder)]) == _key(folder):
+                return True
+        except ValueError:  # another drive
+            continue
+    return False
+
+
+def _outside(target):
+    return {"target": target, "resolved": None,
+            "reason": "outside the declared scope / fuera del ámbito declarado"}
+
+
+def resolve(target, base, remote=True, scope=None):
     if re.match(r"^[A-Za-z]:[/\\]", target):
+        if scope is not None and not in_scope(target, scope):
+            return _outside(target)
         return {"target": target, "resolved": Path(target).exists()}
     parsed = urlsplit(target)
     if parsed.scheme in ("https", "http"):
@@ -43,13 +81,19 @@ def resolve(target, base, remote=True):
     path = Path(unquote(parsed.path))
     if parsed.scheme == "file" and path.drive == "" and re.match(r"^/[A-Za-z]:", str(parsed.path)):
         path = Path(unquote(parsed.path[1:]))
-    local = (base / path).resolve() if parsed.path else None
-    return {"target": target, "resolved": local.exists() if local else None}
+    if not parsed.path:
+        return {"target": target, "resolved": None}
+    if scope is not None:
+        if not in_scope(base / path, scope):
+            return _outside(target)
+        local = (base / path).resolve()
+        return _outside(target) if not in_scope(local, scope) else {"target": target, "resolved": local.exists()}
+    return {"target": target, "resolved": (base / path).resolve().exists()}
 
 
-def resolve_many(targets, base, remote=True):
+def resolve_many(targets, base, remote=True, scope=None):
     with ThreadPoolExecutor(max_workers=6) as pool:
-        rows = list(pool.map(lambda target: resolve(target, base, remote), dict.fromkeys(targets)))
+        rows = list(pool.map(lambda target: resolve(target, base, remote, scope), dict.fromkeys(targets)))
     return {row["target"]: row for row in rows}
 
 
@@ -108,7 +152,7 @@ def check_document(path, requirements, report):
             ] if "citations" in requirements else reader(path) if reader else []
     targets = resolve_many([row["target"] for row in rows if row.get("target")],
                            Path(requirements.get("_base", path.parent)),
-                           requirements.get("resolve_remote", True))
+                           requirements.get("resolve_remote", True), requirements.get("_scope"))
     citations = [{**row, **targets.get(row.get("target"), {"resolved": False, "reason": "source missing"})}
                  for row in rows]
     report.measures["citations"] = citations

@@ -245,7 +245,7 @@ def _check_web_page(path, requirements, report):
                             link_results[target] = {"resolved": None, "error": str(exc).splitlines()[0]}
                 rows.append(row)
     external = resolve_many([link["target"] for row in rows for link in row["links"] if not link["local"]],
-                            folder, requirements.get("resolve_remote", True))
+                            folder, requirements.get("resolve_remote", True), requirements.get("_scope"))
     for row in rows:
         for link in row["links"]:
             result = (link_results if link["local"] else external)[link.pop("target")]
@@ -375,7 +375,7 @@ def check_slides(path, requirements, report):
         text.append(per_shape)
     links = list(_deck_links(path))
     external = resolve_many([row["target"] for row in links if row["external"]], path.parent,
-                            requirements.get("resolve_remote", True))
+                            requirements.get("resolve_remote", True), requirements.get("_scope"))
     for row in links:
         if row["external"]:
             row.update(external[row["target"]])
