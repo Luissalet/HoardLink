@@ -2405,6 +2405,10 @@ class Agora:
             self._rearm_dependents(task["id"])
         return self._with_unseen(a, res)
 
+    def require_current_ui(self, task, commits, *, verified=False):
+        if checker := getattr(self, "compiled_ui_checker", None):
+            checker(self, task, commits, verified=verified)
+
     @_space_operation
     def task_done(self, a: dict[str, Any]) -> dict[str, Any]:
         """Integrated: commits and result. Releases the task's locks. Refused while a review is younger than 2 h
@@ -2504,6 +2508,7 @@ class Agora:
                 en = f"Check this revision's focused tests in Integrations before closing: {names}."
                 raise AgoraError(f"{es}\n{en}", 409, error_code="integration_test_evidence",
                                  messages={"es": es, "en": en}, closure_baseline=baseline)
+            self.require_current_ui(task, commits, verified=verified)
             if delegated:
                 undo = record_closure_undo(self, task, agent, now, commits, result)
             self.db.execute("UPDATE tasks SET status='done', commits=?, result=?, closed_at=?, updated=?, review_state=? "
@@ -3880,6 +3885,8 @@ class AgoraFacet(Facet):
         self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness, config=hub.config,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
+        if compiled_ui := getattr(hub, "facet", lambda _: None)("compiled_ui"):
+            self.agora.compiled_ui_checker = compiled_ui.require_current
         self.agora.registered_repositories = lambda: getattr(getattr(hub, "repos", None), "discover", lambda: [])()
         self.agora.check_integration_closure = lambda agora, task, commits: (
             facet.check_closure(agora, task, commits) if (facet := hub.facet("integration")) else [])

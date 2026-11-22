@@ -88,6 +88,20 @@ _STARTING_NAMES: dict[str, str] = {}
 _STARTING_LOCK = threading.Lock()
 
 
+def render_console_index(content: bytes) -> bytes:
+    # The Hub strips trailing slashes before routing, so /agora itself is the
+    # app root. Keep built assets and the browser session on the Hub origin.
+    html = content.decode("utf-8", "replace")
+    html = html.replace('href="./assets/', 'href="/agora/assets/').replace(
+        'src="./assets/', 'src="/agora/assets/')
+    html = html.replace('href="/assets/', 'href="/agora/assets/').replace(
+        'src="/assets/', 'src="/agora/assets/')
+    if "<head>" in html and "<base " not in html:
+        html = html.replace("<head>", '<head><base href="/agora/">', 1)
+    html = html.replace("<head>", '<head><script src="/ui/browser-session.js"></script>', 1)
+    return html.encode("utf-8")
+
+
 class AgoraConsoleFacet(Facet):
     id = "agora_console"
     ui_scripts = ("order_metrics.js",)
@@ -3870,18 +3884,7 @@ class AgoraConsoleFacet(Facet):
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         content = target.read_bytes()
         if target.name.lower() == "index.html":
-            # The Hub strips trailing slashes before routing, so /agora itself
-            # is the app root. Rewrite relative Vite output URLs at response
-            # time to keep built assets under the same-origin /agora prefix.
-            html = content.decode("utf-8", "replace")
-            html = html.replace('href="./assets/', 'href="/agora/assets/').replace(
-                'src="./assets/', 'src="/agora/assets/')
-            html = html.replace('href="/assets/', 'href="/agora/assets/').replace(
-                'src="/assets/', 'src="/agora/assets/')
-            if "<head>" in html and "<base " not in html:
-                html = html.replace("<head>", '<head><base href="/agora/">', 1)
-            html = html.replace("<head>", '<head><script src="/ui/browser-session.js"></script>', 1)
-            content = html.encode("utf-8")
+            content = render_console_index(content)
         return Reply(body=content, content_type=content_type)
 
     @staticmethod

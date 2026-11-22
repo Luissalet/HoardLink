@@ -232,6 +232,11 @@ reloads when a desktop app is running or has a Hub window open.
 `hub_integration_suite_failures` reads the measured failures for all repositories or one repository.
 For repositories with baseline measurements, a new failure in the submitted focal tests blocks closure.
 Recorded failures remain visible in the receipt and the task's closing message.
+
+[Compiled interfaces](docs/compiled-ui.md) in System and `hub_compiled_ui_status` compare the
+registered build with the interface source revision and the response from the installed app.
+?gora checks freshness when closing deliveries that touch a detected compiled interface.
+
 `hub_modules`
 and `hub_module_set` use declared native module switches and return an undo
 request for a change. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any

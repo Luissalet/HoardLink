@@ -540,6 +540,7 @@ class IntegrationFacet(Facet):
                     return
             if receipt["merge"]:
                 self._snapshot(args, merge=True)
+                agora.require_current_ui(task, [row["merge_commit"] for row in group], verified=True)
                 for (repo, _, _), row in zip(deliveries, group):
                     self._cleanup(repo, row, lambda state, details=None: update(state))
                 self._close_delivery(agora, task, receipt, group)
@@ -627,7 +628,7 @@ class IntegrationFacet(Facet):
                 if any(lane["failures"] for lane in receipt.get("inference", {}).values()):
                     update("inference_failed")
                     return
-                build = frontend.prepare_frontend(candidate, repo_git.changed(repo, base, merged), folder)
+                build = frontend.prepare_frontend(candidate, repo_git.changed(repo, base, merged), folder, revision=merged)
                 if cancelled():
                     update("cancelled")
                     return
@@ -763,6 +764,7 @@ class IntegrationFacet(Facet):
         _, agent, approved = self._snapshot(args, merge=True)
         if approved["commits"] != task["commits"]:
             raise repo_git.IntegrationError("The approved commits changed")
+        agora.require_current_ui(task, [receipt["merge_commit"]], verified=True)
         self._cleanup(repo, receipt, update)
         self._close_delivery(agora, task, receipt, [receipt])
 
