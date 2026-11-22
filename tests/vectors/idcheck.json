@@ -78,7 +78,7 @@
   {"fn": "scan_pii", "args": ["pedido 612345678 y 600123456 sin etiqueta"], "expect": []},
   {"fn": "scan_pii", "args": ["Móvil: 0034 612-345-678, tfno. 91 234 56 78, whatsapp 34612345678"], "expect": [{"kind": "PHONE_ES", "start": 7, "end": 23, "value": "0034 612-345-678"}, {"kind": "PHONE_ES", "start": 31, "end": 43, "value": "91 234 56 78"}, {"kind": "PHONE_ES", "start": 54, "end": 65, "value": "34612345678"}]},
   {"fn": "scan_pii", "args": ["DNI 12.345.678-Z y 12345678-Z y nie x-1234567-l"], "expect": [{"kind": "DNI", "start": 4, "end": 16, "value": "12.345.678-Z"}, {"kind": "DNI", "start": 19, "end": 29, "value": "12345678-Z"}, {"kind": "NIE", "start": 36, "end": 47, "value": "x-1234567-l"}]},
-  {"fn": "scan_pii", "args": ["Contacta a luis.mas+x@mail.example.com, o a ana@x.es."], "opts": {}, "expect": [{"kind": "EMAIL", "start": 11, "end": 38, "value": "luis.mas+x@mail.example.com"}, {"kind": "EMAIL", "start": 44, "end": 52, "value": "ana@x.es"}]},
+  {"fn": "scan_pii", "args": ["Contacta a nora.mas+x@mail.example.com, o a ana@x.es."], "opts": {}, "expect": [{"kind": "EMAIL", "start": 11, "end": 38, "value": "nora.mas+x@mail.example.com"}, {"kind": "EMAIL", "start": 44, "end": 52, "value": "ana@x.es"}]},
   {"fn": "scan_pii", "args": ["DNI 12345678Z y ana@x.es", ["EMAIL"]], "expect": [{"kind": "EMAIL", "start": 16, "end": 24, "value": "ana@x.es"}]},
   {"fn": "scan_pii", "args": ["IBAN ES91 2100 0418 4502 0005 1332"], "expect": [{"kind": "IBAN", "start": 5, "end": 34, "value": "ES91 2100 0418 4502 0005 1332"}]},
   {"fn": "scan_pii", "args": [""], "expect": []},

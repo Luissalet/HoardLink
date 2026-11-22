@@ -106,7 +106,7 @@ class SlackWorld:
             return 429, {"ok": False, "error": "ratelimited"}, {"Retry-After": "120"}
         method, form = call["path"].rsplit("/", 1)[1], call["form"]
         if method == "auth.test":
-            return 200, {"ok": True, "user_id": "UME", "user": "luis", "team": "Corp"}
+            return 200, {"ok": True, "user_id": "UME", "user": "nora", "team": "Corp"}
         if method == "conversations.list":
             types = form.get("types", "")
             chans = [c for c in self.channels if not (c.get("is_im") and "im" not in types.split(","))]
@@ -140,15 +140,15 @@ class GraphWorld:
         self.chat_msgs = {
             "19:abc@thread": [{"id": "m2", "createdDateTime": giso(20), "messageType": "message", "from": {"user": {"id": "U-ANA", "displayName": "Ana"}},
                                "body": {"contentType": "html", "content": "<p>¿Comemos <b>hoy</b>?</p>"}, "mentions": []},
-                              {"id": "m1", "createdDateTime": giso(10), "messageType": "message", "from": {"user": {"id": "ME", "displayName": "Luis"}},
+                              {"id": "m1", "createdDateTime": giso(10), "messageType": "message", "from": {"user": {"id": "ME", "displayName": "Nora"}},
                                "body": {"contentType": "text", "content": "mío"}, "mentions": []}],
             "19:grp@thread": [{"id": "g2", "createdDateTime": giso(40), "messageType": "message", "from": {"user": {"id": "U-BOB", "displayName": "Bob"}},
-                               "body": {"contentType": "text", "content": "@Luis revisa"}, "mentions": [{"mentioned": {"user": {"id": "ME"}}}]},
+                               "body": {"contentType": "text", "content": "@Nora revisa"}, "mentions": [{"mentioned": {"user": {"id": "ME"}}}]},
                               {"id": "g1", "createdDateTime": giso(30), "messageType": "systemEventMessage", "from": None,
                                "body": {"contentType": "text", "content": "Bob joined"}, "mentions": []}],
         }
         self.mail = [{"id": "o2", "internetMessageId": "<o2@corp>", "subject": "Tu factura", "receivedDateTime": giso(60), "hasAttachments": True,
-                      "from": {"emailAddress": {"name": "Pagos", "address": "pagos@proveedor.es"}}, "toRecipients": [{"emailAddress": {"address": "luis@corp.com"}}],
+                      "from": {"emailAddress": {"name": "Pagos", "address": "pagos@proveedor.es"}}, "toRecipients": [{"emailAddress": {"address": "nora@corp.com"}}],
                       "ccRecipients": [], "conversationId": "conv1", "body": {"contentType": "html", "content": "<p>Importe 10 EUR <a href='https://pay.es/1'>pagar</a></p>"}},
                      {"id": "o1", "internetMessageId": "<o1@corp>", "subject": "Reunión", "receivedDateTime": giso(50), "hasAttachments": False,
                       "from": {"emailAddress": {"name": "Jefe", "address": "boss@corp.com"}}, "toRecipients": [], "ccRecipients": [],
@@ -176,7 +176,7 @@ class GraphWorld:
         if self.limited:
             return 429, {"error": {"code": "TooManyRequests"}}, {"Retry-After": "90"}
         if path.endswith("/me"):
-            return 200, {"id": "ME", "displayName": "Luis", "userPrincipalName": "luis@corp.com", "mail": "luis@corp.com"}
+            return 200, {"id": "ME", "displayName": "Nora", "userPrincipalName": "nora@corp.com", "mail": "nora@corp.com"}
         if path.endswith("/me/chats"):
             return 200, {"value": [{"id": "19:abc@thread", "chatType": "oneOnOne", "topic": None, "lastMessagePreview": {"createdDateTime": giso(20)}},
                                    {"id": "19:grp@thread", "chatType": "group", "topic": "Proyecto X", "lastMessagePreview": {"createdDateTime": giso(40)}}]}
@@ -295,7 +295,7 @@ def test_slack_fetch_stores_classifies_and_emits(chats, slack, hub):
     add_slack(chats, slack)
     res = post(chats, "/api/chats/fetch", {"id": "slack-work"})
     assert res["ok"] and res["new"] == 3                                  # general x2 (own message and join skipped) + ops; DMs off; C2 not a member
-    assert {r["text"] for r in rows(chats)} == {"buenos días equipo", "@luis mira el informe (http://x.com) & #ops", "deploy hecho"}
+    assert {r["text"] for r in rows(chats)} == {"buenos días equipo", "@nora mira el informe (http://x.com) & #ops", "deploy hecho"}
     mention = next(r for r in rows(chats) if "informe" in r["text"])
     assert mention["priority"] == "attention" and mention["reasons"] == ["mention"]
     assert mention["subject"] == "#general" and mention["folder"] == "C1" and mention["from_name"] == "Bob" and mention["sphere"] == "work"
@@ -305,7 +305,7 @@ def test_slack_fetch_stores_classifies_and_emits(chats, slack, hub):
     evs = hub.events.query(type="chat.received", limit=10)
     assert len(evs) == 3
     ev = next(e["data"] for e in evs if e["data"]["channel"] == "#general" and e["data"]["priority"] == "attention")
-    assert ev["source"] == "slack-work" and ev["sphere"] == "work" and ev["from"] == "Bob" and ev["text"].startswith("@luis") and len(ev["text"]) <= 120
+    assert ev["source"] == "slack-work" and ev["sphere"] == "work" and ev["from"] == "Bob" and ev["text"].startswith("@nora") and len(ev["text"]) <= 120
     # auth.test filled in `me`, persisted in the source
     assert json.loads(Path(chats.path).read_text())[0]["me"] == "UME"
 
@@ -359,7 +359,7 @@ def test_slack_errors_and_rate_limit(chats, slack):
 def test_test_endpoint(chats, slack):
     add_slack(chats, slack, me="")
     ok = post(chats, "/api/chats/sources/slack-work/test")
-    assert ok["ok"] and ok["detail"] == "luis @ Corp"
+    assert ok["ok"] and ok["detail"] == "nora @ Corp"
     add_slack(chats, slack, token="xoxb-wrong-0000")
     bad = post(chats, "/api/chats/sources/slack-work/test")
     assert bad["ok"] is False and bad["status"] == 502 and bad["error"] == "invalid_auth"
@@ -391,17 +391,17 @@ def test_graph_teams_chats(chats, graph, hub):
     res = post(chats, "/api/chats/fetch", {"id": "ms365"})
     assert res["ok"] and res["new"] == 2                       # the one-to-one question and the group mention (own message, system event skipped)
     by = {r["text"]: r for r in rows(chats)}
-    assert set(by) == {"¿Comemos hoy?", "@Luis revisa"}
+    assert set(by) == {"¿Comemos hoy?", "@Nora revisa"}
     one = by["¿Comemos hoy?"]
     assert one["subject"] == "Ana" and one["priority"] == "attention" and one["reasons"] == ["direct"] and one["source"] == "ms365"
-    grp = by["@Luis revisa"]
+    grp = by["@Nora revisa"]
     assert grp["subject"] == "Proyecto X" and grp["reasons"] == ["mention"] and grp["from_name"] == "Bob"
     assert len(hub.events.query(type="chat.received", limit=10)) == 2
     # a second fetch: the chats' previews are not newer than the watermark, so the messages are not even asked for
     n = len(graph.api.calls)
     assert post(chats, "/api/chats/fetch", {"id": "ms365"})["new"] == 0
     assert not [c for c in graph.api.calls[n:] if "/messages" in c["path"]]
-    assert chats.sources()[0]["state"]["me"] == "Luis"
+    assert chats.sources()[0]["state"]["me"] == "Nora"
 
 
 def test_graph_outlook_inbox_is_mail_with_interests_and_events(chats, graph, hub):
@@ -508,7 +508,7 @@ def test_login_declined_and_slow_down(chats, graph):
 def test_jsonl_incremental_partial_lines_and_rewrites(chats, tmp_path):
     f = tmp_path / "chat.jsonl"
     lines = [{"ts": NOW - 100, "channel": "dev", "from": "ana", "text": "hola"},
-             {"ts": NOW - 90, "channel": "dev", "from": "bob", "text": "@luis ¿puedes?", "mentions_me": True},
+             {"ts": NOW - 90, "channel": "dev", "from": "bob", "text": "@nora ¿puedes?", "mentions_me": True},
              {"ts": NOW - 80, "channel": "dm-ana", "from": "ana", "text": "privado", "direct": True}]
     f.write_text("\n".join(json.dumps(x) for x in lines) + "\nnot json\n" + json.dumps({"ts": "2026-10-02T10:00:00Z", "channel": "dev", "from": "eve", "text": "x"})[:20], encoding="utf-8")
     post(chats, "/api/chats/sources", {"id": "feed", "kind": "jsonl", "name": "Feed", "path": str(f), "sphere": "work"})
@@ -516,7 +516,7 @@ def test_jsonl_incremental_partial_lines_and_rewrites(chats, tmp_path):
     assert res["ok"] and res["new"] == 3 and res["seen"] == 3                         # the partial last line is left for next time
     got = {r["text"]: r for r in rows(chats)}
     assert got["hola"]["priority"] == "normal" and got["hola"]["sphere"] == "work" and got["hola"]["subject"] == "dev"
-    assert got["@luis ¿puedes?"]["reasons"] == ["mention"] and got["privado"]["reasons"] == ["direct"]
+    assert got["@nora ¿puedes?"]["reasons"] == ["mention"] and got["privado"]["reasons"] == ["direct"]
     assert post(chats, "/api/chats/fetch", {"id": "feed"})["new"] == 0
     with open(f, "a", encoding="utf-8") as fh:                                         # finish the partial line and add one
         fh.write(json.dumps({"ts": "2026-10-02T10:00:00Z", "channel": "dev", "from": "eve", "text": "x"})[20:] + "\n")

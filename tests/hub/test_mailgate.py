@@ -431,7 +431,7 @@ def test_claims_dismiss_attention_and_unclaimed(gate):
 def test_search_and_filters(gate):
     enable(gate)
     gate.runner.answers.append(answer([rec(1, "Reunión de presupuestos", "ana@example.com", text="traigo los números"),
-                                       rec(2, "Cena", "luis@example.com"), rec(3, "Presupuesto trabajo", "x@corp.com", account="Work", account_address="work@corp.com")]))
+                                       rec(2, "Cena", "nora@example.com"), rec(3, "Presupuesto trabajo", "x@corp.com", account="Work", account_address="work@corp.com")]))
     gate.run_pass()
     assert [m["subject"] for m in gate.search("reunion presupuestos")] == ["Reunión de presupuestos"]
     assert [m["subject"] for m in gate.search("presupuesto", sphere="work")] == ["Presupuesto trabajo"]
@@ -452,16 +452,16 @@ def test_http_requires_a_family_caller_and_config_is_private(gate):
     assert gate.get(req("GET", "/api/mail/config", caller="ledger"))["status"] == 403
     bad = gate.post(req("POST", "/api/mail/config", body={"interval_min": "soon"}))
     assert bad["status"] == 400 and gate.config()["interval_min"] == 10
-    cfg = gate.post(req("POST", "/api/mail/config", body={"enabled": True, "interval_min": 5, "retention_days": 30, "owner": "luis"}))["config"]
-    assert cfg["enabled"] and cfg["interval_min"] == 5 and cfg["retention_days"] == 30 and cfg["owner"] == "luis"
+    cfg = gate.post(req("POST", "/api/mail/config", body={"enabled": True, "interval_min": 5, "retention_days": 30, "owner": "nora"}))["config"]
+    assert cfg["enabled"] and cfg["interval_min"] == 5 and cfg["retention_days"] == 30 and cfg["owner"] == "nora"
     assert gate.get(req("GET", "/api/mail/nope")) is None and gate.get(req("GET", "/api/other")) is None
-    assert json.loads(Path(gate.config_path).read_text())["owner"] == "luis"
+    assert json.loads(Path(gate.config_path).read_text())["owner"] == "nora"
 
 
 def test_owner_is_passed_to_the_helper(gate):
-    gate.post(req("POST", "/api/mail/config", body={"enabled": True, "owner": "luis", "interval_min": 0}))
+    gate.post(req("POST", "/api/mail/config", body={"enabled": True, "owner": "nora", "interval_min": 0}))
     gate.run_pass()
-    assert gate.runner.requests[0]["owner"] == "luis"
+    assert gate.runner.requests[0]["owner"] == "nora"
 
 
 def test_retention_runs_with_the_pass(gate):

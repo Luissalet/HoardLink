@@ -96,7 +96,7 @@ FAKE_SERVER = textwrap.dedent('''
 
     MESSAGES = {1: _raw(1, "uno", "<m1@x>", 25), 2: _raw(2, "dos", "<m2@x>", 26), 3: _raw(3, "tres", "<m3@x>", 27)}
     ACCOUNTS = [{"id": 1, "account_name": "Personal", "imap_user": "me@example.com", "from_address": "me@example.com",
-                 "smtp_user": "me@example.com", "imap_host": "imap.example.com", "imap_port": 993, "enabled": 1, "owner": "luis"}]
+                 "smtp_user": "me@example.com", "imap_host": "imap.example.com", "imap_port": 993, "enabled": 1, "owner": "nora"}]
 
     def _read_accounts_from_db(): return list(ACCOUNTS)
     def _filter_accounts_for_owner(rows): return rows

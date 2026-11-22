@@ -22,7 +22,7 @@ from hoard_link.hub.repos import RepoMonitor, RepoSettings, build_issues, filter
 from .test_hub_and_server import _http
 
 ME = "luissalet@users.noreply.github.com"
-GIT_ENV = {"GIT_AUTHOR_NAME": "Luis", "GIT_AUTHOR_EMAIL": ME, "GIT_COMMITTER_NAME": "Luis", "GIT_COMMITTER_EMAIL": ME,
+GIT_ENV = {"GIT_AUTHOR_NAME": "Luissalet", "GIT_AUTHOR_EMAIL": ME, "GIT_COMMITTER_NAME": "Luissalet", "GIT_COMMITTER_EMAIL": ME,
            "GIT_CONFIG_NOSYSTEM": "1"}
 
 

@@ -461,9 +461,9 @@ def test_telegram_discovers_the_chat_id(real, web):
     web.responses["/bot"] = (200, {"ok": True, "result": []})
     assert "write to the bot" in real.telegram_discover_chat_id()["error"]
     web.responses["/bot"] = (200, {"ok": True, "result": [{"message": {"chat": {"id": 1, "first_name": "Old"}}},
-                                                          {"message": {"chat": {"id": 555, "first_name": "Luis", "last_name": "S"}}}]})
+                                                          {"message": {"chat": {"id": 555, "first_name": "Nora", "last_name": "S"}}}]})
     res = real.telegram_discover_chat_id()
-    assert res == {"ok": True, "chat_id": "555", "name": "Luis S"}
+    assert res == {"ok": True, "chat_id": "555", "name": "Nora S"}
     assert web.requests[-1]["path"].startswith("/bottok-123456/getUpdates")
     real.update_config({"channels": {"telegram": {"bot_token": None}}})
     assert real.telegram_discover_chat_id()["status"] == 400

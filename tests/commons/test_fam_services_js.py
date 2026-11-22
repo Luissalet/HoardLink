@@ -96,7 +96,7 @@ def test_transcribe_polls_normalises_and_reports_progress(hub, tmp_path):
         "segments": [{"start": 0, "end": 1.5, "text": " hola ", "words": [{"start": 0, "end": 0.5, "word": "hola", "probability": 0.9}]}, {"start": 1.5, "end": 2, "text": "mundo"}]}))
     out = run(hub.url, tmp_path / "mcp-token", """
       const seen = [];
-      const res = await fam.transcribe('/clase.mp3', { language: 'es', model: 'small', initialPrompt: 'Luis', progress: (f) => seen.push(f) });
+      const res = await fam.transcribe('/clase.mp3', { language: 'es', model: 'small', initialPrompt: 'Nora', progress: (f) => seen.push(f) });
       return { res, seen };
     """)
     res = out["res"]
@@ -104,7 +104,7 @@ def test_transcribe_polls_normalises_and_reports_progress(hub, tmp_path):
     assert res["segments"][0] == {"start_s": 0, "end_s": 1.5, "text": "hola", "words": [{"start_s": 0, "end_s": 0.5, "word": "hola", "p": 0.9}]}
     assert out["seen"] == [0.1, 0.5, 1]
     a = hub.of("transcribe_file")[0]["args"]
-    assert a["path"] == str(Path("/clase.mp3").resolve()) and a["language"] == "es" and a["model"] == "small" and a["initial_prompt"] == "Luis" and a["wait_s"] == 150
+    assert a["path"] == str(Path("/clase.mp3").resolve()) and a["language"] == "es" and a["model"] == "small" and a["initial_prompt"] == "Nora" and a["wait_s"] == 150
 
 
 def test_transcribe_timeout_status_and_cancel(hub, tmp_path):

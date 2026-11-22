@@ -466,7 +466,7 @@ def test_read_any_images_need_ocr():
 
 
 def test_read_any_eml():
-    eml = (b"From: Ana <ana@example.org>\nTo: luis@example.org\nSubject: Hola\nDate: Fri, 02 Oct 2026 10:00:00 +0200\n"
+    eml = (b"From: Ana <ana@example.org>\nTo: nora@example.org\nSubject: Hola\nDate: Fri, 02 Oct 2026 10:00:00 +0200\n"
            b"Content-Type: text/plain; charset=utf-8\n\nCuerpo del correo con \xc3\xb1.\n")
     r = rl.read_any("a.eml", eml)
     assert r["kind"] == "eml" and r["title"] == "Hola" and "From: Ana <ana@example.org>" in r["text"] and r["text"].endswith("Cuerpo del correo con ñ.")

@@ -251,7 +251,7 @@ FUNES_DONE = {"job_id": "j1", "status": "done", "language": "es", "text": "hola 
 def test_transcribe_through_funes_normalises_the_transcript(hub, tmp_path):
     hub.on("funes", "transcribe_file", FUNES_DONE)
     seen = []
-    res = fam_media.transcribe(tmp_path / "clase.mp3", language="es", model="small", initial_prompt="Luis", progress=seen.append)
+    res = fam_media.transcribe(tmp_path / "clase.mp3", language="es", model="small", initial_prompt="Nora", progress=seen.append)
     assert res["ok"] is True and res["via"] == "funes" and res["language"] == "es" and res["text"] == "hola mundo" and res["job_id"] == "j1"
     assert res["duration_s"] == 2.5 and res["model"] == "small" and res["stats"] == {} and res["device"] == ""
     seg = res["segments"][0]
@@ -260,7 +260,7 @@ def test_transcribe_through_funes_normalises_the_transcript(hub, tmp_path):
     assert res["segments"][1]["words"] == []
     (call,) = hub.of("transcribe_file")
     a = call["args"]
-    assert a["path"] == str(tmp_path / "clase.mp3") and a["language"] == "es" and a["model"] == "small" and a["initial_prompt"] == "Luis"
+    assert a["path"] == str(tmp_path / "clase.mp3") and a["language"] == "es" and a["model"] == "small" and a["initial_prompt"] == "Nora"
     assert a["word_timestamps"] is True and a["vad"] is True and a["wait_s"] == 150
     assert seen[-1] == 1.0
 

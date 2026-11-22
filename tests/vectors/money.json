@@ -130,11 +130,11 @@
   {"fn": "split_shares", "args": [100, [0.25, 0.25, 0.5]], "expect": [25, 25, 50]},
   {"fn": "split_shares", "args": [100, [1, 0, 1]], "expect": [50, 0, 50]},
   {"fn": "split_shares", "args": [-100, [1, 1, 1]], "expect": [-34, -33, -33]},
-  {"fn": "split_shares", "args": [1000, {"ana": 1, "luis": 1, "eva": 1}], "expect": {"ana": 334, "luis": 333, "eva": 333}},
+  {"fn": "split_shares", "args": [1000, {"ana": 1, "nora": 1, "eva": 1}], "expect": {"ana": 334, "nora": 333, "eva": 333}},
   {"fn": "split_shares", "args": [0, [1, 1]], "expect": [0, 0]},
   {"fn": "split_shares", "args": [10, [1, 1, 1, 1, 1, 1]], "expect": [2, 2, 2, 2, 1, 1]},
   {"fn": "settle", "args": [{"a": -5000, "b": 3000, "c": 2000, "d": 1000, "e": -1000}], "expect": [{"from": "e", "to": "d", "cents": 1000}, {"from": "a", "to": "b", "cents": 3000}, {"from": "a", "to": "c", "cents": 2000}]},
-  {"fn": "settle", "args": [{"luis": 3000, "ana": -1500, "eva": -1500}], "expect": [{"from": "ana", "to": "luis", "cents": 1500}, {"from": "eva", "to": "luis", "cents": 1500}]},
+  {"fn": "settle", "args": [{"nora": 3000, "ana": -1500, "eva": -1500}], "expect": [{"from": "ana", "to": "nora", "cents": 1500}, {"from": "eva", "to": "nora", "cents": 1500}]},
   {"fn": "settle", "args": [{"a": 0, "b": 0}], "expect": []},
   {"fn": "settle", "args": [{"a": 100, "b": -60, "c": -40}], "expect": [{"from": "b", "to": "a", "cents": 60}, {"from": "c", "to": "a", "cents": 40}]},
   {"fn": "settle", "args": [{"1": 500, "2": -200, "10": -300}], "expect": [{"from": "10", "to": "1", "cents": 300}, {"from": "2", "to": "1", "cents": 200}]}
