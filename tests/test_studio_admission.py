@@ -55,6 +55,62 @@ def order(tmp_path):
     agora.close()
 
 
+def test_replacement_owner_closes_handed_over_attempt_preserving_its_worker(order):
+    agora, args = order
+    tid = args["task_id"]
+    agora.task_claim({"agent": "maker", "task_id": tid})
+    agora.heartbeat({"agent": "successor"})
+    begun = order_budget.attempt(agora, {**args, "action": "begin", "key": "prior", "gpu_seconds": 12})
+    successor = {**args, "agent": "successor"}
+    finishing = {**successor, "action": "pass", "key": "prior"}
+    with pytest.raises(AgoraError, match="Another agent holds"):
+        order_budget.attempt(agora, {**finishing, "reason": "Finished job receipt"})
+
+    agora.handover({"agent": "maker", "from_agent": "maker", "to_agent": "successor",
+                    "tasks": [tid], "reason": "End of shift"})
+    with pytest.raises(AgoraError, match="already has an active attempt") as error:
+        order_budget.attempt(agora, {**successor, "action": "begin", "key": "next"})
+    assert error.value.extra["active_attempt"] == {"id": begun["attempt"]["id"], "key": "prior", "agent": "maker"}
+    with pytest.raises(AgoraError, match="Give the reason"):
+        order_budget.attempt(agora, {**finishing, "reason": "  "})
+    result = order_budget.attempt(agora, {**finishing, "reason": "Job receipt: complete"})
+    assert result["attempt"] == {
+        **begun["attempt"], "closed": result["attempt"]["closed"], "result": "pass",
+        "closed_by": "successor", "close_reason": "Job receipt: complete",
+    }
+    assert result["attempt"]["closed"] >= result["attempt"]["created"]
+    receipt = order_budget.attempt(agora, finishing)
+    assert receipt["existing"] and receipt["attempt"] == result["attempt"]
+    assert order_budget.metrics(agora, {})["stations"][0]["gpu_seconds"] == 12
+
+    agora.order_undo({"agent": "successor", "token": result["undo"]})
+    assert order_budget.attempt(agora, {**args, "action": "begin", "key": "prior"})["attempt"] == begun["attempt"]
+    closed = order_budget.attempt(agora, {**finishing, "reason": "Job receipt: complete"})
+    assert order_budget.attempt(agora, {**successor, "action": "begin", "key": "next"})["attempt"]["result"] == "running"
+    with pytest.raises(AgoraError, match="Another attempt has started"):
+        agora.order_undo({"agent": "successor", "token": closed["undo"]})
+
+
+def test_task_reviewer_closes_stopped_workers_attempt_with_actual_gpu_time(order):
+    agora, args = order
+    agora.task_claim(args)
+    agora.task_submit({**args, "summary": "First draft", "reviewer": "foreperson"})
+    order_budget.configure(agora, {**args, "retries": 2, "gpu_seconds": 120, "returns": 4})
+    attempt = {**args, "key": "stopped"}
+    order_budget.attempt(agora, {**attempt, "action": "begin", "gpu_seconds": 20})
+    report = {**attempt, "action": "fail", "reason": "Worker session stopped", "gpu_seconds": 5}
+    with pytest.raises(AgoraError, match="Another agent holds"):
+        order_budget.attempt(agora, {**report, "agent": "bystander"})
+    result = order_budget.attempt(agora, {**report, "agent": "foreperson"})
+    assert result["attempt"]["agent"] == "maker"
+    assert result["attempt"]["closed_by"] == "foreperson"
+    assert result["attempt"]["close_reason"] == "Worker session stopped"
+    assert result["attempt"]["result"] == "fail"
+    assert result["attempt"]["gpu_seconds"] == 5
+    station, = order_budget.metrics(agora, {})["stations"]
+    assert station["failed"] == 1 and station["failed_gpu_seconds"] == 5
+
+
 def test_failed_relay_holds_at_gate_and_undo_leaves_no_gate(order, tmp_path):
     agora, args = order
     limits = {**args, "retries": 1, "returns": 4, "gpu_seconds": 120}

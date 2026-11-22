@@ -133,7 +133,8 @@ _SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #: Tables a journal entry may restore, with their key column.
 _KEYS = {"agora_orders": "id", "agora_order_jobs": "task_id", "agora_pieces": "id", "agora_piece_checks": "id",
          "agora_piece_defects": "id", "agora_gates": "id", "agora_gate_pieces": None,
-         "agora_order_budgets": "order_id", "agora_order_attempts": "id"}
+         "agora_order_budgets": "order_id", "agora_order_attempts": "id",
+         "agora_order_attempt_closures": "attempt_id"}
 _KEYS.update({"agora_order_discarded_jobs": "task_id", "agora_order_decisions": "id",
               "tasks": "id", "locks": "resource", "messages": "id", "agora_dep_wakeups": "key"})
 
@@ -471,6 +472,11 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 raise _err("The task's station or repository changed since this write", 409)
         for change in changes.get("rows") or []:
             table, cond = change["table"], change["where"]
+            if table == "agora_order_attempts" and change["row"] and change["row"]["result"] == "running":
+                attempt = change["row"]
+                if self.db.one("SELECT 1 FROM agora_order_attempts WHERE task_id=? AND id<>? "
+                               "AND (id>? OR result='running')", (attempt["task_id"], attempt["id"], attempt["id"])):
+                    raise _err("Another attempt has started for this job. / Ya ha empezado otro intento para este trabajo.", 409)
             if not decision and table == "agora_gates" and self.db.one(
                     "SELECT 1 FROM agora_order_decisions WHERE gate_id=?", (cond["id"],)):
                 raise _err("A person has already decided a piece in this gate", 409)

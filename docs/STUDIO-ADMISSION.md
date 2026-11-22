@@ -27,6 +27,15 @@ reservation. Finish with `action: "pass"` or `"fail"`, the same key and the actu
 existing attempt. Failed attempts consume a retry for that station job. Returns are counted from the order's recorded
 piece defects, including decisions that send a piece back.
 
+After a handover or worker replacement, the current task owner can close a running attempt opened by the prior
+worker with `pass` or `fail`, its original `key`, and a `reason` describing the handover or station receipt. The task
+reviewer can do the same if neither worker outranks them. An agent who outranks the opener and current owner can
+also report the outcome. Before recovering an attempt, check that the worker has stopped or that the station job
+has ended and cite that observation in `reason`. A begin conflict returns `active_attempt` with the ID, key and
+original worker. The closure receipt preserves the original `agent` and records `closed_by`, `closed`,
+`close_reason`, the result and GPU seconds. Omit `gpu_seconds` to keep the recorded value. Repeating the same
+outcome as the opener or closer returns the receipt. Undo can reopen the attempt before another attempt starts.
+
 At the limit the order waits and new attempts return `state: "waiting"` with the reason. It keeps any open gate,
 or opens one with the available, current draft pieces. When the order has no draft, show the budget hold in
 Orders until a draft is available. Only the person's gate can keep or cancel pieces. After an exhausted budget,

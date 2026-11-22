@@ -11,6 +11,9 @@ Faustus workers can find Hub tools through `lookup_tools` using their exact MCP 
 `hub_piece_validate_record` to save the result with its undo, and `hub_eyes_look` and
 `hub_eyes_get` for visual review. The same connector exposes orders, production
 stations, app tools and receipts. It handles authentication for native calls.
+Following a handover, `hub_order_attempt` lets the current owner or coordinator close a prior worker's open
+attempt with a reason. The receipt records both agents, the outcome and GPU time, and includes an undo token.
+See [studio admission](docs/STUDIO-ADMISSION.md).
 
 ## Production decisions
 

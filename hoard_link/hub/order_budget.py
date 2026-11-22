@@ -7,6 +7,7 @@ from pathlib import Path
 from statistics import median
 
 from ..atomic import read_json
+from . import agora_ranks
 from . import agora_orders as orders
 
 BUDGET_MIGRATION = """
@@ -19,6 +20,10 @@ BUDGET_MIGRATION = """
         station TEXT NOT NULL, agent TEXT NOT NULL, created REAL NOT NULL, closed REAL,
         result TEXT NOT NULL DEFAULT 'running', gpu_seconds INTEGER NOT NULL,
         UNIQUE(order_id, task_id, key)
+    );
+    CREATE TABLE IF NOT EXISTS agora_order_attempt_closures (
+        attempt_id INTEGER PRIMARY KEY REFERENCES agora_order_attempts(id),
+        closed_by TEXT NOT NULL, close_reason TEXT NOT NULL
     );
 """
 
@@ -110,12 +115,25 @@ def _usage(agora, oid, tid):
     )
 
 
+def _may_close_for_worker(agora, tid, agent, worker):
+    task = agora.db.one("SELECT owner, reviewer FROM tasks WHERE id=? AND space_id=?", (tid, agora.space_id))
+    if not task:
+        return False
+    owner = task["owner"]
+    if agent == owner:
+        return True
+    if agent == task["reviewer"]:
+        return not any(agora_ranks.outranks(agora, holder, agent) for holder in (owner, worker))
+    return agora_ranks.outranks(agora, agent, worker) and (not owner or agora_ranks.outranks(agora, agent, owner))
+
+
 def attempt(agora, args):
     agent = agora._agent(args.get("agent"))
     action = args.get("action")
     if action not in ("begin", "pass", "fail"):
         raise orders._err("action must be begin, pass or fail")
     gpu = _nonnegative(args, "gpu_seconds") if "gpu_seconds" in args else None
+    close_reason = orders._txt(args.get("reason"), 2000, "reason")
     key = orders._txt(args.get("key"), 120, "key", required=True)
     tid = orders._int(args.get("task_id"), "task_id")
     with agora.db.tx():
@@ -125,22 +143,43 @@ def attempt(agora, args):
         if job is None:
             raise orders._err("task_id is not a job of this order", 404)
         previous = agora.db.one(
-            "SELECT * FROM agora_order_attempts WHERE order_id=? AND task_id=? AND key=?", (oid, tid, key))
-        if previous and previous["agent"] != agent:
-            raise orders._err("Another agent holds this attempt", 409)
+            "SELECT a.*, c.closed_by, c.close_reason FROM agora_order_attempts a "
+            "LEFT JOIN agora_order_attempt_closures c ON c.attempt_id=a.id "
+            "WHERE a.order_id=? AND a.task_id=? AND a.key=?", (oid, tid, key))
         budget = _budget(agora, oid)
+        reason = (budget or {}).get("reason", "")
+        if action == "begin":
+            if previous and previous["agent"] == agent:
+                return {"ok": True, "attempt": dict(previous), "existing": True, "hold": reason}
+            if previous and previous["result"] != "running":
+                raise orders._err("Another agent holds this attempt", 409)
+            if row["status"] in ("cancelled", "delivered"):
+                raise orders._err("That order is closed", 409)
+            active = agora.db.one("SELECT id, key, agent FROM agora_order_attempts WHERE task_id=? AND result='running'",
+                                  (tid,))
+            if active:
+                raise orders._err("This station job already has an active attempt", 409, active_attempt=dict(active))
+        else:
+            if previous is None:
+                raise orders._err("Begin the attempt before reporting it", 404)
+            own_receipt = agent in (previous["agent"], previous["closed_by"])
+            if own_receipt and previous["result"] == action:
+                return {"ok": True, "attempt": dict(previous), "existing": True, "hold": reason}
+            if agent != previous["agent"]:
+                if previous["result"] != "running" or not _may_close_for_worker(agora, tid, agent, previous["agent"]):
+                    raise orders._err("Another agent holds this attempt", 409)
+                if not close_reason:
+                    raise orders._err("Give the reason for closing another worker's attempt. / Indica el motivo del "
+                                      "cierre del intento de otro trabajador.")
+            if previous["result"] != "running":
+                raise orders._err("This attempt already has an outcome", 409)
+
         journal = orders._Journal(agora, agent, "order_attempt")
         check_returns(agora, row, journal, agent)
         reason = (_budget(agora, oid) or {}).get("reason", "")
         usage = _usage(agora, oid, tid)
         failures = usage["failures"] or 0
         if action == "begin":
-            if previous:
-                return {"ok": True, "attempt": dict(previous), "existing": True, "hold": reason}
-            if row["status"] in ("cancelled", "delivered"):
-                raise orders._err("That order is closed", 409)
-            if agora.db.one("SELECT id FROM agora_order_attempts WHERE task_id=? AND result='running'", (tid,)):
-                raise orders._err("This station job already has an active attempt", 409)
             if budget and not reason:
                 if failures > budget["retries"]:
                     reason = "retries"
@@ -156,17 +195,15 @@ def attempt(agora, args):
             })
             journal.created("agora_order_attempts", entry)
         else:
-            if previous is None:
-                raise orders._err("Begin the attempt before reporting it", 404)
-            if previous["result"] == action:
-                return {"ok": True, "attempt": dict(previous), "existing": True, "hold": reason}
-            if previous["result"] != "running":
-                raise orders._err("This attempt already has an outcome", 409)
             entry = previous["id"]
             journal.before("agora_order_attempts", entry)
             actual = previous["gpu_seconds"] if gpu is None else gpu
             agora.db.execute("UPDATE agora_order_attempts SET result=?, closed=?, gpu_seconds=? WHERE id=?",
                              (action, agora.clock(), actual, entry))
+            agora.db.insert("agora_order_attempt_closures", {
+                "attempt_id": entry, "closed_by": agent, "close_reason": close_reason,
+            })
+            journal.created("agora_order_attempt_closures", entry)
             if budget and not reason:
                 if action == "fail" and failures + 1 > budget["retries"]:
                     reason = "retries"
@@ -176,6 +213,8 @@ def attempt(agora, args):
                     _hold(agora, row, reason, journal, agent)
         token = journal.save()
         result = dict(agora.db.one("SELECT * FROM agora_order_attempts WHERE id=?", (entry,)))
+        result.update(closed_by=agent if action != "begin" else None,
+                      close_reason=close_reason if action != "begin" else None)
     return {"ok": True, "attempt": result, "hold": reason, "undo": token}
 
 
