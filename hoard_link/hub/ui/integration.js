@@ -101,12 +101,18 @@
       content.push(el("p", "", t(ctx,
         `Pruebas superadas · Principal ${main.counts.passed} · Entrega ${candidate.counts.passed}`,
         `Main: ${main.counts.passed} passed. Delivery: ${candidate.counts.passed} passed.`)));
-      content.push(el("p", "", t(ctx,
-        `${Object.keys(known).length} fallos conocidos · ${Object.keys(regressions).length} fallos nuevos`,
-        `${Object.keys(known).length} known failures · ${Object.keys(regressions).length} new failures`)));
-      if (Object.keys(regressions).length) {
+      const knownCount = Object.keys(known).length;
+      const regressionCount = Object.keys(regressions).length;
+      const knownLabel = knownCount === 1 ? t(ctx, "1 fallo conocido", "1 known failure")
+        : t(ctx, `${knownCount} fallos conocidos`, `${knownCount} known failures`);
+      const regressionLabel = regressionCount === 1 ? t(ctx, "1 fallo nuevo", "1 new failure")
+        : t(ctx, `${regressionCount} fallos nuevos`, `${regressionCount} new failures`);
+      content.push(el("p", "", `${knownLabel} · ${regressionLabel}`));
+      const otherRegressions = Object.keys(regressions).filter(test =>
+        !receipt.closure_baseline?.new.some(focal => test === focal || test.endsWith(`/${focal}`)));
+      if (otherRegressions.length) {
         const list = el("ul");
-        for (const test of Object.keys(regressions)) list.append(el("li", "", test));
+        for (const test of otherRegressions) list.append(el("li", "", test));
         content.push(list);
       }
     }
