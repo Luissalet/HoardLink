@@ -243,13 +243,22 @@ use absolute local paths, one per line. On the agent surface, call
 `hub_agora_console_worker` with `action: "propose_files"` and `task_id` to preview.
 For `action: "create"` with `leader_id: "faustus"`, pass the same `task_id` and optional
 `file_scope: {"read_paths": [...], "write_paths": [...]}`. A continued worker keeps
-the scope from its original receipt. Coordination and production checks remain
-available through its Hub connector. For local file arguments sent to the connector,
-use the absolute path inside the declared scope.
-`hub_agora_order` returns the production order and `hub_piece_validate` checks a
-piece. Scoped workers can use `hub_eyes_look` with the absolute path of a
-declared image or PDF file. For image crops, grids or comparisons in the
-worker's conversation, use `inspect_image` with declared local paths.
+the scope from its original receipt. The saved Hub connector binds the worker's identity. Use `coordination_heartbeat`
+to report presence and `coordination_post` with the task's thread ID and the report
+body to publish there. Use `hub_agora_order` to read a production order and
+`hub_piece_validate` to check a piece. Pass absolute paths inside the scope to
+`hub_eyes_look` for images, PDFs and GLBs. For a GLB with external buffers or textures,
+pass their declared absolute paths in `resources`, preserving the GLB's relative
+layout. The Hub stages the GLB and those referenced resources for render.
+Use a declared GLB export for a BLEND until a renderer can confine linked files.
+
+Use `inspect_image` to crop, rotate, zoom and view declared images. Its `measure`
+action returns numeric rows for regional RGB and luminance (`statistics`),
+registered pixel differences outside exclusion polygons (`difference`), and
+four-corner rectification of a source and reference (`homography`). Save a table
+with `write_file` in a declared output or post it through the connector. Python and
+Bash remain listed and return a bilingual refusal while the worker lacks a backend
+with network disabled and mounts restricted to its declared files.
 
 Every managed worker is told to commit its work and `submit` its task. When its process ends, the console checks the
 outcome against the Agora: task status, submission revision and uncommitted changes in the delivery's worktrees.

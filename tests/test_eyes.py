@@ -444,7 +444,7 @@ def test_mesh_views_and_repeatable_camera(eyes: EyesFacet, tmp_path: Path) -> No
     assert again["compare"]["pairs"] == 2
 
 
-def _colour_glb(path: Path, sources: tuple[str, ...]) -> None:
+def _colour_glb(path: Path, sources: tuple[str, ...], *, external_texture: Path | None = None) -> None:
     binary = bytearray()
     gltf = {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": list(range(len(sources)))}],
             "nodes": [], "meshes": [], "accessors": [], "bufferViews": []}
@@ -470,7 +470,13 @@ def _colour_glb(path: Path, sources: tuple[str, ...]) -> None:
         uv = add_accessor(struct.pack("<12f", *(v + 0.5 for point in quad for v in point)), 5126, "VEC2")
         png = io.BytesIO()
         Image.new("RGB", (2, 2), (0, 255, 0)).save(png, format="PNG")
-        gltf.update(images=[{"bufferView": add_view(png.getvalue()), "mimeType": "image/png"}],
+        if external_texture:
+            external_texture.parent.mkdir(exist_ok=True)
+            external_texture.write_bytes(png.getvalue())
+            image_source = {"uri": external_texture.relative_to(path.parent).as_posix()}
+        else:
+            image_source = {"bufferView": add_view(png.getvalue()), "mimeType": "image/png"}
+        gltf.update(images=[image_source],
                     textures=[{"source": 0}],
                     materials=[{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 0}}])
 
@@ -655,3 +661,18 @@ def test_rigged_model_poses_without_the_importers_bone_shapes(eyes: EyesFacet, t
     assert out["facts"]["dimensions_m"][2] == pytest.approx(2 ** 0.5, abs=0.05)
     assert out["resolved"]["pose"]["bones"] == {"brazo": [0.0, 0.0, 45.0]}
     assert any("nope" in w for w in out["warnings"])
+
+
+@pytest.mark.skipif(not eyes_render.find_program("blender"), reason="Blender not installed")
+def test_scoped_glb_renders_its_declared_texture(eyes, tmp_path):
+    glb = tmp_path / "colours.glb"
+    texture = tmp_path / "textures" / "green.png"
+    _colour_glb(glb, ("texture",), external_texture=texture)
+    args = {"path": str(glb), "material": "color", "views": ["front"], "size": 128, "wait_s": 120}
+    denied = eyes.look({**args, "resources": []})
+    assert denied["status"] == "failed" and "Declare every external GLB resource" in denied["error"]
+    allowed = eyes.look({**args, "resources": [str(texture)]})
+    assert allowed["status"] == "done" and allowed["facts"]["textures"] == 1, allowed
+    with Image.open(allowed["views"][0]["path"]) as photo:
+        red, green, blue = photo.convert("RGB").getpixel((64, 64))
+        assert green > max(red, blue) + 60

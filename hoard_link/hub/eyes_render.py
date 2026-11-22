@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import threading
@@ -26,6 +27,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import unquote
 
 KINDS = ("image", "video", "mesh", "web", "document", "game")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
@@ -332,6 +334,58 @@ def look_video(source: str, out: Path, opts: dict[str, Any]) -> dict[str, Any]:
 
 # -- meshes (Blender) ----------------------------------------------------------------------------------------------
 
+def _stage_glb(source: Path, scratch: Path, resources: list[str]) -> Path:
+    """Stage one glTF 2 binary and its declared local dependencies for Blender."""
+    if source.suffix.lower() != ".glb":
+        raise EyesError("Resource-scoped rendering requires a GLB file. / Este renderizado requiere un fichero GLB.")
+    target = scratch / "piece" / source.name
+    target.parent.mkdir()
+    shutil.copyfile(source, target)
+    try:
+        with target.open("rb") as stream:
+            magic, version, length, json_size, chunk = struct.unpack("<4sIII4s", stream.read(20))
+            if (magic != b"glTF" or version != 2 or length != target.stat().st_size or chunk != b"JSON"
+                    or not 0 < json_size <= min(length - 20, 32 * 1024 ** 2)):
+                raise ValueError("invalid GLB header")
+            document = json.loads(stream.read(json_size))
+        if not isinstance(document, dict):
+            raise ValueError("invalid GLB document")
+    except (OSError, ValueError, struct.error, RecursionError) as exc:
+        raise EyesError("Invalid GLB dependency manifest. / Manifiesto de dependencias GLB no v\u00e1lido.") from exc
+
+    approved = {Path(value).resolve() for value in resources}
+    staged = set()
+    pending = [document]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            pending.extend(node.values())
+            if "uri" not in node:
+                continue
+            uri = node["uri"]
+            if isinstance(uri, str) and uri.startswith("data:"):
+                continue
+            decoded = unquote(uri) if isinstance(uri, str) else ""
+            parts = decoded.split("/")
+            if (any(part in ("", ".", "..") or part.endswith((".", " ")) for part in parts)
+                    or any(c in decoded for c in "\\:?#%\0")):
+                raise EyesError("GLB resources must use relative local paths. / Usa rutas locales relativas en el GLB.")
+            relative = Path(*parts)
+            resource = source.parent / relative
+            resolved = resource.resolve()
+            if (resolved not in approved or resource != resolved or not resource.is_file()
+                    or resource == source):
+                raise EyesError("Declare every external GLB resource. / Declara cada recurso externo del GLB.")
+            if relative not in staged:
+                dest = target.parent / relative
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(resource, dest)
+                staged.add(relative)
+    return target
+
+
 def look_mesh(source: str, out: Path, opts: dict[str, Any], timeout: float = 600.0) -> dict[str, Any]:
     names = list(opts.get("views") or DEFAULT_MESH_VIEWS)
     unknown = [n for n in names if n not in MESH_VIEWS]
@@ -361,10 +415,16 @@ def look_mesh(source: str, out: Path, opts: dict[str, Any], timeout: float = 600
             target = Path(scratch) / "piece.glb"
             unit = to_glb(source, target)
             spec["source"] = str(target)
+        scoped = "resources" in opts
+        if scoped:
+            spec["source"] = str(_stage_glb(Path(spec["source"]), Path(scratch), opts["resources"]))
         spec_path = Path(scratch) / "mesh-spec.json"
         spec_path.write_text(json.dumps(spec), encoding="utf-8")
         script = Path(__file__).with_name("eyes_blender.py")
-        proc = _run([blender, "-b", "--factory-startup", "--python", str(script), "--", str(spec_path)], timeout)
+        command = [blender, "-b", "--factory-startup"]
+        if scoped:
+            command.append("--disable-autoexec")
+        proc = _run([*command, "--python", str(script), "--", str(spec_path)], timeout)
     text = proc.stdout.decode("utf-8", "replace")
     line = next((l for l in reversed(text.splitlines()) if l.startswith("EYES_RESULT ")), None)
     if line is None:
