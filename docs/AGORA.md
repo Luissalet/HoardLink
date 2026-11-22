@@ -279,11 +279,20 @@ IDs to exact tool IDs. Example:
 Use `hub_call_app` with the declared app, tool and arguments. Use `lookup_tools` to load its
 schema if the current turn omits it. File ingest accepts a declared CSV or TSV and a dataset alias. Flat export accepts the
 same alias and an explicit output file. The worker uses its own dataset
-namespace. Export undo uses the token returned to that worker. For DOCX,
-declare the document app's `wh_document_new`, `wh_document_save` and
-`wh_document_close` tools. Save can use a session opened by the worker and
-a new DOCX in a declared output folder. When replacing a worker, include the
-tool declarations in the replacement request.
+namespace. Export undo uses the token returned to that worker. Before launch,
+the Hub reads the app's Data module state. If the module is off or its state
+cannot be confirmed, the launch is rejected with a message in English and Spanish.
+Open the app and enable Data there before launching a task that needs those tools.
+
+For a reversible DOCX, declare `wh_document_new`, `wh_document_save_new`,
+`wh_document_open`, `wh_document_text`, `wh_document_close` and
+`wh_document_save_undo`. The exclusive save creates a new file in a declared
+output folder and returns an undo token. Declare the folder for reading as well
+to reopen the file. Open returns a new session ID and does not change the file.
+Undo removes the unchanged file created by that receipt while the same worker
+and document engine are running. The existing `wh_document_save` remains
+available for launches that declare it. Include the tool declarations when
+replacing a worker.
 
 Use `coordination_heartbeat`
 to report presence and `coordination_post` with the task's thread ID and the report

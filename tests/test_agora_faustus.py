@@ -42,6 +42,55 @@ def test_pc_service_keeps_existing_health_contract(tmp_path):
     assert agora_faustus.service(facet.hub) == facet.hub.faustus_status()
 
 
+@pytest.mark.parametrize(("enabled", "error"), [
+    (False, "está desactivado"),
+    (None, "No se pudo comprobar"),
+    (True, "The selected Sparks endpoint is unavailable"),
+    ("writer-only", "The selected Sparks endpoint is unavailable"),
+])
+def test_prepare_checks_declared_modules_before_allocating_workspace(tmp_path, monkeypatch, enabled, error):
+    facet = _facet(tmp_path)
+    facet.space_id = "estudio"
+    facet.hub.agora.for_space = lambda space_id: facet.hub.agora
+    calls = []
+    monkeypatch.setattr(agora_faustus, "proposed_files", lambda *_: {})
+    monkeypatch.setattr(agora_faustus, "production_scope", lambda _, agent, scope, task: scope)
+    monkeypatch.setattr(agora_faustus, "new_worker_workspace", lambda *_: pytest.fail("allocated workspace"))
+
+    def call_app(app, tool, *, timeout):
+        calls.append((app, tool))
+        if enabled is None:
+            return {"ok": False}
+        return {"ok": True, "result": {"modules": [
+            {"id": "data", "enabled": enabled}, {"id": "calculation", "enabled": True},
+        ]}}
+
+    facet.hub.call_app = call_app
+    monkeypatch.setattr(facet, "_faustus_session_request",
+                        lambda *_args, **_kwargs: (calls.append("endpoints") or 200, []))
+    apps = {"nightingale": ["data_ingest", "data_export"]} if enabled != "writer-only" else {
+        "writer": ["wh_document_new"],
+    }
+
+    def prepare():
+        return agora_faustus.prepare(facet, "faustus-fixture", {
+            "endpoint_id": "fixture", "model_id": "fixture",
+        }, "", task_id=23, declared_paths={"apps": apps})
+
+    if enabled is False or enabled is None:
+        with pytest.raises(ValueError) as rejected:
+            prepare()
+        message = str(rejected.value)
+        assert all(text in message for text in (error, "Data module", "data_ingest", "data_export"))
+    else:
+        session, message = prepare()
+        assert session is None and error in message
+    expected = [] if enabled == "writer-only" else [("nightingale", "nightingale_modules")]
+    if enabled is True or enabled == "writer-only":
+        expected.append("endpoints")
+    assert calls == expected
+
+
 def test_studio_apprentice_name_can_be_reopened_but_not_used_in_parallel(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     name = agora_faustus.APPRENTICE
