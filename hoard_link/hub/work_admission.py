@@ -151,9 +151,12 @@ class WorkAdmission:
             _tool("hub_order_budget", "Set limits for an order / fija los límites de una orden.",
                   {**order, "retries": {"type": "integer"}, "gpu_seconds": {"type": "integer"},
                    "returns": {"type": "integer"}}, ("agent", "order_id"), read=False),
-            _tool("hub_order_attempt", "Reserve or report a station attempt / reserva o declara un intento.",
+            _tool("hub_order_attempt", "Reserve, report or recover a station attempt / reserva, declara o recupera un intento.",
                   {**order, "task_id": {"type": "integer"}, "key": {"type": "string"},
-                   "action": {"enum": ["begin", "pass", "fail"]}, "gpu_seconds": {"type": "integer"}},
+                   "action": {"enum": ["begin", "pass", "fail"]}, "gpu_seconds": {"type": "integer"},
+                   "reason": {"type": "string", "description": "Required to close another worker's attempt. Cite the "
+                              "handover, stopped worker or finished job. / Obligatorio al cerrar el intento de otro "
+                              "trabajador. Cita el relevo, el trabajador detenido o el trabajo terminado."}},
                   ("agent", "order_id", "task_id", "key", "action"), read=False),
             _tool("hub_order_metrics", "First-pass decisions, returns, task times and station costs / decisiones a la primera, devoluciones, plazos y coste por puesto.",
                   {**space, "all_spaces": {"type": "boolean"}, "order_id": {"type": "integer", "minimum": 1}}),
