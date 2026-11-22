@@ -22,7 +22,7 @@ from hoard_link.hub.repos import RepoMonitor, RepoSettings, build_issues, filter
 from .test_hub_and_server import _http
 
 ME = "luissalet@users.noreply.github.com"
-GIT_ENV = {"GIT_AUTHOR_NAME": "Luis", "GIT_AUTHOR_EMAIL": ME, "GIT_COMMITTER_NAME": "Luis", "GIT_COMMITTER_EMAIL": ME,
+GIT_ENV = {"GIT_AUTHOR_NAME": "Account Name", "GIT_AUTHOR_EMAIL": ME, "GIT_COMMITTER_NAME": "Account Name", "GIT_COMMITTER_EMAIL": ME,
            "GIT_CONFIG_NOSYSTEM": "1"}
 
 
@@ -1047,8 +1047,9 @@ def test_routes_actions(served_repos, monkeypatch):
     assert _http(url + "/api/repos/Fake%27s%20Hoard/bogus")[0] == 404
     # same guard as every hub action: a cross-site page cannot trigger a fetch or a scan
     hdr = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "cors"}
-    assert _http(url + "/api/repos/Fake%27s%20Hoard/fetch", {}, headers=hdr)[0] == 403
-    assert _http(url + "/api/repos/refresh", {}, headers=hdr)[0] == 403
+    # These actions need no payload. The guard rejects the POST before reading a body.
+    assert _http(url + "/api/repos/Fake%27s%20Hoard/fetch", headers=hdr, method="POST")[0] == 403
+    assert _http(url + "/api/repos/refresh", headers=hdr, method="POST")[0] == 403
     assert _http(url + "/api/repos", headers=hdr)[0] == 403
 
 

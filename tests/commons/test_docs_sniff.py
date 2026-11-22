@@ -92,7 +92,7 @@ def test_binary_and_empty():
     assert sn.sniff("a", b"\x00\x01\x02") == sn.Sniffed("unknown", "application/octet-stream", "bin")
     assert sn.sniff("a.pdf", b"").kind == "pdf" and sn.sniff("a", b"").kind == "unknown"
     assert sn.sniff(None, None).kind == "unknown"
-    assert sn.sniff("C:\\Users\\Luis\\Documentos\\a.PDF", b"").ext == "pdf"
+    assert sn.sniff("C:\\Users\\example-user\\Documentos\\a.PDF", b"").ext == "pdf"
 
 
 def test_media_and_archives():

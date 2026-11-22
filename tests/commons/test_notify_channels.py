@@ -206,8 +206,8 @@ def test_telegram_discovers_the_chat_id(web):
     res = nc.telegram_discover_chat_id("tok-123456", api_base=web.url)
     assert res["ok"] is False and "write to the bot" in res["error"] and res["chat_id"] == "" and res["name"] == ""
     web.answer = (200, {"ok": True, "result": [{"message": {"chat": {"id": 1, "first_name": "Old"}}},
-                                               {"message": {"chat": {"id": 555, "first_name": "Luis", "last_name": "S"}}}]})
-    assert nc.telegram_discover_chat_id("tok-123456", api_base=web.url) == {"ok": True, "chat_id": "555", "name": "Luis S", "error": ""}
+                                               {"message": {"chat": {"id": 555, "first_name": "Nora", "last_name": "S"}}}]})
+    assert nc.telegram_discover_chat_id("tok-123456", api_base=web.url) == {"ok": True, "chat_id": "555", "name": "Nora S", "error": ""}
     assert web.requests[-1]["path"].startswith("/bottok-123456/getUpdates")
     web.answer = (200, {"ok": True, "result": [{"my_chat_member": {"chat": {"id": -7, "title": "Family"}}}]})
     assert nc.telegram_discover_chat_id("tok-123456", api_base=web.url)["name"] == "Family"

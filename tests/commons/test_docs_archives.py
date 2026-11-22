@@ -15,7 +15,7 @@ def test_safe_names():
     assert ar.safe_stem("CON") == "_CON" and ar.safe_stem("") == "document" and ar.safe_stem("...") == "document"
     assert ar.safe_stem("", "informe") == "informe"
     assert ar.safe_stem("a.b.c") == "a.b.c" and len(ar.safe_stem("x" * 500)) <= 110
-    assert ar.safe_filename("C:\\Users\\Luis\\Informe final?.PDF") == "Informe final_.PDF"
+    assert ar.safe_filename("C:\\Users\\example-user\\Informe final?.PDF") == "Informe final_.PDF"
     assert ar.safe_filename("../../etc/passwd") == "passwd" and ar.safe_filename("") == "file" and ar.safe_filename("Canción ñ.mp3") == "Canción ñ.mp3"
     assert ar.safe_filename("nul.txt") == "_nul.txt"
 

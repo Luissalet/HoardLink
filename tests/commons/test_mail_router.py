@@ -204,7 +204,7 @@ FAKE_SERVER = textwrap.dedent('''
     }
     CATEGORY = {5: "promotions", 2: "promotions", 4: "updates"}
     ACCOUNTS = [{"id": 1, "account_name": "Personal", "imap_user": "me@example.com", "from_address": "me@example.com",
-                 "smtp_user": "me@example.com", "imap_host": HOST, "imap_port": 993, "enabled": 1, "owner": "luis"}]
+                 "smtp_user": "me@example.com", "imap_host": HOST, "imap_port": 993, "enabled": 1, "owner": "nora"}]
 
     def _read_accounts_from_db(): return list(ACCOUNTS)
     def _filter_accounts_for_owner(rows): return rows
@@ -428,13 +428,13 @@ def test_helper_run_builds_the_command_and_keeps_secrets_out(tmp_path, monkeypat
     monkeypatch.setenv("KAFKA_SECRET", "s3cret")
     monkeypatch.setenv("KEEP_ME", "yes")
     rec = Recorder()
-    helper = fam_mail.FaustusHelper(str(root), owner=lambda: "luis", python=sys.executable, runner=rec, env_drop_prefixes=("KAFKA_",), ask_hub=False)
+    helper = fam_mail.FaustusHelper(str(root), owner=lambda: "nora", python=sys.executable, runner=rec, env_drop_prefixes=("KAFKA_",), ask_hub=False)
     assert helper.available() and helper.faustus_dir() == root.resolve() and helper.python() == sys.executable
     out = helper.run("scan", {"subject_terms": ["x"]}, timeout=7)
     assert out == {"ok": True, "error": "", "messages": []}                          # the last JSON line, whatever came before
     (cmd, kw), = rec.calls
     assert cmd == [sys.executable, str(fam_mail.HELPER), str(root.resolve())]
-    assert json.loads(kw["input"]) == {"subject_terms": ["x"], "action": "scan", "owner": "luis"}
+    assert json.loads(kw["input"]) == {"subject_terms": ["x"], "action": "scan", "owner": "nora"}
     assert kw["timeout"] == 7 and kw["cwd"] == str(root.resolve()) and kw["encoding"] == "utf-8"
     assert "KAFKA_SECRET" not in kw["env"] and kw["env"]["KEEP_ME"] == "yes" and kw["env"]["PYTHONIOENCODING"] == "utf-8"
     assert kw["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)         # no console window on Windows
@@ -1306,7 +1306,7 @@ def test_node_spawn_runner_failures_and_environment(tmp_path, faustus):
           child.stdin.end = (data) => { sent = data; setImmediate(() => { child.stdout.emit("data", Buffer.from('log\\n{"ok": true, "echo": 1}\\n')); child.emit("close", 0); }); seen.sent = JSON.parse(data); };
           return child;
         };
-        const run = fam.spawnHelperRunner({ helperPath: "/h/mail_helper.py", setting: input.setting, python: input.python, owner: () => "luis",
+        const run = fam.spawnHelperRunner({ helperPath: "/h/mail_helper.py", setting: input.setting, python: input.python, owner: () => "nora",
           envDropPrefixes: ["KAFKA_"], env: { KAFKA_SECRET: "x", KEEP: "yes" }, spawnFn });
         const answer = await run("scan", { subject_terms: ["a"] });
         return { answer, seen };
@@ -1315,7 +1315,7 @@ def test_node_spawn_runner_failures_and_environment(tmp_path, faustus):
     assert captured["answer"] == {"ok": True, "echo": 1}
     assert seen["cmd"] == sys.executable and seen["args"] == ["/h/mail_helper.py", str(faustus.resolve())] and seen["cwd"] == str(faustus.resolve())
     assert seen["hide"] is True and seen["secret"] is None and seen["keep"] == "yes" and seen["enc"] == "utf-8"      # no console window; secrets stay out
-    assert seen["sent"] == {"subject_terms": ["a"], "action": "scan", "owner": "luis"}
+    assert seen["sent"] == {"subject_terms": ["a"], "action": "scan", "owner": "nora"}
     for stdout, expect in (("", "mail helper exit 3"), ("{broken\\n", "mail helper exit 3"), ('{"no_ok": 1}\\n', "mail helper exit 3")):
         got = run_link_js("""
             const { EventEmitter } = await import("node:events");

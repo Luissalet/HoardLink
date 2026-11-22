@@ -49,7 +49,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis"
+   "C:\\Users\\account name"
   ],
   "opts": {
    "lang": "en"
@@ -73,7 +73,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "c:\\users\\LUIS\\"
+   "c:\\users\\account name\\"
   ],
   "opts": {
    "lang": "en"
@@ -85,7 +85,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "\"C:\\Users\\luis\""
+   "\"C:\\Users\\account name\""
   ],
   "opts": {
    "lang": "en"
@@ -97,7 +97,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "  'C:\\Users\\luis'  "
+   "  'C:\\Users\\account name'  "
   ],
   "opts": {
    "lang": "en"
@@ -234,7 +234,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\Documents\\..\\.."
+   "C:\\Users\\account name\\Documents\\..\\.."
   ],
   "opts": {
    "lang": "en"
@@ -246,7 +246,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\.ssh"
+   "C:\\Users\\account name\\.ssh"
   ],
   "opts": {
    "lang": "en"
@@ -257,7 +257,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\AppData\\Roaming\\x"
+   "C:\\Users\\account name\\AppData\\Roaming\\x"
   ],
   "opts": {
    "lang": "en"
@@ -268,7 +268,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\.gnupg\\a"
+   "C:\\Users\\account name\\.gnupg\\a"
   ],
   "opts": {
    "lang": "en"
@@ -279,7 +279,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\Projects\\app\\node_modules\\pkg"
+   "C:\\Users\\account name\\Projects\\app\\node_modules\\pkg"
   ],
   "opts": {
    "lang": "en"
@@ -290,7 +290,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\Documents\\..\\.ssh"
+   "C:\\Users\\account name\\Documents\\..\\.ssh"
   ],
   "opts": {
    "lang": "en"
@@ -302,7 +302,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\.aws"
+   "C:\\Users\\account name\\.aws"
   ],
   "opts": {
    "lang": "en"
@@ -313,7 +313,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\work\\.git\\hooks"
+   "C:\\Users\\account name\\work\\.git\\hooks"
   ],
   "opts": {
    "lang": "en"
@@ -394,7 +394,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\Documents"
+   "C:\\Users\\account name\\Documents"
   ],
   "opts": {
    "lang": "en"
@@ -405,7 +405,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "\"C:\\Users\\luis\\My Documents\\Fotos de verano\""
+   "\"C:\\Users\\account name\\My Documents\\Fotos de verano\""
   ],
   "opts": {
    "lang": "en"
@@ -452,7 +452,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\AppData\\Local\\Temp\\docs"
+   "C:\\Users\\account name\\AppData\\Local\\Temp\\docs"
   ],
   "opts": {
    "lang": "en"
@@ -464,7 +464,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "C:\\Users\\luis\\Desktop\\Ñandú café"
+   "C:\\Users\\account name\\Desktop\\Ñandú café"
   ],
   "opts": {
    "lang": "en"
@@ -681,7 +681,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "/home/luis"
+   "/home/account name"
   ],
   "opts": {
    "lang": "en"
@@ -703,7 +703,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "/Users/luis"
+   "/Users/account name"
   ],
   "opts": {
    "lang": "en"
@@ -714,7 +714,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "/home/luis/.ssh/keys"
+   "/home/account name/.ssh/keys"
   ],
   "opts": {
    "lang": "en"
@@ -725,7 +725,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "/home/luis/.config/x"
+   "/home/account name/.config/x"
   ],
   "opts": {
    "lang": "en"
@@ -736,7 +736,7 @@
  {
   "fn": "unsafe_folder",
   "args": [
-   "/home/luis/proj/node_modules/x"
+   "/home/account name/proj/node_modules/x"
   ],
   "opts": {
    "lang": "en"
@@ -758,7 +758,7 @@
  {
   "fn": "unsafe_file",
   "args": [
-   "C:\\Users\\luis\\.ssh\\id_rsa"
+   "C:\\Users\\account name\\.ssh\\id_rsa"
   ],
   "opts": {
    "lang": "en"
@@ -769,7 +769,7 @@
  {
   "fn": "unsafe_file",
   "args": [
-   "C:\\Users\\luis\\Documents\\credentials.json"
+   "C:\\Users\\account name\\Documents\\credentials.json"
   ],
   "opts": {
    "lang": "en"
@@ -857,7 +857,7 @@
  {
   "fn": "unsafe_file",
   "args": [
-   "C:\\Users\\luis\\AppData\\Roaming\\x\\file.txt"
+   "C:\\Users\\account name\\AppData\\Roaming\\x\\file.txt"
   ],
   "opts": {
    "lang": "en"
@@ -868,7 +868,7 @@
  {
   "fn": "unsafe_file",
   "args": [
-   "C:\\Users\\luis\\proj\\node_modules\\a\\index.js"
+   "C:\\Users\\account name\\proj\\node_modules\\a\\index.js"
   ],
   "opts": {
    "lang": "en"
@@ -901,7 +901,7 @@
  {
   "fn": "unsafe_file",
   "args": [
-   "C:\\Users\\luis\\Documents\\factura 2024.pdf"
+   "C:\\Users\\account name\\Documents\\factura 2024.pdf"
   ],
   "opts": {
    "lang": "en"
@@ -923,7 +923,7 @@
  {
   "fn": "unsafe_file",
   "args": [
-   "\"C:\\Users\\luis\\Desktop\\a.txt\""
+   "\"C:\\Users\\account name\\Desktop\\a.txt\""
   ],
   "opts": {
    "lang": "en"
@@ -935,7 +935,7 @@
  {
   "fn": "unsafe_file",
   "args": [
-   "C:\\Users\\luis\\AppData\\Local\\Temp\\doc.pdf"
+   "C:\\Users\\account name\\AppData\\Local\\Temp\\doc.pdf"
   ],
   "opts": {
    "lang": "en"
@@ -985,7 +985,7 @@
  {
   "fn": "unsafe_file",
   "args": [
-   "/home/luis/.ssh/config"
+   "/home/account name/.ssh/config"
   ],
   "opts": {
    "lang": "en"
@@ -1018,7 +1018,7 @@
  {
   "fn": "unsafe_output_dir",
   "args": [
-   "C:\\Users\\luis\\.ssh"
+   "C:\\Users\\account name\\.ssh"
   ],
   "opts": {
    "lang": "en"
@@ -1052,7 +1052,7 @@
  {
   "fn": "unsafe_output_dir",
   "args": [
-   "C:\\Users\\luis"
+   "C:\\Users\\account name"
   ],
   "opts": {
    "lang": "en"
@@ -1064,7 +1064,7 @@
  {
   "fn": "unsafe_output_dir",
   "args": [
-   "C:\\Users\\luis\\Videos\\out"
+   "C:\\Users\\account name\\Videos\\out"
   ],
   "opts": {
    "lang": "en"

@@ -392,17 +392,17 @@ def test_snippet_masks_passwords_numbers_emails_and_sudoers():
     assert snippet("llama al 600123456 o al 12345") == "llama al *** o al 12345"       # six digits or more only
     assert snippet("escribe a person.m+x@example.co.uk ya") == "escribe a *** ya"
     assert snippet("usuario person ALL=(ALL) NOPASSWD: ALL") == ""
-    assert snippet("hecho\nluis ALL=(ALL:ALL) ALL\n/etc/sudoers.d/person") == "hecho"
+    assert snippet("hecho\nperson ALL=(ALL:ALL) ALL\n/etc/sudoers.d/person") == "hecho"
     assert snippet("export HF=hf_" + "a" * 30) == ""
     assert snippet("curl -H 'Authorization: Bearer abcdef0123456789'") == ""
     assert snippet("Bearer abcdef0123456789xyz") == ""
-    msg = "mi usuario es person y la contraseña 20001234\nluis ALL=(ALL) NOPASSWD: ALL\nlevanta el servidor"
+    msg = "mi usuario es person y la contraseña 20001234\nperson ALL=(ALL) NOPASSWD: ALL\nlevanta el servidor"
     out = snippet(msg)
     assert "20001234" not in out and "NOPASSWD" not in out and out.endswith("levanta el servidor")
 
 
 def test_titles_and_snippets_in_every_view_are_masked(roots, clock):
-    secret = "Entra con person y la contraseña 20001234\nluis ALL=(ALL) NOPASSWD: ALL\nescribe a person@example.com\nArregla el bucle"
+    secret = "Entra con person y la contraseña 20001234\nperson ALL=(ALL) NOPASSWD: ALL\nescribe a person@example.com\nArregla el bucle"
     codex_file(roots["codex"], cx_head(NOW - 90, prompt=secret) + [
         cx_start(NOW - 60), cx_exec(NOW - 50, "c1", "ssh root@host.example.org -p 22222222"),
         cx_msg(NOW - 40, "assistant", "Tu clave 99887766 y el correo a@b.io")], NOW - 40)

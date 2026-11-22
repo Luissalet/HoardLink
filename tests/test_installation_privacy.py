@@ -19,12 +19,10 @@ _TAILNET = re.compile(r"(?<![\w-])([a-z0-9-]+)\.ts\.net\b", re.IGNORECASE)
 # A shared Windows directory, documentation placeholders and named test fixtures.
 _GENERIC_PROFILES = {"public", "example-user", "…"}
 _PROFILE_FIXTURES = {
-    "tests/commons/test_docs_archives.py": {"luis"},
-    "tests/commons/test_docs_sniff.py": {"luis"},
     "tests/commons/test_media_ffmpeg.py": {"me"},
     "tests/commons/test_paths.py": {"me", "someone", "ñ"},
     "tests/hub/test_toast_identity.py": {"a b", "a%20b"},
-    "tests/vectors/paths.json": {"luis"},
+    "tests/vectors/paths.json": {"account name"},
 }
 _SLUG_FIXTURES = {"c--users-alice-desktop-modelos", "c-users-alice-desktop-faustus"}
 _TAILNET_FIXTURES = {"example", "tail1", "tail1234", "tailnet", "x"}
@@ -79,7 +77,7 @@ def test_installation_patterns(content, kind):
 
 
 def test_fictional_examples_are_explicitly_allowed():
-    path = "C:/Users/" + "Luis/Documents"
+    path = "C:/Users/" + "Account Name/Documents"
     assert list(_findings("tests/vectors/paths.json", path)) == []
     assert list(_findings("example.txt", path)) == [(1, "Windows profile path")]
     assert list(_findings("example.txt", "https://worker.example.ts.net")) == []
