@@ -227,8 +227,11 @@ Faustus stores it in the child's encrypted endpoint store. Continuing a child af
 its stored endpoint and credentials. After rotating a key, launch a new child so its session uses the new key.
 
 Every managed worker is told to commit its work and `submit` its task. When its process ends, the console checks the
-outcome against the Agora: task status, submission revision and uncommitted changes in the worker's folder. A clean
-exit with no submission, or with pending changes, is recorded as `incomplete` ("Entrega incompleta"), not `completed`,
+outcome against the Agora: task status, submission revision and uncommitted changes in the delivery's worktrees.
+For `commits_by_repo`, it checks each group in its registered repository. A missing commit in a registered repository
+makes the delivery incomplete. An unregistered repository leaves that group unchecked and adds a warning to the
+worker's receipt (`verification_warnings` in the console overview). A clean exit with no submission, or with pending
+changes, is recorded as `incomplete` ("Entrega incompleta"), not `completed`,
 and a task still `claimed` is moved to `blocked` keeping its owner and locks. If a worker is cut (inactivity, process
 death, Hub restart, provider error) the card and the task thread state the observed cause and the last state; the Hub
 then tries one automatic continuation on the same Faustus session and folder when that session is still available.
@@ -692,6 +695,9 @@ nobody has to remember to look. An agent spends the quota of the provider its id
 The Codex reporter finds the installed CLI on `PATH` or in the Windows desktop installation and reads
 `account/rateLimits/read`. A missing quota window stays unknown. The team console reports a failed observation
 in `capacity_observations.codex` with a timestamp and a reason code.
+
+Automatic quota polling defaults to off for isolated Hub instances. Set `HOARD_AGORA_QUOTA_POLLING=1` to enable it
+on the selected instance. See [the console quota readers](agora-app.md#quotas-where-each-reading-comes-from).
 
 When the Claude quota reader finds an expired access token or a 401, the reporter lets the installed CLI attempt
 its native sign-in refresh with a bounded, tool-free diagnostic. It then retries the quota read. A repeated

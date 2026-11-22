@@ -2397,6 +2397,48 @@ def _commit_in(folder, name):
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+@pytest.mark.parametrize("secondary,expected", [("known", "completed"), ("unknown", "completed"),
+                                                ("missing_commit", "incomplete")])
+def test_managed_worker_checks_each_repository_in_a_grouped_delivery(tmp_path, secondary, expected):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    hub_repo = _fixture_repo(tmp_path / "hub")
+    other_repo = _fixture_repo(tmp_path / "other")
+    hub_tree, other_tree = tmp_path / "hub worktree", tmp_path / "other worktree"
+    for repo, worktree in ((hub_repo, hub_tree), (other_repo, other_tree)):
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", "worker-branch", str(worktree)], check=True)
+    hub_commit = _commit_in(hub_tree, "hub.txt")
+    other_commit = _commit_in(other_tree, "other.txt")
+    repos = {"Hoard Hub": hub_repo}
+    if secondary != "unknown":
+        repos["Second repo"] = other_repo
+    store.repo_lookup = repos.get
+    agent = "codex-qa"
+    task_id = store.task_add({"agent": agent, "title": "Grouped delivery", "repo": "Hoard Hub"})["task"]["id"]
+    store.task_claim({"agent": agent, "task_id": task_id})
+    store.task_submit({"agent": agent, "task_id": task_id, "summary": "Fixture", "branch": "worker-branch",
+                       "commits_by_repo": {"Hoard Hub": [hub_commit], "Second repo": [
+                           "f" * 40 if secondary == "missing_commit" else other_commit]}})
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,workspace,created_at,updated_at)"
+                   " VALUES('test','codex',?,'model','','task','running',?,1,1)", (agent, str(hub_tree)))
+    facet._monitor_worker("test", SimpleNamespace(wait=lambda: 0), tmp_path / "no-result")
+    worker = facet._worker_rows()[0]
+    assert worker["state"] == expected
+    if secondary == "unknown":
+        assert "Second repo" in worker["detail"] and "no está registrado" in worker["detail"]
+        warning, = worker["verification_warnings"]
+        assert "Second repo" in warning
+    elif secondary == "missing_commit":
+        assert "ffffffffffff no están en el repositorio Second repo" in worker["detail"]
+    else:
+        assert "verification_warnings" not in worker
+        (other_tree / "draft.txt").write_text("dirty", encoding="utf-8")
+        verification = facet._verify_worker_delivery(worker)
+        assert verification["issues"] == [f"Hay cambios sin commit en {other_tree.as_posix()}."]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 def test_a_delivery_is_found_by_its_commits_when_the_workers_folder_is_not_known(tmp_path):
     facet = _facet(tmp_path)
     store = _with_real_agora(facet, tmp_path)
