@@ -27,8 +27,14 @@ TUTOR_TOOL = "hub_agora_apprentice_instinct"
 WORKER_APPROVAL_MODE = "auto"
 DECLARED_PATHS = {
     "type": "object", "additionalProperties": False,
-    "properties": {key: {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 1024}}
-                   for key in ("read_paths", "write_paths")},
+    "properties": {
+        **{key: {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 1024}}
+           for key in ("read_paths", "write_paths")},
+        "apps": {"type": "object", "maxProperties": 8,
+                 "description": "App IDs and exact tool IDs for this production task. IDs de aplicaciones y herramientas de esta tarea.",
+                 "additionalProperties": {"type": "array", "minItems": 1, "maxItems": 16,
+                                          "items": {"type": "string", "minLength": 1, "maxLength": 100}}},
+    },
 }
 
 
@@ -97,7 +103,7 @@ def _declared_paths(raw: Any) -> dict[str, list[str]]:
     if raw is None:
         raw = {}
     if not isinstance(raw, dict) or set(raw) - DECLARED_PATHS["properties"].keys():
-        raise ValueError("Use read_paths and write_paths. / Usa read_paths y write_paths.")
+        raise ValueError("Use read_paths, write_paths and apps. / Usa read_paths, write_paths y apps.")
     out = {}
     for key in ("read_paths", "write_paths"):
         values = raw.get(key, [])
@@ -161,9 +167,33 @@ def proposed_files(console: Any, task_id: int | None) -> dict:
 def file_scope(workspace: str, declared: Any = None, proposal: dict | None = None) -> dict:
     roots = _declared_paths(declared)
     proposal = proposal or {}
-    return {"workspace": workspace,
-            "read_paths": list(dict.fromkeys(roots["read_paths"] + proposal.get("read_paths", []))),
-            "write_paths": roots["write_paths"], "read_files": proposal.get("read_files", [])}
+    scope = {"workspace": workspace,
+             "read_paths": list(dict.fromkeys(roots["read_paths"] + proposal.get("read_paths", []))),
+             "write_paths": roots["write_paths"], "read_files": proposal.get("read_files", [])}
+    apps = (declared or {}).get("apps", {})
+    if (not isinstance(apps, dict) or len(apps) > 8
+            or any(not isinstance(app, str) or not 1 <= len(app) <= 64
+                   or not isinstance(tools, list) or not 1 <= len(tools) <= 16
+                   or any(not isinstance(tool, str) or not 1 <= len(tool) <= 100 for tool in tools)
+                   for app, tools in apps.items())):
+        raise ValueError("Declare exact app and tool IDs. / Declara los identificadores exactos de aplicaciones y herramientas.")
+    if apps:
+        scope["apps"] = apps
+    return scope
+
+
+def production_scope(console: Any, agent: str, scope: dict, task_id: int | None) -> dict:
+    if task_id is not None:
+        agora = console._agora()
+        task = agora._task_row(task_id)
+        if not task["repo"] and not task["paths"]:
+            job = agora.db.one("SELECT order_id FROM agora_order_jobs WHERE task_id=? AND space_id=? AND removed=0",
+                               (task_id, console.space_id))
+            return {**scope, "production": {"space_id": console.space_id, "task_id": task_id,
+                                            "order_id": job["order_id"] if job else None, "agent": agent}}
+    if scope.get("apps"):
+        raise ValueError("Declare app tools for a production task. / Declara herramientas de aplicaciones para una tarea de producción.")
+    return scope
 
 
 def service(hub: Any) -> dict[str, Any]:
@@ -222,6 +252,7 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
                 )
         workspace = new_worker_workspace(console, agent)
         scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
+        scope = production_scope(console, agent, scope, task_id)
         runtime = start_pc(console, agent, root, python, endpoint["base_url"], model["model_id"], file_scope=scope, api_key=api_key)
         base, endpoint_id = runtime["url"], "headless"
     try:
@@ -295,6 +326,9 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     data = worker_data(console, agent)
     if not owns_worker_workspace(console, agent, file_scope["workspace"]):
         raise ValueError("A private worker workspace is required. / Se requiere una carpeta de trabajo privada.")
+    production = file_scope.get("production")
+    if production and (production["space_id"] != console.space_id or production["agent"] != agent):
+        raise ValueError("Production task does not match this worker. / La tarea de producción no corresponde a este trabajador.")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]

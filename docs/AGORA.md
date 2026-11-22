@@ -260,7 +260,32 @@ the private workspace and grants from its receipt. A dedicated session with an
 older receipt is reopened in a new private folder, with its explicit grants.
 The saved Hub connector binds the worker's identity and the linked production
 task. Use `coordination_claim` and `coordination_submit` for that task even
-when it has no code repository. Use `coordination_heartbeat`
+when it has no code repository. The direct task claim, progress and submission
+tools also run without confirmation after reading external context if their
+`space_id`, `task_id` and `agent` match the launch. For a job of an order, the
+worker can register a file in its output roots with `hub_agora_piece_add` and
+record an image or spreadsheet check with `hub_piece_validate_record`. Include the same
+task, space and agent, the returned piece ID and its absolute `output_path`
+in the check. The Hub validates the stored revision and checks who owns the
+task. Other jobs, spaces and opening gates keep their existing approval checks.
+People decide gates in their decision pages.
+
+List any declared read or write folder with `ls` or `glob`. To read the
+contents of a file in an output folder, declare read access to that folder too.
+
+For a dedicated production task, include `apps` in `file_scope`. It maps app
+IDs to exact tool IDs. Example:
+`"apps":{"nightingale":["data_ingest","data_export","data_export_undo"]}`.
+Use `hub_call_app` with the declared app, tool and arguments. Use `lookup_tools` to load its
+schema if the current turn omits it. File ingest accepts a declared CSV or TSV and a dataset alias. Flat export accepts the
+same alias and an explicit output file. The worker uses its own dataset
+namespace. Export undo uses the token returned to that worker. For DOCX,
+declare the document app's `wh_document_new`, `wh_document_save` and
+`wh_document_close` tools. Save can use a session opened by the worker and
+a new DOCX in a declared output folder. When replacing a worker, include the
+tool declarations in the replacement request.
+
+Use `coordination_heartbeat`
 to report presence and `coordination_post` with the task's thread ID and the report
 body to publish there. Use `hub_agora_order` to read a production order and
 `hub_piece_validate` to check a piece. Pass absolute paths inside the scope to
