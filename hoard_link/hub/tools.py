@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
-from . import website_handoff
+from . import dojo, website_handoff
 from .browser_lanes import LaneError
 
 LANE_TOOL_OWNER = "mcp"            # lanes taken through the tools belong to this owner
@@ -41,6 +41,7 @@ def _copilot_request(hub, arguments):
 def catalogue() -> list[dict[str, Any]]:
     return [
         website_handoff.TOOL,
+        dojo.TOOL,
         {
             "name": "hub_copilot_request",
             "description": "Use the shared Faustus copilot: conversations, context, imports and turns. Keywords: copilot, chat Hoard.",
@@ -769,6 +770,7 @@ def handlers(hub: Hub, *, agent: str = "", session: str = "") -> dict[str, Calla
         "hub_list_apps": list_apps,
         "hub_app_status": app_status,
         "hub_faustus_status": lambda _: hub.faustus_status(),
+        "hub_dojo": lambda a: dojo.call(hub, a, agent),
         "hub_faustus_start": lambda a: hub.faustus_start(automatic=bool(a.get("_automatic"))),
         "hub_faustus_stop": lambda _: hub.faustus_stop(),
         "hub_placement_status": lambda _: hub.placement.status(),
