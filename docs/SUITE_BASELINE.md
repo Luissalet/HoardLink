@@ -74,6 +74,12 @@ The registry lock prevents concurrent runs using that
 file. If a run is killed, check the PID in the adjacent `.lock` file and
 remove the lock only after the process and its tests have exited.
 
+To compare revisions, keep the original registry and use a second registry for
+the new worktree and pinned commit. Define the batches you want to repeat or
+measure there. State the commit for each group of results when reporting a run
+that spans revisions. Keep the expanded environment from each receipt so a
+change in test settings remains visible in the comparison.
+
 The Node reporter writes both individual test cases and aggregate counters
 into its JUnit XML. The runner uses those totals to include nested tests and
 records TODOs as skipped and cancellations as errors. A batch with zero
