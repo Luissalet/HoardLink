@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import struct
 import threading
 import time
 from pathlib import Path
@@ -414,6 +415,81 @@ def test_mesh_views_and_repeatable_camera(eyes: EyesFacet, tmp_path: Path) -> No
     again = eyes.look({"same_as": out["id"], "path": str(bigger), "wait_s": 300})
     assert again["status"] == "done" and again["resolved"]["camera"] == camera     # the same camera, not refitted
     assert again["compare"]["pairs"] == 2
+
+
+def _colour_glb(path: Path, sources: tuple[str, ...]) -> None:
+    binary = bytearray()
+    gltf = {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": list(range(len(sources)))}],
+            "nodes": [], "meshes": [], "accessors": [], "bufferViews": []}
+
+    def add_view(data):
+        offset = len(binary)
+        binary.extend(data)
+        binary.extend(b"\0" * (-len(binary) % 4))
+        gltf["bufferViews"].append({"buffer": 0, "byteOffset": offset, "byteLength": len(data)})
+        return len(gltf["bufferViews"]) - 1
+
+    def add_accessor(data, component_type, element_type, **extra):
+        gltf["accessors"].append({"bufferView": add_view(data), "componentType": component_type,
+                                  "count": 6, "type": element_type, **extra})
+        return len(gltf["accessors"]) - 1
+
+    quad = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+    positions = add_accessor(struct.pack("<18f", *(v for x, y in quad for v in (x, y, 0))), 5126, "VEC3",
+                             min=[-0.5, -0.5, 0], max=[0.5, 0.5, 0])
+    if "vertex" in sources:
+        vertex_colours = add_accessor(bytes((255, 0, 0, 255)) * 6, 5121, "VEC4", normalized=True)
+    if "texture" in sources:
+        uv = add_accessor(struct.pack("<12f", *(v + 0.5 for point in quad for v in point)), 5126, "VEC2")
+        png = io.BytesIO()
+        Image.new("RGB", (2, 2), (0, 255, 0)).save(png, format="PNG")
+        gltf.update(images=[{"bufferView": add_view(png.getvalue()), "mimeType": "image/png"}],
+                    textures=[{"source": 0}],
+                    materials=[{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 0}}])
+
+    for index, source in enumerate(sources):
+        attributes = {"POSITION": positions}
+        primitive = {"attributes": attributes}
+        if source == "vertex":
+            attributes["COLOR_0"] = vertex_colours
+        else:
+            attributes["TEXCOORD_0"] = uv
+            primitive["material"] = 0
+        gltf["meshes"].append({"primitives": [primitive]})
+        gltf["nodes"].append({"mesh": index, "translation": [(index - (len(sources) - 1) / 2) * 1.25, 0, 0]})
+
+    gltf["buffers"] = [{"byteLength": len(binary)}]
+    header = json.dumps(gltf).encode("utf-8")
+    header += b" " * (-len(header) % 4)
+    path.write_bytes(struct.pack("<4sIII4s", b"glTF", 2, 28 + len(header) + len(binary), len(header), b"JSON")
+                     + header + struct.pack("<I4s", len(binary), b"BIN\0") + binary)
+
+
+@pytest.mark.skipif(not eyes_render.find_program("blender"), reason="Blender not installed")
+@pytest.mark.parametrize("sources", [("vertex",), ("texture",), ("vertex", "texture")])
+def test_mesh_colour_preserves_vertex_colours_and_textures(eyes, tmp_path, sources):
+    glb = tmp_path / "colours.glb"
+    _colour_glb(glb, sources)
+    mixed = len(sources) == 2
+    out = eyes.look({"path": str(glb), "material": "both" if mixed else "color",
+                     "views": ["front"], "size": 128, "wait_s": 120})
+
+    assert out["status"] == "done", out
+    assert bool(out["facts"]["textures"]) == ("texture" in sources)
+    assert bool(out["facts"]["color_attributes"]) == ("vertex" in sources)
+    sample_x = [32, 96] if mixed else [64]
+    with Image.open(out["views"][-1]["path"]) as image:
+        for source, x in zip(sources, sample_x):
+            rgb = image.convert("RGB").getpixel((x, 64))
+            channel = 0 if source == "vertex" else 1
+            assert rgb[channel] > max(rgb[i] for i in range(3) if i != channel) + 60, (source, rgb)
+    assert out["resolved"]["material_engines"]["color"] == ("eevee" if mixed else "workbench")
+    if mixed:
+        assert out["resolved"]["material_engines"]["neutral"] == "workbench"
+        with Image.open(out["views"][0]["path"]) as image:
+            for x in sample_x:
+                rgb = image.convert("RGB").getpixel((x, 64))
+                assert max(rgb) - min(rgb) < 30
 
 
 def test_declared_front_is_reused_by_fingerprint_and_removed_by_undo(eyes, tmp_path, monkeypatch):

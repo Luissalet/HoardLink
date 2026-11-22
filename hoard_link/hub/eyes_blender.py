@@ -190,16 +190,34 @@ def _setup_render(spec, cam):
     return camera
 
 
-def _engine(spec):
+def _eevee_engine():
     items = {i.identifier for i in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items}
-    if spec.get("engine") == "eevee":
-        for ident in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"):
-            if ident in items:
-                return ident
-    return "BLENDER_WORKBENCH"
+    return next((ident for ident in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE") if ident in items), None)
 
 
-def _material_mode(scene, mode, clay):
+def _gltf_vertex_materials(scene):
+    # The importer connects vertex colours for assigned materials. Add a preview material for empty slots.
+    fallback = None
+    for obj in scene.objects:
+        if obj.type != "MESH" or obj.hide_render or not obj.data.color_attributes:
+            continue
+        slots = obj.data.materials
+        missing = [index for index, material in enumerate(slots) if material is None]
+        if slots and not missing:
+            continue
+        if fallback is None:
+            fallback = bpy.data.materials.new("EyesVertexColour")
+            fallback.use_nodes = True
+            nodes = fallback.node_tree.nodes
+            vertex = nodes.new("ShaderNodeVertexColor")  # An empty layer name uses the render colour attribute.
+            fallback.node_tree.links.new(vertex.outputs["Color"], nodes["Principled BSDF"].inputs["Base Color"])
+        if not slots:
+            slots.append(fallback)
+        for index in missing:
+            slots[index] = fallback
+
+
+def _material_mode(scene, mode, clay, facts):
     engine = scene.render.engine
     if engine == "BLENDER_WORKBENCH":
         shading = scene.display.shading
@@ -210,12 +228,9 @@ def _material_mode(scene, mode, clay):
             shading.color_type = "SINGLE"
             shading.single_color = NEUTRAL
         else:
-            has_attr = any(getattr(o.data, "color_attributes", None) and len(o.data.color_attributes)
-                           for o in scene.objects if o.type == "MESH" and not o.hide_render)
-            has_tex = any(i.source in ("FILE", "PACKED") or i.packed_file for i in bpy.data.images)
             kinds = {i.identifier for i in shading.bl_rna.properties["color_type"].enum_items}
             by_vertex = "ATTRIBUTE" if "ATTRIBUTE" in kinds else "VERTEX"   # renamed between Blender versions
-            shading.color_type = by_vertex if has_attr and not has_tex else "TEXTURE"
+            shading.color_type = by_vertex if facts["color_attributes"] and not facts["textures"] else "TEXTURE"
     else:
         bpy.context.view_layer.material_override = clay if mode == "neutral" else None
 
@@ -230,22 +245,36 @@ def main():
     low, high = _bounds()
     cam = _camera_spec(spec, low, high)
     scene = bpy.context.scene
-    scene.render.engine = _engine(spec)
+    facts = _facts(low, high)
+    mixed_colours = bool(facts["color_attributes"] and facts["textures"])
+    # Workbench can show only one of these sources at a time. The glTF importer wires both into the shaders.
+    gltf = spec["source"].lower().endswith((".glb", ".gltf"))
+    requested_engine = spec.get("engine") or "workbench"
+    eevee = _eevee_engine()
+    default_engine = eevee if requested_engine == "eevee" and eevee else "BLENDER_WORKBENCH"
+    engines = dict.fromkeys(spec["materials"], default_engine)
+    if eevee and gltf and mixed_colours and "color" in engines:
+        engines["color"] = eevee
     camera = _setup_render(spec, cam)
-    if scene.render.engine != "BLENDER_WORKBENCH":
+    if eevee and eevee in engines.values():
         sun = bpy.data.objects.new("EyesSun", bpy.data.lights.new("EyesSun", "SUN"))
         sun.data.energy = 3.0
         sun.rotation_euler = Euler((math.radians(50), 0, math.radians(30)), "XYZ")
         scene.collection.objects.link(sun)
-    facts = _facts(low, high)
-    if "color" in spec["materials"] and not (facts["textures"] or facts["color_attributes"] or facts["materials"]):
+    if "color" in engines and not (facts["textures"] or facts["color_attributes"] or facts["materials"]):
         warnings.append("The model has no colours of its own (no textures, vertex colours or materials): "
                         "its colour views look like the neutral ones")
+    if mixed_colours and engines.get("color") == "BLENDER_WORKBENCH":
+        warnings.append("The model has vertex colours and textures. Workbench omits the vertex colours in this view. "
+                        "/ El modelo tiene colores de vértice y texturas. Workbench omite los colores de vértice en esta vista.")
     clay = bpy.data.materials.new("EyesClay")
     clay.diffuse_color = (*NEUTRAL, 1.0)
     views = []
     for material in spec["materials"]:
-        _material_mode(scene, material, clay)
+        scene.render.engine = engines[material]
+        if material == "color" and gltf and eevee == engines[material] and facts["color_attributes"]:
+            _gltf_vertex_materials(scene)
+        _material_mode(scene, material, clay, facts)
         for view in spec["views"]:
             _place(camera, cam, view)
             target = f"{spec['out']}/{view}-{material}.png"
@@ -255,7 +284,9 @@ def main():
                           "view": view, "material": material, "path": target})
     resolved = {"views": spec["views"], "material": "both" if len(spec["materials"]) == 2 else spec["materials"][0],
                 "camera": cam, "turn": float(spec.get("turn") or 0.0), "up": spec.get("up") or "z",
-                "pose": applied_pose, "size": int(spec.get("size") or 640), "engine": spec.get("engine") or "workbench"}
+                "pose": applied_pose, "size": int(spec.get("size") or 640), "engine": requested_engine,
+                "material_engines": {mode: "eevee" if engine == eevee else "workbench"
+                                     for mode, engine in engines.items()}}
     return {"ok": True, "views": views, "facts": facts, "resolved": resolved, "warnings": warnings}
 
 
