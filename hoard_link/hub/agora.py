@@ -2251,6 +2251,7 @@ class Agora:
     def task_submit(self, a: dict[str, Any]) -> dict[str, Any]:
         """Ask for review: what changed, where (branch/commits) and how it was verified.
 
+        An omitted reviewer keeps the current assignment.
         Optional ``blocks``: structured review sections (what_why, paths, code_peek, flow, sequence).
         Each ``code_peek`` is verified with ``git show`` outside the write transaction (isolated clones via
         ``checkout`` when identity matches the registered repo). Plain text summaries stay valid without blocks.
@@ -2300,7 +2301,7 @@ class Agora:
             now = self.clock()
             # A new submission asks for a new verdict: an approval given to earlier commits does not carry over.
             self.db.execute(
-                "UPDATE tasks SET status='review', reviewer=?, branch=COALESCE(?, branch), commits=?, "
+                "UPDATE tasks SET status='review', reviewer=COALESCE(?, reviewer), branch=COALESCE(?, branch), commits=?, "
                 "repo=COALESCE(NULLIF(?, ''), repo), commits_by_repo=?, "
                 "submission_blocks=?, submitted_at=?, updated=?, reviewed=0, reviewed_commits=NULL, "
                 "reviewed_submission_revision=NULL, submission_revision=submission_revision+1 WHERE id=?",
@@ -2310,6 +2311,7 @@ class Agora:
                  now, now, task["id"]))
             task = self._task_row(task["id"])
             revision = task["submission_revision"]
+            reviewer = task["reviewer"]
             details = f"\n\nSubmission revision: {revision}\nCommits: {', '.join(task['commits']) or '(none)'}"
             for name, hashes in commits_by_repo.items():
                 details += f"\n{name}: {', '.join(hashes)}"
@@ -2318,13 +2320,13 @@ class Agora:
             if stale_note:
                 self._system(task, stale_note, agent)
             self._msg(int(task["thread_id"]), agent, "proposal", summary + details,
-                      [snap["reviewer"]] if snap["reviewer"] else [])
-        self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": snap["reviewer"],
+                      [reviewer] if reviewer else [])
+        self._bump("agora.task.review", {"task_id": task["id"], "agent": agent, "reviewer": reviewer,
                                           "submission_revision": revision, "commits": task["commits"],
                                           "blocks": len(blocks or [])})
         self._rearm_dependents(task["id"])          # a new submission is a new cycle for whoever waits on it
         out = {"ok": True, "task": self._task_row(task["id"])}
-        warnings = self._quota_warnings([snap["reviewer"]] if snap["reviewer"] else [])
+        warnings = self._quota_warnings([reviewer] if reviewer else [])
         if warnings:
             out["quota_warnings"] = warnings
         return self._with_unseen(a, out)

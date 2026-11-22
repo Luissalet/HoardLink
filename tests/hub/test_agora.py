@@ -470,6 +470,24 @@ def test_submit_without_blocks_stays_compatible(ag):
     assert task["submission_blocks"] is None and task["submission_revision"] == 1
 
 
+@pytest.mark.parametrize("override", [{}, {"reviewer": None}, {"reviewer": "reviewer-two"}])
+def test_resubmitting_changes_keeps_reviewer_unless_replaced(ag, override):
+    task = ag.task_add({"agent": "worker", "title": "Fix requested changes", "claim": True})["task"]
+    args = {"agent": "worker", "task_id": task["id"], "summary": "First delivery"}
+    ag.task_submit({**args, "reviewer": "reviewer-one"})
+    ag.task_review({"agent": "reviewer-one", "task_id": task["id"], "expected_submission_revision": 1,
+                    "verdict": "changes", "body": "Please update the tests."})
+
+    result = ag.task_submit({**args, "summary": "Updated tests", **override})["task"]
+
+    reviewer = override.get("reviewer") or "reviewer-one"
+    assert result["reviewer"] == reviewer
+    assert result["status"] == "review" and result["submission_revision"] == 2
+    assert result["reviewed_submission_revision"] is None
+    assert [item["id"] for item in ag.inbox({"agent": reviewer, "peek": True})["reviews"]] == [task["id"]]
+    assert [event["reviewer"] for kind, event in ag.events if kind == "agora.task.review"][-1] == reviewer
+
+
 def test_structured_submit_verifies_code_peek(tmp_path):
     repo = tmp_path / "DemoRepo"
     sha = _git_repo(repo, {"src/hello.py": "a = 1\nb = 2\nc = 3\n"})
