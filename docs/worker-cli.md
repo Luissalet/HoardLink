@@ -39,8 +39,11 @@ URL is selected. The CLI connects to an existing Hub. App lifecycle changes are 
 
 ## HTTP and MCP
 
-Each name from the authenticated `GET /api/agent/tools` catalogue has
-`GET /api/agent/tools/<name>` for its schema and `POST /api/agent/tools/<name>` for invocation.
+Use tool names from MCP `tools/list` or the authenticated `GET /api/agent/tools` catalogue to
+identify tools across Hub versions. For example, `hub_agora_console_overview` reads console turns
+and their liveness classifications.
+
+Use `GET /api/agent/tools/<name>` for the schema and `POST /api/agent/tools/<name>` for invocation.
 Send the Hub bearer token and the arguments object as the POST body. The named POST and the
 shared `POST /api/agent/call` return the same `{ok, tool, result}` envelope, using the same
 handler as MCP. Existing app routes still work. `GET /api/apps/<id>/status` is an explicit alias
