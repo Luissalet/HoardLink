@@ -110,3 +110,24 @@ checkpoint and records its SHA-256. Images use Pillow. PPTX uses python-pptx and
 headless LibreOffice with a temporary profile, and PDF text and URI extraction
 use PyMuPDF. Missing engines leave a measurement pending. These checks do
 not start a Hoard service or call the shared inference service.
+
+**Links and citations of a dedicated worker.** A local path that comes with the
+piece (a DOCX or PDF hyperlink, a Markdown link, a slide relationship, a web
+link, an entry of `citations`) is followed only inside the worker's scope: its
+granted files and output, and its declared read and write folders. The Hub
+compares the text of the path and does not ask the disk. Anything else is
+`unmeasured` with reason «outside the declared scope», whether the file exists
+or not. A caller that is not a dedicated worker keeps following local paths.
+The connector passes `_worker_read_files`, and may pass `_worker_read_paths` and
+`_worker_write_paths`; until it passes the folders, only the exact files count.
+
+**Enlaces y citas de un trabajador dedicado.** Una ruta local que viene con la
+pieza (enlace de un DOCX o un PDF, enlace de Markdown, relación de una
+diapositiva, enlace de una web, entrada de `citations`) solo se sigue dentro del
+ámbito del trabajador: sus ficheros concedidos y su salida, y sus carpetas de
+lectura y escritura declaradas. El Hub compara el texto de la ruta y no consulta
+el disco. Todo lo demás queda `unmeasured` con el motivo «fuera del ámbito
+declarado», exista el fichero o no. Quien no es un trabajador dedicado sigue
+resolviendo rutas locales. El conector pasa `_worker_read_files` y puede pasar
+`_worker_read_paths` y `_worker_write_paths`; mientras no pase las carpetas, solo
+cuentan los ficheros exactos.
