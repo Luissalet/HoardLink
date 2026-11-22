@@ -2182,7 +2182,8 @@ class AgoraConsoleFacet(Facet):
         task = str(args.get("task") or "").strip()
         template = str(args.get("template") or "").strip()
         if template and template not in agora_worker_profiles.TEMPLATES:
-            return {"ok": False, "status": 400, "error": "template must be build, probe, review or integrate"}
+            return {"ok": False, "status": 400,
+                    "error": "template must be one of: " + ", ".join(agora_worker_profiles.TEMPLATES)}
         if leader_id not in {row[0] for row in LEADERS} or not task or len(task) > MAX_TASK_CHARS:
             return {"ok": False, "status": 400, "error": f"leader_id and task (1-{MAX_TASK_CHARS} characters) are required"}
         scope = {}
@@ -2318,6 +2319,23 @@ class AgoraConsoleFacet(Facet):
         prompt += "If blocked, report the exact cause in the task thread and preserve the session/worktree. Return concrete evidence."
         if benchmark_prompt is None:
             prompt += agora_worker_profiles.briefing(agora_worker_profiles.read(self), template)
+            if template == "check":
+                from . import agora_orders
+
+                task_id = args.get("task_id")
+                if task_id is not None and (type(task_id) is not int or task_id <= 0):
+                    return {"ok": False, "status": 400, "error": "Use a positive task ID. / Indica un identificador de tarea positivo."}
+                agora = self._agora()
+                job = agora.db.one("SELECT order_id, inputs FROM agora_order_jobs "
+                                   "WHERE task_id=? AND space_id=? AND removed=0",
+                                   (task_id, self.space_id)) if task_id is not None and agora is not None else None
+                if task_id is not None and not job:
+                    return {"ok": False, "status": 404, "error": "No production job in this space. / No hay un trabajo de producción en este espacio."}
+                comparisons = agora_orders.revision_comparisons(agora, job) if job else []
+                if comparisons:
+                    prompt += f"\n\nProduction task #{task_id} · revision_comparisons:\n" + json.dumps(comparisons, ensure_ascii=False)
+                else:
+                    prompt += "\n\nNo previous reference supplied by the console. / Sin referencia anterior aportada por la consola."
             prompt += f"\n\nTask: {task}"
             prompt += self._saved_instructions(agent_id)
         else:
@@ -3896,7 +3914,7 @@ class AgoraConsoleFacet(Facet):
                  "confirm_process": {"type": "object", "properties": {"pid": {"type": "integer"}, "started_at": {"type": "number"}},
                                      "required": ["pid", "started_at"], "additionalProperties": False},
                  "message": {"type": "string", "maxLength": 4000, "description": "Follow-up instruction for continue or replace."},
-                 "task_id": {"type": "integer", "minimum": 1, "description": "Job for Faustus file suggestions and its registered inputs, or task to transfer with replace."},
+                 "task_id": {"type": "integer", "minimum": 1, "description": "Production job for the check template or Faustus file suggestions, or task to transfer with replace."},
                  "file_scope": agora_faustus.DECLARED_PATHS,
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},
