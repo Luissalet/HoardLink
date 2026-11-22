@@ -6,6 +6,8 @@ import pytest
 from hoard_link.hub import production
 from hoard_link.hub.core import Hub
 
+# Fixtures imported by name: pytest hides the sibling conftest when files of tests/ and tests/hub are interleaved.
+from .conftest import _agent_watch_sees_no_transcripts, _no_auto_rules, family, fake_app, hub  # noqa: F401
 from .test_hub_and_server import _http, served  # noqa: F401 - the fixture and the helper
 
 CONTROLS = {"studio": {"list": "mods_list", "set": "mods_set", "name_field": "id"}}
