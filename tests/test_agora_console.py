@@ -862,7 +862,11 @@ def test_faustus_child_session_creation_uses_native_form_api(tmp_path, monkeypat
         "endpoint_id": ["spark-main"], "project_id": ["faustus-project"], "skip_validation": ["true"]}
 
 
-def test_faustus_coordination_put_uses_owner_scoped_json_api(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("method", "path", "body"), [
+    ("PUT", "/api/coordination/child-session", {"connector_id": "agora", "actor": "faustus-fixture"}),
+    ("PATCH", "/api/projects/project", {"workspace": "fixture-workspace"}),
+])
+def test_faustus_binding_requests_use_owner_scoped_json_api(tmp_path, monkeypatch, method, path, body):
     facet = _facet(tmp_path)
     monkeypatch.setenv("FAUSTUS_OWNER_API_TOKEN", "configured-owner-token")
     requests = []
@@ -879,14 +883,11 @@ def test_faustus_coordination_put_uses_owner_scoped_json_api(tmp_path, monkeypat
             requests.append((request, timeout))
             return Response()
     monkeypatch.setattr("urllib.request.build_opener", lambda *args: Opener())
-    body = {"connector_id": "agora", "actor": "faustus-worker-a1b2c3d4", "active": True,
-            "operations": ["poll"], "resources": [], "repos": [], "thread_ids": []}
-
-    status, data = facet._faustus_session_request("PUT", "/api/coordination/child-session", body)
+    status, _ = facet._faustus_session_request(method, path, body)
 
     request, timeout = requests[0]
-    assert status == 200 and data["binding"]["actor"] == body["actor"]
-    assert request.get_method() == "PUT" and timeout == 8.0
+    assert status == 200 and request.full_url.endswith(path)
+    assert request.get_method() == method and timeout == 8.0
     assert request.headers["Content-type"] == "application/json"
     assert request.headers["Authorization"] == "Bearer configured-owner-token"
     assert json.loads(request.data.decode("utf-8")) == body
@@ -2615,3 +2616,59 @@ def test_a_finished_claude_child_has_its_worktree_retired_whatever_the_outcome(t
                        "VALUES(?,?,?,?,?,?,'running',1,1)", (f"claude-end-{n}", "claude", f"claude-worker-1234567{n}", "haiku", "low", "task"))
         facet._monitor_worker(f"claude-end-{n}", SimpleNamespace(wait=lambda code=code: code), tmp_path / "none.txt")
     assert retired == ["claude-end-0", "claude-end-1"]
+
+
+def test_legacy_dedicated_continuation_replaces_implicit_workspace(tmp_path, monkeypatch):
+    from hoard_link.hub import agora_faustus
+
+    facet = _facet(tmp_path)
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    assets = profile / "assets"
+    log = tmp_path / "worker.jsonl"
+    log.touch()
+    legacy_scope = agora_faustus.file_scope(str(profile), {"read_paths": [str(assets)]})
+    command = ["python", "runner.py", "--session", "original", "--agent-id", "faustus-fixture",
+               "--project-id", "project", "--model", "fixture-model", "--url", "http://127.0.0.1:49100",
+               "--workspace", str(profile), "--approve", "-p", ""]
+    old_url, new_url = "http://127.0.0.1:49100", "http://127.0.0.1:49101"
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,log_path,session_id,"
+                   "created_at,updated_at,faustus_url,workspace,runtime_endpoint,launch_command,launch_cwd,"
+                   "worker_file_scope) VALUES('legacy','faustus','faustus-fixture','fixture','','task',"
+                   "'incomplete',?,'original',1,1,?,?,'http://models.example/v1',?,?,?)",
+                   (str(log), old_url, str(profile), json.dumps(command), str(tmp_path), json.dumps(legacy_scope)))
+    launched = []
+    rebound = []
+
+    def start(*args, file_scope, resume):
+        assert resume
+        launched.append(file_scope)
+        return {"url": new_url, "tool_approval_mode": "auto"}
+
+    def request(method, path, fields=None, *, base_url):
+        if base_url == old_url:
+            return 503, {}
+        assert base_url == new_url
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "runs": {}}
+        if path == "/api/sessions":
+            return 200, [{"id": "original"}]
+        assert method == "PATCH" and path == "/api/projects/project"
+        rebound.append(fields["workspace"])
+        return 200, fields
+
+    monkeypatch.setattr(agora_faustus, "start_pc", start)
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+    monkeypatch.setattr(facet, "_resumed_worker", lambda *_: {"ok": True})
+    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.Popen", lambda *args, **kwargs: SimpleNamespace(pid=1))
+    assert facet._continue_worker("legacy")["ok"]
+    workspace, = rebound
+    persisted, = facet._worker_rows()
+    assert persisted["workspace"] == workspace != str(profile)
+    assert agora_faustus.owns_worker_workspace(facet, "faustus-fixture", workspace)
+    assert persisted["file_scope"] == launched[0] == {**legacy_scope, "workspace": workspace}
+    assert persisted["session_id"] == "original"
+    with facet._db() as db:
+        resumed = json.loads(db.execute("SELECT launch_command FROM workers WHERE id='legacy'").fetchone()[0])
+    assert resumed[resumed.index("--workspace") + 1] == workspace and "--approve" not in resumed

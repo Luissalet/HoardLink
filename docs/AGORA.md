@@ -236,10 +236,18 @@ its stored endpoint and credentials. After rotating a key, launch a new child so
 
 **Dedicated Faustus workers on the PC** launch in automatic approval mode (`auto`).
 The runner leaves approval cards for the person and records the mode and the file scope
-in its console receipt. File tools can write inside the space's workspace and the
-declared output folders. They can also read declared input folders and the copies
-of pieces attached to the production task. A file outside those paths is rejected.
-The person’s own runtime uses its own settings.
+in its console receipt. Each worker starts with a private empty workspace. The
+space's profile folder conveys no access by itself. File tools can write in the
+private workspace and declared output folders. They can read the private
+workspace, declared input folders and stored pieces linked to the production
+task. Add a folder to both lists to grant both kinds of access. Credential
+stores, environment secrets and token files are protected even inside granted
+folders.
+
+Cada trabajador dedicado empieza en una carpeta privada vacía, visible en el
+recibo. La carpeta del perfil del espacio requiere declaración expresa para
+lectura o escritura. Los almacenes de credenciales, los secretos de entorno y
+los ficheros de token se protegen también dentro de las carpetas declaradas.
 
 In **Create worker**, link a production task to see its input pieces and kept references.
 Their stored copies are available for reading. Select suggested asset folders if the
@@ -248,7 +256,11 @@ use absolute local paths, one per line. On the agent surface, call
 `hub_agora_console_worker` with `action: "propose_files"` and `task_id` to preview.
 For `action: "create"` with `leader_id: "faustus"`, pass the same `task_id` and optional
 `file_scope: {"read_paths": [...], "write_paths": [...]}`. A continued worker keeps
-the scope from its original receipt. The saved Hub connector binds the worker's identity. Use `coordination_heartbeat`
+the private workspace and grants from its receipt. A dedicated session with an
+older receipt is reopened in a new private folder, with its explicit grants.
+The saved Hub connector binds the worker's identity and the linked production
+task. Use `coordination_claim` and `coordination_submit` for that task even
+when it has no code repository. Use `coordination_heartbeat`
 to report presence and `coordination_post` with the task's thread ID and the report
 body to publish there. Use `hub_agora_order` to read a production order and
 `hub_piece_validate` to check a piece. Pass absolute paths inside the scope to

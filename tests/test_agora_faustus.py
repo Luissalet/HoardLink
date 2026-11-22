@@ -209,12 +209,14 @@ def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeyp
         assert key not in error and "old-key" not in error
         assert starts == [] and len(calls) == 1
         return
-    assert not error and result["workspace"] == str(tmp_path)
+    workspace = Path(result["workspace"])
+    assert not error and workspace.parent == agora_faustus.worker_data(facet, "faustus-qa") / "workspaces"
+    assert workspace != tmp_path and not list(workspace.iterdir())
     assert result["url"] == runtime["url"] and result["runtime"] is runtime
     args, kwargs = starts[0]
     assert args[-2:] == ("http://model.example/v1", "deepseek-v4.1-flash")
     assert kwargs == {"api_key": key if key_status == "matched" else "",
-                      "file_scope": agora_faustus.file_scope(str(tmp_path))}
+                      "file_scope": agora_faustus.file_scope(str(workspace))}
     creation = next(row for row in calls if row[1] == "/api/session")
     assert creation[2]["endpoint_id"] == "headless"
     binding = next(row[2] for row in calls if row[1] == "/api/coordination/child")
@@ -248,11 +250,15 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     monkeypatch.setattr("hoard_link.hub.procs.proc_info", lambda pid: SimpleNamespace(created_at=1))
     monkeypatch.setattr("hoard_link.hub.contract._get", lambda *args: (200, {"service": "faustus"}))
     monkeypatch.setattr(facet, "_faustus_session_request", request)
+    workspace = agora_faustus.new_worker_workspace(facet, "faustus-qa")
+    custom_token = str(tmp_path / "fixture-connection.dat")
+    facet.hub.apps = [SimpleNamespace(token_file=custom_token)]
     runtime = agora_faustus.start_pc(facet, "faustus-qa", tmp_path, "python", "http://models.example/v1",
-                                     "model", file_scope=agora_faustus.file_scope(str(tmp_path)),
+                                     "model", file_scope=agora_faustus.file_scope(workspace),
                                      api_key="" if resume else key, resume=resume)
     command, env = launches[0]
     assert env["FAUSTUS_AGORA_WORKER_SPACE"] == space
+    assert custom_token in json.loads(env["FAUSTUS_AGORA_PROTECTED_PATHS"])
     assert ("--agora-studio" in command) == (space == "estudio")
     assert json.loads(command[command.index("--agora-file-scope") + 1]) == runtime["file_scope"]
     assert json.loads(command[command.index("--settings") + 1]) == {"tool_approval_mode": "auto"}
@@ -447,3 +453,15 @@ def test_validates_separate_file_grants(tmp_path):
                     {"workspace": str(tmp_path)}, {"write_paths": [str(tmp_path.anchor)]}):
         with pytest.raises(ValueError):
             agora_faustus.file_scope(str(tmp_path), invalid)
+
+
+def test_dedicated_workspaces_are_empty_and_distinct_for_the_same_agent(tmp_path):
+    facet = _facet(tmp_path)
+    agent = agora_faustus.APPRENTICE
+    first = Path(agora_faustus.new_worker_workspace(facet, agent))
+    (first / "note.txt").write_text("fixture", encoding="utf-8")
+    second = Path(agora_faustus.new_worker_workspace(facet, agent))
+    assert first != second and not list(second.iterdir())
+    assert agora_faustus.owns_worker_workspace(facet, agent, str(first))
+    assert not agora_faustus.owns_worker_workspace(facet, "other", str(first))
+    assert not agora_faustus.owns_worker_workspace(facet, agent, str(tmp_path))

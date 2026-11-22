@@ -1886,7 +1886,7 @@ class AgoraConsoleFacet(Facet):
         if method == "GET":
             return _get(url, token, 6.0)
         if ((method == "PUT" and path.startswith("/api/coordination/"))
-                or (method == "PATCH" and path == "/api/model-endpoints/headless")
+                or (method == "PATCH" and (path == "/api/model-endpoints/headless" or path.startswith("/api/projects/")))
                 or (method == "POST" and (path == "/api/projects" or path.startswith("/api/chat/stop/")))) and isinstance(fields, dict):
             headers = {"Accept": "application/json", "Content-Type": "application/json",
                        "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})}
@@ -3023,7 +3023,8 @@ class AgoraConsoleFacet(Facet):
 
     def _continue_worker(self, worker_id: str, automatic: bool = False,
                          previous_process: Optional[subprocess.Popen[str]] = None, message: str = "") -> dict[str, Any]:
-        from .agora_faustus import APPRENTICE, STUDIO, file_scope, reactivate_apprentice_binding
+        from .agora_faustus import (APPRENTICE, STUDIO, file_scope, new_worker_workspace, owns_worker_workspace,
+                                    reactivate_apprentice_binding, start_pc)
 
         with _STARTING_LOCK, self._db_lock, self._db() as db:
             row = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
@@ -3058,9 +3059,10 @@ class AgoraConsoleFacet(Facet):
         self._adopt_worker_runtime(row)
         base_url = row["faustus_url"]
         session_busy = False
-        launch_scope = json.loads(row["worker_file_scope"] or "{}")
+        workspace = row["workspace"]
         approval_mode = row["tool_approval_mode"]
         try:
+            launch_scope = json.loads(row["worker_file_scope"] or "{}")
             if not row["session_id"]:
                 return self._resume_unavailable(row, "missing_session")
             if not row["launch_command"] and not row["faustus_url"]:
@@ -3070,14 +3072,20 @@ class AgoraConsoleFacet(Facet):
                     or command[command.index("--agent-id") + 1] != row["agent_id"]):
                 self._close_worker_runtime(worker_id)
                 return self._resume_unavailable(row, "missing_receipt")
-            if row["runtime_endpoint"] and not launch_scope:
-                # A legacy dedicated runtime had no scope. Reopen its saved
-                # session with the workspace grant, never continue it unscoped.
-                launch_scope = file_scope(row["workspace"])
+            status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
+            migrate_workspace = bool(row["runtime_endpoint"] and (
+                launch_scope.get("workspace") != workspace
+                or not owns_worker_workspace(self, row["agent_id"], workspace)))
+            if migrate_workspace:
+                if status == 200:
+                    session_busy = (not isinstance(activity, dict) or bool(activity.get("running"))
+                                    or bool(activity.get("runs")) or worker_id not in self._faustus_runtimes)
+                    if session_busy:
+                        raise RuntimeError("The old worker runtime is active or cannot be verified. / El proceso anterior está ocupado o no se puede comprobar.")
                 self._close_worker_runtime(worker_id)
+                workspace = new_worker_workspace(self, row["agent_id"])
+                launch_scope = {**(launch_scope or file_scope(workspace)), "workspace": workspace}
                 status, activity = 0, {}
-            else:
-                status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)
             if row["runtime_endpoint"] and "--approve" in command:
                 command.remove("--approve")
             runtime = self._faustus_runtimes.get(worker_id)
@@ -3085,7 +3093,6 @@ class AgoraConsoleFacet(Facet):
             runtime_alive = runtime is not None and (runtime_process is None or runtime_process.poll() is None)
             if status != 200 and row["runtime_endpoint"] and not runtime_alive:
                 self._close_worker_runtime(worker_id)
-                from .agora_faustus import start_pc
                 model = command[command.index("--model") + 1]
                 runtime = start_pc(self, row["agent_id"], Path(cwd), command[0],
                                    row["runtime_endpoint"], model, file_scope=launch_scope, resume=True)
@@ -3109,6 +3116,18 @@ class AgoraConsoleFacet(Facet):
             if not any(isinstance(session, dict) and session.get("id") == row["session_id"] for session in sessions):
                 self._close_worker_runtime(worker_id)
                 return self._resume_unavailable(row, "missing_session")
+            if row["runtime_endpoint"]:
+                # Older sessions could share one native project. Rebind its
+                # context to this session's receipt before starting the turn.
+                project_id = command[command.index("--project-id") + 1]
+                status, project = self._faustus_session_request(
+                    "PATCH", "/api/projects/" + project_id, {"workspace": workspace}, base_url=base_url)
+                if status != 200 or not isinstance(project, dict) or project.get("workspace") != workspace:
+                    raise RuntimeError("Faustus did not confirm the private workspace. / Faustus no confirmó la carpeta privada.")
+                if "--workspace" in command:
+                    command[command.index("--workspace") + 1] = workspace
+                else:
+                    command.extend(["--workspace", workspace])
             if self.space_id == STUDIO and row["agent_id"] == APPRENTICE:
                 reactivate_apprentice_binding(self, base_url, row["session_id"])
             command[command.index("--url") + 1] = base_url
@@ -3135,11 +3154,11 @@ class AgoraConsoleFacet(Facet):
             runtime = self._faustus_runtimes.get(worker_id, {})
             resume_command = command.copy()
             resume_command[resume_command.index("-p") + 1] = ""
-            db.execute("UPDATE workers SET state='running',pid=?,log_path=?,faustus_url=?,detail=?,"
+            db.execute("UPDATE workers SET state='running',pid=?,log_path=?,faustus_url=?,workspace=?,detail=?,"
                        "runtime_pid=?,runtime_started_at=?,launch_command=?,launch_cwd=?,"
                        "outcome='unverified',process_exit_code=NULL,process_started_at=?,updated_at=?,"
                        "tool_approval_mode=?,worker_file_scope=? WHERE id=?",
-                       (process.pid, str(log_path), base_url, detail, runtime.get("pid"), runtime.get("created_at"),
+                       (process.pid, str(log_path), base_url, workspace, detail, runtime.get("pid"), runtime.get("created_at"),
                         json.dumps(resume_command), cwd, agora_worker_processes.started_at(process.pid),
                         time.time(), approval_mode, json.dumps(launch_scope), worker_id))
         return self._resumed_worker(row, process, result_path, detail)

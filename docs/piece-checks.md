@@ -8,6 +8,17 @@ outputs with `piece_check`. An explicit `profile` can select the intended use
 of a file, such as printing a GLB. For unregistered files the Hub can also
 infer a profile from a known piece kind or the file extension.
 
+Dedicated workers use declared local paths or retained revisions granted by
+an assignment. Validation by ID uses the declared retained copy. Declare any
+additional reference files before passing their absolute paths. For web checks,
+pass a declared ZIP. For spreadsheet checks, pass explicit sheet requirements.
+
+Los trabajadores dedicados usan rutas locales declaradas o revisiones
+conservadas que autoriza el encargo. La validación por identificador usa la
+copia conservada y declarada. Declara los ficheros de referencia adicionales
+antes de pasar sus rutas absolutas. Para comprobar una web, usa un ZIP declarado.
+Para una hoja de cálculo, indica los requisitos de la hoja.
+
 An executed request returns `ok: true` and a separate `verdict` of `pass`,
 `fail` or `unmeasured`. A measured defect takes precedence over a pending
 measurement. Each check includes a reason in Spanish and English, and
