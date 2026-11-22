@@ -186,6 +186,28 @@ def check_web(path, requirements, report):
         _check_web_page(root, requirements, report)
 
 
+class _LocalOnlyEngine:
+    """Browser engine whose pages abort every request that does not go to the local page server.
+
+    A confined worker has no network: the Hub must not reach out for it while rendering its page.
+    """
+
+    def __init__(self, engine, base):
+        self._engine, self._base = engine, base.rstrip("/") + "/"
+
+    def new_page(self, **options):
+        page = self._engine.new_page(**{**options, "service_workers": "block"})
+        page.route("**/*", lambda route: route.continue_() if (
+            route.request.url.startswith(self._base) or route.request.url.split(":", 1)[0] in ("data", "blob", "about")
+        ) else route.abort())
+        # Without connect_to_server the handler answers for the server: nothing leaves the machine.
+        page.route_web_socket("**/*", lambda socket: None)
+        return page
+
+    def __getattr__(self, name):
+        return getattr(self._engine, name)
+
+
 def _check_web_page(path, requirements, report):
     from vitruvius_hoard.functional_check.browser import state_facts
     from vitruvius_hoard.functional_check.run import Browser, aimed
@@ -199,6 +221,8 @@ def _check_web_page(path, requirements, report):
     rows = []
     link_results = {}
     with Browser(folder, entry) as browser:
+        if requirements.get("_offline"):
+            browser._engine = _LocalOnlyEngine(browser._engine, browser._base)
         for width, height in viewports:
             with browser.open({"viewport": {"width": width, "height": height}}) as (page, crashes, console, failed):
                 for image in page.locator("img[loading=lazy]").all():
@@ -274,6 +298,14 @@ def _pdf_words(path):
             raise RuntimeError(proc.tail_lines(result.stderr or result.stdout) or "PPTX rendering failed")
         with pymupdf.open(pdf) as deck:
             return [_words(page.get_text()) for page in deck]
+
+
+def _external_resources(path):
+    """Relationships the office renderer would load from outside the file (hyperlinks are not loaded)."""
+    with ZipFile(path) as archive:
+        return [name for name in archive.namelist() if name.endswith(".rels") and any(
+            rel.get("TargetMode") == "External" and not rel.get("Type", "").endswith("/hyperlink")
+            for rel in ET.fromstring(archive.read(name)))]
 
 
 def _deck_links(path):
@@ -367,6 +399,10 @@ def check_slides(path, requirements, report):
                "Resolve slide hyperlinks and image relationships.",
                "Comprueba los enlaces y las referencias a las imágenes.", details=pending)
 
+    if requirements.get("_offline") and _external_resources(path):
+        report.add("rendered-text", None, "The deck links external resources, so it was not rendered.",
+                   "La presentación enlaza recursos externos, así que no se ha renderizado.")
+        return
     pages = _pdf_words(path)
     missing = []
     for index, shapes in enumerate(text, 1):
