@@ -1,11 +1,14 @@
+import hashlib
 import json
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 from contextlib import nullcontext
 
 import pytest
 
 from hoard_link.hub import agora_faustus
+from hoard_link.hub import faustus_endpoint_key
 from tests.test_agora_console import _facet
 
 
@@ -123,20 +126,36 @@ def test_stop_request_sends_native_run_identity_and_work_scope(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("connector_id", ["agora", "existing-hub-connector"])
-def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeypatch, connector_id):
+@pytest.mark.parametrize("key_status", ["open", "matched", "missing", "mismatched", "no-fingerprint"])
+def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeypatch, connector_id, key_status):
     facet = _facet(tmp_path)
+    key = "synthetic-key"
+    facet.hub.placement = object()
+    key_reads = []
+
+    def read_key(root, python, endpoint_id, base_url, *, placement):
+        key_reads.append((endpoint_id, base_url, placement))
+        return {"missing": "", "mismatched": "old-key"}.get(key_status, key)
+
+    monkeypatch.setattr(agora_faustus, "read_endpoint_key", read_key)
     facet.hub.agora.space_store = SimpleNamespace(get=lambda sid: {"workspace": str(tmp_path)})
     monkeypatch.setattr(agora_faustus, "service", lambda hub: {
         "remote": True, "reachable": True, "url": "https://spark.example"})
     runtime = {"url": "http://127.0.0.1:58200"}
     starts = []
-    monkeypatch.setattr(agora_faustus, "start_pc", lambda *args: starts.append(args) or runtime)
+    monkeypatch.setattr(agora_faustus, "start_pc",
+                        lambda *args, **kwargs: starts.append((args, kwargs)) or runtime)
     calls = []
 
     def request(method, path, fields=None, *, base_url=""):
         calls.append((method, path, fields, base_url))
         if path == "/api/model-endpoints":
-            return 200, [{"id": "sparks", "is_enabled": True, "base_url": "http://model.example/v1"}]
+            fingerprint = None if key_status == "no-fingerprint" else hashlib.sha256(key.encode()).hexdigest()[:8]
+            return 200, [
+                {"id": "other", "is_enabled": True, "base_url": "http://model.example/v1", "has_key": True},
+                {"id": "sparks", "is_enabled": True, "base_url": "http://model.example/v1",
+                 "has_key": key_status != "open", "api_key_fingerprint": fingerprint},
+            ]
         assert base_url == runtime["url"]
         if path == "/api/projects":
             return (200, []) if method == "GET" else (200, {"id": "project"})
@@ -154,15 +173,120 @@ def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeyp
     monkeypatch.setattr(facet, "_faustus_session_request", request)
     result, error = agora_faustus.prepare(facet, "faustus-qa", {
         "endpoint_id": "sparks", "model_id": "deepseek-v4.1-flash"}, "high")
+    assert key_reads == ([] if key_status == "open" else [
+        ("sparks", "http://model.example/v1", facet.hub.placement)])
+    if key_status in ("missing", "mismatched", "no-fingerprint"):
+        assert result is None and "Added Models" in error and "Modelos añadidos" in error
+        assert key not in error and "old-key" not in error
+        assert starts == [] and len(calls) == 1
+        return
     assert not error and result["workspace"] == str(tmp_path)
     assert result["url"] == runtime["url"] and result["runtime"] is runtime
-    assert starts[0][-2:] == ("http://model.example/v1", "deepseek-v4.1-flash")
+    args, kwargs = starts[0]
+    assert args[-2:] == ("http://model.example/v1", "deepseek-v4.1-flash")
+    assert kwargs == {"api_key": key if key_status == "matched" else ""}
     creation = next(row for row in calls if row[1] == "/api/session")
     assert creation[2]["endpoint_id"] == "headless"
     binding = next(row[2] for row in calls if row[1] == "/api/coordination/child")
     assert binding["actor"] == "faustus-qa" and binding["space_id"] == "ecosystem"
     assert binding["connector_id"] == connector_id
     assert calls[0][3] == "https://spark.example"
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, monkeypatch, resume):
+    facet = _facet(tmp_path)
+    key = "synthetic-key"
+    launches = []
+    requests = []
+    process = SimpleNamespace(pid=1, poll=lambda: None)
+
+    def popen(command, **kwargs):
+        launches.append((command, kwargs["env"]))
+        return process
+
+    def request(method, path, fields=None, *, base_url=""):
+        assert base_url.startswith("http://127.0.0.1:")
+        requests.append((method, path, fields))
+        if method == "PATCH":
+            return 200, {"id": "headless", "is_enabled": True}
+        return 200, [{"id": "agora", "status": "connected"}]
+
+    monkeypatch.setattr(agora_faustus.subprocess, "Popen", popen)
+    monkeypatch.setattr("hoard_link.hub.procs.proc_info", lambda pid: SimpleNamespace(created_at=1))
+    monkeypatch.setattr("hoard_link.hub.contract._get", lambda *args: (200, {"service": "faustus"}))
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+    runtime = agora_faustus.start_pc(facet, "faustus-qa", tmp_path, "python", "http://models.example/v1",
+                                     "model", api_key="" if resume else key, resume=resume)
+    command, _ = launches[0]
+    assert command[command.index("--endpoint-url") + 1] == ("" if resume else "http://models.example/v1")
+    assert command[command.index("--api-key") + 1] == ""
+    assert key not in repr(launches) and key not in repr(runtime)
+    assert requests == [("GET", "/api/mcp/servers", None)] + (
+        [] if resume else [("PATCH", "/api/model-endpoints/headless", {"api_key": key})])
+
+
+def test_read_only_store_selects_exact_encrypted_endpoint(tmp_path):
+    fernet = pytest.importorskip("cryptography.fernet").Fernet
+    key_file = tmp_path / ".app_key"
+    key_file.write_bytes(fernet.generate_key())
+    box = fernet(key_file.read_bytes())
+    database = tmp_path / "app.db"
+    url = "http://models.example/v1"
+    with sqlite3.connect(database) as store:
+        store.execute("CREATE TABLE model_endpoints (id, base_url, is_enabled, api_key)")
+        store.executemany("INSERT INTO model_endpoints VALUES (?, ?, ?, ?)", [
+            ("other", url, 1, "enc:" + box.encrypt(b"other-key").decode()),
+            ("selected", url, 1, "enc:" + box.encrypt(b"synthetic-key").decode()),
+            ("legacy", url, 1, "unencrypted-key"),
+            ("disabled", url, 0, "enc:" + box.encrypt(b"disabled-key").decode()),
+        ])
+    before = database.read_bytes()
+    assert faustus_endpoint_key._read_key(database, key_file, "selected", url) == "synthetic-key"
+    assert faustus_endpoint_key._read_key(database, key_file, "selected", url + "/changed") == ""
+    for endpoint in ("missing", "legacy", "disabled"):
+        assert faustus_endpoint_key._read_key(database, key_file, endpoint, url) == ""
+    missing_key = tmp_path / "absent-key"
+    assert faustus_endpoint_key._read_key(database, missing_key, "selected", url) == ""
+    assert not missing_key.exists()
+    assert database.read_bytes() == before
+
+
+def test_key_reader_uses_placement_ssh_and_drops_failure_output(tmp_path):
+    from hoard_link.hub.placement import PlacementError
+
+    key = "synthetic-key"
+    calls = []
+
+    def ssh(command, *, input, timeout):
+        calls.append(command)
+        assert key not in command and key not in input
+        assert "SELECT api_key FROM model_endpoints" in input
+        if len(calls) == 1:
+            return json.dumps(key)
+        raise PlacementError(key)
+
+    placement = SimpleNamespace(_ssh=ssh)
+    url = "http://models.example/v1"
+    assert faustus_endpoint_key.read_endpoint_key(tmp_path, "python", "selected", url, placement=placement) == key
+    assert faustus_endpoint_key.read_endpoint_key(tmp_path, "python", "selected", url, placement=placement) == ""
+    assert all(cmd.endswith(" - selected " + url) for cmd in calls)
+
+
+def test_headless_endpoint_credential_patch_uses_json(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    requests = []
+
+    def open_request(request, timeout):
+        requests.append(request)
+        return nullcontext(SimpleNamespace(status=200, read=lambda limit: b'{"id":"headless","is_enabled":true}'))
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: SimpleNamespace(open=open_request))
+    result = facet._faustus_session_request("PATCH", "/api/model-endpoints/headless", {"api_key": "synthetic-key"},
+                                           base_url="http://127.0.0.1:58200")
+    assert result == (200, {"id": "headless", "is_enabled": True})
+    assert requests[0].headers["Content-type"] == "application/json"
+    assert json.loads(requests[0].data) == {"api_key": "synthetic-key"}
 
 
 def test_stop_targets_recorded_instance_even_after_placement_changes(tmp_path, monkeypatch):

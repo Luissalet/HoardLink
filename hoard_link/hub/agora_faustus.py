@@ -2,10 +2,12 @@
 
 The main Faustus address follows placement. A Spark cannot execute Windows
 paths, so an explicit worker launch starts a separate, headless PC runtime
-with its own data and the selected Sparks endpoint. No user data is copied.
+with its own data and the selected Sparks endpoint. Protected endpoints use
+the credential from the Faustus installation supplying the catalog.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import ntpath
 import os
@@ -16,6 +18,8 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+from .faustus_endpoint_key import read_endpoint_key
 
 STUDIO = "estudio"
 APPRENTICE = "faustus-aprendiz"
@@ -112,7 +116,18 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
         endpoint = next((row for row in endpoints if row.get("id") == endpoint_id and row.get("is_enabled")), None) if status == 200 and isinstance(endpoints, list) else None
         if not endpoint or not str(endpoint.get("base_url") or "").startswith(("http://", "https://")):
             return None, "The selected Sparks endpoint is unavailable for the PC worker."
-        runtime = start_pc(console, agent, root, python, endpoint["base_url"], model["model_id"])
+        api_key = ""
+        if endpoint.get("has_key"):
+            placement = console.hub.placement if target.get("remote") else None
+            api_key = read_endpoint_key(root, python, endpoint_id, endpoint["base_url"], placement=placement)
+            fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8]
+            if not api_key or fingerprint != endpoint.get("api_key_fingerprint"):
+                return None, (
+                    "No matching credential for the selected endpoint. Add or update its API key in "
+                    "Faustus Settings → Added Models. / No se encontró la credencial del endpoint seleccionado. "
+                    "Añade o actualiza su clave API en Ajustes de Faustus → Modelos añadidos."
+                )
+        runtime = start_pc(console, agent, root, python, endpoint["base_url"], model["model_id"], api_key=api_key)
         base, endpoint_id = runtime["url"], "headless"
     try:
         def request(method, path, fields=None):
@@ -175,7 +190,8 @@ def reactivate_apprentice_binding(console: Any, base: str, session: str) -> None
         raise RuntimeError("Faustus could not reactivate the apprentice chat binding.")
 
 
-def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, model: str) -> dict:
+def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, model: str, *,
+             api_key: str = "", resume: bool = False) -> dict:
     data = worker_data(console, agent)
     data.mkdir(parents=True, exist_ok=True)
     with socket.socket() as listener:
@@ -186,8 +202,10 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     env["FAUSTUS_APP_ROOT"] = str(root)
     env["FAUSTUS_AGORA_HUB_PYTHON"] = sys.executable
     env["FAUSTUS_AGORA_HUB_ROOT"] = str(Path(__file__).resolve().parents[2])
+    # On resume, leave the original endpoint and its encrypted credential in place.
     command = [str(python), "-X", "utf8", str(root / "integrations" / "harbor" / "serve_headless.py"),
-               "--port", str(port), "--data", str(data), "--endpoint-url", endpoint, "--model", model,
+               "--port", str(port), "--data", str(data), "--endpoint-url", "" if resume else endpoint,
+               "--model", model, "--api-key", "",
                "--hub-url", str(console.hub.config.url)]
     if console.space_id == STUDIO:
         command.extend(["--agora-studio", agent])
@@ -207,6 +225,14 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
             if status == 200 and isinstance(body, dict) and body.get("service") == "faustus":
                 status, servers = console._faustus_session_request("GET", "/api/mcp/servers", base_url=base)
                 if status == 200 and any(row.get("id") == "agora" and row.get("status") == "connected" for row in servers if isinstance(row, dict)):
+                    if api_key:
+                        status, saved = console._faustus_session_request(
+                            "PATCH", "/api/model-endpoints/headless", {"api_key": api_key}, base_url=base)
+                        if (status != 200 or not isinstance(saved, dict) or saved.get("id") != "headless"
+                                or not saved.get("is_enabled")):
+                            raise RuntimeError(
+                                "PC Faustus could not store the endpoint credential. / "
+                                "Faustus no ha podido guardar la credencial del endpoint.")
                     return runtime
             time.sleep(0.5)
         raise RuntimeError(f"PC Faustus startup timed out; see {data / 'server.log'}")
