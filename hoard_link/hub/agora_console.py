@@ -1860,6 +1860,7 @@ class AgoraConsoleFacet(Facet):
         if method == "GET":
             return _get(url, token, 6.0)
         if ((method == "PUT" and path.startswith("/api/coordination/"))
+                or (method == "PATCH" and path == "/api/model-endpoints/headless")
                 or (method == "POST" and (path == "/api/projects" or path.startswith("/api/chat/stop/")))) and isinstance(fields, dict):
             headers = {"Accept": "application/json", "Content-Type": "application/json",
                        "User-Agent": "hoard-hub", **({"Authorization": "Bearer " + token} if token else {})}
@@ -2961,7 +2962,7 @@ class AgoraConsoleFacet(Facet):
                 from .agora_faustus import start_pc
                 model = command[command.index("--model") + 1]
                 runtime = start_pc(self, row["agent_id"], Path(cwd), command[0],
-                                   row["runtime_endpoint"], model)
+                                   row["runtime_endpoint"], model, resume=True)
                 self._faustus_runtimes[worker_id] = runtime
                 base_url = runtime["url"]
                 status, activity = self._faustus_session_request("GET", "/api/chat/activity", base_url=base_url)

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -123,20 +124,30 @@ def test_stop_request_sends_native_run_identity_and_work_scope(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("connector_id", ["agora", "existing-hub-connector"])
-def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeypatch, connector_id):
+@pytest.mark.parametrize("key_status", ["open", "matched", "missing", "mismatched"])
+def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeypatch, connector_id, key_status):
     facet = _facet(tmp_path)
+    key = "synthetic-key"
+    facet.hub.faustus_endpoint_keys = {"other": key}
+    if key_status in ("matched", "mismatched"):
+        facet.hub.faustus_endpoint_keys["sparks"] = key if key_status == "matched" else "old-key"
     facet.hub.agora.space_store = SimpleNamespace(get=lambda sid: {"workspace": str(tmp_path)})
     monkeypatch.setattr(agora_faustus, "service", lambda hub: {
         "remote": True, "reachable": True, "url": "https://spark.example"})
     runtime = {"url": "http://127.0.0.1:58200"}
     starts = []
-    monkeypatch.setattr(agora_faustus, "start_pc", lambda *args: starts.append(args) or runtime)
+    monkeypatch.setattr(agora_faustus, "start_pc",
+                        lambda *args, **kwargs: starts.append((args, kwargs)) or runtime)
     calls = []
 
     def request(method, path, fields=None, *, base_url=""):
         calls.append((method, path, fields, base_url))
         if path == "/api/model-endpoints":
-            return 200, [{"id": "sparks", "is_enabled": True, "base_url": "http://model.example/v1"}]
+            return 200, [
+                {"id": "other", "is_enabled": True, "base_url": "http://model.example/v1", "has_key": True},
+                {"id": "sparks", "is_enabled": True, "base_url": "http://model.example/v1",
+                 "has_key": key_status != "open", "api_key_fingerprint": hashlib.sha256(key.encode()).hexdigest()[:8]},
+            ]
         assert base_url == runtime["url"]
         if path == "/api/projects":
             return (200, []) if method == "GET" else (200, {"id": "project"})
@@ -154,15 +165,74 @@ def test_pc_workspace_launches_headless_and_binds_own_identity(tmp_path, monkeyp
     monkeypatch.setattr(facet, "_faustus_session_request", request)
     result, error = agora_faustus.prepare(facet, "faustus-qa", {
         "endpoint_id": "sparks", "model_id": "deepseek-v4.1-flash"}, "high")
+    if key_status in ("missing", "mismatched"):
+        assert result is None and "credential" in error
+        assert key not in error and "old-key" not in error
+        assert starts == [] and len(calls) == 1
+        return
     assert not error and result["workspace"] == str(tmp_path)
     assert result["url"] == runtime["url"] and result["runtime"] is runtime
-    assert starts[0][-2:] == ("http://model.example/v1", "deepseek-v4.1-flash")
+    args, kwargs = starts[0]
+    assert args[-2:] == ("http://model.example/v1", "deepseek-v4.1-flash")
+    assert kwargs == {"api_key": key if key_status == "matched" else ""}
     creation = next(row for row in calls if row[1] == "/api/session")
     assert creation[2]["endpoint_id"] == "headless"
     binding = next(row[2] for row in calls if row[1] == "/api/coordination/child")
     assert binding["actor"] == "faustus-qa" and binding["space_id"] == "ecosystem"
     assert binding["connector_id"] == connector_id
     assert calls[0][3] == "https://spark.example"
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, monkeypatch, resume):
+    facet = _facet(tmp_path)
+    key = "synthetic-key"
+    monkeypatch.setenv(agora_faustus.ENDPOINT_KEYS_ENV, json.dumps({"sparks": key}))
+    assert agora_faustus.load_endpoint_keys() == {"sparks": key}
+    launches = []
+    requests = []
+    process = SimpleNamespace(pid=1, poll=lambda: None)
+
+    def popen(command, **kwargs):
+        launches.append((command, kwargs["env"]))
+        return process
+
+    def request(method, path, fields=None, *, base_url=""):
+        assert base_url.startswith("http://127.0.0.1:")
+        requests.append((method, path, fields))
+        if method == "PATCH":
+            return 200, {"id": "headless", "is_enabled": True}
+        return 200, [{"id": "agora", "status": "connected"}]
+
+    monkeypatch.setattr(agora_faustus.subprocess, "Popen", popen)
+    monkeypatch.setattr("hoard_link.hub.procs.proc_info", lambda pid: SimpleNamespace(created_at=1))
+    monkeypatch.setattr("hoard_link.hub.contract._get", lambda *args: (200, {"service": "faustus"}))
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+    runtime = agora_faustus.start_pc(facet, "faustus-qa", tmp_path, "python", "http://models.example/v1",
+                                     "model", api_key="" if resume else key, resume=resume)
+    command, env = launches[0]
+    assert command[command.index("--endpoint-url") + 1] == ("" if resume else "http://models.example/v1")
+    assert command[command.index("--api-key") + 1] == ""
+    assert key not in repr(launches) and key not in repr(runtime)
+    assert agora_faustus.ENDPOINT_KEYS_ENV not in env
+    assert requests == [("GET", "/api/mcp/servers", None)] + (
+        [] if resume else [("PATCH", "/api/model-endpoints/headless", {"api_key": key})])
+
+
+def test_headless_endpoint_credential_patch_uses_json(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    requests = []
+
+    def open_request(request, timeout):
+        requests.append(request)
+        return nullcontext(SimpleNamespace(status=200, read=lambda limit: b'{"id":"headless","is_enabled":true}'))
+
+    monkeypatch.setattr("urllib.request.build_opener", lambda *args: SimpleNamespace(open=open_request))
+    result = facet._faustus_session_request("PATCH", "/api/model-endpoints/headless", {"api_key": "synthetic-key"},
+                                           base_url="http://127.0.0.1:58200")
+    assert result == (200, {"id": "headless", "is_enabled": True})
+    assert requests[0].headers["Content-type"] == "application/json"
+    assert json.loads(requests[0].data) == {"api_key": "synthetic-key"}
 
 
 def test_stop_targets_recorded_instance_even_after_placement_changes(tmp_path, monkeypatch):
