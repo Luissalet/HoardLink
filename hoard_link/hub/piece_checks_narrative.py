@@ -111,7 +111,7 @@ def _continuity(requirements, continuity, report):
                details=[*pending, *({"unknown_defect_id": key} for key in unknown)])
 
 
-def registered_source(agora, pdf):
+def registered_source(agora, pdf, resolve_piece=None):
     """Resolve the material review and its writing revisions within this order."""
     from .agora_orders import _parents, _piece_row, piece_file
 
@@ -133,7 +133,9 @@ def registered_source(agora, pdf):
                 item = _piece_row(agora, parent["piece"])
                 if item["kind"] in {"manuscript", "reviewed-manuscript"}:
                     pending.append(item)
-    source = Path(piece_file(agora, review["id"])) if review["path"] else None
+    source = None
+    if review["path"]:
+        source = Path(resolve_piece(review) if resolve_piece is not None else piece_file(agora, review["id"]))
     identity = {key: review[key] for key in ("id", "revision", "sha256")}
     if not any(row["kind"] == "manuscript" for row in active.values()):
         return source, None, identity

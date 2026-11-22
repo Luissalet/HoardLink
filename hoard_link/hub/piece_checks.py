@@ -127,6 +127,19 @@ def _engine(hub, engine, path, profile, requirements):
         return report.payload()
 
 
+def _registered_path(agora, row, worker_files):
+    from . import agora_orders
+
+    if worker_files is None:
+        return agora_orders.piece_file(agora, row["id"])
+    # A worker's connector supplies the exact staged revisions granted at
+    # launch. Do not fall back to the original path if a copy disappears.
+    stored = row["stored"]
+    if not stored or stored not in worker_files or not Path(stored).is_file():
+        raise ValueError("This piece has no declared stored copy. / Esta pieza no tiene una copia almacenada declarada.")
+    return stored
+
+
 class PieceChecksFacet(Facet):
     id = "piece_checks"
 
@@ -137,7 +150,7 @@ class PieceChecksFacet(Facet):
         if args.get("space_id"):
             agora = agora.for_space(args["space_id"])
         row = agora_orders._piece_row(agora, args["piece_id"])
-        source = agora_orders.piece_file(agora, row["id"]) if row["path"] else row["url"]
+        source = (_registered_path(agora, row, args.get("_worker_read_files")) if row["path"] else row["url"])
         return agora, row, source
 
     def validate(self, args):
@@ -146,6 +159,7 @@ class PieceChecksFacet(Facet):
         if len(supplied) != 1:
             return {"ok": False, "error": "Supply exactly one of path or piece_id."}
         row = None
+        worker_files = args.get("_worker_read_files")
         try:
             if supplied[0] == "piece_id":
                 agora, row, source = self._registered(args)
@@ -161,6 +175,10 @@ class PieceChecksFacet(Facet):
             requirements = args.get("requirements", {})
             if profile not in PROFILES or not isinstance(requirements, dict):
                 return {"ok": False, "error": "Choose a supported profile and an object of requirements."}
+            if worker_files is not None and profile == "web" and path.suffix.lower() != ".zip":
+                return {"ok": False, "error": "Use a declared web ZIP. / Usa un ZIP web declarado."}
+            if worker_files is not None and profile == "spreadsheet" and "dataset" in requirements:
+                return {"ok": False, "error": "This worker cannot open an undeclared dataset. / Este trabajador no puede abrir un conjunto de datos sin declarar."}
             if profile == "spreadsheet":
                 requirements = {key: value for key, value in requirements.items() if not key.startswith("_")}
                 if "dataset" in requirements:
@@ -169,14 +187,15 @@ class PieceChecksFacet(Facet):
             if row and profile == "narrative":
                 from .piece_checks_narrative import registered_source
 
-                manuscript_path, continuity, manuscript = registered_source(agora, row)
+                manuscript_path, continuity, manuscript = registered_source(
+                    agora, row, lambda item: _registered_path(agora, item, worker_files))
                 narrative = {"source": manuscript_path, "continuity": continuity}
                 requirements = {key: value for key, value in requirements.items() if key != "source_path"}
         except (ImportError, OSError, ValueError, TypeError) as exc:
             return {"ok": False, "error": str(exc)}
         if kind == "character-sheet":
             requirements = {**requirements, "sheet": True}
-        if row and profile == "document":
+        if row and profile == "document" and worker_files is None:
             requirements = {**requirements, "_base": str(Path(row["path"]).parent)}
         engine = ENGINES.get(profile)
         result = (_engine(self.hub, engine, path, profile, requirements) if engine
@@ -214,7 +233,8 @@ class PieceChecksFacet(Facet):
         for piece in pieces:
             if not isinstance(piece, dict) or "piece_id" not in piece:
                 return {"ok": False, "error": "Each gate piece needs a piece_id."}
-            result = self.validate({**piece, "space_id": args.get("space_id")})
+            result = self.validate({**piece, "space_id": args.get("space_id"),
+                                    "_worker_read_files": args.get("_worker_read_files")})
             if not result.get("ok"):
                 return result
             results.append(result)
@@ -223,7 +243,8 @@ class PieceChecksFacet(Facet):
 
         language = args.get("language", "es")
         notes = [_note(result, language, detail_limit=max(120, 10000 // len(results))) for result in results]
-        agora = self._registered({"piece_id": pieces[0]["piece_id"], "space_id": args.get("space_id")})[0]
+        agora = self._registered({"piece_id": pieces[0]["piece_id"], "space_id": args.get("space_id"),
+                                  "_worker_read_files": args.get("_worker_read_files")})[0]
         body = {key: args.get(key) for key in ("order_id", "title", "agent")}
         body.update(piece_ids=[result["piece"]["id"] for result in results],
                     note=("\n\n".join([*notes, args.get("note") or ""]))[:19000])
