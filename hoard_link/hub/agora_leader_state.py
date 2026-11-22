@@ -12,7 +12,7 @@ reading, READ-ONLY, the files each CLI already writes:
 Privacy: only event kinds and timestamps leave a file. Message bodies, tool inputs and outputs, reasoning and file
 paths are never copied into the result (the parsers only look at ``type``-like fields, ``timestamp`` fields and the
 ``type`` of content blocks), and from the credentials file only ``claudeAiOauth.expiresAt`` is read — the token
-fields are never touched. Every ``detail`` is a fixed Spanish sentence, never text taken from a file.
+fields are never touched. Each ``detail_i18n`` contains fixed Spanish and English sentences, with ``detail`` kept for existing callers.
 
 Each leader gets ``{state, label, last_activity_at, last_activity_ts, source, detail, ...}`` where ``state`` is one of
 :data:`STATES`. :func:`build_leader_states` additionally flags ``idle_with_work`` when a leader that is idle, has an
@@ -119,9 +119,10 @@ def _label(state: str, ts: Optional[float]) -> str:
     return LABELS.get(state, state)
 
 
-def _result(state: str, source: str, detail: str, last_ts: Optional[float], **extra: Any) -> dict[str, Any]:
+def _result(state: str, source: str, detail: tuple[str, str], last_ts: Optional[float], **extra: Any) -> dict[str, Any]:
     out = {"state": state, "label": _label(state, last_ts), "last_activity_at": _iso(last_ts),
-           "last_activity_ts": last_ts, "source": source, "detail": detail}
+           "last_activity_ts": last_ts, "source": source, "detail": detail[0],
+           "detail_i18n": dict(zip(("es", "en"), detail))}
     out.update(extra)
     return out
 
@@ -200,19 +201,20 @@ def _blocks(content: Any) -> list[dict[str, Any]]:
 
 
 def _verdict(*, turn_open: Optional[bool], pending: bool, silence: float, ended_ts: Optional[float],
-             last_ts: Optional[float], source: str, ended: str, stale: str) -> dict[str, Any]:
+             last_ts: Optional[float], source: str) -> dict[str, Any]:
     """Shared working / waiting / idle decision once a source reduced its lines to turn facts."""
     if pending:
-        return _result("waiting", source, "Espera una respuesta o un permiso tuyo.", last_ts)
+        return _result("waiting", source, ("Espera una respuesta o un permiso tuyo.", "Waiting for your reply or permission."), last_ts)
     if turn_open is None:
         turn_open = silence <= WORKING_S
         if not turn_open:
-            return _result("idle", source, ended, last_ts)
+            return _result("idle", source, ("El último turno terminó.", "The last turn ended."), last_ts)
     if not turn_open:
-        return _result("idle", source, ended, ended_ts or last_ts)
+        return _result("idle", source, ("El último turno terminó.", "The last turn ended."), ended_ts or last_ts)
     if silence > STALE_TURN_S:
-        return _result("idle", source, stale, last_ts)
-    return _result("working", source, "Turno en curso.", last_ts)
+        return _result("idle", source, ("Turno abierto sin actividad; el proceso probablemente ya no existe.",
+                                        "The turn is open with no activity. Its process probably no longer exists."), last_ts)
+    return _result("working", source, ("Turno en curso.", "Turn in progress."), last_ts)
 
 
 # ---- Claude Code ---------------------------------------------------------------------------------------------------
@@ -280,9 +282,9 @@ def claude_state(projects: Path, credentials: Path, now: float) -> dict[str, Any
     cred_mtime = _mtime(Path(credentials)) if credentials else None
     extra: dict[str, Any] = {"auth_expires_at": _iso(expires)} if expires is not None else {}
     if newest is None:
-        detail = "No hay sesiones de Claude Code en este equipo."
+        detail = ("No hay sesiones de Claude Code en este equipo.", "No Claude Code sessions on this computer.")
         if expires is not None and expires <= now:
-            detail = "No hay sesiones de Claude Code. El CLI comprueba si puede renovar el acceso al usarlo."
+            detail = ("No hay sesiones de Claude Code. El CLI comprueba si puede renovar el acceso al usarlo.", "No Claude Code sessions. The CLI checks whether it can renew access when used.")
         return _result("unknown", "claude_session", detail, None, **extra)
     path, mtime = newest
     info = _reduce_claude(_tail_objects(path))
@@ -293,10 +295,10 @@ def claude_state(projects: Path, credentials: Path, now: float) -> dict[str, Any
         # A login renewed after the failed call (credentials file rewritten later) is no longer a problem.
         if cred_mtime is None or err_ts is None or cred_mtime <= err_ts + 1:
             return _result("auth_expired", "claude_session",
-                           "La última llamada falló por autenticación (401); vuelve a iniciar sesión en Claude Code.",
+                           ("La última llamada falló por autenticación (401); vuelve a iniciar sesión en Claude Code.", "The last call failed to authenticate (401). Sign in to Claude Code again."),
                            err_ts or last_ts, **extra)
     elif err:
-        return _result("error", "claude_session", "El último turno terminó con un error de la API.", err_ts or last_ts,
+        return _result("error", "claude_session", ("El último turno terminó con un error de la API.", "The last turn ended with an API error."), err_ts or last_ts,
                        **extra)
     tools = info["open_tools"]
     pending = any(name in _CLAUDE_ASK_TOOLS for name, _ in tools.values())
@@ -304,12 +306,13 @@ def claude_state(projects: Path, credentials: Path, now: float) -> dict[str, Any
         oldest = min(since for _, since in tools.values())
         pending = now - oldest > TOOL_WAIT_S               # a tool without result for a while: a permission prompt
     result = _verdict(turn_open=info["turn_open"], pending=pending, silence=silence, ended_ts=info["ended_ts"],
-                      last_ts=last_ts, source="claude_session", ended="El último turno terminó.",
-                      stale="Turno abierto sin actividad; el proceso probablemente ya no existe.")
+                      last_ts=last_ts, source="claude_session")
     result.update(extra)
     if result["state"] == "idle" and expires is not None and expires <= now and last_ts <= expires:
         result["auth_refresh"] = "pending"
-        result["detail"] += " Claude Code comprueba si el acceso se renueva al usarlo."
+        result["detail_i18n"]["es"] += " Claude Code comprueba si el acceso se renueva al usarlo."
+        result["detail_i18n"]["en"] += " Claude Code checks whether access can be renewed when used."
+        result["detail"] = result["detail_i18n"]["es"]
     return result
 
 
@@ -346,16 +349,14 @@ def _reduce_codex(events: list[dict[str, Any]]) -> dict[str, Any]:
 def codex_state(sessions: Path, now: float) -> dict[str, Any]:
     newest = _newest(_walk_jsonl(Path(sessions), prefix="rollout-", max_depth=5))
     if newest is None:
-        return _result("unknown", "codex_session", "No hay sesiones de Codex en este equipo.", None)
+        return _result("unknown", "codex_session", ("No hay sesiones de Codex en este equipo.", "No Codex sessions on this computer."), None)
     path, mtime = newest
     info = _reduce_codex(_tail_objects(path))
     last_ts = info["last_ts"] if info["last_ts"] is not None else mtime
     if info["failed"] and info["turn_open"] is False:
-        return _result("error", "codex_session", "El último turno terminó con un error.", info["ended_ts"] or last_ts)
+        return _result("error", "codex_session", ("El último turno terminó con un error.", "The last turn ended with an error."), info["ended_ts"] or last_ts)
     return _verdict(turn_open=info["turn_open"], pending=info["pending"], silence=max(0.0, now - last_ts),
-                    ended_ts=info["ended_ts"], last_ts=last_ts, source="codex_session",
-                    ended="El último turno terminó.",
-                    stale="Turno abierto sin actividad; el proceso probablemente ya no existe.")
+                    ended_ts=info["ended_ts"], last_ts=last_ts, source="codex_session")
 
 
 # ---- Cursor --------------------------------------------------------------------------------------------------------
@@ -425,12 +426,12 @@ def cursor_state(cursor_dir: Path, now: float, pid_alive: Callable[[Any], bool] 
     log_running = log_recent and log.get("last_type") != "result"
     if doc is None:
         if not log:
-            return _result("unknown", "cursor_launch_state", "No hay estado de lanzamiento ni registros de Cursor.", None)
+            return _result("unknown", "cursor_launch_state", ("No hay estado de lanzamiento ni registros de Cursor.", "No launch state or logs for Cursor."), None)
         if log_running:
-            return _result("working", "cursor_log", "Ejecución en curso según el registro.", log_ts)
+            return _result("working", "cursor_log", ("Ejecución en curso según el registro.", "The log shows a run in progress."), log_ts)
         if log.get("result_error"):
-            return _result("error", "cursor_log", "La última ejecución terminó con error.", log_ts)
-        return _result("idle", "cursor_log", "La última ejecución terminó.", log_ts)
+            return _result("error", "cursor_log", ("La última ejecución terminó con error.", "The last run ended with an error."), log_ts)
+        return _result("idle", "cursor_log", ("La última ejecución terminó.", "The last run ended."), log_ts)
 
     status = str(doc.get("status") or "").strip().lower()
     started = parse_ts(doc.get("started_at_utc"))
@@ -439,25 +440,26 @@ def cursor_state(cursor_dir: Path, now: float, pid_alive: Callable[[Any], bool] 
     last_ts = max([t for t in (started, completed, log_ts) if t is not None], default=None)
     extra = {"run_status": _kind(status) or None, "exit_code": exit_code if isinstance(exit_code, int) else None}
     if any(w in status for w in ("wait", "await", "input", "approval")):
-        return _result("waiting", "cursor_launch_state", "La ejecución espera una respuesta o un permiso.", last_ts, **extra)
+        return _result("waiting", "cursor_launch_state", ("La ejecución espera una respuesta o un permiso.", "The run is waiting for a reply or permission."), last_ts, **extra)
     finished = completed is not None or status not in _CURSOR_RUNNING
     if finished and log_running and (completed is None or (log_ts or 0) > completed + 5):
-        return _result("working", "cursor_log", "Hay una ejecución nueva en curso en el registro.", log_ts, **extra)
+        return _result("working", "cursor_log", ("Hay una ejecución nueva en curso en el registro.", "The log shows a new run in progress."), log_ts, **extra)
     if not finished:
         pid = doc.get("cli_pid")
         alive = pid_alive(pid) if pid else None
         if alive or (alive is None and last_ts is not None and now - last_ts <= STALE_TURN_S) or log_recent:
-            return _result("working", "cursor_launch_state", "Ejecución en curso.", last_ts, **extra)
+            return _result("working", "cursor_launch_state", ("Ejecución en curso.", "Run in progress."), last_ts, **extra)
         return _result("error", "cursor_launch_state",
-                       "La ejecución figura en curso pero su proceso ya no existe.", last_ts, **extra)
+                       ("La ejecución figura en curso pero su proceso ya no existe.", "The run appears active, but its process no longer exists."), last_ts, **extra)
     failed = (status in _CURSOR_FAILED or bool(doc.get("error"))
               or (isinstance(exit_code, int) and exit_code != 0))
     if failed:
-        code = f" (código {exit_code})" if isinstance(exit_code, int) else ""
-        return _result("error", "cursor_launch_state", f"La última ejecución falló{code}.", completed or last_ts, **extra)
+        detail = (f"La última ejecución falló (código {exit_code}).", f"The last run failed (exit code {exit_code}).") if isinstance(exit_code, int) else (
+            "La última ejecución falló.", "The last run failed.")
+        return _result("error", "cursor_launch_state", detail, completed or last_ts, **extra)
     if log.get("result_error") and log_ts is not None and (completed is None or log_ts >= completed - 5):
-        return _result("error", "cursor_log", "La última ejecución terminó con error.", log_ts, **extra)
-    return _result("idle", "cursor_launch_state", "La última ejecución terminó.", completed or last_ts, **extra)
+        return _result("error", "cursor_log", ("La última ejecución terminó con error.", "The last run ended with an error."), log_ts, **extra)
+    return _result("idle", "cursor_launch_state", ("La última ejecución terminó.", "The last run ended."), completed or last_ts, **extra)
 
 
 # ---- Faustus -------------------------------------------------------------------------------------------------------
@@ -466,12 +468,12 @@ def faustus_state(native_session: Optional[dict[str, Any]], provider_state: str 
     """Faustus has no CLI session file here: use the native session state the console already verified."""
     session_state = str((native_session or {}).get("state") or "").lower()
     if session_state == "working":
-        return _result("working", "faustus_native_session", "Turno nativo en curso.", None)
+        return _result("working", "faustus_native_session", ("Turno nativo en curso.", "Native turn in progress."), None)
     if session_state == "idle":
-        return _result("idle", "faustus_native_session", "Sesión nativa sin turno activo.", None)
+        return _result("idle", "faustus_native_session", ("Sesión nativa sin turno activo.", "The native session has no active turn."), None)
     if provider_state in ("unavailable",):
-        return _result("unknown", "faustus_provider", "Faustus no responde en el Hub.", None)
-    return _result("unknown", "faustus_native_session", "No hay una sesión nativa verificada.", None)
+        return _result("unknown", "faustus_provider", ("Faustus no responde en el Hub.", "Faustus is not responding in the Hub."), None)
+    return _result("unknown", "faustus_native_session", ("No hay una sesión nativa verificada.", "No verified native session."), None)
 
 
 # ---- public API ----------------------------------------------------------------------------------------------------
@@ -488,7 +490,7 @@ def read_leader_states(now: Optional[float] = None, *, paths: Optional[dict[str,
         try:
             out[leader] = reader()
         except Exception:  # noqa: BLE001 - a strange file must not break the console
-            out[leader] = _result("unknown", f"{leader}_session", "No se pudieron leer los ficheros de sesión.", None)
+            out[leader] = _result("unknown", f"{leader}_session", ("No se pudieron leer los ficheros de sesión.", "Could not read the session files."), None)
     return out
 
 
@@ -549,7 +551,7 @@ def build_leader_states(leaders: Iterable[tuple[str, str, str]], *, tasks: Itera
     agent_list = list(agents or [])
     out: dict[str, dict[str, Any]] = {}
     for leader_id, name, agent_id in leaders:
-        state = dict(states.get(leader_id) or _result("unknown", "none", "Sin lector para este líder.", None))
+        state = dict(states.get(leader_id) or _result("unknown", "none", ("Sin lector para este líder.", "No session reader for this leader."), None))
         open_ids = open_task_ids(task_list, leader_id, (agent_id,))
         state["open_tasks"] = open_ids
         seen = agora_last_seen(agent_list, leader_id, (agent_id,))
@@ -559,13 +561,16 @@ def build_leader_states(leaders: Iterable[tuple[str, str, str]], *, tasks: Itera
             if last_ts is None or seen > float(last_ts):
                 state = dict(state, **_result(
                     "working", "agora",
-                    "Activo en el Ágora en los últimos 15 min (latido o mensaje), aunque su sesión local no muestra actividad.", seen),
+                    ("Activo en el Ágora en los últimos 15 min (latido o mensaje), aunque su sesión local no muestra actividad.", "Active in Agora in the last 15 minutes (heartbeat or message), with no activity in the local session."), seen),
                     open_tasks=open_ids, agora_last_seen_at=_iso(seen))
         # Recently active in the Ágora means somebody IS on it, whatever the
         # local files say (a logged-out local CLI next to a working cloud one).
         agora_active = seen is not None and now - seen <= AGORA_ACTIVE_S
         state["idle_with_work"] = bool(open_ids) and state["state"] in NEEDS_ATTENTION and not agora_active
         if state["idle_with_work"]:
-            state["detail"] += f" Tiene {len(open_ids)} tarea(s) abierta(s) sin que nadie trabaje en ellas."
+            count = len(open_ids)
+            state["detail_i18n"]["es"] += f" Tiene {count} tarea(s) abierta(s) sin que nadie trabaje en ellas."
+            state["detail_i18n"]["en"] += f" Unattended open tasks: {count}."
+            state["detail"] = state["detail_i18n"]["es"]
         out[leader_id] = state
     return out
