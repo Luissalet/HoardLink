@@ -6,13 +6,72 @@ with its own data and the selected Sparks endpoint. No user data is copied.
 """
 from __future__ import annotations
 
+import json
 import ntpath
+import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+STUDIO = "estudio"
+APPRENTICE = "faustus-aprendiz"
+TUTOR_TOOL = "hub_agora_apprentice_instinct"
+
+
+def worker_data(console: Any, agent: str) -> Path:
+    return Path(console.hub.config.data_dir).resolve() / "agora-console" / "faustus" / agent
+
+
+def tutor_instinct(console: Any, args: dict, actor: str) -> dict:
+    """Keep one explicitly selected, attributed studio correction in the apprentice store."""
+    from . import agora_ranks
+
+    if console.space_id != STUDIO:
+        return {"ok": False, "status": 404, "error": "Apprentice instincts belong to estudio."}
+    action = args.get("action")
+    message_id = args.get("message_id")
+    if action not in ("remember", "forget") or type(message_id) is not int or message_id < 1:
+        return {"ok": False, "status": 400, "error": "Choose remember or forget and a positive message_id."}
+    agora = console._agora()
+    if actor == APPRENTICE or agora_ranks.level(agora, actor) < agora_ranks.LEVEL["agent"]:
+        return {"ok": False, "status": 403, "error": "A studio agent or higher must teach the apprentice."}
+    message = agora.db.one(
+        "SELECT m.author, m.kind, m.body, m.thread_id FROM messages m "
+        "JOIN threads t ON t.id=m.thread_id WHERE m.id=? AND t.space_id=?", (message_id, STUDIO))
+    if not message or message["kind"] == "system":
+        return {"ok": False, "status": 404, "error": "Studio correction message not found."}
+    if actor != message["author"]:
+        return {"ok": False, "status": 403, "error": "Use a correction you authored in the studio."}
+    folder = worker_data(console, APPRENTICE) / "instincts" / "agora-tutor"
+    target = folder / f"{message_id}.json"
+    receipt = {"ok": True, "message_id": message_id, "thread_id": message["thread_id"], "agent": APPRENTICE}
+    if action == "forget":
+        target.unlink(missing_ok=True)
+        return {**receipt, "status": "forgotten"}
+    trigger = " ".join(str(args.get("trigger") or "").split())
+    correction = " ".join(message["body"].split())
+    if not (1 <= len(trigger) <= 200 and 1 <= len(correction) <= 300):
+        return {"ok": False, "status": 400,
+                "error": "Use a trigger of 1–200 characters and a correction message of 1–300 characters."}
+    folder.mkdir(parents=True, exist_ok=True)
+    record = {"author": actor, "message_id": message_id, "thread_id": message["thread_id"],
+              "trigger": trigger, "action": correction, "created": time.time()}
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=folder, suffix=".tmp",
+                                     delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            json.dump(record, stream, ensure_ascii=False)
+            stream.close()
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return {**receipt, "status": "remembered",
+            "undo": {"tool": TUTOR_TOOL, "arguments": {"space_id": STUDIO, "actor": actor,
+                       "action": "forget", "message_id": message_id}}}
 
 
 def service(hub: Any) -> dict[str, Any]:
@@ -40,7 +99,7 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
     agora = console._agora()
     space = agora.space_store.get(console.space_id) if hasattr(agora, "space_store") else None
     workspace = str((space or {}).get("workspace") or root.parent)
-    if ntpath.splitdrive(workspace)[0] and not Path(workspace).is_dir():
+    if (ntpath.splitdrive(workspace)[0] or console.space_id == STUDIO) and not Path(workspace).is_dir():
         return None, "The space's PC workspace directory is unavailable."
     target = service(console.hub)
     if not target.get("reachable"):
@@ -48,7 +107,7 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
     base = str(target.get("url") or "").rstrip("/")
     endpoint_id = str(model["endpoint_id"])
     runtime = None
-    if target.get("remote") and Path(workspace).is_dir():
+    if (target.get("remote") or console.space_id == STUDIO) and Path(workspace).is_dir():
         status, endpoints = console._faustus_session_request("GET", "/api/model-endpoints", base_url=base)
         endpoint = next((row for row in endpoints if row.get("id") == endpoint_id and row.get("is_enabled")), None) if status == 200 and isinstance(endpoints, list) else None
         if not endpoint or not str(endpoint.get("base_url") or "").startswith(("http://", "https://")):
@@ -98,8 +157,26 @@ def prepare(console: Any, agent: str, model: dict, effort: str) -> tuple[dict | 
         raise
 
 
+def reactivate_apprentice_binding(console: Any, base: str, session: str) -> None:
+    """Continuing an older apprentice chat hands its identity back to that chat."""
+    path = "/api/coordination/" + session
+    status, data = console._faustus_session_request("GET", path, base_url=base)
+    binding = data.get("binding") if isinstance(data, dict) else None
+    if status != 200 or not isinstance(binding, dict) or binding.get("actor") != APPRENTICE:
+        raise RuntimeError("Faustus did not confirm the apprentice chat binding.")
+    if binding.get("active"):
+        return
+    fields = {key: binding[key] for key in ("id", "connector_id", "space_id", "actor",
+              "operations", "resources", "repos", "thread_ids")}
+    fields.update(active=True, expected_revision=binding["revision"])
+    status, data = console._faustus_session_request("PUT", path, fields, base_url=base)
+    confirmed = data.get("binding") if isinstance(data, dict) else None
+    if status != 200 or not isinstance(confirmed, dict) or not confirmed.get("active"):
+        raise RuntimeError("Faustus could not reactivate the apprentice chat binding.")
+
+
 def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, model: str) -> dict:
-    data = Path(console.hub.config.data_dir).resolve() / "agora-console" / "faustus" / agent
+    data = worker_data(console, agent)
     data.mkdir(parents=True, exist_ok=True)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -112,6 +189,8 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     command = [str(python), "-X", "utf8", str(root / "integrations" / "harbor" / "serve_headless.py"),
                "--port", str(port), "--data", str(data), "--endpoint-url", endpoint, "--model", model,
                "--hub-url", str(console.hub.config.url)]
+    if console.space_id == STUDIO:
+        command.extend(["--agora-studio", agent])
     with (data / "server.log").open("a", encoding="utf-8") as log:
         process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
             stdout=log, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
