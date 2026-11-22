@@ -1,0 +1,56 @@
+@media (max-width: 640px) {
+  .app:not(.app--embedded) {
+    position: relative;
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .app:not(.app--embedded) .topbar {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px 12px;
+  }
+
+  .app:not(.app--embedded) .topbar .space-selector {
+    flex: 1 0 calc(100% - 8rem);
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    max-width: none;
+    font-size: 13px;
+  }
+
+  .app:not(.app--embedded) .space-selector select {
+    flex: 1;
+    width: auto;
+    min-height: 44px;
+    padding-inline: 8px;
+    color: inherit;
+    color-scheme: dark;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 15px;
+  }
+
+  .app:not(.app--embedded) .topbar .icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .app:not(.app--embedded) .topbar .connection {
+    flex: 1 1 52px;
+    min-width: 0;
+    margin-inline-start: 0;
+    font-size: 12px;
+  }
+
+  .app:not(.app--embedded) .connection i {
+    flex: none;
+  }
+
+  .app:not(.app--embedded) .operations {
+    position: absolute;
+    grid-area: 2 / 1 / -1 / -1;
+    inset: 0 0 0 auto;
+  }
+}
