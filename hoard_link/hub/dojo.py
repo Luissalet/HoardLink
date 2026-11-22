@@ -12,7 +12,9 @@ from .config import AGENT_ID_RE
 OPERATIONS = {
     "list": ("GET", ""),
     "attempt": ("GET", "/attempts/{attempt_id}"),
+    "compare": ("POST", "/compare"),
     "exam_create": ("POST", "/exams"),
+    "exam_key": ("GET", "/exams/{exam_id}/key"),
     "exam_import": ("POST", "/benchmarks"),
     "launch": ("POST", "/attempts"),
     "stop": ("POST", "/attempts/{attempt_id}/stop"),
@@ -27,7 +29,7 @@ OPERATIONS = {
 
 TOOL = {
     "name": "hub_dojo",
-    "description": "Use Dojo as a teacher: exams, launch, mark, lessons, round import and undo. Keywords: examen, nota.",
+    "description": "Use Dojo as a teacher: exams and keys, launch, compare attempts, mark, lessons, round import and undo. Keywords: examen, nota.",
     "inputSchema": {"type": "object", "properties": {
         "operation": {"type": "string", "enum": list(OPERATIONS)},
         "arguments": {"type": "object", "description": "Arguments of the matching dojo_<operation> tool."},
@@ -57,12 +59,13 @@ def call(hub, args, agent):
     if operation not in OPERATIONS or not isinstance(arguments, dict):
         return {"ok": False, "error": "Invalid Dojo operation or arguments"}
     method, path = OPERATIONS[operation]
-    if "{attempt_id}" in path:
-        ident = arguments.get("attempt_id")
+    field = path.partition("{")[2].partition("}")[0]
+    if field:
+        ident = arguments.get(field)
         if not isinstance(ident, str) or not re.fullmatch(r"[a-f0-9]{32}", ident):
-            return {"ok": False, "error": "An attempt id is required"}
-        path = path.format(attempt_id=ident)
-        arguments = {name: value for name, value in arguments.items() if name != "attempt_id"}
+            return {"ok": False, "error": f"An {field.removesuffix('_id')} id is required"}
+        path = path.format(**{field: ident})
+        arguments = {name: value for name, value in arguments.items() if name != field}
     base = _url(hub)
     address = urlsplit(base)
     if address.scheme != "https" and (address.scheme != "http" or address.hostname not in ("127.0.0.1", "localhost", "::1")):
