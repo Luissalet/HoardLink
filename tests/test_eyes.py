@@ -399,6 +399,29 @@ def test_pdf_pages_with_text(eyes: EyesFacet, tmp_path: Path) -> None:
     assert out["facts"]["pages"] == 3
 
 
+def test_blender_lookup_prefers_explicit_path_then_newest_install(tmp_path, monkeypatch):
+    native = tmp_path / "Program Files"
+    other = tmp_path / "Program Files (x86)"
+    monkeypatch.setenv("ProgramFiles", str(native))
+    monkeypatch.setenv("ProgramFiles(x86)", str(other))
+    monkeypatch.delenv("HOARD_HUB_BLENDER", raising=False)
+    monkeypatch.setattr(eyes_render.shutil, "which", lambda name: None)
+    older = other / "Blender Foundation" / "Blender 4.5" / "blender.exe"
+    later = native / "Blender Foundation" / "Blender 5.10" / "blender.exe"
+    earlier = native / "Blender Foundation" / "Blender 5.2" / "blender.exe"
+    for binary in (older, later, earlier):
+        binary.parent.mkdir(parents=True)
+        binary.touch()
+    list_matches = eyes_render.glob.glob
+    monkeypatch.setattr(eyes_render.glob, "glob", lambda pattern: sorted(list_matches(pattern), reverse=True))
+
+    assert eyes_render.find_program("blender") == str(later)
+    monkeypatch.setattr(eyes_render.shutil, "which", lambda name: str(older))
+    assert eyes_render.find_program("blender") == str(older)
+    monkeypatch.setenv("HOARD_HUB_BLENDER", str(earlier))
+    assert eyes_render.find_program("blender") == str(earlier)
+
+
 @pytest.mark.skipif(not eyes_render.find_program("blender"), reason="Blender not installed")
 def test_mesh_views_and_repeatable_camera(eyes: EyesFacet, tmp_path: Path) -> None:
     cube = tmp_path / "box.obj"
@@ -410,6 +433,10 @@ def test_mesh_views_and_repeatable_camera(eyes: EyesFacet, tmp_path: Path) -> No
     assert [v["name"] for v in out["views"]] == ["front-neutral", "back_left-neutral"]
     camera = out["resolved"]["camera"]
     assert camera["projection"] == "ortho" and out["facts"]["faces"] == 6
+    stored = json.loads((eyes.root / out["id"] / "look.json").read_text(encoding="utf-8"))
+    assert stored["resolved"]["blender_version"] == out["resolved"]["blender_version"]
+    assert stored["resolved"]["blender_version"]
+    assert stored["resolved"]["material_engines"] == {"neutral": "workbench"}
     bigger = tmp_path / "box2.obj"
     bigger.write_text(cube.read_text().replace(" 2\n", " 3\n"))
     again = eyes.look({"same_as": out["id"], "path": str(bigger), "wait_s": 300})

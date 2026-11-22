@@ -285,6 +285,7 @@ def main():
     resolved = {"views": spec["views"], "material": "both" if len(spec["materials"]) == 2 else spec["materials"][0],
                 "camera": cam, "turn": float(spec.get("turn") or 0.0), "up": spec.get("up") or "z",
                 "pose": applied_pose, "size": int(spec.get("size") or 640), "engine": requested_engine,
+                "blender_version": bpy.app.version_string,
                 "material_engines": {mode: "eevee" if engine == eevee else "workbench"
                                      for mode, engine in engines.items()}}
     return {"ok": True, "views": views, "facts": facts, "resolved": resolved, "warnings": warnings}

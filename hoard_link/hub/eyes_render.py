@@ -136,6 +136,9 @@ def find_program(name: str) -> Optional[str]:
         "ffmpeg": ["ffmpeg/bin/ffmpeg.exe"], "ffprobe": ["ffmpeg/bin/ffprobe.exe"],
     }.get(name, [])
     hits = [hit for root in roots if root for pattern in patterns for hit in glob.glob(os.path.join(root, pattern))]
+    if name == "blender":
+        return max((hit for hit in hits if Path(hit).is_file()),
+                   key=lambda hit: (_version_key(Path(hit).parent.name), hit.casefold(), hit), default=None)
     return max(hits, key=_version_key) if hits else None
 
 
