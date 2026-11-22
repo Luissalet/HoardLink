@@ -77,6 +77,43 @@ def _facet(tmp_path):
     return facet
 
 
+@pytest.mark.parametrize("settings,polling,account_usage,readers", [
+    ({}, None, None, ["codex", "account"]),
+    ({"HOARD_HUB_ISOLATED_CATALOG": "1"}, None, None, []),
+    ({"HOARD_HUB_DATA_DIR": "private"}, None, None, []),
+    ({"HOARD_HUB_PORT": "62841"}, None, None, []),
+    ({"HOARD_HUB_DATA_DIR": "private"}, "1", None, ["codex", "account"]),
+    ({"HOARD_HUB_DATA_DIR": "private"}, "invalid", "1", []),
+    ({"HOARD_HUB_DATA_DIR": "private"}, "1", "0", ["codex"]),
+    ({}, "0", None, []),
+])
+def test_quota_reporters_follow_hub_isolation(tmp_path, monkeypatch, settings, polling, account_usage, readers):
+    from hoard_link.hub import agora_capacity, agora_capacity_accounts
+    from hoard_link.hub.config import HubConfig
+
+    facet = _facet(tmp_path)
+    env = dict(settings)
+    if "HOARD_HUB_DATA_DIR" in env:
+        env["HOARD_HUB_DATA_DIR"] = str(tmp_path / "private")
+    facet.hub.config = HubConfig.load(tmp_path / "hub.json", env=env)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST")
+    for name, value in (("HOARD_AGORA_QUOTA_POLLING", polling), ("HOARD_AGORA_ACCOUNT_USAGE", account_usage)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    starts = []
+    monkeypatch.setattr(agora_capacity, "start_codex_capacity_reporter", lambda **kw: starts.append("codex"))
+    monkeypatch.setattr(agora_capacity_accounts, "start_account_capacity_reporter", lambda **kw: starts.append("account"))
+    monkeypatch.setattr(agora_capacity, "stop_codex_capacity_reporter", lambda: None)
+    monkeypatch.setattr(agora_capacity_accounts, "stop_account_capacity_reporter", lambda: None)
+    try:
+        facet.start()
+        assert starts == readers
+    finally:
+        facet.close()
+
+
 def test_orphan_workers_are_reconciled_without_changing_finished_receipts(tmp_path, monkeypatch):
     from hoard_link.hub import procs
 
@@ -157,6 +194,7 @@ def test_capacity_reporter_starts_with_this_hub_configuration(tmp_path, monkeypa
                         lambda: stopped.append(True))
     monkeypatch.setattr("hoard_link.hub.agora_capacity_accounts.start_account_capacity_reporter", lambda **_: None)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("HOARD_AGORA_QUOTA_POLLING", "1")
     monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:8810")
 
     facet = _facet(tmp_path)
@@ -2357,6 +2395,48 @@ def _commit_in(folder, name):
                     "commit", "-qm", f"Add {name}"], check=True)
     return subprocess.run(["git", "-C", str(folder), "rev-parse", "HEAD"], capture_output=True, text=True,
                           check=True).stdout.strip()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+@pytest.mark.parametrize("secondary,expected", [("known", "completed"), ("unknown", "completed"),
+                                                ("missing_commit", "incomplete")])
+def test_managed_worker_checks_each_repository_in_a_grouped_delivery(tmp_path, secondary, expected):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    hub_repo = _fixture_repo(tmp_path / "hub")
+    other_repo = _fixture_repo(tmp_path / "other")
+    hub_tree, other_tree = tmp_path / "hub worktree", tmp_path / "other worktree"
+    for repo, worktree in ((hub_repo, hub_tree), (other_repo, other_tree)):
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", "worker-branch", str(worktree)], check=True)
+    hub_commit = _commit_in(hub_tree, "hub.txt")
+    other_commit = _commit_in(other_tree, "other.txt")
+    repos = {"Hoard Hub": hub_repo}
+    if secondary != "unknown":
+        repos["Second repo"] = other_repo
+    store.repo_lookup = repos.get
+    agent = "codex-qa"
+    task_id = store.task_add({"agent": agent, "title": "Grouped delivery", "repo": "Hoard Hub"})["task"]["id"]
+    store.task_claim({"agent": agent, "task_id": task_id})
+    store.task_submit({"agent": agent, "task_id": task_id, "summary": "Fixture", "branch": "worker-branch",
+                       "commits_by_repo": {"Hoard Hub": [hub_commit], "Second repo": [
+                           "f" * 40 if secondary == "missing_commit" else other_commit]}})
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,workspace,created_at,updated_at)"
+                   " VALUES('test','codex',?,'model','','task','running',?,1,1)", (agent, str(hub_tree)))
+    facet._monitor_worker("test", SimpleNamespace(wait=lambda: 0), tmp_path / "no-result")
+    worker = facet._worker_rows()[0]
+    assert worker["state"] == expected
+    if secondary == "unknown":
+        assert "Second repo" in worker["detail"] and "no está registrado" in worker["detail"]
+        warning, = worker["verification_warnings"]
+        assert "Second repo" in warning
+    elif secondary == "missing_commit":
+        assert "ffffffffffff no están en el repositorio Second repo" in worker["detail"]
+    else:
+        assert "verification_warnings" not in worker
+        (other_tree / "draft.txt").write_text("dirty", encoding="utf-8")
+        verification = facet._verify_worker_delivery(worker)
+        assert verification["issues"] == [f"Hay cambios sin commit en {other_tree.as_posix()}."]
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")

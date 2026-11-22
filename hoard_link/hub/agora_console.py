@@ -118,7 +118,7 @@ class AgoraConsoleFacet(Facet):
         self._capacity_reporter_started = False
 
     def start(self) -> None:
-        """Start the read-only Codex quota reporter bound to this Hub instance."""
+        """Start console services and the enabled quota reporters for this Hub."""
         agora = self._agora()
         if agora is not None and hasattr(agora, 'space_store'):
             from .order_budget import setup
@@ -137,17 +137,23 @@ class AgoraConsoleFacet(Facet):
         token_file = str(getattr(config, "token_file", "") or "")
         if not (hub_url and data_dir and token_file) or "PYTEST_CURRENT_TEST" in os.environ:
             return
+        repo_root = Path(__file__).resolve().parents[2]
+        isolated = (getattr(config, "isolated", False) or getattr(config, "isolated_catalog", False)
+                    or Path(data_dir).resolve() != (repo_root / "data").resolve())
+        polling = os.environ.get("HOARD_AGORA_QUOTA_POLLING", "0" if isolated else "1")
+        if polling.strip().lower() not in ("1", "true", "yes", "on"):
+            return
+        publication = {
+            "repo_root": repo_root,
+            "env": {
+                "HOARD_HUB_URL": hub_url,
+                "HOARD_HUB_DATA_DIR": data_dir,
+                "HOARD_HUB_TOKEN_FILE": token_file,
+            },
+        }
         try:
             from .agora_capacity import start_codex_capacity_reporter
 
-            publication = {
-                "repo_root": Path(__file__).resolve().parents[2],
-                "env": {
-                    "HOARD_HUB_URL": hub_url,
-                    "HOARD_HUB_DATA_DIR": data_dir,
-                    "HOARD_HUB_TOKEN_FILE": token_file,
-                },
-            }
             start_codex_capacity_reporter(interval_seconds=90, reporter_kwargs=publication)
             self._capacity_reporter_started = True
         except Exception:
@@ -732,6 +738,9 @@ class AgoraConsoleFacet(Facet):
         workers = []
         for row in rows:
             worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
+            verification_warnings = json.loads(row["verification"] or "{}").get("warnings")
+            if verification_warnings:
+                worker["verification_warnings"] = verification_warnings
             replacement = json.loads(row["replacement"])
             worker["can_continue"] = self._worker_can_continue(row)
             worker["resume_issue"] = row["resume_issue"]
@@ -851,7 +860,9 @@ class AgoraConsoleFacet(Facet):
             if verification.get("verdict"):
                 state, outcome, detail = "completed", "reviewed", "Voto de revisión comprobado tras recuperar el Hub."
             else:
-                state, outcome, detail = "completed", "submitted", "Entrega comprobada en el Ágora tras recuperar el Hub."
+                state, outcome = "completed", "submitted"
+                detail = ("Entrega registrada en el Ágora. / Delivery recorded in Agora." if verification.get("warnings")
+                          else "Entrega comprobada en el Ágora tras recuperar el Hub.")
         elif summary.get("stop") == "answered":
             state, outcome, detail = "incomplete", "incomplete", "El turno terminó durante el reinicio del Hub. Entrega incompleta."
         elif summary.get("stop") == "inactivity":
@@ -860,6 +871,8 @@ class AgoraConsoleFacet(Facet):
             detail = f"Cortado por inactividad tras {minutes:g} min sin eventos del turno."
         if verification["issues"]:
             detail += " " + " ".join(verification["issues"])
+        if verification.get("warnings"):
+            detail += " " + " ".join(verification["warnings"])
         with self._db_lock, self._db() as db:
             updated = db.execute("UPDATE workers SET state=?,outcome=?,detail=?,result=?,session_id=?,workspace=?,"
                                  "verification=?,updated_at=? WHERE id=? AND state='unknown' AND outcome=?",
@@ -2506,6 +2519,7 @@ class AgoraConsoleFacet(Facet):
             return reviewed
         agora = self._agora()
         issues = []
+        warnings = []
         tasks = []
         if not worker["agent_id"] or agora is None or not hasattr(agora, "tasks"):
             issues.append("No se pudo comprobar la entrega en el Ágora.")
@@ -2539,15 +2553,18 @@ class AgoraConsoleFacet(Facet):
             except (OSError, subprocess.SubprocessError):
                 issues.append(f"No se pudo verificar el estado Git de {workspace}.")
 
-        resolved = False
+        repo_lookup = getattr(agora, "repo_lookup", None)
+        has_repository_scope = False
         for task in tasks:
-            if not task.get("paths") and not task.get("commits"):
+            commits = task.get("commits")
+            groups = task.get("commits_by_repo") or {}
+            if not task.get("paths") and not commits and not groups:
                 continue
             branch = task.get("branch")
-            repo_lookup = getattr(agora, "repo_lookup", None)
-            repo = repo_lookup(task["repo"]) if task.get("repo") and repo_lookup else None
-            if repo:
-                resolved = True
+            repo_name = task.get("repo") or ""
+            repo = repo_lookup(repo_name) if repo_name and repo_lookup else None
+            if repo or groups:
+                has_repository_scope = True
             if repo and branch:
                 branch = branch.removeprefix("refs/heads/")
                 try:
@@ -2560,26 +2577,31 @@ class AgoraConsoleFacet(Facet):
                     else:
                         if recorded_root and self._same_repository(recorded_root, repo):
                             workspaces.add(recorded_root)
-                        elif not task.get("commits"):
+                        elif not commits and not groups:
                             issues.append(f"#{task['id']}: no se encontró la carpeta de la rama {branch}.")
                 except (OSError, subprocess.SubprocessError):
                     issues.append(f"#{task['id']}: no se pudo localizar la carpeta de la rama {branch}.")
-            if repo and task.get("commits"):
-                # The submit names its commits: they are looked for in the task's repository and its worktrees, wherever
-                # the worker's own folder is (or whether the console knows it at all).
-                found, missing = self._locate_submitted_commits(repo, task["commits"])
+            if not groups and repo and commits:
+                groups = {repo_name: commits}
+            for name, refs in groups.items():
+                target = repo if name.casefold() == repo_name.casefold() else (repo_lookup(name) if repo_lookup else None)
+                if not target:
+                    warnings.append(f"#{task['id']}: el repositorio {name} no está registrado. Sus commits quedan sin comprobar. "
+                                    f"Repository {name} is unregistered. Its commits could not be checked.")
+                    continue
+                found, missing = self._locate_submitted_commits(target, refs)
                 workspaces.update(found)
                 if missing:
                     issues.append(f"#{task['id']}: los commits {', '.join(m[:12] for m in missing)} no están en el "
-                                  f"repositorio {task['repo']}.")
-                if recorded_root and self._same_repository(recorded_root, repo):
+                                  f"repositorio {name}.")
+                if recorded_root and self._same_repository(recorded_root, target):
                     workspaces.add(recorded_root)
-            elif not repo:
+            if not repo and not groups:
                 if recorded_root:
                     workspaces.add(recorded_root)
                 else:
                     issues.append(f"#{task['id']}: no consta la carpeta de trabajo para comprobar los commits.")
-        if not workspaces and recorded_root and not resolved:
+        if not workspaces and recorded_root and not has_repository_scope:
             workspaces.add(recorded_root)
         for path in sorted(workspaces):
             try:
@@ -2588,7 +2610,7 @@ class AgoraConsoleFacet(Facet):
                     issues.append(f"Hay cambios sin commit en {path}.")
             except (OSError, subprocess.SubprocessError):
                 issues.append(f"No se pudo verificar el estado Git de {path}.")
-        return {"issues": issues, "tasks": [task["id"] for task in tasks]}
+        return {"issues": issues, "warnings": warnings, "tasks": [task["id"] for task in tasks]}
 
     def _same_repository(self, path: Any, repo: Any) -> bool:
         """True when both folders belong to one repository (the checkout and its worktrees share a common git dir)."""
@@ -3078,9 +3100,12 @@ class AgoraConsoleFacet(Facet):
                     detail = "Voto de revisión comprobado en el Ágora."
                 else:
                     state, outcome = "completed", "submitted"
-                    detail = "Entrega comprobada en el Ágora."
+                    detail = ("Entrega registrada en el Ágora. / Delivery recorded in Agora." if verification.get("warnings")
+                              else "Entrega comprobada en el Ágora.")
                 if state in ("failed", "stopped") and verification["issues"]:
                     detail += " " + " ".join(verification["issues"])
+                if verification.get("warnings"):
+                    detail += " " + " ".join(verification["warnings"])
                 db.execute("UPDATE workers SET state=?,result=?,detail=?,session_id=?,workspace=?,process_exit_code=?,"
                            "outcome=?,tool_success_count=?,tool_failure_count=?,provider_error=?,verification=?,resume_issue=?,updated_at=? WHERE id=?",
                            (state, result or worker["result"], detail, worker["session_id"], worker["workspace"], code, outcome,

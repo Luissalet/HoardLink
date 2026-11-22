@@ -15,7 +15,9 @@ The console reads every provider's quota where its own client does, the way unif
 - **Cursor**: `GET https://cursor.com/api/usage-summary` with the Cursor app's session, read from its `state.vscdb` opened read-only, every 2 min: the two quotas included in the plan as the dashboard shows them, *Cursor models* (Auto, Composer, Grok) and *Other models*, plus on-demand spend when enabled; they reset at the end of the billing cycle.
 - **Faustus**: local models have no account quota; spend caps are reported by Faustus itself.
 
-`HOARD_AGORA_ACCOUNT_USAGE=0` turns the Claude/Cursor readers off. A network failure publishes nothing, so the last real reading stays until it goes stale; bars show the percentage used, with what is left and the reset underneath.
+The standard Hub uses the installation's `data/` directory, port 8810 and the regular catalogue. Its automatic quota polling starts by default. An isolated catalogue (`HOARD_HUB_ISOLATED_CATALOG=1`), an alternate port, or a data directory whose resolved path differs from the installation's `data/` puts the Hub in isolated mode and defaults polling to off. This also applies when you deliberately select another directory with `--data-dir` or `HOARD_HUB_DATA_DIR`. On the Hub command line, pair a separate data directory with an unused `--port` other than 8810.
+
+Set `HOARD_AGORA_QUOTA_POLLING=1` in that Hub's environment before launching to opt in, or `=0` to turn polling off on the standard installation. `HOARD_AGORA_ACCOUNT_USAGE=0` still turns the Claude/Cursor readers off independently. A network failure publishes nothing, so the last real reading stays until it goes stale. Bars show the percentage used, with what is left and the reset underneath.
 
 ## Live state of each leader
 
@@ -108,7 +110,7 @@ See [the integration station](INTEGRATION.md) for native rebuild and publication
 
 For development, `npm run dev` in `apps/agora` starts the local UI on port 62840 and proxies Hub reads. Use the native console or the built `/agora` page on the Hub origin to test writes. `AGORA_HUB_URL` can select a different loopback QA Hub. Tests use a separate Hub data directory and synthetic messages, preferences, workers and quotas. The native application contains self-hosted fonts and bundled frontend assets.
 
-Build output and installed local binaries are generated files. Source distributions require the build step for `/agora/`; a missing build produces an explicit error rather than an empty console.
+Build output and installed local binaries are generated files. After updating the frontend from source, run `npm ci` and `npm run build` in `apps/agora` to refresh the Hub's `/agora/` assets in `dist/`. For the Windows shortcut, follow the [integration station's native rebuild](INTEGRATION.md) to refresh the assets embedded in the executable. A missing web build produces an explicit error rather than an empty console.
 
 ## Where write sessions come from
 

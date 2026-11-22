@@ -18,6 +18,6 @@ repositories with its handoffs. Jobs and their Agora tasks carry the recorded me
 With a separate data directory, roots and port, set `HOARD_HUB_ISOLATED_CATALOG=1` on the test Hub process. Its
 browser header receives empty backend and service catalogues and a local response for the Copilot assets, and
 Faustus status uses an empty probe list. App discovery and the selected apps' real proxy routes still use the test
-roots. Leave the instance on fresh placement data with isolated app ports and tokens. This setting covers browser
-startup discovery. For offline QA, set `HOARD_AGORA_ACCOUNT_USAGE=0` to skip the separate account quota reporter.
-Explicit model calls and service controls remain separate.
+roots. Leave the instance on fresh placement data with isolated app ports and tokens. Automatic quota polling is
+off by default in isolated instances. `HOARD_AGORA_QUOTA_POLLING=1` explicitly enables it. Model calls and service
+controls remain separate.
