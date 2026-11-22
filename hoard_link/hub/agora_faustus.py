@@ -196,6 +196,32 @@ def production_scope(console: Any, agent: str, scope: dict, task_id: int | None)
     return scope
 
 
+def require_app_modules(hub: Any, apps: dict) -> None:
+    """Read module state without starting an app or enabling a module."""
+    data_tools = {"data_ingest", "data_export", "data_export_undo", "data_undo"}
+    requested = sorted(data_tools.intersection(apps.get("nightingale", ())))
+    if not requested:
+        return
+    reply = hub.call_app("nightingale", "nightingale_modules", timeout=5.0)
+    result = reply.get("result")
+    modules = result.get("modules") if reply.get("ok") and isinstance(result, dict) else None
+    data = None
+    if isinstance(modules, list):
+        data = next((module for module in modules if isinstance(module, dict) and module.get("id") == "data"), None)
+    tools = ", ".join(requested)
+    if data is not None and data.get("enabled") is True:
+        return
+    if data is not None and data.get("enabled") is False:
+        raise ValueError(
+            f"Nightingale's Data module is off ({tools}). Enable it in Nightingale before launching this worker. / "
+            f"El módulo Datos de Nightingale está desactivado ({tools}). Actívalo en Nightingale antes de lanzar el trabajador."
+        )
+    raise ValueError(
+        f"Could not check Nightingale's Data module ({tools}). Check that Nightingale is running and try again. / "
+        f"No se pudo comprobar el módulo Datos de Nightingale ({tools}). Comprueba que Nightingale esté abierto y vuelve a intentarlo."
+    )
+
+
 def service(hub: Any) -> dict[str, Any]:
     """Read the same location as /api/placement, without starting anything."""
     placement = getattr(hub, "placement", None)
@@ -235,6 +261,9 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
     if not dedicated and ntpath.splitdrive(workspace)[0] and not Path(workspace).is_dir():
         return None, "The space's PC workspace directory is unavailable."
     if dedicated:
+        scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
+        scope = production_scope(console, agent, scope, task_id)
+        require_app_modules(console.hub, scope.get("apps", {}))
         status, endpoints = console._faustus_session_request("GET", "/api/model-endpoints", base_url=base)
         endpoint = next((row for row in endpoints if row.get("id") == endpoint_id and row.get("is_enabled")), None) if status == 200 and isinstance(endpoints, list) else None
         if not endpoint or not str(endpoint.get("base_url") or "").startswith(("http://", "https://")):
@@ -250,9 +279,7 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
                     "Faustus Settings → Added Models. / No se encontró la credencial del endpoint seleccionado. "
                     "Añade o actualiza su clave API en Ajustes de Faustus → Modelos añadidos."
                 )
-        workspace = new_worker_workspace(console, agent)
-        scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
-        scope = production_scope(console, agent, scope, task_id)
+        workspace = scope["workspace"] = new_worker_workspace(console, agent)
         runtime = start_pc(console, agent, root, python, endpoint["base_url"], model["model_id"], file_scope=scope, api_key=api_key)
         base, endpoint_id = runtime["url"], "headless"
     try:
