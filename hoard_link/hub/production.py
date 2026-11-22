@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import time
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -23,6 +24,37 @@ def _tool(name, description, properties=None, required=(), *, read=True):
                         "required": list(required), "additionalProperties": False},
         "annotations": {"readOnlyHint": read, "destructiveHint": False},
     }
+
+
+def _module_row(row):
+    kept = {"group": row["group"], "module": row["module"], "enabled": row["enabled"]}
+    if isinstance(row.get("automatic"), bool):
+        kept["automatic"] = row["automatic"]
+    return kept
+
+
+def _failure(done, en, es=None):
+    return {**done, "error": en, "error_es": es or en}
+
+
+def _restore_message(before, restored, failed):
+    """What a restart did to the modules, for the person: Spanish and English."""
+    names = lambda rows: ", ".join(row["module"] for row in rows if row.get("module"))
+    es, en = [], []
+    if before["errors"] and not before["rows"]:
+        es.append("No se pudieron leer los módulos antes del reinicio.")
+        en.append("The modules could not be read before the restart.")
+    if restored:
+        es.append(f"Módulos que estaban encendidos y se han vuelto a encender: {names(restored)}.")
+        en.append(f"Modules that were on and have been switched on again: {names(restored)}.")
+    for row in failed:
+        label = f"{row['module']}: " if row.get("module") else ""
+        es.append(f"No se pudo restaurar. {label}{row['error_es']}.")
+        en.append(f"Could not restore. {label}{row['error']}.")
+    if not es:
+        es.append("Ningún módulo necesitaba restaurarse.")
+        en.append("No module needed restoring.")
+    return {"es": " ".join(es), "en": " ".join(en)}
 
 
 def _app_repo(app):
@@ -248,6 +280,66 @@ class ProductionFacet(Facet):
                 undo["automatic"] = previous_automatic
             return {"ok": True, "changed": True, "result": native,
                     "undo": {"tool": "hub_module_set", "arguments": undo}}
+
+    def remember_modules(self, app_id):
+        """Which declared modules an app has on now, to put back after a restart; None when it declares none."""
+        app = self.hub.get(app_id)
+        controls = app.family.get("module_controls") if app else None
+        if not isinstance(controls, dict) or not controls:
+            return None
+        status = self.modules({"app": app_id})
+        return {"rows": [_module_row(row) for row in status["modules"]], "errors": status["errors"]}
+
+    def restore_modules(self, app_id, before, *, started, read_tries=6):
+        """Switch on again the modules that were on before ``before`` was taken. Those that were off stay off.
+
+        Returns what there was, what there is, what was put back (each with its undo) and what could not be,
+        with a message in Spanish and English."""
+        restored, failed, after = [], [], None
+        if started:
+            for attempt in range(read_tries):
+                status = self.modules({"app": app_id})
+                if status["ok"]:
+                    after = status
+                    break
+                if attempt + 1 < read_tries:
+                    time.sleep(1.0)
+        if after is None:
+            failed.append(_failure({}, "The modules could not be read after the restart" if started
+                                   else "The app did not start again",
+                                   "No se pudieron leer los módulos tras el reinicio" if started
+                                   else "La app no volvió a arrancar"))
+        else:
+            current = {(row["group"], row["module"]): row for row in after["modules"]}
+            for row in before["rows"]:
+                if not row["enabled"]:
+                    continue
+                key = (row["group"], row["module"])
+                if key in current and current[key]["enabled"]:
+                    continue
+                done = {"group": row["group"], "module": row["module"]}
+                if key not in current:
+                    failed.append(_failure(done, "The module is no longer declared",
+                                           "El módulo ya no está declarado"))
+                    continue
+                request = {"app": app_id, "group": row["group"], "module": row["module"], "enabled": True,
+                           "expected_enabled": False,
+                           "reason": "Restore a module that was on before the restart. "
+                                     "Restaurar un módulo que estaba encendido antes del reinicio."}
+                if "automatic" in row:
+                    request["automatic"] = row["automatic"]
+                result = self.module_set(request)
+                if result.get("ok"):
+                    restored.append({**done, **({"automatic": row["automatic"]} if "automatic" in row else {}),
+                                     **({"undo": result["undo"]} if "undo" in result else {})})
+                else:
+                    failed.append(_failure(done, str(result.get("error") or "The module switch failed")))
+            if restored:
+                final = self.modules({"app": app_id})
+                after = final if final["ok"] else after
+        rows = [_module_row(row) for row in after["modules"]] if after else None
+        return {"before": before["rows"], "after": rows, "restored": restored, "failed": failed,
+                "unread_before": before["errors"], "message": _restore_message(before, restored, failed)}
 
     @classmethod
     def tools(cls):

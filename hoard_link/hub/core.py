@@ -521,6 +521,27 @@ class Hub:
         return res
 
     def restart(self, app_id: str, *, automatic: bool = False) -> dict[str, Any]:
+        """Stop then start. An app that declares native module switches gets the ones that were on put back on."""
+        production = self.facet("production")
+        app = self.get(app_id)
+        before = None
+        if production is not None and app is not None and app.family.get("module_controls"):
+            try:
+                before = production.remember_modules(app_id) if procs.health(app).state == "healthy" else None
+            except Exception:  # noqa: BLE001 - a restart is never held back by what it could not read
+                before = None
+        result = self._restart(app_id, automatic=automatic)
+        if before is not None and "stopped" in result and not result.get("skipped"):
+            try:
+                result["modules"] = production.restore_modules(app_id, before, started=bool(result.get("ok")))
+            except Exception as exc:  # noqa: BLE001 - the restart itself succeeded; say what the restore did not
+                result["modules"] = {"before": before["rows"], "after": None, "restored": [], "unread_before": before["errors"],
+                                     "failed": [{"error": f"{type(exc).__name__}: {exc}", "error_es": f"{type(exc).__name__}: {exc}"}],
+                                     "message": {"es": "No se pudieron restaurar los módulos tras el reinicio.",
+                                                 "en": "The modules could not be restored after the restart."}}
+        return result
+
+    def _restart(self, app_id: str, *, automatic: bool = False) -> dict[str, Any]:
         if automatic:
             app = self.get(app_id)
             if app is None:

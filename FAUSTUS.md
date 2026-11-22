@@ -239,7 +239,8 @@ registered build with the interface source revision and the response from the in
 
 `hub_modules`
 and `hub_module_set` use declared native module switches and return an undo
-request for a change. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any
+request for a change. Restarting an app that declares module switches turns on again the modules that were on and
+reports what it restored or could not restore. See [the Hub reference](docs/HUB.md#production-stations). `hub_eyes_look` turns any
 piece (image, video, model, web page, document, Godot scene or an app's object) into views to open, with an
 optional vision check of details to keep, and repeats the same camera on a new revision. Mesh looks report the
 front axis used to orient the render ([docs/eyes.md](docs/eyes.md)).
