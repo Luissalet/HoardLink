@@ -45,6 +45,7 @@ each repository. This also works for a single repository. Use `spark_repos` to s
 | `hub_integration_plan` | Resolve the submitted head and list affected test files and repositories missing a live case. |
 | `hub_integration_run` | Compare main and delivery. With `merge: true`, integrate the approved revision and close it in Agora after the post-merge check. Add `install_dependencies: true` to update stale dependencies before that check. The submitted `Live-Test:`, `live_test` or `live_tests` selects a narrower check. |
 | `hub_integration_status` | Read a receipt and its current state by `id`. |
+| `hub_integration_suite_failures` | Read the measured suite failures and observation dates. Pass `repo` to filter by repository name. |
 | `hub_integration_reconcile` | Correct a historical fast-forward after the registered main branch has the equivalent merge. Supply the receipt `id`, `agent`, `space_id`, registered `repo`, merge `commit` and `reason`. A correction returns the undo call. |
 | `hub_integration_undo` | Cancel a queued or testing run. For a completed merge, restore the previous checkout, baseline and task state while the recorded head and revision still match. |
 
@@ -55,6 +56,14 @@ releases its locks. A multirepository run keeps the task open until all reposito
 contains each comparison, live case, merge hash and cleanup. On a regression, the station attempts to restore
 any repositories it already moved. The receipt's undo restores completed repositories in reverse order.
 The task retains its owner. Production gates remain a decision for the person.
+
+For repositories with a [measured suite baseline](SUITE_BASELINE.md), failures in submitted
+`Test-Paths` are compared by case identifier with that repository's recorded failures. A known
+failure appears in the receipt and closing message. A new failure in those files blocks closure.
+The other selected tests retain the main-versus-delivery checks, including lost coverage.
+For a manual closure, run the integration check for the submitted revision. Agora uses its
+receipt only when it covers the declared focal files and the tested tree matches the commits
+being closed. A collection failure or missing verification leaves the task open.
 
 Runs that share a target checkout wait in submission order and recompute their plans against the current mainline
 when their turn starts. After moving the registered checkout, the station checks its local dependencies before
