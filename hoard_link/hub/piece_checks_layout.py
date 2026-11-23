@@ -1,7 +1,7 @@
 """Rendered web checks and structural and rendered slide checks."""
 
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from itertools import combinations
 from pathlib import Path, PurePosixPath
 import re
@@ -208,6 +208,35 @@ class _LocalOnlyEngine:
         return getattr(self._engine, name)
 
 
+def _offline_flags(base):
+    """Chromium switches that leave a page nothing to reach but its own server.
+
+    Request interception (``_LocalOnlyEngine``) never sees what the browser does before or beside a request:
+    ``<link rel=preconnect>`` and ``dns-prefetch`` open a connection or resolve a name, and a subdomain is
+    enough to carry data out. So the browser itself has no network: every name but the loopback address
+    resolves to nothing, and every connection goes to a proxy that does not exist. The implicit loopback
+    exemption of the proxy is withdrawn, leaving only the page server's own address and port.
+    """
+    return ["--proxy-server=http://proxy.invalid:9",
+            f"--proxy-bypass-list=<-loopback>;{urlsplit(base).netloc}",
+            "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+            "--dns-prefetch-disable"]
+
+
+@contextmanager
+def _offline_launch(browser):
+    """Start the page engine's browser with ``_offline_flags`` (the engine reads its switches when it launches)."""
+    from vitruvius_hoard import browser as engine
+
+    original = engine.launch_args
+    engine.launch_args = lambda: [*original(), *_offline_flags(browser._base)]
+    try:
+        yield
+    finally:
+        engine.launch_args = original
+
+
 def _check_web_page(path, requirements, report):
     from vitruvius_hoard.functional_check.browser import state_facts
     from vitruvius_hoard.functional_check.run import Browser, aimed
@@ -220,8 +249,10 @@ def _check_web_page(path, requirements, report):
         raise ValueError("Declare one to eight positive [width, height] viewport sizes")
     rows = []
     link_results = {}
-    with Browser(folder, entry) as browser:
-        if requirements.get("_offline"):
+    offline = bool(requirements.get("_offline"))
+    page_engine = Browser(folder, entry)
+    with (_offline_launch(page_engine) if offline else nullcontext()), page_engine as browser:
+        if offline:
             browser._engine = _LocalOnlyEngine(browser._engine, browser._base)
         for width, height in viewports:
             with browser.open({"viewport": {"width": width, "height": height}}) as (page, crashes, console, failed):
