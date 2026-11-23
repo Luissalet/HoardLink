@@ -5,13 +5,20 @@ from __future__ import annotations
 import io
 import json
 import math
+from functools import partial
 from pathlib import Path
 import subprocess
 
 from .. import proc
 from . import piece_checks_identity as identity_model
+from .piece_checks_sources import in_scope
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}
+# ffmpeg picks the demuxer from the content, not from the extension: a playlist or a concat list named .mp4
+# makes it open the addresses and paths it lists. A confined worker's clip is read as MP4/MOV or Matroska/WebM,
+# from a plain file, and nothing else. Neither demuxer opens other files (external MOV data references are off
+# unless asked for).
+SAFE_INPUT = ["-protocol_whitelist", "file", "-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm"]
 
 
 def _dimensions(report, actual, requirements):
@@ -100,20 +107,28 @@ def _command(name, arguments, timeout=15, *, binary=False):
     return result.stdout
 
 
-def _video_info(path):
+def _source(path, safe):
+    """The input options and the input argument for ffmpeg and ffprobe."""
+    return (SAFE_INPUT, f"file:{path}") if safe else ([], str(path))
+
+
+def _video_info(path, safe=False):
+    options, source = _source(path, safe)
     raw = _command("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries",
-                              "stream=width,height,duration,avg_frame_rate:format=duration", "-of", "json", str(path)])
+                              "stream=width,height,duration,avg_frame_rate:format=duration", "-of", "json",
+                              *options, source])
     data = json.loads(raw)
     stream = data["streams"][0]
     num, den = map(int, stream["avg_frame_rate"].split("/"))
     return [stream["width"], stream["height"]], float(stream.get("duration", data["format"]["duration"])), num / den
 
 
-def _frame(path, seconds):
+def _frame(path, seconds, safe=False):
     from PIL import Image
 
-    data = _command("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", f"{seconds:.6f}",
-                               "-threads", "2", "-i", str(path), "-frames:v", "1", "-vf", "scale=384:-2",
+    options, source = _source(path, safe)
+    data = _command("ffmpeg", ["-hide_banner", "-loglevel", "error", *options, "-ss", f"{seconds:.6f}",
+                               "-threads", "2", "-i", source, "-frames:v", "1", "-vf", "scale=384:-2",
                                "-threads", "1", "-f", "image2pipe", "-c:v", "png", "-"], binary=True)
     with Image.open(io.BytesIO(data)) as image:
         return image.convert("RGB")
@@ -140,15 +155,19 @@ def _similarity(first, second):
     return round(float(np.mean([np.dot(a, b) if a.any() or b.any() else 1.0 for a, b in zip(first, second)])), 5)
 
 
-def _reference(ref, signature):
+def _reference(ref, signature, scope=None):
     from PIL import Image
 
     path = Path(ref["path"]).expanduser()
+    if scope is not None and not (in_scope(path, scope) and in_scope(path.resolve(), scope)):
+        # Judged from the path text: the disk is not asked about anything outside the worker's scope.
+        raise ValueError("A reference outside the declared scope. / Una referencia fuera del ámbito declarado.")
     if ref.get("time_s") is not None:
         time_s = float(ref["time_s"])
         if not math.isfinite(time_s) or time_s < 0:
             raise ValueError("Reference time_s must be nonnegative and finite")
-        return signature(_crop(_frame(path, time_s), ref.get("region")))
+        frame = partial(_frame, safe=True) if scope is not None else _frame
+        return signature(_crop(frame(path, time_s), ref.get("region")))
     with Image.open(path) as image:
         return signature(_crop(image, ref.get("region")))
 
@@ -162,7 +181,7 @@ def _identity_options(requirements, shot):
     return {**(shared or {}), **(local or {})}
 
 
-def _start_identity(options, shot, row, report):
+def _start_identity(options, shot, row, report, scope=None):
     refs = options.get("references", shot.get("references", []))
     threshold = options.get("min_similarity")
     if threshold is not None:
@@ -174,7 +193,7 @@ def _start_identity(options, shot, row, report):
                        "min_similarity": threshold, "samples": []}
     if refs:
         try:
-            return {"references": [_reference(ref, identity_model.prepare) for ref in refs], "samples": []}
+            return {"references": [_reference(ref, identity_model.prepare, scope) for ref in refs], "samples": []}
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
             report.add("identity", None, "The identity references could not be loaded.",
                        "No se han podido cargar las referencias de identidad.", shot=row["shot"], detail=str(exc))
@@ -227,7 +246,11 @@ def _shots(requirements, duration, fps):
 
 
 def check_video(path, requirements, report):
-    size, duration, fps = _video_info(path)
+    # A confined worker's clip: no network and nothing of the host outside its scope (see SAFE_INPUT).
+    safe = bool(requirements.get("_offline"))
+    scope = (requirements.get("_scope") or {}) if safe else None
+    probe, grab = (partial(_video_info, safe=True), partial(_frame, safe=True)) if safe else (_video_info, _frame)
+    size, duration, fps = probe(path)
     if not (math.isfinite(duration) and duration > 0 and math.isfinite(fps) and fps > 0):
         raise ValueError("Video duration and frame rate must be positive")
     report.measures.update(size_px=size, duration_s=duration, fps=fps)
@@ -245,12 +268,12 @@ def check_video(path, requirements, report):
     identity_jobs = []
     for index, shot in enumerate(_shots(requirements, duration, fps), 1):
         label = str(shot.get("id", index))
-        references = [_reference(ref, _signature) for ref in shot.get("references", [])] if threshold is not None else []
+        references = [_reference(ref, _signature, scope) for ref in shot.get("references", [])] if threshold is not None else []
         samples = []
         row = {"shot": label, "samples": samples}
         all_samples.append(row)
         options = _identity_options(requirements, shot)
-        identity = _start_identity(options, shot, row, report) if options is not None else None
+        identity = _start_identity(options, shot, row, report, scope) if options is not None else None
         if identity is not None:
             identity_jobs.append((row, identity))
         if not references:
@@ -268,7 +291,7 @@ def check_video(path, requirements, report):
         if last - times[-1] > 0.5 / fps:
             times.append(last)
         for seconds in times:
-            frame = _frame(path, seconds)
+            frame = grab(path, seconds)
             time_s = round(seconds, 4)
             if references:
                 signature = _signature(_crop(frame, shot.get("region")))
