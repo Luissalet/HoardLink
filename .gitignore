@@ -11,3 +11,12 @@ dist/
 data/
 data-*/
 .claude/worktrees/
+# Local agent and tool state (created per user at runtime)
+.faustus/
+.odysseus/
+.claude/
+.agents/
+.codex/
+.playwright-mcp/
+.hoard-integration.json
+.impeccable/
