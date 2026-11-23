@@ -5,6 +5,24 @@ from __future__ import annotations
 import base64
 import math
 
+# A confined worker's meshes are measured from the one file it delivered. 3MF and STL carry no other file;
+# OBJ, glTF and a GLB with a URI name neighbours (materials, buffers, textures), which the loaders would read
+# from whatever folder they point at, so those are not opened.
+OFFLINE_PRINT_SUFFIXES = {".3mf", ".stl"}
+
+
+def _external_uris(node):
+    """Every non-data URI a glTF document names (buffers, images and anything an extension adds)."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key != "uri":
+                yield from _external_uris(value)
+            elif value and not (isinstance(value, str) and value[:5].lower() == "data:"):
+                yield value
+    elif isinstance(node, list):
+        for item in node:
+            yield from _external_uris(item)
+
 
 def check_print(path, requirements, report):
     from vulcan.asset_inspection import UNIT_TO_MM, _edge_counts, _wall_records, load_geometry, sha256_of
@@ -13,6 +31,8 @@ def check_print(path, requirements, report):
     except ImportError:  # Older installed inspectors still serve their existing measurements.
         load_print_geometry, measure_mesh_edges = load_geometry, None
 
+    if requirements.get("_offline") and path.suffix.lower() not in OFFLINE_PRINT_SUFFIXES:
+        raise ValueError("Offline checks accept 3MF and STL only. / Las comprobaciones sin red solo admiten 3MF y STL.")
     wall = requirements.get("min_wall_mm")
     volume = requirements.get("build_volume_mm")
     if wall is not None and (not math.isfinite(float(wall)) or float(wall) <= 0):
@@ -120,6 +140,14 @@ def check_game(path, requirements, report):
 
     if path.suffix.lower() not in {".glb", ".gltf"}:
         raise ValueError("Skin checks accept GLB and glTF")
+    if requirements.get("_offline"):
+        if path.suffix.lower() != ".glb":
+            raise ValueError("Offline checks accept GLB only. / Las comprobaciones sin red solo admiten GLB.")
+        if any(True for _ in _external_uris(read_gltf(path)[0])):
+            # Buffers and images must travel inside the file: a path or an address in it is never followed.
+            report.add("external-resources", None, "The model links files outside itself, so it was not measured.",
+                       "El modelo enlaza ficheros externos, así que no se ha medido.")
+            return
     facts = gltf_facts(path)
     document, binary = read_gltf(path)
     nodes = document.get("nodes", [])

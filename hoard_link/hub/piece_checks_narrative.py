@@ -6,7 +6,7 @@ from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 import xml.etree.ElementTree as ET
 
-from .piece_checks_sources import W
+from .piece_checks_sources import W, in_scope
 
 
 def _text(value):
@@ -74,7 +74,11 @@ def check_narrative(path, requirements, report, *, source=None, continuity=None)
                "Comprueba que las fuentes del PDF estén incrustadas.", details=unembedded)
 
     if source is None and requirements.get("source_path"):
-        source = Path(requirements["source_path"]).expanduser().resolve(strict=True)
+        source = Path(requirements["source_path"]).expanduser()
+        if requirements.get("_scope") is not None and not in_scope(source, requirements["_scope"]):
+            # A confined worker's manuscript is read only inside its scope; the disk is not asked about the rest.
+            raise ValueError("The manuscript is outside the declared scope. / El manuscrito está fuera del ámbito declarado.")
+        source = source.resolve(strict=True)
     expected = _text(_manuscript(source)) if source else None
     mismatch = []
     if expected is not None and text != expected:
