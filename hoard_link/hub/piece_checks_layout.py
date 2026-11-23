@@ -1,11 +1,12 @@
 """Rendered web checks and structural and rendered slide checks."""
 
 from collections import Counter
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from itertools import combinations
 from pathlib import Path, PurePosixPath
 import re
 import tempfile
+import threading
 import unicodedata
 from urllib.parse import urlsplit
 from zipfile import BadZipFile, ZipFile
@@ -224,17 +225,31 @@ def _offline_flags(base):
             "--dns-prefetch-disable"]
 
 
+_LAUNCH = threading.Lock()
+
+
 @contextmanager
-def _offline_launch(browser):
-    """Start the page engine's browser with ``_offline_flags`` (the engine reads its switches when it launches)."""
+def _launched(page_engine, offline):
+    """The page engine's browser, started; with the offline switches when ``offline``.
+
+    The engine reads its switches from a module function when it launches, so the switches are put there only
+    for the launch itself, under a lock that every launch takes, and the function is always put back to the one
+    it was. Checks that overlap in a process neither share switches nor lose them.
+    """
     from vitruvius_hoard import browser as engine
 
-    original = engine.launch_args
-    engine.launch_args = lambda: [*original(), *_offline_flags(browser._base)]
+    with _LAUNCH:
+        original = engine.launch_args
+        if offline:
+            engine.launch_args = lambda: [*original(), *_offline_flags(page_engine._base)]
+        try:
+            page_engine.__enter__()
+        finally:
+            engine.launch_args = original
     try:
-        yield
+        yield page_engine
     finally:
-        engine.launch_args = original
+        page_engine.__exit__(None, None, None)
 
 
 def _check_web_page(path, requirements, report):
@@ -251,7 +266,7 @@ def _check_web_page(path, requirements, report):
     link_results = {}
     offline = bool(requirements.get("_offline"))
     page_engine = Browser(folder, entry)
-    with (_offline_launch(page_engine) if offline else nullcontext()), page_engine as browser:
+    with _launched(page_engine, offline) as browser:
         if offline:
             browser._engine = _LocalOnlyEngine(browser._engine, browser._base)
         for width, height in viewports:

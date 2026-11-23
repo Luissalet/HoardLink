@@ -193,6 +193,55 @@ def test_offline_browser_has_no_preconnect_or_dns_prefetch(tmp_path):
         outside.close()
 
 
+CONCURRENT_DRIVER = r"""
+import json, sys, threading, time
+from pathlib import Path
+hub, folder, port = sys.argv[1:4]
+sys.path[:0] = [hub]
+from vitruvius_hoard import browser as engine
+original = engine.launch_args
+from hoard_link.hub import piece_checks
+results = {}
+
+def check(name, offline, delay):
+    time.sleep(delay)
+    requirements = {"viewports": [[400, 300]], **({"_offline": True} if offline else {})}
+    result = piece_checks.run_checks(Path(folder) / (name + ".zip"), "web", requirements)
+    results[name] = [result["verdict"], [row.get("detail") for row in result["checks"] if row["id"] == "inspection"]]
+
+threads = [threading.Thread(target=check, args=args) for args in
+           (("a", True, 0), ("n", False, 0.4), ("d", True, 0.8))]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()
+print(json.dumps({"results": results, "restored": engine.launch_args is original}))
+"""
+
+
+def test_overlapping_offline_and_normal_web_checks_do_not_share_browser_switches(tmp_path):
+    """Two offline checks with a person's check between them, at the same time, in one process."""
+    python = _python(PAGE_ENGINE)
+    outside = Outside()
+    try:
+        for name in ("a", "n", "d"):
+            html = ('<!doctype html><html lang="en"><title>Fixture</title><body><p>Fixture</p>'
+                    f'<img alt="" src="http://127.0.0.1:{outside.port}/{name}"></body></html>')
+            with ZipFile(tmp_path / f"{name}.zip", "w") as archive:
+                archive.writestr("index.html", html)
+        done = subprocess.run([python, "-c", CONCURRENT_DRIVER, str(HUB), str(tmp_path), str(outside.port)],
+                              cwd=HUB, env={**os.environ, "PYTHONUTF8": "1", "PYTHONPATH": str(PAGE_ENGINE)},
+                              capture_output=True, encoding="utf-8", timeout=300)
+        assert done.returncode == 0, done.stderr[-800:]
+        answer = json.loads(done.stdout.strip().splitlines()[-1])
+        assert set(answer["results"]) == {"a", "n", "d"}, (answer, done.stderr[-3000:])
+        paths = sorted(row.split()[1] for row in outside.requests if row.startswith("GET "))
+        assert paths == ["/n"], (paths, outside.requests)  # only the person's page reached the server
+        assert answer["restored"] is True  # and the engine's own switches are back
+    finally:
+        outside.close()
+
+
 # -------------------------------------------------------------------- video
 
 
