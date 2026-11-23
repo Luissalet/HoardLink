@@ -89,7 +89,17 @@ helper = fam_mail.FaustusHelper(setting=None, *, owner=None, python=None, env_dr
 helper.available() -> bool
 helper.run(action, payload=None, timeout=180) -> dict  # never raises: {"ok": False, "error": ...}
 helper.status(refresh=False) -> dict                   # run("status"), remembered five minutes
+fam_mail.isolation() -> "" | "hub" | "data"            # why the helper must not run here; "" in the real install
+fam_mail.isolation_text(code) -> str                   # the state line, Spanish / English
 ```
+
+The helper reads the person's real mailbox, so it only runs in the real install: the hub the app talks to is
+`127.0.0.1:8810` and the folder of its token file is the `data` folder of its own repo (`family.configure` says which).
+In any other case (`hub`: another hub or port; `data`: other or unknown data folder) `helper.available()` is `False` and
+`helper.run` runs nothing and answers `{"ok": False, "isolated": "hub" | "data", "error": "sin pasarela en un Hub de
+pruebas: correo desactivado / no mail gateway in a test hub: mail is off"}` (the `data` case says «con datos de pruebas»).
+A router in `auto` or `faustus` then returns no messages and keeps that line in `last_error`; the hub's gateway still
+serves the app when it has one. The Node twin (`spawnHelperRunner`) does not have this rule yet.
 
 `helper.run` actions (all read-only: EXAMINE and BODY.PEEK, nothing is marked read, moved or deleted):
 

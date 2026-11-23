@@ -31,6 +31,9 @@ helper as the fallback, one watermark, one interest, one claim)::
     router.commit()                                                                          # the watermark moves only now
     router.claim(rows, ref="hoard://kafka/doc/1")                                            # "this mail is mine"
 
+The Faustus helper only runs in the real install (the hub at ``127.0.0.1:8810`` and the app's own ``data`` folder, see :func:`isolation`):
+an app started by a test hub or on test data has no mail unless a gateway serves it, and says so.
+
 Standard library only (runs inside apps that vendor ``hoard_link/``). Nothing here raises: when the hub cannot be reached the
 answer is ``{"ok": False, "error": "hub unreachable"}``. The hub only returns mail of the spheres the app is allowed in.
 """
@@ -49,6 +52,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any, Callable, Iterable, Optional
 
 from . import family as _f
@@ -255,6 +259,37 @@ PYTHON_CANDIDATES = ("venv/Scripts/python.exe", ".venv/Scripts/python.exe", "ven
 COMMON_FAUSTUS_PATHS = (r"E:\Development\IA\Faustus", r"C:\LocalAI\faustus", "~/LocalAI/faustus", "~/faustus")
 _hub_hint: dict[str, Any] = {"at": 0.0, "key": "", "dir": ""}
 
+REAL_HUB_PORT = 8810
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+_ISOLATED = {
+    "hub": "sin pasarela en un Hub de pruebas: correo desactivado / no mail gateway in a test hub: mail is off",
+    "data": "sin pasarela con datos de pruebas: correo desactivado / no mail gateway with test data: mail is off",
+}
+
+
+def isolation() -> str:
+    """Why this process must not use the Faustus helper: ``"hub"`` (the hub it talks to is not the real one, ``127.0.0.1:8810``),
+    ``"data"`` (the app's data folder, where its token file lives, is not the ``data`` folder of its own repo, or is not known), or
+    ``""`` for the real install. The helper reads the person's real mailbox, so only the real install may run it; a gateway still
+    serves any app that its hub lets in."""
+    try:
+        parts = urlsplit(_f._hub())
+        if (parts.hostname or "").lower() not in _LOOPBACK or (parts.port or 80) != REAL_HUB_PORT:
+            return "hub"
+        token = str(_f.status().get("token_file") or "")
+        folder = os.path.normcase(os.path.realpath(os.path.dirname(os.path.abspath(token)))) if token else ""
+        here = Path(__file__).resolve().parent
+        if not folder or not any(os.path.normcase(os.path.realpath(str(up / "data"))) == folder for up in list(here.parents)[:4]):
+            return "data"
+    except (OSError, ValueError):
+        return "data"
+    return ""
+
+
+def isolation_text(code: str) -> str:
+    """The one-line state (Spanish / English) for an :func:`isolation` code."""
+    return _ISOLATED.get(code, "")
+
 
 def _is_faustus(path: Path) -> bool:
     try:
@@ -376,12 +411,16 @@ class FaustusHelper:
         return faustus_python(root, self.python_setting) if root else None
 
     def available(self) -> bool:
-        """True when Faustus's folder and its Python were found. Does not start anything."""
-        return self.faustus_dir() is not None and self.python() is not None
+        """True when Faustus's folder and its Python were found and this is the real install (:func:`isolation`). Does not start anything."""
+        return not isolation() and self.faustus_dir() is not None and self.python() is not None
 
     def run(self, action: str, payload: Optional[dict[str, Any]] = None, timeout: float = HELPER_TIMEOUT_S) -> dict[str, Any]:
         """Run one helper action (``status | fetch | scan | headers | read | send``, see ``mail_helper.py``) and return its answer.
-        Never raises: failures come back as ``{"ok": False, "error": ...}``. No console window opens on Windows."""
+        Never raises: failures come back as ``{"ok": False, "error": ...}``. No console window opens on Windows. A test hub or test data
+        never reaches the person's mailbox: the answer is ``{"ok": False, "isolated": "hub" | "data", "error": ...}`` and nothing runs."""
+        code = isolation()
+        if code:
+            return {"ok": False, "isolated": code, "error": isolation_text(code)}
         root = self.faustus_dir()
         if root is None:
             return {"ok": False, "error": "Faustus folder not found (set it in the app's mail settings, or FAUSTUS_DIR)"}
