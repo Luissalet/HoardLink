@@ -140,3 +140,37 @@ declarado», exista el fichero o no. Quien no es un trabajador dedicado sigue
 resolviendo rutas locales. El conector pasa `_worker_read_files` y puede pasar
 `_worker_read_paths` y `_worker_write_paths`; mientras no pase las carpetas, solo
 cuentan los ficheros exactos.
+
+**Web, video and meshes of a dedicated worker.** The browser that renders a
+worker's web page has no network at all: every name except the loopback address
+resolves to nothing and every connection goes to a proxy that does not exist, so
+`<link rel=preconnect>` and `dns-prefetch` open no connection and ask the resolver
+for no name, besides the aborted requests. Only the page server's own address and
+port are reachable. FFmpeg and FFprobe read the clip as MP4/MOV or Matroska/WebM
+from a plain file and nothing else, whatever the content looks like: a playlist
+or a concat list named `.mp4` is refused instead of opening the addresses and
+paths it names. A reference image or frame for a video, and the manuscript of a
+narrative check (`source_path`), must be inside the worker's scope; the disk is
+not asked about anything else. A 3D model is measured only from the file
+delivered: print checks accept 3MF and STL; game checks accept a GLB whose buffers
+and images are inside it or `data:` URIs. A GLB that names any other file or
+address is not opened: its check is `external-resources`, `unmeasured`. The same
+checks for anyone who is not a dedicated worker are unchanged.
+
+**Web, vídeo y mallas de un trabajador dedicado.** El navegador que renderiza la
+página web de un trabajador no tiene red: todo nombre salvo la dirección de
+bucle local se resuelve a nada y toda conexión va a un proxy que no existe, de
+modo que `<link rel=preconnect>` y `dns-prefetch` no abren ninguna conexión ni
+piden ningún nombre al resolutor, además de las peticiones abortadas. Solo se
+alcanza la dirección y el puerto del propio servidor de la página. FFmpeg y
+FFprobe leen el clip como MP4/MOV o Matroska/WebM desde un fichero normal y nada
+más, parezca lo que parezca su contenido: una lista de reproducción o de
+concatenación con extensión `.mp4` se rechaza en vez de abrir las direcciones y
+rutas que nombra. Una imagen o un fotograma de referencia de un vídeo, y el
+manuscrito de una comprobación narrativa (`source_path`), deben estar dentro del
+ámbito del trabajador; el disco no se consulta para nada más. Un modelo 3D se
+mide solo desde el fichero entregado: la impresión admite 3MF y STL; el juego
+admite un GLB cuyos búferes e imágenes van dentro o son URI `data:`. Un GLB que
+nombre cualquier otro fichero o dirección no se abre: su comprobación es
+`external-resources`, `unmeasured`. Para quien no es un trabajador dedicado, las
+mismas comprobaciones no cambian.
