@@ -10,6 +10,14 @@ from hoard_link.hub.agora_console import AgoraConsoleFacet
 from hoard_link.hub.facets import Request
 
 
+CHECK_RULES = (
+    "only measure and keep crops", "«medido» / MEASURED", "pixel differences per box", "fingerprints",
+    "inspect_image", "«recorte» / CROP", "write the error literally and where the crop ended up",
+    "right, wrong, better or worse", "present or absent", "«visto, sin medida» / 'seen, not measured'",
+    "state of a review you have not opened", "neither approves nor returns", "«sin referencia anterior»",
+)
+
+
 def console_for(tmp_path):
     agora = Agora(tmp_path / "agora.db")
     agora.space_create({"id": "estudio", "title": "Estudio", "agent": "codex-builder"})
@@ -54,6 +62,17 @@ def test_space_profile_is_readable_editable_and_scoped(tmp_path):
     finally:
         console.close()
         agora.close()
+
+
+def test_check_template_asks_for_measures_and_crops_and_never_for_a_visual_judgement():
+    check = profiles.TEMPLATES["check"]
+    text = check["instructions"]
+    for rule in CHECK_RULES:
+        assert rule in text
+    assert "measure" in check["en"]["hint"] and "medir" in check["es"]["hint"]
+    for forbidden in ("visually confirm", "describe what you see", "describe only what you observed"):
+        assert forbidden not in text
+    assert text.count("«visto, sin medida»") == 1 and "there is no «visto, sin medida»" in text
 
 
 def test_manual_runner_receives_rules_context_paths_and_selected_template(tmp_path, monkeypatch):
@@ -108,6 +127,8 @@ def test_manual_runner_receives_rules_context_paths_and_selected_template(tmp_pa
         payload = prompt.split("revision_comparisons:\n", 1)[1].split("\n\nTask:", 1)[0]
         assert json.loads(payload) == view.job({"task_id": task_id})["job"]["revision_comparisons"]
         assert "sin referencia anterior" in payload
+        for text in CHECK_RULES:
+            assert text in prompt
         proposal = console.worker({"action": "propose_files", "task_id": task_id})["file_scope"]
         assert set(proposal["read_files"]) == {
             old["stored"], *old["previews_stored"], current["stored"], *current["previews_stored"], first["stored"],

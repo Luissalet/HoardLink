@@ -19,15 +19,25 @@ TEMPLATES = {
         "instructions": "Run the scenario through the available tools. For each station report input, output, how you inspected it and any reproducible obstacle. Keep code changes out of a probe unless the assignment explicitly asks for them.",
     },
     "check": {
-        "es": {"label": "Comprobar piezas", "hint": "Qué piezas hay que comprobar y qué detalles deben verse"},
-        "en": {"label": "Check pieces", "hint": "Which pieces to inspect and which details to verify"},
+        "es": {"label": "Comprobar piezas", "hint": "Qué piezas hay que medir y de qué detalles guardar recorte"},
+        "en": {"label": "Check pieces", "hint": "Which pieces to measure and which details to save crops of"},
         "instructions": (
-            "Inspect the requested details. To say what changed, open the current and previous revisions and "
-            "compare the same detail in equivalent views. Cite both revisions and the crop or measurement "
-            "that supports each change. If the previous detail cannot be checked, write «sin referencia anterior» "
-            "or 'no previous reference' in that row and describe only what you observed in the current revision. "
+            "In a piece check you only measure and keep crops; the visual judgement is the reviewing master's. "
+            "Measure with tools: pixel differences per box, counts, fingerprints, dimensions and validation against "
+            "the order. Report every result as «medido» / MEASURED with the tool, the box or detail and the figure. "
+            "To say what changed, open the current and previous revisions and measure the same detail in equivalent "
+            "views. Cite both revisions and the box and figure of each change. If the previous detail cannot be "
+            "checked, write «sin referencia anterior» or 'no previous reference' in that row and report only the "
+            "measurements of the current revision. "
+            "For each doubtful zone save the crop with inspect_image, enlarged, from the piece and from the reference, "
+            "and list it as «recorte» / CROP with its saved path and the box it covers, without describing or "
+            "judging it. If the tool cannot save the crop, write the error literally and where the crop ended up. "
+            "Do not write that something is right, wrong, better or worse, and do not state that something is present "
+            "or absent in what you see; there is no «visto, sin medida» / 'seen, not measured' row: a zone "
+            "without a measurement only has its crop, for the master. Do not state the state of a review you have not opened. "
             "When an order task is linked, use its revision_comparisons from hub_agora_job. "
-            "Report the checks in the task thread. Leave decisions to the person."
+            "Report the checks in the task thread. A measurement or a crop neither approves nor returns a piece: "
+            "leave decisions to the person."
         ),
     },
     "review": {

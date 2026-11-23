@@ -205,7 +205,16 @@ Each entry pairs `current` and `previous` by the registered `supersedes` link, w
 verified local file paths and numbered preview paths. Dedicated workers receive read access to the retained copies.
 `missing` means no predecessor was recorded. `unavailable` means no file or view can establish its content.
 When the previous view needed for a detail is absent or cannot be inspected, the report says
-“no previous reference” / «sin referencia anterior» and records what the current piece shows.
+“no previous reference” / «sin referencia anterior» and records only what was measured on the current piece.
+
+The check template asks the worker to measure and keep crops, not to judge by eye. Each result is reported as
+«medido» / MEASURED with its tool, box and figure (pixel differences per box, counts, fingerprints, dimensions,
+validation against the order). Each doubtful zone gets an enlarged crop saved with `inspect_image` from the piece and
+from the reference, listed as «recorte» / CROP with its path and box; if the crop cannot be saved the worker writes the
+error literally and where the crop ended up. The worker does not write that something is right, wrong, better, worse,
+present or absent, does not state the state of a review it has not opened, and has no «visto, sin medida» / “seen, not
+measured” row: the visual judgement is the reviewing master's. A measurement or a crop neither approves nor returns a
+piece.
 
 | Tool | Does |
 |---|---|
