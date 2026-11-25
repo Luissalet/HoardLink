@@ -53,6 +53,7 @@ from typing import Any, Callable, Optional
 from ..sqlkit import Database
 from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError, SpaceStore, space_id
 from . import agent_watch
+from .agora_capacity_accounts import CLAUDE_SOURCE
 from .config import AGENT_ID_RE, PERSON_ALIAS, HubConfig
 from . import agora_channels
 from . import agora_ranks
@@ -1550,6 +1551,10 @@ class Agora:
         measured = [w for w in pool.get("windows") or [] if not w.get("stale") and w.get("remaining_percent") is not None]
         if not measured:
             out.update(state="unknown")
+            if provider == "claude":
+                out["note"] = next((w["label"] for w in pool.get("windows") or []
+                                    if w.get("source") == CLAUDE_SOURCE and w.get("window_id") == "claude.session"
+                                    and w.get("measurement") == "unknown" and not w.get("stale")), None)
             return out
         remaining = min(float(w["remaining_percent"]) for w in measured)
         out["remaining_percent"] = round(remaining, 1)

@@ -7,7 +7,7 @@ same place the provider's own client does:
   Code keeps in ``~/.claude/.credentials.json`` (``CLAUDE_CONFIG_DIR`` when set). It answers the
   session (5 h) and weekly windows as ``utilization`` percentages with ``resets_at``. The token
   needs the ``user:profile`` scope. The installed CLI owns credential refresh and persistence.
-  When quota reads hit expired credentials, the reporter can ask that CLI to validate its sign-in.
+  If access expires or is rejected, the reporter can check the CLI's locally stored sign-in.
 * **Cursor** -- ``GET https://cursor.com/api/usage-summary`` authenticated with the Cursor app's
   own session (``cursorAuth/accessToken`` in its ``state.vscdb``, opened read-only), sent as the
   ``WorkosCursorSessionToken`` cookie. The plan has two included quotas, the same two the Cursor
@@ -152,6 +152,18 @@ def claude_config_dir(env: Optional[Mapping[str, str]] = None) -> Path:
     return Path(configured).expanduser() if configured else Path.home() / ".claude"
 
 
+def _claude_identity(directory: Path, home: Optional[Path]) -> str:
+    profile = (home or Path.home()) / ".claude.json"
+    try:
+        account = json.loads(profile.read_text(encoding="utf-8")).get("oauthAccount") or {}
+        identity = account.get("accountUuid") or account.get("organizationUuid")
+        if identity:
+            return identity
+    except (OSError, ValueError, AttributeError):
+        pass
+    return f"local-config:{directory.absolute()}"
+
+
 def read_claude_session(*, config_dir: Optional[Path] = None, home: Optional[Path] = None,
                         now: Optional[float] = None) -> dict[str, Any]:
     """Claude Code's OAuth token and account id, read-only. Raises when missing or expired."""
@@ -161,33 +173,23 @@ def read_claude_session(*, config_dir: Optional[Path] = None, home: Optional[Pat
         data = json.loads((directory / ".credentials.json").read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise AccountCapacityError("claude_not_logged_in",
-                                   "Claude Code no ha iniciado sesión en este PC") from None
+                                   "No hay una sesión guardada de Claude Code") from None
     except (OSError, ValueError):
         raise AccountCapacityError("claude_credentials_unreadable",
                                    "No se pudieron leer las credenciales de Claude Code") from None
     oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
     token = oauth.get("accessToken") if isinstance(oauth, dict) else None
     if not isinstance(token, str) or not token:
-        raise AccountCapacityError("claude_not_logged_in", "Claude Code no ha iniciado sesión en este PC")
+        raise AccountCapacityError("claude_not_logged_in", "No hay una sesión guardada de Claude Code")
     scopes = oauth.get("scopes") if isinstance(oauth.get("scopes"), list) else None
     if scopes is not None and "user:profile" not in scopes:
         raise AccountCapacityError("claude_scope_missing",
                                    "La sesión de Claude Code no permite leer la cuota (falta user:profile)")
     expires = oauth.get("expiresAt")
     if isinstance(expires, (int, float)) and not isinstance(expires, bool):
-        if float(expires) / 1000.0 - _EXPIRY_MARGIN_S <= now:
-            raise AccountCapacityError("claude_access_expired", "Hay que comprobar si Claude Code puede renovar el acceso")
-    identity = ""
-    profile = (home or Path.home()) / ".claude.json"
-    try:
-        account = json.loads(profile.read_text(encoding="utf-8")).get("oauthAccount") or {}
-        identity = account.get("accountUuid") or account.get("organizationUuid") or ""
-    except (OSError, ValueError, AttributeError):
-        identity = ""
-    if not identity:
-        # Stable enough for one machine and still opaque: the subscription tier plus the config dir.
-        identity = f"{oauth.get('subscriptionType', '')}|{oauth.get('rateLimitTier', '')}|{directory}"
-    return {"token": token, "identity": identity,
+        if float(expires) / 1000.0 <= now:
+            raise AccountCapacityError("claude_access_expired", "El acceso guardado de Claude Code ha caducado")
+    return {"token": token, "identity": _claude_identity(directory, home),
             "plan": str(oauth.get("subscriptionType") or ""), "tier": str(oauth.get("rateLimitTier") or "")}
 
 
@@ -260,7 +262,7 @@ def build_claude_report(usage: Mapping[str, Any], session: Mapping[str, Any], *,
 
 
 def probe_claude_sign_in(directory: Path) -> str:
-    """Check explicit logout via the native CLI without running inference."""
+    """Check explicit logout. The CLI's auth status output does not verify access to quota."""
     executable = shutil.which("claude")
     if not executable:
         return "unknown"
@@ -296,46 +298,54 @@ def collect_claude_usage_report(*, config_dir: Optional[Path] = None, home: Opti
                                 now: Optional[float] = None,
                                 opener: Callable[..., Any] = urllib.request.urlopen,
                                 refresh: Optional[Callable[[Path], str]] = None) -> dict[str, Any]:
-    def read() -> dict[str, Any]:
-        session = read_claude_session(config_dir=config_dir, home=home, now=now)
-        usage = _http_json(CLAUDE_USAGE_URL, {
-            "Authorization": f"Bearer {session['token']}",
-            "anthropic-beta": "oauth-2025-04-20",
-            "Accept": "application/json",
-            "User-Agent": "hoardlink-agora-capacity/0.1",
-        }, opener=opener)
-        return build_claude_report(usage, session, now=now)
+    directory = config_dir or claude_config_dir()
+    rejected_token: Optional[str] = None
 
+    def read() -> dict[str, Any]:
+        nonlocal rejected_token
+        session = read_claude_session(config_dir=directory, home=home, now=now)
+        token = session["token"]
+        if token != rejected_token:
+            try:
+                usage = _http_json(CLAUDE_USAGE_URL, {
+                    "Authorization": f"Bearer {token}",
+                    "anthropic-beta": "oauth-2025-04-20",
+                    "Accept": "application/json",
+                    "User-Agent": "hoardlink-agora-capacity/0.1",
+                }, opener=opener)
+            except AccountCapacityError as exc:
+                if exc.code != "unauthorized":
+                    raise
+                rejected_token = token
+            else:
+                return build_claude_report(usage, session, now=now)
+        raise AccountCapacityError("claude_quota_unauthorized", "Claude ha rechazado el acceso a la cuota")
+
+    retryable = ("claude_access_expired", "claude_quota_unauthorized")
     try:
         return read()
     except AccountCapacityError as exc:
-        if exc.code not in ("claude_access_expired", "unauthorized"):
+        if refresh is None or exc.code not in retryable:
             raise
-    state = refresh(config_dir or claude_config_dir()) if refresh else "unknown"
-    if state == "logged_out":
-        raise AccountCapacityError("claude_not_logged_in", "Claude Code indica que no hay una sesión iniciada")
-    if state == "refused":
-        raise AccountCapacityError("claude_token_expired", "Claude Code intentó renovar el acceso y recibió un rechazo")
-    if refresh:
-        try:
-            return read()
-        except AccountCapacityError as exc:
-            if exc.code not in ("claude_access_expired", "unauthorized"):
-                raise
-    raise AccountCapacityError("claude_refresh_unverified", "No se pudo verificar la renovación del acceso a la cuota de Claude")
+    state = refresh(directory)
+    try:
+        # The client can replace the file independently while the probe is running.
+        return read()
+    except AccountCapacityError as exc:
+        if exc.code in retryable:
+            if state == "logged_out":
+                raise AccountCapacityError("claude_not_logged_in",
+                                           "Claude Code indica que no hay una sesión iniciada") from None
+            if state == "refused":
+                raise AccountCapacityError("claude_token_expired",
+                                           "Claude Code intentó renovar el acceso y recibió un rechazo") from None
+        raise
 
 
 def claude_unavailable_report(error: AccountCapacityError, *, config_dir: Optional[Path] = None,
-                              home: Optional[Path] = None) -> Optional[dict[str, Any]]:
-    """An honest 'unknown' window saying why, when the account can still be told apart."""
-    identity = ""
-    try:
-        account = json.loads(((home or Path.home()) / ".claude.json").read_text(encoding="utf-8")).get("oauthAccount") or {}
-        identity = account.get("accountUuid") or account.get("organizationUuid") or ""
-    except (OSError, ValueError, AttributeError):
-        identity = ""
-    if not identity:
-        return None
+                              home: Optional[Path] = None) -> dict[str, Any]:
+    """Report the reason even when the local profile has no account metadata."""
+    identity = _claude_identity(config_dir or claude_config_dir(), home)
     return {"provider_id": "claude", "pool_id": _pool_id("claude", identity), "pool_label": "Cuenta de Claude",
             "source": CLAUDE_SOURCE, "windows": [_unknown("claude.session", error.label, CLAUDE_SOURCE)]}
 

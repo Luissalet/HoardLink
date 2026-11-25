@@ -14,7 +14,8 @@ from types import SimpleNamespace
 import pytest
 
 from hoard_link.hub import agora_capacity, agora_capacity_accounts as acc
-from hoard_link.hub.agora import Agora
+from hoard_link.hub.agora import Agora, AgoraFacet
+from hoard_link.hub.config import HubConfig
 
 NOW = 1_791_634_000.0  # 2026-10-10
 CLAUDE_TOKEN = "sk-ant-oat01-secret-token"
@@ -58,7 +59,7 @@ CLAUDE_USAGE = {
 
 
 def test_claude_reads_session_and_weekly_windows_without_leaking_identity(tmp_path):
-    config, home = _claude_files(tmp_path, expires_ms=(NOW + 3600) * 1000)
+    config, home = _claude_files(tmp_path, expires_ms=(NOW + 30) * 1000)
     seen: list = []
     report = acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW, opener=_opener(CLAUDE_USAGE, seen))
     assert seen[0]["url"] == acc.CLAUDE_USAGE_URL
@@ -88,30 +89,67 @@ def test_claude_limits_array_fills_scoped_weeks(tmp_path):
                       "claude.week-opus-5-5": "Semana · Opus 5.5"}
 
 
-def test_claude_expired_token_is_reported_as_unknown_with_the_reason(tmp_path):
+def test_claude_expired_token_is_reported_as_unknown_with_the_reason(tmp_path, monkeypatch):
     config, home = _claude_files(tmp_path, expires_ms=(NOW - 10) * 1000)
     calls: list = []
+    seen: list = []
+    monkeypatch.setattr(acc.shutil, "which", lambda name: "fake-claude")
+
+    def status(command, **kwargs):
+        assert command == ["fake-claude", "auth", "status"]
+        assert kwargs["env"]["CLAUDE_CONFIG_DIR"] == str(config.resolve())
+        return SimpleNamespace(returncode=0, stdout='{"loggedIn": true}')
+
+    monkeypatch.setattr(acc.subprocess, "run", status)
     result = acc.collect_and_report_account_usage(
         "claude", reporter=lambda report, **kw: calls.append((report, kw)) or {"ok": True},
-        collector_kwargs={"config_dir": config, "home": home, "now": NOW})
-    assert result["reason"] == "claude_refresh_unverified" and result["measured"] is False
+        collector_kwargs={"config_dir": config, "home": home, "now": NOW,
+                          "opener": _opener(CLAUDE_USAGE, seen), "refresh": acc.probe_claude_sign_in})
+    assert result["reason"] == "claude_access_expired" and result["measured"] is False
+    assert seen == []
     report, kwargs = calls[0]
     assert kwargs["agent_id"] == "claude-capacity"
     assert report["windows"] == [{"window_id": "claude.session", "label": report["windows"][0]["label"],
                                   "measurement": "unknown", "used_percent": None, "remaining_percent": None,
                                   "reset_at": None, "source": acc.CLAUDE_SOURCE}]
-    assert "renovación" in report["windows"][0]["label"]
+    assert report["windows"][0]["label"] == "El acceso guardado de Claude Code ha caducado"
     assert CLAUDE_TOKEN not in json.dumps(report)
 
 
-def test_claude_never_rewrites_credentials(tmp_path):
+@pytest.mark.parametrize("status", [401, 403])
+def test_claude_reports_denied_quota_without_resending_the_same_token(tmp_path, status):
     config, home = _claude_files(tmp_path, expires_ms=(NOW + 3600) * 1000)
     before = (config / ".credentials.json").read_bytes()
-    acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW, opener=_opener(CLAUDE_USAGE, []))
+    seen: list = []
     with pytest.raises(acc.AccountCapacityError) as err:
-        acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW, opener=_opener({}, [], status=401))
-    assert err.value.code == "claude_refresh_unverified"
+        acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW,
+                                       opener=_opener({}, seen, status=status), refresh=lambda _: "unknown")
+    assert err.value.code == "claude_quota_unauthorized"
+    assert err.value.label == "Claude ha rechazado el acceso a la cuota"
+    assert len(seen) == 1
     assert (config / ".credentials.json").read_bytes() == before
+
+
+def test_claude_reads_native_token_replacement_after_http_rejection(tmp_path):
+    config, home = _claude_files(tmp_path, expires_ms=(NOW + 3600) * 1000)
+    seen: list = []
+
+    def opener(request, timeout):
+        if not seen:
+            return _opener({}, seen, status=401)(request, timeout)
+        return _opener(CLAUDE_USAGE, seen)(request, timeout)
+
+    def status(directory):
+        path = directory / ".credentials.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["claudeAiOauth"]["accessToken"] = "replacement-fixture"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return "logged_out"
+
+    report = acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW, opener=opener, refresh=status)
+    assert [item["headers"]["Authorization"] for item in seen] == [
+        f"Bearer {CLAUDE_TOKEN}", "Bearer replacement-fixture"]
+    assert report["windows"][0]["remaining_percent"] == 63.0
 
 
 def test_claude_reads_quota_after_native_refresh_and_reports_a_refusal(tmp_path):
@@ -135,6 +173,52 @@ def test_claude_reads_quota_after_native_refresh_and_reports_a_refusal(tmp_path)
         acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW,
                                         opener=_opener({}, [], status=401), refresh=lambda directory: "refused")
     assert refused.value.code == "claude_token_expired"
+
+
+def test_claude_explicit_logout_is_distinct_from_access_expiry(tmp_path):
+    config, home = _claude_files(tmp_path, expires_ms=(NOW - 10) * 1000)
+    seen: list = []
+    with pytest.raises(acc.AccountCapacityError) as err:
+        acc.collect_claude_usage_report(config_dir=config, home=home, now=NOW,
+                                       opener=_opener({}, seen), refresh=lambda _: "logged_out")
+    assert err.value.code == "claude_not_logged_in"
+    assert err.value.label == "Claude Code indica que no hay una sesión iniciada"
+    assert seen == []
+
+
+def test_claude_quota_explains_missing_session_and_recovers_on_next_poll(tmp_path):
+    config, home = tmp_path / ".claude", tmp_path
+    seen: list = []
+    time = NOW
+    facet = AgoraFacet(SimpleNamespace(config=HubConfig(data_dir=tmp_path, roots=[])))
+    facet.agora.clock = lambda: time
+    handlers = facet.handlers()
+    options = {"config_dir": config, "home": home, "now": NOW, "opener": _opener(CLAUDE_USAGE, seen)}
+
+    def publish(report, *, agent_id):
+        return handlers["hub_agora_usage_report"]({"agent": agent_id, **report})
+
+    try:
+        result = acc.collect_and_report_account_usage("claude", reporter=publish, collector_kwargs=options)
+        assert result["ok"] and result["reason"] == "claude_not_logged_in"
+        assert seen == []
+        quota = handlers["hub_agora_agent_quota"]({"agent": "claude"})
+        assert quota["state"] == "unknown" and quota["remaining_percent"] is None
+        assert quota["note"] == "No hay una sesión guardada de Claude Code"
+
+        _claude_files(tmp_path, expires_ms=(NOW + 3600) * 1000)
+        (home / ".claude.json").unlink()
+        time += 120
+        result = acc.collect_and_report_account_usage("claude", reporter=publish,
+                                                     collector_kwargs={**options, "now": time})
+        quota = handlers["hub_agora_agent_quota"]({"agent": "claude"})
+        assert result["ok"] and quota["state"] == "ok" and quota["remaining_percent"] == 37.5
+        assert quota["note"] is None
+        pools = next(row["pools"] for row in handlers["hub_agora_usage"]({})["providers"]
+                     if row["provider_id"] == "claude")
+        assert len(pools) == 1
+    finally:
+        facet.close()
 
 
 def test_claude_without_profile_scope_says_so(tmp_path):
