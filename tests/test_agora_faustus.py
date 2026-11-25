@@ -302,11 +302,25 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     workspace = agora_faustus.new_worker_workspace(facet, "faustus-qa")
     custom_token = str(tmp_path / "fixture-connection.dat")
     facet.hub.apps = [SimpleNamespace(token_file=custom_token)]
+    monkeypatch.setenv("FAUSTUS_AGORA_WORKER_TASK_THREAD", "999")
+    scope = agora_faustus.file_scope(workspace)
+    thread_id = None
+    if space == "estudio":
+        scope["production"] = {"space_id": space, "task_id": 74, "order_id": 6, "agent": "faustus-qa"}
+
+        def task_thread(sql, params):
+            assert "WHERE id=? AND space_id=?" in sql and params == (74, space)
+            return {"thread_id": 120}
+
+        monkeypatch.setattr(facet, "_agora", lambda: SimpleNamespace(db=SimpleNamespace(one=task_thread)))
+        thread_id = "120"
+
     runtime = agora_faustus.start_pc(facet, "faustus-qa", tmp_path, "python", "http://models.example/v1",
-                                     "model", file_scope=agora_faustus.file_scope(workspace),
+                                     "model", file_scope=scope,
                                      api_key="" if resume else key, resume=resume)
     command, env = launches[0]
     assert env["FAUSTUS_AGORA_WORKER_SPACE"] == space
+    assert env.get("FAUSTUS_AGORA_WORKER_TASK_THREAD") == thread_id
     assert custom_token in json.loads(env["FAUSTUS_AGORA_PROTECTED_PATHS"])
     assert ("--agora-studio" in command) == (space == "estudio")
     assert json.loads(command[command.index("--agora-file-scope") + 1]) == runtime["file_scope"]

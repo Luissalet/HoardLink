@@ -362,6 +362,12 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     base = f"http://127.0.0.1:{port}"
     env = console._runner_env()
     env["FAUSTUS_AGORA_WORKER_SPACE"] = console.space_id
+    env.pop("FAUSTUS_AGORA_WORKER_TASK_THREAD", None)
+    if production:
+        task = console._agora().db.one("SELECT thread_id FROM tasks WHERE id=? AND space_id=?",
+                                       (production["task_id"], console.space_id))
+        if task and task["thread_id"]:
+            env["FAUSTUS_AGORA_WORKER_TASK_THREAD"] = str(task["thread_id"])
     env["FAUSTUS_APP_ROOT"] = str(root)
     secret_paths = [str(Path(console.hub.config.data_dir) / "hub.json"),
                     *(str(data / name) for name in ("app.db", "app.db-wal", "app.db-shm"))]

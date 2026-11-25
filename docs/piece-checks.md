@@ -9,7 +9,10 @@ of a file, such as printing a GLB. For unregistered files the Hub can also
 infer a profile from a known piece kind or the file extension.
 
 Dedicated workers use declared local paths or retained revisions granted by
-an assignment. Validation by ID uses the declared retained copy. Declare any
+an assignment. Validation by ID uses the declared retained copy. For a
+read-only check allowed by the worker's file scope, give the registered piece's
+`piece_id`, `space_id`, `profile` and declared absolute `path`. The Hub matches
+the task and path before reading the exact retained revision. Declare any
 additional reference files before passing their absolute paths. For web checks,
 pass a declared ZIP. For spreadsheet checks, pass explicit sheet requirements.
 The Hub does not reach the network for a dedicated worker. Web citations in a
@@ -19,7 +22,10 @@ not rendered (its rendered-text check stays `unmeasured`).
 
 Los trabajadores dedicados usan rutas locales declaradas o revisiones
 conservadas que autoriza el encargo. La validación por identificador usa la
-copia conservada y declarada. Declara los ficheros de referencia adicionales
+copia conservada y declarada. Para una comprobación de solo lectura que permita
+el ámbito de ficheros del trabajador, indica el `piece_id`, `space_id`,
+`profile` y `path` absoluto declarado. El Hub coteja la tarea y la ruta antes de
+leer la revisión exacta conservada. Declara los ficheros de referencia adicionales
 antes de pasar sus rutas absolutas. Para comprobar una web, usa un ZIP declarado.
 Para una hoja de cálculo, indica los requisitos de la hoja.
 El Hub no sale a la red por un trabajador dedicado. Las citas web de un

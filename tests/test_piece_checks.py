@@ -121,6 +121,47 @@ def test_image_dimensions_alpha_and_declared_views(tmp_path):
     assert by_id["views"]["measured"] == 1
 
 
+
+def test_registered_worker_read_checks_the_retained_revision_of_its_task(tmp_path):
+    from hoard_link.hub.agora import Agora
+
+    image = pytest.importorskip("PIL.Image")
+    agora = Agora(tmp_path / "agora.db")
+    try:
+        order = agora.order_create({"agent": "worker", "title": "Sheet", "words": "Draw a sheet.",
+                                    "folder": str(tmp_path)})["order"]["id"]
+        jobs = agora.plan_set({"order_id": order, "agent": "worker", "jobs": [
+            {"key": "first", "title": "Draw", "station": "art", "produces": ["image"]},
+            {"key": "second", "title": "Redraw", "station": "art", "produces": ["image"]},
+        ]})["keys"]
+        path = tmp_path / "sheet.png"
+
+        def register(task, size):
+            image.new("RGB", size).save(path)
+            return agora.piece_add({"agent": "worker", "order_id": order, "task_id": task,
+                                    "kind": "image", "title": "Sheet", "path": str(path)})["piece"]
+
+        own = register(jobs["first"], (32, 16))
+        foreign = register(jobs["second"], (64, 32))
+        facet = checks.PieceChecksFacet(SimpleNamespace(facet=lambda name: SimpleNamespace(agora=agora)))
+        validate = facet.handlers()["hub_piece_validate"]
+        fields = {"piece_id": own["id"], "task_id": jobs["first"], "profile": "image",
+                  "_worker_read_files": [], "_worker_read_paths": [str(tmp_path)],
+                  "_worker_piece_path": str(path), "requirements": {"size_px": [32, 16]}}
+
+        result = validate(fields)
+        assert result["ok"] and _checks(result)["resolution"]["verdict"] == "pass"
+        assert result["piece"]["id"] == own["id"] and "undo" not in result
+        assert "does not belong" in validate({**fields, "piece_id": foreign["id"]})["error"]
+        assert not validate({**fields, "_worker_piece_path": str(tmp_path / "other.png")})["ok"]
+        assert not validate({**fields, "_worker_read_paths": []})["ok"]
+        assert not validate({**fields, "task_id": None})["ok"]
+        assert not validate({"piece_id": own["id"], "path": str(path)})["ok"]
+        assert not facet.record(fields)["ok"]
+    finally:
+        agora.close()
+
+
 def test_video_checks_declared_cuts_and_preserves_sample_time(tmp_path, monkeypatch):
     image = pytest.importorskip("PIL.Image")
     pytest.importorskip("numpy")

@@ -13,7 +13,7 @@ import time
 from .. import proc
 from .facets import Facet
 from .piece_checks_sheet import check_sheet, dataset_requirements
-from .piece_checks_sources import worker_scope
+from .piece_checks_sources import in_scope, worker_scope
 from .production import _tool
 
 PROFILES = {
@@ -144,7 +144,7 @@ def _registered_path(agora, row, worker_files):
 class PieceChecksFacet(Facet):
     id = "piece_checks"
 
-    def _registered(self, args):
+    def _registered(self, args, *, worker_piece_path=None):
         from . import agora_orders
 
         agora = self.hub.facet("agora").agora
@@ -161,10 +161,17 @@ class PieceChecksFacet(Facet):
                     or task["owner"] != args.get("agent") or row["agent"] != args.get("agent")):
                 raise ValueError("Use a registered output of your task. / Usa una salida registrada de tu tarea.")
             worker_files = [*(worker_files or []), row["stored"]]
+        if worker_piece_path is not None:
+            if (type(args.get("task_id")) is not int or worker_files is None or not row["path"]
+                    or Path(row["path"]) != Path(worker_piece_path)
+                    or not in_scope(worker_piece_path, worker_scope(args))):
+                raise ValueError("Use a registered file of this task within your scope. "
+                                 "/ Usa un fichero registrado de esta tarea dentro de tu ámbito.")
+            worker_files = [*worker_files, row["stored"]]
         source = (_registered_path(agora, row, worker_files) if row["path"] else row["url"])
         return agora, row, source
 
-    def validate(self, args):
+    def validate(self, args, *, worker_piece_path=None):
         started = time.monotonic()
         supplied = [key for key in ("path", "piece_id") if args.get(key) is not None]
         if len(supplied) != 1:
@@ -173,7 +180,7 @@ class PieceChecksFacet(Facet):
         worker_files = args.get("_worker_read_files")
         try:
             if supplied[0] == "piece_id":
-                agora, row, source = self._registered(args)
+                agora, row, source = self._registered(args, worker_piece_path=worker_piece_path)
             else:
                 source = args["path"]
             # The web engine serves an explicit local piece. A publication URL is a separate handoff.
@@ -300,8 +307,10 @@ class PieceChecksFacet(Facet):
         actor = {"agent": string, "language": {"enum": ["en", "es"]}}
         file = {**properties, "path": string, "kind": string}
         return [
-            _tool("hub_piece_validate", "Check a piece against its requirements. Comprobar los requisitos de una pieza.",
-                  file),
+            _tool("hub_piece_validate", "Check a piece against its requirements: give path or piece_id. "
+                  "A confined worker can give both to check the stored revision of a declared file in its task. "
+                  "Comprueba una pieza con path o piece_id. Un trabajador confinado puede indicar ambos "
+                  "para comprobar la revisión guardada de un fichero declarado de su tarea.", file),
             _tool("hub_piece_validate_record", "Check and record an order piece. Comprueba y anota una pieza de una orden.",
                   {**properties, **actor,
                    "task_id": {"type": "integer", "minimum": 1},
@@ -319,7 +328,9 @@ class PieceChecksFacet(Facet):
         ]
 
     def handlers(self):
-        return {"hub_piece_validate": self.validate, "hub_piece_validate_record": self.record,
+        return {"hub_piece_validate": lambda args: self.validate(
+                    args, worker_piece_path=args.get("_worker_piece_path")),
+                "hub_piece_validate_record": self.record,
                 "hub_piece_gate_checked": self.gate, "hub_piece_look_checked": self.look}
 
 
