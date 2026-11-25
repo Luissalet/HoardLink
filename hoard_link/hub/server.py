@@ -232,6 +232,28 @@ class _HubHandler(BaseHTTPRequestHandler):
             return "ui"
         return None
 
+    def _mail_apps(self) -> list[dict[str, str]]:
+        return [{"id": app.id, "name": app.name} for app in self.hub.apps if app.id != "hub"]
+
+    def _mail_helper_caller(self) -> None:
+        token = self._bearer()
+        who = self.hub.token_owner(token) if token else None
+        if not who or (who == "hub" and token != self.hub.token):
+            return self._json({"ok": False, "error": "family bearer token required"}, 401)
+        raw_account = self.headers.get("X-Hoard-Mail-Account")
+        if raw_account is None:
+            return self._json({"ok": True, "app": who, "apps": self._mail_apps()})
+        try:
+            account = json.loads(raw_account)
+            if (not isinstance(account, list) or len(account) != 3
+                    or any(not isinstance(value, str) for value in account) or not account[1]):
+                raise ValueError("invalid account descriptor")
+        except ValueError:
+            return self._json({"ok": False, "error": "invalid account descriptor"}, 400)
+        gate = self.hub.facet("mailgate")
+        allowed = who == "hub" or (gate is not None and gate.helper_account_allowed(who, *account))
+        return self._json({"ok": True, "app": who, "mail_allowed": allowed})
+
     def _browser_origin(self) -> bool:
         return (self.headers.get("Origin") or "").rstrip("/") in ("", self.hub.config.url)
 
@@ -557,6 +579,10 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/health":
                 return self._json({"ok": True, "service": SERVICE, "version": HUB_VERSION, "apps": len(hub.apps),
                                    "url": hub.config.url})
+            if path == "/api/family/caller":
+                return self._mail_helper_caller()
+            if path == "/api/family/mail-apps":
+                return self._json({"ok": True, "apps": self._mail_apps()})
             if path == "/api/apps":
                 return self._json(hub.snapshot())
             if path == "/api/faustus":

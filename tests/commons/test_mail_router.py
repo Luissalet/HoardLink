@@ -215,6 +215,7 @@ FAKE_SERVER = textwrap.dedent('''
 
     def _read_accounts_from_db(): return list(ACCOUNTS)
     def _filter_accounts_for_owner(rows): return rows
+    def _load_config(account): return {"account_id": account}
     def _decode_header(v): return str(v)
     def _q(f): return f
     def _resolve_send_config(account): raise RuntimeError("smtp not configured")
@@ -315,17 +316,48 @@ FAKE_SERVER = textwrap.dedent('''
 def make_faustus(tmp_path: Path, host: str = "imap.example.com", name: str = "faustus") -> Path:
     root = tmp_path / name
     (root / "mcp_servers").mkdir(parents=True)
+    (root / "data").mkdir()
+    (root / "data" / "mail_installation.json").write_text('{"hub_urls": ["http://test-hub.invalid:59184"]}', encoding="utf-8")
     (root / "mcp_servers" / "email_server.py").write_text(FAKE_SERVER.replace("__HOST__", host), encoding="utf-8")
     return root
 
 
 @pytest.fixture
-def faustus(tmp_path):
+def helper_identity(tmp_path, monkeypatch, isolated):
+    transport = tmp_path / "mock-hub"
+    transport.mkdir()
+    (transport / "sitecustomize.py").write_text(textwrap.dedent('''
+        import io
+        import json
+        from urllib.request import OpenerDirector
+
+        def read_hub(self, request, **kwargs):
+            assert request.full_url == "http://test-hub.invalid:59184/api/family/caller"
+            assert request.get_header("Authorization") == "Bearer synthetic-mail-app-token"
+            return io.BytesIO(json.dumps({"ok": True, "app": "ledger", "apps": [{"id": "ledger"}],
+                                          "mail_allowed": True}).encode())
+
+        OpenerDirector.open = read_hub
+    '''), encoding="utf-8")
+    data = tmp_path / "faustus-data"
+    data.mkdir()
+    (data / "mail_callers.json").write_text('["ledger"]', encoding="utf-8")
+    token = tmp_path / "appdata" / "mcp-token"
+    token.parent.mkdir()
+    token.write_text("synthetic-mail-app-token", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(transport))
+    monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(data))
+    family.configure("ledger", token_file=str(token))
+    return token
+
+
+@pytest.fixture
+def faustus(tmp_path, helper_identity):
     return make_faustus(tmp_path)
 
 
 @pytest.fixture
-def gmail_faustus(tmp_path):
+def gmail_faustus(tmp_path, helper_identity):
     return make_faustus(tmp_path, "imap.gmail.com", "faustus-gmail")
 
 
@@ -432,6 +464,9 @@ class Recorder:
 def test_helper_run_builds_the_command_and_keeps_secrets_out(tmp_path, monkeypatch, isolated):
     clean_env(monkeypatch, tmp_path)
     root = make_faustus(tmp_path)
+    token = tmp_path / "mcp-token"
+    token.write_text("synthetic-app-token", encoding="utf-8")
+    family.configure("paperwork", token_file=str(token))
     monkeypatch.setenv("KAFKA_SECRET", "s3cret")
     monkeypatch.setenv("KEEP_ME", "yes")
     rec = Recorder()
@@ -441,7 +476,8 @@ def test_helper_run_builds_the_command_and_keeps_secrets_out(tmp_path, monkeypat
     assert out == {"ok": True, "error": "", "messages": []}                          # the last JSON line, whatever came before
     (cmd, kw), = rec.calls
     assert cmd == [sys.executable, str(fam_mail.HELPER), str(root.resolve())]
-    assert json.loads(kw["input"]) == {"subject_terms": ["x"], "action": "scan", "owner": "nora"}
+    assert json.loads(kw["input"]) == {"subject_terms": ["x"], "action": "scan", "owner": "nora",
+                                       "caller": {"app": "paperwork", "token": "synthetic-app-token"}}
     assert kw["timeout"] == 7 and kw["cwd"] == str(root.resolve()) and kw["encoding"] == "utf-8"
     assert "KAFKA_SECRET" not in kw["env"] and kw["env"]["KEEP_ME"] == "yes" and kw["env"]["PYTHONIOENCODING"] == "utf-8"
     assert kw["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)         # no console window on Windows
@@ -492,7 +528,7 @@ def test_helper_status_is_remembered(tmp_path, monkeypatch, isolated):
 
 def test_helper_status_and_account_listing(faustus):
     out = helper_for(faustus).run("status")
-    assert out["ok"] and out["helper"] == 2 and out["accounts"][0]["account"] == "Personal"
+    assert out["ok"] and out["helper"] == 3 and out["accounts"][0]["account"] == "Personal"
     assert "me@example.com" not in out["accounts"][0]["user"]
 
 
@@ -882,8 +918,8 @@ def test_messages_fields_python_and_the_unavailable_hub(hubs):
 # The router end to end with the real helper (no hub)
 # ---------------------------------------------------------------------------------------------------------------------
 
-def test_router_with_the_real_helper_when_the_hub_is_not_there(faustus, tmp_path, isolated):
-    family.configure("ledger", str(tmp_path / "appdata"), hub="http://127.0.0.1:1")
+def test_router_with_the_real_helper_when_the_gateway_is_not_there(faustus, tmp_path, helper_identity):
+    family.configure("ledger", token_file=str(helper_identity), hub="http://127.0.0.1:1")
     fam_mail.forget_availability()
     r = fam_mail.MailRouter(helper_for(faustus), source_getter=lambda: "auto", interest={"subject_terms": ["factura"]})
     assert r.source_now() == "faustus"
@@ -1270,11 +1306,13 @@ def test_node_faustus_python_and_hub_hint(hubs, tmp_path):
 
 def spawn_scan_in_node(root: Path, criteria: dict, **opts: Any) -> dict:
     return run_link_js("""
-        const { root, python, helper, criteria, opts } = input;
+        const { root, python, helper, criteria, opts, tokenFile } = input;
+        fam.configure({ app: "ledger", tokenFile });
         const run = fam.spawnHelperRunner({ helperPath: helper, setting: root, python, owner: opts.owner ?? null,
                                             envDropPrefixes: opts.drop ?? [], env: { ...process.env, KAFKA_SECRET: "s3cret" } });
         return await run(opts.action ?? "scan", criteria, opts.timeout ?? 60000);
-    """, {"root": str(root), "python": sys.executable, "helper": str(HELPER_FILE), "criteria": criteria, "opts": opts})
+    """, {"root": str(root), "python": sys.executable, "helper": str(HELPER_FILE), "criteria": criteria, "opts": opts,
+          "tokenFile": str(root.parent / "appdata" / "mcp-token")})
 
 
 def test_node_spawn_runner_runs_the_real_helper_like_python_does(faustus):
@@ -1290,7 +1328,7 @@ def test_node_spawn_runner_runs_the_real_helper_like_python_does(faustus):
     assert st["ok"] and st["accounts"][0]["account"] == "Personal"
 
 
-def test_node_spawn_runner_failures_and_environment(tmp_path, faustus):
+def test_node_spawn_runner_failures_and_environment(tmp_path, faustus, helper_identity):
     none = run_link_js("""
         const run = fam.spawnHelperRunner({ helperPath: input.helper, setting: input.setting, env: {}, discovery: { searchParents: false, commonPaths: [] } });
         return await run("status");
@@ -1303,6 +1341,7 @@ def test_node_spawn_runner_failures_and_environment(tmp_path, faustus):
     assert no_python == {"ok": False, "error": "Faustus has no venv with Python"}
     captured = run_link_js("""
         const { EventEmitter } = await import("node:events");
+        fam.configure({ app: "ledger", tokenFile: input.tokenFile });
         const seen = {};
         const spawnFn = (cmd, args, opts) => {
           Object.assign(seen, { cmd, args, cwd: opts.cwd, hide: opts.windowsHide, secret: opts.env.KAFKA_SECRET ?? null, keep: opts.env.KEEP ?? null, enc: opts.env.PYTHONIOENCODING });
@@ -1315,14 +1354,15 @@ def test_node_spawn_runner_failures_and_environment(tmp_path, faustus):
         };
         const run = fam.spawnHelperRunner({ helperPath: "/h/mail_helper.py", setting: input.setting, python: input.python, owner: () => "nora",
           envDropPrefixes: ["KAFKA_"], env: { KAFKA_SECRET: "x", KEEP: "yes" }, spawnFn });
-        const answer = await run("scan", { subject_terms: ["a"] });
+        const answer = await run("scan", { subject_terms: ["a"], caller: { app: "hub", token: "spoofed" } });
         return { answer, seen };
-    """, {"setting": str(faustus), "python": sys.executable})
+    """, {"setting": str(faustus), "python": sys.executable, "tokenFile": str(helper_identity)})
     seen = captured["seen"]
     assert captured["answer"] == {"ok": True, "echo": 1}
     assert seen["cmd"] == sys.executable and seen["args"] == ["/h/mail_helper.py", str(faustus.resolve())] and seen["cwd"] == str(faustus.resolve())
     assert seen["hide"] is True and seen["secret"] is None and seen["keep"] == "yes" and seen["enc"] == "utf-8"      # no console window; secrets stay out
-    assert seen["sent"] == {"subject_terms": ["a"], "action": "scan", "owner": "nora"}
+    assert seen["sent"] == {"subject_terms": ["a"], "action": "scan", "owner": "nora",
+                            "caller": {"app": "ledger", "token": "synthetic-mail-app-token"}}
     for stdout, expect in (("", "mail helper exit 3"), ("{broken\\n", "mail helper exit 3"), ('{"no_ok": 1}\\n', "mail helper exit 3")):
         got = run_link_js("""
             const { EventEmitter } = await import("node:events");
@@ -1348,18 +1388,18 @@ def test_node_spawn_runner_failures_and_environment(tmp_path, faustus):
     assert timeout == {"answer": {"ok": False, "error": "the mail read took too long"}, "killed": True}
 
 
-def test_node_router_end_to_end_with_the_real_helper(faustus, tmp_path):
+def test_node_router_end_to_end_with_the_real_helper(faustus, helper_identity):
     hub = FakeMailHub(ready=False)
     try:
         js = run_link_js("""
-            const { url, dataDir, root, python, helper } = input;
-            fam.configure({ app: "ledger", dataDir, hub: url });
+            const { url, tokenFile, root, python, helper } = input;
+            fam.configure({ app: "ledger", tokenFile, hub: url });
             fam.mailForgetAvailability();
             const router = fam.famMailRouter({ runHelper: fam.spawnHelperRunner({ helperPath: helper, setting: root, python }),
               helperAvailable: async () => fam.faustusDir(root, { env: {} }) !== null && fam.faustusPython(root, python, { env: {} }) !== null });
             const rows = await router.scan({ subject_terms: ["factura", "reserva"], since_days: 30, limit: 10 });
             return { subjects: rows.map((m) => m.subject), source: router.lastSource, status: await router.status() };
-        """, {"url": hub.url, "dataDir": str(tmp_path / "d"), "root": str(faustus), "python": sys.executable, "helper": str(HELPER_FILE)})
+        """, {"url": hub.url, "tokenFile": str(helper_identity), "root": str(faustus), "python": sys.executable, "helper": str(HELPER_FILE)})
     finally:
         hub.close()
     assert js["subjects"] == ["Tu reserva de vuelo", "Factura de octubre"] and js["source"] == "faustus"

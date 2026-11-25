@@ -474,7 +474,9 @@ class FaustusHelper:
         python = faustus_python(root, self.python_setting)
         if python is None:
             return {"ok": False, "error": "Faustus has no venv with Python"}
-        request = {**(payload or {}), "action": str(action)}
+        app = _f.status().get("app") or ""
+        caller = {"app": app, "token": _f._token()}
+        request = {**(payload or {}), "action": str(action), "caller": caller}
         owner = _value(self.owner)
         if owner and not request.get("owner"):
             request["owner"] = owner

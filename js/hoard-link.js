@@ -807,7 +807,8 @@ export function spawnHelperRunner({ helperPath, setting = null, owner = null, py
     if (!root) return { ok: false, error: "Faustus folder not found (set it in the app's mail settings, or FAUSTUS_DIR)" };
     const py = faustusPython(root, python, { env });
     if (!py) return { ok: false, error: "Faustus has no venv with Python" };
-    const request = { ...payload, action: String(action) };
+    const caller = { app: state.app, token: readText(state.tokenFile) };
+    const request = { ...payload, action: String(action), caller };
     const who = String(callValue(owner) || "").trim();
     if (who && !request.owner) request.owner = who;
     const childEnv = Object.fromEntries(Object.entries(env).filter(([k]) => !envDropPrefixes.some((p) => k.startsWith(p))));

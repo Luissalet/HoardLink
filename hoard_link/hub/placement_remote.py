@@ -21,6 +21,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import struct
@@ -236,6 +237,47 @@ def apply(root: str, tar_path: str, deleted: list[str], trash: Optional[str] = N
 
 
 # ====================================================================================== settings that hold machine paths
+def _spark_mail_installation(spec: dict) -> str:
+    """Declare the link and fingerprint the tokens deployed with the two mail modules."""
+    data = Path(spec["hermes_data"]).expanduser().resolve()
+    try:
+        modules = json.loads((data / "modules.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        modules = {}
+    paths = modules.get("data_paths", {})
+    enabled = set(modules.get("enabled", []))
+    offline = {}
+    registered = {app["id"] for app in spec["apps"]}
+    for app, module in (("phileas", "shipments"), ("tantalus", "products")):
+        folder = data / module
+        stored = paths.get(module)
+        if stored:
+            parts = re.split(r"[/\\]+", stored)
+            if re.match(r"^[A-Za-z]:", stored):
+                if "native" in parts:
+                    folder = data.joinpath(*parts[parts.index("native"):])
+            else:
+                folder = Path(stored)
+        token_file = (folder / "mcp-token").resolve()
+        token = ""
+        if app in registered and token_file.is_relative_to(data):
+            try:
+                token = token_file.read_text(encoding="utf-8-sig").strip()
+            except FileNotFoundError:
+                pass
+        if re.fullmatch(r"[!-~]+", token):
+            offline[app] = hashlib.sha256(token.encode("ascii")).hexdigest()
+        elif module in enabled:
+            raise ValueError(f"mail caller declaration unavailable for {app}")
+    path = Path(spec["file"]).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".placement-tmp")
+    tmp.write_text(json.dumps({"hub_urls": [LINK_URL], "apps": spec["apps"], "offline": offline,
+                               "spheres": spec["spheres"]}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path.name
+
+
 def patch(spec: dict) -> list[str]:
     """``{"sqlite": [{"db", "table", "key", "value"}], "json": [{"file", "path": [...], "value"}]}`` -> what changed.
     A ``value`` of None removes the key (back to "not set")."""
@@ -279,6 +321,8 @@ def patch(spec: dict) -> list[str]:
             json.dump(data, fh, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
         done.append(f"{os.path.basename(path)}:{'/'.join(map(str, item['path']))}")
+    if "mail_installation" in spec:
+        done.append(_spark_mail_installation(spec["mail_installation"]))
     return done
 
 

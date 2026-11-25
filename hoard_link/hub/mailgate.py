@@ -44,6 +44,8 @@ from typing import Any, Callable, Iterable, Optional
 from urllib.parse import quote
 
 from .. import fam_mail, mail_helper as _mail_helper
+from ..atomic import write_json_atomic
+from . import DEFAULT_PORT
 from .config import REPO_DIR  # noqa: F401 - kept for callers that import it from here
 from .facets import Facet, Reply, Request
 
@@ -608,7 +610,7 @@ def allowed_spheres(hub: Any, store: MailStore, caller: Optional[str]) -> Option
     sph = hub.facet("spheres") if hasattr(hub, "facet") else None
     fn = getattr(sph, "app_allowed", None)
     if fn is None:
-        return None
+        return set()
     out: set[str] = set()
     known = set(store.distinct_spheres())
     lister = getattr(sph, "list", None)
@@ -700,9 +702,11 @@ class MailGate(Facet):
     def _spheres(self) -> Any:
         return self.hub.facet("spheres") if hasattr(self.hub, "facet") else None
 
-    def _sphere_for_account(self, account: str, account_id: str = "", address: str = "") -> str:
+    def _sphere_for_account(self, account: str, account_id: str = "", address: str = "", *, strict: bool = False) -> str:
         fn = getattr(self._spheres(), "sphere_of_account", None)
         if fn is None:
+            if strict:
+                raise ValueError("mail account classifier unavailable")
             return "personal"
         try:
             default = fn("\x00no-such-account", "")
@@ -713,6 +717,8 @@ class MailGate(Facet):
                         return str(found)
             return str(default or "personal")
         except Exception:  # noqa: BLE001
+            if strict:
+                raise
             logger.exception("sphere_of_account failed")
             return "personal"
 
@@ -733,11 +739,19 @@ class MailGate(Facet):
             return True
         fn = getattr(self._spheres(), "app_allowed", None)
         if fn is None:
-            return True
+            return False
         try:
             return bool(fn(sphere, app))
         except Exception:  # noqa: BLE001
-            return True
+            return False
+
+    def helper_account_allowed(self, app: str, account: str, account_id: str, address: str) -> bool:
+        try:
+            sphere = self._sphere_for_account(account, account_id, address, strict=True)
+        except Exception:  # noqa: BLE001
+            logger.exception("mail helper account policy unavailable")
+            return False
+        return self.app_allowed(sphere, app) if app not in ("ui", "hub-tool") else False
 
     # -- the helper ------------------------------------------------------------
     def faustus_dir(self) -> Optional[Path]:
@@ -758,6 +772,7 @@ class MailGate(Facet):
         owner = self.config().get("owner")
         if owner and not request.get("owner"):
             request = {**request, "owner": owner}
+        request = {**request, "caller": {"app": "hub", "token": self.hub.token}}
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         try:
@@ -807,9 +822,9 @@ class MailGate(Facet):
     def mail_accounts(self, caller: str = "hub", refresh: bool = False) -> dict[str, Any]:
         """Outbound availability is independent of the inbox polling switch."""
         answer = self.helper_status(refresh=refresh)
-        rows = [r for r in answer.get("accounts", []) if caller in ("hub", "ui") or
-                self.app_allowed(self._sphere_for_account(str(r.get("account") or ""), str(r.get("id") or ""),
-                                                        str(r.get("address") or "")), caller)]
+        rows = [r for r in answer.get("accounts", []) if caller in ("hub", "ui", "hub-tool") or
+                self.helper_account_allowed(caller, str(r.get("account") or ""), str(r.get("id") or ""),
+                                            str(r.get("address") or ""))]
         return {"ok": bool(answer.get("ok")), "available": bool(answer.get("ok") and answer.get("send_ready") and rows),
                 "accounts": rows, "default_account": next((r["account"] for r in rows if r.get("account") == answer.get("account")),
                                                          rows[0].get("account", "") if rows else ""),
@@ -1005,7 +1020,22 @@ class MailGate(Facet):
                 logger.exception("mail pass failed")
             wait = max(30.0, cfg["interval_min"] * 60.0)
 
+    def _declare_mail_installation(self) -> None:
+        config = self.hub.config
+        if getattr(config, "isolated", False) or getattr(config, "isolated_catalog", False):
+            return
+        if (getattr(config, "port", None) != DEFAULT_PORT
+                or Path(config.data_dir).resolve() != (REPO_DIR / "data").resolve()):
+            return
+        root = self.faustus_dir()
+        if root:
+            write_json_atomic(root / "data" / _mail_helper.INSTALLATION_FILE, {"hub_urls": [config.url]})
+
     def start(self) -> None:
+        try:
+            self._declare_mail_installation()
+        except OSError:
+            logger.exception("could not declare the mail helper's Hub in the installation")
         self._ensure_thread()
 
     def close(self) -> None:
