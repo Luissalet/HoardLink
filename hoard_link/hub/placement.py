@@ -641,15 +641,27 @@ class Placement:
 
     # ================================================================================= notices
     def _mail(self, subject: str, text: str, *, on_spark: bool) -> None:
-        payload = json.dumps({"action": "send", "subject": subject, "text": text, "from_name": "Hoard Hub"})
         try:
+            payload = json.dumps({"action": "send", "subject": subject, "text": text, "from_name": "Hoard Hub",
+                                  "caller": {"app": "hub", "token": self.hub.token}})
             if on_spark:
-                out = self._ssh(f"cd {STACK}/faustus && venv/bin/python {STACK}/mail_helper.py {STACK}/faustus", input=payload, timeout=90)
+                # The switch's regular poke comes after this notice. Open the link now, or wait for a look already in flight.
+                link = self.link.tick()
+                deadline = time.monotonic() + 10.0
+                while not link["up"] and not link["error"] and time.monotonic() < deadline:
+                    time.sleep(0.25)
+                    link = self.link.status()
+                if not link["up"]:
+                    raise PlacementError(link["error"] or "el enlace al Hub aún no está disponible")
+                command = (f"cd {STACK}/faustus && HOARD_MAIL_REAL_HUB_URLS={pr.LINK_URL} "
+                           f"venv/bin/python {STACK}/mail_helper.py {STACK}/faustus")
+                out = self._ssh(command, input=payload, timeout=90)
             else:
                 root, python = self.hub.faustus_runtime.installation()
                 helper = Path(__file__).resolve().parent.parent / "mail_helper.py"
-                r = subprocess.run([str(python), str(helper), str(root)], input=payload, capture_output=True, text=True,
-                                   timeout=90, cwd=str(root), creationflags=_flags())
+                env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+                r = self._run([str(python), str(helper), str(root)], input=payload, capture_output=True, encoding="utf-8",
+                              timeout=90, cwd=str(root), env=env, creationflags=_flags())
                 out = r.stdout
             answer = json.loads(out.strip().splitlines()[-1]) if out.strip() else {}
             self._log("aviso por correo enviado" if answer.get("ok") else f"no he podido enviar el aviso: {answer.get('error')}")
