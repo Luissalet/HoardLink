@@ -31,8 +31,8 @@ helper as the fallback, one watermark, one interest, one claim)::
     router.commit()                                                                          # the watermark moves only now
     router.claim(rows, ref="hoard://kafka/doc/1")                                            # "this mail is mine"
 
-The Faustus helper only runs in the real install (the hub at ``127.0.0.1:8810`` and the app's own ``data`` folder, see :func:`isolation`):
-an app started by a test hub or on test data has no mail unless a gateway serves it, and says so.
+The Faustus helper only runs when both the Hub and the app's data belong to the installation (see :func:`isolation`).
+An app started by a test Hub or on test data has no mail unless a gateway serves it, and says so.
 
 Standard library only (runs inside apps that vendor ``hoard_link/``). Nothing here raises: when the hub cannot be reached the
 answer is ``{"ok": False, "error": "hub unreachable"}``. The hub only returns mail of the spheres the app is allowed in.
@@ -267,23 +267,64 @@ _ISOLATED = {
 }
 
 
-def isolation() -> str:
-    """Why this process must not use the Faustus helper: ``"hub"`` (the hub it talks to is not the real one, ``127.0.0.1:8810``),
-    ``"data"`` (the app's data folder, where its token file lives, is not the ``data`` folder of its own repo, or is not known), or
-    ``""`` for the real install. The helper reads the person's real mailbox, so only the real install may run it; a gateway still
-    serves any app that its hub lets in."""
+def _origin(url: str) -> Optional[tuple[str, str, int]]:
+    """The HTTP(S) origin, including the default port."""
     try:
-        parts = urlsplit(_f._hub())
-        if (parts.hostname or "").lower() not in _LOOPBACK or (parts.port or 80) != REAL_HUB_PORT:
+        parts = urlsplit(url.strip())
+        port = parts.port
+        if parts.scheme not in ("http", "https") or not parts.hostname or port == 0:
+            return None
+    except (AttributeError, ValueError):
+        return None
+    return parts.scheme, parts.hostname, port or (443 if parts.scheme == "https" else 80)
+
+
+def _declared(source: Any) -> tuple[Any, ...]:
+    """Accept a declaration supplied by an install as a value, iterable or callable."""
+    try:
+        value = source() if callable(source) else source
+        if isinstance(value, (str, os.PathLike)):
+            return (value,)
+        return tuple(value or ())
+    except Exception:  # noqa: BLE001 — an unreadable declaration grants nothing
+        return ()
+
+
+def isolation(real_hubs: Any = (), real_data: Any = ()) -> str:
+    """Return ``"hub"`` or ``"data"`` if fallback is isolated, or ``""`` if both match.
+
+    The defaults are the loopback Hub on port 8810 and the installation's exact
+    ``data`` directory. Installations can declare additional origins and absolute
+    data roots (including their descendants), through the environment or the
+    optional arguments. The client's active Hub and token directory must still
+    match independently.
+    """
+    hub = _origin(_f._hub())
+    if not hub:
+        return "hub"
+    if not (hub[1] in _LOOPBACK and hub[2] == REAL_HUB_PORT):
+        hubs = os.environ.get("HOARD_MAIL_REAL_HUB_URLS", "").split(",")
+        if hub not in {_origin(url) for url in (*hubs, *_declared(real_hubs))}:
             return "hub"
-        token = str(_f.status().get("token_file") or "")
-        folder = os.path.normcase(os.path.realpath(os.path.dirname(os.path.abspath(token)))) if token else ""
-        here = Path(__file__).resolve().parent
-        if not folder or not any(os.path.normcase(os.path.realpath(str(up / "data"))) == folder for up in list(here.parents)[:4]):
-            return "data"
-    except (OSError, ValueError):
+
+    token = _f.status().get("token_file")
+    if not token:
         return "data"
-    return ""
+    try:
+        folder = Path(token).parent.resolve()
+        parents = Path(__file__).resolve().parents
+        install = next((parent for parent in parents[1:5] if (parent / "faustus-plugin.json").is_file()), parents[1])
+        if folder == (install / "data").resolve():
+            return ""
+        roots = os.environ.get("HOARD_MAIL_REAL_DATA_DIRS", "").split(os.pathsep)
+        for entry in (*roots, *_declared(real_data)):
+            if isinstance(entry, (str, os.PathLike)):
+                root = Path(entry)
+                if root.is_absolute() and folder.is_relative_to(root.resolve()):
+                    return ""
+    except (OSError, RuntimeError, ValueError):
+        return "data"
+    return "data"
 
 
 def isolation_text(code: str) -> str:
@@ -392,11 +433,14 @@ class FaustusHelper:
 
     ``setting`` is where the person said Faustus lives (a path or a callable; empty = discover it with :func:`faustus_dir`);
     ``owner`` picks the Faustus user when several have accounts; ``python`` overrides the interpreter; ``env_drop_prefixes`` removes
-    the app's own secrets (``("KAFKA_",)``) from the child's environment; ``runner`` replaces ``subprocess.run`` (tests)."""
+    the app's own secrets (``("KAFKA_",)``) from the child's environment; ``runner`` replaces ``subprocess.run`` (tests).
+    ``real_hubs`` and ``real_data`` add installation declarations to the environment defaults (see :func:`isolation`)."""
 
     def __init__(self, setting: Any = None, *, owner: Any = None, python: Any = None, runner: Optional[Callable[..., Any]] = None,
-                 env_drop_prefixes: Iterable[str] = (), ask_hub: bool = True, clock: Callable[[], float] = time.time):
+                 env_drop_prefixes: Iterable[str] = (), ask_hub: bool = True, clock: Callable[[], float] = time.time,
+                 real_hubs: Any = (), real_data: Any = ()):
         self.setting, self.owner, self.python_setting = setting, owner, python
+        self.real_hubs, self.real_data = real_hubs, real_data
         self.runner = runner or subprocess.run
         self.env_drop_prefixes = tuple(env_drop_prefixes)
         self.ask_hub = ask_hub
@@ -410,15 +454,18 @@ class FaustusHelper:
         root = self.faustus_dir()
         return faustus_python(root, self.python_setting) if root else None
 
+    def isolation(self) -> str:
+        return isolation(self.real_hubs, self.real_data)
+
     def available(self) -> bool:
         """True when Faustus's folder and its Python were found and this is the real install (:func:`isolation`). Does not start anything."""
-        return not isolation() and self.faustus_dir() is not None and self.python() is not None
+        return not self.isolation() and self.faustus_dir() is not None and self.python() is not None
 
     def run(self, action: str, payload: Optional[dict[str, Any]] = None, timeout: float = HELPER_TIMEOUT_S) -> dict[str, Any]:
         """Run one helper action (``status | fetch | scan | headers | read | send``, see ``mail_helper.py``) and return its answer.
         Never raises: failures come back as ``{"ok": False, "error": ...}``. No console window opens on Windows. A test hub or test data
         never reaches the person's mailbox: the answer is ``{"ok": False, "isolated": "hub" | "data", "error": ...}`` and nothing runs."""
-        code = isolation()
+        code = self.isolation()
         if code:
             return {"ok": False, "isolated": code, "error": isolation_text(code)}
         root = self.faustus_dir()
@@ -452,6 +499,10 @@ class FaustusHelper:
 
     def status(self, refresh: bool = False) -> dict[str, Any]:
         """``run("status")``, remembered for five minutes (thirty seconds when it failed). Adds ``faustus_dir``."""
+        code = self.isolation()
+        if code:
+            self._status = None
+            return {"ok": False, "isolated": code, "error": isolation_text(code), "faustus_dir": ""}
         key = str(self.faustus_dir() or "") + "|" + _value(self.owner)
         hit = self._status
         if hit and not refresh and hit[1] == key and self.clock() - hit[0] < (STATUS_TTL_S if hit[2].get("ok") else 30.0):

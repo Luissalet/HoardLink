@@ -135,7 +135,7 @@ class FakeMailHub:
 def real_install(monkeypatch):
     """These scenarios are about the helper and the router themselves, with a fake Faustus in a temp folder; the guard that keeps
     test data away from the person's mailbox has its own file (test_fam_mail_isolation.py)."""
-    monkeypatch.setattr(fam_mail, "isolation", lambda: "")
+    monkeypatch.setattr(fam_mail, "isolation", lambda *_: "")
 
 
 @pytest.fixture

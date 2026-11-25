@@ -4,6 +4,7 @@ Every scenario counts the calls of a stand-in for ``subprocess.run``; for test h
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -62,7 +63,8 @@ def faustus(tmp_path):
 def configure(monkeypatch):
     """Point the family client at a hub and a token file, and put the state back afterwards."""
     saved = dict(family._state)
-    for key in ("HOARD_HUB_URL", "HOARD_TOKEN_FILE", "HOARD_HUB_DATA_DIR"):
+    for key in ("HOARD_HUB_URL", "HOARD_TOKEN_FILE", "HOARD_HUB_DATA_DIR",
+                "HOARD_MAIL_REAL_HUB_URLS", "HOARD_MAIL_REAL_DATA_DIRS"):
         monkeypatch.delenv(key, raising=False)
     fam_mail.forget_availability()
 
@@ -161,3 +163,59 @@ def test_the_real_install_still_uses_the_helper(configure, faustus):
     assert not fam_mail.isolation() and helper_for(faustus, runner).available()
     rows = router_for(faustus, runner).scan(since_days=30, limit=10)
     assert [m["subject"] for m in rows] == ["Factura"] and runner.calls == 1
+
+
+@pytest.mark.parametrize("case, code", [
+    ("declared", ""), ("other-port", "hub"), ("other-scheme", "hub"),
+    ("sibling-data", "data"), ("temp-data", "data"), ("relative-root", "data"),
+])
+def test_a_declared_install_requires_both_matches(case, code, configure, faustus, tmp_path, monkeypatch):
+    install_hub = "https://mail.example.test"
+    root = tmp_path / "adopted data"
+    other_root = tmp_path / "second root"
+    hub = {"other-port": install_hub + ":8810", "other-scheme": "http://mail.example.test"}.get(
+        case, install_hub + ":443/"
+    )
+    folder = {"sibling-data": tmp_path / "adopted data-copy", "temp-data": tmp_path / "tests"}.get(
+        case, root / "native" / "shipment" / "data"
+    )
+    monkeypatch.setenv("HOARD_MAIL_REAL_HUB_URLS", f"invalid, {install_hub}, http://second.example.test:8810")
+    roots = [root.name if case == "relative-root" else str(root), str(other_root)]
+    monkeypatch.setenv("HOARD_MAIL_REAL_DATA_DIRS", os.pathsep.join(roots))
+    monkeypatch.chdir(tmp_path)
+    configure(hub, str(folder / "mcp-token"))
+    runner = CountingRunner()
+    helper = helper_for(faustus, runner)
+
+    assert helper.isolation() == code
+    assert helper.available() is (not code)
+    router = fam_mail.MailRouter(helper, hub=NoGateway())
+    rows = router.scan(since_days=30, limit=10)
+    assert len(rows) == runner.calls == (0 if code else 1)
+
+
+def test_the_default_data_folder_belongs_to_the_install(configure, monkeypatch, tmp_path):
+    install = tmp_path / "fleet" / "app"
+    (install / "faustus-plugin.json").parent.mkdir(parents=True)
+    (install / "faustus-plugin.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(fam_mail, "__file__", str(install / "app_pkg" / "hoard_link" / "fam_mail.py"))
+
+    for folder in (install.parent / "data", install / "app_pkg" / "data"):
+        configure(REAL_HUB, str(folder / "mcp-token"))
+        assert fam_mail.isolation() == "data"
+    configure(REAL_HUB, str(install / "data" / "mcp-token"))
+    assert fam_mail.isolation() == ""
+
+
+def test_status_cache_follows_the_installation(configure, faustus, tmp_path):
+    runner = CountingRunner()
+    helper = helper_for(faustus, runner)
+    data = str(REPO / "data" / "mcp-token")
+    configure(REAL_HUB, data)
+    assert helper.status()["ok"] and runner.calls == 1
+    configure("http://127.0.0.1:58778", data)
+    assert helper.status()["isolated"] == "hub" and runner.calls == 1
+    configure(REAL_HUB, str(tmp_path / "mcp-token"))
+    assert helper.status()["isolated"] == "data" and runner.calls == 1
+    configure(REAL_HUB, data)
+    assert helper.status()["ok"] and runner.calls == 2
