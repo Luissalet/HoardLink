@@ -123,17 +123,28 @@ TEST_NODE = {"name": "Studio node", "ssh": "studio-node", "host": "192.0.2.10"}
 @pytest.mark.parametrize("refresh", [False, True], ids=["deploy", "refresh-after-interruption"])
 def test_spark_services_restart_with_the_mail_installation(tmp_path, monkeypatch, refresh):
     from hoard_link.hub.placement import APPS, STACK, Placement
+    from hoard_link.mail_helper import INSTALLATION_FILE
 
-    stack = "/home/spark-test/faustus-stack"
+    stack = str(tmp_path / "remote").replace("\\", "/")
+    monkeypatch.setattr("hoard_link.hub.placement.SPARK_STACK", stack)
+    hermes_data = tmp_path / "remote" / "hermes" / "data"
+    _write(hermes_data / "modules.json", '{"enabled": ["shipments", "products"]}')
+    for module in ("shipments", "products"):
+        _write(hermes_data / module / "mcp-token", f"synthetic-{module}-token")
+    declaration = tmp_path / "remote" / "faustus" / "data" / INSTALLATION_FILE
     unit_dir = tmp_path / ".config" / "systemd" / "user"
     monkeypatch.setattr(pr.Path, "home", staticmethod(lambda: tmp_path))
     reloaded = []
     monkeypatch.setattr(pr.subprocess, "run", lambda argv, **kw: reloaded.append(argv))
-    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path / "hub")), get=lambda _: None)
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path / "hub")), get=lambda _: None,
+                          facet=lambda _: SimpleNamespace(list=lambda: [
+                              {"id": "shared", "mail_accounts": ["*"], "apps": ["phileas", "tantalus"], "name": "Shared"},
+                          ]), apps=[SimpleNamespace(id=id_, name=id_.title()) for id_ in ("hub", "phileas", "tantalus")])
     pl = Placement(hub)
     pl._update(node=TEST_NODE, location="sparks" if refresh else "pc")
     dirs = {app: tmp_path / app for app in APPS}
     restarted = {}
+    code_sent = []
 
     def remote(command):
         operation, *args = command.split()
@@ -143,6 +154,10 @@ def test_spark_services_restart_with_the_mail_installation(tmp_path, monkeypatch
         assert operation == "svc"
         action, *names = args
         if action == "restart":
+            policy = json.loads(declaration.read_text(encoding="utf-8"))
+            assert policy["hub_urls"] == [pr.LINK_URL]
+            assert set(policy["offline"]) == {"phileas", "tantalus"}
+            assert policy["spheres"] == [{"id": "shared", "mail_accounts": ["*"], "apps": ["phileas", "tantalus"]}]
             for name in names:
                 unit = (unit_dir / f"{name}.service").read_text(encoding="utf-8")
                 restarted[name] = dict(line.removeprefix("Environment=").split("=", 1)
@@ -155,15 +170,34 @@ def test_spark_services_restart_with_the_mail_installation(tmp_path, monkeypatch
     monkeypatch.setattr(pl, "_put_text", lambda *a, **kw: None)
     monkeypatch.setattr(pl, "_remote", remote)
     monkeypatch.setattr(pl, "_upload_helper", lambda: None)
+
+    def upload_mail_helper():
+        assert declaration.is_file()
+        code_sent.append("standalone")
+
+    def deploy_code(app, *_args):
+        if refresh:
+            assert declaration.is_file()
+        code_sent.append(app)
+
+    monkeypatch.setattr(pl, "_upload_mail_helper", upload_mail_helper)
     monkeypatch.setattr(pl, "_ensure_node_runtime", lambda: None)
-    monkeypatch.setattr(pl, "_deploy_code", lambda *a: None)
+    monkeypatch.setattr(pl, "_deploy_code", deploy_code)
     monkeypatch.setattr(pl, "_ensure_runtime", lambda *a: None)
     monkeypatch.setattr(pl, "_pairs", lambda dirs: [])
-    monkeypatch.setattr(pl, "_remote_patch", lambda spec: None)
+    monkeypatch.setattr(pl, "_remote_patch", pr.patch)
     monkeypatch.setattr(pl, "_wait_remote_health", lambda: dict.fromkeys(APPS, True))
     monkeypatch.setattr(pl, "_tailnet_urls", lambda: {})
 
     if refresh:
+        token = hermes_data / "products" / "mcp-token"
+        token.unlink()
+        with pytest.raises(ValueError, match="tantalus"):
+            pl._refresh_sparks()
+        assert restarted == {} and code_sent == []
+        assert not declaration.exists()
+        _write(token, "synthetic-products-token")
+
         pr.units(stack)
         reloaded.clear()
         for name in ("hermes", "faustus"):
@@ -180,6 +214,9 @@ def test_spark_services_restart_with_the_mail_installation(tmp_path, monkeypatch
         with pytest.raises(RuntimeError, match="simulated interruption"):
             pl._refresh_sparks()
         assert restarted == {}
+        assert declaration.exists()
+        assert code_sent == ["standalone"]
+        code_sent.clear()
         monkeypatch.setattr(pl, "_ensure_node_runtime", lambda: None)
         pl._refresh_sparks()
     else:
@@ -189,6 +226,7 @@ def test_spark_services_restart_with_the_mail_installation(tmp_path, monkeypatch
         pl._to_sparks()
 
     assert reloaded == [["systemctl", "--user", "daemon-reload"]]
+    assert code_sent == (["standalone", *APPS] if refresh else [*APPS, "standalone"])
     assert set(restarted) == ({"faustus", "hermes"} if refresh else set(APPS))
     link = "http://127.0.0.1:8811"
     assert restarted["hermes"]["HOARD_HUB_URL"] == link

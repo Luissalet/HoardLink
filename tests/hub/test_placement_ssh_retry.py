@@ -17,6 +17,11 @@ from hoard_link.hub import placement as pl
 
 
 class FakeHub:
+    apps = ()
+
+    def facet(self, _):
+        return None
+
     def __init__(self, data_dir):
         self.config = types.SimpleNamespace(data_dir=str(data_dir))
 
@@ -30,6 +35,7 @@ class FakeHub:
 def _placement(tmp_path, monkeypatch):
     placement = pl.Placement(FakeHub(tmp_path / "data"))
     placement._update(node={"name": "Studio node", "ssh": "studio-node"})
+    monkeypatch.setattr(placement, "_upload_mail_helper", lambda: None)
     monkeypatch.setattr(pl.time, "sleep", lambda _s: None)          # no real backoff in the tests
     return placement
 
@@ -169,6 +175,7 @@ def test_a_job_that_dies_after_sending_code_leaves_the_restart_owed(tmp_path, mo
     placement._update(deployed={}, location="sparks")
     monkeypatch.setattr(placement, "local_dirs", lambda: {a: placement.path.parent for a in pl.APPS})
     monkeypatch.setattr(placement, "_upload_helper", lambda: None)
+    monkeypatch.setattr(placement, "_remote_patch", lambda _patches: None)
     monkeypatch.setattr(placement, "_ensure_node", lambda: [])
     monkeypatch.setattr(placement, "_ensure_node_runtime", lambda: None)
     monkeypatch.setattr(placement, "_deploy_code", lambda app_id, folder, dep: dep.update({app_id: "stamp",

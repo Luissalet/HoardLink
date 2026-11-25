@@ -482,10 +482,6 @@ class FaustusHelper:
             request["owner"] = owner
         env = {k: v for k, v in os.environ.items() if not any(k.startswith(p) for p in self.env_drop_prefixes)}
         env["PYTHONIOENCODING"] = "utf-8"
-        key = "HOARD_MAIL_REAL_HUB_URLS"
-        declared = [env.get(key, ""), *_declared(self.real_hubs)]
-        if any(declared):
-            env[key] = ",".join(str(url) for url in declared if url)
         try:
             done = self.runner([python, str(HELPER), str(root)], input=json.dumps(request, ensure_ascii=False), capture_output=True,
                                text=True, encoding="utf-8", timeout=timeout, cwd=str(root), env=env,

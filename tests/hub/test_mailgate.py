@@ -15,10 +15,11 @@ from types import SimpleNamespace
 import pytest
 
 from hoard_link.hub import facets as _facets
-from hoard_link.hub import tools as hub_tools
+from hoard_link.hub import DEFAULT_PORT, tools as hub_tools
 from hoard_link.hub.facets import Reply, Request
 from hoard_link.hub.mailgate import (MailGate, MailStore, domain_of, fold, guess_category, match_interest, normalize_spec)
 from hoard_link.hub.server import make_server
+from hoard_link.mail_helper import INSTALLATION_FILE
 
 from ._hub_fakes import ui_headers
 from .test_hub_and_server import _http
@@ -593,3 +594,47 @@ def test_routes_through_the_real_server(served, gate, hub):
     st, body = _http(served + "/api/mail/messages/1", headers=ui)
     assert st == 200 and body["message"]["category"] == "other"
     assert _http(served + "/api/mail/messages/99", headers=ui)[0] == 404
+
+
+def test_local_mail_installation_declares_only_the_configured_hub(tmp_path, monkeypatch):
+    root = tmp_path / "faustus"
+    root.mkdir()
+    config = SimpleNamespace(data_dir=str(tmp_path / "data"), isolated=True, port=DEFAULT_PORT,
+                             url=f"http://127.0.0.1:{DEFAULT_PORT}")
+    gate = MailGate(SimpleNamespace(config=config))
+    monkeypatch.setattr("hoard_link.hub.mailgate.REPO_DIR", tmp_path)
+    monkeypatch.setattr(gate, "faustus_dir", lambda: root)
+    monkeypatch.setenv("HOARD_MAIL_REAL_HUB_URLS", "http://untrusted.example.test")
+    declaration = root / "data" / INSTALLATION_FILE
+    gate._declare_mail_installation()
+    assert not declaration.exists()
+    config.isolated = False
+    config.port = 59401
+    gate._declare_mail_installation()
+    assert not declaration.exists()
+    config.port = DEFAULT_PORT
+    config.data_dir = str(tmp_path / "isolated-data")
+    gate._declare_mail_installation()
+    assert not declaration.exists()
+    config.data_dir = str(tmp_path / "data")
+    gate._declare_mail_installation()
+    assert json.loads(declaration.read_text(encoding="utf-8")) == {"hub_urls": [config.url]}
+
+
+@pytest.mark.parametrize("broken_facet", [False, True])
+def test_gateway_and_helper_deny_family_mail_when_sphere_policy_is_unavailable(gate, hub, broken_facet):
+    mid = gate.ingest(rec(1, "Synthetic private mail"))["id"]
+    gate.runner.answers.append({"ok": True, "send_ready": True, "accounts": [{"account": "Personal", "id": "1"}]})
+    if broken_facet:
+        def unavailable(*_args):
+            raise OSError("sphere policy unavailable")
+
+        hub._facets_by_id["spheres"] = SimpleNamespace(id="spheres", sphere_of_account=unavailable, app_allowed=unavailable)
+    else:
+        hub._facets_by_id.pop("spheres")
+    assert not gate.helper_account_allowed("people", "Personal", "1", "")
+    assert not gate.mail_accounts("people")["accounts"]
+    assert gate.mail_accounts("hub")["accounts"]
+    path = f"/api/mail/messages/{mid}"
+    assert gate.get(req("GET", path, caller="people"))["status"] == 404
+    assert gate.get(req("GET", path, caller="ui"))["message"]["subject"] == "Synthetic private mail"

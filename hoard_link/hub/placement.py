@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..atomic import read_json
+from ..mail_helper import INSTALLATION_FILE
 from . import placement_remote as pr
 
 APPS = ("faustus", "hermes", "prometheus")
@@ -64,7 +65,7 @@ COMMON_EXCLUDES = ["*.placement-tmp", "*/browser-profile", "browser-profile", "p
 DATA = {
     # WhatsApp's session travels with Faustus (it may run in one place only); its process record stays per machine.
     "faustus": ("data", ["fastembed_cache", "desktop-profile", "desktop-profile-apps", "reach-browser", "logs", "runtime",
-                         "whatsapp/bridge.json", "voice-comparison-test"]),
+                         "whatsapp/bridge.json", "voice-comparison-test", INSTALLATION_FILE]),
     "hermes": ("data", ["legacy-material", "logs", "cache", "*/cache"]),
     "prometheus": ("data", ["cache", "logs"]),
 }
@@ -318,9 +319,13 @@ class Placement:
     def _upload_helper(self) -> None:
         self._ssh_step(f"mkdir -p {STACK}", what="creando la carpeta del stack")
         self._put_text(REMOTE_HELPER, Path(pr.__file__).read_text(encoding="utf-8"))
+
+    def _upload_mail_helper(self) -> None:
         mail = Path(__file__).resolve().parent.parent / "mail_helper.py"
-        if mail.is_file():
-            self._put_text(f"{STACK}/mail_helper.py", mail.read_text(encoding="utf-8"))
+        destination = f"{STACK}/mail_helper.py"
+        pending = f"{destination}.placement-tmp"
+        self._ssh_step(f"cat > {pending} && mv -f {pending} {destination}", input=mail.read_text(encoding="utf-8"),
+                       timeout=60, what="escribiendo el ayudante de correo")
 
     def _stream(self, command: str) -> subprocess.Popen:
         return subprocess.Popen(["ssh", *SSH_OPTS, self._node(), command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -623,6 +628,16 @@ class Placement:
                     out["json"].append({"file": str(dirs["prometheus"] / prom), "path": [key], "value": saved["prometheus"][key]})
         return out
 
+    def _spark_mail_policy(self) -> dict[str, Any]:
+        spheres = self.hub.facet("spheres")
+        return {
+            "file": f"{SPARK_STACK}/faustus/data/{INSTALLATION_FILE}",
+            "hermes_data": f"{SPARK_STACK}/hermes/data",
+            "apps": [{"id": app.id, "name": app.name} for app in self.hub.apps if app.id != "hub"],
+            "spheres": [{key: sphere[key] for key in ("id", "mail_accounts", "apps")}
+                        for sphere in spheres.list()] if spheres is not None else [],
+        }
+
     def _remote_patch(self, spec: dict[str, Any]) -> None:
         self._put_text(f"{STACK}/patch.json", json.dumps(spec))
         self._log("ajustes de la Spark: " + ", ".join(self._remote(f"patch {STACK}/patch.json") or []))
@@ -653,8 +668,7 @@ class Placement:
                     link = self.link.status()
                 if not link["up"]:
                     raise PlacementError(link["error"] or "el enlace al Hub aún no está disponible")
-                command = (f"cd {STACK}/faustus && HOARD_MAIL_REAL_HUB_URLS={pr.LINK_URL} "
-                           f"venv/bin/python {STACK}/mail_helper.py {STACK}/faustus")
+                command = f"cd {STACK}/faustus && venv/bin/python {STACK}/mail_helper.py {STACK}/faustus"
                 out = self._ssh(command, input=payload, timeout=90)
             else:
                 root, python = self.hub.faustus_runtime.installation()
@@ -799,7 +813,10 @@ class Placement:
                 self._log(f"copiando datos de {name} a la Spark", step=f"datos de {name}")
                 res = self._push_dir(local, remote, excludes)
                 self._log(f"{name}: {res['copied']} ficheros ({res['bytes'] / 1e6:.0f} MB), {res['removed']} borrados")
-            self._remote_patch(self._patches(dirs, "sparks", saved))
+            spec = self._patches(dirs, "sparks", saved)
+            spec["mail_installation"] = self._spark_mail_policy()
+            self._remote_patch(spec)
+            self._upload_mail_helper()
             self._log("arrancando en la Spark", step="arrancando en la Spark")
             self._remote(f"svc enable {' '.join(APPS)}")
             self._remote(f"svc restart {' '.join(APPS)}")
@@ -834,6 +851,9 @@ class Placement:
         """On the Spark already: send the code that changed on the PC since, install new dependencies, restart those apps."""
         dirs = self.local_dirs()
         self._upload_helper()
+        # Existing services may launch a vendored helper during refresh. Publish the policy first.
+        self._remote_patch({"mail_installation": self._spark_mail_policy()})
+        self._upload_mail_helper()
         deployed = dict(self.state().get("deployed") or {})
         before = dict(deployed)
         units_changed = self._ensure_node()

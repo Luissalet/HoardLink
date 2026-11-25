@@ -316,6 +316,8 @@ FAKE_SERVER = textwrap.dedent('''
 def make_faustus(tmp_path: Path, host: str = "imap.example.com", name: str = "faustus") -> Path:
     root = tmp_path / name
     (root / "mcp_servers").mkdir(parents=True)
+    (root / "data").mkdir()
+    (root / "data" / "mail_installation.json").write_text('{"hub_urls": ["http://test-hub.invalid:59184"]}', encoding="utf-8")
     (root / "mcp_servers" / "email_server.py").write_text(FAKE_SERVER.replace("__HOST__", host), encoding="utf-8")
     return root
 
@@ -345,7 +347,6 @@ def helper_identity(tmp_path, monkeypatch, isolated):
     token.write_text("synthetic-mail-app-token", encoding="utf-8")
     monkeypatch.setenv("PYTHONPATH", str(transport))
     monkeypatch.setenv("ODYSSEUS_DATA_DIR", str(data))
-    monkeypatch.setenv("HOARD_MAIL_REAL_HUB_URLS", "http://test-hub.invalid:59184")
     family.configure("ledger", token_file=str(token))
     return token
 

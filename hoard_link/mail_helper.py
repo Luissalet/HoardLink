@@ -57,6 +57,7 @@ import email
 import email.header
 import email.utils
 import hashlib
+import hmac
 import html as _html
 import io
 import json
@@ -69,6 +70,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
+from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -85,7 +87,9 @@ ATTACHMENT_EXT = {"pdf", "png", "jpg", "jpeg", "webp", "heic", "tif", "tiff"}
 SEND_TIMEOUT_S = 25
 HEADER_CHUNK = 250
 GMAIL_CATEGORIES = {"promotions": "promotions", "social": "social", "updates": "updates", "forums": "forums"}
-DEFAULT_CALLERS = {"kafka", "hermes", "phileas", "tantalus"}
+INSTALLATION_FILE = "mail_installation.json"
+DEFAULT_CALLERS = {"kafka", "hermes", "ledger", "phileas", "tantalus"}
+OFFLINE_CALLERS = {"phileas", "tantalus"}
 CALLER_REQUIRED = "Llamante de correo no identificado / Mail caller not identified"
 HUB_UNAVAILABLE = "El Hub de la instalación no responde / The installation Hub is unavailable"
 CALLER_DENIED = "La app no tiene acceso al ayudante de correo / The app has no access to the mail helper"
@@ -98,19 +102,30 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _real_hubs() -> list[str]:
-    declared = os.environ.get("HOARD_MAIL_REAL_HUB_URLS", "").strip() or "http://127.0.0.1:8810"
-    hubs = []
-    for raw in declared.split(","):
-        raw = raw.strip().rstrip("/")
-        try:
+class _HubUnreachable(OSError):
+    """Connection failed before the Hub returned a response."""
+
+
+def _installation(data_dir: Path) -> tuple[dict, list[str]]:
+    try:
+        record = json.loads((data_dir / INSTALLATION_FILE).read_text(encoding="utf-8"))
+        declared = record.get("hub_urls") if isinstance(record, dict) else None
+        if not isinstance(declared, list) or not declared:
+            raise ValueError
+        hubs = []
+        for raw in declared:
+            if not isinstance(raw, str) or any(c.isspace() for c in raw):
+                raise ValueError
+            raw = raw.rstrip("/")
             url = urlsplit(raw)
-            if (url.scheme in ("http", "https") and url.hostname and url.username is None
-                    and not (url.path or url.query or url.fragment)):
-                hubs.append(raw)
-        except ValueError:
-            continue
-    return hubs
+            port = url.port  # also validates the port syntax and range
+            if (url.scheme not in ("http", "https") or not url.hostname or url.username is not None
+                    or port == 0 or url.path or url.query or url.fragment):
+                raise ValueError
+            hubs.append(raw)
+        return record, hubs
+    except (OSError, ValueError):
+        raise OSError(HUB_UNAVAILABLE) from None
 
 
 def _hub_read(hub: str, path: str, *, token: str = "", account: tuple[str, str, str] | None = None) -> dict:
@@ -119,14 +134,20 @@ def _hub_read(hub: str, path: str, *, token: str = "", account: tuple[str, str, 
         headers["X-Hoard-Mail-Account"] = json.dumps(account, ensure_ascii=True)
     opener = build_opener(ProxyHandler({}), _NoRedirect())
     try:
-        with opener.open(Request(hub + path, headers=headers), timeout=3) as reply:
-            body = json.loads(reply.read(512 * 1024))
+        reply = opener.open(Request(hub + path, headers=headers), timeout=3)
     except HTTPError as exc:
         exc.close()
         if exc.code == 401:
             return {}
         raise OSError(HUB_UNAVAILABLE) from None
-    except (URLError, OSError, ValueError):
+    except (URLError, TimeoutError, ConnectionError):
+        raise _HubUnreachable(HUB_UNAVAILABLE) from None
+    except (OSError, ValueError):
+        raise OSError(HUB_UNAVAILABLE) from None
+    try:
+        with reply:
+            body = json.loads(reply.read(512 * 1024))
+    except (OSError, ValueError, HTTPException):
         raise OSError(HUB_UNAVAILABLE) from None
     if not isinstance(body, dict) or body.get("ok") is not True:
         raise OSError(HUB_UNAVAILABLE)
@@ -141,33 +162,68 @@ def _registered_apps(body: dict) -> dict[str, str]:
             if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"] not in ("", "hub")}
 
 
-def registered_mail_apps() -> dict[str, str]:
-    for hub in _real_hubs():
+def registered_mail_apps(data_dir: str | Path) -> dict[str, str]:
+    record, hubs = _installation(Path(data_dir))
+    for hub in hubs:
         try:
             return _registered_apps(_hub_read(hub, "/api/family/mail-apps"))
-        except OSError:
+        except _HubUnreachable:
             continue
+    if record.get("offline"):
+        return _registered_apps(record)
     raise OSError(HUB_UNAVAILABLE)
 
 
-def _resolve_caller(request: dict) -> tuple[str, str, str, dict[str, str]]:
+def _resolve_caller(request: dict, data_dir: Path) -> tuple[str, str, str, dict[str, str], list[dict]]:
     caller = request.get("caller")
     app = caller.get("app") if isinstance(caller, dict) else None
     token = caller.get("token") if isinstance(caller, dict) else None
     if not isinstance(app, str) or not app.strip() or not isinstance(token, str) or not re.fullmatch(r"[!-~]+", token):
         raise ValueError(CALLER_REQUIRED)
-    hubs = _real_hubs()
-    unreachable = not hubs
+    record, hubs = _installation(data_dir)
     for hub in hubs:
         try:
             answer = _hub_read(hub, "/api/family/caller", token=token)
-            if answer.get("app") == app:
-                return app, token, hub, _registered_apps(answer)
-        except OSError:
-            unreachable = True
-    if unreachable:
+        except _HubUnreachable:
+            continue
+        if answer.get("app") != app:
+            raise ValueError(CALLER_REQUIRED)
+        return app, token, hub, _registered_apps(answer), []
+    offline = record.get("offline")
+    if not isinstance(offline, dict):
         raise OSError(HUB_UNAVAILABLE)
-    raise ValueError(CALLER_REQUIRED)
+    fingerprint = offline.get(app)
+    if (app not in OFFLINE_CALLERS or not isinstance(fingerprint, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+            or not hmac.compare_digest(fingerprint, hashlib.sha256(token.encode("ascii")).hexdigest())):
+        raise ValueError(CALLER_REQUIRED)
+    spheres = record.get("spheres")
+    if not isinstance(spheres, list) or any(
+        not isinstance(s, dict) or not isinstance(s.get("id"), str)
+        or any(not isinstance(s.get(key), list) or any(not isinstance(x, str) for x in s[key])
+               for key in ("mail_accounts", "apps"))
+        for s in spheres
+    ):
+        raise OSError(HUB_UNAVAILABLE)
+    return app, token, "", _registered_apps(record), spheres
+
+
+def _offline_account_allowed(spheres: list[dict], app: str, account: tuple[str, str, str]) -> bool:
+    # Same precedence as the live mail gate: compare each account identifier to the default sphere.
+    default = next((s["id"] for s in spheres if any(x.strip() == "*" for x in s["mail_accounts"])), "personal")
+    for candidate in filter(None, account):
+        keys = {value.strip().lower() for value in (candidate, account[2]) if value.strip()}
+        found = next((s["id"] for s in spheres if any(x.strip().lower() in keys and x.strip() != "*"
+                                                    for x in s["mail_accounts"])), default)
+        if found != default:
+            break
+    else:
+        found = default
+    for sphere in spheres:
+        if sphere["id"] == found:
+            apps = {value.strip().lower() for value in sphere["apps"]}
+            return "*" in apps or app in apps
+    return False
 
 
 @contextlib.contextmanager
@@ -265,13 +321,17 @@ def _accounts(server, wanted):
     return rows
 
 
-def _visible_accounts(rows: list[dict], app: str, token: str, hub: str) -> list[dict]:
+def _visible_accounts(rows: list[dict], app: str, token: str, hub: str, spheres: list[dict]) -> list[dict]:
     visible = []
     for row in rows:
         account_id = str(row.get("id") or "")
         if not account_id:
             continue
         descriptor = (account_key(row), account_id, account_address(row))
+        if not hub:
+            if _offline_account_allowed(spheres, app, descriptor):
+                visible.append(row)
+            continue
         answer = _hub_read(hub, "/api/family/caller", token=token, account=descriptor)
         if answer.get("app") != app:
             raise ValueError(CALLER_REQUIRED)
@@ -1166,11 +1226,14 @@ def _mail_owner(server, owner: str):
 
 def handle(request: dict, root: str) -> dict:
     try:
-        app, token, hub, registered = _resolve_caller(request)
+        # The installation declares the validator in its own data folder. Launcher variables
+        # never select this file or its destinations.
+        installation_dir = Path(root).resolve() / "data"
+        app, token, hub, registered, spheres = _resolve_caller(request, installation_dir)
     except (ValueError, OSError) as exc:
         return {"ok": False, "error": str(exc)}
     if app != "hub":
-        data_dir = Path(root) / os.environ.get("ODYSSEUS_DATA_DIR", "data")
+        data_dir = installation_dir.parent / os.environ.get("ODYSSEUS_DATA_DIR", "data")
         try:
             enabled = mail_callers(data_dir, registered)
         except OSError:
@@ -1186,7 +1249,7 @@ def handle(request: dict, root: str) -> dict:
         try:
             rows = _accounts(server, request.get("account"))
             if app != "hub":
-                rows = _visible_accounts(rows, app, token, hub)
+                rows = _visible_accounts(rows, app, token, hub, spheres)
         except (ValueError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:  # noqa: BLE001

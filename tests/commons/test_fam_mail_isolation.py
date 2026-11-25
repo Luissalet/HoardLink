@@ -84,7 +84,7 @@ def helper_for(faustus, runner):
     return fam_mail.FaustusHelper(str(faustus), python=sys.executable, runner=runner, ask_hub=False)
 
 
-def test_helper_uses_configured_identity_and_propagates_declared_hub(configure, faustus, tmp_path):
+def test_helper_uses_configured_identity_without_exporting_a_validator(configure, faustus, tmp_path):
     hub = "https://hub.example.test:9831"
     data = tmp_path / "mail-app"
     data.mkdir()
@@ -96,7 +96,7 @@ def test_helper_uses_configured_identity_and_propagates_declared_hub(configure, 
                                    real_hubs=[hub], real_data=[data])
     assert helper.run("status", {"caller": {"app": "hub", "token": "ignore"}})["ok"]
     assert json.loads(runner.requests[0]["input"])["caller"] == {"app": "probe", "token": "synthetic-token"}
-    assert runner.requests[0]["env"]["HOARD_MAIL_REAL_HUB_URLS"] == hub
+    assert "HOARD_MAIL_REAL_HUB_URLS" not in runner.requests[0]["env"]
 
 
 def router_for(faustus, runner, mode="auto", hub=None):
