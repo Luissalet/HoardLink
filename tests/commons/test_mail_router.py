@@ -432,6 +432,9 @@ class Recorder:
 def test_helper_run_builds_the_command_and_keeps_secrets_out(tmp_path, monkeypatch, isolated):
     clean_env(monkeypatch, tmp_path)
     root = make_faustus(tmp_path)
+    token = tmp_path / "mcp-token"
+    token.write_text("synthetic-app-token", encoding="utf-8")
+    family.configure("paperwork", token_file=str(token))
     monkeypatch.setenv("KAFKA_SECRET", "s3cret")
     monkeypatch.setenv("KEEP_ME", "yes")
     rec = Recorder()
@@ -441,7 +444,8 @@ def test_helper_run_builds_the_command_and_keeps_secrets_out(tmp_path, monkeypat
     assert out == {"ok": True, "error": "", "messages": []}                          # the last JSON line, whatever came before
     (cmd, kw), = rec.calls
     assert cmd == [sys.executable, str(fam_mail.HELPER), str(root.resolve())]
-    assert json.loads(kw["input"]) == {"subject_terms": ["x"], "action": "scan", "owner": "nora"}
+    assert json.loads(kw["input"]) == {"subject_terms": ["x"], "action": "scan", "owner": "nora",
+                                       "caller": {"app": "paperwork", "token": "synthetic-app-token"}}
     assert kw["timeout"] == 7 and kw["cwd"] == str(root.resolve()) and kw["encoding"] == "utf-8"
     assert "KAFKA_SECRET" not in kw["env"] and kw["env"]["KEEP_ME"] == "yes" and kw["env"]["PYTHONIOENCODING"] == "utf-8"
     assert kw["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)         # no console window on Windows

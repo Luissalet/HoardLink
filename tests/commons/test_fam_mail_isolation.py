@@ -4,6 +4,7 @@ Every scenario counts the calls of a stand-in for ``subprocess.run``; for test h
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -20,13 +21,15 @@ OK_ANSWER = '{"ok": true, "error": "", "messages": [{"subject": "Factura", "mess
 
 
 class CountingRunner:
-    """A ``subprocess.run`` stand-in that only counts."""
+    """A ``subprocess.run`` stand-in that records the helper invocations."""
 
     def __init__(self):
         self.calls = 0
+        self.requests = []
 
     def __call__(self, cmd, **kw):
         self.calls += 1
+        self.requests.append(kw)
         return subprocess.CompletedProcess(cmd, 0, OK_ANSWER, "")
 
 
@@ -79,6 +82,21 @@ def configure(monkeypatch):
 
 def helper_for(faustus, runner):
     return fam_mail.FaustusHelper(str(faustus), python=sys.executable, runner=runner, ask_hub=False)
+
+
+def test_helper_uses_configured_identity_and_propagates_declared_hub(configure, faustus, tmp_path):
+    hub = "https://hub.example.test:9831"
+    data = tmp_path / "mail-app"
+    data.mkdir()
+    token_file = data / "mcp-token"
+    token_file.write_text("synthetic-token\n", encoding="utf-8")
+    configure(hub, str(token_file))
+    runner = CountingRunner()
+    helper = fam_mail.FaustusHelper(str(faustus), python=sys.executable, runner=runner, ask_hub=False,
+                                   real_hubs=[hub], real_data=[data])
+    assert helper.run("status", {"caller": {"app": "hub", "token": "ignore"}})["ok"]
+    assert json.loads(runner.requests[0]["input"])["caller"] == {"app": "probe", "token": "synthetic-token"}
+    assert runner.requests[0]["env"]["HOARD_MAIL_REAL_HUB_URLS"] == hub
 
 
 def router_for(faustus, runner, mode="auto", hub=None):

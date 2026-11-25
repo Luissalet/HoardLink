@@ -474,12 +474,18 @@ class FaustusHelper:
         python = faustus_python(root, self.python_setting)
         if python is None:
             return {"ok": False, "error": "Faustus has no venv with Python"}
-        request = {**(payload or {}), "action": str(action)}
+        app = _f.status().get("app") or ""
+        caller = {"app": app, "token": _f._token()}
+        request = {**(payload or {}), "action": str(action), "caller": caller}
         owner = _value(self.owner)
         if owner and not request.get("owner"):
             request["owner"] = owner
         env = {k: v for k, v in os.environ.items() if not any(k.startswith(p) for p in self.env_drop_prefixes)}
         env["PYTHONIOENCODING"] = "utf-8"
+        key = "HOARD_MAIL_REAL_HUB_URLS"
+        declared = [env.get(key, ""), *_declared(self.real_hubs)]
+        if any(declared):
+            env[key] = ",".join(str(url) for url in declared if url)
         try:
             done = self.runner([python, str(HELPER), str(root)], input=json.dumps(request, ensure_ascii=False), capture_output=True,
                                text=True, encoding="utf-8", timeout=timeout, cwd=str(root), env=env,
