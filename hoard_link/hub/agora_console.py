@@ -32,7 +32,7 @@ from typing import Any, Optional
 from urllib.parse import quote, urlencode, urlsplit
 
 from . import agora_faustus
-from . import agora_auto_review, agora_liveness, agora_ranks, agora_worker_processes, agora_worker_profiles
+from . import agora_auto_review, agora_liveness, agora_quota_floors, agora_ranks, agora_worker_processes, agora_worker_profiles
 from . import work_admission
 from .agora import AgoraError, FINAL
 from .agora_capacity import codex_executable, codex_observation
@@ -1486,6 +1486,7 @@ class AgoraConsoleFacet(Facet):
                 "person": self.hub.config.person_profile,
                 "foreman": foreman.status({"space_id": self.space_id}).get("foreman") if foreman else None,
                 "agents": list(agents.values()), "workers": workers, "quota_pools": usage.get("providers", []),
+                "quota_floors": agora_quota_floors.view(agora, usage) if agora is not None else None,
                 "capacity_observations": {"codex": codex_observation()},
                 "activity": activity, "messages": messages, "console_turns": console_turns,
                 "console_sessions": console_sessions, "native_preferences": native_preferences,
@@ -1561,6 +1562,14 @@ class AgoraConsoleFacet(Facet):
         facet = self.hub.facet("agora") if hasattr(self.hub, "facet") else None
         agora = getattr(facet, "agora", None)
         return agora.for_space(self.space_id) if agora is not None and self.space_id != 'ecosystem' else agora
+
+    def quota_floors(self, args: Optional[dict] = None, actor: str = "") -> dict:
+        agora = self._agora()
+        if agora is None:
+            return {"ok": False, "status": 503, "error": "Agora is unavailable. / El Ágora no está disponible."}
+        if args is None:
+            return {"ok": True, **agora_quota_floors.view(agora)}
+        return agora_quota_floors.save(agora, args, actor)
 
     @property
     def person_id(self) -> str:
@@ -2181,6 +2190,8 @@ class AgoraConsoleFacet(Facet):
                 return {"ok": False, "status": 409, "error": "No available provider for the requested capability"}
             for candidate in picked:
                 reply = self._create_worker_now({**args, **candidate}, actor, reserved, worker_id or str(uuid.uuid4()))
+                if reply.get("code") == "quota_below_floor" and not provider and not args.get("confirm_quota_floor"):
+                    continue
                 if args.get("name") or (reply.get("worker") or {}).get("state") != "unavailable":
                     return reply
                 worker_id = None
@@ -2202,6 +2213,12 @@ class AgoraConsoleFacet(Facet):
                     "error": "template must be one of: " + ", ".join(agora_worker_profiles.TEMPLATES)}
         if leader_id not in {row[0] for row in LEADERS} or not task or len(task) > MAX_TASK_CHARS:
             return {"ok": False, "status": 400, "error": f"leader_id and task (1-{MAX_TASK_CHARS} characters) are required"}
+        if leader_id in agora_quota_floors.PROVIDERS:
+            leaders = {leader_id, next(agent for provider, _, agent in LEADERS if provider == leader_id)}
+            if leader_id == "codex":
+                leaders.add(self._leader_identity(leader_id))
+            if refusal := agora_quota_floors.worker_guard(self._agora(), leader_id, actor, args, leaders):
+                return refusal
         scope = {}
         if leader_id == "faustus":
             if "file_scope" in args:
@@ -2957,6 +2974,8 @@ class AgoraConsoleFacet(Facet):
             launched = self._create_worker({"leader_id": leader, "task": prompt, "rank": "support",
                                             "model": args.get("model") or (row["model"] if same_model else ""),
                                             "effort": args.get("effort") or (row["effort"] if same_model else ""),
+                                            "confirm_quota_floor": args.get("confirm_quota_floor"),
+                                            "lang": args.get("lang"),
                                             **scope},
                                            actor, worker_id=replacement["worker_id"])
         except Exception:
@@ -2965,6 +2984,8 @@ class AgoraConsoleFacet(Facet):
         if (launched.get("worker") or {}).get("state") not in ("running", "completed", "incomplete"):
             detail = launched.get("error") or launched.get("warning") or "Replacement could not start. / No se pudo iniciar el relevo."
             self._finish_replacement(worker_id, replacement, "failed", detail)
+            if launched.get("code") == "quota_below_floor":
+                return launched
             return {"ok": False, "status": launched.get("status", 409), "error": detail}
         self._start_replacement_handoff(worker_id)
         return self._replacement_reply(replacement)
@@ -3801,6 +3822,8 @@ class AgoraConsoleFacet(Facet):
             return self.for_space(sid).get(req)
         if req.path == "/api/agora/console/overview":
             return self.overview(req.q_bool("refresh"))
+        if req.path == "/api/agora/console/quota_floors":
+            return self.quota_floors()
         if req.path == "/api/agora/console/leaders":
             return self.leader_states(req.q_bool("refresh"))
         if req.path == "/api/agora/console/name":
@@ -3859,6 +3882,8 @@ class AgoraConsoleFacet(Facet):
             return self.send_message(args, actor)
         if req.path == "/api/agora/console/preferences":
             return self.set_preferences(args, actor)
+        if req.path == "/api/agora/console/quota_floors":
+            return self.quota_floors(args, actor)
         if req.path == "/api/agora/console/model_rank":
             if self._person_page(req):
                 args["_person"] = True               # the person says which rank a model's sessions start with
@@ -3922,6 +3947,20 @@ class AgoraConsoleFacet(Facet):
             {"name": "hub_agora_console_preferences", "description": "Save a verified provider model and reasoning effort; Codex/Cursor independent console leaders and the child workers of Codex, Cursor and Claude consume the saved preferences. Faustus limitations are reported explicitly.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "model": {"type": "string", "description": "A model of the provider's catalog."}, "effort": {"type": "string"}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id", "model"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
+            {"name": "hub_agora_quota_floors",
+             "description": "Read the space’s weekly quota floors and latest provider readings. An unmeasured weekly value is null.",
+             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+             "annotations": {"readOnlyHint": True}},
+            {"name": agora_quota_floors.SET_TOOL,
+             "description": "Replace a space’s weekly quota floors. Omit a provider to clear its floor. Use the revision you read. A change returns undo arguments.",
+             "inputSchema": {"type": "object", "properties": {
+                 "expected_revision": {"type": "integer", "minimum": 0},
+                 "floors": {"type": "object", "properties": {
+                     key: {"type": "number", "minimum": 0, "maximum": 100}
+                     for key in agora_quota_floors.PROVIDERS}, "additionalProperties": False},
+                 "actor": {"type": "string", "maxLength": 64}},
+                 "required": ["expected_revision", "floors", "actor"], "additionalProperties": False},
+             "annotations": {"readOnlyHint": False}},
             {"name": "hub_agora_console_color", "description": "Set the colour that outlines one leader's messages and avatar in the Agora console (#rrggbb; empty restores the default). Shared by the browser and the desktop app.",
              "inputSchema": {"type": "object", "properties": {"leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]}, "color": {"type": "string", "maxLength": 7}, "actor": {"type": "string", "maxLength": 64}}, "required": ["leader_id"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
@@ -3931,7 +3970,7 @@ class AgoraConsoleFacet(Facet):
             {"name": agora_auto_review.TOOL, "description": "Read automatic reviews and corrections with their task revisions, worker states and reasons for waiting.",
              "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
-            {"name": "hub_agora_console_worker", "description": "Start, stop, continue or replace a console worker, or register an external worker. Reconcile without leader fields lists live orphan processes. Stop an orphan with stop_orphan and its exact confirm_process from the listing; the directing agent must confirm this irreversible stop. Reconcile with leader fields still confirms an ambiguous leader session.",
+            {"name": "hub_agora_console_worker", "description": "Start, stop, continue or replace a console worker, or register an external worker. Below a weekly quota floor, a directing lead can retry with the exact confirm_quota_floor object (provider_id and floor_percent). Reconcile without leader fields lists live orphan processes. Stop an orphan with stop_orphan and its exact confirm_process from the listing; the directing agent must confirm this irreversible stop. Reconcile with leader fields still confirms an ambiguous leader session.",
              "inputSchema": {"type": "object", "properties": {
                  "action": {"type": "string", "enum": ["create", "propose_files", "stop", "stop_orphan", "register", "heartbeat", "finish", "reconcile", "continue", "replace"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
@@ -3947,6 +3986,11 @@ class AgoraConsoleFacet(Facet):
                  "rank": {"type": "string", "enum": ["director", "lead", "agent", "support"], "description": "With create: the session's rank on this server. Never higher than the caller's own, unless the person starts it."},
                  "task": {"type": "string", "maxLength": MAX_TASK_CHARS}, "confirm_idle": {"type": "boolean"},
                  "template": {"type": "string", "enum": list(agora_worker_profiles.TEMPLATES)},
+                 "confirm_quota_floor": {"type": "object", "properties": {
+                     "provider_id": {"enum": list(agora_quota_floors.PROVIDERS)},
+                     "floor_percent": {"type": "number", "minimum": 0, "maximum": 100}},
+                     "required": ["provider_id", "floor_percent"], "additionalProperties": False},
+                 "lang": {"enum": ["es", "en"]},
                  "session_id": {"type": "string"}, "model_source": {"type": "string"},
                  "result": {"type": "string", "maxLength": 20000}, "actor": {"type": "string", "maxLength": 64}}, "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
@@ -3974,6 +4018,8 @@ class AgoraConsoleFacet(Facet):
             'hub_agora_console_leaders': lambda a: self.leader_states(bool(a.get('refresh'))),
             'hub_agora_console_message': lambda a: write(self.send_message, a),
             'hub_agora_console_preferences': lambda a: write(self.set_preferences, a),
+            'hub_agora_quota_floors': lambda _a: self.quota_floors(),
+            agora_quota_floors.SET_TOOL: lambda a: write(self.quota_floors, a),
             'hub_agora_console_color': lambda a: write(self.set_color, a),
             'hub_agora_console_worker': lambda a: write(self.worker, a),
             TUTOR_TOOL: lambda a: write(lambda args, actor: tutor_instinct(self, args, actor), a),

@@ -22,6 +22,7 @@ from hoard_link.hub.tools import call
 class FakeAgora:
     def __init__(self):
         self.posts = []
+        self.db = SimpleNamespace(one=lambda *_: None)
 
     def agents(self):
         return {"ok": True, "agents": [{"id": x, "state": "idle"} for x in
@@ -36,7 +37,8 @@ class FakeAgora:
         return {"ok": True, "thread": {"id": THREAD_ID}, "messages": []}
 
     def usage(self):
-        return {"ok": True, "providers": [{"provider_id": "codex", "pools": [{"pool_id": "team"}]}]}
+        return {"ok": True, "providers": [{"provider_id": "codex", "pools": [
+            {"pool_id": "team", "reported_at": "2026-10-20T12:00:00+00:00", "windows": []}]}]}
 
 
 class FakeHub:
