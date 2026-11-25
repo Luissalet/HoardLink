@@ -15,6 +15,11 @@ the absolute path of its worktree root in `cwd`, the expected Git revision in
 configured batch. Use one batch for an ordinary suite and disjoint test
 selectors for a suite that needs to run in parts.
 
+Hub batches can interleave files from `tests/` and `tests/hub/`. Preserve the
+file order when reproducing a missing-fixture error. The parent conftest
+keeps the Hub package collector stable so fixtures from `tests/hub/conftest.py`
+remain available to every file in that package.
+
 ```json
 {
   "repositories": [

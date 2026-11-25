@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
+from pathlib import Path
 from typing import Callable, Optional
 
 import httpx
-import os
-
 import pytest
 
 from hoard_link.config import LinkConfig
@@ -13,6 +13,20 @@ from hoard_link.link import Link
 
 
 ISOLATED_HUB_PORT = 1
+_HUB_TESTS = Path(__file__).parent / "hub"
+_HUB_PACKAGE = pytest.StashKey[pytest.Package]()
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collect_directory(path: Path, parent: pytest.Collector) -> pytest.Package | None:
+    """Keep Hub fixtures visible when explicit test files interleave the two packages."""
+    if path != _HUB_TESTS:
+        return None
+    # Collecting an explicit file in tests/ can recreate the tests/hub package node.
+    # Pytest binds its conftest fixtures to the first node, so reuse it on later scans.
+    if _HUB_PACKAGE not in parent.stash:
+        parent.stash[_HUB_PACKAGE] = pytest.Package.from_parent(parent, path=path)
+    return parent.stash[_HUB_PACKAGE]
 
 
 class FakeClock:
