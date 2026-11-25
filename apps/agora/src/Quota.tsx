@@ -1,4 +1,5 @@
-import {providerNames} from './api';
+import {useState,type FormEvent} from 'react';
+import {api,providerNames} from './api';
 import {lang,locale,tr} from './locale';
 
 type Window = {
@@ -7,8 +8,10 @@ type Window = {
   source?: string;
   remaining_percent?: number | null;
   reset_at?: string | number;
+  reported_at?: string;
   measurement?: string;
   stale?: boolean;
+  window_duration_mins?: number;
 };
 
 export type QuotaProvider = {
@@ -24,6 +27,81 @@ export type QuotaProvider = {
     windows: Window[];
   }[];
 };
+
+export type QuotaFloorState = {
+  revision: number;
+  floors: Record<string,number | undefined>;
+  providers: Record<string,{weekly?: {remaining_percent: number | null; reported_at: string | null}} | undefined>;
+};
+type FloorWrite = {expected_revision: number; floors: QuotaFloorState['floors']};
+const floorRoute = '/api/agora/console/quota_floors';
+const weeklyProviders = ['claude','codex'];
+const unmeasured = tr('Sin medir','Unmeasured');
+const number = new Intl.NumberFormat(locale,{maximumFractionDigits:2});
+const time = new Intl.DateTimeFormat(locale,{hour:'2-digit',minute:'2-digit'});
+
+export function confirmQuotaFloor(policy:QuotaFloorState|null, provider:string) {
+  const floor = policy?.floors[provider];
+  const remaining = policy?.providers[provider]?.weekly?.remaining_percent;
+  if (floor == null || remaining == null || remaining >= floor) return undefined;
+  const name = providerNames[provider] || provider;
+  const confirmed = window.confirm(tr(
+    `${name} tiene ${number.format(remaining)}% de cuota semanal libre. El suelo es ${number.format(floor)}%. ¿Crear el ayudante de todas formas?`,
+    `${name} has ${number.format(remaining)}% of weekly quota left. The floor is ${number.format(floor)}%. Create the worker anyway?`));
+  return confirmed ? {provider_id:provider, floor_percent:floor} : null;
+}
+
+export function WeeklyQuotaFloor({policy,provider}:{policy:QuotaFloorState|null;provider:string}) {
+  const floor=policy?.floors[provider];
+  if (floor == null) return null;
+  const remaining=policy?.providers[provider]?.weekly?.remaining_percent;
+  const below=remaining != null && remaining < floor;
+  return <p className={below?'weekly-quota-floor is-below':'weekly-quota-floor'}>
+    {tr('Suelo semanal','Weekly floor')} {number.format(floor)}%
+    {remaining==null?' · '+unmeasured:below?' · '+tr('Por debajo del suelo','Below floor'):''}
+  </p>;
+}
+
+export function QuotaFloorSettings({policy,refresh}:{policy:QuotaFloorState;refresh:()=>Promise<void>}) {
+  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [undo,setUndo]=useState<FloorWrite>();
+  async function write(values:FloorWrite, undoing=false) {
+    setBusy(true);setError('');
+    try {
+      const result=await api<{undo?:{arguments:FloorWrite}}>(floorRoute,values);
+      if (undoing) setUndo(undefined);
+      else if (result.undo) setUndo(result.undo.arguments);
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+      await refresh();
+    } finally {setBusy(false);}
+  }
+  function submit(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data=new FormData(event.currentTarget);
+    const floors:FloorWrite['floors']={};
+    for (const id of weeklyProviders) {
+      const value=data.get(id);
+      if (typeof value==='string' && value.trim()) floors[id]=Number(value);
+    }
+    void write({expected_revision:policy.revision,floors});
+  }
+  return <details id="quota-floors" className="quota-settings" open={location.hash==='#quota-floors'||undefined}>
+    <summary>{tr('Suelos de cuota del espacio','Space quota floors')}</summary>
+    <form key={policy.revision} onSubmit={submit}>
+      <small>{tr('Porcentaje semanal libre. Deja vacío para quitar el suelo.','Weekly percentage remaining. Leave blank to remove a floor.')}</small>
+      {weeklyProviders.map(id=><label key={id}>{providerNames[id]} <input type="number" min="0" max="100" step="any"
+        inputMode="decimal" name={id} defaultValue={policy.floors[id]}/></label>)}
+      <div className="quota-settings-actions">
+        <button className="primary" disabled={busy}>{tr('Guardar','Save')}</button>
+        {undo?.expected_revision===policy.revision&&
+          <button className="icon-button" type="button" disabled={busy} onClick={()=>void write(undo,true)}>{tr('Deshacer','Undo')}</button>}
+      </div>
+      {error&&<small role="alert">{error}</small>}
+    </form>
+  </details>;
+}
 
 // Existing snapshots already store these collector labels. Keep custom labels verbatim.
 const quotaLabels = new Map(Object.entries({
@@ -59,6 +137,9 @@ const quotaLabels = new Map(Object.entries({
 }));
 
 function windowLabel(window: Window, poolLabel?: string) {
+  if (['codex.primary','codex.secondary'].includes(window.window_id) && window.window_duration_mins === 7*24*60) {
+    return tr('Semana · todos los modelos','Week · all models');
+  }
   const label = window.label || poolLabel;
   if (!label) return tr('Cuenta compartida', 'Shared account');
   if (lang === 'es') {
@@ -72,25 +153,29 @@ function windowLabel(window: Window, poolLabel?: string) {
 
 export function Quota({provider}:{provider?:QuotaProvider}) {
   if (!provider?.pools?.length) return <div className="quota unknown">
-    <span>{tr('Cuota sin datos', 'No quota data')}</span><div className="meter"/>
+    <div className="quota-label"><span>{tr('Cuota sin datos', 'No quota data')}</span><strong>{unmeasured}</strong></div>
+    <div className="meter"/>
   </div>;
   return provider.pools.map(pool => <div className="quota" key={pool.pool_id}>
     {(pool.windows || []).map(window => {
       const label = windowLabel(window, pool.pool_label);
-      const remaining = window.remaining_percent;
+      const remaining = pool.stale || window.stale ? null : window.remaining_percent;
       const used = remaining == null ? null : Math.round(100 - remaining);
       const count = pool.shared_agent_count ?? pool.agent_ids?.length;
       const shared = count === 1 ? tr('1 agente comparte esta cuota', '1 agent shares this quota') :
         tr(`${count || 'Varios'} agentes comparten esta cuota`, `${count || 'Several'} agents share this quota`);
+      const observed = window.reported_at || pool.reported_at;
       const notes = [
-        pool.reported_at && tr('Actualizado ', 'Updated ') + new Date(pool.reported_at).toLocaleTimeString(locale, {hour:'2-digit',minute:'2-digit'}),
-        pool.stale || window.stale ? tr('Dato caducado', 'Stale data') : window.measurement === 'declared' ?
-          tr('Declarado', 'Declared') : remaining == null ? '' : tr(`${Math.round(remaining)}% libre`, `${Math.round(remaining)}% remaining`),
+        observed && (remaining != null && window.measurement === 'measured' ? tr('Medido ', 'Measured ') :
+          tr('Última consulta ', 'Last checked ')) + time.format(new Date(observed)),
+        pool.stale || window.stale ? tr('Dato caducado', 'Stale data') :
+          window.measurement === 'declared' ? tr('Declarado', 'Declared') : '',
+        remaining == null ? '' : tr(`${number.format(remaining)}% libre`,`${number.format(remaining)}% remaining`),
         window.reset_at && tr('reinicia ', 'resets ') + new Date(typeof window.reset_at === 'number' ? window.reset_at * 1000 : window.reset_at).toLocaleDateString(locale,{day:'2-digit',month:'2-digit'}),
       ].filter(Boolean);
       const name = providerNames[provider.provider_id] || provider.provider_id;
       return <div key={window.window_id} title={[window.source || pool.source, shared].filter(Boolean).join(' · ')}>
-        <div className="quota-label"><span>{label}</span><strong>{used == null ? tr('Sin datos','Unknown') : tr(`${used}% usado`,`${used}% used`)}</strong></div>
+        <div className="quota-label"><span>{label}</span><strong>{used == null ? unmeasured : tr(`${used}% usado`,`${used}% used`)}</strong></div>
         <div className="meter" role={used == null ? undefined : 'meter'} aria-label={tr(`${name}: ${label} usada`, `${name}: ${label} used`)}
           aria-valuenow={used ?? undefined} aria-valuemin={0} aria-valuemax={100}>
           <span className={remaining != null && remaining <= 10 ? 'full' : ''} style={{width:`${remaining == null ? 0 : 100 - remaining}%`}}/>

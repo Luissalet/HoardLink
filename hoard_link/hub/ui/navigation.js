@@ -286,13 +286,67 @@
     container.append(footer);
     if(!homeData && !homeLoading && !homeError)loadHome();
   }
+  function projectQuota(container, sid, policy) {
+    const section = node('section', 'hub-quota-overview');
+    const settings = '/agora/?space_id=' + encodeURIComponent(sid) + '&lang=' + tr('es', 'en') + '#quota-floors';
+    heading(section, tr('Cuota de proveedores', 'Provider quota'), tr('Suelos de cuota', 'Quota floors'), settings);
+    const names = {claude:'Claude', codex:'Codex', cursor:'Cursor', faustus:'Faustus'};
+    const labels = {
+      'claude.session': tr('Sesión', 'Session'),
+      'cursor.models': tr('Modelos de Cursor', 'Cursor models'),
+      'cursor.other': tr('Otros modelos', 'Other models'),
+      'cursor.plan': tr('Plan', 'Plan'),
+      'cursor.on-demand': tr('Bajo demanda', 'On demand'),
+    };
+    const number = new Intl.NumberFormat(tr('es-ES', 'en-GB'), {maximumFractionDigits: 2});
+    const time = new Intl.DateTimeFormat(tr('es-ES', 'en-GB'), {
+      day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit',
+    });
+    const unknown = tr('Sin medir', 'Unmeasured');
+    const week = tr('Semana', 'Week');
+    for (const [id, name] of Object.entries(names)) {
+      const provider = policy.providers[id];
+      const windows = provider?.windows || [];
+      const row = node('div', 'hub-attention-row');
+      const lines = node('span');
+      lines.append(node('strong', '', name));
+      for (const window of windows) {
+        const original = es() ? window.label : window.label?.replace(/^Semana · /, 'Week · ');
+        const label = window.window_id === provider.weekly?.window_id ? week : labels[window.window_id] || (
+          window.window_id.endsWith('.primary') ? tr('Principal', 'Primary') :
+          window.window_id.endsWith('.secondary') ? tr('Secundaria', 'Secondary') : original);
+        const remaining = window.remaining_percent == null || window.stale ? unknown :
+          tr(`${number.format(window.remaining_percent)}% libre`, `${number.format(window.remaining_percent)}% remaining`);
+        const declared = window.measurement === 'declared' && !window.stale ? tr(' · Declarado', ' · Declared') : '';
+        lines.append(node('small', '', [label, remaining].filter(Boolean).join(' · ') + declared));
+      }
+      if (!windows.length) lines.append(node('small', '', unknown));
+      const floor = policy.floors[id];
+      if (floor != null) {
+        if (!provider?.weekly?.window_id) lines.append(node('small', '', week + ' · ' + unknown));
+        lines.append(node('small', '', tr(`Suelo semanal ${number.format(floor)}%`, `Weekly floor ${number.format(floor)}%`)));
+      }
+      if (provider?.reported_at) {
+        const measured = windows.some(w => w.measurement === 'measured' && !w.stale);
+        const label = measured ? tr('Medido ', 'Measured ') : tr('Última consulta ', 'Last checked ');
+        const stamp = node('time', 'hint', label + time.format(new Date(provider.reported_at)));
+        stamp.dateTime = provider.reported_at;
+        lines.append(stamp);
+      }
+      row.append(lines);
+      section.append(row);
+    }
+    container.append(section);
+  }
   function projectOverview(container) {
     const sid=spaceId(), space=activeSpace();
     decisionSummary(container, sid);
     const section=node('section','hub-project-overview');container.append(section);
     heading(section,tr('Dónde continuar','Where to continue'));
     rowLink(section,tr('Entrar en el ágora del proyecto','Enter this project’s Agora'),tr('Tareas, conversaciones, revisiones y decisiones de este proyecto.','This project’s tasks, conversations, reviews and decisions.'),'#hub/agora','hub-project-agora');
-    const b=boards.get(sid);const recent=node('div','hub-project-recent');section.append(recent);
+    const b=boards.get(sid);
+    if(b?.quota_floors)projectQuota(section,sid,b.quota_floors);
+    const recent=node('div','hub-project-recent');section.append(recent);
     if(b?.error){recent.append(node('p','hub-empty',tr('No se ha podido consultar la actividad del proyecto.','Project activity could not be loaded.')));const retry=node('button','ghost',tr('Reintentar','Retry'));retry.onclick=()=>{boards.delete(sid);show('project');};recent.append(retry);}
     else if(!b || b.loading) {recent.append(node('p','hub-loading',tr('Consultando el trabajo del proyecto…','Checking project work…')));loadProjectBoard(sid);}
     else {
@@ -381,7 +435,7 @@
   }
   function show(next) {
     if(next==='home' && route!=='home'){homeData=null;homeError=false;if(homeLoading){homeEpoch++;homeLoading=false;}}
-    if(next==='project' && route==='agora')boards.delete(spaceId());
+    if(next==='project' && route!=='project' && !boards.get(spaceId())?.loading)boards.delete(spaceId());
     if (!groups.some(group => group.id === next) && !['project', 'resources', 'agora', 'help', 'today'].includes(next) && !facetButtons().some(btn => btn.dataset.tab === next)) next = 'home';
     route = next;
     $('#hub-landing').hidden = true; $('#hub-resources').hidden = true; $('#hub-apps').hidden = true;

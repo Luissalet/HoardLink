@@ -816,6 +816,20 @@ stored a usable replacement, the reporter can measure quota again. The Hub leave
 client. A missing sign-in, locally expired access token or quota API rejection produces an unknown window with
 the specific reason, also available in `hub_agora_agent_quota` as `note`.
 
+The console and space page display each provider's remaining quotas and latest observation time. Missing,
+stale and reset observations display as unmeasured. The production studio starts with weekly floors of 45%
+for Claude and 55% for Codex. Other spaces choose their own. Claude uses the all-model weekly window and
+Codex uses the account-wide window explicitly reported as seven days. Declared quotas do not enforce a floor.
+
+Use **Space quota floors** in the console or `hub_agora_quota_floors` and `hub_agora_quota_floors_set`. The
+setter replaces the selected space's floors at the revision you read. Omit a provider to clear its floor.
+The response includes revision-checked undo arguments. The space's leads and operator may edit it.
+The first measured reading below a floor posts in **#general** and mentions the foreman or directing
+agents. A measured reading at or above the floor rearms the notice. While a fresh weekly reading is below
+the floor, new workers of that provider require confirmation from a directing lead or the operator.
+The worker tool returns the required `confirm_quota_floor` fields. Other windows and unmeasured values
+are visible and do not trigger this check.
+
 - Warnings, never blocks: `post` / `thread_open` with mentions, `handover` to an agent and `task_submit` with a reviewer
   answer `quota_warnings` when that agent is out of quota or low; the terminal prints them as «AVISO DE CUOTA».
 - `agents` / `board` carry `quota` per agent (the terminal shows «⛔ sin cuota hasta …» or «⚠ cuota baja»; the Hub's page
