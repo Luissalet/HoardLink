@@ -1,7 +1,6 @@
 """Localised console chrome with real Hub tasks and quota snapshots."""
 
 import os
-from pathlib import Path
 
 import pytest
 
@@ -17,6 +16,7 @@ from ._hub_fakes import make_hub, serve
         "week": "Semana · todos los modelos", "model_week": "Semana · Fixture",
         "used": "35% usado", "remaining": "65% libre", "reset": "reinicia",
         "unknown": "Sin medir", "declared": "Declarado", "stale": "Dato caducado",
+        "floor": "Suelo semanal 45%", "measured": "Medido",
         "browse": "Consultar modelos", "model": "Modelo del líder", "search": "Buscar tareas",
         "pending": "Pendiente", "completed": "Finalizado", "unassigned": "Sin asignar", "open": "Abierta",
         "reply": "Respuesta", "live": "En directo", "board": "Pizarra", "files": "Ficheros en uso",
@@ -27,6 +27,7 @@ from ._hub_fakes import make_hub, serve
         "week": "Week · all models", "model_week": "Week · Fixture",
         "used": "35% used", "remaining": "65% remaining", "reset": "resets",
         "unknown": "Unmeasured", "declared": "Declared", "stale": "Stale data",
+        "floor": "Weekly floor 45%", "measured": "Measured",
         "browse": "Browse models", "model": "Leader model", "search": "Search tasks",
         "pending": "Pending", "completed": "Completed", "unassigned": "Unassigned", "open": "Open",
         "reply": "Reply", "live": "Live", "board": "Board", "files": "Files in use",
@@ -35,7 +36,7 @@ from ._hub_fakes import make_hub, serve
 ])
 def test_console_renders_localised_chrome_and_quota(tmp_path, monkeypatch, lang, copy):
     browser_api = pytest.importorskip("playwright.sync_api")
-    if not (Path(__file__).parents[2] / "apps/agora/dist/index.html").exists():
+    if not (AgoraConsoleFacet._static_root() / "index.html").exists():
         pytest.skip("Build apps/agora before browser tests")
     monkeypatch.setattr(AgoraConsoleFacet, "_provider_data", lambda self, force=False:
                         {leader_id: {"state": "unavailable"} for leader_id, *_ in LEADERS})
@@ -95,12 +96,15 @@ def test_console_renders_localised_chrome_and_quota(tmp_path, monkeypatch, lang,
                  "used_percent": 1, "remaining_percent": 99, "reset_at": "2000-11-25T20:00:00Z"},
             ]})
             page.reload()
-            quota = page.locator(".leader").filter(has=page.get_by_role("heading", name="Claude", exact=True)).locator(".quota")
+            claude = page.locator(".leader").filter(has=page.get_by_role("heading", name="Claude", exact=True))
+            quota = claude.locator(".quota")
             expect(page.get_by_text(copy["quota"], exact=True)).to_have_count(3)
             expect(quota.get_by_text(copy["week"], exact=True)).to_be_visible()
             expect(quota.get_by_role("meter", name=f"Claude: {copy['week']} {'usada' if lang == 'es' else 'used'}")).to_have_attribute("aria-valuenow", "35")
             expect(quota.get_by_text(copy["used"], exact=True)).to_be_visible()
             expect(quota.get_by_text(copy["remaining"], exact=False)).to_contain_text(copy["reset"])
+            expect(quota.get_by_text(copy["remaining"], exact=False)).to_contain_text(copy["measured"])
+            expect(claude.locator(".weekly-quota-floor")).to_have_text(copy["floor"])
             expect(quota.get_by_text(copy["model_week"], exact=True)).to_be_visible()
             expect(quota.get_by_text("Ventana personalizada", exact=True)).to_be_visible()
             expect(quota.get_by_text(copy["declared"], exact=False)).to_be_visible()

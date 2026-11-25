@@ -34,7 +34,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from . import agora_faustus
 from . import agora_auto_review, agora_liveness, agora_quota_floors, agora_ranks, agora_worker_processes, agora_worker_profiles
 from . import work_admission
-from .agora import AgoraError, FINAL
+from .agora import Agora, AgoraError, FINAL
 from .agora_capacity import codex_executable, codex_observation
 from .agora_leader_state import build_leader_states, resolve_paths
 from .facets import Facet, Reply, Request
@@ -1486,7 +1486,7 @@ class AgoraConsoleFacet(Facet):
                 "person": self.hub.config.person_profile,
                 "foreman": foreman.status({"space_id": self.space_id}).get("foreman") if foreman else None,
                 "agents": list(agents.values()), "workers": workers, "quota_pools": usage.get("providers", []),
-                "quota_floors": agora_quota_floors.view(agora, usage) if agora is not None else None,
+                "quota_floors": agora_quota_floors.view(agora, usage) if isinstance(agora, Agora) else None,
                 "capacity_observations": {"codex": codex_observation()},
                 "activity": activity, "messages": messages, "console_turns": console_turns,
                 "console_sessions": console_sessions, "native_preferences": native_preferences,
@@ -1565,7 +1565,7 @@ class AgoraConsoleFacet(Facet):
 
     def quota_floors(self, args: Optional[dict] = None, actor: str = "") -> dict:
         agora = self._agora()
-        if agora is None:
+        if not isinstance(agora, Agora):
             return {"ok": False, "status": 503, "error": "Agora is unavailable. / El Ágora no está disponible."}
         if args is None:
             return {"ok": True, **agora_quota_floors.view(agora)}
@@ -2213,11 +2213,12 @@ class AgoraConsoleFacet(Facet):
                     "error": "template must be one of: " + ", ".join(agora_worker_profiles.TEMPLATES)}
         if leader_id not in {row[0] for row in LEADERS} or not task or len(task) > MAX_TASK_CHARS:
             return {"ok": False, "status": 400, "error": f"leader_id and task (1-{MAX_TASK_CHARS} characters) are required"}
-        if leader_id in agora_quota_floors.PROVIDERS:
+        agora = self._agora() if leader_id in agora_quota_floors.PROVIDERS else None
+        if isinstance(agora, Agora):
             leaders = {leader_id, next(agent for provider, _, agent in LEADERS if provider == leader_id)}
             if leader_id == "codex":
                 leaders.add(self._leader_identity(leader_id))
-            if refusal := agora_quota_floors.worker_guard(self._agora(), leader_id, actor, args, leaders):
+            if refusal := agora_quota_floors.worker_guard(agora, leader_id, actor, args, leaders):
                 return refusal
         scope = {}
         if leader_id == "faustus":
