@@ -103,6 +103,12 @@ Origins match by scheme, host and port. Declared data roots include their descen
 in the installed service environment. `HOARD_HUB_URL` and `family.configure` select the active Hub and
 token directory for a run.
 
+On a Spark, placement writes the Hermes and Faustus service environments. Both declare the Hub's
+reverse link at `http://127.0.0.1:8811` and their own `data` roots under `~/faustus-stack`. Hermes also
+uses that link as its active Hub. Its root covers the Phileas and Tantalus module directories.
+Faustus keeps its separate placement link configuration for coordination. Placement reloads changed
+units and restarts the affected services when deploying or refreshing on the Spark.
+
 When either check fails, `helper.available()` is `False` and
 `helper.run` runs nothing and answers `{"ok": False, "isolated": "hub" | "data", "error": "sin pasarela en un Hub de
 pruebas: correo desactivado / no mail gateway in a test hub: mail is off"}` (the `data` case says «con datos de pruebas»).
