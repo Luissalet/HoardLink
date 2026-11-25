@@ -8,6 +8,7 @@ import os
 import sqlite3
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -117,6 +118,88 @@ def _hub(tmp_path):
 
 
 TEST_NODE = {"name": "Studio node", "ssh": "studio-node", "host": "192.0.2.10"}
+
+
+@pytest.mark.parametrize("refresh", [False, True], ids=["deploy", "refresh-after-interruption"])
+def test_spark_services_restart_with_the_mail_installation(tmp_path, monkeypatch, refresh):
+    from hoard_link.hub.placement import APPS, STACK, Placement
+
+    stack = "/home/spark-test/faustus-stack"
+    unit_dir = tmp_path / ".config" / "systemd" / "user"
+    monkeypatch.setattr(pr.Path, "home", staticmethod(lambda: tmp_path))
+    reloaded = []
+    monkeypatch.setattr(pr.subprocess, "run", lambda argv, **kw: reloaded.append(argv))
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path / "hub")), get=lambda _: None)
+    pl = Placement(hub)
+    pl._update(node=TEST_NODE, location="sparks" if refresh else "pc")
+    dirs = {app: tmp_path / app for app in APPS}
+    restarted = {}
+
+    def remote(command):
+        operation, *args = command.split()
+        if operation == "units":
+            assert args == [STACK]
+            return pr.units(stack)
+        assert operation == "svc"
+        action, *names = args
+        if action == "restart":
+            for name in names:
+                unit = (unit_dir / f"{name}.service").read_text(encoding="utf-8")
+                restarted[name] = dict(line.removeprefix("Environment=").split("=", 1)
+                                       for line in unit.splitlines() if line.startswith("Environment="))
+        else:
+            assert action == "enable"
+
+    monkeypatch.setattr(pl, "local_dirs", lambda: dirs)
+    monkeypatch.setattr(pl, "_ssh_step", lambda *a, **kw: "8388608")
+    monkeypatch.setattr(pl, "_put_text", lambda *a, **kw: None)
+    monkeypatch.setattr(pl, "_remote", remote)
+    monkeypatch.setattr(pl, "_upload_helper", lambda: None)
+    monkeypatch.setattr(pl, "_ensure_node_runtime", lambda: None)
+    monkeypatch.setattr(pl, "_deploy_code", lambda *a: None)
+    monkeypatch.setattr(pl, "_ensure_runtime", lambda *a: None)
+    monkeypatch.setattr(pl, "_pairs", lambda dirs: [])
+    monkeypatch.setattr(pl, "_remote_patch", lambda spec: None)
+    monkeypatch.setattr(pl, "_wait_remote_health", lambda: dict.fromkeys(APPS, True))
+    monkeypatch.setattr(pl, "_tailnet_urls", lambda: {})
+
+    if refresh:
+        pr.units(stack)
+        reloaded.clear()
+        for name in ("hermes", "faustus"):
+            path = unit_dir / f"{name}.service"
+            before = path.read_text(encoding="utf-8").splitlines(keepends=True)
+            path.write_text("".join(line for line in before
+                                    if not line.startswith(("Environment=HOARD_HUB_URL=", "Environment=HOARD_MAIL_REAL_"))),
+                            encoding="utf-8")
+
+        def interrupted():
+            raise RuntimeError("simulated interruption")
+
+        monkeypatch.setattr(pl, "_ensure_node_runtime", interrupted)
+        with pytest.raises(RuntimeError, match="simulated interruption"):
+            pl._refresh_sparks()
+        assert restarted == {}
+        monkeypatch.setattr(pl, "_ensure_node_runtime", lambda: None)
+        pl._refresh_sparks()
+    else:
+        monkeypatch.setattr(pl, "_stop_local", lambda: None)
+        monkeypatch.setattr(pl, "_stop_local_whatsapp", lambda root: None)
+        monkeypatch.setattr(pl, "_mail", lambda *a, **kw: None)
+        pl._to_sparks()
+
+    assert reloaded == [["systemctl", "--user", "daemon-reload"]]
+    assert set(restarted) == ({"faustus", "hermes"} if refresh else set(APPS))
+    link = "http://127.0.0.1:8811"
+    assert restarted["hermes"]["HOARD_HUB_URL"] == link
+    assert restarted["hermes"]["HOARD_MAIL_REAL_HUB_URLS"] == link
+    assert restarted["hermes"]["HOARD_MAIL_REAL_DATA_DIRS"] == f"{stack}/hermes/data"
+    assert restarted["hermes"]["FAUSTUS_DIR"] == f"{stack}/faustus"
+    assert restarted["faustus"]["HOARD_MAIL_REAL_HUB_URLS"] == link
+    assert restarted["faustus"]["HOARD_MAIL_REAL_DATA_DIRS"] == f"{stack}/faustus/data"
+    assert restarted["faustus"]["FAUSTUS_HUB_LINK"] == f"{stack}/hub-link.json"
+    assert "HOARD_HUB_URL" not in restarted["faustus"]
+    assert pl.state().get("deployed", {}) == {}
 
 
 def test_empty_placement_does_not_invent_a_target(tmp_path):

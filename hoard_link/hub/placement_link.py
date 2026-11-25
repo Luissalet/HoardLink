@@ -28,8 +28,8 @@ import time
 from typing import Any, Callable, Optional
 
 from . import agora_person
+from .placement_remote import LINK_PORT, LINK_URL
 
-LINK_PORT = 8811                 # on the Spark's loopback; 8810 stays free for a Hub of its own
 CHECK_S = 20.0                   # how often the tunnel is looked at
 RETRY_S = 60.0                   # how long to wait after a tunnel that would not open
 SETTLE_S = 4.0                   # a tunnel that is still there after this opened
@@ -179,7 +179,7 @@ class HubLink:
 
     def link_file(self) -> dict[str, Any]:
         from .placement import SPARK_STACK
-        return {"url": f"http://127.0.0.1:{LINK_PORT}", "token_file": f"{SPARK_STACK}/hub-token", "hub": platform.node(),
+        return {"url": LINK_URL, "token_file": f"{SPARK_STACK}/hub-token", "hub": platform.node(),
                 "port": self._hub_port()}
 
     def _tell(self, node: str) -> None:

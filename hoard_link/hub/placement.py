@@ -825,13 +825,18 @@ class Placement:
         deployed = dict(self.state().get("deployed") or {})
         before = dict(deployed)
         units_changed = self._ensure_node()
+        if units_changed:
+            # The next attempt sees the updated units on disk even if this attempt never restarts them.
+            for app_id in units_changed:
+                deployed[app_id + ":restart"] = True
+            self._update(deployed=deployed)
         self._ensure_node_runtime()
         changed = []
         for app_id in APPS:
             self._deploy_code(app_id, dirs[app_id], deployed)
             self._update(deployed=deployed)                      # the restart it owes survives a failure in the next step
             self._ensure_runtime(app_id, dirs[app_id], deployed)
-            if (deployed.get(app_id) != before.get(app_id) or app_id in units_changed
+            if (deployed.get(app_id) != before.get(app_id)
                     or deployed.get(app_id + ":requirements") != before.get(app_id + ":requirements")
                     or deployed.get(app_id + ":restart")):
                 changed.append(app_id)

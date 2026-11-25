@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import IO, Optional
 
 SERVICES = ("faustus", "hermes", "prometheus")
+LINK_PORT = 8811  # on the Spark's loopback; 8810 stays free for a Hub of its own
+LINK_URL = f"http://127.0.0.1:{LINK_PORT}"
 
 
 # ====================================================================================== manifests and transfers
@@ -306,10 +308,12 @@ TAILNET = "*.ts.net"
 UNITS = {
     # FAUSTUS_HUB_LINK: where the Hub of the PC is while its tunnel is open (placement_link.py), for the Agora and coordination.
     "faustus": ("Faustus", "faustus", "server_runtime.py serve --port 7000 --token placement", "6G",
-                {"FAUSTUS_HUB_LINK": "{stack}/hub-link.json"}),
+                {"FAUSTUS_HUB_LINK": "{stack}/hub-link.json", "HOARD_MAIL_REAL_HUB_URLS": LINK_URL,
+                 "HOARD_MAIL_REAL_DATA_DIRS": "{stack}/faustus/data"}),
     "hermes": ("Hermes's Hoard", "hermes", "-m hermes_hoard --no-browser", "2G",
-               {"FAUSTUS_DIR": "{stack}/faustus", "HERMES_ALLOWED_HOSTS": TAILNET, "TANTALUS_ALLOWED_HOSTS": TAILNET,
-                "PHILEAS_ALLOWED_HOSTS": TAILNET}),
+               {"FAUSTUS_DIR": "{stack}/faustus", "HOARD_HUB_URL": LINK_URL, "HOARD_MAIL_REAL_HUB_URLS": LINK_URL,
+                "HOARD_MAIL_REAL_DATA_DIRS": "{stack}/hermes/data",
+                "HERMES_ALLOWED_HOSTS": TAILNET, "TANTALUS_ALLOWED_HOSTS": TAILNET, "PHILEAS_ALLOWED_HOSTS": TAILNET}),
     "prometheus": ("Prometheus's Hoard", "prometheus", "-m prometheus_hoard --no-browser", "1G",
                    {"PROMETHEUS_ALLOWED_HOSTS": TAILNET, "PROMETHEUS_SSH_DIR": "{stack}/prometheus-ssh"}),
 }

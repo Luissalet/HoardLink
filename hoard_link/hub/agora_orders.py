@@ -966,16 +966,17 @@ def _decisions(self: Any, order_id: Optional[int], limit: int = 200) -> list[dic
         sql += " AND d.order_id=?"
         params.append(order_id)
     rows = self.db.query(sql + " ORDER BY d.id DESC LIMIT ?", (*params, limit))
-    decisions = []
     names: dict[str, str] = {}
-    for row in rows:
-        situation = _load(row["situation"], {})
-        # Before receipts stored the actor, only the person's pages could write them.
-        actor = situation.get("decided_by") or _person_id(self)
-        if actor not in names:
-            names[actor] = _member_name(self, actor)
-        decisions.append({**dict(row), "situation": situation, "decided_by": {"id": actor, "name": names[actor]}})
-    return decisions
+    return [_decision_record(self, row, names) for row in rows]
+
+
+def _decision_record(self: Any, row: Any, names: dict[str, str]) -> dict[str, Any]:
+    situation = _load(row["situation"], {})
+    # Before receipts stored the actor, only the person's pages could write them.
+    actor = situation.get("decided_by") or _person_id(self)
+    if actor not in names:
+        names[actor] = _member_name(self, actor)
+    return {**dict(row), "situation": situation, "decided_by": {"id": actor, "name": names[actor]}}
 
 
 def order_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:

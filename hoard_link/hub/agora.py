@@ -66,6 +66,7 @@ from . import agora_work
 from . import agora_orders
 from . import agora_drafts
 from . import agora_decision_history
+from . import agora_list_query
 from . import agora_person
 from . import agora_debate
 from . import agora_review
@@ -2942,6 +2943,8 @@ class Agora:
             if a.get(key):
                 where.append(f"lower({key})=lower(?)")
                 params.append(str(a[key]))
+        if agora_list_query.enabled(a):
+            return agora_list_query.tasks(self, a, where, params)
         limit = max(1, min(int(a.get("limit") or 200), 500))
         offset = max(0, int(a.get('cursor') or 0))
         sql = "SELECT * FROM tasks" + (" WHERE " + " AND ".join(where) if where else "") + \
@@ -3279,7 +3282,10 @@ class Agora:
     @_space_operation
     def decisions(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """The space's recorded thread resolutions and production decisions."""
-        limit = max(1, min(int((a or {}).get("limit") or 50), 500))
+        a = a or {}
+        if agora_list_query.enabled(a) or a.get("cursor"):
+            return agora_list_query.decisions(self, a)
+        limit = max(1, min(int(a.get("limit") or 50), 500))
         with self.db.tx(immediate=False):
             rows = self.db.query(
                 "SELECT id, title, kind, status, resolution, resolved_by, updated, space_id FROM threads "
@@ -3741,9 +3747,11 @@ TOOLS: list[dict[str, Any]] = [
                              "force": {"type": "boolean", "description": "take it now even if from_agent still sends heartbeats"}},
                             ["agent", "from_agent", "to_agent", "reason"])},
     {"name": "hub_agora_tasks", "read": True,
-     "description": "List tasks: status (or 'active'), owner, repo, kind. Follow next_cursor to read all tasks.",
+     "description": "List tasks by status (or 'active'), owner, repo, kind and date. Use fields or compact for small "
+                    "pages, or count_only for the total. Follow next_cursor with the same filters.",
      "inputSchema": _schema({"status": {"type": "string"}, "owner": {"type": "string"}, "repo": {"type": "string"},
-                             "kind": {"type": "string"}, "limit": {"type": "integer"}, "cursor": {"type": "string"}}, [])},
+                             "kind": {"type": "string"}, "limit": {"type": "integer"}, "cursor": {"type": "string"},
+                             **agora_list_query.properties(agora_list_query.TASK_DATES)}, [])},
     {"name": "hub_agora_task", "read": True,
      "description": "One task with its whole conversation and its locks.",
      "inputSchema": _schema({"task_id": _TASK, "agent": {"type": "string", "description": "who reads; marks the task thread as read"},
@@ -3806,8 +3814,10 @@ TOOLS: list[dict[str, Any]] = [
                     "finished (approved, exempt or unreviewed), reviews given, decisions, and what waits now.",
      "inputSchema": _schema({"hours": {"type": "number"}}, [])},
     {"name": "hub_agora_decisions", "read": True,
-     "description": "The space's decision log: resolved threads and recorded production decisions, newest first.",
-     "inputSchema": _schema({"limit": {"type": "integer"}}, [])},
+     "description": "List resolved threads and recorded production decisions. Use fields, compact or a date range "
+                    "for small pages, or count_only for the total. Follow next_cursor with the same filters.",
+     "inputSchema": _schema({"limit": {"type": "integer"}, "cursor": {"type": "string"},
+                             **agora_list_query.properties(agora_list_query.DECISION_DATES)}, [])},
     {"name": "hub_agora_threads", "read": True,
      "description": "List threads (escalated first, then open, newest first), filtered by status or kind; task threads "
                     "only with include_tasks. With agent, each thread says how many messages by others that agent "
@@ -4070,6 +4080,8 @@ class AgoraFacet(Facet):
 
     def _tasks(self, a: dict[str, Any]) -> dict[str, Any]:
         out = self.agora.tasks(a)
+        if agora_list_query.enabled(a):
+            return out
         return self._enrich(out, out["tasks"])
 
     def _sync(self, a: dict[str, Any]) -> dict[str, Any]:
@@ -4295,7 +4307,7 @@ class AgoraFacet(Facet):
             q['skip_muted'] = str(q.get('skip_muted', '')).lower() in ('1', 'true', 'yes')
             return self._run(self._inbox, q)
         if p == "/api/agora/tasks":
-            return self._run(self._tasks, q)
+            return self._run(self._tasks, agora_list_query.http_args(q))
         if p in ("/api/agora/activity", "/api/agora/timeline"):
             for key in ("task_id", "after_id", "idle_after_s", "limit"):
                 if key in q and re.fullmatch(r"[0-9]+", q[key]):
@@ -4345,7 +4357,7 @@ class AgoraFacet(Facet):
         if p == "/api/agora/locks":
             return self._run(ag.locks, q)
         if p == "/api/agora/decisions":
-            out = self._run(ag.decisions, q)
+            out = self._run(ag.decisions, agora_list_query.http_args(q))
             if out.get("ok"):
                 out["viewer"] = ag.person_id if self._person_surface(req) else None
             return out
