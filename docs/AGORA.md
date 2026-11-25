@@ -809,10 +809,12 @@ An isolated catalogue, alternate port or separate data directory defaults pollin
 `--data-dir` change. Set `HOARD_AGORA_QUOTA_POLLING=1` to opt in on that instance.
 See [the console quota readers](agora-app.md#quotas-where-each-reading-comes-from).
 
-When the Claude quota reader finds an expired access token or a 401, the reporter lets the installed CLI attempt
-its native sign-in refresh with a bounded, tool-free diagnostic. It then retries the quota read. A repeated
-diagnostic is suppressed for 30 minutes for the same credentials file version. Only an explicit authentication
-refusal is reported as expired. If the reporter still cannot verify quota, it reports an unknown window.
+When the Claude quota reader finds an expired access token or the quota endpoint returns 401 or 403, the reporter
+checks for explicit logout with the installed CLI's `auth status`. The check is cached for up to 30 minutes per
+credentials file version. The reporter rereads the file after the check and on every poll. If the client has
+stored a usable replacement, the reporter can measure quota again. The Hub leaves credential renewal to the
+client. A missing sign-in, locally expired access token or quota API rejection produces an unknown window with
+the specific reason, also available in `hub_agora_agent_quota` as `note`.
 
 - Warnings, never blocks: `post` / `thread_open` with mentions, `handover` to an agent and `task_submit` with a reviewer
   answer `quota_warnings` when that agent is out of quota or low; the terminal prints them as «AVISO DE CUOTA».

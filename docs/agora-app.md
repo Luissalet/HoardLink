@@ -13,7 +13,7 @@ On narrow screens, the standalone console gives the space selector and wordmark 
 The console reads every provider's quota where its own client does, the way unified usage trackers such as CodexBar do. The Hub starts the readers; each publishes through `usage-report` as `<provider>-capacity`, hashes the account identity into an opaque pool key and never stores or logs a token.
 
 - **Codex**: the official CLI's app-server (`account/rateLimits/read`), every 90 s (`agora_capacity.py`).
-- **Claude**: `GET https://api.anthropic.com/api/oauth/usage` with Claude Code's OAuth token from `~/.claude/.credentials.json` (`CLAUDE_CONFIG_DIR` when set), every 2 min: session (5 h), the week for all models and per-model weeks. The file is only read. An expired session is published as an unknown window that says how to renew it (`claude /login` on the PC); the reading comes back on the next poll.
+- **Claude**: `GET https://api.anthropic.com/api/oauth/usage` with Claude Code's OAuth token from `~/.claude/.credentials.json` (`CLAUDE_CONFIG_DIR` when set), every 2 min: session (5 h), the week for all models and per-model weeks. The reporter reads the file and distinguishes missing sign-in, expired stored access and rejected quota requests. Once the client stores a usable token, the next poll measures quota again.
 - **Cursor**: `GET https://cursor.com/api/usage-summary` with the Cursor app's session, read from its `state.vscdb` opened read-only, every 2 min: the two quotas included in the plan as the dashboard shows them, *Cursor models* (Auto, Composer, Grok) and *Other models*, plus on-demand spend when enabled; they reset at the end of the billing cycle.
 - **Faustus**: local models have no account quota; spend caps are reported by Faustus itself.
 
