@@ -1,7 +1,7 @@
 # Mail gateway (facet `mailgate`)
 
-The hub reads the inbox once for the whole family and hands each app only the mail it asked for and may see. Apps stop
-carrying their own IMAP code (they keep it as the fallback for when the hub, or its gateway, is not there). Module
+The hub reads the inbox once for the whole family and hands each app only the mail it asked for and may see. When the
+gateway is unavailable, enabled apps can use the direct helper while the installation Hub can verify their identity. Module
 `hoard_link/hub/mailgate.py`, helper `hoard_link/hub/mail_helper.py`, UI `hub/ui/mail.js` (tab "Correo" / "Mail"), app
 clients `hoard_link/fam_mail.py` and `js/parts/mail.js`.
 
@@ -13,8 +13,9 @@ faustus_root]`, JSON on stdin, one JSON line on stdout, cwd = Faustus root), whi
 where Faustus keeps them. Actions: `status`, `fetch`, `read`, `send`.
 
 Helper protocol 3 authenticates `caller: {app, token}` against a Hub declared by the installation. The gateway supplies
-its own bearer token. Apps with direct helper access also require an enabled entry in the mail settings and permission
-for each account's sphere. Helper access requires the declared Hub to answer the resolution request.
+its own bearer token, including relocation notices sent from the Spark through the placement link. Python and Node apps
+send the family token configured for their own app. Direct helper access also requires an enabled entry in the mail
+settings and permission for each account's sphere. The declared Hub must answer the resolution request.
 
 * **Incremental**: per account and folder the helper keeps a UID watermark plus UIDVALIDITY (a changed validity restarts
   that folder). The first read takes the newest `max_per_pass` messages of the last `since_days`; later reads take the
