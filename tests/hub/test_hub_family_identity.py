@@ -1,10 +1,76 @@
 """Family identity and answering the person without loading a whole conversation."""
+import json
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 import pytest
 
+from hoard_link.hub.mailgate import MailGate
+from hoard_link.hub.server import _HubHandler
 from ._hub_fakes import make_hub, serve, ui_url
+
+
+@pytest.fixture
+def caller_route(tmp_path):
+    spheres = SimpleNamespace(
+        sphere_of_account=lambda selector, address: "work" if selector == "work-id" else "personal",
+        app_allowed=lambda sphere, app: (sphere, app) == ("work", "kafka"),
+    )
+    tokens = {"token-kafka": "kafka", "token-hub": "hub", "token-spoof": "hub"}
+    hub = SimpleNamespace(token="token-hub", token_owner=tokens.get, config=SimpleNamespace(data_dir=str(tmp_path)),
+                          apps=[SimpleNamespace(id="kafka", name="Kafka")])
+    gate = MailGate(hub)
+    hub.facet = {"mailgate": gate, "spheres": spheres}.get
+    handler = _HubHandler.__new__(_HubHandler)
+    handler.hub = hub
+    handler.command = "GET"
+    handler._mcp_relay = lambda: False
+    handler._facet = lambda *_: False
+
+    def call(path="/api/family/caller", **headers):
+        answer = []
+        handler.path = path
+        handler.headers = headers
+        handler._json = lambda payload, status=200: answer.append((status, payload))
+        handler.do_GET()
+        return answer[0]
+
+    return call
+
+
+@pytest.mark.parametrize("headers", [{"Sec-Fetch-Site": "same-origin"}, {"Authorization": "Bearer no"},
+                                     {"Authorization": "Bearer token-spoof"}])
+def test_mail_helper_caller_requires_a_real_bearer(caller_route, headers):
+    assert caller_route(**headers)[0] == 401
+
+
+def test_mail_helper_caller_resolves_names_and_account_scope(caller_route):
+    token = "Bearer token-kafka"
+    assert caller_route("/api/family/caller?app=other", Authorization=token) == (
+        200, {"ok": True, "app": "kafka", "apps": [{"id": "kafka", "name": "Kafka"}]})
+    assert caller_route("/api/family/mail-apps") == (200, {"ok": True, "apps": [{"id": "kafka", "name": "Kafka"}]})
+    for account, allowed in (("work-id", True), ("private-id", False)):
+        hdr = {"X-Hoard-Mail-Account": json.dumps(["Shared label", account, "test@example.test"])}
+        assert caller_route(Authorization=token, **hdr) == (200, {"ok": True, "app": "kafka", "mail_allowed": allowed})
+        assert caller_route(Authorization="Bearer token-hub", **hdr) == (200, {"ok": True, "app": "hub", "mail_allowed": True})
+    assert caller_route(Authorization=token, **{"X-Hoard-Mail-Account": "[]"})[0] == 400
+
+
+def test_mailgate_labels_the_helper_request_with_its_own_token(tmp_path):
+    captured = []
+
+    def runner(_cmd, **kwargs):
+        captured.append(json.loads(kwargs["input"]))
+        return SimpleNamespace(stdout='{"ok": true}', returncode=0)
+
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path)), token="synthetic")
+    gate = MailGate(hub, runner=runner)
+    gate.faustus_dir = lambda: tmp_path
+    gate.python_of = lambda _path: "mocked.exe"
+    forged = {"action": "status", "caller": {"app": "other", "token": "ignore"}}
+    assert gate.call_helper(forged) == {"ok": True}
+    assert captured == [{"action": "status", "caller": {"app": "hub", "token": "synthetic"}}]
 
 
 def seed(hub):

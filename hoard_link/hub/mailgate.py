@@ -700,7 +700,7 @@ class MailGate(Facet):
     def _spheres(self) -> Any:
         return self.hub.facet("spheres") if hasattr(self.hub, "facet") else None
 
-    def _sphere_for_account(self, account: str, account_id: str = "", address: str = "") -> str:
+    def _sphere_for_account(self, account: str, account_id: str = "", address: str = "", *, strict: bool = False) -> str:
         fn = getattr(self._spheres(), "sphere_of_account", None)
         if fn is None:
             return "personal"
@@ -713,6 +713,8 @@ class MailGate(Facet):
                         return str(found)
             return str(default or "personal")
         except Exception:  # noqa: BLE001
+            if strict:
+                raise
             logger.exception("sphere_of_account failed")
             return "personal"
 
@@ -739,6 +741,17 @@ class MailGate(Facet):
         except Exception:  # noqa: BLE001
             return True
 
+    def helper_account_allowed(self, app: str, account: str, account_id: str, address: str) -> bool:
+        spheres = self._spheres()
+        if spheres is None:
+            return False
+        try:
+            sphere = self._sphere_for_account(account, account_id, address, strict=True)
+            return bool(spheres.app_allowed(sphere, app))
+        except Exception:  # noqa: BLE001
+            logger.exception("mail helper account policy unavailable")
+            return False
+
     # -- the helper ------------------------------------------------------------
     def faustus_dir(self) -> Optional[Path]:
         """The Faustus folder: the hub's ``faustus_dir`` setting, then the shared discovery (``fam_mail.faustus_dir``: environment,
@@ -758,6 +771,7 @@ class MailGate(Facet):
         owner = self.config().get("owner")
         if owner and not request.get("owner"):
             request = {**request, "owner": owner}
+        request = {**request, "caller": {"app": "hub", "token": self.hub.token}}
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         try:

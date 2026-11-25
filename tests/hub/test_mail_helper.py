@@ -4,6 +4,7 @@ Faustus root whose ``mcp_servers/email_server.py`` hands out an in-memory IMAP c
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -137,9 +138,24 @@ def fake_faustus(tmp_path):
     return root
 
 
-def run_helper(root: Path, request: dict) -> dict:
-    done = subprocess.run([sys.executable, str(HELPER), str(root)], input=json.dumps(request), capture_output=True, text=True,
-                          encoding="utf-8", timeout=60, cwd=str(root))
+def run_helper(root: Path, request: dict, script: Path = HELPER) -> dict:
+    (root / "sitecustomize.py").write_text(textwrap.dedent('''
+        import io
+        from urllib.request import OpenerDirector
+
+        def read_hub(self, request, **kwargs):
+            assert request.full_url == "http://test-hub.invalid:59184/api/family/caller"
+            assert request.get_header("Authorization") == "Bearer synthetic-hub-token"
+            return io.BytesIO(b'{"ok": true, "app": "hub", "apps": []}')
+
+        OpenerDirector.open = read_hub
+    '''), encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(root), "PYTHONIOENCODING": "utf-8",
+           "FAUSTUS_DIR": str(root), "ODYSSEUS_DATA_DIR": str(root / "data"),
+           "HOARD_MAIL_REAL_HUB_URLS": "http://test-hub.invalid:59184"}
+    request = {"caller": {"app": "hub", "token": "synthetic-hub-token"}, **request}
+    done = subprocess.run([sys.executable, str(script), str(root)], input=json.dumps(request), capture_output=True, text=True,
+                          encoding="utf-8", timeout=60, cwd=str(root), env=env)
     lines = [ln for ln in done.stdout.splitlines() if ln.strip().startswith("{")]
     assert lines, done.stderr
     return json.loads(lines[-1])
@@ -149,6 +165,11 @@ def test_real_helper_status(fake_faustus):
     ans = run_helper(fake_faustus, {"action": "status"})
     assert ans["ok"] and ans["accounts"][0]["account"] == "Personal" and ans["accounts"][0]["address"] == "me@example.com"
     assert "me@example.com" not in json.dumps(ans["accounts"][0]["user"])             # the masked form for display
+
+
+def test_helper_command_requires_caller_before_importing_mail(tmp_path):
+    answer = run_helper(tmp_path, {"action": "status", "caller": None})
+    assert answer == {"ok": False, "error": mh.CALLER_REQUIRED}
 
 
 def test_real_helper_first_fetch_then_incremental(fake_faustus, tmp_path):
@@ -194,10 +215,6 @@ def test_real_helper_without_accounts_or_module(tmp_path, fake_faustus):
 
 def test_the_helper_does_not_let_the_hubs_own_modules_shadow_faustus(tmp_path):
     """mail_helper.py sits next to the hub's mcp.py: Faustus's ``import mcp`` must find Faustus's package."""
-    import json as _json
-    import subprocess
-    import sys as _sys
-    from pathlib import Path as _Path
     root = tmp_path / "faustus"
     (root / "mcp_servers").mkdir(parents=True)
     (root / "mcp_servers" / "__init__.py").write_text("", encoding="utf-8")
@@ -206,8 +223,6 @@ def test_the_helper_does_not_let_the_hubs_own_modules_shadow_faustus(tmp_path):
     (root / "mcp_servers" / "email_server.py").write_text(
         "import mcp\nassert mcp.FROM_FAUSTUS\n"
         "def _read_accounts_from_db():\n    return []\n", encoding="utf-8")
-    helper = _Path(__file__).resolve().parents[2] / "hoard_link" / "hub" / "mail_helper.py"
-    done = subprocess.run([_sys.executable, str(helper), str(root)], input=_json.dumps({"action": "status"}),
-                          capture_output=True, text=True, cwd=str(root), timeout=60)
-    answer = _json.loads(done.stdout.strip().splitlines()[-1])
-    assert "not loadable" not in str(answer.get("error")), answer
+    helper = Path(__file__).resolve().parents[2] / "hoard_link" / "hub" / "mail_helper.py"
+    answer = run_helper(root, {"action": "status"}, helper)
+    assert "no enabled mail account" in answer["error"], answer

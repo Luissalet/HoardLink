@@ -10,7 +10,7 @@ and uses the standard library only, because it runs under another interpreter. C
 Mail reads use read-only folders (EXAMINE) and BODY.PEEK. Sending adds the Hermes Gmail label to the sent copy via
 IMAP after SMTP succeeds; no message is marked as read, moved or deleted. It started as the Kafka / Phileas / Ledger / Tantalus helpers (same author, MIT) and is their superset.
 
-Requests (``action``); ``owner`` (optional) picks the Faustus user whose accounts are used (without it, the only owner that
+Requests must carry ``caller: {app, token}`` from the calling installation. ``owner`` (optional) picks the Faustus user whose accounts are used (without it, the only owner that
 has accounts), ``account`` narrows a request to one account:
 
     {"action": "status"}
@@ -64,12 +64,17 @@ import mimetypes
 import re
 import smtplib
 import ssl
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-HELPER_VERSION = 2
+HELPER_VERSION = 3
 MAX_TEXT = 24_000
 MAX_LINKS = 60
 MAX_HTML = 240_000
@@ -80,6 +85,141 @@ ATTACHMENT_EXT = {"pdf", "png", "jpg", "jpeg", "webp", "heic", "tif", "tiff"}
 SEND_TIMEOUT_S = 25
 HEADER_CHUNK = 250
 GMAIL_CATEGORIES = {"promotions": "promotions", "social": "social", "updates": "updates", "forums": "forums"}
+DEFAULT_CALLERS = {"kafka", "hermes", "phileas", "tantalus"}
+CALLER_REQUIRED = "Llamante de correo no identificado / Mail caller not identified"
+HUB_UNAVAILABLE = "El Hub de la instalación no responde / The installation Hub is unavailable"
+CALLER_DENIED = "La app no tiene acceso al ayudante de correo / The app has no access to the mail helper"
+ACCOUNT_DENIED = "La app no tiene acceso a esta cuenta de correo / The app has no access to this mail account"
+CALLERS_UNAVAILABLE = "No se puede abrir la lista de apps de correo / The mail app list is unavailable"
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _real_hubs() -> list[str]:
+    declared = os.environ.get("HOARD_MAIL_REAL_HUB_URLS", "").strip() or "http://127.0.0.1:8810"
+    hubs = []
+    for raw in declared.split(","):
+        raw = raw.strip().rstrip("/")
+        try:
+            url = urlsplit(raw)
+            if (url.scheme in ("http", "https") and url.hostname and url.username is None
+                    and not (url.path or url.query or url.fragment)):
+                hubs.append(raw)
+        except ValueError:
+            continue
+    return hubs
+
+
+def _hub_read(hub: str, path: str, *, token: str = "", account: tuple[str, str, str] | None = None) -> dict:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    if account is not None:
+        headers["X-Hoard-Mail-Account"] = json.dumps(account, ensure_ascii=True)
+    opener = build_opener(ProxyHandler({}), _NoRedirect())
+    try:
+        with opener.open(Request(hub + path, headers=headers), timeout=3) as reply:
+            body = json.loads(reply.read(512 * 1024))
+    except HTTPError as exc:
+        exc.close()
+        if exc.code == 401:
+            return {}
+        raise OSError(HUB_UNAVAILABLE) from None
+    except (URLError, OSError, ValueError):
+        raise OSError(HUB_UNAVAILABLE) from None
+    if not isinstance(body, dict) or body.get("ok") is not True:
+        raise OSError(HUB_UNAVAILABLE)
+    return body
+
+
+def _registered_apps(body: dict) -> dict[str, str]:
+    apps = body.get("apps")
+    if not isinstance(apps, list):
+        raise OSError(HUB_UNAVAILABLE)
+    return {row["id"]: str(row.get("name") or row["id"]) for row in apps
+            if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"] not in ("", "hub")}
+
+
+def registered_mail_apps() -> dict[str, str]:
+    for hub in _real_hubs():
+        try:
+            return _registered_apps(_hub_read(hub, "/api/family/mail-apps"))
+        except OSError:
+            continue
+    raise OSError(HUB_UNAVAILABLE)
+
+
+def _resolve_caller(request: dict) -> tuple[str, str, str, dict[str, str]]:
+    caller = request.get("caller")
+    app = caller.get("app") if isinstance(caller, dict) else None
+    token = caller.get("token") if isinstance(caller, dict) else None
+    if not isinstance(app, str) or not app.strip() or not isinstance(token, str) or not re.fullmatch(r"[!-~]+", token):
+        raise ValueError(CALLER_REQUIRED)
+    hubs = _real_hubs()
+    unreachable = not hubs
+    for hub in hubs:
+        try:
+            answer = _hub_read(hub, "/api/family/caller", token=token)
+            if answer.get("app") == app:
+                return app, token, hub, _registered_apps(answer)
+        except OSError:
+            unreachable = True
+    if unreachable:
+        raise OSError(HUB_UNAVAILABLE)
+    raise ValueError(CALLER_REQUIRED)
+
+
+@contextlib.contextmanager
+def _callers_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix(".lock").open("a+b") as stream:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def mail_callers(data_dir: str | Path, registered: dict[str, str], *, change: tuple[str, bool] | None = None) -> set[str]:
+    """Seed once, then retain explicit choices even if an app disappears and returns."""
+    path = Path(data_dir) / "mail_callers.json"
+    with _callers_lock(path):
+        try:
+            stored = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            enabled = DEFAULT_CALLERS.intersection(registered)
+            seed = True
+        except ValueError:
+            raise OSError(CALLERS_UNAVAILABLE) from None
+        else:
+            if not isinstance(stored, list) or any(not isinstance(app, str) for app in stored):
+                raise OSError(CALLERS_UNAVAILABLE)
+            enabled = set(stored)
+            seed = False
+        if change is not None:
+            app, allow = change
+            if app not in registered:
+                raise ValueError(CALLER_REQUIRED)
+            if allow:
+                enabled.add(app)
+            else:
+                enabled.discard(app)
+        if seed or change is not None:
+            fd, name = tempfile.mkstemp(dir=path.parent)
+            scratch = Path(name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump(sorted(enabled), stream, indent=2)
+                    stream.write("\n")
+                scratch.replace(path)
+            finally:
+                scratch.unlink(missing_ok=True)
+        return enabled
 
 
 def _mask(address: str) -> str:
@@ -125,11 +265,35 @@ def _accounts(server, wanted):
     return rows
 
 
+def _visible_accounts(rows: list[dict], app: str, token: str, hub: str) -> list[dict]:
+    visible = []
+    for row in rows:
+        account_id = str(row.get("id") or "")
+        if not account_id:
+            continue
+        descriptor = (account_key(row), account_id, account_address(row))
+        answer = _hub_read(hub, "/api/family/caller", token=token, account=descriptor)
+        if answer.get("app") != app:
+            raise ValueError(CALLER_REQUIRED)
+        if answer.get("mail_allowed") is True:
+            visible.append(row)
+    return visible
+
+
 def _selector(row: dict):
     for key in ("account_name", "imap_user", "id"):
         if row.get(key):
             return str(row[key])
     return None
+
+
+def _imap_connect(server, row: dict, scoped: bool):
+    if not scoped:
+        return server._imap_connect(_selector(row))
+    account_id = str(row["id"])
+    if str(server._load_config(account_id).get("account_id") or "") != account_id:
+        raise ValueError(ACCOUNT_DENIED)
+    return server._imap_connect(account_id)
 
 
 def account_key(row: dict) -> str:
@@ -522,7 +686,7 @@ def _label(row: dict) -> str:
     return str(row.get("account_name") or _mask(row.get("imap_user") or ""))
 
 
-def fetch(server, request: dict) -> dict:
+def fetch(server, request: dict, rows: list[dict] | None = None) -> dict:
     since_days = max(1, min(int(request.get("since_days") or 14), 365))
     limit = max(1, min(int(request.get("max") or 300), 2000))
     since = request.get("since") if isinstance(request.get("since"), dict) else {}
@@ -532,14 +696,14 @@ def fetch(server, request: dict) -> dict:
     mode = _html_mode(request)
     want_categories = bool(request.get("categories", True))
     out, errors, infos = [], [], []
-    for row in _accounts(server, request.get("account")):
+    for row in rows if rows is not None else _accounts(server, request.get("account")):
         key = account_key(row)
         info = {"account": key, "address": account_address(row), "folders": {}}
         infos.append(info)
         gmail = _is_gmail(str(row.get("imap_host") or "").lower())
         conn = None
         try:
-            conn = server._imap_connect(_selector(row))
+            conn = _imap_connect(server, row, scoped=rows is not None)
             for folder in folders:
                 if not _select(conn, server, folder):
                     continue
@@ -614,7 +778,7 @@ def _clean_terms(value, width: int = 60, limit: int = 80) -> list:
     return [re.sub(r'["\\]', "", str(t)).strip()[:width] for t in (value or []) if str(t).strip()][:limit]
 
 
-def scan(server, request: dict) -> dict:
+def scan(server, request: dict, rows: list[dict] | None = None) -> dict:
     """Messages that match any of the subject words / sender domains / Gmail query of the request (or its free text), newest first."""
     days = max(1, min(int(request.get("since_days") or 30), 365))
     limit = max(1, min(int(request.get("max") or 60), 1000))
@@ -630,11 +794,11 @@ def scan(server, request: dict) -> dict:
     if not (query or gmail_query or terms or domains):
         return {"ok": True, "error": "", "accounts": [], "messages": []}
     out, errors, scanned = [], [], []
-    for row in _accounts(server, request.get("account")):
+    for row in rows if rows is not None else _accounts(server, request.get("account")):
         host = str(row.get("imap_host") or "").lower()
         conn = None
         try:
-            conn = server._imap_connect(_selector(row))
+            conn = _imap_connect(server, row, scoped=rows is not None)
             folder = _select_first(conn, server, _scan_folders(host))
             uids = _uids_newest(_search(conn, host, days, query, gmail_query, terms, domains))
             fresh = uids
@@ -666,16 +830,16 @@ def scan(server, request: dict) -> dict:
     return {"ok": not errors or bool(out) or bool(scanned), "error": "; ".join(errors), "accounts": scanned, "messages": out}
 
 
-def headers(server, request: dict) -> dict:
+def headers(server, request: dict, rows: list[dict] | None = None) -> dict:
     """One small record per message of the last ``since_days`` (sender, date, List-Unsubscribe, Gmail category): no subject, no body."""
     days = max(1, min(int(request.get("since_days") or 30), 365))
     limit = max(1, min(int(request.get("max") or 4000), 12000))
     messages, errors, scanned = [], [], []
-    for row in _accounts(server, request.get("account")):
+    for row in rows if rows is not None else _accounts(server, request.get("account")):
         host = str(row.get("imap_host") or "").lower()
         conn = None
         try:
-            conn = server._imap_connect(_selector(row))
+            conn = _imap_connect(server, row, scoped=rows is not None)
             folder = _select_first(conn, server, _scan_folders(host))
             uids = _uids_newest(_uids(conn, ["SINCE", _imap_since(days)]))
             total = len(uids)
@@ -716,7 +880,7 @@ def _folders_for_read(host: str) -> list:
     return ["INBOX"]
 
 
-def read_one(server, request: dict) -> dict:
+def read_one(server, request: dict, rows: list[dict] | None = None) -> dict:
     mid = str(request.get("message_id") or "").strip()
     folder = str(request.get("folder") or "").strip()
     uid = request.get("uid")
@@ -724,10 +888,10 @@ def read_one(server, request: dict) -> dict:
     attachments_dir = str(request.get("attachments_dir") or "").strip()
     if not mid and not (folder and uid):
         return {"ok": False, "error": "message_id (or account + folder + uid) required"}
-    for row in _accounts(server, request.get("account")):
+    for row in rows if rows is not None else _accounts(server, request.get("account")):
         conn = None
         try:
-            conn = server._imap_connect(_selector(row))
+            conn = _imap_connect(server, row, scoped=rows is not None)
             if folder and uid:
                 if not _select(conn, server, folder):
                     continue
@@ -786,8 +950,21 @@ def _addresses(value) -> list:
     return out[:10]
 
 
-def send_info(server, request: dict) -> dict:
-    _sel, cfg = server._resolve_send_config(request.get("account") or None)
+def send_info(server, request: dict, rows: list[dict] | None = None) -> dict:
+    if rows is None:
+        _sel, cfg = server._resolve_send_config(request.get("account") or None)
+    else:
+        for row in rows:
+            account_id = str(row["id"])
+            try:
+                _, cfg = server._resolve_send_config(account_id)
+            except ValueError:
+                continue
+            if str(cfg.get("account_id") or "") == account_id:
+                _sel = account_id
+                break
+        else:
+            raise ValueError("No permitted mail account can send / Ninguna cuenta de correo permitida puede enviar")
     sender = str(cfg.get("from_address") or cfg.get("smtp_user") or "")
     to = _addresses(request.get("to")) or _addresses(sender)
     return {"selector": _sel, "cfg": cfg, "sender": sender, "to": to,
@@ -861,9 +1038,9 @@ def label_hermes(connect, message_id: str) -> bool:
                 conn.logout()
 
 
-def send(server, request: dict) -> dict:
+def send(server, request: dict, rows: list[dict] | None = None) -> dict:
     try:
-        meta = send_info(server, request)
+        meta = send_info(server, request, rows)
     except Exception as exc:  # noqa: BLE001 — Faustus's messages carry no secrets
         return {"ok": False, "error": str(exc)[:200] or type(exc).__name__}
     cfg, sender, to, info = meta["cfg"], meta["sender"], meta["to"], meta["info"]
@@ -888,7 +1065,7 @@ def send(server, request: dict) -> dict:
     return {"ok": True, "error": "", **info}
 
 
-def compose(server, request: dict) -> dict:
+def compose(server, request: dict, rows: list[dict] | None = None) -> dict:
     """Compose a family message; draft by default, SMTP only for explicit mode=send.
 
     This is separate from notification sending so existing callers retain their defaults.
@@ -912,7 +1089,7 @@ def compose(server, request: dict) -> dict:
         paths = request.get("attachments") or []
         if not isinstance(paths, list) or any(not isinstance(p, str) or not os.path.isabs(p) for p in paths):
             raise ValueError("attachments must be absolute file paths on the gateway machine")
-        meta = send_info(server, request)
+        meta = send_info(server, request, rows)
         msg = build_message({**request, "text": request.get("body", ""), "hermes_kind": "mail"}, meta["sender"], recipients["to"])
         if recipients["cc"]:
             msg["Cc"] = ", ".join(recipients["cc"])
@@ -962,41 +1139,78 @@ def compose(server, request: dict) -> dict:
 
 
 # ------------------------------------------------------------------ entry
+@contextlib.contextmanager
+def _mail_owner(server, owner: str):
+    if not owner:
+        yield
+        return
+    current = getattr(server, "_CURRENT_OWNER", None)
+    if current is not None:
+        marker = current.set(owner)
+        try:
+            yield
+        finally:
+            current.reset(marker)
+        return
+    key = "ODYSSEUS_MCP_EMAIL_OWNER"
+    previous = os.environ.get(key)
+    os.environ[key] = owner
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = previous
+
+
 def handle(request: dict, root: str) -> dict:
+    try:
+        app, token, hub, registered = _resolve_caller(request)
+    except (ValueError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
+    if app != "hub":
+        data_dir = Path(root) / os.environ.get("ODYSSEUS_DATA_DIR", "data")
+        try:
+            enabled = mail_callers(data_dir, registered)
+        except OSError:
+            return {"ok": False, "error": CALLERS_UNAVAILABLE}
+        if app not in enabled or app not in registered:
+            return {"ok": False, "error": CALLER_DENIED}
     try:
         server = _load_server(root)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"Faustus mail module not loadable ({type(exc).__name__}: {str(exc)[:160]})"}
     owner = _pick_owner(server, str(request.get("owner") or "").strip())
-    if owner:
-        os.environ["ODYSSEUS_MCP_EMAIL_OWNER"] = owner
-    try:
-        rows = _accounts(server, request.get("account"))
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"accounts not readable ({type(exc).__name__})"}
+    with _mail_owner(server, owner):
+        try:
+            rows = _accounts(server, request.get("account"))
+            if app != "hub":
+                rows = _visible_accounts(rows, app, token, hub)
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"accounts not readable ({type(exc).__name__})"}
+        return _handle_action(server, request, rows, owner, scoped=app != "hub")
+
+
+def _handle_action(server, request: dict, rows: list[dict], owner: str, *, scoped: bool) -> dict:
     if not rows:
-        return {"ok": False, "error": "Faustus has no enabled mail account" + (f" for {owner}" if owner else "")}
+        error = ACCOUNT_DENIED if scoped else "Faustus has no enabled mail account" + (f" for {owner}" if owner else "")
+        return {"ok": False, "error": error}
+    scope = rows if scoped else None
+    handlers = {"send": send, "compose": compose, "fetch": fetch, "scan": scan, "headers": headers, "read": read_one}
+    action = request.get("action")
+    if isinstance(action, str) and action in handlers:
+        return handlers[action](server, request, scope)
     info = {"helper": HELPER_VERSION,
             "accounts": [{"account": account_key(r), "id": str(r.get("id") or ""), "address": account_address(r),
                           "user": _mask(r.get("imap_user") or ""), "server": f"{r.get('imap_host')}:{r.get('imap_port')}"} for r in rows]}
     try:
-        info.update(send_info(server, request)["info"])
+        info.update(send_info(server, request, scope)["info"])
         info["send_ready"] = True
     except Exception:  # noqa: BLE001 — reading may work even when sending is not configured
         info["send_ready"] = False
-    action = request.get("action")
-    if action == "send":
-        return send(server, request)
-    if action == "compose":
-        return compose(server, request)
-    if action == "fetch":
-        return fetch(server, request)
-    if action == "scan":
-        return scan(server, request)
-    if action == "headers":
-        return headers(server, request)
-    if action == "read":
-        return read_one(server, request)
     return {"ok": True, "error": "", **info}
 
 

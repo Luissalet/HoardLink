@@ -12,6 +12,10 @@ faustus_root]`, JSON on stdin, one JSON line on stdout, cwd = Faustus root), whi
 `mcp_servers.email_server` (accounts, IMAP connect, header decoding, send configuration). So accounts and passwords stay
 where Faustus keeps them. Actions: `status`, `fetch`, `read`, `send`.
 
+Helper protocol 3 authenticates `caller: {app, token}` against a Hub declared by the installation. The gateway supplies
+its own bearer token. Apps with direct helper access also require an enabled entry in the mail settings and permission
+for each account's sphere. Helper access requires the declared Hub to answer the resolution request.
+
 * **Incremental**: per account and folder the helper keeps a UID watermark plus UIDVALIDITY (a changed validity restarts
   that folder). The first read takes the newest `max_per_pass` messages of the last `since_days`; later reads take the
   oldest not yet seen.
@@ -62,6 +66,8 @@ Attributes for tests: `background` (False = no thread), `first_delay_s`, `next_p
 
 | route | who | |
 |---|---|---|
+| `GET /api/family/caller` | family bearer token | Returns the authenticated app ID and registered app names. With an `X-Hoard-Mail-Account` JSON header containing `[account, id, address]`, returns whether the caller can access that account's sphere. |
+| `GET /api/family/mail-apps` | any | Registered app IDs and names for the mail settings. |
 | `GET /api/mail/status` | any family caller | `?refresh=1` (ui/hub) also asks the helper for the accounts |
 | `GET /api/mail/config`, `POST /api/mail/config` | ui/hub | validated; a bad value is `400` naming the field |
 | `GET /api/mail/messages` | any | `since_id` (ascending + `last_id` cursor), `limit`, `sphere`, `q`, `interest`, `unclaimed`, `full`, `kind`, `source`, `folder`, `days`, `order`, `hide_dismissed`; apps default `kind=mail`, `interest=1`, and only see their spheres |
@@ -93,7 +99,7 @@ if fam_mail.available():            # gateway on, read at least once, and not st
         fam_mail.claim([m["id"]], "payment", "hoard://ledger/tx/12")
         fam_mail.copy_attachment(m["attachments"][0], dest_dir)
 else:
-    ...                                               # the app's own helper
+    ...                                               # the direct helper if the installation Hub can authenticate the app
 ```
 
 `available()` is cached for 30 s and false when the last good pass is older than `interval*180 + 900` s. Nothing in
