@@ -57,6 +57,7 @@ from .agora_capacity_accounts import CLAUDE_SOURCE
 from .config import AGENT_ID_RE, PERSON_ALIAS, HubConfig
 from . import agora_channels
 from . import agora_ranks
+from . import agora_quota_floors
 from . import agora_router
 from . import agora_social
 from . import agora_profiles
@@ -249,6 +250,7 @@ MIGRATIONS.append(agora_orders.DECISION_HANDOFF_MIGRATION)
 MIGRATIONS.append(agora_orders.DECISION_NOTICE_MIGRATION)
 MIGRATIONS.append(order_gate_readiness.MIGRATION)
 MIGRATIONS.append(agora_orders.DELIVERY_MIGRATION)
+MIGRATIONS.append(agora_quota_floors.MIGRATION)
 #: The last thing a task's owner wrote in the task's threads since a moment (the progress its activity is read from).
 OWNER_NOTE_SQL = ("SELECT m.id,m.created FROM messages m JOIN threads t ON t.id=m.thread_id "
                   "WHERE t.task_id=? AND m.author=? AND m.created>=? ORDER BY m.id DESC LIMIT 1")
@@ -871,6 +873,7 @@ class Agora:
                 config.update_person(historical=dict(historical[0]))
         self.space_id = DEFAULT_SPACE_ID
         self.space_store = SpaceStore(self.db, clock=self.clock)
+        self.quota_foreman: Callable[[str], Optional[str]] = lambda _sid: None
         self._changed = threading.Condition()
         self._version = [0]
         self._space_sweeps: dict[str, float] = {}
@@ -941,6 +944,7 @@ class Agora:
             with self.db.tx():
                 self._touch(agent)
                 created = self.space_store.create(a, agent=agent)
+                agora_quota_floors.seed(self, created["id"])
         except SpaceError as exc:
             raise AgoraError(str(exc), exc.status, **exc.extra) from exc
         self._bump("agora.space.created", {"space_id": created["id"], "by": agent})
@@ -1430,6 +1434,12 @@ class Agora:
             windows.append({"window_id": window_id, "label": label, "measurement": measurement,
                             "used_percent": used, "remaining_percent": remaining, "reset_at": reset_at,
                             "source": _txt(raw.get("source") or source, 120, "window source", required=True)})
+            duration = raw.get("window_duration_mins")
+            if duration is not None:
+                if (type(duration) not in (int, float) or duration <= 0
+                        or (isinstance(duration, float) and not math.isfinite(duration))):
+                    raise AgoraError("window_duration_mins must be a positive number or null")
+                windows[-1]["window_duration_mins"] = duration
 
         before_pools = self._quota_pools()
         before = {r["id"]: self._quota_state_from(r["id"], before_pools)["state"]
@@ -1447,7 +1457,11 @@ class Agora:
                 "INSERT INTO agora_usage_reporters(provider_id,pool_id,agent_id,last_reported_at) VALUES(?,?,?,?) "
                 "ON CONFLICT(provider_id,pool_id,agent_id) DO UPDATE SET last_reported_at=excluded.last_reported_at",
                 (provider, pool_id, agent, now))
-            self._quota_exhaustion_notice(provider, before)
+            pools = self._quota_pools()
+            self._quota_exhaustion_notice(provider, before, pools)
+            notices = agora_quota_floors.record_crossings(self, provider, pools[provider])
+        for notice in notices:
+            self._bump("agora.thread.message", notice)
         self._bump("agora.usage.reported", {"provider_id": provider, "pool_id": pool_id, "agent_id": agent})
         return {"ok": True, "provider_id": provider, "pool_id": pool_id, "agent_id": agent,
                 "reported_at": datetime.fromtimestamp(now, timezone.utc).isoformat()}
@@ -1597,10 +1611,9 @@ class Agora:
                 notes.append(state["note"])
         return notes
 
-    def _quota_exhaustion_notice(self, provider: str, before: dict[str, str]) -> None:
+    def _quota_exhaustion_notice(self, provider: str, before: dict[str, str], pools: dict) -> None:
         """When a report leaves agents of ``provider`` out of quota (and they were not before), say in the coordination
         thread which of their tasks and reviews should be handed over. Nothing moves by itself."""
-        pools = self._quota_pools()
         agents = sorted({r["id"] for r in self.db.query("SELECT id FROM agents")} | set(before))
         lines = []
         for agent in agents:
@@ -3461,6 +3474,7 @@ class Agora:
                 "lock_groups": group_locks(live),
                 "threads": self.threads({"limit": 40})["threads"],
                 "space": self.space_store.get(self.space_id),
+                "quota_floors": agora_quota_floors.view(self),
                 "escalated": self.db.scalar("SELECT COUNT(*) FROM threads WHERE status='escalated' AND space_id=?",
                                              (self.space_id,), default=0),
                 "decisions": self.decisions({"limit": 8})["decisions"]}
@@ -3606,6 +3620,7 @@ TOOLS: list[dict[str, Any]] = [
                                  "measurement": {"type": "string", "enum": ["measured", "declared", "unknown"]},
                                  "used_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
                                  "remaining_percent": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+                                 "window_duration_mins": {"type": ["number", "null"], "exclusiveMinimum": 0},
                                  "reset_at": {"type": ["string", "null"]},
                                  "source": {"type": "string", "maxLength": 120}}, ["window_id", "measurement"])}},
                             ["agent", "provider_id", "pool_id", "pool_label", "source", "windows"])},
@@ -3900,6 +3915,7 @@ class AgoraFacet(Facet):
         self.agora = Agora(Path(hub.config.data_dir) / "agora.db", task_idle_s=task_idle_s, freshness=freshness, config=hub.config,
                            emit=(lambda t, d: events.emit(t, d, source="hub")) if events is not None else None,
                            escalate_hook=self._notify_person, repo_lookup=repo_lookup, repo_roots=repo_roots)
+        self.agora.quota_foreman = self._quota_foreman
         if compiled_ui := getattr(hub, "facet", lambda _: None)("compiled_ui"):
             self.agora.compiled_ui_checker = compiled_ui.require_current
         self.agora.registered_repositories = lambda: getattr(getattr(hub, "repos", None), "discover", lambda: [])()
@@ -3924,6 +3940,11 @@ class AgoraFacet(Facet):
 
     def close(self) -> None:
         self.agora.close()
+
+    def _quota_foreman(self, sid: str) -> Optional[str]:
+        facet = getattr(self.hub, "facet", lambda _: None)("agora_foreman")
+        foreman = facet.status({"space_id": sid}).get("foreman") if facet else None
+        return (foreman or {}).get("agent_id")
 
     @property
     def watch(self) -> agent_watch.AgentWatch:

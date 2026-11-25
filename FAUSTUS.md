@@ -91,6 +91,10 @@ A managed worker can use `commits_by_repo` on `hub_agora_task_submit` to deliver
 The console checks each group in its registered repository and warns about groups it could not check because their
 repository is unregistered. An isolated Hub starts with automatic quota polling off. See [the Agora reference](docs/AGORA.md).
 
+The Agora console and space page display provider quotas and when they were measured. Space leads can set
+and undo weekly quota floors for Claude and Codex. A measured dip posts to the space's general channel,
+mentions its directing lead, and requires explicit confirmation to create another worker of that provider.
+
 A task whose submission lists commits can be read as a real diff. The task page
 in the Hub's Agora tab shows **Revisión de la entrega** with **Revisar el diff**
 and **Revisión guiada**. The diff reader lists each commit's files, hunks and lines

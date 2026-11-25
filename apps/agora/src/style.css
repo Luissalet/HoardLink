@@ -81,3 +81,12 @@ input::placeholder,textarea::placeholder{color:#bebbb4;opacity:1}.quota-label st
 .foreman-status strong { color: #ece9e1; }
 .foreman-warning { color: var(--accent); font-weight: 600; }
 .foreman-warning:empty { position: absolute; }
+
+.weekly-quota-floor { margin: 5px 0 0; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.weekly-quota-floor.is-below { color: var(--accent); }
+.quota-settings { padding: 6px 16px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.quota-settings summary { cursor: pointer; }
+.quota-settings form { display: grid; gap: 6px; padding-top: 6px; }
+.quota-settings label, .quota-settings-actions { display: flex; align-items: center; gap: 8px; }
+.quota-settings label { justify-content: space-between; }
+.quota-settings input { width: 70px; padding: 3px 6px; color: inherit; background: #1c1a14; border: 1px solid var(--line); border-radius: 4px; }

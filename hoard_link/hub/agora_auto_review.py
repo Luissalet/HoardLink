@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from . import agora_social, agora_worker_profiles
+from . import agora_quota_floors, agora_social, agora_worker_profiles
 from .agora_capacity import codex_observation
 
 ROUTE = "/api/agora/console/auto-review"
@@ -97,8 +97,10 @@ def _quota_available(provider: str, pools: list[dict[str, Any]]) -> bool:
 
 
 def _choose(console: Any, order: list[str], *, review: bool = False) -> tuple[str, str, str] | None:
-    pools = {p["provider_id"]: p.get("pools", []) for p in console._agora().usage().get("providers", [])}
-    quota = [provider for provider in order if _quota_available(provider, pools.get(provider, []))]
+    agora = console._agora()
+    pools = agora._quota_pools()
+    quota = [provider for provider in order if _quota_available(provider, pools.get(provider, []))
+             and not agora_quota_floors.below_floor(agora, provider, pools.get(provider, []))]
     codex = codex_observation()
     if codex and not codex.get("ok") and "codex" in quota:
         quota.remove("codex")
@@ -211,7 +213,8 @@ class AutoReview:
             self.thread.join(timeout=1)
 
     def _wake_on_task(self, event: dict[str, Any]) -> None:
-        if event["type"] in (*EVENTS.split("|"), "agora.usage.reported", "agora.agent.heartbeat"):
+        if event["type"] in (*EVENTS.split("|"), "agora.usage.reported", "agora.quota_floors.updated",
+                             "agora.agent.heartbeat"):
             self.wake.set()
 
     def _run(self) -> None:
@@ -345,6 +348,9 @@ class AutoReview:
         except Exception:
             self._update(console, current, "failed", "launch_failed")
             raise
+        if result.get("code") == "quota_below_floor":
+            self._update(console, current, "waiting_quota", "no_provider_with_quota", worker_id="")
+            return
         worker = result.get("worker") or {}
         if worker.get("state") in ("running", "completed", "incomplete"):
             if not self._update(console, current, "launched" if review else "handover"):
