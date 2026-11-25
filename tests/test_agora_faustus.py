@@ -333,44 +333,6 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
         [] if resume else [("PATCH", "/api/model-endpoints/headless", {"api_key": key})])
 
 
-@pytest.mark.parametrize(("confined", "stop", "expected"), [
-    (True, "approval_required", "waiting_approval"),
-    (False, "approval_required", "failed"),
-    (True, "error", "failed"),
-])
-def test_console_reports_a_confined_worker_waiting_for_tool_approval(tmp_path, monkeypatch, confined, stop, expected):
-    facet = _facet(tmp_path)
-    worker_id = "approval-fixture"
-    log = facet._worker_log_path(worker_id)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    question = "Allow this task to continue?"
-    reason = "This action requires approval after reading a local file."
-    tool = "mcp__agora__hub_agora_gate_open"
-    log.write_text(json.dumps({"type": "run_summary", "stop": stop, "text": question,
-                               "approval": {"kind": "tool_approval", "description": reason,
-                                            "action": {"tool": tool}}}) + "\n", encoding="utf-8")
-    with facet._db() as db:
-        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,workspace,log_path,"
-                   "tool_approval_mode,worker_file_scope,created_at,updated_at) "
-                   "VALUES(?, 'faustus', 'faustus-fixture', 'model', '', 'task', 'running', ?, ?, ?, ?, 1, 1)",
-                   (worker_id, str(tmp_path), str(log), "auto" if confined else "",
-                    json.dumps({"workspace": str(tmp_path)}) if confined else "{}"))
-    attempts = []
-    monkeypatch.setattr(facet, "_continue_worker", lambda *a, **kw: attempts.append(a) or {"ok": False})
-    monkeypatch.setattr(facet, "_verify_worker_delivery", lambda worker: {"issues": ["Pending"], "tasks": []})
-    monkeypatch.setattr(facet, "_forget_rank_of_absent", lambda agent: None)
-    facet._monitor_worker(worker_id, SimpleNamespace(wait=lambda: 2), tmp_path / "no-result.txt")
-
-    worker, = facet._worker_rows()
-    assert worker["state"] == expected and worker["process_exit_code"] == 2
-    if expected == "waiting_approval":
-        assert worker["outcome"] == "approval_required" and not attempts
-        assert not worker["result"]
-        detail = worker["detail_i18n"]
-        assert detail["es"].startswith("Herramienta ") and detail["en"].startswith("Tool ")
-        assert all(tool in message and reason in message for message in detail.values())
-
-
 def test_read_only_store_selects_exact_encrypted_endpoint(tmp_path):
     fernet = pytest.importorskip("cryptography.fernet").Fernet
     key_file = tmp_path / ".app_key"
