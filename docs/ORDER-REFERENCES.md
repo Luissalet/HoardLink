@@ -18,8 +18,9 @@ intermediate piece counts. The Hub does not attach evidence of work the station 
 
 For each order detail to preserve, open the retained visual reference and the result. For a clip or model,
 register relevant stills or turntable previews with the piece and select the matching view. Record the observation
-on the detail in `hub_agora_piece_check`. For example, a check on a clip with the result in preview 1 can include
-this mark in `keep`:
+on the detail in `hub_agora_piece_check`. A kept visual reference required by the order can be compared even when
+the station did not use it as an input, including a reference from a cited order. The check records its author,
+observation and evidence on the existing piece. This mark in `keep` compares a clip's preview 1.
 
 ```json
 {
@@ -37,8 +38,8 @@ numbers and their hashes. Use `state: "missing"` for a mismatch. `not_visible` r
 that cannot be seen in the pair. At least one applicable detail must match each source. These records document what
 the inspecting worker saw. A different piece revision needs its own observations.
 
-`hub_agora_gate_open` returns HTTP 409 with `kept_reference_comparison` if a new visual piece with order details has
-a missing lineage link, a missing observation, or a failed comparison against a required visual reference. The error
-identifies the affected piece and source. Retained draft guides remain inputs for pose and composition. Visual pieces
-kept from a production gate serve as comparison sources. The gate opens only after the relevant checks pass. The
-keep or cancel decision stays on the person's page.
+`hub_agora_gate_open` returns HTTP 409 with `kept_reference_comparison` when a new visual piece with order details
+lacks a passing comparison with a required visual reference. The error identifies the piece and reference, reports
+`comparison_pending` or `comparison_failed`, and directs the worker to `hub_agora_piece_check`.
+Retained draft guides remain inputs for pose and composition. Visual pieces kept from a production gate serve as
+comparison sources. The keep or cancel decision stays on the person's page.

@@ -41,10 +41,12 @@ def keep(studio, order, piece):
                         "decision": "keep", "note": "Use this restaging"})
 
 
-def compare(studio, piece, reference, *, state="ok", preview=None):
+def compare(studio, piece, reference, *, state="ok", preview=None, reference_preview=None):
     comparisons = {"reference_piece": reference["id"], "observed": "Opened each view and inspected the detail."}
     if preview is not None:
         comparisons["piece_preview"] = preview
+    if reference_preview is not None:
+        comparisons["reference_preview"] = reference_preview
     return studio.piece_check({"agent": "reviewer", "piece_id": piece["id"], "note": "Compared the retained views",
                                "ok": state == "ok", "keep": [{"detail": detail, "state": state,
                                                                "comparisons": [comparisons]} for detail in DETAILS]})
@@ -86,18 +88,11 @@ def test_job_and_draft_receive_kept_revisions_without_a_draft(studio, tmp_path, 
     assert anchor["kept_note"] == "Use this restaging"
 
 
-def test_gate_requires_real_lineage_and_recorded_comparisons_per_revision(studio, tmp_path):
+def test_gate_requires_recorded_comparisons_per_revision(studio, tmp_path):
     source = make_order(studio, tmp_path)
     sheet = make_piece(studio, source, "sheet")
     keep(studio, source, sheet)
     order = make_order(studio, tmp_path, refs=[{"order_id": source["id"]}], keep=DETAILS)
-    omitted = make_piece(studio, order, "omitted")
-    assert omitted["missing_required_references"] == [sheet["id"]]
-    note_only(studio, omitted)
-    with pytest.raises(AgoraError) as absent:
-        gate(studio, order, omitted)
-    assert absent.value.extra["comparisons"][0]["reason"] == "missing_reference"
-
     links = [{"piece": sheet["id"], "role": "reference"}]
     wrong = make_piece(studio, order, "wrong", color="orange", derives_from=links)
     note_only(studio, wrong)
@@ -125,6 +120,50 @@ def test_gate_requires_real_lineage_and_recorded_comparisons_per_revision(studio
     studio.order_undo({"agent": "reviewer", "token": reviewed["undo"]})
     with pytest.raises(AgoraError, match="passing visual comparison"):
         gate(studio, order, right)
+
+
+def test_gate_accepts_comparison_with_a_kept_reference_outside_lineage(studio, tmp_path):
+    source = make_order(studio, tmp_path)
+    sheet = make_piece(studio, source, "sheet")
+    keep(studio, source, sheet)
+    (tmp_path / "model.obj").write_text("v 0 0 0\n", encoding="utf-8")
+    Image.new("RGB", (8, 8), "blue").save(tmp_path / "model-view.png")
+    model = studio.piece_add({"agent": "station", "order_id": source["id"], "title": "Model", "kind": "mesh",
+                              "path": "model.obj", "previews": ["model-view.png"]})["piece"]
+    keep(studio, source, model)
+
+    order = make_order(studio, tmp_path, refs=[{"order_id": source["id"]}], keep=DETAILS)
+    previous = make_piece(studio, order, "previous", derives_from=[sheet["id"]])
+    candidate = make_piece(studio, order, "candidate", derives_from=[previous["id"]])
+    assert candidate["missing_required_references"] == [model["id"]]
+    compare(studio, candidate, sheet)
+    with pytest.raises(AgoraError) as pending:
+        gate(studio, order, candidate)
+    assert pending.value.status == 409
+    assert pending.value.extra["error_code"] == "kept_reference_comparison"
+    assert pending.value.extra["comparisons"] == [
+        {"piece": candidate["id"], "reference_piece": model["id"], "reason": "comparison_pending"},
+    ]
+    for lang in ("es", "en"):
+        assert "hub_agora_piece_check" in pending.value.extra[lang]
+        assert "keep[].comparisons" in pending.value.extra[lang]
+
+    reviewed = compare(studio, candidate, model, reference_preview=0)
+    check = reviewed["piece"]["checks"][-1]
+    assert check["agent"] == "reviewer"
+    evidence = check["keep"][0]["comparisons"][0]
+    assert evidence["observed"] == "Opened each view and inspected the detail."
+    assert evidence["result"]["revision"] == candidate["revision"]
+    assert evidence["reference"] == {
+        "piece": model["id"], "revision": model["revision"], "preview": 0,
+        "sha256": Path(model["previews_stored"][0]).stem,
+        "file_url": f"/api/agora/piece_file/{model['id']}?preview=0",
+    }
+    assert gate(studio, order, candidate)["gate"]["status"] == "open"
+    pieces = studio.order({"order_id": order["id"]})["order"]["piece_list"]
+    assert {piece["id"]: piece["derivation"] for piece in pieces} == {
+        piece["id"]: piece["derivation"] for piece in (previous, candidate)
+    }
 
 
 def test_video_check_uses_a_registered_preview(studio, tmp_path):

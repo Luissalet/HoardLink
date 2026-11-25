@@ -9,7 +9,8 @@ from . import agora_orders as orders
 
 
 COMPARISONS = {
-    "description": "Visual comparisons with kept references, using registered image files or previews.",
+    "description": "Visual comparisons with kept references required by the order or in the piece's lineage, "
+                   "using registered image files or previews.",
     "type": "array", "maxItems": 200, "items": {
         "type": "object", "additionalProperties": False, "required": ["reference_piece", "observed"],
         "properties": {
@@ -143,7 +144,7 @@ def _comparison_references(self, piece, required):
                            and row["id"] not in by_id})
     if other_orders:
         by_id.update((row["id"], row) for row in _kept_rows(self, other_orders) if row["id"] in ancestors)
-    return ancestors, {pid: row for pid, row in by_id.items() if pid != piece["id"] and _continuity_reference(row)}
+    return {pid: row for pid, row in by_id.items() if pid != piece["id"] and _continuity_reference(row)}
 
 
 def _image_evidence(piece, preview):
@@ -186,7 +187,7 @@ def check_comparisons(self, piece, mark):
     if not isinstance(raw, list) or not 1 <= len(raw) <= COMPARISONS["maxItems"]:
         raise orders._err("comparisons must be a nonempty list of image comparisons")
     order = orders._order_row(self, piece["order_id"])
-    ancestors, references = _comparison_references(self, piece, required_rows(self, order))
+    references = _comparison_references(self, piece, required_rows(self, order))
     evidence = {}
     for item in raw:
         if not isinstance(item, dict) or item.keys() - COMPARISONS["items"]["properties"].keys():
@@ -194,8 +195,9 @@ def check_comparisons(self, piece, mark):
         if not isinstance(item.get("observed"), str):
             raise orders._err("comparison.observed must describe what was seen in the pair")
         reference = orders._int(item.get("reference_piece"), "reference_piece")
-        if reference not in references or reference not in ancestors or reference in evidence:
-            raise orders._err("comparison must name a distinct kept visual reference in the piece's lineage", 409)
+        if reference not in references or reference in evidence:
+            raise orders._err("comparison must name a distinct kept visual reference required by the order "
+                              "or in the piece's lineage", 409)
         evidence[reference] = {
             "reference_piece": reference, "result": _image_evidence(piece, item.get("piece_preview")),
             "reference": _image_evidence(references[reference], item.get("reference_preview")),
@@ -215,7 +217,7 @@ def validate_gate_references(self, order, piece_ids):
         piece = orders._piece_row(self, piece_id)
         if piece["status"] == "kept" or not _visual(piece):
             continue
-        ancestors, references = _comparison_references(self, piece, required)
+        references = _comparison_references(self, piece, required)
         if not references:
             continue
         latest = {}
@@ -224,23 +226,23 @@ def validate_gate_references(self, order, piece_ids):
                 for evidence in mark.get("comparisons", []):
                     latest[mark["id"], evidence["reference_piece"]] = (check["ok"], mark["state"], evidence)
         detail_ids = {detail["detail"].casefold(): detail["id"] for detail in orders._load(piece["keep"], [])}
-        for reference in references:
+        for reference, reference_row in references.items():
             states = []
-            if reference in ancestors:
-                for detail in details:
-                    ok, state, evidence = latest.get((detail_ids.get(detail.casefold()), reference), (False, "pending", None))
-                    if evidence:
-                        current = (evidence["result"] == _image_evidence(piece, evidence["result"]["preview"])
-                                   and evidence["reference"] == _image_evidence(
-                                       references[reference], evidence["reference"]["preview"]))
-                        states.append(state if ok and current else "missing")
-                    else:
-                        states.append("pending")
+            for detail in details:
+                ok, state, evidence = latest.get((detail_ids.get(detail.casefold()), reference), (False, "pending", None))
+                if evidence:
+                    current = (evidence["result"] == _image_evidence(piece, evidence["result"]["preview"])
+                               and evidence["reference"] == _image_evidence(
+                                   reference_row, evidence["reference"]["preview"]))
+                    states.append(state if ok and current else "missing")
+                else:
+                    states.append("pending")
             if "ok" not in states or any(state not in ("ok", "not_visible") for state in states):
                 failures.append({"piece": piece["id"], "reference_piece": reference,
-                                 "reason": "missing_reference" if reference not in ancestors else
-                                 "comparison_failed" if "missing" in states else "comparison_pending"})
+                                 "reason": "comparison_failed" if "missing" in states else "comparison_pending"})
     if failures:
-        es = "Falta una comparación visual aprobada con las referencias conservadas."
-        en = "A passing visual comparison with the kept references is required."
+        es = ("Falta un cotejo visual satisfactorio con las referencias conservadas. "
+              "Regístralo con hub_agora_piece_check en keep[].comparisons.")
+        en = ("A passing visual comparison with the kept references is required. "
+              "Record it with hub_agora_piece_check in keep[].comparisons.")
         raise orders._err(en, 409, error_code="kept_reference_comparison", es=es, en=en, comparisons=failures)
