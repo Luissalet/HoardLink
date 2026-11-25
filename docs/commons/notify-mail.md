@@ -85,11 +85,35 @@ Node: `notifyRouter({ via, ownSend, app })` with `send(title, body, { priority, 
 fam_mail.faustus_dir(setting=None) -> Path | None     # setting, FAUSTUS_DIR / HOARD_FAUSTUS_DIR / HOARD_HUB_FAUSTUS_DIR, a "faustus"
                                                       # next to the app, the usual places, then the hub's own hint
 fam_mail.faustus_python(root, setting=None) -> str | None
-helper = fam_mail.FaustusHelper(setting=None, *, owner=None, python=None, env_drop_prefixes=(), runner=None)
+helper = fam_mail.FaustusHelper(setting=None, *, owner=None, python=None, env_drop_prefixes=(), runner=None,
+                                real_hubs=(), real_data=())
 helper.available() -> bool
 helper.run(action, payload=None, timeout=180) -> dict  # never raises: {"ok": False, "error": ...}
 helper.status(refresh=False) -> dict                   # run("status"), remembered five minutes
+fam_mail.isolation(real_hubs=(), real_data=()) -> "" | "hub" | "data"            # why the helper must not run here; "" in the real install
+fam_mail.isolation_text(code) -> str                   # the state line, Spanish / English
 ```
+
+The helper only runs when both the active Hub and the token directory belong to the installation.
+The defaults accept a loopback Hub on port 8810 and the exact `data` directory of the app's installation.
+An installation can add Hub origins through `HOARD_MAIL_REAL_HUB_URLS` (comma-separated HTTP(S) URLs)
+and absolute data roots through `HOARD_MAIL_REAL_DATA_DIRS` (separated by `;` on Windows and `:` on POSIX).
+Origins match by scheme, host and port. Declared data roots include their descendants. Apps can also supply
+`real_hubs` and `real_data` to the helper, as values, iterables or callables. Configure these declarations
+in the installed service environment. `HOARD_HUB_URL` and `family.configure` select the active Hub and
+token directory for a run.
+
+On a Spark, placement writes the Hermes and Faustus service environments. Both declare the Hub's
+reverse link at `http://127.0.0.1:8811` and their own `data` roots under `~/faustus-stack`. Hermes also
+uses that link as its active Hub. Its root covers the Phileas and Tantalus module directories.
+Faustus keeps its separate placement link configuration for coordination. Placement reloads changed
+units and restarts the affected services when deploying or refreshing on the Spark.
+
+When either check fails, `helper.available()` is `False` and
+`helper.run` runs nothing and answers `{"ok": False, "isolated": "hub" | "data", "error": "sin pasarela en un Hub de
+pruebas: correo desactivado / no mail gateway in a test hub: mail is off"}` (the `data` case says «con datos de pruebas»).
+A router in `auto` or `faustus` then returns no messages and keeps that line in `last_error`; the hub's gateway still
+serves the app when it has one. The Node twin (`spawnHelperRunner`) does not have this rule yet.
 
 `helper.run` actions (all read-only: EXAMINE and BODY.PEEK, nothing is marked read, moved or deleted):
 
