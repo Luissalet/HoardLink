@@ -47,6 +47,30 @@ def status(monitor):
     return monitor.status({"space_id": "estudio"})["foreman"]
 
 
+@pytest.fixture
+def console(room, monkeypatch):
+    monkeypatch.setattr(AgoraConsoleFacet, "_ensure_leader_drain", lambda *_: None)
+    monkeypatch.setattr(AgoraConsoleFacet, "_codex_executable", lambda _: "fake-runner")
+    monkeypatch.setattr(AgoraConsoleFacet, "_provider_data", lambda _: {
+        "codex": {"current_model": "test-model", "current_effort": "high",
+                  "catalog": [{"id": "test-model", "efforts": ["high"]}]},
+    })
+    root = room.facets["agora_console"] = AgoraConsoleFacet(room.hub)
+    yield root.for_space("estudio")
+    root.close()
+
+
+def save_session(console, session_id, leader_id="codex"):
+    with console._db() as db:
+        db.execute("INSERT INTO leader_sessions(leader_id,session_id,updated_at) VALUES(?,?,0)",
+                   (leader_id, session_id))
+
+
+def queued_turns(console):
+    with console._db() as db:
+        return [dict(row) for row in db.execute("SELECT * FROM leader_turns ORDER BY rowid")]
+
+
 @pytest.mark.parametrize("review", [False, True])
 def test_one_alert_per_outage_and_recovery(room, review):
     heartbeat(room)
@@ -95,6 +119,131 @@ def test_one_alert_per_outage_and_recovery(room, review):
     monitor.check("estudio")
     assert status(monitor)["outage_thread_id"] not in (None, thread_id)
     assert len(room.notify.history()) == 2 and room.notify.unseen_count() == 1
+
+
+def test_console_delivers_one_turn_per_message_to_the_established_leader(room, console):
+    launcher = console._leader_identity("codex")
+    for director in ("claude", "codex-investiga"):
+        room.studio.heartbeat({"agent": director})
+        set_rank(room.studio, director, "director", room.studio.person_id)
+    with console._db() as db:
+        db.execute("INSERT INTO workers(id,agent_id,parent_id,model,effort,task,state,launched_by,created_at,updated_at)"
+                   " VALUES ('foreman','claude-capataz','claude','test-model','','Monitor','completed',?,0,0)",
+                   (launcher,))
+    save_session(console, "studio-leader")
+    save_session(console, "unaddressed-leader", "cursor")
+    other_space = room.facets["agora_console"]
+    save_session(other_space, "ecosystem-leader")
+    claim(room.studio)
+    heartbeat(room)
+    room.now[0] += 1801
+
+    room.monitor.check("estudio")
+    room.monitor.check("estudio")
+    thread_id = status(room.monitor)["outage_thread_id"]
+    thread = room.studio.thread({"thread_id": console.thread_id})
+    [alert] = [row for row in thread["messages"] if f"#agora-{thread_id}" in row["body"]]
+    assert alert["author"] == "system"
+    assert alert["mentions"] == ["claude", "codex-investiga", launcher]
+    assert "Capataz sin latido" in alert["body"]
+    inbox = room.studio.inbox({"agent": launcher, "peek": True})["messages"]
+    assert [row["id"] for row in inbox if row["for_you"] and "Capataz sin latido" in row["body"]] == [alert["id"]]
+    assert room.studio.thread({"thread_id": thread_id})["thread"]["status"] == "open"
+    assert len(room.notify.history()) == 1
+    [turn] = queued_turns(console)
+    assert (turn["leader_id"], turn["session_id"], turn["message_id"], turn["state"]) == (
+        "codex", "studio-leader", str(alert["id"]), "queued")
+    assert turn["prompt"].count(alert["body"]) == 1
+    assert queued_turns(other_space) == []
+
+    heartbeat(room)
+    room.monitor.check("estudio")
+    room.monitor.check("estudio")
+    work = room.studio.thread({"thread_id": console.thread_id})
+    alert_again, resolution = [row for row in work["messages"] if f"#agora-{thread_id}" in row["body"]]
+    assert alert_again["id"] == alert["id"]
+    assert resolution["mentions"] == alert["mentions"]
+    assert resolution["body"].startswith("Se recibió un nuevo latido de claude-capataz.")
+    first_turn, last_turn = queued_turns(console)
+    assert first_turn == turn
+    assert last_turn["state"] == "queued" and last_turn["session_id"] == "studio-leader"
+    assert last_turn["message_id"] == str(resolution["id"]) and last_turn["prompt"].count(resolution["body"]) == 1
+    assert room.studio.thread({"thread_id": thread_id})["thread"]["status"] == "resolved"
+    assert room.notify.unseen_count() == 0
+
+
+def test_console_mentions_the_leader_even_without_a_session_in_the_space(room, console):
+    room.hub.config.language = "en"
+    room.studio.heartbeat({"agent": "codex-investiga"})
+    set_rank(room.studio, "codex-investiga", "director", room.studio.person_id)
+    save_session(room.facets["agora_console"], "ecosystem-leader")
+    heartbeat(room)
+    room.now[0] += 1801
+    room.monitor.check("estudio")
+    assert status(room.monitor)["outage_thread_id"] is None
+    assert queued_turns(console) == []
+
+    claim(room.studio)
+    room.monitor.check("estudio")
+    heartbeat(room)
+    room.monitor.check("estudio")
+    thread = room.studio.thread({"thread_id": console.thread_id})
+    alert, resolution = [row for row in thread["messages"] if "codex-investiga" in row["mentions"]]
+    assert alert["body"].startswith("Foreman heartbeat overdue.")
+    assert resolution["body"].startswith("A new heartbeat arrived from claude-capataz.")
+    assert queued_turns(console) == []
+
+
+def test_console_retries_the_same_message_after_an_interrupted_dispatch(room, console, monkeypatch):
+    leader = console._leader_identity("codex")
+    room.studio.heartbeat({"agent": leader})
+    set_rank(room.studio, leader, "director", room.studio.person_id)
+    save_session(console, "studio-leader")
+    heartbeat(room)
+    claim(room.studio)
+    room.now[0] += 1801
+    with monkeypatch.context() as interruption:
+        def fail_after_queue(*_args):
+            raise RuntimeError("Interrupted after committing the turn")
+
+        interruption.setattr(console, "_record", fail_after_queue)
+        with pytest.raises(RuntimeError, match="Interrupted after committing the turn"):
+            room.monitor.check("estudio")
+    [turn] = queued_turns(console)
+    room.monitor.close()
+
+    restarted = AgoraForemanFacet(room.hub)
+    restarted.start()
+    try:
+        restarted.check("estudio")
+        restarted.check("estudio")
+        assert queued_turns(console) == [turn]
+        thread = room.studio.thread({"thread_id": console.thread_id})
+        assert [row["id"] for row in thread["messages"] if leader in row["mentions"]] == [int(turn["message_id"])]
+        assert len(room.notify.history()) == 1
+    finally:
+        restarted.close()
+
+
+def test_console_queued_notice_does_not_start_a_replacement_session(room, console, monkeypatch):
+    leader = console._leader_identity("codex")
+    room.studio.heartbeat({"agent": leader})
+    set_rank(room.studio, leader, "director", room.studio.person_id)
+    save_session(console, "studio-leader")
+    heartbeat(room)
+    claim(room.studio)
+    room.now[0] += 1801
+    room.monitor.check("estudio")
+    with console._db() as db:
+        db.execute("UPDATE leader_sessions SET session_id='replacement' WHERE leader_id='codex'")
+
+    def unexpected_turn(_turn):
+        pytest.fail("A heartbeat notice must stay with the addressed session.")
+
+    monkeypatch.setattr(console, "_run_leader_turn", unexpected_turn)
+    console._drain_leader("codex")
+    [turn] = queued_turns(console)
+    assert turn["state"] == "failed" and turn["session_id"] == "studio-leader"
 
 
 def test_silence_without_work_in_the_space_does_not_alert(room):
