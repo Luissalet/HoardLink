@@ -89,7 +89,7 @@ from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools, autostart, profile_editor, portable_profiles
 from .isolation import passive_error
-from . import agent_routes, ui_session
+from . import agent_routes, ui_session, voice_routing
 from .browser_lanes import LaneError
 from .lease import LeaseError
 from .rules import example_rules
@@ -940,13 +940,13 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json(res, 200 if res.get("ok", True) else 400)
             if len(parts) == 5 and parts[1] == "api" and parts[2] == "apps":
                 app_id, action = parts[3], parts[4]
-                if hub.get(app_id) is None:
+                name = str(body.get("tool") or body.get("name") or "") if action == "call" else ""
+                if hub.get(app_id) is None and voice_routing.requested_service(app_id, name) is None:
                     return self._json({"ok": False, "error": "unknown app"}, 404)
                 if action == "call":
                     who = self._family_ok()
                     if who is None:
                         return None
-                    name = str(body.get("tool") or body.get("name") or "")
                     args = body.get("arguments") or body.get("args") or {}
                     try:
                         timeout = float(body.get("timeout_s") or 120.0)

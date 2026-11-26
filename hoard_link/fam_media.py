@@ -44,13 +44,14 @@ from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from . import _famsvc as _s
 from . import family as _f
+from .service_contracts import PREVIOUS_OWNERS
 
 __all__ = ["download", "status", "cancel", "info", "subtitles", "audio_for_asr", "tools", "transcribe", "transcribe_status",
            "transcribe_cancel", "speak", "speak_bytes", "available", "forget_availability"]
 
 LINKS = _s.OWNERS["media"]
-FUNES = _s.OWNERS["stt"]
-PROSPERO = _s.OWNERS["tts"]
+FUNES = PREVIOUS_OWNERS.get("stt", _s.OWNERS["stt"])  # compatibility address also accepted by older Hubs
+PROSPERO = PREVIOUS_OWNERS.get("tts", _s.OWNERS["tts"])
 ACTIVE_DOWNLOAD = ("queued", "downloading", "processing")
 MAX_TTS_CHARS = 20000
 
@@ -58,7 +59,7 @@ _FORMATS = {"auto": "auto", "video": "video", "audio": "audio", "image": "image"
             "photos": "image", "images": "image"}
 
 
-def available(service: str = "media", timeout: float = 1.0) -> bool:
+def available(service: str = "media", timeout: Optional[float] = None) -> bool:
     """True when the hub is up and the owner of ``service`` (``"media"`` = Links, ``"stt"`` = Funes, ``"tts"`` = Prospero) is running.
     Cached for 30 seconds."""
     return _s.available(service, timeout)
@@ -343,16 +344,15 @@ def transcribe(path: str, *, language: str = "auto", model: Optional[str] = None
                vad: bool = True) -> dict[str, Any]:
     """Speech to text for an audio or video file on this computer.
 
-    First Funes's Hoard through the hub (``transcribe_file``, then ``transcribe_status`` polling until ``timeout_s``): one Whisper model
-    for the whole family, no new session in Funes. When Funes cannot be reached (hub down, app not running, an older Funes without the
-    tool) and ``local_fallback`` is set and ``faster_whisper`` is importable, :class:`hoard_link.media.stt.Transcriber` does it here. A
-    job that Funes started and that fails, or is still running at the deadline, is *not* repeated locally.
+    The Hub resolves ``transcribe_file`` and follows the issuing provider with ``transcribe_status`` until ``timeout_s``.
+    When no provider can take the work, ``local_fallback`` allows :class:`hoard_link.media.stt.Transcriber` if
+    ``faster_whisper`` is importable. An accepted job keeps its issuing provider.
 
     ``language``: ``"auto"`` or a code (``es``, ``en``...). ``model``: a Whisper size (``small``, ``medium``, ``large-v3``...; the owner's
     default when None). ``initial_prompt`` primes names and jargon. ``progress(fraction)`` is called as the job advances. Returns the
-    :class:`~hoard_link.media.stt.Transcript` dict plus ``ok`` and ``via`` (``"funes"`` or ``"local"``): ``{ok, language, language_probability,
+    :class:`~hoard_link.media.stt.Transcript` dict plus ``ok`` and ``via`` (the provider or ``"local"``): ``{ok, language, language_probability,
     duration_s, text, segments: [{start_s, end_s, text, words: [{start_s, end_s, word, p}]}], model, device, note, stats, via}``.
-    Timeout: ``{ok: False, kind: "timeout", job_id, status, via: "funes"}`` (see :func:`transcribe_status`, :func:`transcribe_cancel`)."""
+    Retain ``job_id`` to follow or cancel pending work via :func:`transcribe_status` or :func:`transcribe_cancel`."""
     try:
         src = _s.as_path(path)
         if not src:
@@ -361,6 +361,7 @@ def transcribe(path: str, *, language: str = "auto", model: Optional[str] = None
         args = _s.clean_args(path=src, language=lang, model=model, word_timestamps=bool(word_timestamps), initial_prompt=str(initial_prompt or ""),
                              vad=bool(vad))
         res = _s.run_job(FUNES, "transcribe_file", args, "transcribe_status", timeout_s=float(timeout_s), on_data=_progress_from(progress))
+        via = res.get("service_owner", FUNES)
         if res["ok"]:
             data = res["data"] if isinstance(res["data"], Mapping) else {}
             if str(data.get("status") or "done").lower() in ("done", "completed", "ok"):
@@ -369,20 +370,20 @@ def transcribe(path: str, *, language: str = "auto", model: Optional[str] = None
                         progress(1.0)
                     except Exception:  # noqa: BLE001
                         pass
-                return _transcript(data, FUNES)
+                return _transcript(data, via)
             err = _s.fail("tool_error", str(data.get("error") or f"transcription {data.get('status')}"), data=dict(data))
-            out = _s.public_error(err, FUNES)
+            out = _s.public_error(err, via)
             out.update({"status": data.get("status"), "job_id": data.get("job_id")})
             return out
-        if local_fallback and _s.is_unavailable(res):
+        if local_fallback and not res.get("job_id") and _s.is_unavailable(res):
             try:
                 return _local_transcribe(src, language=lang, model=model, word_timestamps=word_timestamps, initial_prompt=str(initial_prompt or ""),
                                          vad=vad, progress=progress)
             except Exception as exc:  # noqa: BLE001 - say both reasons
                 return {"ok": False, "error": f"{res['error']}; local fallback failed: {type(exc).__name__}: {exc}"[:400], "via": "local",
                         "kind": res["kind"], "hub_error": res["error"]}
-        out = _s.public_error(res, FUNES)
-        if res.get("kind") == "timeout":
+        out = _s.public_error(res, via)
+        if res.get("kind") == "timeout" or res.get("job_id"):
             job = res.get("data") if isinstance(res.get("data"), Mapping) else {}
             out.update({"job_id": res.get("job_id") or job.get("job_id"), "status": job.get("status") or "running", "still_running": True})
         return out
@@ -396,15 +397,16 @@ def transcribe_status(job_id: str, wait_s: float = 0) -> dict[str, Any]:
     ``{ok: False, still_running: True, status, job_id}``. ``wait_s`` (0 to 150) blocks until it finishes or the time runs out."""
     wait = _s.clamp_wait(wait_s)
     res = _s.call_tool(FUNES, "transcribe_status", {"job_id": str(job_id), "wait_s": wait}, timeout_s=wait + _s.HUB_MARGIN_S)
+    via = res.get("service_owner", FUNES)
     if not res["ok"]:
-        return _s.public_error(res, FUNES)
+        return _s.public_error(res, via)
     data = res["data"] if isinstance(res["data"], Mapping) else {}
     state = str(data.get("status") or "done").lower()
     if state in ("done", "completed", "ok"):
-        return _transcript(data, FUNES)
+        return _transcript(data, via)
     if state in _s.DONE_STATES:
-        return {"ok": False, "error": str(data.get("error") or f"transcription {state}"), "via": FUNES, "kind": "tool_error", "status": state, "job_id": job_id}
-    return {"ok": False, "error": f"still running ({state})", "via": FUNES, "kind": "timeout", "still_running": True, "status": state, "job_id": job_id,
+        return {"ok": False, "error": str(data.get("error") or f"transcription {state}"), "via": via, "kind": "tool_error", "status": state, "job_id": job_id}
+    return {"ok": False, "error": f"still running ({state})", "via": via, "kind": "timeout", "still_running": True, "status": state, "job_id": job_id,
             "progress": data.get("progress")}
 
 
@@ -413,9 +415,9 @@ def transcribe_cancel(job_id: str) -> dict[str, Any]:
     """Stop a transcription job (``transcribe_cancel``): ``{ok, status, job_id, via}``."""
     res = _s.call_tool(FUNES, "transcribe_cancel", {"job_id": str(job_id)}, timeout_s=30)
     if not res["ok"]:
-        return _s.public_error(res, FUNES)
+        return _s.public_error(res, res.get("service_owner", FUNES))
     data = dict(res["data"]) if isinstance(res["data"], Mapping) else {}
-    return {"ok": True, "job_id": job_id, "status": data.get("status") or "cancelled", "via": FUNES}
+    return {"ok": True, "job_id": job_id, "status": data.get("status") or "cancelled", "via": res.get("service_owner", FUNES)}
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -442,14 +444,14 @@ def _local_speak(text: str, voice: Optional[str], link: Any, out_dir: Optional[s
 
 def speak(text: str, *, voice: Optional[str] = None, engine: Optional[str] = None, lang: Optional[str] = None, speed: Optional[float] = None,
           timeout_s: float = 300.0, local_fallback: bool = True, link: Any = None, out_dir: Optional[str] = None) -> dict[str, Any]:
-    """Read ``text`` aloud: a WAV file on this computer. Prospero's Hoard through the hub (``voice_tts``) with its voices (a library voice
-    id or name, or an engine's own voice id) and engines; when Prospero cannot be reached and ``local_fallback`` is set, ``link.tts`` (a
+    """Read ``text`` aloud and return a WAV path. The Hub selects the provider for ``voice_tts``.
+    When no provider is available and ``local_fallback`` is set, ``link.tts`` (a
     :class:`hoard_link.Link`, default one built for this app; needs ``httpx``) does it, writing the audio under ``out_dir`` or
     ``$HOARD_HOME/tmp/tts`` (the fallback ignores ``engine``, ``lang`` and ``speed``).
 
     ``voice``: library voice (id or name) or the engine's voice id; empty = the best installed engine. ``engine``: an engine id
     (``piper``...). ``lang``: ``es``, ``en``... ``speed``: 1.0 is normal. At most 20000 characters per call. Returns ``{ok, path, bytes,
-    engine_id, via}`` (``via``: ``"prospero"`` or ``"local"``; a local file in the default folder also carries ``temp: True``: the caller
+    engine_id, via}`` (``via`` names the provider or ``"local"``; a local file in the default folder also carries ``temp: True``: the caller
     may delete it after use)."""
     try:
         body = str(text or "").strip()
@@ -460,25 +462,27 @@ def speak(text: str, *, voice: Optional[str] = None, engine: Optional[str] = Non
                     "kind": "client_error"}
         args = _s.clean_args(text=body, voice=voice, engine=engine, lang=lang, speed=speed)
         res = _s.call_tool(PROSPERO, "voice_tts", args, timeout_s=float(timeout_s))
+        via = res.get("service_owner", PROSPERO)
         if res["ok"]:
             data = res["data"] if isinstance(res["data"], Mapping) else {}
             path = str(data.get("path") or "")
             if not path:
-                return {"ok": False, "error": "Prospero returned no audio path", "via": PROSPERO, "kind": "tool_error"}
+                return {"ok": False, "error": ("Prospero" if via == PROSPERO else via) + " returned no audio path",
+                        "via": via, "kind": "tool_error"}
             size = data.get("bytes")
             if not isinstance(size, int):
                 try:
                     size = os.path.getsize(path)
                 except OSError:
                     size = 0
-            return {"ok": True, "path": path, "bytes": size, "engine_id": str(data.get("engine_id") or ""), "via": PROSPERO}
+            return {"ok": True, "path": path, "bytes": size, "engine_id": str(data.get("engine_id") or ""), "via": via}
         if local_fallback and _s.is_unavailable(res):
             try:
                 return _local_speak(body, voice, link, out_dir)
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "error": f"{res['error']}; local fallback failed: {type(exc).__name__}: {exc}"[:400], "via": "local",
                         "kind": res["kind"], "hub_error": res["error"]}
-        return _s.public_error(res, PROSPERO)
+        return _s.public_error(res, via)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300], "via": PROSPERO, "kind": "client_error"}
 

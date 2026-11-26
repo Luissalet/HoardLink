@@ -9,9 +9,9 @@ call exactly these tools, and the migration table at the end says which app swit
 | Service | Owner (hub app id) | Python client | Node twin (`fam-services.js`) |
 |---|---|---|---|
 | Media download from a link | `links` (Links Hoard, Node) | `fam_media.download`, `status`, `cancel`, `info`, `subtitles`, `audio_for_asr`, `tools` | `mediaDownload`, `mediaStatus`, `mediaCancel`, `mediaInfo`, `mediaSubtitles`, `mediaAudioForAsr`, `mediaTools` |
-| Speech to text | `funes` (Funes's Hoard, Python) | `fam_media.transcribe`, `transcribe_status`, `transcribe_cancel` | `transcribe`, `transcribeStatus`, `transcribeCancel` |
-| Natural dictation and structured fields | `cyrano` (Cyrano's Hoard, Python) | `cyrano_hoard.client.DictationClient` | `cyrano-client.js` from the app |
-| Text to speech | `prospero` (Prospero's Hoard, Python) | `fam_media.speak`, `speak_bytes` | `speak` |
+| Speech to text | `boltagon` | `fam_media.transcribe`, `transcribe_status`, `transcribe_cancel` | `transcribe`, `transcribeStatus`, `transcribeCancel` |
+| Natural dictation and structured fields | `boltagon` (Boltagon's Hoard, Python) | `boltagon_hoard.client.DictationClient` | `boltagon-client.js` from the app |
+| Text to speech | `boltagon` | `fam_media.speak`, `speak_bytes` | `speak` |
 | PDF operations, extraction, OCR | `kafka` (Kafka's Hoard, Python) | `fam_docs.*` | `pdf*`, `imagesToPdf`, `imagesCompress`, `docsExtract`, `docsOcr*` |
 | Text embeddings | `borges` (Borges's Hoard, Python) | `fam_embed.status`, `embed_texts`, `embed_query` | `embedStatus`, `embedTexts`, `embedQuery` |
 | Outbound mail and remote drafts | `hub` (mail gateway, accounts in Faustus) | `fam_mail.send_status`, `fam_mail.send` | `mailStatus`, `mailSend` |
@@ -167,7 +167,22 @@ into yt-dlp options (cookies plus its `extra`). Links also slots in the session 
 (`site_sessions`, `site_login`, `site_logout`) right after the attempts without cookies; a failure that needs an account carries
 `details.login = {site, label}`.
 
-## 3. Speech to text: owner `funes` (Funes's Hoard)
+## 3. Speech to text
+
+The Hub prefers Boltagon and checks the tool catalogue before sending work.
+The previous transcription provider, Funes, remains available through its
+compatibility route when the registered owner is down or lacks a required tool.
+Existing clients can keep calling the same app address. The Hub returns an
+opaque `job_id` for jobs issued by the new provider and routes status and
+cancellation back to that provider. Unqualified legacy IDs continue to use
+Funes at the historical address. Keep the returned ID intact.
+
+Media imports save `transcribe_owner` with `transcribe_job_id`, and record
+the submitted owner before sending the request so a lost reply can be
+reconciled without resubmitting work. Journals from before the change use
+Funes for a saved or uncertain transcription. A Hub restart still pauses
+imports until an explicit resume. Use `hub_media_imports` to inspect the
+saved owner and `hub_media_import_resume` to reconcile the original job.
 
 Code: `funes_hoard/audio_memory/agent_tools.py` (a `Tool(...)` + a pydantic input model each, like `ImportFileArgs`/`run_import_file`),
 route list in `funes_hoard/api.py` (`for _tool in ("scribe_minutes", "minutes_get", "scribe_import_file")`), `mcp_server.py` (`_audio_call`),
@@ -187,10 +202,16 @@ The job runs on the lane the importer already uses (one transcription at a time,
 Client behaviour: `transcribe(path, language="auto", model=None, word_timestamps=True, initial_prompt="", timeout_s=600, local_fallback=True, progress=None)`:
 `transcribe_file(wait_s: 150)`, then `transcribe_status` until `timeout_s`; `progress(fraction)` per poll. The result is normalised to
 `hoard_link.media.stt.Transcript.as_dict()` (`start`/`end` -> `start_s`/`end_s`, `probability` -> `p`, `text` rebuilt from the segments when absent) plus
-`ok`, `via` (`"funes"` | `"local"`) and `job_id`. A job Funes ran and that failed is **not** repeated locally; only `hub_down`, `app_down`, `app_missing`
-and `tool_missing` fall back (to `Transcriber(size=model or $HOARD_WHISPER_MODEL or "small")`, kept loaded between calls).
+`ok`, `via` (the selected provider or `"local"`) and `job_id`. A job that was accepted keeps its issuing
+provider, even when a later poll fails. The Python client's existing local fallback is available
+for unavailable providers before acceptance.
 
-## 4. Text to speech: owner `prospero` (Prospero's Hoard)
+## 4. Text to speech
+
+The Hub selects Boltagon for `voice_tts`. Prospero can serve this tool
+during the transition when it is already available. The shared call
+never starts Prospero or switches on its generation module. Project
+synthesis and audiobook jobs keep their existing app-specific routes.
 
 Code: `prosperos_hoard/family_api.py` (`TtsBody`, `agent_voice_tts`), `family_tools.py:tts`, `mcp_server.py:voice_tts`. Synchronous (Piper is fast).
 
@@ -199,11 +220,10 @@ Code: `prosperos_hoard/family_api.py` (`TtsBody`, `agent_voice_tts`), `family_to
 | `voice_tts` | yes; **2 arguments to add** | `text` (<= 20000 chars), `voice` (a library voice id or name, or an engine's own voice id; empty = best installed engine), `lang` (`es`, `en`...). **Add:** `engine` (an engine id such as `piper`; 400 `unknown_engine` when it is not installed; with a library `voice` the voice's own engine wins), `speed` (0.5..2.0, 1.0 normal; passed to `synthesize(speed=)`) | `{ok, path, engine_id, bytes}`: a WAV under `<data>/exports/tts/` |
 | `voice_speak`, `voice_audiobook`, `voice_transcribe`, `voice_list` | yes | (not wrapped: `voice_speak` saves a project asset, `voice_audiobook` is a job) | |
 
-Errors: 400 `empty_text`, `text_too_long`, `tts_not_installed` (no engine), `unknown_engine`. Prospero's own `voice_transcribe` stays for its studio; **speech to
-text for other apps is Funes's**.
+Errors include `empty_text`, `text_too_long`, `tts_not_installed` and `unknown_engine`. Prospero's studio retains its own `voice_transcribe` tool.
 
 Client behaviour: `speak(text, *, voice, engine, lang, speed, timeout_s=300, local_fallback=True, link=None, out_dir=None) -> {ok, path, bytes, engine_id, via}`;
-`speak_bytes(...)` reads the file. Fallback when Prospero cannot be reached: `link.tts(text, voice)` of a `hoard_link.Link` (the app's own, or one built for the
+`speak_bytes(...)` reads the file. When the Hub has no available voice provider, Python can fall back to `link.tts(text, voice)` of a `hoard_link.Link` (the app's own, or one built for the
 app; needs `httpx`), written under `out_dir` or `$HOARD_HOME/tmp/tts` (`temp: True`; `engine`, `lang` and `speed` are ignored there). More than 20000 characters is
 `client_error` (split the text; narration of long texts is `voice_audiobook`).
 
@@ -374,20 +394,25 @@ para soltar su reserva. El registro y la retirada devuelven cómo deshacerlos.
 
 ## 11. Hub service discovery and media imports
 
-HoardLink 0.8.1 adds the Services tab and `hub_services_status` (also
-`GET /api/services/status?refresh=1`). The rows identify Web (Hub), downloads
-(Links), speech recognition (Funes), speech synthesis (Prospero), document OCR
-(Kafka) and embeddings (Borges). Owner catalogues are checked concurrently with
-a two-second timeout and a fifteen-second cache. `ready` means the required tools
-are exposed; it does not load models or guarantee that the next inference will succeed.
+The Services tab and `hub_services_status` (also
+`GET /api/services/status?refresh=1`) report owners and required tools.
+Voice rows identify the provider selected by the catalogue check.
+When a compatibility provider serves the request, the row includes the
+registered owner and `fallback: true`. The catalogue check uses a two-second
+timeout per provider and a fifteen-second cache. `ready` confirms the tool
+names and does not guarantee inference. A catalogue that runs out of time
+is reported as `timed_out` until it can be checked again. The Python and
+Node voice clients allow time for the registered provider and its reserves
+by default. An explicit shorter deadline can return an unconfirmed result,
+which does not enter the availability cache.
 Missing owners, unreachable apps and incompatible catalogues have distinct states.
 
 `hub_media_import({url|download_id, folder, language?, model?})` starts an asynchronous
 download → stateless transcription → transcript collection workflow. Poll
 `hub_media_import_status({job_id, wait_s?})` (maximum wait 150 seconds). An existing
 Links download can be reused without downloading it again. Files must be safe and
-inside the selected folder; protected folders are refused. Funes creates no recording
-session. Only the recovered text and its source are saved as `*.transcript.txt`, then
+inside the selected folder. The transcription stage creates no recording session.
+The workflow saves the recovered text and its source as `*.transcript.txt`, then
 Borges is asked to add/watch the folder and reindex its transcript files.
 
 `status=done, stage=index_requested` means Borges accepted the indexing request,
@@ -397,7 +422,7 @@ The Hub holds at most two running imports. The atomic local journal
 `<data>/media-imports.json` retains finished jobs for seven days, preserves paused
 jobs, and refuses new work at 100 retained jobs. Restart changes running imports
 to `paused`; nothing resumes automatically. `hub_media_imports` lists them and
-`hub_media_import_resume({job_id})` follows saved Links/Funes job IDs and skips
+`hub_media_import_resume({job_id})` follows saved job IDs with their issuing providers and skips
 completed steps. Repeated `download_id` + folder + language/model requests reuse
 the retained running, paused or completed import. URL-only requests are fresh work.
 A provider poll has a ten-minute limit and all common terminal states stop polling.
@@ -406,8 +431,8 @@ Before each mutation the journal records the intent. If its reply is lost, resum
 requires reconciliation with the owner: `download_id`, `transcribe_job_id`,
 `collection_id`, or `index_requested: true` as appropriate. This avoids blindly
 duplicating work; it is not an exactly-once transaction across HTTP services.
-Funes's stateless job retention still applies: an expired job may need a new,
-explicit import. Closing the Hub cannot cancel a provider request already in flight.
+The issuing provider's job retention still applies. An expired job may need a
+new, explicit import. Closing the Hub leaves provider requests in flight.
 
 Each transcript has a `*.transcript.provenance.json` sidecar with the provider IDs,
 model/language when reported, a source URL without credentials/query/fragment,
@@ -422,13 +447,15 @@ HTTP operator routes: `GET /api/services/imports`,
 
 ### Local dictation
 
-Cyrano owns `dictation` on loopback port 5253. Its manifest registers the
-app and its local stdio bridge. Discovery checks the tool catalogue
-without starting Cyrano, the transcription owner, or a model.
+Boltagon owns `dictation` on loopback port 5253. Its manifest registers the
+app and its local stdio bridge. Discovery checks the tool catalogue without
+starting the app, the transcription owner, or a model. During the rename,
+the Hub accepts the previous `cyrano` ID for incoming app lookups and logs
+each fallback. Only the installed manifest appears in the app catalogue.
 
 - `dictation_understand` processes text. `dictation_audio` takes an absolute
   path on the shared machine and delegates raw recognition through the
-  existing `stt` service. Both return `cyrano.dictation/v0`.
+  existing `stt` service. Both preserve the wire version `cyrano.dictation/v0`.
 - The result contains the raw and clean text, edits, validated fields with
   literal evidence, missing and ambiguous fields, changed fields, final
   status, and stage timings. The caller supplies the field schema and

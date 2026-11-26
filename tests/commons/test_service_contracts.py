@@ -15,7 +15,17 @@ def test_python_hub_and_node_share_the_exact_owner_contract():
     mirror = repo / "js/hoard-commons/family-services.json"
     assert canonical.read_bytes() == mirror.read_bytes()
     assert services.SERVICES is service_contracts.SERVICES
-    assert (fam_media.LINKS, fam_media.FUNES, fam_media.PROSPERO, fam_docs.KAFKA, fam_embed.BORGES, fam_workspace.OWNER) == tuple(service_contracts.OWNERS[k] for k in ("media", "stt", "tts", "docs", "embed", "storage"))
+    assert (fam_media.LINKS, fam_docs.KAFKA, fam_embed.BORGES, fam_workspace.OWNER) == tuple(
+        service_contracts.OWNERS[key] for key in ("media", "docs", "embed", "storage")
+    )
+    assert {key: service_contracts.OWNERS[key] for key in ("stt", "tts", "dictation")} == dict.fromkeys(
+        ("stt", "tts", "dictation"), "boltagon"
+    )
+    assert dict(service_contracts.PREVIOUS_OWNERS) == {"stt": "funes", "tts": "prospero"}
+    assert (fam_media.FUNES, fam_media.PROSPERO) == (
+        service_contracts.PREVIOUS_OWNERS["stt"], service_contracts.PREVIOUS_OWNERS["tts"],
+    )
+    assert service_contracts.VOICE_ALIASES["cyrano"] == "boltagon"
     assert service_contracts.OWNERS["mail"] == "hub"
     node = shutil.which("node")
     if not node:

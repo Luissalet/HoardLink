@@ -31,6 +31,53 @@ def _isolated_state():
     fam_media._reset_local()
 
 
+def test_common_transcript_poll_failure_preserves_job_and_provider_without_local_replay(monkeypatch):
+    handle = "hoard-stt:boltagon:accepted"
+    calls = []
+
+    def call(owner, tool, args, **kwargs):
+        calls.append((owner, tool, args))
+        if tool == "transcribe_file":
+            return {"ok": True, "status": 200, "service_owner": "boltagon",
+                    "result": {"status": "running", "job_id": handle}}
+        return {"ok": False, "status": None, "contract": "shared", "error": "not reachable"}
+
+    monkeypatch.setattr(family, "call", call)
+    monkeypatch.setattr(fam_media, "_local_transcribe", lambda *a, **kw: pytest.fail("accepted job replayed"))
+    result = fam_media.transcribe("fixture.wav")
+    assert not result["ok"] and result["via"] == "boltagon"
+    assert result["still_running"] and result["job_id"] == handle
+    assert [name for _, name, _ in calls] == ["transcribe_file", "transcribe_status"]
+    assert calls[1][2]["job_id"] == handle
+
+
+@pytest.mark.parametrize("indeterminate", ["client_deadline", "provider_deadline"])
+def test_voice_deadline_is_retried_and_default_budget_can_reach_funes(monkeypatch, indeterminate):
+    monkeypatch.setattr(family, "_hub", lambda: "http://fixture.invalid")
+    monkeypatch.setattr(family, "_token", lambda: "fixture")
+    monkeypatch.setattr(family, "_headers", lambda: {})
+    observed = []
+
+    def fetch(url, *, timeout, headers):
+        assert url == "http://fixture.invalid/api/services/status"
+        observed.append(timeout)
+        if timeout < 2:
+            if indeterminate == "client_deadline":
+                return None, None
+            return 200, {"services": [{"service": "stt", "state": "timed_out", "available": False}]}
+        return 200, {"services": [
+            {"service": "stt", "state": "ready", "available": True, "owner": "funes", "fallback": True},
+        ]}
+
+    monkeypatch.setattr(_famsvc, "fetch", fetch)
+    assert not fam_media.available("stt", timeout=1)
+    assert fam_media.available("stt")
+    assert fam_media.available("stt", timeout=1)
+    assert len(observed) == 2 and observed[0] == 1 and observed[1] > 2
+    _famsvc.forget_availability()
+    assert fam_media.available("stt") and observed[-1] > 2
+
+
 @pytest.fixture
 def hub(tmp_path):
     h = FakeHub()
