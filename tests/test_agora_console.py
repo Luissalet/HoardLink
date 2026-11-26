@@ -119,6 +119,8 @@ def test_quota_reporters_follow_hub_isolation(tmp_path, monkeypatch, settings, p
 
 
 def test_orphan_workers_are_reconciled_without_changing_finished_receipts(tmp_path, monkeypatch):
+    import psutil
+
     from hoard_link.hub import procs
 
     started = time.time() - 120
@@ -131,12 +133,15 @@ def test_orphan_workers_are_reconciled_without_changing_finished_receipts(tmp_pa
     calls = []
 
     def process(pid):
+        if pid not in pids:
+            raise psutil.NoSuchProcess(pid)
         # The recycled PID has a different creation time. The unrelated CLI
         # has a superficially similar result filename in another Hub's folder.
         output = result if pid == 3649 else tmp_path.parent / "finished.result.txt"
         return SimpleNamespace(pid=pid, create_time=lambda: started + (1 if pid == 3651 else 0),
                                cmdline=lambda: ["codex.exe", "exec", "--output-last-message", str(output)],
-                               status=lambda: "sleeping", is_running=lambda: pid in pids)
+                               status=lambda: "sleeping", is_running=lambda: pid in pids,
+                               terminate=lambda: terminate(pid, created_at=started, exact_identity=True))
 
     def terminate(pid, *, created_at, exact_identity):
         calls.append((pid, created_at, exact_identity))
@@ -144,7 +149,8 @@ def test_orphan_workers_are_reconciled_without_changing_finished_receipts(tmp_pa
         return {"ok": True, "stopped": [pid]}
 
     monkeypatch.setattr(procs, "_psutil", lambda: SimpleNamespace(
-        pids=lambda: list(pids), Process=process, Error=RuntimeError, STATUS_ZOMBIE="zombie"))
+        pids=lambda: list(pids), Process=process, Error=psutil.Error, NoSuchProcess=psutil.NoSuchProcess,
+        STATUS_ZOMBIE="zombie"))
     monkeypatch.setattr(procs, "terminate_tree", terminate)
     facet = _facet(tmp_path)
     with facet._db() as db:
@@ -163,13 +169,13 @@ def test_orphan_workers_are_reconciled_without_changing_finished_receipts(tmp_pa
     facet = _facet(tmp_path)  # startup reconciliation, with no local Popen handles
     assert calls == []
     found = facet.worker({"action": "reconcile"})["orphans"]
-    assert {row["id"]: row["state"] for row in found} == {"finished": "completed", "interrupted": "unknown"}
+    assert {row["id"]: row["state"] for row in found} == {"finished": "completed"}
     finished = next(row for row in found if row["id"] == "finished")
     assert finished["task"] == "Assignment"
     assert finished["can_continue"] is False
     assert finished["orphan_process"]["last_activity_at"] == pytest.approx(started + 30)
     assert finished["orphan_process"]["age_seconds"] >= 120
-    assert {row["id"] for row in facet.overview()["workers"] if row.get("orphan_process")} == {"finished", "interrupted"}
+    assert {row["id"] for row in facet.overview()["workers"] if row.get("orphan_process")} == {"finished"}
     assert facet.worker({"action": "stop", "worker_id": "finished"})["status"] == 409
     assert facet.worker({"action": "continue", "worker_id": "finished"})["status"] == 409
     stop = {"action": "stop_orphan", "worker_id": "finished"}
@@ -181,12 +187,108 @@ def test_orphan_workers_are_reconciled_without_changing_finished_receipts(tmp_pa
     stopped = facet.worker(stop, "codex")
     assert stopped["ok"] and stopped["irreversible"] and stopped["undo"] is None
     assert calls == [(3649, started, True)]
-    assert [row["id"] for row in facet.worker({"action": "reconcile"})["orphans"]] == ["interrupted"]
+    assert facet.worker({"action": "reconcile"})["orphans"] == []
     assert facet.worker({"action": "stop_orphan", "worker_id": "interrupted",
-                         "confirm_process": {"pid": 3650, "started_at": started}}, "codex")["ok"]
+                         "confirm_process": {"pid": 3650, "started_at": started}}, "codex")["status"] == 409
+    assert facet.worker({"action": "stop", "worker_id": "interrupted"}, "codex")["ok"]
+    assert calls == [(3649, started, True), (3650, started, True)]
     with facet._db() as db:
         assert db.execute("SELECT state FROM workers WHERE id='finished'").fetchone()[0] == "completed"
-        assert db.execute("SELECT outcome FROM workers WHERE id='interrupted'").fetchone()[0] == "hub_restart_stopping"
+        assert db.execute("SELECT state FROM workers WHERE id='interrupted'").fetchone()[0] == "stopping"
+
+
+def test_restart_adopts_matching_workers_and_keeps_unverified_pids_without_controls(tmp_path, monkeypatch):
+    import psutil
+
+    from hoard_link.hub import procs
+
+    directory = tmp_path / "agora-console" / "workers"
+    directory.mkdir(parents=True)
+    started = time.time() - 60
+    live = {
+        101: (started, ["python.exe", "faustus_run.py", "-p", "private assignment", "--session", "native"]),
+        102: (started + 10, ["codex.exe"]),
+        103: (started, ["python.exe", "faustus_run.py", "-p", "different text", "--session", "other"]),
+        104: (started, ["codex.exe", "exec", "--output-last-message", str(directory / "legacy.result.txt")]),
+        105: (started, ["codex.exe", "exec", "--output-last-message", str(directory / "unrelated.result.txt")]),
+        106: (started, ["codex.exe"]),
+        107: (started, ["codex.exe"]),
+    }
+    signalled = []
+
+    def process(pid):
+        if pid not in live:
+            raise psutil.NoSuchProcess(pid)
+        return SimpleNamespace(pid=pid, create_time=lambda: live[pid][0], cmdline=lambda: live[pid][1],
+                               status=lambda: "sleeping", is_running=lambda: pid in live,
+                               wait=lambda **_: None, terminate=lambda: signalled.append(pid))
+
+    monkeypatch.setattr(procs, "_psutil", lambda: SimpleNamespace(
+        pids=lambda: list(live), Process=process, STATUS_ZOMBIE="zombie", NoSuchProcess=psutil.NoSuchProcess,
+        Error=psutil.Error, AccessDenied=psutil.AccessDenied, TimeoutExpired=psutil.TimeoutExpired))
+    saved = json.dumps(["python.exe", "faustus_run.py", "-p", "", "--session", "native"])
+    original = _facet(tmp_path)
+    for worker_id, provider, state, outcome, pid, recorded, command in (
+        ("native", "faustus", "running", "unverified", 101, started, saved),
+        ("recycled", "codex", "running", "unverified", 102, started, ""),
+        ("wrong-command", "faustus", "running", "unverified", 103, started, saved),
+        ("legacy", "codex", "unknown", "hub_restart", 104, None, ""),
+        ("legacy-without-match", "codex", "running", "unverified", 105, None, ""),
+        ("stopping", "codex", "unknown", "hub_restart_stopping", 106, started, ""),
+        ("paused", "codex", "paused", "unverified", 107, started, ""),
+    ):
+        with original._db() as db:
+            db.execute("INSERT INTO workers(id,parent_id,model,effort,task,state,outcome,pid,log_path,created_at,"
+                       "updated_at,process_started_at,launch_command) VALUES(?,?,'model','','assignment',?,?,?,?,?,?,?,?)",
+                       (worker_id, provider, state, outcome, pid, str(directory / f"{worker_id}.jsonl"),
+                        started, started + 30, recorded, command))
+    log = directory / "legacy.jsonl"
+    log.write_text(json.dumps({"type": "thread.started", "thread_id": "session", "cwd": str(tmp_path)}),
+                   encoding="utf-8")
+    result = directory / "legacy.result.txt"
+    result.write_text("Verified result", encoding="utf-8")
+
+    facet = _facet(tmp_path)
+    assert signalled == []
+    rows = {row["id"]: row for row in facet._worker_rows()}
+    assert {worker_id: rows[worker_id]["state"] for worker_id in facet._processes} == {
+        "native": "running", "legacy": "running", "stopping": "stopping", "paused": "paused"}
+    assert rows["legacy"]["session_id"] == "session"
+    assert rows["legacy"]["workspace"] == str(tmp_path)
+    with facet._db() as db:
+        assert db.execute("SELECT process_started_at FROM workers WHERE id='legacy'").fetchone()[0] == started
+    report = facet.worker({"action": "reconcile"})
+    assert not report["orphans"]
+    assert {row["id"]: row["restart_issue"] for row in report["unverified"]} == {
+        "recycled": "pid_reused", "legacy-without-match": "legacy_identity_unverified",
+        "wrong-command": "command_mismatch",
+    }
+    for row in report["unverified"]:
+        assert row["state"] == "unknown" and not row["can_continue"]
+        assert set(row["detail_i18n"]) == {"es", "en"}
+        assert "private assignment" not in str(row)
+        for action in ("stop", "continue", "replace"):
+            refusal = facet.worker({"action": action, "worker_id": row["id"]})
+            assert refusal["status"] == 409 and refusal["code"] == row["restart_issue"]
+    for action in ("continue", "replace"):
+        assert facet.worker({"action": action, "worker_id": "legacy"})["status"] == 409
+    assert signalled == []
+
+    # The adopted worker uses the normal delivery monitor, even on platforms
+    # that cannot supply the exit code of a process spawned by the old Hub.
+    monkeypatch.setattr(facet, "_verify_worker_delivery", lambda row: {"issues": []})
+    facet._monitor_worker("legacy", facet._processes["legacy"], result)
+    worker = next(row for row in facet._worker_rows() if row["id"] == "legacy")
+    assert worker["state"] == "completed" and worker["outcome"] == "submitted"
+    assert worker["process_exit_code"] is None
+    assert worker["result"] == "Verified result"
+    assert "legacy" not in facet._processes
+
+    facet.close()
+    facet._monitor_worker("native", facet._processes["native"], directory / "native.result.txt")
+    with facet._db() as db:
+        assert db.execute("SELECT state FROM workers WHERE id='native'").fetchone()[0] == "running"
+    assert signalled == []
 
 
 def test_capacity_reporter_starts_with_this_hub_configuration(tmp_path, monkeypatch):

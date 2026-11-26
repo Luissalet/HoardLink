@@ -20,7 +20,7 @@ const labels:Record<string,string>={
  incomplete:tr('Entrega incompleta','Incomplete delivery'), blocked:tr('Bloqueada','Blocked'),
  starting:tr('Iniciando','Starting'), completed:tr('Entrega comprobada','Delivery verified'),
  not_started:tr('No arrancó','Did not start'),
- stopped:tr('Detenido','Stopped'), stopping:tr('Deteniendo','Stopping'), dropped:tr('Descartada','Dropped'),
+ paused:tr('En pausa','Paused'), stopped:tr('Detenido','Stopped'), stopping:tr('Deteniendo','Stopping'), dropped:tr('Descartada','Dropped'),
 };
 const status=(value:string)=>labels[value]||value;
 const messageLabels:Record<string,string>={
@@ -71,6 +71,7 @@ const workerText=lang==='es'?{
  missingReceipt:'The receipt does not identify the original session.',replaceHint:'You can start a replacement with the previous report and hand over a task.',
 };
 function workerStatus(worker:Worker){
+ if(worker.restart_issue)return tr('Proceso huérfano sin verificar','Unverified orphan process');
  if(worker.startup)return status(worker.startup.state);
  if(worker.state==='completed'&&worker.verification_warnings?.length)return tr('Entrega con avisos','Delivery with warnings');
  return status(worker.state);
@@ -106,8 +107,9 @@ function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];bu
  const handover=worker.replacement;
  const replacementActive=handover?.state==='waiting_for_worker'||handover?.state==='transferred';
  const owned=tasks.filter(task=>task.owner===worker.agent_id&&!['done','dropped'].includes(task.state));
- const replace=!orphan&&Boolean(worker.resume_issue)&&!replacementActive;
- const canWrite=!orphan&&(worker.can_continue||(replace&&owned.length>0));
+ const canControl=!orphan&&!worker.restart_issue;
+ const replace=canControl&&Boolean(worker.resume_issue)&&!replacementActive;
+ const canWrite=canControl&&(worker.can_continue||(replace&&owned.length>0));
  const issue=worker.resume_issue==='missing_workspace'?workerText.missingWorkspace:worker.resume_issue==='missing_receipt'?workerText.missingReceipt:workerText.unavailable;
  const pickedTask=owned.some(task=>task.id===taskId)?taskId:owned.length===1?owned[0].id:0;
  useEffect(()=>{if(open&&canWrite)form.current?.focus();},[open,canWrite]);
@@ -142,7 +144,7 @@ function WorkerDetail({worker,tasks,busy,control}:{worker:Worker;tasks:Task[];bu
   {handover?.state==='transferred'&&handover.task_id&&<p role="status">{workerText.transferred(handover.task_id)}</p>}
   {handover?.state==='failed'&&handover.detail&&<p role="alert">{handover.detail}</p>}
   {error&&(!worker.resume_issue||error.action!=='continue')&&<p role="alert">{error.text}</p>}
-  {!orphan&&(worker.state==='running'||(worker.parent_id==='faustus'&&worker.state==='unknown'))&&
+  {canControl&&(worker.state==='running'||worker.state==='paused'||(worker.parent_id==='faustus'&&worker.state==='unknown'))&&
    <button className="model-selector" disabled={busy} onClick={()=>void act('stop')}>{workerText.stop}</button>}
   {orphan&&(confirming?<div>
    <p>{tr('Se terminará este proceso y sus procesos hijos. Esta acción no se puede deshacer.',
