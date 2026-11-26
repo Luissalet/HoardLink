@@ -34,9 +34,17 @@ export async function api<T=any>(path:string,body?:unknown):Promise<T>{
     else body={space_id:spaceId,...(body as Record<string,unknown>)};
   }
   let data:any;
+  let status:number|undefined;
   if(isTauri()) data=await native('hub_request',{path,body:body===undefined?null:body});
-  else {const response=await fetch(path,{headers:{'Accept-Language':locale,...(body===undefined?{}:{'Content-Type':'application/json'})},method:body===undefined?'GET':'POST',body:body===undefined?undefined:JSON.stringify(body)});data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error || `Error ${response.status}`),{code:data.code});}
-  if(data.ok===false)throw new Error(data.error || tr('No se pudo completar la operación', 'Could not complete the operation'));
+  else {
+    const response=await fetch(path,{headers:{'Accept-Language':locale,...(body===undefined?{}:{'Content-Type':'application/json'})},method:body===undefined?'GET':'POST',body:body===undefined?undefined:JSON.stringify(body)});
+    data=await response.json();
+    if(!response.ok) status=response.status;
+  }
+  if(status!==undefined || data.ok===false){
+    const fallback=status===undefined ? tr('No se pudo completar la operación', 'Could not complete the operation') : `Error ${status}`;
+    throw Object.assign(new Error(data.error_i18n?.[lang] || data.error || fallback),{code:data.code});
+  }
   return data as T;
 }
 export type Model={id:string;name?:string;efforts?:string[]};

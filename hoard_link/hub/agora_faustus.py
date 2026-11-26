@@ -286,17 +286,20 @@ def service(hub: Any, *, fresh: bool = False) -> dict[str, Any]:
 
 def launch_service(hub: Any) -> dict[str, Any]:
     """Require a current Faustus health response before leaving a worker receipt."""
+    target = {}
     try:
-        target = service(hub, fresh=True)
+        if not getattr(getattr(hub, "config", None), "isolated", False):
+            target = service(hub, fresh=True)
     except OSError:
-        target = {}
+        pass
     if target.get("manually_stopped"):
         raise WorkerLaunchError("faustus_manually_stopped", "Faustus está parado manualmente.",
                                 "Faustus was stopped manually.")
     health = target.get("body")
-    if (not target.get("reachable") or not target.get("url")
+    if (not target.get("reachable") or not target.get("url") or target.get("status", 200) != 200
             or not isinstance(health, dict) or health.get("service") != "faustus"):
-        raise WorkerLaunchError("faustus_unreachable", "Faustus no responde.", "Faustus is not responding.")
+        raise WorkerLaunchError("faustus_unreachable", "Faustus está parado (no responde).",
+                                "Faustus is not responding.")
     return target
 
 

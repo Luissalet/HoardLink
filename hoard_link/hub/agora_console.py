@@ -125,6 +125,8 @@ class AgoraConsoleFacet(Facet):
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._faustus_runtimes: dict[str, dict[str, Any]] = {}
         self._recovery_stop = threading.Event()
+        self._registration_lock = threading.Lock()
+        self._registration_monitor: threading.Thread | None = None
         self._leader_locks = {"codex": threading.Lock(), "cursor": threading.Lock()}
         self._leader_threads: dict[str, threading.Thread] = {}
         self._wakeups: dict[str, threading.Timer] = {}
@@ -148,6 +150,10 @@ class AgoraConsoleFacet(Facet):
         for view in (self, *self._space_views.values()):
             view._start_worker_recovery()
         self._auto_review.start()
+        if self._registration_monitor is None:
+            self._registration_monitor = threading.Thread(
+                target=self._watch_worker_registrations, daemon=True, name="agora-worker-registration")
+            self._registration_monitor.start()
         config = getattr(self.hub, "config", None)
         hub_url = str(getattr(config, "url", "") or "").rstrip("/")
         data_dir = str(getattr(config, "data_dir", "") or "")
@@ -186,8 +192,20 @@ class AgoraConsoleFacet(Facet):
         except Exception:
             logger.info("Claude/Cursor quota reporter could not start", exc_info=False)
 
+    def _watch_worker_registrations(self) -> None:
+        while not self._recovery_stop.wait(5):
+            with self._db_lock:
+                views = (self, *self._space_views.values())
+            for view in views:
+                try:
+                    agora_faustus.reconcile_registrations(view)
+                except Exception:
+                    logger.exception("Worker registration reconciliation failed in %s", view.space_id)
+
     def close(self) -> None:
         self._recovery_stop.set()
+        if self._registration_monitor is not None and self.space_id == "ecosystem":
+            self._registration_monitor.join(timeout=1)
         if self.space_id == 'ecosystem':
             self._auto_review.close()
         for view in list(self._space_views.values()):
@@ -291,7 +309,9 @@ class AgoraConsoleFacet(Facet):
                                       ("template", "TEXT NOT NULL DEFAULT ''"),
                                       ("verification", "TEXT NOT NULL DEFAULT ''"),
                                       ("resume_issue", "TEXT NOT NULL DEFAULT ''"),
-                                      ("replacement", "TEXT NOT NULL DEFAULT '{}'")):
+                                      ("replacement", "TEXT NOT NULL DEFAULT '{}'"),
+                                      ("agora_start_at", "REAL"), ("agora_task_id", "INTEGER"),
+                                      ("agora_start_state", "TEXT NOT NULL DEFAULT ''")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE workers ADD COLUMN {name} {declaration}")
             for name in ("faustus_url", "workspace"):
@@ -760,6 +780,11 @@ class AgoraConsoleFacet(Facet):
             if row["tool_approval_mode"]:
                 worker["tool_approval_mode"] = row["tool_approval_mode"]
                 worker["file_scope"] = json.loads(row["worker_file_scope"])
+            if row["agora_task_id"] is not None:
+                worker["task_id"] = row["agora_task_id"]
+            if row["agora_start_state"] == "not_started":
+                worker["startup"] = {"state": "not_started", "code": "agora_registration_timeout",
+                                     "detail_i18n": agora_faustus.registration_details(row)}
             verification = json.loads(row["verification"] or "{}")
             if verification.get("warnings"):
                 worker["verification_warnings"] = verification["warnings"]
@@ -1832,12 +1857,12 @@ class AgoraConsoleFacet(Facet):
                         pass
                 handle.close()
 
-    def _prepare_faustus_worker_session(self, agent_id: str, model: dict[str, Any], effort: str, **scope
-                                       ) -> tuple[Optional[dict[str, Any]], str]:
+    def _prepare_faustus_worker_session(self, agent_id: str, model: dict[str, Any], effort: str, *,
+                                       target: dict | None = None, **scope) -> tuple[Optional[dict[str, Any]], str]:
         from .agora_faustus import prepare
         placement = getattr(self.hub, "placement", None)
         if self.space_id != "ecosystem" or (placement is not None and placement.state().get("location") == "sparks"):
-            return prepare(self, agent_id, model, effort, **scope)
+            return prepare(self, agent_id, model, effort, target=target, **scope)
         if scope:
             return None, "File scope requires a dedicated PC worker. / El ámbito de ficheros requiere un trabajador aislado en el PC."
         parent, detail = self._faustus_bound_session()
@@ -2236,10 +2261,18 @@ class AgoraConsoleFacet(Facet):
                 return {"ok": False, "status": 400, "error": "A named worker needs its provider"}
             picked = candidates(self, capability, providers=(provider,) if provider else None)
             if not picked:
+                if provider == "faustus":
+                    try:
+                        with _STARTING_LOCK:
+                            agora_faustus.launch_service(self.hub)
+                    except agora_faustus.WorkerLaunchError as exc:
+                        return exc.reply(args.get("lang"))
                 return {"ok": False, "status": 409, "error": "No available provider for the requested capability"}
             for candidate in picked:
                 reply = self._create_worker_now({**args, **candidate}, actor, reserved, worker_id or str(uuid.uuid4()))
                 if reply.get("code") == "quota_below_floor" and not provider and not args.get("confirm_quota_floor"):
+                    continue
+                if not provider and reply.get("code") in ("faustus_manually_stopped", "faustus_unreachable"):
                     continue
                 if args.get("name") or (reply.get("worker") or {}).get("state") != "unavailable":
                     return reply
@@ -2270,11 +2303,20 @@ class AgoraConsoleFacet(Facet):
             if refusal := agora_quota_floors.worker_guard(agora, leader_id, actor, args, leaders):
                 return refusal
         scope = {}
+        faustus_target = None
         if leader_id == "faustus":
             if "file_scope" in args:
                 scope["declared_paths"] = args["file_scope"]
             if "task_id" in args:
                 scope["task_id"] = args["task_id"]
+            try:
+                with _STARTING_LOCK:
+                    faustus_target = agora_faustus.launch_service(self.hub)
+                declared = scope.get("declared_paths")
+                apps = declared.get("apps", {}) if isinstance(declared, dict) else {}
+                agora_faustus.worker_order(self, scope.get("task_id"), apps)
+            except agora_faustus.WorkerLaunchError as exc:
+                return exc.reply(args.get("lang"))
         elif "file_scope" in args:
             return {"ok": False, "status": 400,
                     "error": "File scope applies to Faustus workers. / El ámbito de ficheros se aplica a trabajadores de Faustus."}
@@ -2362,10 +2404,18 @@ class AgoraConsoleFacet(Facet):
                 detail = f"{model} does not offer the effort level {effort!r}."
             elif runner_available and has_catalog:
                 detail = f"{model or 'No model'} is not in the {leader_id.title()} catalog the Hub discovered."
+            state = "unavailable"
+            if leader_id == "faustus" and not row and provider.get("state") != "available":
+                try:
+                    agora_faustus.launch_service(self.hub)
+                except agora_faustus.WorkerLaunchError as exc:
+                    state, detail = "failed", str(exc)
             with self._db_lock, self._db() as db:
-                db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,?,'unavailable',?,?,?)",
-                           (worker_id, leader_id, agent_id, model, effort, task, detail, now, now))
-            self._record("worker", worker_id, "unavailable", detail)
+                db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                           (worker_id, leader_id, agent_id, model, effort, task, state, detail, now, now))
+                if leader_id == "faustus":
+                    self._track_faustus_start(db, worker_id, scope.get("task_id"), actor, time.time())
+            self._record("worker", worker_id, state, detail)
             return {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id),
                     "warning": detail}
         work_dir = Path(__file__).resolve().parents[2]
@@ -2466,7 +2516,10 @@ class AgoraConsoleFacet(Facet):
         else:
             setup_failed = False
             try:
-                faustus_session, setup_error = self._prepare_faustus_worker_session(agent_id, row, effort, **scope)
+                faustus_session, setup_error = self._prepare_faustus_worker_session(
+                    agent_id, row, effort, target=faustus_target, **scope)
+            except agora_faustus.WorkerLaunchError as exc:
+                return exc.reply(args.get("lang"))
             except ValueError as exc:
                 return {"ok": False, "status": 400, "error": str(exc)}
             except Exception as exc:  # noqa: BLE001
@@ -2487,9 +2540,15 @@ class AgoraConsoleFacet(Facet):
             if faustus_session is None or setup_error:
                 session_id = str((faustus_session or {}).get("session_id") or "")
                 state = "failed" if session_id or setup_failed else "unavailable"
+                if state == "unavailable":
+                    try:
+                        agora_faustus.launch_service(self.hub)
+                    except agora_faustus.WorkerLaunchError as exc:
+                        state, setup_error = "failed", str(exc)
                 with self._db_lock, self._db() as db:
                     db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,session_id,outcome,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'unverified',?,?)",
                                (worker_id, leader_id, agent_id, model, effort, task, state, setup_error, session_id, now, time.time()))
+                    self._track_faustus_start(db, worker_id, scope.get("task_id"), actor, time.time())
                 self._record("worker", worker_id, state, setup_error)
                 return {"ok": True, "worker": next(w for w in self._worker_rows() if w["id"] == worker_id),
                         "warning": setup_error}
@@ -2538,6 +2597,7 @@ class AgoraConsoleFacet(Facet):
                 model_source += " + dedicated PC runtime using the placed Sparks endpoint"
             worker_cwd = root
             process_env = self._faustus_runner_env()
+        launching_at = time.time()
         try:
             with open(log_path, "a", encoding="utf-8") as log:
                 process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
@@ -2552,6 +2612,8 @@ class AgoraConsoleFacet(Facet):
                 db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,detail,session_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'failed',?,?,?,?)",
                            (worker_id, leader_id, agent_id, model, effort, task,
                             f"Could not start {leader_id.title()} worker: {type(exc).__name__}.", session_id, now, time.time()))
+                if leader_id == "faustus":
+                    self._track_faustus_start(db, worker_id, scope.get("task_id"), actor, launching_at)
             return {"ok": False, "status": 503, "error": f"Could not start {leader_id.title()} worker: {type(exc).__name__}"}
         self._processes[worker_id] = process
         with self._db_lock, self._db() as db:
@@ -2564,6 +2626,7 @@ class AgoraConsoleFacet(Facet):
             if leader_id == "claude":
                 db.execute("UPDATE workers SET launch_cwd=? WHERE id=?", (str(worker_cwd), worker_id))
             if leader_id == "faustus":
+                self._track_faustus_start(db, worker_id, scope.get("task_id"), actor, launching_at)
                 runtime = faustus_session.get("runtime") or {}
                 resume_command = command.copy()
                 resume_command[resume_command.index("-p") + 1] = ""
@@ -2586,7 +2649,17 @@ class AgoraConsoleFacet(Facet):
                                                                               "space_id": self.space_id}}}
         if rank_asked and rank_asked != rank:
             out["rank_asked"] = rank_asked           # lowered to the rank of whoever started it
+        if leader_id == "faustus" and (warning := faustus_session.get("warning_i18n")):
+            lang = args.get("lang")
+            out["warning_i18n"] = warning
+            out["warning"] = warning[lang] if lang in ("es", "en") else f"{warning['en']} / {warning['es']}"
         return out
+
+    @staticmethod
+    def _track_faustus_start(db: sqlite3.Connection, worker_id: str, task_id: int | None,
+                             actor: str, started_at: float) -> None:
+        db.execute("UPDATE workers SET agora_start_at=?,agora_task_id=?,launched_by=?,agora_start_state='pending' WHERE id=?",
+                   (started_at, task_id, actor, worker_id))
 
     def _saved_instructions(self, agent_id: str) -> str:
         """The instructions the person saved for this agent on its page, as the closing part of its brief."""
@@ -3695,7 +3768,10 @@ class AgoraConsoleFacet(Facet):
             return self._stop_orphan(args, actor)
         if action == "reconcile":
             if not any(key in args for key in ("leader_id", "session_id", "confirm_idle")):
-                return {"ok": True, "orphans": [row for row in self._worker_rows() if "orphan_process" in row]}
+                agora_faustus.reconcile_registrations(self)
+                workers = self._worker_rows()
+                return {"ok": True, "orphans": [row for row in workers if "orphan_process" in row],
+                        "not_started": [row for row in workers if "startup" in row]}
             leader_id = str(args.get("leader_id") or "").strip().lower()
             session_id = str(args.get("session_id") or "").strip()
             if leader_id not in ("codex", "cursor") or not session_id or args.get("confirm_idle") is not True:
@@ -4077,14 +4153,14 @@ class AgoraConsoleFacet(Facet):
             {"name": agora_auto_review.TOOL, "description": "Read automatic reviews and corrections with their task revisions, worker states and reasons for waiting.",
              "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
-            {"name": "hub_agora_console_worker", "description": "Start, stop, continue or replace a console worker, or register an external worker. Below a weekly quota floor, a directing lead can retry with the exact confirm_quota_floor object (provider_id and floor_percent). Reconcile without leader fields lists live orphan processes. Stop an orphan with stop_orphan and its exact confirm_process from the listing; the directing agent must confirm this irreversible stop. Reconcile with leader fields still confirms an ambiguous leader session.",
+            {"name": "hub_agora_console_worker", "description": "Start, stop, continue or replace a console worker, or register an external worker. Below a weekly quota floor, a directing lead can retry with the exact confirm_quota_floor object (provider_id and floor_percent). Reconcile without leader fields lists live orphans and Faustus registration timeouts, posting one notice on each linked task. App access for Faustus requires an order job in this space. Stop an orphan with stop_orphan and its exact confirm_process from the listing; the directing agent must confirm this irreversible stop. Reconcile with leader fields still confirms an ambiguous leader session.",
              "inputSchema": {"type": "object", "properties": {
                  "action": {"type": "string", "enum": ["create", "propose_files", "stop", "stop_orphan", "register", "heartbeat", "finish", "reconcile", "continue", "replace"]},
                  "worker_id": {"type": "string"}, "parent_id": {"type": "string"},
                  "confirm_process": {"type": "object", "properties": {"pid": {"type": "integer"}, "started_at": {"type": "number"}},
                                      "required": ["pid", "started_at"], "additionalProperties": False},
                  "message": {"type": "string", "maxLength": 4000, "description": "Follow-up instruction for continue or replace."},
-                 "task_id": {"type": "integer", "minimum": 1, "description": "Production job for the check template or Faustus file suggestions, or task to transfer with replace."},
+                 "task_id": {"type": "integer", "minimum": 1, "description": "Linked task for a Faustus worker or file suggestions, order job for the check template, or task to transfer with replace."},
                  "file_scope": agora_faustus.DECLARED_PATHS,
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},

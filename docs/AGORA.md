@@ -228,7 +228,8 @@ placement. The probe leaves the service's start and stop controls alone. If
 Faustus was stopped manually or fails the fresh health check,
 the request returns HTTP 409 with the cause and creates no worker receipt. Agent
 calls receive `faustus_manually_stopped` or `faustus_unreachable` and
-`error_i18n` in Spanish and English.
+`error_i18n` in Spanish and English. If the service stops responding after
+the probe and setup fails, the launch leaves a failed receipt without a worker process.
 
 The console expects the new identity to register in its Agora space within five
 minutes of launch. If it does not, the receipt shows **No arrancó / Did not start**

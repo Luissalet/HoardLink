@@ -1014,13 +1014,20 @@ def test_faustus_worker_setup_exception_becomes_failed_receipt(tmp_path, monkeyp
 @pytest.mark.parametrize(("stopped", "lang", "code", "message"), [
     (True, "es", "faustus_manually_stopped", "Faustus está parado manualmente."),
     (True, "en", "faustus_manually_stopped", "Faustus was stopped manually."),
-    (False, "es", "faustus_unreachable", "Faustus no responde."),
+    (False, "es", "faustus_unreachable", "Faustus está parado (no responde)."),
     (False, "en", "faustus_unreachable", "Faustus is not responding."),
 ])
 def test_faustus_worker_mcp_refuses_unhealthy_service_without_receipt(tmp_path, monkeypatch, stopped, lang, code, message):
+    from hoard_link.hub.agora_console import _STARTING_LOCK
+
     facet = _facet(tmp_path)
     facet.hub.facets = [facet]
-    facet.hub._refresh_faustus = lambda: {"reachable": False, "manually_stopped": stopped}
+
+    def health():
+        assert _STARTING_LOCK.locked()
+        return {"reachable": False, "manually_stopped": stopped}
+
+    facet.hub._refresh_faustus = health
     monkeypatch.setattr(facet, "_provider_data", lambda: pytest.fail("read a catalog before checking health"))
     monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_kw: pytest.fail("attempted to launch a worker"))
     result = call(facet.hub, "hub_agora_console_worker", {
@@ -1032,6 +1039,56 @@ def test_faustus_worker_mcp_refuses_unhealthy_service_without_receipt(tmp_path, 
     with facet._db() as db:
         assert db.execute("SELECT COUNT(*) FROM workers").fetchone()[0] == 0
         assert db.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("drop_at", ["catalog", "session"])
+def test_faustus_worker_mcp_loses_service_after_health_check(tmp_path, monkeypatch, drop_at):
+    from hoard_link.hub.agora import Agora
+
+    facet = _facet(tmp_path)
+    facet.hub.facets = [facet]
+    refreshes = []
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "faustus_run.py").touch()
+    commands = _capture_popen(monkeypatch)
+    monkeypatch.setattr(facet, "_faustus_current_settings", lambda: {})
+
+    def health():
+        healthy = not refreshes
+        refreshes.append(healthy)
+        return {"reachable": healthy, "url": "http://placed.invalid", "body": {"service": "faustus"}}
+
+    def catalog():
+        if drop_at == "catalog":
+            return {"faustus": {"state": "unverified", "catalog": []}}
+        return {"faustus": {"state": "available", "current_model": "fixture", "catalog": [
+            {"id": "fixture", "model_id": "fixture", "endpoint_id": "fixture", "efforts": []},
+        ]}}
+
+    def request(method, path, fields=None, **kwargs):
+        assert drop_at == "session" and (method, path) == ("GET", "/api/model-endpoints")
+        return None, {"transport": "connection_failed"}
+
+    facet.hub._refresh_faustus = health
+    monkeypatch.setattr(facet, "_provider_data", catalog)
+    monkeypatch.setattr(facet, "_faustus_session_request", request)
+
+    with closing(Agora(tmp_path / "agora.db")) as root:
+        facet.hub.agora = root
+        root.space_create({"agent": "codex-fixture", "id": "estudio", "title": "Studio"})
+        created = call(facet.hub, "hub_agora_console_worker", {
+            "leader_id": "faustus", "space_id": "estudio", "task": "Synthetic race.",
+            "actor": "codex-fixture", "name": "faustus-race",
+        })
+        assert refreshes == [True, False]
+        worker = created["worker"]
+        assert worker["state"] == "failed" and "Faustus is not responding" in worker["detail"]
+        assert worker["session_id"] == "" and commands == [] and "undo" not in created
+        console = facet.for_space("estudio")
+        with console._db() as db:
+            rows = db.execute("SELECT id,state,pid FROM workers").fetchall()
+        assert [tuple(row) for row in rows] == [(worker["id"], "failed", None)]
+        assert not root.for_space("estudio").db.one("SELECT 1 FROM agents WHERE id='faustus-race'")
 
 
 def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
@@ -1053,7 +1110,7 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
     facet.hub.call_app = lambda *a, **kw: {"ok": True, "result": {"modules": [{"id": "data", "enabled": True}]}}
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "faustus_run.py").write_text("# fixture", encoding="utf-8")
-    catalog = {"faustus": {"state": "available", "current_model": "fixture", "catalog": [
+    catalog = {**facet._provider_cache, "faustus": {"state": "available", "current_model": "fixture", "catalog": [
         {"id": "fixture", "model_id": "fixture", "endpoint_id": "fixture", "efforts": []},
     ]}}
     monkeypatch.setattr(facet, "_provider_data", lambda force=False: catalog)
@@ -1144,6 +1201,7 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
         assert "código 3" in missing[0]["startup"]["detail_i18n"]["es"]
         assert "code 3" in missing[0]["startup"]["detail_i18n"]["en"]
         overview = call(facet.hub, "hub_agora_console_overview", {"space_id": "estudio"})
+        assert overview["ok"], overview
         assert next(item for item in overview["workers"] if item["id"] == worker["id"])["startup"] == missing[0]["startup"]
         assert [item["id"] for item in tool("reconcile")["not_started"]] == [worker["id"]]
         thread = agora.thread_recent({"thread_id": task["thread_id"]})["messages"]

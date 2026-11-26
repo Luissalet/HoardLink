@@ -46,6 +46,7 @@ def test_pc_service_keeps_existing_health_contract(tmp_path):
     ({"reachable": False, "manually_stopped": True}, "faustus_manually_stopped"),
     ({"reachable": False, "listening": True}, "faustus_unreachable"),
     ({"reachable": True, "body": {"service": "different"}}, "faustus_unreachable"),
+    ({"reachable": True, "status": 403, "body": {"service": "faustus"}}, "faustus_unreachable"),
     ({"reachable": True, "body": {"service": "faustus"}}, None),
 ])
 def test_worker_launch_requires_fresh_faustus_health(tmp_path, monkeypatch, health, code):
@@ -62,6 +63,15 @@ def test_worker_launch_requires_fresh_faustus_health(tmp_path, monkeypatch, heal
     assert result["code"] == code and result["status"] == 409
     assert result["error_i18n"]["es"] in result["error"]
     assert result["error_i18n"]["en"] in result["error"]
+
+
+def test_worker_launch_does_not_probe_faustus_from_an_isolated_hub(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    facet.hub.config.isolated = True
+    monkeypatch.setattr(agora_faustus, "service", lambda *_a, **_kw: pytest.fail("unexpected Faustus probe"))
+    with pytest.raises(agora_faustus.WorkerLaunchError) as rejected:
+        agora_faustus.launch_service(facet.hub)
+    assert rejected.value.code == "faustus_unreachable"
 
 
 def test_app_scope_requires_current_order_job_in_launch_space(tmp_path):
