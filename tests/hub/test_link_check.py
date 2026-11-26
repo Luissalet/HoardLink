@@ -82,7 +82,7 @@ def hub(tmp_path, monkeypatch):
 
 
 def poll(facet, run_id, lang="es"):
-    deadline = time.monotonic() + 4
+    deadline = time.monotonic() + link_check.PROBE_TIMEOUT_S + 1
     while time.monotonic() < deadline:
         run = facet.call({"run_id": run_id, "lang": lang})
         if run.get("phase") == "completed":
@@ -771,6 +771,79 @@ def test_literal_spark_links_ignore_local_manual_stops_and_refresh_passively(hub
     assert LinkProbes(hub, request=transport, listeners=forbidden).catalogue("placed-app", now_deadline()).location == "remote"
 
 
+def test_placed_catalogues_use_real_published_urls_and_refreshed_services(hub, tmp_path, monkeypatch):
+    from hoard_link.hub.placement import PORTS, Placement
+
+    health_calls = []
+
+    def ssh(argv, **kwargs):
+        assert argv[-2] == "fixture-node"
+        command = argv[-1]
+        health_calls.append(command)
+        assert "baird" not in command and ":5232" not in command
+        stdout = b"faustus active 200\nhermes active 200\nprometheus active 200\n"
+        if ("systemctl --user is-active placed-extra.service" in command
+                and "http://127.0.0.1:55021/portal/" in command):
+            stdout += b"placed-extra active 200\n"
+        return SimpleNamespace(returncode=0, stdout=stdout)
+
+    placement = hub.placement = Placement(hub, runner=ssh)
+    monkeypatch.setattr(placement, "_ssh_step", lambda command, **kwargs: (
+        '{"BackendState":"Running","Self":{"DNSName":"fixture.example.test."}}'
+        if command == "tailscale status --json 2>/dev/null || true" else forbidden(command)
+    ))
+    monkeypatch.setattr(placement, "_served_ports", lambda: {443, PORTS["hermes"], PORTS["prometheus"]})
+    urls = placement._tailnet_urls()
+    assert urls["hermes"] == "https://fixture.example.test:5221/products/"
+    urls.update({
+        "placed-extra": "https://fixture.example.test:55021/portal/",
+        "baird": "https://fixture.example.test:5232/",
+        "excluded-port-fixture": "https://fixture.example.test:5232/",
+    })
+    state = placement._update(location="sparks", since=time.time(), urls=urls,
+                              node={"name": "Fixture", "ssh": "fixture-node"})
+    placement._remote_health = {"checked": state["since"] - 60, "ok": True, "apps": {}}
+
+    for alias in ("phileas", "tantalus"):
+        folder = tmp_path / alias
+        folder.mkdir()
+        hub.register(alias, PORTS["hermes"], prefix=f"/compat/{alias}", folder=folder)
+        (folder / "bridge.json").write_text(json.dumps({
+            "owner": "hermes", "tools": [{"schema": {"name": "fixture_mail_state"}}],
+        }), encoding="utf-8")
+    hub.register("placed-extra", 55021)
+    hub.manually_stopped.update({"hermes", "phileas", "tantalus", "placed-extra"})
+    expected_urls = [
+        "https://fixture.example.test:5221/compat/phileas/api/agent/tools",
+        "https://fixture.example.test:5221/compat/tantalus/api/agent/tools",
+        "https://fixture.example.test:55021/portal/api/agent/tools",
+    ]
+    requests = []
+
+    class Opener:
+        def open(self, request, *, timeout):
+            assert request.get_method() == "GET" and request.data is None and timeout > 0
+            url = request.full_url
+            requests.append(url)
+            if url not in expected_urls:
+                raise urllib.error.HTTPError(url, 404, "Fixture route not found", {}, io.BytesIO(b"{}"))
+            response = io.BytesIO(b'{"tools":[{"name":"fixture_mail_state"}]}')
+            response.status = 200
+            return response
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_: Opener())
+    probes = LinkProbes(hub, listeners=forbidden)
+    observations = [probes.compatibility(alias, time.monotonic() + link_check.PROBE_TIMEOUT_S)
+                    for alias in ("phileas", "tantalus")]
+    observations.append(probes.catalogue("placed-extra", time.monotonic() + link_check.PROBE_TIMEOUT_S))
+    assert [(row.state, row.outcome, row.location) for row in observations] == [
+        (RESPONDS, "catalogue_matches", "remote"),
+    ] * 3
+    assert requests == expected_urls
+    assert len(health_calls) == 1
+    assert set(placement._remote_health["apps"]) == {"faustus", "hermes", "prometheus", "placed-extra"}
+
+
 def test_literal_local_manual_and_not_started_rows_are_distinct(hub, monkeypatch):
     hub.register("cookhoard", 5210)
     hub.register("ledger", 5180)
@@ -1009,10 +1082,10 @@ def test_literal_vendored_copies_distinguish_versions_and_unpublished_drift(hub,
 
     (node_copy / "hoard-link.js").write_bytes(b"node version 0\n")
     probes = LinkProbes(hub, request=forbidden, listeners=forbidden)
-    check = probes.mail_library(now_deadline())
+    check = probes.mail_library(time.monotonic() + link_check.PROBE_TIMEOUT_S)
     assert check.metrics["versions_behind_1"] == check.metrics["versions_behind_2"] == 1
     (node_copy / "hoard-link.js").write_bytes(b"node version 0\r\n")
-    check = probes.mail_library(now_deadline())
+    check = probes.mail_library(time.monotonic() + link_check.PROBE_TIMEOUT_S)
     assert check.state == FAILED and check.metrics["unmatched"] == 1
     assert check.metrics["versions_behind_1"] == 1
     assert git("status", "--porcelain") == ""

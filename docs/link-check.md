@@ -20,7 +20,11 @@ La colocación determina dónde se comprueba cada aplicación. Para Faustus,
 Hermes, sus compatibilidades y las demás apps de la Spark se usa la salud
 de esa máquina. Si la caché falta, caduca o es anterior al traslado, el
 comprobador pide la misma lectura pasiva que usa `hub_placement_status`
-y espera dentro del plazo de la sonda. `evidence.location` vale `remote`
+y espera dentro del plazo de la sonda. El refresco incluye las aplicaciones
+adicionales declaradas en la colocación mediante su puerto y ruta en el
+propio nodo. Las compatibilidades de Hermes usan `/compat/` desde el origen
+publicado, mientras `/products/` sigue siendo la ruta de su interfaz.
+`evidence.location` vale `remote`
 y el texto añade «en otra máquina». En el PC, `manually_stopped` indica
 una parada manual y `no_listener` indica que el puerto registrado carece
 de escucha. Ambos conservan `state: stopped`. Una parada en la Spark
@@ -114,7 +118,10 @@ evidence.
 Placement determines which machine the checker uses. For apps on the
 Spark and their compatibility IDs, it uses placement health and requests
 the same passive refresh as `hub_placement_status` when the cache is
-absent, stale or older than the move. The result carries
+absent, stale or older than the move. The refresh checks additional apps
+declared in placement using their port and path on the node. Hermes's
+compatibility catalogues use `/compat/` from its published origin.
+The `/products/` path still opens its interface. The result carries
 `evidence.location: remote` and shows “on another machine”. On the PC,
 `manually_stopped` means the person stopped the app and `no_listener`
 means its registered port has no listener. Both keep `state: stopped`.

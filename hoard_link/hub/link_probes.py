@@ -19,7 +19,14 @@ from ..atomic import read_json
 from ..service_contracts import SERVICES
 from . import contract, procs
 from .link_inventory import COMPATIBILITY_OWNERS, NATIVE_COMPATIBILITY
-from .placement import APPS, REMOTE_HEALTH_TTL_S, PlacementError
+from .placement import (
+    APPS,
+    HEALTH_EXCLUDED_APPS as DEFAULT_EXCLUDED_APPS,
+    HEALTH_EXCLUDED_PORTS as EXCLUDED_PORTS,
+    REMOTE_HEALTH_TTL_S,
+    PlacementError,
+    remote_health_targets,
+)
 from .registry import App
 
 RESPONDS = "responds"
@@ -32,8 +39,6 @@ HEALTH_PATH = "/api/health"
 GET_PATHS = frozenset({CATALOGUE_PATH, HEALTH_PATH, "/api/hoard-copilot/capabilities"})
 HEALTH_APPS = frozenset({"faustus", "nightingale"})
 APP_READ_TOOLS = frozenset({("nightingale", "nightingale_modules")})
-DEFAULT_EXCLUDED_APPS = frozenset({"baird"})
-EXCLUDED_PORTS = frozenset({5232})
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 SERVICE_SPECS = {key: (owner, tools) for key, owner, tools in SERVICES}
 AGENDA_APPS = ("homehoard", "kafka", "ledger", "people", "hypatia", "mercator")
@@ -205,6 +210,11 @@ class LinkProbes:
             base = urls.get(owner_id)
             if not base or (faustus_base and faustus_base.rstrip("/") != base.rstrip("/")):
                 return Observation(UNCHECKED, "placement.json", "endpoint_not_verified", location=location)
+            if owner_id == "hermes":
+                published = urlsplit(base)
+                if published.path.rstrip("/") == "/products":
+                    # Placement publishes the UI, while agent routes live at the origin.
+                    base = published._replace(path="").geturl()
             prefix = urlsplit(app.url).path if app_id != owner_id else ""
             app = replace(app, url=base.rstrip("/") + prefix)
 
@@ -372,7 +382,8 @@ class LinkProbes:
                 cache = getattr(placement, "_remote_health", None)
         current = placement.state()
         if (current.get("location") != "sparks" or current.get("since") != state.get("since")
-                or current.get("node") != state.get("node") or (current.get("job") or {}).get("running")):
+                or current.get("node") != state.get("node") or current.get("urls") != state.get("urls")
+                or (current.get("job") or {}).get("running")):
             return None
         return cache if fresh(cache) else None
 
@@ -395,7 +406,7 @@ class LinkProbes:
         if cached.get("ok") is False:
             return Observation(FAILED, call, "remote_unreachable", location="remote")
         rows = cached.get("apps") or {}
-        included = (set(APPS) | (state.get("urls") or {}).keys()) - self.excluded
+        included = remote_health_targets(state.get("urls")).keys() - self.excluded
         healthy = sum(1 for app in included if rows.get(app, {}).get("healthy") is True)
         metrics = {"services": len(included), "healthy_http": healthy, "seen_at": cached["checked"]}
         if healthy == len(included) and healthy:

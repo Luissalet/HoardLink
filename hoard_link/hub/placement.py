@@ -28,6 +28,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 from .._process import popen_hidden, run_hidden
 from ..atomic import read_json
@@ -44,6 +45,8 @@ THREAD_NAME = "placement-switch"
 MIN_FREE_GB = 4.0
 PORTS = {"faustus": 7000, "hermes": 5221, "prometheus": 5205}
 HEALTH = {"faustus": "/", "hermes": "/api/health", "prometheus": "/api/health"}
+HEALTH_EXCLUDED_APPS = frozenset({"baird"})
+HEALTH_EXCLUDED_PORTS = frozenset({5232})
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             "-o", "TCPKeepAlive=yes"]
 REMOTE_HEALTH_TTL_S = 30.0       # how old the "are they up on the Spark?" answer may be before it is asked again
@@ -86,6 +89,29 @@ NO_NODE = "No hay una Spark de destino configurada. / No target Spark is configu
 
 def _flags() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+
+def remote_health_targets(urls: Any = None) -> dict[str, tuple[int, str]]:
+    """Known backend routes and the loopback ports and paths of additional placements."""
+    targets = {app: (PORTS[app], HEALTH[app]) for app in APPS}
+    if not isinstance(urls, dict):
+        return targets
+    for app, url in urls.items():
+        if app in targets or app in HEALTH_EXCLUDED_APPS or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", app):
+            continue
+        if not isinstance(url, str):
+            continue
+        try:
+            endpoint = urlsplit(url)
+            port = endpoint.port
+        except ValueError:
+            continue
+        if (endpoint.scheme not in ("http", "https") or not endpoint.hostname
+                or endpoint.username is not None or endpoint.password is not None
+                or endpoint.query or endpoint.fragment or port == 0 or port in HEALTH_EXCLUDED_PORTS):
+            continue
+        targets[app] = (port or (443 if endpoint.scheme == "https" else 80), endpoint.path or "/")
+    return targets
 
 
 class PlacementError(RuntimeError):
@@ -197,17 +223,21 @@ class Placement:
         return cached
 
     @staticmethod
-    def _health_command() -> str:
-        return "; ".join(f"echo {a} $(systemctl --user is-active {a}.service 2>/dev/null) "
-                         f"$(curl -s -o /dev/null -w '%{{http_code}}' --max-time 4 http://127.0.0.1:{PORTS[a]}{HEALTH[a]} || true)"
-                         for a in APPS)
+    def _health_command(targets: Optional[dict[str, tuple[int, str]]] = None) -> str:
+        targets = remote_health_targets() if targets is None else targets
+        return "; ".join(
+            f"echo {app} $(systemctl --user is-active {app}.service 2>/dev/null) "
+            f"$(curl -s -o /dev/null -w '%{{http_code}}' --max-time 4 "
+            f"{shlex.quote(f'http://127.0.0.1:{port}{path}')} || true)"
+            for app, (port, path) in targets.items()
+        )
 
     @staticmethod
-    def _parse_health(text: str) -> dict[str, dict[str, Any]]:
+    def _parse_health(text: str, expected=APPS) -> dict[str, dict[str, Any]]:
         apps: dict[str, dict[str, Any]] = {}
         for line in (text or "").splitlines():
             parts = line.split()
-            if not parts or parts[0] not in APPS:
+            if not parts or parts[0] not in expected:
                 continue
             service = parts[1] if len(parts) > 1 else "unknown"
             code = parts[2] if len(parts) > 2 else "000"
@@ -217,15 +247,16 @@ class Placement:
 
     def _refresh_remote_health(self) -> None:
         state = self.state()
+        targets = remote_health_targets(state.get("urls"))
         try:
-            out = self._ssh(self._health_command(), timeout=30)
-            result = {"checked": time.time(), "ok": True, "apps": self._parse_health(out), "error": ""}
+            out = self._ssh(self._health_command(targets), timeout=30)
+            result = {"checked": time.time(), "ok": True, "apps": self._parse_health(out, targets), "error": ""}
         except Exception as exc:  # noqa: BLE001 - an unreachable Spark is an answer too
             result = {"checked": time.time(), "ok": False, "apps": {}, "error": str(exc)[-300:]}
         current = self.state()
         with self._lock:
             if (not (current.get("job") or {}).get("running")
-                    and all(state.get(key) == current.get(key) for key in ("location", "since", "node"))):
+                    and all(state.get(key) == current.get(key) for key in ("location", "since", "node", "urls"))):
                 self._remote_health = result
             self._remote_refreshing = False
         try:
