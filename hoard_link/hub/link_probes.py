@@ -16,7 +16,7 @@ import sqlite3
 import time
 
 from ..atomic import read_json
-from ..service_contracts import SERVICES, service_owners
+from ..service_contracts import SERVICES, VOICE_CATALOGUE_TIMEOUT_S, VOICE_SERVICES, service_owners
 from . import contract, procs
 from .link_inventory import COMPATIBILITY_OWNERS, NATIVE_COMPATIBILITY
 from .placement import (
@@ -254,7 +254,8 @@ class LinkProbes:
             return Observation(FAILED, call, "probe_timeout", location=location), None
         status, body = self._request(app, method, path, args, timeout=seconds)
         if status is None:
-            return Observation(FAILED, call, "no_http_response", location=location), None
+            outcome = "probe_timeout" if isinstance(body, dict) and body.get("transport") == "timeout" else "no_http_response"
+            return Observation(FAILED, call, outcome, location=location), None
         if not 200 <= status < 300:
             return Observation(FAILED, call, "http_error", {"http_status": status}, location=location), None
         return Observation(RESPONDS, call, "http_success", {"http_status": status}, location=location), body
@@ -937,8 +938,14 @@ class LinkProbes:
             return obs
         first = None
         seen = set()
-        for candidate in service_owners(key):
-            endpoint = self._get_app(candidate, deadline)
+        candidates = service_owners(key)
+        for index, candidate in enumerate(candidates):
+            attempt = deadline
+            if key in VOICE_SERVICES:
+                now = time.monotonic()
+                share = (deadline - now) / (len(candidates) - index)
+                attempt = now + min(VOICE_CATALOGUE_TIMEOUT_S, share)
+            endpoint = self._get_app(candidate, attempt)
             if isinstance(endpoint, Observation):
                 observation = endpoint
             else:
@@ -947,7 +954,7 @@ class LinkProbes:
                 if identity in seen:
                     continue
                 seen.add(identity)
-                observation = self._catalogue(endpoint, deadline, required)
+                observation = self._catalogue(endpoint, attempt, required)
             if first is None or (first.outcome == "app_missing" and observation.outcome != "app_missing"):
                 first = observation
             if observation.state == RESPONDS:
@@ -982,7 +989,9 @@ class LinkProbes:
             prefix = "4.5." if kind == "services" else "1.17."
             return self.combine([row for key, row in results.items() if key.startswith(prefix)], "Child link checks")
         if kind == "media_owners":
-            stt = self.service("stt", deadline)
+            remaining = deadline - time.monotonic()
+            index_budget = min(VOICE_CATALOGUE_TIMEOUT_S, max(0.0, remaining / 2))
+            stt = self.service("stt", deadline - index_budget)
             indexing = self.catalogue("borges", deadline, ("library_reindex",))
             observation = self.combine([stt, indexing], f"{stt.called} + {indexing.called}", "prerequisites")
             return replace(observation, metrics={**observation.metrics,

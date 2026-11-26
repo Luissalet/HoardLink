@@ -39,7 +39,9 @@ del proveedor registrado y las rutas de compatibilidad. Una reserva válida
 se identifica como `legacy_service_catalogue`. En STT, el catálogo de Funes
 servido por Talos puede acreditar la reserva aunque la ficha de Funes indique
 `foreign`. La fila `1.9` usa la misma comprobación de STT y el catálogo de
-indexación. Estas sondas solo leen catálogos.
+indexación. Cada proveedor de voz dispone de hasta dos segundos dentro del
+plazo de la sonda. La fila `1.9` reserva parte del plazo para la indexación.
+Estas sondas solo leen catálogos.
 
 - `catalogue` comprueba los nombres publicados en un catálogo. Es el alcance de las sondas de Atlas, Mercator, las compatibilidades y los servicios comunes con dueño en una app.
 - `declaration` comprueba el registro de una capacidad, como el relay MCP. `prerequisites` comprueba los requisitos publicados o el catálogo de los extremos. Agenda, Hoy y Búsqueda usan este alcance.
@@ -153,8 +155,9 @@ The `4.5.stt`, `4.5.tts` and `4.5.dictation` rows check catalogue tools
 from the registered provider and compatibility routes. A working fallback
 is reported as `legacy_service_catalogue`. The Funes catalogue served by
 Talos can confirm the STT fallback even when Funes is reported as `foreign`.
-Row `1.9` uses the same STT check and reads the indexing catalogue. All
-these checks read catalogues only.
+Each voice catalogue gets up to two seconds within the probe's deadline.
+Row `1.9` uses the same STT check and reserves time for the indexing
+catalogue. All these checks read catalogues only.
 
 The catalogue uses the same HTTP client as `hub_app_tools`. It compares
 sets of names against the app manifest or the owner's compatibility

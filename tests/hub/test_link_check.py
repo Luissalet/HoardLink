@@ -1157,6 +1157,39 @@ def test_media_and_voice_catalogues_cover_before_and_after_owner_change(hub, sta
     assert ("funes" in visited) == (provider == "funes")
 
 
+@pytest.mark.parametrize("budget", [2.0, 8.0])
+@pytest.mark.parametrize("probe_name", ["service:stt", "media_owners"])
+def test_slow_primary_leaves_budget_for_funes_and_indexing(hub, monkeypatch, budget, probe_name):
+    primary = hub.register("boltagon", 55461)
+    hub.registry["cyrano"] = primary  # both IDs resolve to the same installed manifest
+    hub.register("talos", 55462)
+    hub.register("funes", 55463, prefix="/compat/funes")
+    hub.register("writer", 55464)
+    hub.register("borges", 55464)
+    clock = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(link_probes, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    visited = []
+
+    def catalogue(app, method, path, arguments, *, timeout):
+        assert (method, path, arguments) == ("GET", "/api/agent/tools", None)
+        assert timeout > 0 and clock.now + timeout <= budget
+        visited.append((app.id, timeout))
+        if app.id == "boltagon":
+            clock.now += timeout
+            return None, {"transport": "timeout"}
+        names = ("library_reindex",) if app.id == "borges" else link_probes.SERVICE_SPECS["stt"][1]
+        return 200, {"tools": [{"name": tool} for tool in names]}
+
+    probe = LinkProbes(hub, request=catalogue, listeners=lambda: {55461, 55462, 55464})
+    row = probe.run(probe_name, budget, {})
+    assert row.state == RESPONDS and row.called.startswith("funes GET ")
+    assert visited[0][1] <= 2.0
+    assert [name for name, _ in visited] == (["boltagon", "funes", "borges"] if probe_name == "media_owners"
+                                               else ["boltagon", "funes"])
+    if probe_name == "media_owners":
+        assert row.metrics["stt_fallback"] == 1
+
+
 def test_literal_vendored_copies_distinguish_versions_and_unpublished_drift(hub, tmp_path, monkeypatch):
     import shutil
 
