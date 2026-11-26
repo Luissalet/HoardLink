@@ -73,6 +73,7 @@ FACET_MODULES = (
     "parity",
     "brainbus",
     "keepalive",
+    "link_check",
 )
 
 # These facets can create processes independently of the app fixture launcher.

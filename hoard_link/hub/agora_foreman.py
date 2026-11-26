@@ -329,6 +329,7 @@ class AgoraForemanFacet(Facet):
     def tools(cls) -> list[dict[str, Any]]:
         return [{
             "name": "hub_agora_foreman",
+            "annotations": {"readOnlyHint": True},
             "read": True,
             "description": "Read the space's foreman, last explicit heartbeat, age, threshold and open outage thread.",
             "inputSchema": {"type": "object", "properties": {"space_id": {"type": "string"}}},

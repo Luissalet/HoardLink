@@ -1,6 +1,7 @@
 """Named HTTP entry points for the Hub's existing agent tool contract."""
 
 from . import tools
+from .link_check import TOOL_NAME as LINK_CHECK_TOOL
 from .order_receipts import CALL, CONTEXT
 
 PREFIX = "/api/agent/tools/"
@@ -38,7 +39,7 @@ def capture(hub, context, app, tool, arguments, invoke):
 def invoke(hub, name, arguments, **identity):
     context = arguments.get(CONTEXT)
     meta = {}
-    if context is not None and name != CALL:
+    if context is not None and name not in (CALL, LINK_CHECK_TOOL):
         arguments = {key: value for key, value in arguments.items() if key != CONTEXT}
         native = name == "hub_call_app" and isinstance(arguments.get("arguments", {}), dict)
         app = str(arguments.get("app") or "") if native else ""
