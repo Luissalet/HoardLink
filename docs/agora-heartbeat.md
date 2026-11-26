@@ -41,10 +41,17 @@ configuration at startup.
 }
 ```
 
-After the threshold, the monitor opens one note mentioning the space's
-directors and adds one entry to the person's Hub inbox if there is a claimed
-task, a task in review or a running worker in the space. The notice stays
-open for the duration of the outage. When the foreman sends a new heartbeat,
-the Hub resolves the note and removes its entry from the unseen inbox,
-preserving the entry in notification history. The notice uses the Hub's
-configured language and does not use external notification channels.
+After the threshold, the monitor opens one note and adds one entry to the
+person's Hub inbox if there is a claimed task, a task in review or a running
+worker in the space. It posts one message in that space's console work
+thread, linking the note and mentioning the directors and the recorded
+agent who launched the foreman. If a mentioned leader has an existing
+independent console session in that space, the message enters the same
+turn queue as console messages. Other leaders receive the ordinary Ágora
+mention on their next read.
+
+When the foreman sends a new heartbeat, the Hub resolves the note, posts the
+resolution to the same recipients through the same routes and marks the
+person's inbox entry as seen. Repeated checks and Hub restarts reuse the
+same messages for that episode. The notice and resolution use the Hub's
+configured language in the work thread and notification history.

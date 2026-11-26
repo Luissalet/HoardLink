@@ -933,7 +933,25 @@ class AgoraConsoleFacet(Facet):
         self._leader_threads[leader_id] = thread
         thread.start()
 
-    def _enqueue_leader_turn(self, leader_id: str, message_id: Any, body: str) -> dict[str, Any]:
+    def worker_launcher(self, agent: str) -> str:
+        """Return the recorded launcher for this worker name in this space."""
+        with self._db_lock, self._db() as db:
+            row = db.execute("SELECT launched_by FROM workers WHERE agent_id=? AND launched_by<>'' "
+                             "ORDER BY created_at DESC, id DESC LIMIT 1", (agent,)).fetchone()
+        return row["launched_by"] if row else ""
+
+    def deliver_to_existing_leaders(self, mentions: list[str], message_id: int, body: str) -> None:
+        """Use the console queue for addressed, established sessions in this space."""
+        with self._db_lock, self._db() as db:
+            established = {row["leader_id"] for row in db.execute(
+                "SELECT leader_id FROM leader_sessions WHERE session_id<>''")}
+        for leader_id, _, agent in LEADERS:
+            if leader_id in CONSOLE_IDENTITIES and leader_id in established and (
+                    agent in mentions or self._leader_identity(leader_id) in mentions):
+                self._enqueue_leader_turn(leader_id, message_id, body, existing_session=True)
+
+    def _enqueue_leader_turn(self, leader_id: str, message_id: Any, body: str, *,
+                             existing_session: bool = False) -> dict[str, Any]:
         if leader_id not in ("codex", "cursor"):
             provider = self._provider_data().get(leader_id) or {}
             return {"leader_id": leader_id, "status": "queued" if leader_id == "faustus" else "unavailable",
@@ -956,10 +974,14 @@ class AgoraConsoleFacet(Facet):
         context = []
         for row in messages[-20:]:
             if isinstance(row, dict):
+                if existing_session and row.get("id") == message_id:
+                    continue
                 author = str(row.get("author") or row.get("agent") or "unknown")[:80]
                 text = str(row.get("body") or row.get("text") or "")[:4000]
                 if text:
                     context.append(f"{author}: {text}")
+        if existing_session:
+            context.append(f"system: {body}")
         identity = self._leader_identity(leader_id)
         prompt = ("You are the independent Agora console leader " + identity + ". Continue the shared work chat. "
                   "At the start of each turn, use `E:\\Development\\IA\\agora.cmd --space " + self.space_id + " --as " + identity + " hb \"...\"`, then read inbox and board. "
@@ -971,10 +993,28 @@ class AgoraConsoleFacet(Facet):
                   + f"\n\nRecent canonical thread {self.thread_id}:\n" + "\n".join(context))[-30000:]
         turn_id, now = str(uuid.uuid4()), time.time()
         with self._db_lock, self._db() as db:
-            db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,created_at,updated_at) VALUES(?,?,?,?,?,?,'queued',?,?)",
-                       (turn_id, leader_id, str(message_id or ""), prompt, model, effort, now, now))
-        self._record("leader_turn", turn_id, "queued", f"{leader_id}; {model}/{effort}; canonical message {message_id}")
-        self._ensure_leader_drain(leader_id)
+            prior = None
+            session_id = ""
+            if existing_session:
+                prior = db.execute("SELECT id,state FROM leader_turns WHERE leader_id=? AND message_id=? LIMIT 1",
+                                   (leader_id, str(message_id))).fetchone()
+                if not prior:
+                    session = db.execute("SELECT session_id FROM leader_sessions WHERE leader_id=? AND session_id<>''",
+                                         (leader_id,)).fetchone()
+                    if not session:
+                        return {"leader_id": leader_id, "status": "unavailable", "receipt_id": None,
+                                "detail": "No existing console session in this space."}
+                    session_id = session["session_id"]
+            if prior:
+                turn_id = prior["id"]
+            else:
+                db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,session_id,"
+                           "created_at,updated_at) VALUES(?,?,?,?,?,?,'queued',?,?,?)",
+                           (turn_id, leader_id, str(message_id or ""), prompt, model, effort, session_id, now, now))
+        if not prior:
+            self._record("leader_turn", turn_id, "queued", f"{leader_id}; {model}/{effort}; canonical message {message_id}")
+        if not prior or prior["state"] == "queued":
+            self._ensure_leader_drain(leader_id)
         return {"leader_id": leader_id, "status": "queued", "receipt_id": turn_id,
                 "detail": f"Queued for the independent {leader_id.title()} console session ({model}/{effort}); reply will be posted only after a real CLI turn completes."}
 
@@ -1015,6 +1055,10 @@ class AgoraConsoleFacet(Facet):
                     if row is None:
                         self._schedule_wakeup(leader_id)
                         return
+                    if row["session_id"] and (not session or session["session_id"] != row["session_id"]):
+                        db.execute("UPDATE leader_turns SET state='failed',detail=?,updated_at=? WHERE id=?",
+                                   ("The addressed console session is no longer available.", time.time(), row["id"]))
+                        continue
                     db.execute("UPDATE leader_turns SET state='working',started_at=?,updated_at=? WHERE id=? AND state='queued'", (time.time(), time.time(), row["id"]))
                     db.execute("INSERT INTO leader_sessions(leader_id,state,detail,updated_at) VALUES(?,'working','Provider turn started',?) ON CONFLICT(leader_id) DO UPDATE SET state='working',detail='Provider turn started',updated_at=excluded.updated_at",
                                (leader_id, time.time()))

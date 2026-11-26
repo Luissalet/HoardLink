@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import threading
@@ -25,6 +26,12 @@ CREATE TABLE IF NOT EXISTS agora_foreman_outages (
     space_id TEXT PRIMARY KEY, agent TEXT NOT NULL, event_id INTEGER,
     thread_id INTEGER NOT NULL REFERENCES threads(id), notification_id INTEGER
 );
+CREATE TABLE IF NOT EXISTS agora_foreman_work_messages (
+    thread_id INTEGER NOT NULL REFERENCES threads(id) ON DELETE CASCADE, phase TEXT NOT NULL,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, dispatched INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (thread_id, phase)
+);
+CREATE INDEX IF NOT EXISTS agora_foreman_pending ON agora_foreman_work_messages(message_id) WHERE dispatched=0;
 """
 
 
@@ -153,25 +160,83 @@ class AgoraForemanFacet(Facet):
                 outage = self._outage(sid)
         if outage and outage["notification_id"] is None:
             self._notify(agora, outage)
+        self._dispatch_work_messages(agora)
+
+    def _console(self, agora: Any) -> Any:
+        console = self.hub.facet("agora_console")
+        return console.for_space(agora.space_id) if console is not None else None
+
+    @staticmethod
+    def _work_thread(agora: Any, console: Any) -> int | None:
+        if console is None:
+            return None
+        thread = console.thread_id
+        return thread if agora.db.one("SELECT 1 FROM threads WHERE id=? AND space_id=?",
+                                      (thread, agora.space_id)) else None
+
+    @staticmethod
+    def _leaders(agora: Any, agent: str, console: Any) -> list[str]:
+        leaders = [row["id"] for row in agora_ranks.ranks(agora)["members"]
+                   if row["rank"] == "director" and row["id"] != agent]
+        launcher = console.worker_launcher(agent) if console is not None else ""
+        if launcher not in ("", "codex-console", agora.person_id, agent, *leaders):
+            leaders.append(launcher)
+        return leaders
 
     def _open_outage(self, agora: Any, agent: str, event_id: int | None) -> None:
         sid = agora.space_id
+        console = self._console(agora)
+        work_thread = self._work_thread(agora, console)
+        leaders = self._leaders(agora, agent, console)
         with agora.db.tx():
             if self._outage(sid) or self._heartbeat(sid, agent)["event_id"] != event_id:
                 return
             title, body = self._notice(agora, agent)
             now = agora.clock()
-            directors = [row["id"] for row in agora_ranks.ranks(agora)["members"]
-                         if row["rank"] == "director" and row["id"] != agent]
             thread = agora.db.insert("threads", {
                 "space_id": sid, "title": title, "kind": "note", "status": "open",
                 "created_by": "system", "created": now, "updated": now,
             })
-            agora._msg(thread, "system", "proposal", body, directors)
+            agora._msg(thread, "system", "proposal", body, leaders if work_thread is None else [])
             agora.db.insert("agora_foreman_outages", {
                 "space_id": sid, "agent": agent, "event_id": event_id, "thread_id": thread,
             })
+            message = self._write_work_message(agora, work_thread, thread, "overdue", f"{title}. {body}", leaders)
         agora._bump("agora.thread.opened", {"thread_id": thread, "kind": "note", "title": title, "by": "system"})
+        self._publish_work_message(agora, work_thread, message)
+
+    def _notice_url(self, agora: Any, thread: int) -> str:
+        return f"{self.hub.config.url}/?space_id={quote(agora.space_id, safe='')}#agora-{thread}"
+
+    def _write_work_message(self, agora: Any, work_thread: int | None, outage_thread: int,
+                            phase: str, body: str, leaders: list[str]) -> int | None:
+        if work_thread is None:
+            return None
+        message = agora._msg(work_thread, "system", "comment", f"{body} {self._notice_url(agora, outage_thread)}",
+                             leaders)
+        agora.db.insert("agora_foreman_work_messages", {
+            "thread_id": outage_thread, "phase": phase, "message_id": message,
+        })
+        return message
+
+    @staticmethod
+    def _publish_work_message(agora: Any, thread: int | None, message: int | None) -> None:
+        if message is not None:
+            agora._bump("agora.thread.message", {
+                "thread_id": thread, "message_id": message, "author": "system", "kind": "comment",
+            })
+
+    def _dispatch_work_messages(self, agora: Any) -> None:
+        pending = agora.db.query(
+            "SELECT w.message_id, m.body, m.mentions FROM agora_foreman_work_messages w "
+            "JOIN threads t ON t.id=w.thread_id JOIN messages m ON m.id=w.message_id "
+            "WHERE t.space_id=? AND w.dispatched=0 ORDER BY w.message_id", (agora.space_id,))
+        if not pending or (console := self._console(agora)) is None:
+            return
+        for row in pending:
+            console.deliver_to_existing_leaders(json.loads(row["mentions"]), row["message_id"], row["body"])
+            agora.db.execute("UPDATE agora_foreman_work_messages SET dispatched=1 WHERE message_id=?",
+                             (row["message_id"],))
 
     def _notice(self, agora: Any, agent: str) -> tuple[str, str]:
         space = agora.space_store.get(agora.space_id)["title"]
@@ -194,7 +259,7 @@ class AgoraForemanFacet(Facet):
         notification_id = self._notification(outage)
         if notification_id is None:
             title, body = self._notice(agora, outage["agent"])
-            link = f"{self.hub.config.url}/?space_id={quote(agora.space_id, safe='')}#agora-{outage['thread_id']}"
+            link = self._notice_url(agora, outage["thread_id"])
             result = self.hub.facet("notify").send(
                 title, body, url=link, group=self._group(outage), channels_override=[], now=agora.clock())
             notification_id = result["id"]
@@ -203,6 +268,15 @@ class AgoraForemanFacet(Facet):
 
     def _close_outage(self, agora: Any, outage: Any, *, replaced: bool) -> None:
         thread = outage["thread_id"]
+        opening = agora.db.one(
+            "SELECT m.thread_id, m.mentions FROM agora_foreman_work_messages w JOIN messages m ON m.id=w.message_id "
+            "WHERE w.thread_id=? AND w.phase='overdue'", (thread,))
+        if opening:
+            work_thread, leaders = opening["thread_id"], json.loads(opening["mentions"])
+        else:
+            console = self._console(agora)
+            work_thread = self._work_thread(agora, console)
+            leaders = self._leaders(agora, outage["agent"], console)
         notification_id = self._notification(outage)
         if notification_id is not None:
             self.hub.facet("notify").mark_read([notification_id])
@@ -212,14 +286,18 @@ class AgoraForemanFacet(Facet):
         else:
             resolution = "The monitored foreman has changed." if replaced else f"A new heartbeat arrived from {agent}."
         with agora.db.tx():
+            if not agora.db.one("SELECT 1 FROM agora_foreman_outages WHERE thread_id=?", (thread,)):
+                return
             updated = agora.db.execute(
                 "UPDATE threads SET status='resolved', resolution=?, resolved_by='system' WHERE id=? AND status<>'resolved'",
                 (resolution, thread)).rowcount
             if updated:
-                agora._msg(thread, "system", "resolution", resolution)
+                agora._msg(thread, "system", "resolution", resolution, leaders if work_thread is None else [])
+            message = self._write_work_message(agora, work_thread, thread, "resolved", resolution, leaders)
             agora.db.execute("DELETE FROM agora_foreman_outages WHERE thread_id=?", (thread,))
         if updated:
             agora._bump("agora.thread.resolved", {"thread_id": thread, "by": "system"})
+        self._publish_work_message(agora, work_thread, message)
 
     def status(self, args: dict[str, Any]) -> dict[str, Any]:
         if not hasattr(self, "agora"):
