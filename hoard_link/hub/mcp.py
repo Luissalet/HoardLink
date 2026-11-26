@@ -172,7 +172,7 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
         if isinstance(body, dict) and any(key in body for key in ("receipt_id", "receipt_error")):
             result = {"reply": result, **{key: body[key] for key in ("receipt_id", "receipt_undo", "receipt_error")
                                          if key in body}}
-        is_error = status >= 400
+        is_error = status >= 400 or (name == LINK_CHECK_TOOL and status >= 300)
         if status == 401:
             result = {"ok": False, "error": "hub refused the token: check HOARD_HUB_TOKEN_FILE / data/mcp-token"}
         return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text(result), "isError": is_error}}

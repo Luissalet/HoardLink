@@ -24,7 +24,7 @@ Nightingale. Los resultados guardan códigos, recuentos y marcas de tiempo.
 El catálogo del Hub y MCP `tools/list` se generan con la misma definición.
 
 - `catalogue` comprueba los nombres publicados en un catálogo. Es el alcance de las sondas de Atlas, Mercator, las compatibilidades y los servicios comunes con dueño en una app.
-- `declaration` comprueba el registro de una capacidad, como el relay MCP. `prerequisites` comprueba los requisitos publicados o la salud de los extremos. Agenda, Hoy y Búsqueda usan este alcance.
+- `declaration` comprueba el registro de una capacidad, como el relay MCP. `prerequisites` comprueba los requisitos publicados o el catálogo de los extremos. Agenda, Hoy y Búsqueda usan este alcance.
 - `cached` y `recorded_receipt` usan observaciones previas. La pasarela de correo compara la última pasada correcta con su intervalo. Los lectores requieren un acuse de correo en la flota. La colocación usa la salud remota registrada y el estado del túnel. La consola busca procesos huérfanos en los espacios cargados.
 - El puente al Cerebro combina la salud de Faustus con los recuentos de la cola. Los relevos de producción se verifican en su orden correspondiente.
 

@@ -29,6 +29,7 @@ UNCHECKED = "not_checked"
 CATALOGUE_PATH = "/api/agent/tools"
 HEALTH_PATH = "/api/health"
 GET_PATHS = frozenset({CATALOGUE_PATH, HEALTH_PATH, "/api/hoard-copilot/capabilities"})
+HEALTH_APPS = frozenset({"faustus", "nightingale"})
 APP_READ_TOOLS = frozenset({("nightingale", "nightingale_modules")})
 DEFAULT_EXCLUDED_APPS = frozenset({"baird"})
 EXCLUDED_PORTS = frozenset({5232})
@@ -148,7 +149,7 @@ class LinkProbes:
         if app_id == "faustus":
             urls = self.hub.config.faustus_urls
             base = faustus_base or (urls[0] if urls else "")
-            app = App("faustus", "Faustus", "", "", base, HEALTH_PATH, None)
+            app = App("faustus", "Faustus", "", "", base, HEALTH_PATH, "faustus")
         if app is None:
             return Observation(FAILED, "Hub registry", "app_missing")
         if app.port in EXCLUDED_PORTS:
@@ -198,8 +199,10 @@ class LinkProbes:
             method = "POST"
             args = {"name": native_tool, "tool": native_tool, "arguments": {}}
         else:
-            if path not in GET_PATHS:
-                raise ValueError("GET path is outside the link checker allowlist")
+            if path not in GET_PATHS or (path == "/api/hoard-copilot/capabilities" and app.id != "faustus"):
+                raise ValueError("GET target is outside the link checker allowlist")
+            if path == HEALTH_PATH and app.id not in HEALTH_APPS:
+                return Observation(UNCHECKED, "Hub registry", "health_route_not_reviewed"), None
             method, args = "GET", None
         call = f"{app.id} {method} {path}" + (f" ({native_tool})" if native_tool else "")
         seconds = deadline - time.monotonic()
@@ -662,10 +665,11 @@ class LinkProbes:
 
     def prerequisites(self, apps, reason, deadline):
         app_ids = apps.split(",")
-        call = f"{apps} GET {HEALTH_PATH}"
+        call = f"{apps} GET {CATALOGUE_PATH}"
         rows = []
         for app_id in app_ids:
-            row = self.health(app_id, deadline)
+            # Some health handlers run tool detection or contact another service.
+            row = self.catalogue(app_id, deadline)
             rows.append(row)
             if row.state != RESPONDS:
                 return replace(row, scope="prerequisites")

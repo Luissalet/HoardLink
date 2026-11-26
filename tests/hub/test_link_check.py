@@ -471,9 +471,12 @@ def test_facet_get_and_normal_agent_mcp_contract_without_hub_listener(hub, monke
         latest = get({"lang": ["en"]})
         assert latest["run_id"] == run["run_id"] and latest["links"][0]["status"] == "not checked"
         assert get({"run_id": [run["run_id"]]}) == run
+        monkeypatch.setattr(mcp, "_request", lambda *args, **kwargs: (302, None))
+        redirected = mcp.handle({"id": 3, "method": "tools/call", "params": {"name": name}})["result"]
+        assert redirected["isError"] is True
         monkeypatch.setattr(mcp, "_hub_up", lambda: False)
         monkeypatch.setattr(mcp, "_request", forbidden)
-        reply = mcp.handle({"id": 3, "method": "tools/call", "params": {"name": name}})["result"]
+        reply = mcp.handle({"id": 4, "method": "tools/call", "params": {"name": name}})["result"]
         assert reply["isError"] is True
     finally:
         facet.close()
@@ -599,3 +602,22 @@ def test_native_compatibility_uses_module_catalogue_and_owner_listener(hub):
     alias.family["absorbed_by"]["module"] = "wrong"
     assert probes.compatibility("midas", now_deadline()).outcome == "bridge_owner_missing"
     assert len(called) == 2
+
+
+def test_cook_prerequisite_uses_catalogue_even_while_running(hub):
+    hub.register("cookhoard", 5210)
+    hub.register("kafka", 5200)
+    called = []
+
+    def transport(app, method, path, body, **kwargs):
+        called.append((app.id, method, path))
+        return 200, {"tools": [{"name": "catalogue_marker"}]}
+
+    probes = LinkProbes(hub, request=transport, listeners=lambda: {5200, 5210})
+    assert probes.health("cookhoard", now_deadline()).outcome == "health_route_not_reviewed"
+    result = probes.run("prerequisites:cookhoard,kafka:cook_workflow", now_deadline(), {})
+    assert (result.state, result.outcome) == (UNCHECKED, "cook_workflow")
+    assert called == [
+        ("cookhoard", "GET", "/api/agent/tools"),
+        ("kafka", "GET", "/api/agent/tools"),
+    ]
