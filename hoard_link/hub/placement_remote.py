@@ -25,11 +25,22 @@ import re
 import shutil
 import sqlite3
 import struct
-import subprocess
 import sys
 import tarfile
 from pathlib import Path
 from typing import IO, Optional
+
+if __package__:
+    from .._process import run_hidden
+else:
+    try:
+        from placement_process import run_hidden
+    except ModuleNotFoundError as exc:
+        if exc.name != "placement_process":
+            raise
+        # Direct invocation from the source tree.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from _process import run_hidden
 
 SERVICES = ("faustus", "hermes", "prometheus")
 LINK_PORT = 8811  # on the Spark's loopback; 8810 stays free for a Hub of its own
@@ -377,7 +388,7 @@ def units(stack: str) -> list[str]:
             path.write_text(text, encoding="utf-8")
             changed.append(name)
     if changed:
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+        run_hidden(["systemctl", "--user", "daemon-reload"], check=False)
     return changed
 
 
@@ -386,12 +397,12 @@ def svc(action: str, names: list[str]) -> dict[str, str]:
     if action == "status":
         out = {}
         for n in names:
-            r = subprocess.run(["systemctl", "--user", "is-active", f"{n}.service"], capture_output=True, text=True)
+            r = run_hidden(["systemctl", "--user", "is-active", f"{n}.service"], capture_output=True, text=True)
             out[n] = r.stdout.strip() or r.stderr.strip()
         return out
     if action not in ("start", "stop", "restart", "enable", "disable"):
         return {"rc": "2", "error": f"unknown action {action}"}
-    r = subprocess.run(["systemctl", "--user", action, *[f"{n}.service" for n in names]], capture_output=True, text=True)
+    r = run_hidden(["systemctl", "--user", action, *[f"{n}.service" for n in names]], capture_output=True, text=True)
     return {"rc": str(r.returncode), "error": r.stderr.strip()[-400:]}
 
 

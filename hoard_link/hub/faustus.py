@@ -8,6 +8,7 @@ import subprocess
 import threading
 from urllib.parse import urlsplit
 
+from .._process import popen_hidden, run_hidden
 from ..fam_mail import faustus_dir, faustus_python
 from . import procs
 
@@ -28,7 +29,7 @@ class FaustusRuntime:
         with self._lock:
             if self._cancelled.is_set():
                 raise subprocess.SubprocessError("Faustus start was cancelled")
-            process = subprocess.Popen(argv, **options)
+            process = popen_hidden(argv, **options)
             self._starting = process
         try:
             stdout, stderr = process.communicate(timeout=180)
@@ -92,7 +93,7 @@ class FaustusRuntime:
             if action == "start":
                 result = self._execute(argv, cwd=root, creationflags=flags)
             else:
-                result = subprocess.run(argv, cwd=root, stdin=subprocess.DEVNULL, capture_output=True,
+                result = run_hidden(argv, cwd=root, stdin=subprocess.DEVNULL, capture_output=True,
                                         text=True, timeout=180, creationflags=flags)
             raw = json.loads(result.stdout.strip().splitlines()[-1])
         except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
@@ -110,7 +111,7 @@ class FaustusRuntime:
         models = root / "Stop-Local-Models.ps1"
         if action == "stop-all" and out["ok"] and os.name == "nt" and models.is_file():
             try:
-                stopped = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(models)],
+                stopped = run_hidden(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(models)],
                                          cwd=root, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                          timeout=90, creationflags=flags)
                 if stopped.returncode:

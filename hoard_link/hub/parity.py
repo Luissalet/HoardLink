@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from .._process import popen_hidden
 from ..parity import EmptyTraceError, TraceMismatch, compare_traces, survey_traces
 from ..parity.corpus import read_jsonl
 from ..parity.select import State
@@ -99,7 +100,7 @@ class ParityFacet(Facet):
                    "PYTHONIOENCODING": "utf-8"}
             log = open(folder / "last-run.log", "w", encoding="utf-8")
             kwargs: dict[str, Any] = {"creationflags": 0x08000000} if os.name == "nt" else {}
-            proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(harness.resolve().parent), **kwargs)
+            proc = popen_hidden(argv, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=str(harness.resolve().parent), **kwargs)
             _RUNNING[str(folder)] = proc
         return {"ok": True, "started": True, "pid": proc.pid, "state_dir": str(folder), "log": str(folder / "last-run.log"),
                 "note": "poll hub_parity_status; a harness that has not changed since its last pass is skipped unless force is set"}

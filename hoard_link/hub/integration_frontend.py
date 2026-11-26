@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from .._process import run_hidden
 from ..atomic import tmp_path_for, write_bytes_atomic, write_json_atomic
 from .compiled_ui import CONSOLE_INPUTS, RECEIPT, STUDIO_INPUTS
 from .integration_git import IntegrationError
@@ -44,7 +45,7 @@ def prepare_frontend(candidate: Path, paths: set[str], folder: Path, *, revision
         for args in (("ci", "--no-audit", "--no-fund"), build_args):
             try:
                 env = {**os.environ, "CARGO_TARGET_DIR": str(target)} if desktop else None
-                result = subprocess.run([npm, *args], cwd=workdir, stdout=stream, stderr=subprocess.STDOUT,
+                result = run_hidden([npm, *args], cwd=workdir, stdout=stream, stderr=subprocess.STDOUT,
                                         env=env, timeout=1800 if desktop else 600,
                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except (OSError, subprocess.TimeoutExpired) as error:

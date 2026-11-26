@@ -36,15 +36,15 @@ def _wait_for_hub(url: str, seconds: float = 40.0) -> bool:
 
 
 def _start_hub_headless() -> None:
+    from hoard_link._process import popen_hidden
     from hoard_link.hub import autostart
 
     kwargs: dict = {}
     if sys.platform.startswith("win"):
-        kwargs["creationflags"] = (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                                   | getattr(subprocess, "DETACHED_PROCESS", 0))
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen([autostart.pythonw(), *autostart.hub_args()], cwd=REPO_DIR, stdin=subprocess.DEVNULL,
+    popen_hidden([autostart.pythonw(), *autostart.hub_args()], cwd=REPO_DIR, stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
 
 

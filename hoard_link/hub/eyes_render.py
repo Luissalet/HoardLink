@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import unquote
 
+from .._process import run_hidden
+
 KINDS = ("image", "video", "mesh", "web", "document", "game")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
@@ -156,7 +158,7 @@ def _need(name: str) -> str:
 def _run(cmd: list[str], timeout: float, **kwargs: Any) -> subprocess.CompletedProcess:
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=flags, **kwargs)
+        return run_hidden(cmd, capture_output=True, timeout=timeout, creationflags=flags, **kwargs)
     except subprocess.TimeoutExpired as exc:
         raise EyesError(f"{Path(cmd[0]).name} did not finish within {timeout:.0f}s") from exc
 

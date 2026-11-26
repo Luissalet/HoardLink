@@ -55,6 +55,8 @@ python -m hoard_link.hub --autostart-status
 
 ## App windows
 
+Use `hoard_link.proc` for background commands that need the common UTF-8, process-tree and timeout behavior. Use `hoard_link._process` when a caller needs the standard `subprocess` arguments and streams. Both apply `CREATE_NO_WINDOW` on Windows, including when the installed Hub runs under `pythonw`. Opening a browser or folder on request uses the system's normal application.
+
 A process launch hint may declare `opens_window: true` when a source launcher
 opens the app's native window itself.
 

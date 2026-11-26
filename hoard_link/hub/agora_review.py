@@ -29,6 +29,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .._process import run_hidden
+
 SIDES = ("new", "old")
 MAX_COMMITS = 20
 MAX_FILES = 300
@@ -76,7 +78,7 @@ def _git(root: Path, *args: str, timeout: float = 30.0) -> subprocess.CompletedP
                           "env": {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "LANG": "C.UTF-8"}}
     if hasattr(subprocess, "CREATE_NO_WINDOW"):
         kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-    return subprocess.run(argv, **kw)
+    return run_hidden(argv, **kw)
 
 
 def _text(raw: bytes) -> str:

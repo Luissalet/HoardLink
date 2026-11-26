@@ -10,6 +10,8 @@ import sqlite3
 import subprocess
 import sys
 
+from .._process import run_hidden
+
 
 def _read_key(database: Path, key_file: Path, endpoint_id: str, base_url: str) -> str:
     # Use the owning installation's cryptography dependency and existing key.
@@ -35,7 +37,7 @@ def read_endpoint_key(root: Path, python: str, endpoint_id: str, base_url: str, 
     try:
         source = Path(__file__).read_text(encoding="utf-8")
         if placement is None:
-            process = subprocess.run(
+            process = run_hidden(
                 [str(python), "-B", "-X", "utf8", "-", endpoint_id, base_url], cwd=root,
                 input=source, capture_output=True, encoding="utf-8", timeout=12,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

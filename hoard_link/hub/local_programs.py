@@ -16,6 +16,7 @@ import time
 import tomllib
 from uuid import uuid4
 
+from .._process import run_hidden
 from ..atomic import read_json, write_json_atomic
 from ..media import bins
 from .config import REPO_DIR, _locked_config
@@ -50,7 +51,7 @@ def _version(path, flag="--version"):
     if not path:
         return None
     try:
-        result = subprocess.run(
+        result = run_hidden(
             [str(path), flag], capture_output=True, stdin=subprocess.DEVNULL,
             encoding="utf-8", errors="replace", timeout=5,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

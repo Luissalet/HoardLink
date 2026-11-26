@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .._process import popen_hidden, run_hidden
 from ..atomic import read_json
 from ..mail_helper import INSTALLATION_FILE
 from . import placement_remote as pr
@@ -97,7 +98,7 @@ class Placement:
         self.path = Path(hub.config.data_dir) / "placement.json"
         self.trash_root = Path(hub.config.data_dir) / "placement-trash"
         self.recipes_pc = Path(os.path.expanduser("~")) / "Desktop" / "Proyectos independientes" / "Sparks cluster" / "recipes"
-        self._run = runner or subprocess.run
+        self._run = runner or run_hidden
         self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
         # Faustus on the Spark keeps reaching this Hub (Agora, rooms, council) through a tunnel; started by the Hub's main.
@@ -317,7 +318,10 @@ class Placement:
         return json.loads(out.strip().splitlines()[-1]) if out.strip() else None
 
     def _upload_helper(self) -> None:
+        from .. import _process
+
         self._ssh_step(f"mkdir -p {STACK}", what="creando la carpeta del stack")
+        self._put_text(f"{STACK}/placement_process.py", Path(_process.__file__).read_text(encoding="utf-8"))
         self._put_text(REMOTE_HELPER, Path(pr.__file__).read_text(encoding="utf-8"))
 
     def _upload_mail_helper(self) -> None:
@@ -328,7 +332,7 @@ class Placement:
                        timeout=60, what="escribiendo el ayudante de correo")
 
     def _stream(self, command: str) -> subprocess.Popen:
-        return subprocess.Popen(["ssh", *SSH_OPTS, self._node(), command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        return popen_hidden(["ssh", *SSH_OPTS, self._node(), command], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, creationflags=_flags())
 
     # ================================================================================= what lives where on the PC
@@ -345,7 +349,7 @@ class Placement:
 
     # ================================================================================= code
     def _deploy_code(self, app_id: str, folder: Path, deployed: dict[str, Any]) -> None:
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=folder, capture_output=True, text=True,
+        head = run_hidden(["git", "rev-parse", "HEAD"], cwd=folder, capture_output=True, text=True,
                               creationflags=_flags()).stdout.strip()
         extra = [p for p in EXTRA_UNTRACKED.get(app_id, []) if (folder / p).exists()]
         stamp = head + "|" + "|".join(f"{p}:{max((f.stat().st_mtime_ns for f in (folder / p).rglob('*') if f.is_file()), default=0)}"
@@ -358,7 +362,7 @@ class Placement:
         # A clean tree each time (files removed from git must not linger); the venv and the data stay.
         proc = self._stream(f"mkdir -p {STACK}/{app_id} && find {STACK}/{app_id} -mindepth 1 -maxdepth 1 ! -name venv ! -name data"
                             f" -exec rm -rf {{}} + && tar -xf - -C {STACK}/{app_id}")
-        archive = subprocess.run(["git", "archive", "--format=tar", "HEAD"], cwd=folder, capture_output=True, creationflags=_flags())
+        archive = run_hidden(["git", "archive", "--format=tar", "HEAD"], cwd=folder, capture_output=True, creationflags=_flags())
         if archive.returncode != 0:
             proc.kill()
             raise PlacementError(f"git archive {app_id}: {archive.stderr.decode(errors='replace').strip()[-300:]}")
@@ -380,7 +384,7 @@ class Placement:
 
     def _ensure_runtime(self, app_id: str, folder: Path, deployed: dict[str, Any]) -> None:
         # The committed requirements: that is what git archive sent (uncommitted edits stay on the PC).
-        req = subprocess.run(["git", "show", "HEAD:requirements.txt"], cwd=folder, capture_output=True, creationflags=_flags())
+        req = run_hidden(["git", "show", "HEAD:requirements.txt"], cwd=folder, capture_output=True, creationflags=_flags())
         digest = hashlib.sha256(req.stdout).hexdigest()[:16] if req.returncode == 0 else ""
         key = app_id + ":requirements"
         if deployed.get(key) == digest and self._ssh_step(f"test -x {STACK}/{app_id}/venv/bin/python && echo ok || true",
@@ -425,11 +429,11 @@ class Placement:
             return
         try:
             if os.name == "nt":
-                seen = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True,
+                seen = run_hidden(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True,
                                       text=True, creationflags=_flags()).stdout.lower()
                 if "node" not in seen:
                     return                      # the pid was reused by something else
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, creationflags=_flags())
+                run_hidden(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, creationflags=_flags())
             else:
                 os.kill(pid, 9)
             self._log("WhatsApp: puente parado en el PC (su sesión viaja con Faustus)")
@@ -541,7 +545,7 @@ class Placement:
         theirs = self._remote(f"hashes {remote_file}") or []
         indices = pr.changed_blocks(theirs, pr.block_hashes(str(local)))
         self._put_text(f"{STACK}/blocks.json", json.dumps(indices))
-        proc = subprocess.Popen(["ssh", *SSH_OPTS, self._node(), f"python3 {REMOTE_HELPER} readblocks {remote_file} {STACK}/blocks.json"],
+        proc = popen_hidden(["ssh", *SSH_OPTS, self._node(), f"python3 {REMOTE_HELPER} readblocks {remote_file} {STACK}/blocks.json"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=_flags())
         try:
             got = pr.receive_blocks(str(local), proc.stdout, meta[0], meta[1])
@@ -563,7 +567,7 @@ class Placement:
         if not changed and not deleted:
             return {"copied": len(big), "removed": 0, "bytes": got, "extracted": 0, "skipped": 0, "skipped_files": []}
         self._put_text(f"{STACK}/files.json", json.dumps(changed))
-        proc = subprocess.Popen(["ssh", *SSH_OPTS, self._node(), f"python3 {REMOTE_HELPER} pack {remote} {STACK}/files.json -"],
+        proc = popen_hidden(["ssh", *SSH_OPTS, self._node(), f"python3 {REMOTE_HELPER} pack {remote} {STACK}/files.json -"],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=_flags())
         try:
             res = pr.apply_from(str(local), proc.stdout, deleted, str(trash / name))

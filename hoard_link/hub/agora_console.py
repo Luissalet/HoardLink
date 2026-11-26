@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote, urlencode, urlsplit
 
+from .._process import popen_hidden, run_hidden
 from . import agora_faustus
 from . import agora_auto_review, agora_liveness, agora_quota_floors, agora_ranks, agora_worker_processes, agora_worker_profiles
 from . import work_admission
@@ -346,7 +347,7 @@ class AgoraConsoleFacet(Facet):
         if not executable:
             return {"state": "unavailable", "detail": "Codex CLI is not on the Hub process PATH.", "catalog": []}
         try:
-            result = subprocess.run([executable, "debug", "models"], capture_output=True, text=True,
+            result = run_hidden([executable, "debug", "models"], capture_output=True, text=True,
                                     encoding="utf-8", errors="replace",
                                     timeout=8, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if result.returncode != 0:
@@ -392,7 +393,7 @@ class AgoraConsoleFacet(Facet):
         try:
             # This is a non-inference diagnostic. Keep only the boolean reported
             # by the CLI; never retain its raw output, which may contain account data.
-            result = subprocess.run([executable, "auth", "status"], capture_output=True, text=True,
+            result = run_hidden([executable, "auth", "status"], capture_output=True, text=True,
                                     encoding="utf-8", errors="replace", timeout=8, check=False,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             payload = json.loads(result.stdout) if result.stdout.strip() else None
@@ -441,7 +442,7 @@ class AgoraConsoleFacet(Facet):
         ones its ``--help`` prints for ``--effort``. ``default`` (a model or an effort) passes no option. An install
         whose help does not show the headless options this hub uses gives no catalog."""
         try:
-            result = subprocess.run([executable, "--help"], capture_output=True, text=True, encoding="utf-8",
+            result = run_hidden([executable, "--help"], capture_output=True, text=True, encoding="utf-8",
                                     errors="replace", timeout=8, check=False,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, subprocess.TimeoutExpired):
@@ -577,7 +578,7 @@ class AgoraConsoleFacet(Facet):
         if not node.is_file() or not entry.is_file():
             return {"state": "unavailable", "detail": "The managed Cursor CLI runtime is not installed at its configured path; the existing managed session is left untouched.", "catalog": []}
         try:
-            result = subprocess.run([str(node), str(entry), "models"], capture_output=True, text=True,
+            result = run_hidden([str(node), str(entry), "models"], capture_output=True, text=True,
                                     encoding="utf-8", errors="replace",
                                     timeout=12, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if result.returncode != 0:
@@ -1131,7 +1132,7 @@ class AgoraConsoleFacet(Facet):
         observer.start()
         try:
             with log_path.open("w", encoding="utf-8") as log:
-                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                result = run_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                         text=True, cwd=(str(cursor_workspace) if leader_id == "cursor" else
                                                        str(work_dir) if use_saved_cwd else None),
                                         timeout=1800, check=False, env=self._runner_env(),
@@ -1710,7 +1711,7 @@ class AgoraConsoleFacet(Facet):
         if not controller.is_file():
             return None, "The Faustus Agora controller is not present beside the configured installation."
         try:
-            status = subprocess.run([str(python), "-X", "utf8", str(controller), "status"], stdin=subprocess.DEVNULL,
+            status = run_hidden([str(python), "-X", "utf8", str(controller), "status"], stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, encoding="utf-8", errors="replace",
                                     timeout=5, check=False,
                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -2535,7 +2536,7 @@ class AgoraConsoleFacet(Facet):
             process_env = self._faustus_runner_env()
         try:
             with open(log_path, "a", encoding="utf-8") as log:
-                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                            text=True, cwd=str(worker_cwd), env=process_env,
                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except OSError as exc:
@@ -2829,7 +2830,7 @@ class AgoraConsoleFacet(Facet):
 
     @staticmethod
     def _git_worker_info(path: str, *args: str, check: bool = False) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", path, *args], capture_output=True, encoding="utf-8",
+        return run_hidden(["git", "-C", path, *args], capture_output=True, encoding="utf-8",
                               errors="replace", timeout=10, check=check,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
@@ -2939,7 +2940,7 @@ class AgoraConsoleFacet(Facet):
             if not executable:
                 raise FileNotFoundError(f"{leader.title()} runner unavailable")
             with log_path.open("w", encoding="utf-8") as log:
-                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                            text=True, cwd=str(cwd), env=self._runner_env(),
                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, ValueError) as exc:
@@ -3218,7 +3219,7 @@ class AgoraConsoleFacet(Facet):
                 prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(launch_scope, ensure_ascii=False)
             command[command.index("-p") + 1] = prompt + "\n\nPrior stop: " + row["detail"]
             with log_path.open("w", encoding="utf-8") as log:
-                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                            text=True, cwd=cwd, env=self._faustus_runner_env(),
                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, RuntimeError, ValueError) as exc:
@@ -3363,7 +3364,7 @@ class AgoraConsoleFacet(Facet):
             return False
 
         def git(*args: str) -> int:
-            return subprocess.run(["git", "-C", str(root), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            return run_hidden(["git", "-C", str(root), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=60, check=False,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode
         try:
@@ -3414,7 +3415,7 @@ class AgoraConsoleFacet(Facet):
             return False
 
         def git(*args: str, cwd: Path = root) -> subprocess.CompletedProcess:
-            return subprocess.run(["git", "-C", str(cwd), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            return run_hidden(["git", "-C", str(cwd), *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=60, check=False,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         try:

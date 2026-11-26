@@ -25,7 +25,6 @@ import logging
 import os
 import re
 import sqlite3
-import subprocess
 import sys
 import threading
 import time
@@ -34,6 +33,7 @@ from datetime import datetime
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
+from .._process import is_native_runner, run_hidden
 from .. import notify_channels as nc
 from ..notify_channels import (  # noqa: F401 - re-exported: the hub's tests and tools import them from here
     HTTP_TIMEOUT_S, POWERSHELL_APP_ID, TOAST_TIMEOUT_S, build_toast_ps1, clean_url, http_json as _http_json, scrub as _scrub, xml_escape)
@@ -153,7 +153,7 @@ class NotifyFacet(Facet):
         self.db_path = os.path.join(data_dir, "notify.db")
         self.platform = sys.platform
         self.toast_async = True                      # the toast runs on its own thread; tests set False
-        self.powershell_runner: Callable[..., Any] = subprocess.run
+        self.powershell_runner: Callable[..., Any] = run_hidden
         self.smtp_factory: Callable[[dict[str, Any]], Any] = self._default_smtp
         self.http: Callable[..., tuple[Optional[int], Any]] = _http_json
         self._cfg_lock = threading.RLock()
@@ -663,7 +663,7 @@ class NotifyFacet(Facet):
     def _send_windows(self, note: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         if not self._is_windows():
             return {"ok": False, "unsupported": True, "error": "unsupported"}
-        if self.powershell_runner in (None, subprocess.run) and nc.dry_run():
+        if is_native_runner(self.powershell_runner) and nc.dry_run():
             # Decided here, not in the toast thread: a test's teardown may restore the environment before it runs.
             return {"ok": True, "dry_run": True}
         name, icon_path = self._toast_identity(str(note.get("icon_app") or note.get("app") or "hub"))

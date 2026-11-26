@@ -143,8 +143,8 @@ def test_hub_dry_run_is_decided_before_the_toast_thread(hub, monkeypatch):
     f = hub.facet("notify")
     f.platform = "win32"
     f.toast_async = True
-    import subprocess
-    assert f.powershell_runner is subprocess.run  # the hub's real default
+    from hoard_link._process import run_hidden
+    assert f.powershell_runner is run_hidden
     started = []
     monkeypatch.setattr(nc, "run_ps1", lambda *a, **k: started.append(a) or {"ok": True})
     res = f.send("Resumen", "## Hoy\nNada.", app="hub", channels_override=["windows"])

@@ -14,6 +14,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from ._process import run_hidden
+
 
 @dataclass(frozen=True)
 class GpuProbe:
@@ -65,7 +67,7 @@ def probe_gpu_memory(timeout_s: float = 10.0) -> GpuProbe:
     if sys.platform == "win32":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        proc = subprocess.run(
+        proc = run_hidden(
             [
                 _nvidia_smi(),
                 "--query-gpu=index,memory.total,memory.used,uuid",

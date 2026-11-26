@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
+from .._process import run_hidden
 from .repos import git_env
 
 
@@ -21,7 +22,7 @@ def git(repo, *args, check=True, data=None):
     env = git_env()
     for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
         env.pop(key, None)
-    result = subprocess.run(
+    result = run_hidden(
         ["git", "--literal-pathspecs", "-C", str(repo), "-c", "core.hooksPath=" + os.devnull, *args],
         input=data, capture_output=True, env=env, timeout=120,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

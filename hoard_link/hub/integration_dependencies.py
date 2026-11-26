@@ -13,6 +13,7 @@ import sys
 import tomllib
 from pathlib import Path, PurePosixPath
 
+from .._process import run_hidden
 from . import integration_git as git
 from .integration_checks import app_python, test_env
 
@@ -79,7 +80,7 @@ def _command(args):
 
 
 def _run(args, cwd, *, timeout, data=None, output=None):
-    return subprocess.run(args, cwd=cwd, input=data, env=test_env(), timeout=timeout,
+    return run_hidden(args, cwd=cwd, input=data, env=test_env(), timeout=timeout,
                           stdout=output if output is not None else subprocess.PIPE, stderr=subprocess.STDOUT,
                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 

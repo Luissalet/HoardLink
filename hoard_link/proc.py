@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, Sequence
 
+from ._process import popen_hidden, run_hidden
 from .errors import HoardLinkError
 from .launch import hoard_home
 
@@ -118,7 +119,7 @@ def popen(args: Sequence[Any], *, detached: bool = False, low_priority: bool = F
         kw.setdefault("close_fds", True)
     if not IS_WIN:
         kw.setdefault("start_new_session", True)
-        proc = subprocess.Popen(argv, **kw)
+        proc = popen_hidden(argv, **kw)
         if low_priority:
             try:
                 os.setpriority(os.PRIO_PROCESS, proc.pid, 10)
@@ -130,10 +131,10 @@ def popen(args: Sequence[Any], *, detached: bool = False, low_priority: bool = F
         flags |= _BELOW_NORMAL
     if detached:
         try:
-            return subprocess.Popen(argv, creationflags=flags | _BREAKAWAY, **kw)
+            return popen_hidden(argv, creationflags=flags | _BREAKAWAY, **kw)
         except OSError:
             pass  # the parent's job does not allow breakaway
-    return subprocess.Popen(argv, creationflags=flags, **kw)
+    return popen_hidden(argv, creationflags=flags, **kw)
 
 
 # ---------------------------------------------------------------- killing --
@@ -174,7 +175,7 @@ def pid_alive(pid: int) -> bool:
 def _taskkill(pid: int, force: bool) -> None:
     cmd = ["taskkill", "/PID", str(pid), "/T"] + (["/F"] if force else [])
     try:
-        subprocess.run(cmd, capture_output=True, timeout=20, stdin=subprocess.DEVNULL, **no_window_kwargs())
+        run_hidden(cmd, capture_output=True, timeout=20, stdin=subprocess.DEVNULL, **no_window_kwargs())
     except (OSError, subprocess.SubprocessError):
         pass
 

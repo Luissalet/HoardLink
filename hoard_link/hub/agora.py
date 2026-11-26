@@ -50,6 +50,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .._process import run_hidden
 from ..sqlkit import Database
 from ..coordination.spaces import DEFAULT_SPACE_ID, SPACES_MIGRATION, SpaceError, SpaceStore, space_id
 from . import agent_watch
@@ -468,7 +469,7 @@ def _git_run(repo: Path, *args: str, timeout: float = _GIT_TIMEOUT_S) -> subproc
     }
     if hasattr(subprocess, "CREATE_NO_WINDOW"):
         kw["creationflags"] = CREATE_NO_WINDOW
-    return subprocess.run(argv, **kw)
+    return run_hidden(argv, **kw)
 
 
 def _git_show(repo: Path, commit: str, rel_path: str) -> str:

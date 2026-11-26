@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from ._process import run_hidden
 from . import _faustus, _probes
 from ._comfy import ComfyClient
 from ._sync import SyncFacade
@@ -1609,7 +1610,7 @@ class Link:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
 
             def run() -> subprocess.CompletedProcess:
-                return subprocess.run(
+                return run_hidden(
                     argv,
                     input=None if uses_text_arg else text.encode("utf-8"),
                     stdin=subprocess.DEVNULL if uses_text_arg else None,

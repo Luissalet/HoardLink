@@ -90,7 +90,7 @@ def test_open_window_chromium_when_forced(tmp_path, monkeypatch):
     folder, _ = _fake_shell(tmp_path)
     monkeypatch.setenv("HOARD_WINDOW_SHELL", str(folder))
     monkeypatch.setattr(desktop, "find_browser", lambda pref="auto": None)
-    monkeypatch.setattr(desktop.webbrowser, "open", lambda url: True)
+    monkeypatch.setattr(desktop, "open_browser_tab", lambda url: True)
     res = desktop.open_window("http://127.0.0.1:1/", "x", str(tmp_path / "p"), engine="chromium")
     assert res["mode"] == "browser-tab"
 
@@ -102,7 +102,7 @@ def test_hub_launcher_only_fetches_a_ticket_for_the_browser_fallback(tmp_path, m
     shell_result = {"ok": True, "mode": "app-window", "pid": 42}
     monkeypatch.setattr(desktop, "_open_shell_window", lambda url, *a, **kw: shell_urls.append(url) or shell_result)
     monkeypatch.setattr(desktop, "find_browser", lambda _: None)
-    monkeypatch.setattr(desktop.webbrowser, "open", lambda url: fallback_urls.append(url) or True)
+    monkeypatch.setattr(desktop, "open_browser_tab", lambda url: fallback_urls.append(url) or True)
     ticketed = cfg.url + "/#hub-session=test"
     monkeypatch.setattr(ui_session, "launch_url", lambda *args: issued.append(args) or ticketed)
 

@@ -62,13 +62,13 @@ import re
 import sqlite3
 import threading
 import time
-import webbrowser
 from collections.abc import MutableMapping
 from typing import Any, Callable, Iterator, Optional
 from urllib.parse import unquote, urlsplit
 
 from .. import paths as _paths
 from ..fam_web import extract_payload
+from ..net import open_in_browser
 from ..web import browser as _browser
 from ..web import meta as _meta
 from ..web import safety
@@ -386,7 +386,7 @@ class WebFacet(Facet):
         self.fetcher_options = dict(type(self).fetcher_options)
         self.app_profile = safety.PUBLIC
         self.resolver: Optional[safety.Resolver] = None
-        self.open_default: Callable[[str], Any] = webbrowser.open
+        self.open_default: Callable[[str], Any] = open_in_browser
         self._build_lock = threading.Lock()
         self._fetcher: Optional[Fetcher] = None
         self._search: Optional[WebSearch] = None

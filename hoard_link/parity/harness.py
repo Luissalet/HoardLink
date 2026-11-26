@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+from .._process import run_hidden
 from ..atomic import write_json_atomic
 from .cache import OracleCache
 from .compare import EmptyTraceError, TraceMismatch, compare_traces, survey_traces
@@ -106,7 +107,7 @@ def _run(cmd: Command, inputs: Path, output: Path, log: Path) -> tuple[int, floa
     output.unlink(missing_ok=True)
     with open(log, "wb") as fh:
         try:
-            p = subprocess.run(argv, cwd=cmd.cwd, env=env, stdout=fh, stderr=subprocess.STDOUT, timeout=cmd.timeout)
+            p = run_hidden(argv, cwd=cmd.cwd, env=env, stdout=fh, stderr=subprocess.STDOUT, timeout=cmd.timeout)
             code = p.returncode
         except subprocess.TimeoutExpired:
             fh.write(f"\n[parity] timed out after {cmd.timeout}s\n".encode())

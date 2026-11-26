@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, NamedTuple, Optional
 
+from .._process import run_hidden
 from . import drift
 
 GIT_TIMEOUT_S = 10.0
@@ -96,7 +97,7 @@ def run_git(repo: str, *args: str, timeout: float = GIT_TIMEOUT_S, git: Optional
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", CREATE_NO_WINDOW)
     try:
-        proc = subprocess.run(argv, capture_output=True, timeout=timeout, env=git_env(), stdin=subprocess.DEVNULL, **kwargs)
+        proc = run_hidden(argv, capture_output=True, timeout=timeout, env=git_env(), stdin=subprocess.DEVNULL, **kwargs)
     except subprocess.TimeoutExpired:
         return GitResult(-1, "", f"timed out after {timeout:.0f}s", True)
     except OSError as exc:
@@ -341,7 +342,7 @@ def _default_ci_runner(argv: list[str], timeout: float) -> tuple[int, str, str]:
     env = dict(os.environ)
     env.update({"GH_PROMPT_DISABLED": "1", "NO_COLOR": "1", "GH_NO_UPDATE_NOTIFIER": "1"})
     try:
-        proc = subprocess.run(argv, capture_output=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL, **kwargs)
+        proc = run_hidden(argv, capture_output=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL, **kwargs)
     except subprocess.TimeoutExpired:
         return -1, "", "timed out"
     except OSError as exc:

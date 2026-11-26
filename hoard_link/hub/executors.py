@@ -29,6 +29,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from .._process import popen_hidden, run_hidden
 from .facets import Facet, Request
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
@@ -46,7 +47,7 @@ def kill_tree(proc: subprocess.Popen) -> None:
     """End the process and everything it started."""
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, creationflags=_flags())
+            run_hidden(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, creationflags=_flags())
         else:
             import signal
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -116,7 +117,7 @@ class ExecutorsFacet(Facet):
             else:
                 kwargs["start_new_session"] = True
             try:
-                proc = subprocess.Popen([exe] + argv[1:], **kwargs)  # noqa: S603 - the program is the one found on PATH
+                proc = popen_hidden([exe] + argv[1:], **kwargs)  # noqa: S603 - the program is the one found on PATH
             except OSError as exc:
                 kwargs["stdout"].close()
                 return {"ok": False, "status": 500, "error": f"could not start {argv[0]}: {exc}"[:300]}

@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .._process import popen_hidden
 from .faustus_endpoint_key import read_endpoint_key
 
 STUDIO = "estudio"
@@ -385,7 +386,7 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     if console.space_id == STUDIO:
         command.extend(["--agora-studio", agent])
     with (data / "server.log").open("a", encoding="utf-8") as log:
-        process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
+        process = popen_hidden(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
             stdout=log, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     from . import procs
     from .contract import _get

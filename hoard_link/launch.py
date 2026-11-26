@@ -64,6 +64,8 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
+from ._process import run_hidden
+
 __all__ = ["Launcher", "Service", "hoard_home", "comfy_port_from_url", "list_gpus", "memory", "host_stats",
            "process_created", "process_alive", "spawn_orphan"]
 
@@ -160,7 +162,7 @@ def list_gpus() -> list[dict[str, Any]]:
     if IS_WIN:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        out = subprocess.run([exe, "--query-gpu=index,name,memory.free,memory.total", "--format=csv,noheader,nounits"],
+        out = run_hidden([exe, "--query-gpu=index,name,memory.free,memory.total", "--format=csv,noheader,nounits"],
                              capture_output=True, text=True, timeout=8, stdin=subprocess.DEVNULL, **kwargs).stdout
     except (OSError, subprocess.SubprocessError):
         return []
@@ -239,30 +241,24 @@ _alive = process_alive
 # short-lived Python in between starts it and exits at once, so the server
 # is orphaned from the start and no process tree reaches it.
 _SPAWNER = r"""
-import json, os, subprocess, sys
+import json, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+from hoard_link.proc import popen
+
 spec = json.loads(sys.stdin.read())
-log = open(spec["log"], "ab")
-kw = dict(cwd=spec["cwd"] or None, env=spec["env"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-          close_fds=True)
-if os.name == "nt":
-    flags = 0x00000200 | 0x08000000  # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
-    try:
-        p = subprocess.Popen(spec["argv"], creationflags=flags | 0x01000000, **kw)  # + CREATE_BREAKAWAY_FROM_JOB
-    except OSError:
-        p = subprocess.Popen(spec["argv"], creationflags=flags, **kw)
-else:
-    p = subprocess.Popen(spec["argv"], start_new_session=True, **kw)
-sys.stdout.write(str(p.pid))
-sys.stdout.flush()
+with open(spec["log"], "ab") as log:
+    child = popen(spec["argv"], detached=True, cwd=spec["cwd"] or None, env=spec["env"],
+                  stdout=log, stderr=subprocess.STDOUT)
+print(child.pid, flush=True)
 """
 
 
 def spawn_orphan(argv: list[str], cwd: Optional[str], env: dict[str, str], log_path: Path) -> int:
     """Start ``argv`` detached, as an orphan; returns its pid."""
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WIN else 0
     spec = json.dumps({"argv": argv, "cwd": cwd, "env": env, "log": str(log_path)})
-    out = subprocess.run([sys.executable, "-c", _SPAWNER], input=spec, capture_output=True, text=True, timeout=60,
-                         env=env, creationflags=flags)
+    source_root = Path(__file__).resolve().parents[1]
+    out = run_hidden([sys.executable, "-c", _SPAWNER, str(source_root)], input=spec, capture_output=True,
+                     text=True, timeout=60, env=env)
     if out.returncode != 0 or not out.stdout.strip().isdigit():
         raise OSError((out.stderr or out.stdout or "the spawner failed").strip()[-600:])
     return int(out.stdout.strip())
@@ -274,12 +270,12 @@ _spawn_orphan = spawn_orphan
 def _kill_tree(pid: int, grace_s: float = 6.0) -> None:
     if IS_WIN:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.run(["taskkill", "/PID", str(pid), "/T"], capture_output=True, creationflags=flags, timeout=20)
+        run_hidden(["taskkill", "/PID", str(pid), "/T"], capture_output=True, creationflags=flags, timeout=20)
         deadline = time.monotonic() + grace_s
         while time.monotonic() < deadline and process_created(pid) is not None:
             time.sleep(0.3)
         if process_created(pid) is not None:
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, creationflags=flags, timeout=20)
+            run_hidden(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, creationflags=flags, timeout=20)
         return
     try:
         os.killpg(pid, signal.SIGTERM)
@@ -829,7 +825,7 @@ class Launcher:
     def _run_stop_script(self, svc: Service) -> dict[str, Any]:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WIN else 0
         try:
-            out = subprocess.run(svc.stop_argv or [], cwd=svc.cwd or None, capture_output=True, text=True, timeout=120,
+            out = run_hidden(svc.stop_argv or [], cwd=svc.cwd or None, capture_output=True, text=True, timeout=120,
                                  stdin=subprocess.DEVNULL, creationflags=flags)
         except (OSError, subprocess.SubprocessError) as exc:
             return {"ok": False, "service": svc.id, "error": f"its stop command failed: {exc}"}
@@ -901,7 +897,7 @@ def _listeners() -> dict[int, int]:
     try:
         if IS_WIN:
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            text = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10,
+            text = run_hidden(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10,
                                   creationflags=flags).stdout
             for line in text.splitlines():
                 parts = line.split()
@@ -910,7 +906,7 @@ def _listeners() -> dict[int, int]:
                     if port.isdigit() and parts[4].isdigit():
                         out.setdefault(int(port), int(parts[4]))
         elif shutil.which("ss"):
-            text = subprocess.run(["ss", "-ltnpH"], capture_output=True, text=True, timeout=10).stdout
+            text = run_hidden(["ss", "-ltnpH"], capture_output=True, text=True, timeout=10).stdout
             for line in text.splitlines():
                 m = re.search(r":(\d+)\s.*pid=(\d+)", line)
                 if m:
@@ -929,7 +925,7 @@ def _gpu_processes() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 
     def q(args: list[str]) -> list[list[str]]:
         try:
-            text = subprocess.run([exe, *args, "--format=csv,noheader,nounits"], capture_output=True, text=True,
+            text = run_hidden([exe, *args, "--format=csv,noheader,nounits"], capture_output=True, text=True,
                                   timeout=10, stdin=subprocess.DEVNULL, creationflags=flags).stdout
         except (OSError, subprocess.SubprocessError):
             return []
