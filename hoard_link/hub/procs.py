@@ -36,6 +36,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .._process import run_hidden
 from .registry import App
 
 HEALTH_TIMEOUT_S = 1.5
@@ -230,7 +231,7 @@ def _listening_pids_cli() -> dict[int, int]:
     out: dict[int, int] = {}
     try:
         if sys.platform.startswith("win"):
-            text = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, timeout=10).stdout
+            text = run_hidden(["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True, timeout=10).stdout
             for line in text.splitlines():
                 parts = line.split()
                 if len(parts) >= 5 and parts[0].upper() == "TCP" and parts[3].upper() == "LISTENING":
@@ -238,7 +239,7 @@ def _listening_pids_cli() -> dict[int, int]:
                     if m:
                         out.setdefault(int(m.group(1)), int(parts[4]))
         else:
-            text = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True, timeout=10).stdout
+            text = run_hidden(["ss", "-ltnp"], capture_output=True, text=True, timeout=10).stdout
             for line in text.splitlines():
                 m = re.search(r":(\d+)\s.*pid=(\d+)", line)
                 if m:
