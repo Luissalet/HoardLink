@@ -125,6 +125,7 @@ def test_p1_bootstrap_starts_only_http(isolated_config, monkeypatch):
     monkeypatch.setattr(cli, "time", SimpleNamespace(sleep=Mock(side_effect=KeyboardInterrupt)))
     assert cli.main(["--port", str(isolated_config.port), "--data-dir", isolated_config.data_dir, "--browser"]) == 0
     constructor.assert_called_once()
+    assert constructor.call_args.kwargs == {"fixture_jobs": None}
     forbidden.assert_not_called()
     assert [name for name, *_ in hub.method_calls] == ["write_url_file", "close"]
     server.shutdown.assert_called_once()

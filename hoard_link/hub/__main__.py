@@ -196,7 +196,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             _open_own_window(cfg, "browser" if args.browser else "window")
         return 0
 
-    hub = Hub(cfg, fixture_jobs=fixture_jobs) if fixture_jobs is not None else Hub(cfg)
+    hub = Hub(cfg, fixture_jobs=fixture_jobs) if cfg.isolated else Hub(cfg)
     try:
         server = make_server(hub)
     except OSError as exc:
