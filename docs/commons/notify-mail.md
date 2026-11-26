@@ -113,7 +113,10 @@ When either check fails, `helper.available()` is `False` and
 `helper.run` runs nothing and answers `{"ok": False, "isolated": "hub" | "data", "error": "sin pasarela en un Hub de
 pruebas: correo desactivado / no mail gateway in a test hub: mail is off"}` (the `data` case says «con datos de pruebas»).
 A router in `auto` or `faustus` then returns no messages and keeps that line in `last_error`; the hub's gateway still
-serves the app when it has one. The Node twin (`spawnHelperRunner`) does not have this rule yet.
+serves the app when it has one. In Node, `mailIsolation()` returns the same failure object or `null`.
+`spawnHelperRunner` checks it before looking for the helper, and `famMailRouter` checks it before using a
+helper callback. Both use the same environment declarations. If `family.configure` receives a data directory
+and a separate token file, the data directory and the token's parent must each match the installation.
 
 `helper.run` actions (all read-only: EXAMINE and BODY.PEEK, nothing is marked read, moved or deleted):
 

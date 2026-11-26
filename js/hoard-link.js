@@ -34,6 +34,7 @@ export const FAMILY_VERSION = "0.8.2";
 const DEFAULT_URL = "http://127.0.0.1:8810";
 
 const state = { app: "", tokenFile: "", hub: null, enabled: true, sent: 0, dropped: 0, lastError: "" };
+let configuredDataDir = "";
 
 function readText(p) {
   try { return fs.readFileSync(p, "utf8").replace(/^﻿/, "").trim(); } catch { return ""; }
@@ -60,6 +61,7 @@ function findHubUrl() {
 
 export function configure({ app, dataDir, tokenFile, hub, enabled } = {}) {
   state.app = String(app || process.env.HOARD_APP_ID || "").trim();
+  configuredDataDir = dataDir ? path.resolve(dataDir) : "";
   state.tokenFile = String(tokenFile || process.env.HOARD_TOKEN_FILE || (dataDir ? path.join(dataDir, "mcp-token") : ""));
   state.hub = hub || null;
   const envOff = ["0", "false", "no", "off"].includes(String(process.env.HOARD_EVENTS ?? "1").trim().toLowerCase());
@@ -770,6 +772,48 @@ const nonEmpty = (v) => v !== undefined && v !== null && String(v).trim() !== ""
 const expandHome = (p) => (String(p).startsWith("~") ? path.join(os.homedir(), String(p).slice(1)) : String(p));
 const callValue = (v) => { try { return typeof v === "function" ? v() : v; } catch { return null; } };
 
+const MAIL_ISOLATION_ERRORS = {
+  hub: "sin pasarela en un Hub de pruebas: correo desactivado / no mail gateway in a test hub: mail is off",
+  data: "sin pasarela con datos de pruebas: correo desactivado / no mail gateway with test data: mail is off",
+};
+const INSTALL_DATA = fileURLToPath(new URL("../data", import.meta.url));
+
+function mailHubOrigin(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && url.port !== "0" ? url : null;
+  } catch { return null; }
+}
+
+function realFolder(folder) {
+  try { return fs.realpathSync.native(folder); } catch { return null; }
+}
+
+function isWithin(folder, root) {
+  const relative = path.relative(root, folder);
+  return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
+}
+
+/** Why the local mail helper is disabled, or null when the Hub and app data belong to the installation. */
+export function mailIsolation() {
+  const fail = (isolated) => ({ ok: false, isolated, error: MAIL_ISOLATION_ERRORS[isolated] });
+  const hub = mailHubOrigin(findHubUrl());
+  if (!hub) return fail("hub");
+  if (!(hub.port === "8810" && ["127.0.0.1", "localhost", "[::1]"].includes(hub.hostname))) {
+    const origins = (process.env.HOARD_MAIL_REAL_HUB_URLS || "").split(",").map(mailHubOrigin);
+    if (!origins.some((origin) => origin?.origin === hub.origin)) return fail("hub");
+  }
+  if (!state.tokenFile) return fail("data");
+  const installData = realFolder(INSTALL_DATA);
+  const roots = (process.env.HOARD_MAIL_REAL_DATA_DIRS || "").split(path.delimiter)
+    .filter(path.isAbsolute).map(realFolder).filter(Boolean);
+  const folders = [path.dirname(state.tokenFile), configuredDataDir].filter(Boolean).map(realFolder);
+  if (!folders.every((folder) => folder && (folder === installData || roots.some((root) => isWithin(folder, root))))) {
+    return fail("data");
+  }
+  return null;
+}
+
 /** The Faustus folder (the one with mcp_servers/email_server.py) or null. First hit wins: `setting` (a path or a function), the
  *  environment (FAUSTUS_DIR, HOARD_FAUSTUS_DIR, HOARD_HUB_FAUSTUS_DIR), a `faustus` folder next to this file, the app that vendors it or any
  *  folder above (five levels), the usual places (E:\Development\IA\Faustus, ~/faustus ...), then `extra`. Sync; the hub's own hint is faustusHubHint(). */
@@ -803,6 +847,8 @@ export function faustusPython(root, setting = null, { env = process.env } = {}) 
  *  mail_helper.py), setting (Faustus's folder), owner, python, env, envDropPrefixes (the app's own secrets), spawnFn (tests). */
 export function spawnHelperRunner({ helperPath, setting = null, owner = null, python = null, env = process.env, envDropPrefixes = [], discovery = {}, spawnFn = spawn } = {}) {
   return async function runHelper(action, payload = {}, timeoutMs = 180_000) {
+    const isolated = mailIsolation();
+    if (isolated) return isolated;
     const root = faustusDir(setting, { ...discovery, env });
     if (!root) return { ok: false, error: "Faustus folder not found (set it in the app's mail settings, or FAUSTUS_DIR)" };
     const py = faustusPython(root, python, { env });
@@ -866,6 +912,7 @@ export function famMailRouter({ runHelper = null, helperAvailable = null, source
   };
   const hubUp = async () => { try { return Boolean(await api().mailAvailable()); } catch { return false; } };
   const helperUp = async () => {
+    if (mailIsolation()) return false;
     try { return typeof helperAvailable === "function" ? Boolean(await helperAvailable()) : typeof runHelper === "function"; } catch { return false; }
   };
   const sourceNow = async ({ deep = false } = {}) => {
@@ -895,6 +942,8 @@ export function famMailRouter({ runHelper = null, helperAvailable = null, source
     ? rows.sort((a, b) => ((a.ts || 0) - (b.ts || 0)) * (order === "desc" ? -1 : 1)) : rows);
 
   async function scanHelper(c, fallbackFrom = "") {
+    const isolated = typeof runHelper === "function" && mailIsolation();
+    if (isolated) return { ...isolated, source: "faustus", messages: [], more: false, pending_since: null, fallback_from: fallbackFrom };
     const limit = Math.trunc(Number(pick(c, "limit", "max", 100)) || 100);
     const payload = {};
     for (const [k, v] of Object.entries(c)) if (!ROUTER_KEYS.has(k) && !ROUTER_KEYS.has(snakeKey(k)) && k !== "order") payload[snakeKey(k)] = v;
@@ -1012,8 +1061,11 @@ export function famMailRouter({ runHelper = null, helperAvailable = null, source
     async status() {
       const m = await mode();
       const up = m !== "faustus" ? await hubUp() : false;
-      return { setting: m, effective: await sourceNow(), hub_available: up, helper_available: await helperUp(), interest_registered: Boolean(registeredSig),
-        hub_since_id: await watermark(), last_source: router.lastSource, last_error: router.lastError };
+      const effective = await sourceNow();
+      const isolated = effective === "faustus" && typeof runHelper === "function" && mailIsolation();
+      return { setting: m, effective, hub_available: up, helper_available: await helperUp(), interest_registered: Boolean(registeredSig),
+        hub_since_id: await watermark(), last_source: router.lastSource, last_error: isolated ? isolated.error : router.lastError,
+        ...(isolated ? { isolated: isolated.isolated } : {}) };
     },
   });
 }

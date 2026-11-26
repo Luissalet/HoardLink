@@ -1130,6 +1130,22 @@ return { results, helper_calls: helperCalls, wm: st.wm };
 """
 
 
+def run_mail_link_js(body: str, payload: dict) -> Any:
+    """Declare the synthetic installation for tests exercising helper behavior."""
+    return run_link_js("""
+        const fsForTest = await import("node:fs");
+        const pathForTest = await import("node:path");
+        const tokenForTest = input.tokenFile ?? pathForTest.join(input.dataDir, "mcp-token");
+        const dataForTest = pathForTest.dirname(tokenForTest);
+        fsForTest.mkdirSync(dataForTest, { recursive: true });
+        process.env.HOARD_HUB_URL = input.url ?? "http://127.0.0.1:1";
+        process.env.HOARD_MAIL_REAL_HUB_URLS = process.env.HOARD_HUB_URL;
+        process.env.HOARD_MAIL_REAL_DATA_DIRS = dataForTest;
+        delete process.env.HOARD_TOKEN_FILE;
+        fam.configure({ app: "ledger", tokenFile: tokenForTest });
+    """ + body, payload)
+
+
 def normalise(run: dict) -> dict:
     """Python gives ``None`` where a missing JS value is ``null`` too; make both sides JSON-comparable."""
     return json.loads(json.dumps(run, default=str))
@@ -1187,7 +1203,7 @@ def test_scenario_node_matches_python(name, hubs, tmp_path):
     py = normalise(run_scenario_python(hub_py.url, scn, str(tmp_path / "appdata")))
     py_calls = hub_py.calls()
     hub_js = hubs(**scenario_hub_cfg(scn))
-    js = run_link_js(JS_SCENARIO, {"url": hub_js.url, "dataDir": str(tmp_path / "appdata"), "scn": scn, "t0": T0})
+    js = run_mail_link_js(JS_SCENARIO, {"url": hub_js.url, "dataDir": str(tmp_path / "appdata"), "scn": scn, "t0": T0})
     py_status = [r for r in py["results"] if r["op"] == "status"]
     js_status = [r for r in js["results"] if r["op"] == "status"]
     assert js["results"] == py["results"], name
@@ -1200,7 +1216,7 @@ def test_scenario_node_matches_python(name, hubs, tmp_path):
 def test_node_camel_case_criteria_reach_the_helper_as_snake_case(hubs, tmp_path):
     hub = hubs(ready=False)
     scn = {"helper": {"available": True, "answer": HELPER_ROWS}, "steps": []}
-    js = run_link_js("""
+    js = run_mail_link_js("""
         const { url, dataDir, answer } = input;
         fam.configure({ app: "ledger", dataDir, hub: url });
         fam.mailForgetAvailability();
@@ -1215,7 +1231,7 @@ def test_node_camel_case_criteria_reach_the_helper_as_snake_case(hubs, tmp_path)
 
 def test_node_router_never_rejects(hubs, tmp_path):
     hub = hubs()
-    js = run_link_js("""
+    js = run_mail_link_js("""
         const { url, dataDir } = input;
         fam.configure({ app: "ledger", dataDir, hub: url });
         fam.mailForgetAvailability();
@@ -1305,7 +1321,7 @@ def test_node_faustus_python_and_hub_hint(hubs, tmp_path):
 
 
 def spawn_scan_in_node(root: Path, criteria: dict, **opts: Any) -> dict:
-    return run_link_js("""
+    return run_mail_link_js("""
         const { root, python, helper, criteria, opts, tokenFile } = input;
         fam.configure({ app: "ledger", tokenFile });
         const run = fam.spawnHelperRunner({ helperPath: helper, setting: root, python, owner: opts.owner ?? null,
@@ -1329,17 +1345,17 @@ def test_node_spawn_runner_runs_the_real_helper_like_python_does(faustus):
 
 
 def test_node_spawn_runner_failures_and_environment(tmp_path, faustus, helper_identity):
-    none = run_link_js("""
+    none = run_mail_link_js("""
         const run = fam.spawnHelperRunner({ helperPath: input.helper, setting: input.setting, env: {}, discovery: { searchParents: false, commonPaths: [] } });
         return await run("status");
-    """, {"helper": str(HELPER_FILE), "setting": str(tmp_path / "nowhere")})
+    """, {"helper": str(HELPER_FILE), "setting": str(tmp_path / "nowhere"), "tokenFile": str(helper_identity)})
     assert none["ok"] is False and "Faustus folder not found" in none["error"]
-    no_python = run_link_js("""
+    no_python = run_mail_link_js("""
         const run = fam.spawnHelperRunner({ helperPath: input.helper, setting: input.setting, env: {}, discovery: { searchParents: false, commonPaths: [] } });
         return await run("status");
-    """, {"helper": str(HELPER_FILE), "setting": str(faustus)})
+    """, {"helper": str(HELPER_FILE), "setting": str(faustus), "tokenFile": str(helper_identity)})
     assert no_python == {"ok": False, "error": "Faustus has no venv with Python"}
-    captured = run_link_js("""
+    captured = run_mail_link_js("""
         const { EventEmitter } = await import("node:events");
         fam.configure({ app: "ledger", tokenFile: input.tokenFile });
         const seen = {};
@@ -1364,7 +1380,7 @@ def test_node_spawn_runner_failures_and_environment(tmp_path, faustus, helper_id
     assert seen["sent"] == {"subject_terms": ["a"], "action": "scan", "owner": "nora",
                             "caller": {"app": "ledger", "token": "synthetic-mail-app-token"}}
     for stdout, expect in (("", "mail helper exit 3"), ("{broken\\n", "mail helper exit 3"), ('{"no_ok": 1}\\n', "mail helper exit 3")):
-        got = run_link_js("""
+        got = run_mail_link_js("""
             const { EventEmitter } = await import("node:events");
             const spawnFn = () => {
               const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stdin = new EventEmitter();
@@ -1372,9 +1388,9 @@ def test_node_spawn_runner_failures_and_environment(tmp_path, faustus, helper_id
               return child;
             };
             return await fam.spawnHelperRunner({ helperPath: "/h", setting: input.setting, python: input.python, spawnFn })("status");
-        """, {"setting": str(faustus), "python": sys.executable, "stdout": stdout.replace("\\n", "\n")})
+        """, {"setting": str(faustus), "python": sys.executable, "stdout": stdout.replace("\\n", "\n"), "tokenFile": str(helper_identity)})
         assert got == {"ok": False, "error": expect}
-    timeout = run_link_js("""
+    timeout = run_mail_link_js("""
         const { EventEmitter } = await import("node:events");
         let killed = false;
         const spawnFn = () => {
@@ -1384,14 +1400,14 @@ def test_node_spawn_runner_failures_and_environment(tmp_path, faustus, helper_id
         };
         const run = fam.spawnHelperRunner({ helperPath: "/h", setting: input.setting, python: input.python, spawnFn });
         return { answer: await run("status", {}, 30), killed };
-    """, {"setting": str(faustus), "python": sys.executable})
+    """, {"setting": str(faustus), "python": sys.executable, "tokenFile": str(helper_identity)})
     assert timeout == {"answer": {"ok": False, "error": "the mail read took too long"}, "killed": True}
 
 
 def test_node_router_end_to_end_with_the_real_helper(faustus, helper_identity):
     hub = FakeMailHub(ready=False)
     try:
-        js = run_link_js("""
+        js = run_mail_link_js("""
             const { url, tokenFile, root, python, helper } = input;
             fam.configure({ app: "ledger", tokenFile, hub: url });
             fam.mailForgetAvailability();
