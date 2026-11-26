@@ -145,7 +145,7 @@ def test_baird_id_and_port_are_excluded_before_any_connection(hub, monkeypatch):
     assert hub.lookups == ["atlas"]
 
 
-def test_remote_absorbed_app_uses_active_owner_and_never_calls_placement_refresh(hub):
+def test_remote_absorbed_app_uses_active_owner_and_refreshes_only_stale_health(hub):
     hub.register("phileas", 5221, prefix="/shipments")
     hub.placement_state = {"location": "sparks", "node": {"name": "test"},
                            "urls": {"hermes": "https://fake.invalid:8443"}}
@@ -158,14 +158,45 @@ def test_remote_absorbed_app_uses_active_owner_and_never_calls_placement_refresh
         return 200, {"tools": [{"name": "mail_status"}]}
 
     probes = LinkProbes(hub, request=transport, listeners=forbidden)
-    assert probes.catalogue("phileas", now_deadline()).state == STOPPED
+    failed = probes.catalogue("phileas", now_deadline())
+    assert (failed.state, failed.outcome, failed.location) == (FAILED, "no_running_service", "remote")
     assert not called
     hub.placement._remote_health["apps"]["hermes"]["service"] = "active"
     assert probes.catalogue("phileas", now_deadline(), ["mail_status"]).state == RESPONDS
     assert called == [("https://fake.invalid:8443/shipments", "GET", "/api/agent/tools")]
     hub.placement_state["since"] = time.time() + 1
+    refreshed = []
+
+    def passive_refresh(*, since):
+        refreshed.append(since)
+        return hub.placement._remote_health
+
+    hub.placement.remote_health = passive_refresh
     assert probes.catalogue("phileas", now_deadline()).outcome == "remote_state_unknown"
+    assert probes.catalogue("phileas", now_deadline()).outcome == "remote_state_unknown"
+    assert refreshed == [hub.placement_state["since"]]
     assert len(called) == 1
+
+
+def test_placement_refresh_queries_the_configured_node_without_changing_placement(hub):
+    from hoard_link.hub.placement import Placement
+
+    calls = []
+
+    def runner(command, **kwargs):
+        assert command[-2] == "fixture-node"
+        assert command[-1] == Placement._health_command()
+        calls.append(command[-1])
+        return SimpleNamespace(returncode=0, stdout=b"faustus active 200\nhermes active 200\nprometheus active 200\n")
+
+    placement = hub.placement = Placement(hub, runner=runner)
+    state = placement._update(location="sparks", node={"name": "Fixture", "ssh": "fixture-node"}, since=time.time())
+    placement._remote_health = {"checked": state["since"] - 1, "ok": True, "apps": {}}
+    before = placement.path.read_bytes()
+    probes = LinkProbes(hub, listeners=forbidden, request=forbidden)
+    result = probes.placement(now_deadline())
+    assert result.state == RESPONDS and result.metrics["healthy_http"] == 3
+    assert len(calls) == 1 and placement.path.read_bytes() == before
 
 
 def test_native_tool_boundary_and_bridge_catalogue_are_explicitly_read_only(hub, tmp_path):
@@ -210,7 +241,8 @@ def test_native_tool_boundary_and_bridge_catalogue_are_explicitly_read_only(hub,
     with pytest.raises(ValueError, match="allowlist"):
         probes.native_tool("nightingale", "nightingale_set_module", now_deadline())
     with pytest.raises(ValueError, match="allowlist"):
-        probes._http(hub.get("nightingale"), "/api/mail/search", now_deadline())
+        endpoint = probes._get_app("nightingale", now_deadline())
+        probes._http(endpoint, "/api/mail/search", now_deadline())
     assert len(called) == 5
 
     nightingale_modules["annotations"].clear()
@@ -642,3 +674,146 @@ def test_cook_prerequisite_uses_catalogue_even_while_running(hub):
         ("cookhoard", "GET", "/api/agent/tools"),
         ("kafka", "GET", "/api/agent/tools"),
     ]
+
+
+def run_inventory_rows(hub, monkeypatch, ids):
+    links = tuple(link for link in LINKS if link.id in ids)
+    assert {link.id for link in links} == set(ids)
+    monkeypatch.setattr(link_check, "LINKS", links)
+    monkeypatch.setattr(link_check, "app_links", lambda _: ())
+    facet = link_check.LinkCheckFacet(hub)
+    try:
+        run_id = facet.call({})["run_id"]
+        result = poll(facet, run_id)
+        return ({row["id"]: row for row in result["links"]},
+                {row["id"]: row for row in facet.status(run_id, "en")["links"]})
+    finally:
+        facet.close()
+
+
+def test_literal_spark_links_ignore_local_manual_stops_and_refresh_passively(hub, tmp_path, monkeypatch):
+    owner = "https://spark.example.test"
+    hub.placement_state = {
+        "location": "sparks", "node": {"name": "Spark 3"}, "since": time.time() - 10,
+        "urls": {"hermes": f"{owner}:5221", "faustus": f"{owner}:7000", "prometheus": f"{owner}:5205",
+                 "placed-app": f"{owner}:5019"},
+    }
+    hub.manually_stopped.update({"phileas", "tantalus", "hermes", "faustus", "prometheus", "placed-app"})
+    hub.register("prometheus", 5205)
+    hub.register("placed-app", 5019)
+    for alias in ("phileas", "tantalus"):
+        folder = tmp_path / alias
+        folder.mkdir()
+        hub.register(alias, 5221, prefix=f"/compat/{alias}", folder=folder)
+        (folder / "bridge.json").write_text(json.dumps({
+            "owner": "hermes", "tools": [{"schema": {"name": "fixture_mail_state"}}],
+        }), encoding="utf-8")
+
+    hub.placement._remote_health = {
+        "checked": time.time() - 60, "ok": True, "apps": {
+            "hermes": {"healthy": False, "service": "inactive"},
+            "faustus": {"healthy": False, "service": "inactive"},
+        },
+    }
+    refreshes = []
+
+    def refresh(*, since):
+        refreshes.append(since)
+        hub.placement._remote_health = {
+            "checked": time.time(), "ok": True, "apps": {
+                app: {"healthy": True, "service": "active"} for app in hub.placement_state["urls"]
+            },
+        }
+        return hub.placement._remote_health
+
+    hub.placement.remote_health = refresh
+    hub.facet_map.update(
+        brain=SimpleNamespace(target=lambda: {"base": f"{owner}:7000"}, counts=lambda: {"done": 1}),
+        fleet=SimpleNamespace(cached={"generated_ts": 200, "items": [
+            {"owner": "phileas", "kind": "watcher", "id": "phileas:mail", "last_success_ts": 182, "state": "ok"},
+            {"owner": "tantalus", "kind": "watcher", "id": "tantalus:mail", "last_success_ts": 175, "state": "ok"},
+        ]}, status=forbidden),
+    )
+    requests = []
+
+    def transport(app, method, path, args, **kwargs):
+        assert method == "GET" and app.url.startswith(owner) and args is None
+        requests.append((app.url, path))
+        if path == "/api/health":
+            return 200, {"service": "faustus"}
+        if path == "/api/hoard-copilot/capabilities":
+            return 200, {"contract_version": "1"}
+        assert path == "/api/agent/tools"
+        return 200, {"tools": [{"name": "fixture_mail_state", "description": PRIVATE}]}
+
+    monkeypatch.setattr(link_probes, "_request_app", transport)
+    monkeypatch.setattr(link_probes, "_listener_ports", forbidden)
+    ids = {"1.17.tantalus", "1.17.phileas", "2.3", "2.4", "3.3", "3.9", "5.1", "5.6", "6.6", "6.10"}
+    spanish, english = run_inventory_rows(hub, monkeypatch, ids)
+    assert len(refreshes) == 1
+    assert all(row["state"] == RESPONDS for row in spanish.values())
+    for row_id in ids:
+        assert spanish[row_id]["evidence"]["location"] == "remote"
+        assert spanish[row_id]["status"] == "responde: en otra máquina"
+        assert english[row_id]["status"] == "responds: on another machine"
+    for alias in ("phileas", "tantalus"):
+        assert (f"{owner}:5221/compat/{alias}", "/api/agent/tools") in requests
+    assert spanish["2.3"]["evidence"]["metrics"]["last_success_at"] == 182
+    assert spanish["2.4"]["evidence"]["metrics"]["watchers"] == 1
+    assert spanish["2.4"]["evidence"]["metrics"]["last_success_at"] == 175
+    assert spanish["3.9"]["evidence"]["metrics"]["watchers"] == 2
+    assert LinkProbes(hub, request=transport, listeners=forbidden).catalogue("placed-app", now_deadline()).location == "remote"
+
+
+def test_literal_local_manual_and_not_started_rows_are_distinct(hub, monkeypatch):
+    hub.register("cookhoard", 5210)
+    hub.register("ledger", 5180)
+    hub.register("atlas", 5203)
+    hub.manually_stopped.update({"cookhoard", "ledger", "faustus"})
+    monkeypatch.setattr(link_probes, "_listener_ports", lambda: {5210, 5180, 7000})
+    monkeypatch.setattr(link_probes, "_request_app", forbidden)
+    es, en = run_inventory_rows(hub, monkeypatch, {"4.2", "2.5", "6.6", "1.7"})
+    for identity in ("4.2", "2.5", "6.6"):
+        assert es[identity]["state"] == STOPPED
+        assert es[identity]["evidence"]["outcome"] == "manually_stopped"
+        assert es[identity]["status"] == "parado: parada manual"
+        assert en[identity]["status"] == "stopped: manual stop"
+    assert es["1.7"]["state"] == STOPPED
+    assert es["1.7"]["evidence"]["outcome"] == "no_listener"
+    assert es["1.7"]["status"] == "parado: sin iniciar"
+    assert en["1.7"]["status"] == "stopped: not started"
+
+
+def test_literal_funes_catalogue_wins_over_foreign_lifecycle_state(hub, monkeypatch):
+    from hoard_link import _famsvc
+
+    hub.register("talos", 55120)
+    hub.register("funes", 55121, prefix="/compat/funes")
+    monkeypatch.setattr(_famsvc, "_cache", {})
+    monkeypatch.setattr(_famsvc._f, "_hub", lambda: "http://fixture.invalid")
+    monkeypatch.setattr(_famsvc._f, "_token", lambda: "fixture-token")
+    monkeypatch.setattr(_famsvc._f, "_headers", lambda: {})
+    monkeypatch.setattr(_famsvc, "fetch", lambda url, **_: (
+        (200, {"state": "foreign"}) if url.endswith("/api/apps/funes") else forbidden()
+    ))
+    monkeypatch.setattr(_famsvc._f, "call", lambda owner, tool, args, **kw: {
+        "ok": owner == "funes", "status": 200, "result": {"fixture": True},
+    })
+    assert not _famsvc.available("stt")
+    assert _famsvc.call_tool("funes", "transcribe_status", {"job_id": "fixture"})["ok"]
+
+    required = link_probes.SERVICE_SPECS["stt"][1]
+    tools_returned = [{"name": name} for name in required]
+
+    def transport(app, method, path, args, **kw):
+        assert app.url == "http://127.0.0.1:55120/compat/funes"
+        assert (method, path, args) == ("GET", "/api/agent/tools", None)
+        return 200, {"tools": tools_returned}
+
+    monkeypatch.setattr(link_probes, "_listener_ports", lambda: {55120})
+    monkeypatch.setattr(link_probes, "_request_app", transport)
+    rows, _ = run_inventory_rows(hub, monkeypatch, {"4.5.stt"})
+    row = rows["4.5.stt"]
+    assert row["state"] == RESPONDS and row["evidence"]["outcome"] == "shared_service_catalogue"
+    tools_returned.pop()
+    assert LinkProbes(hub, request=transport, listeners=lambda: {55120}).service("stt", now_deadline()).outcome == "missing_tools"

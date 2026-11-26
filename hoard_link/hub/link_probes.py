@@ -51,6 +51,13 @@ class Observation:
     outcome: str
     metrics: dict | None = None
     scope: str = "link"
+    location: str | None = None
+
+
+@dataclass(frozen=True)
+class AppEndpoint:
+    app: App
+    location: str
 
 
 def _request_app(app, method, path, args, *, timeout):
@@ -129,6 +136,7 @@ class LinkProbes:
         self.excluded = DEFAULT_EXCLUDED_APPS | frozenset(excluded)
         self._request = request if request is not None else _request_app
         self._listen = listeners if listeners is not None else _listener_ports
+        self._placement_refresh_key = None
 
     @cached_property
     def listeners(self):
@@ -146,63 +154,75 @@ class LinkProbes:
             return Observation(UNCHECKED, "link-check.json", "operator_excluded")
         if time.monotonic() >= deadline:
             return Observation(FAILED, "Hub registry", "probe_timeout")
-        if getattr(self.hub.config, "isolated", False) or getattr(self.hub.config, "isolated_catalog", False):
+        if self._isolated():
             return Observation(UNCHECKED, "Hub registry", "isolated_hub")
-        if self.hub.automation_blocked(app_id) or self.hub.automation_blocked(owner_id):
-            return Observation(STOPPED, "Hub registry", "manually_stopped")
-
         placement = self.hub.placement
         state = placement.state()
-        managed = owner_id in APPS
+        urls = state.get("urls") or {}
+        app = self.hub.get(app_id) if app_id != "faustus" else None
+        if app is not None:
+            declared = app.family.get("absorbed_by")
+            if isinstance(declared, dict) and isinstance(declared.get("id"), str):
+                owner_id = COMPATIBILITY_OWNERS.get(app_id, declared["id"].casefold())
+        if owner_id in self.excluded:
+            return Observation(UNCHECKED, "link-check.json", "operator_excluded")
+
+        managed = owner_id in APPS or owner_id in urls
         remote = managed and state["location"] == "sparks"
+        location = "remote" if remote else "pc"
         if managed and (state.get("job") or {}).get("running"):
             return Observation(UNCHECKED, "placement.json", "placement_moving")
-        app = self.hub.get(app_id)
+        if not remote and (self.hub.automation_blocked(app_id) or self.hub.automation_blocked(owner_id)):
+            return Observation(STOPPED, "Hub registry", "manually_stopped", location=location)
+
         if app_id == "faustus":
-            urls = self.hub.config.faustus_urls
-            base = faustus_base or (urls[0] if urls else "")
+            local_urls = self.hub.config.faustus_urls
+            base = faustus_base or (local_urls[0] if local_urls else "")
             app = App("faustus", "Faustus", "", "", base, HEALTH_PATH, "faustus")
         if app is None:
-            return Observation(FAILED, "Hub registry", "app_missing")
+            return Observation(FAILED, "Hub registry", "app_missing", location=location)
         if app.port in EXCLUDED_PORTS:
-            return Observation(UNCHECKED, "Hub registry", "endpoint_not_verified")
+            return Observation(UNCHECKED, "Hub registry", "endpoint_not_verified", location=location)
         if not remote and app_id != owner_id:
             owner = self.hub.get(owner_id)
             if owner is not None and owner.url:
                 prefix = urlsplit(app.url).path
                 app = replace(app, url=owner.url.rstrip("/") + prefix)
         if remote:
-            cached = self._remote_health(state)
+            call = "placement health cache"
+            cached = self._remote_health(state, deadline)
             if cached is None:
-                return Observation(UNCHECKED, "placement health cache", "remote_state_unknown")
+                return Observation(UNCHECKED, call, "remote_state_unknown", location=location)
             if cached.get("ok") is False:
-                return Observation(FAILED, "placement health cache", "remote_unreachable")
+                return Observation(FAILED, call, "remote_unreachable", location=location)
             row = (cached.get("apps") or {}).get(owner_id, {})
-            if row.get("service") in ("inactive", "failed", "deactivating"):
-                return Observation(STOPPED, "placement health cache", "no_running_service")
-            if row.get("service") not in ("active", "reloading"):
-                return Observation(UNCHECKED, "placement health cache", "remote_state_unknown")
-            base = (state.get("urls") or {}).get(owner_id)
+            if row.get("healthy") is not True:
+                if row.get("service") in ("inactive", "failed", "deactivating"):
+                    return Observation(FAILED, call, "no_running_service", location=location)
+                if row.get("service") not in ("active", "reloading"):
+                    return Observation(UNCHECKED, call, "remote_state_unknown", location=location)
+            base = urls.get(owner_id)
             if not base or (faustus_base and faustus_base.rstrip("/") != base.rstrip("/")):
-                return Observation(UNCHECKED, "placement.json", "endpoint_not_verified")
+                return Observation(UNCHECKED, "placement.json", "endpoint_not_verified", location=location)
             prefix = urlsplit(app.url).path if app_id != owner_id else ""
             app = replace(app, url=base.rstrip("/") + prefix)
 
         parsed = urlsplit(app.url)
         if (parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.port in EXCLUDED_PORTS
                 or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
-            return Observation(UNCHECKED, "Hub registry", "endpoint_not_verified")
+            return Observation(UNCHECKED, "Hub registry", "endpoint_not_verified", location=location)
         if not remote:
             if parsed.hostname not in LOOPBACK:
-                return Observation(UNCHECKED, "Hub registry", "endpoint_not_verified")
+                return Observation(UNCHECKED, "Hub registry", "endpoint_not_verified", location=location)
             if self.listeners is None:
-                return Observation(UNCHECKED, "Hub registry / OS listeners", "listener_state_unknown")
+                return Observation(UNCHECKED, "Hub registry / OS listeners", "listener_state_unknown", location=location)
             port = parsed.port or (443 if parsed.scheme == "https" else 80)
             if port not in self.listeners:
-                return Observation(STOPPED, "Hub registry / OS listeners", "no_listener")
-        return app
+                return Observation(STOPPED, "Hub registry / OS listeners", "no_listener", location=location)
+        return AppEndpoint(app, location)
 
-    def _http(self, app, path, deadline, *, native_tool=None):
+    def _http(self, endpoint, path, deadline, *, native_tool=None):
+        app, location = endpoint.app, endpoint.location
         if app.id in self.excluded or app.port in EXCLUDED_PORTS:
             return Observation(UNCHECKED, "link-check.json", "operator_excluded"), None
         if native_tool is not None:
@@ -219,24 +239,26 @@ class LinkProbes:
         call = f"{app.id} {method} {path}" + (f" ({native_tool})" if native_tool else "")
         seconds = deadline - time.monotonic()
         if seconds <= 0:
-            return Observation(FAILED, call, "probe_timeout"), None
+            return Observation(FAILED, call, "probe_timeout", location=location), None
         status, body = self._request(app, method, path, args, timeout=seconds)
         if status is None:
-            return Observation(FAILED, call, "no_http_response"), None
+            return Observation(FAILED, call, "no_http_response", location=location), None
         if not 200 <= status < 300:
-            return Observation(FAILED, call, "http_error", {"http_status": status}), None
-        return Observation(RESPONDS, call, "http_success", {"http_status": status}), body
+            return Observation(FAILED, call, "http_error", {"http_status": status}, location=location), None
+        return Observation(RESPONDS, call, "http_success", {"http_status": status}, location=location), body
 
     def catalogue(self, app_id, deadline, required=()):
-        app = self._get_app(app_id, deadline)
-        return app if isinstance(app, Observation) else self._catalogue(app, deadline, required)
+        endpoint = self._get_app(app_id, deadline)
+        return endpoint if isinstance(endpoint, Observation) else self._catalogue(endpoint, deadline, required)
 
-    def _catalogue(self, app, deadline, required):
+    def _catalogue(self, endpoint, deadline, required):
+        app = endpoint.app
         module = NATIVE_COMPATIBILITY.get(app.id)
         prefix = f"/compat/{module}" if module and app.id != "scheherazade" else ""
         if prefix and not urlsplit(app.url).path.endswith(prefix):
             app = replace(app, url=app.url.rstrip("/") + prefix)
-        obs, body = self._http(app, CATALOGUE_PATH, deadline)
+            endpoint = replace(endpoint, app=app)
+        obs, body = self._http(endpoint, CATALOGUE_PATH, deadline)
         if prefix:
             obs = replace(obs, called=f"{app.id} GET {prefix}{CATALOGUE_PATH}")
         if obs.state != RESPONDS:
@@ -255,13 +277,13 @@ class LinkProbes:
     def native_tool(self, app_id, tool, deadline):
         if (app_id, tool) not in APP_READ_TOOLS:
             raise ValueError("App tool is outside the link checker allowlist")
-        app = self._get_app(app_id, deadline)
-        if isinstance(app, Observation):
-            return app
-        health = self._health(app, deadline)
+        endpoint = self._get_app(app_id, deadline)
+        if isinstance(endpoint, Observation):
+            return endpoint
+        health = self._health(endpoint, deadline)
         if health.state != RESPONDS:
             return health
-        catalogue, body = self._http(app, CATALOGUE_PATH, deadline)
+        catalogue, body = self._http(endpoint, CATALOGUE_PATH, deadline)
         if catalogue.state != RESPONDS:
             return catalogue
         rows = body.get("tools") if isinstance(body, dict) else body
@@ -273,7 +295,8 @@ class LinkProbes:
         target = self._get_app(app_id, deadline)
         if isinstance(target, Observation):
             return target
-        if (target.url, target.token_file) != (app.url, app.token_file):
+        if (target.app.url, target.app.token_file, target.location) != (
+                endpoint.app.url, endpoint.app.token_file, endpoint.location):
             return replace(catalogue, state=UNCHECKED, outcome="endpoint_not_verified")
         obs, body = self._http(target, "/api/agent/call", deadline, native_tool=tool)
         if obs.state != RESPONDS:
@@ -282,10 +305,11 @@ class LinkProbes:
             return replace(obs, outcome="module_inventory", metrics={**obs.metrics, "modules": len(body["modules"])})
         return replace(obs, state=FAILED, outcome="unexpected_response")
 
-    def _health(self, app, deadline):
+    def _health(self, endpoint, deadline):
+        app = endpoint.app
         if app.health_path != HEALTH_PATH:
             return Observation(UNCHECKED, "Hub registry", "health_route_not_reviewed")
-        obs, body = self._http(app, HEALTH_PATH, deadline)
+        obs, body = self._http(endpoint, HEALTH_PATH, deadline)
         if obs.state != RESPONDS:
             return obs
         if (not isinstance(body, dict) or body.get("ok") is False
@@ -294,20 +318,21 @@ class LinkProbes:
         return replace(obs, scope="health")
 
     def health(self, app_id, deadline):
-        app = self._get_app(app_id, deadline)
-        return app if isinstance(app, Observation) else self._health(app, deadline)
+        endpoint = self._get_app(app_id, deadline)
+        return endpoint if isinstance(endpoint, Observation) else self._health(endpoint, deadline)
 
     def compatibility(self, app_id, deadline):
-        app = self._get_app(app_id, deadline)
-        if isinstance(app, Observation):
-            return app
+        endpoint = self._get_app(app_id, deadline)
+        if isinstance(endpoint, Observation):
+            return endpoint
+        app = endpoint.app
         module = NATIVE_COMPATIBILITY.get(app_id)
         if module:
             declaration = app.family.get("absorbed_by")
             if (not isinstance(declaration, dict) or declaration.get("id") != COMPATIBILITY_OWNERS[app_id]
                     or declaration.get("module") != module):
                 return Observation(FAILED, f"{app_id} compatibility manifest", "bridge_owner_missing")
-            obs = self._catalogue(app, deadline, WRITER_COMPAT_TOOLS.get(app_id, ()))
+            obs = self._catalogue(endpoint, deadline, WRITER_COMPAT_TOOLS.get(app_id, ()))
             return replace(obs, called=f"{app_id} compatibility manifest + {obs.called}")
         if not app.manifest_path:
             return Observation(FAILED, f"{app_id} bridge.json", "bridge_owner_missing")
@@ -318,19 +343,43 @@ class LinkProbes:
         required = _tool_names([row.get("schema") for row in rows if isinstance(row, dict)])
         if not required:
             return Observation(FAILED, f"{app_id} bridge.json", "bridge_tools_missing")
-        observation = self._catalogue(app, deadline, required)
+        observation = self._catalogue(endpoint, deadline, required)
         if observation.scope != "catalogue":
             return observation
         return replace(observation, called=f"{app_id} bridge.json + {observation.called}")
 
-    def _remote_health(self, placement):
-        cache = getattr(self.hub.placement, "_remote_health", None)
-        checked = (cache or {}).get("checked")
-        if not checked or checked < (placement.get("since") or 0) or time.time() - checked > REMOTE_HEALTH_TTL_S:
-            return None
-        return cache
+    def _remote_health(self, state, deadline):
+        placement = self.hub.placement
+        since = state.get("since") or 0
 
-    def placement(self):
+        def fresh(cache):
+            checked = (cache or {}).get("checked") or 0
+            return bool(checked) and checked >= since and time.time() - checked <= REMOTE_HEALTH_TTL_S
+
+        cache = getattr(placement, "_remote_health", None)
+        if not state.get("node") or self._isolated():
+            return None
+        refresh_key = (since, (cache or {}).get("checked"))
+        if not fresh(cache) and self._placement_refresh_key != refresh_key:
+            self._placement_refresh_key = refresh_key
+            cache = placement.remote_health(since=since)
+            while not fresh(cache) and getattr(placement, "_remote_refreshing", False):
+                remaining = deadline - time.monotonic() - 0.15
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.05, remaining))
+                cache = getattr(placement, "_remote_health", None)
+        current = placement.state()
+        if (current.get("location") != "sparks" or current.get("since") != state.get("since")
+                or current.get("node") != state.get("node") or (current.get("job") or {}).get("running")):
+            return None
+        return cache if fresh(cache) else None
+
+    def _isolated(self):
+        return getattr(self.hub.config, "isolated", False) or getattr(self.hub.config, "isolated_catalog", False)
+
+    def placement(self, deadline):
+
         state = self.hub.placement.state()
         if (state.get("job") or {}).get("running"):
             return Observation(UNCHECKED, "placement.json", "placement_moving")
@@ -338,23 +387,23 @@ class LinkProbes:
             return Observation(UNCHECKED, "placement.json", "not_placed_remotely")
         if not state.get("node"):
             return Observation(FAILED, "placement.json", "remote_node_missing")
-        cached = self._remote_health(state)
+        cached = self._remote_health(state, deadline)
         call = "placement.json + placement health cache"
         if cached is None:
-            return Observation(UNCHECKED, call, "remote_state_unknown")
+            return Observation(UNCHECKED, call, "remote_state_unknown", location="remote")
         if cached.get("ok") is False:
-            return Observation(FAILED, call, "remote_unreachable")
+            return Observation(FAILED, call, "remote_unreachable", location="remote")
         rows = cached.get("apps") or {}
-        included = set(APPS) - self.excluded
+        included = (set(APPS) | (state.get("urls") or {}).keys()) - self.excluded
         healthy = sum(1 for app in included if rows.get(app, {}).get("healthy") is True)
         metrics = {"services": len(included), "healthy_http": healthy, "seen_at": cached["checked"]}
         if healthy == len(included) and healthy:
-            return Observation(RESPONDS, call, "recorded_health", metrics, "cached")
+            return Observation(RESPONDS, call, "recorded_health", metrics, "cached", "remote")
         if included and all(rows.get(app, {}).get("service") in ("inactive", "failed") for app in included):
-            return Observation(STOPPED, call, "no_running_service", metrics, "cached")
+            return Observation(FAILED, call, "no_running_service", metrics, "cached", "remote")
         if healthy < len(included) and included <= rows.keys():
-            return Observation(FAILED, call, "remote_unreachable", metrics, "cached")
-        return Observation(UNCHECKED, call, "remote_state_unknown", metrics, "cached")
+            return Observation(FAILED, call, "remote_unreachable", metrics, "cached", "remote")
+        return Observation(UNCHECKED, call, "remote_state_unknown", metrics, "cached", "remote")
 
     def spark_link(self):
         link = self.hub.placement.link.status()
@@ -445,16 +494,23 @@ class LinkProbes:
                            "mail_fresh" if age <= interval_s else "mail_stale",
                            {"last_success_at": last_ok, "age_s": age, "interval_s": interval_s}, "recorded_receipt")
 
-    def fleet(self, deadline, reader=None):
+    def fleet(self, deadline, reader=None, *, owner=None):
+        location = None
         if reader:
-            app = self._get_app(reader, deadline)
-            if isinstance(app, Observation):
-                return app
+            endpoint = self._get_app(reader, deadline)
+            if isinstance(endpoint, Observation):
+                return endpoint
+            location = endpoint.location
+        else:
+            state = self.hub.placement.state()
+            if state["location"] == "sparks" and not (state.get("job") or {}).get("running"):
+                location = "remote"
         call = "Fleet recorded watcher receipts"
         value = self._facet("fleet").cached
         if not value:
-            return Observation(UNCHECKED, call, "fleet_no_snapshot", scope="cached")
-        owners = ({reader} if reader else {"tantalus", "phileas", "hermes"}) - self.excluded
+            return Observation(UNCHECKED, call, "fleet_no_snapshot", scope="cached", location=location)
+        link_owner = reader or owner
+        owners = ({link_owner} if link_owner else {"tantalus", "phileas", "hermes"}) - self.excluded
         rows = [row for row in value.get("items", []) if row.get("kind") == "watcher" and row.get("owner") in owners]
         # These readers can have other watchers. A non-mail watcher is never
         # evidence of a mail read.
@@ -465,7 +521,7 @@ class LinkProbes:
         metrics = {"watchers": len(rows), "failing": failed, "seen_at": value.get("generated_ts"),
                    "last_success_at": last or None}
         state = FAILED if failed else RESPONDS if last else UNCHECKED
-        return Observation(state, call, "fleet_receipts" if state != UNCHECKED else "fleet_no_receipt", metrics, "cached")
+        return Observation(state, call, "fleet_receipts" if state != UNCHECKED else "fleet_no_receipt", metrics, "cached", location)
 
     def mail_library(self, deadline):
         from .drift import find_vendored
@@ -515,10 +571,10 @@ class LinkProbes:
 
     def brain(self, deadline):
         brain = self._facet("brain")
-        app = self._get_app("faustus", deadline, faustus_base=brain.target().get("base"))
-        if isinstance(app, Observation):
-            return app
-        obs = self._health(app, deadline)
+        endpoint = self._get_app("faustus", deadline, faustus_base=brain.target().get("base"))
+        if isinstance(endpoint, Observation):
+            return endpoint
+        obs = self._health(endpoint, deadline)
         if obs.state != RESPONDS:
             return obs
         # The native Brain status enumerates the person's notes. Read only
@@ -536,10 +592,10 @@ class LinkProbes:
         declared = sum(1 for a in self.hub.apps if a.id not in self.excluded
                        and COMPATIBILITY_OWNERS.get(a.id) not in self.excluded
                        and a.port not in EXCLUDED_PORTS and a.family.get("copilot"))
-        app = self._get_app("faustus", deadline)
-        if isinstance(app, Observation):
-            return app
-        obs, body = self._http(app, "/api/hoard-copilot/capabilities", deadline)
+        endpoint = self._get_app("faustus", deadline)
+        if isinstance(endpoint, Observation):
+            return endpoint
+        obs, body = self._http(endpoint, "/api/hoard-copilot/capabilities", deadline)
         if obs.state != RESPONDS:
             return obs
         if not isinstance(body, dict) or not body.get("contract_version"):
@@ -685,7 +741,7 @@ class LinkProbes:
         states = [self._get_app(app_id, deadline) for app_id in providers]
         return replace(obs, called=obs.called + " + Hub registry agenda declarations and passive state",
                        metrics={**obs.metrics, "apps_declaring_agenda": len(providers),
-                                "running_candidates": sum(isinstance(state, App) for state in states),
+                                "running_candidates": sum(isinstance(state, AppEndpoint) for state in states),
                                 "stopped_providers": sum(isinstance(state, Observation) and state.state == STOPPED
                                                          for state in states)})
 
@@ -720,7 +776,10 @@ class LinkProbes:
                 return replace(gateway, called=obs.called + " + " + gateway.called,
                                metrics={**obs.metrics, **(gateway.metrics or {})})
             return obs
-        return self.catalogue(owner, deadline, required)
+        observation = self.catalogue(owner, deadline, required)
+        if key == "stt" and observation.state == RESPONDS:
+            return replace(observation, outcome="shared_service_catalogue")
+        return observation
 
     def run(self, probe, deadline, results):
         kind, _, arg = probe.partition(":")
@@ -758,7 +817,7 @@ class LinkProbes:
             "mail": self.mail,
             "mail_reader": lambda: self.fleet(deadline, arg),
             "mail_library": lambda: self.mail_library(deadline),
-            "fleet": lambda: self.fleet(deadline),
+            "fleet": lambda: self.fleet(deadline, owner=arg or None),
             "events": self.events,
             "faustus_events": lambda: self.events("faustus"),
             "rules": self.rules,
@@ -768,7 +827,7 @@ class LinkProbes:
             "lanes": self.lanes,
             "coordination": self.coordination,
             "web": self.web,
-            "placement": self.placement,
+            "placement": lambda: self.placement(deadline),
             "spark_link": self.spark_link,
             "deployment": self.deployment,
             "backend_cache": lambda: self.backend_cache(arg),

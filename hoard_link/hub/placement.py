@@ -184,15 +184,16 @@ class Placement:
         return out
 
     # ================================================================================= are they up on the Spark?
-    def remote_health(self) -> dict[str, Any]:
+    def remote_health(self, *, since: float = 0) -> dict[str, Any]:
         """Is each of Faustus, Hermes and Prometheus up on the Spark (its user service and its HTTP answer)? The last answer,
-        refreshed in the background once it is older than ``REMOTE_HEALTH_TTL_S``: the Hub page polls every few seconds and
-        must never wait for an SSH round trip. ``{"checked": None, "apps": {}}`` until the first answer arrives."""
-        cached = self.__dict__.get("_remote_health") or {"checked": None, "ok": None, "apps": {}, "error": ""}
-        age = time.time() - float(cached.get("checked") or 0)
-        if age > REMOTE_HEALTH_TTL_S and not self.__dict__.get("_remote_refreshing"):
-            self._remote_refreshing = True
-            threading.Thread(target=self._refresh_remote_health, name="placement-health", daemon=True).start()
+        refreshed in the background after ``REMOTE_HEALTH_TTL_S`` or when it predates the requested placement timestamp.
+        The Hub page polls every few seconds and does not wait for SSH."""
+        with self._lock:
+            cached = self.__dict__.get("_remote_health") or {"checked": None, "ok": None, "apps": {}, "error": ""}
+            checked = float(cached.get("checked") or 0)
+            if (checked < since or time.time() - checked > REMOTE_HEALTH_TTL_S) and not getattr(self, "_remote_refreshing", False):
+                self._remote_refreshing = True
+                threading.Thread(target=self._refresh_remote_health, name="placement-health", daemon=True).start()
         return cached
 
     @staticmethod
@@ -215,13 +216,18 @@ class Placement:
         return apps
 
     def _refresh_remote_health(self) -> None:
+        state = self.state()
         try:
             out = self._ssh(self._health_command(), timeout=30)
             result = {"checked": time.time(), "ok": True, "apps": self._parse_health(out), "error": ""}
         except Exception as exc:  # noqa: BLE001 - an unreachable Spark is an answer too
             result = {"checked": time.time(), "ok": False, "apps": {}, "error": str(exc)[-300:]}
-        self._remote_health = result
-        self._remote_refreshing = False
+        current = self.state()
+        with self._lock:
+            if (not (current.get("job") or {}).get("running")
+                    and all(state.get(key) == current.get(key) for key in ("location", "since", "node"))):
+                self._remote_health = result
+            self._remote_refreshing = False
         try:
             self.hub.invalidate_snapshot()
         except Exception:  # noqa: BLE001

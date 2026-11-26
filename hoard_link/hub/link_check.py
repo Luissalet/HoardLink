@@ -36,7 +36,8 @@ REASONS = {
     "app_missing": ("La aplicación no figura en el registro del Hub.", "The app is missing from the Hub registry."),
     "manually_stopped": ("El Hub tiene registrada una parada manual.", "The Hub records a manual stop."),
     "no_listener": ("El registro apunta a un puerto local sin servicio en escucha.", "The registry points to a local port without a listener."),
-    "no_running_service": ("La última lectura remota confirma una parada.", "The latest remote reading confirms a stop."),
+    "no_running_service": ("El servicio remoto está inactivo.", "The remote service is inactive."),
+    "remote_unreachable": ("La comprobación remota no obtuvo una respuesta válida.", "The remote check did not get a valid response."),
     "no_http_response": ("La sonda HTTP no obtuvo respuesta.", "The HTTP probe received no response."),
     "http_error": ("El servidor devolvió un código HTTP de error.", "The server returned an HTTP error status."),
     "missing_tools": ("El catálogo carece de herramientas exigidas por el enlace.", "The catalogue lacks tools required by the link."),
@@ -50,6 +51,8 @@ REASONS = {
     "app_proxy_health": ("La herramienta de salud respondió a través del proxy del Hub.", "The health tool answered through the Hub proxy."),
     "invalid_catalogue": ("La respuesta no tiene el formato de catálogo.", "The response lacks the catalogue format."),
     "catalogue_matches": ("El catálogo respondió y contiene las herramientas exigidas.", "The catalogue answered and contains the required tools."),
+    "shared_service_catalogue": ("El catálogo de Funes servido por Talos contiene las herramientas de transcripción.",
+                                 "The Funes catalogue served by Talos contains the transcription tools."),
     "mail_fresh": ("La última pasada se completó dentro del intervalo.", "The last successful pass is within its interval."),
     "mail_stale": ("La última pasada correcta supera el intervalo configurado.", "The last successful pass is older than the configured interval."),
     "no_event_receipt": ("El bus aún no tiene eventos de ese origen.", "The bus has no events from that source."),
@@ -198,12 +201,25 @@ class LinkCheckFacet(Facet):
         states = dict(zip(STATES, LANGUAGES[lang]))
         for row in result.get("links", []):
             row["status"] = states[row["state"]]
-            outcome = row["evidence"]["outcome"]
-            if outcome == "no_health_probe":
-                row["status"] += ": no probe" if lang == "en" else ": sin sonda"
+            evidence = row["evidence"]
+            outcome = evidence["outcome"]
+            suffixes = {
+                "no_health_probe": ("sin sonda", "no probe"),
+                "manually_stopped": ("parada manual", "manual stop"),
+                "no_listener": ("sin iniciar", "not started"),
+            }
+            suffix = suffixes.get(outcome)
+            local_text = suffix[lang == "en"] if suffix else None
+            remote_text = None
+            if evidence.get("location") == "remote":
+                remote_text = "on another machine" if lang == "en" else "en otra máquina"
+            details = [text for text in (local_text, remote_text) if text]
+            if details:
+                row["status"] += ": " + ", ".join(details)
             reason = REASONS.get(outcome)
             if reason:
-                row["evidence"]["detail"] = reason[1] if lang == "en" else reason[0]
+                detail = reason[lang == "en"]
+                evidence["detail"] = detail
         return result
 
     def _settings(self):
@@ -258,7 +274,8 @@ class LinkCheckFacet(Facet):
                 "checked_at": checked_at,
                 "failure_since": failures.get(link.id),
                 "evidence": {"called": observation.called, "outcome": observation.outcome,
-                             "metrics": metrics, "scope": observation.scope},
+                             "metrics": metrics, "scope": observation.scope,
+                             **({"location": observation.location} if observation.location else {})},
             })
         summary = {state: sum(row["state"] == state for row in rows) for state in STATES}
         finished = {**run, "phase": "completed", "finished_at": _now(),

@@ -148,12 +148,12 @@ def _health(probes, app, deadline):
     target = probes._get_app(app.id, deadline)
     if isinstance(target, Observation):
         return replace(target, scope=scope)
-    if (target.url, target.token_file) != (app.url, app.token_file):
+    if (target.app.url, target.app.token_file) != (app.url, app.token_file):
         return Observation(UNCHECKED, called, "endpoint_not_verified", scope=scope)
     seconds = deadline - time.monotonic()
     if seconds <= 0:
         return Observation(FAILED, called, "probe_timeout", scope=scope)
-    response = contract.call_app(target, name, {}, caller="hub-link-check", timeout=seconds, shared_only=True)
+    response = contract.call_app(target.app, name, {}, caller="hub-link-check", timeout=seconds, shared_only=True)
     status = response.get("status")
     metrics = {"http_status": status}
     if response.get("ok") is not True:
@@ -181,7 +181,8 @@ def probe_registered_app(probes, probe, deadline):
     app = probes._get_app(app_id, deadline)
     if isinstance(app, Observation):
         return replace(app, scope=scope)
-    if not app.agent_contract:
+    if not app.app.agent_contract:
         return Observation(UNCHECKED, "Hub registry", "no_health_probe" if health else "no_http_tool_contract",
-                           scope=scope)
-    return _health(probes, app, deadline) if health else _compare(app, deadline)
+                           scope=scope, location=app.location)
+    outcome = _health(probes, app.app, deadline) if health else _compare(app.app, deadline)
+    return replace(outcome, location=outcome.location or app.location)

@@ -257,7 +257,7 @@ def test_run_contains_registry_rows_and_sanitized_bilingual_evidence(fixture, mo
         assert rows["1.3.app.fixture"]["state"] == RESPONDS
         assert rows["1.2.app.fixture"]["inventory_id"] == "1.2"
         assert rows["1.2.app.no-probe"]["evidence"]["detail"].startswith("El cat\u00e1logo respondi\u00f3.")
-        assert rows["1.2.app.stopped"]["status"] == rows["1.3.app.stopped"]["status"] == "parado"
+        assert rows["1.2.app.stopped"]["status"] == rows["1.3.app.stopped"]["status"] == "parado: sin iniciar"
         assert rows["1.3.app.no-probe"]["status"] == "no comprobado: sin sonda"
         assert rows["9.1"]["evidence"]["detail"] == "No comprobado por orden de la persona."
         english = poll(checker, run["run_id"], "en")

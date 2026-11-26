@@ -43,7 +43,7 @@ INVENTORY = (
     Link("2.1", "Hub (pasarela)", "buzón IMAP vía ayudante de Faustus", "mail_helper.py ejecutado por el Hub, <data>/mail.db, bus mail.received", "mail", "P"),
     Link("2.2", "Kafka", "pasarela del Hub", "fam_mail.MailRouter (register_interest, messages, claim)", "mail_reader:kafka", "P"),
     Link("2.3", "Hermes · Phileas", "pasarela del Hub (en la Spark)", "MailRouter con faustus_dir y huellas escritas por la colocación", "mail_reader:phileas", "P"),
-    Link("2.4", "Hermes · Tantalus", "pasarela del Hub (en la Spark)", "MailRouter(interest=…, claim_kind=\"deal\")", "fleet", "P"),
+    Link("2.4", "Hermes · Tantalus", "pasarela del Hub (en la Spark)", "MailRouter(interest=…, claim_kind=\"deal\")", "fleet:tantalus", "P"),
     Link("2.5", "Ledger", "pasarela del Hub", "gemelo Node famMailRouter", "mail_reader:ledger", "R"),
     Link("2.6", "People", "pasarela del Hub", "mailsync.js + router.ensureInterest (direcciones de contactos)", "no:reader_status", "R"),
     Link("2.7", "JobHunter", "pasarela del Hub", "copia de la biblioteca server/hoard-link.js:643 (mailRegisterInterest)", "no:no_consumer", "D"),
