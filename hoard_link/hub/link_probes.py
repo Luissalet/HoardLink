@@ -82,6 +82,18 @@ def _tool_names(body) -> set[str] | None:
     return {row["name"] for row in rows if isinstance(row, dict) and isinstance(row.get("name"), str)}
 
 
+def read_only_without_arguments(tool):
+    if not isinstance(tool, dict):
+        return False
+    annotations = tool.get("annotations")
+    schema = tool.get("inputSchema")
+    return (
+        isinstance(annotations, dict) and annotations.get("readOnlyHint") is True
+        and isinstance(schema, dict) and schema.get("type") == "object"
+        and schema.get("required", []) == []
+    )
+
+
 def _local_head(folder: Path) -> str | None:
     """Read an ordinary Git checkout or linked worktree without invoking Git."""
     try:
@@ -249,7 +261,21 @@ class LinkProbes:
         health = self._health(app, deadline)
         if health.state != RESPONDS:
             return health
-        obs, body = self._http(app, "/api/agent/call", deadline, native_tool=tool)
+        catalogue, body = self._http(app, CATALOGUE_PATH, deadline)
+        if catalogue.state != RESPONDS:
+            return catalogue
+        rows = body.get("tools") if isinstance(body, dict) else body
+        if not isinstance(rows, list):
+            return replace(catalogue, state=FAILED, outcome="invalid_catalogue")
+        matches = [row for row in rows if isinstance(row, dict) and row.get("name") == tool]
+        if len(matches) != 1 or not read_only_without_arguments(matches[0]):
+            return replace(catalogue, state=UNCHECKED, outcome="no_health_probe")
+        target = self._get_app(app_id, deadline)
+        if isinstance(target, Observation):
+            return target
+        if (target.url, target.token_file) != (app.url, app.token_file):
+            return replace(catalogue, state=UNCHECKED, outcome="endpoint_not_verified")
+        obs, body = self._http(target, "/api/agent/call", deadline, native_tool=tool)
         if obs.state != RESPONDS:
             return obs
         if isinstance(body, dict) and isinstance(body.get("modules"), list):

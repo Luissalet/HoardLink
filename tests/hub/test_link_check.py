@@ -176,6 +176,8 @@ def test_native_tool_boundary_and_bridge_catalogue_are_explicitly_read_only(hub,
         "owner": "talos", "tools": [{"schema": {"name": "svc_incidents"}}],
     }), encoding="utf-8")
     called = []
+    nightingale_modules = {"name": "nightingale_modules", "annotations": {"readOnlyHint": True},
+                           "inputSchema": {"type": "object", "properties": {}}}
 
     def transport(app, method, path, args, *, timeout):
         assert 0 < timeout <= 2
@@ -184,6 +186,8 @@ def test_native_tool_boundary_and_bridge_catalogue_are_explicitly_read_only(hub,
             return 200, {"service": "nightingale-hoard", "private": PRIVATE}
         if method == "POST":
             return 200, {"modules": [{"name": PRIVATE, "data_dir": PRIVATE}]}
+        if app.id == "nightingale":
+            return 200, {"tools": [nightingale_modules]}
         return 200, {"tools": [{"name": "svc_incidents", "description": PRIVATE}]}
 
     probes = LinkProbes(hub, request=transport, listeners=lambda: {5189, 5203, 5220})
@@ -197,6 +201,7 @@ def test_native_tool_boundary_and_bridge_catalogue_are_explicitly_read_only(hub,
     assert PRIVATE not in repr(results)
     assert called == [
         ("nightingale", "GET", "/api/health", None),
+        ("nightingale", "GET", "/api/agent/tools", None),
         ("nightingale", "POST", "/api/agent/call",
          {"name": "nightingale_modules", "tool": "nightingale_modules", "arguments": {}}),
         ("cassandra", "GET", "/api/agent/tools", None),
@@ -206,7 +211,12 @@ def test_native_tool_boundary_and_bridge_catalogue_are_explicitly_read_only(hub,
         probes.native_tool("nightingale", "nightingale_set_module", now_deadline())
     with pytest.raises(ValueError, match="allowlist"):
         probes._http(hub.get("nightingale"), "/api/mail/search", now_deadline())
-    assert len(called) == 4
+    assert len(called) == 5
+
+    nightingale_modules["annotations"].clear()
+    assert probes.native_tool("nightingale", "nightingale_modules", now_deadline()).outcome == "no_health_probe"
+    assert called[5:] == [("nightingale", "GET", "/api/health", None),
+                          ("nightingale", "GET", "/api/agent/tools", None)]
 
 
 def test_app_transport_never_follows_redirects_to_the_excluded_port(hub, monkeypatch):
@@ -299,20 +309,31 @@ def test_run_is_private_passive_and_writes_only_its_history(hub, monkeypatch):
         if path == "/api/hoard-copilot/capabilities":
             return 200, {"contract_version": "1.0", "private": PRIVATE}
         if path == "/api/agent/tools":
-            return 200, {"tools": [{"name": "atlas_projects", "description": PRIVATE}]}
+            return 200, {"tools": [
+                {"name": "atlas_projects", "description": PRIVATE},
+                {"name": "nightingale_modules", "annotations": {"readOnlyHint": True},
+                 "inputSchema": {"type": "object", "properties": {}}},
+            ]}
         if method == "POST" and args["name"] == "nightingale_modules":
             return 200, {"modules": [{"path": PRIVATE}]}
         forbidden()
 
     monkeypatch.setattr(link_probes, "_request_app", transport)
+
+    def proxy_catalogue(url, token, timeout):
+        assert url in {"http://127.0.0.1:5203/api/agent/tools", "http://127.0.0.1:5189/api/agent/tools"}
+        return 200, {"tools": [{"name": "atlas_projects", "description": PRIVATE}]}
+
+    monkeypatch.setattr(link_probes.contract, "_get", proxy_catalogue)
+    monkeypatch.setattr(link_probes.contract, "_post", reject("unexpected proxy POST"))
     facet = link_check.LinkCheckFacet(hub)
     try:
         started = facet.call({})
         assert started["phase"] == "running"
         run = poll(facet, started["run_id"])
         rows = {row["id"]: row for row in run["links"]}
-        assert run["history_saved"] and run["summary"]["total"] == 119
-        assert sum(run["summary"][state] for state in link_check.STATES) == 119
+        assert run["history_saved"] and run["summary"]["total"] == 125
+        assert sum(run["summary"][state] for state in link_check.STATES) == 125
         assert rows["3.1"]["evidence"]["metrics"] == {"events": 1, "last_event_at": 123.0}
         assert rows["3.2"]["evidence"]["metrics"]["enabled"] == 1
         assert rows["3.3"]["evidence"]["called"] == "faustus GET /api/health + Hub Brain queue counts"

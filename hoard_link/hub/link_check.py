@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from ..atomic import read_json, write_json_atomic
 from .facets import Facet, Reply
+from .link_app_probes import app_links, probe_registered_app
 from .link_inventory import LINKS
 from .link_probes import FAILED, RESPONDS, STOPPED, UNCHECKED, LinkProbes, Observation
 
@@ -39,6 +40,14 @@ REASONS = {
     "no_http_response": ("La sonda HTTP no obtuvo respuesta.", "The HTTP probe received no response."),
     "http_error": ("El servidor devolvió un código HTTP de error.", "The server returned an HTTP error status."),
     "missing_tools": ("El catálogo carece de herramientas exigidas por el enlace.", "The catalogue lacks tools required by the link."),
+    "invalid_tool_declaration": ("La lista de herramientas declaradas no es válida.", "The declared tool list is invalid."),
+    "no_tool_declaration": ("El catálogo respondió. Falta una lista de herramientas declaradas en el manifiesto.", "The catalogue answered. The manifest has no declared tool list."),
+    "partial_tool_declaration": ("Las herramientas declaradas están servidas. La declaración es parcial.", "The declared tools are served. The declaration is partial."),
+    "tool_catalogue_matches": ("Coinciden las herramientas declaradas y las servidas.", "The declared and served tools match."),
+    "tool_catalogue_drift": ("El catálogo difiere de las herramientas declaradas.", "The catalogue differs from the declared tools."),
+    "no_http_tool_contract": ("La aplicación carece del contrato HTTP de herramientas.", "The app has no HTTP tool contract."),
+    "no_health_probe": ("Falta una herramienta de salud de solo lectura que se pueda llamar sin argumentos.", "A read-only health tool callable without arguments is unavailable."),
+    "app_proxy_health": ("La herramienta de salud respondió a través del proxy del Hub.", "The health tool answered through the Hub proxy."),
     "invalid_catalogue": ("La respuesta no tiene el formato de catálogo.", "The response lacks the catalogue format."),
     "catalogue_matches": ("El catálogo respondió y contiene las herramientas exigidas.", "The catalogue answered and contains the required tools."),
     "mail_fresh": ("La última pasada se completó dentro del intervalo.", "The last successful pass is within its interval."),
@@ -129,7 +138,7 @@ class LinkCheckFacet(Facet):
     def tools(cls):
         return [{
             "name": TOOL_NAME,
-            "description": "Start a passive family link check or poll it by run_id. Comprueba los enlaces de la familia en segundo plano y consulta el resultado con run_id.",
+            "description": "Start passive family link, app catalogue and proxy checks or poll by run_id. Comprueba enlaces, catálogos y proxy de las apps en segundo plano y consulta la pasada con run_id.",
             "inputSchema": {"type": "object", "properties": {
                 "run_id": {"type": "string", "description": "Run ID to poll. Omit to start or join a run."},
                 "lang": {"type": "string", "enum": ["es", "en"]},
@@ -189,7 +198,10 @@ class LinkCheckFacet(Facet):
         states = dict(zip(STATES, LANGUAGES[lang]))
         for row in result.get("links", []):
             row["status"] = states[row["state"]]
-            reason = REASONS.get(row["evidence"]["outcome"])
+            outcome = row["evidence"]["outcome"]
+            if outcome == "no_health_probe":
+                row["status"] += ": no probe" if lang == "en" else ": sin sonda"
+            reason = REASONS.get(outcome)
             if reason:
                 row["evidence"]["detail"] = reason[1] if lang == "en" else reason[0]
         return result
@@ -218,7 +230,7 @@ class LinkCheckFacet(Facet):
         results = {}
         rows = []
         failures = self._failures.copy()
-        for link in LINKS:
+        for link in (*LINKS, *app_links(self.hub.apps)):
             if self._closed.is_set():
                 return
             if link.probe == "excluded:baird":
@@ -275,7 +287,10 @@ class LinkCheckFacet(Facet):
 
         def observe():
             try:
-                value = probes.run(probe, deadline, results.copy())
+                if probe.startswith(("registered_catalogue:", "registered_health:")):
+                    value = probe_registered_app(probes, probe, deadline)
+                else:
+                    value = probes.run(probe, deadline, results.copy())
             except Exception:
                 value = Observation(FAILED, probe, "probe_error")
             finally:
