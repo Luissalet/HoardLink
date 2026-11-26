@@ -35,6 +35,27 @@ LAUNCHERS = {
 }
 LAUNCH_PREFIXES = ("asyncio.create_subprocess_", "asyncio.subprocess.create_subprocess_",
                    "os.exec", "os.spawn", "os.posix_spawn")
+PROCESS_MODULES = {"subprocess", "asyncio", "os", "webbrowser", "_winapi", "pty"}
+BOUNDARY_MODULES = {"_process", "hoard_link._process"}
+IMPORTERS = {"__import__", "builtins.__import__", "importlib.import_module"}
+GETTERS = {"getattr", "builtins.getattr"}
+
+
+def _standard_name(name):
+    for module in BOUNDARY_MODULES:
+        if name.startswith(module + ".subprocess"):
+            return name.removeprefix(module + ".")
+    return name
+
+
+def _is_standard_launcher(name):
+    return name in LAUNCHERS or any(name.startswith(prefix) and "." not in name[len(prefix):]
+                                    for prefix in LAUNCH_PREFIXES)
+
+
+def _is_launcher(name):
+    return (_is_standard_launcher(name)
+            or name.endswith((".subprocess_exec", ".subprocess_shell")))
 
 
 def _direct_launches(source, path):
@@ -43,36 +64,91 @@ def _direct_launches(source, path):
     annotations = set()
     aliases = {}
     imports = {}
+    assignments = []
+
+    def bind(identifier, names):
+        if not names:
+            return False
+        bound = aliases.setdefault(identifier, set())
+        added = names - bound
+        bound.update(added)
+        return bool(added)
+
     for node in ast.walk(tree):
         for value in (getattr(node, "annotation", None), getattr(node, "returns", None)):
             if value is not None:
                 annotations.update(ast.walk(value))
         if isinstance(node, ast.Import):
             for item in node.names:
-                aliases[item.asname or item.name.split(".")[0]] = item.name if item.asname else item.name.split(".")[0]
-        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
-            imported = [f"{node.module}.{item.name}" for item in node.names]
-            for item, name in zip(node.names, imported):
-                aliases[item.asname or item.name] = name
+                root = item.name.split(".")[0]
+                bind(item.asname or root, {item.name if item.asname else root})
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level and module not in ("", "_process"):
+                continue
+            imported = set()
+            for item in node.names:
+                name = _standard_name(f"{module}.{item.name}" if module else item.name)
+                imported.add(name)
+                if item.name != "*":
+                    bind(item.asname or item.name, {name})
             imports[node] = imported
+        elif isinstance(node, ast.Assign):
+            assignments.extend((target, node.value) for target in node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+            assignments.append((node.target, node.value))
 
     def qualified(node):
         if isinstance(node, ast.Name):
-            return aliases.get(node.id, node.id)
+            return aliases.get(node.id, {node.id})
         if isinstance(node, ast.Attribute):
-            return f"{qualified(node.value)}.{node.attr}"
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr"
-                and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)):
-            return f"{qualified(node.args[0])}.{node.args[1].value}"
-        return ""
+            return {_standard_name(f"{base}.{node.attr}") for base in qualified(node.value)}
+        if isinstance(node, ast.NamedExpr):
+            return qualified(node.value)
+        if isinstance(node, ast.Call):
+            func = qualified(node.func)
+            if func & GETTERS and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                return {_standard_name(f"{base}.{node.args[1].value}") for base in qualified(node.args[0])}
+            imported = dynamic_import(node, func)
+            if imported:
+                return {imported}
+        return set()
+
+    def dynamic_import(node, func):
+        if not (func & IMPORTERS):
+            return None
+        module = node.args[0] if node.args else next(
+            (kw.value for kw in node.keywords if kw.arg == "name"), None)
+        if isinstance(module, ast.Constant) and isinstance(module.value, str):
+            return module.value
+        return None
+
+    # Only track names that can reach a process launcher. This also bounds
+    # the fixed point for ordinary assignments such as value = value.field.
+    tracked_modules = PROCESS_MODULES | BOUNDARY_MODULES | {
+        "asyncio.subprocess", "hoard_link", "importlib", "builtins",
+    }
+    changed = True
+    while changed:
+        changed = False
+        for target, value in assignments:
+            if isinstance(target, ast.Name):
+                names = {name for name in qualified(value)
+                         if name in tracked_modules or name in IMPORTERS or name in GETTERS
+                         or _is_standard_launcher(name)}
+                changed |= bind(target.id, names)
 
     for node in ast.walk(tree):
         if node in annotations:
             continue
-        for name in imports.get(node, [qualified(node)]):
-            if (name not in LAUNCHERS and not name.startswith(LAUNCH_PREFIXES)
-                    and not name.endswith((".subprocess_exec", ".subprocess_shell"))):
-                continue
+        names = imports[node] if node in imports else qualified(node)
+        names = {name for name in names if _is_launcher(name) or (
+            name.endswith(".*") and name[:-2] in tracked_modules)}
+        if isinstance(node, ast.Call):
+            imported = dynamic_import(node, qualified(node.func))
+            if imported and (imported.split(".")[0] in PROCESS_MODULES or imported in BOUNDARY_MODULES):
+                names.add(f"dynamic import of {imported}")
+        for name in sorted(names):
             parent = parents.get(node)
             command = ""
             if isinstance(parent, ast.Call) and parent.func is node and parent.args:
@@ -105,6 +181,7 @@ def test_process_launches_use_the_shared_boundary():
             name = site[2]
             violations.append(f"{site[0]}:{line}: {name}")
     assert not violations, "Launch through hoard_link.proc or hoard_link._process:\n" + "\n".join(violations)
+    assert not permitted, f"Remove obsolete process exceptions: {sorted(permitted)}"
 
 
 @pytest.mark.parametrize(("snippet", "name"), [
@@ -114,6 +191,19 @@ def test_process_launches_use_the_shared_boundary():
     ("import subprocess\ngetattr(subprocess, 'run')(['git'])", "subprocess.run"),
     ("import asyncio\nasyncio.create_subprocess_exec('git')", "asyncio.create_subprocess_exec"),
     ("from os import system\nsystem('git')", "os.system"),
+    ("from subprocess import *\nrun(['git'])", "subprocess.*"),
+    ("from os import *\nsystem('git')", "os.*"),
+    ("from asyncio import *\ncreate_subprocess_exec('git')", "asyncio.*"),
+    ("from asyncio.subprocess import *", "asyncio.subprocess.*"),
+    ("import subprocess\nS = subprocess\nT = S\nT.run(['git'])", "subprocess.run"),
+    ("import os\nO: object = os\nO.system('git')", "os.system"),
+    ("import asyncio\n(A := asyncio).create_subprocess_exec('git')", "asyncio.create_subprocess_exec"),
+    ("__import__('subprocess').run(['git'])", "subprocess.run"),
+    ("import importlib\nimportlib.import_module('subprocess')", "dynamic import of subprocess"),
+    ("from importlib import import_module as load\nI = load\nI(name='os')", "dynamic import of os"),
+    ("from hoard_link import _process\n_process.subprocess.run(['git'])", "subprocess.run"),
+    ("from ._process import subprocess as sp\nsp.Popen(['git'])", "subprocess.Popen"),
+    ("import hoard_link._process as p\ngetattr(p, 'subprocess').call(['git'])", "subprocess.call"),
 ])
 def test_static_guard_detects_direct_and_aliased_launches(snippet, name):
     assert name in {site[2] for site, _ in _direct_launches(snippet, "injected.py")}

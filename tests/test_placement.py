@@ -97,7 +97,7 @@ def test_patch_sets_inserts_and_removes_settings(tmp_path):
 
 def test_units_carry_the_faustus_folder_for_hermes(tmp_path, monkeypatch):
     monkeypatch.setattr(pr.Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.setattr(pr.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(pr, "run_hidden", lambda *a, **k: None)
     assert pr.units(str(tmp_path / "stack")) == ["faustus", "hermes", "prometheus"]
     assert pr.units(str(tmp_path / "stack")) == []                   # unchanged units: nothing to restart
     hermes = (tmp_path / ".config" / "systemd" / "user" / "hermes.service").read_text(encoding="utf-8")
@@ -135,7 +135,7 @@ def test_spark_services_restart_with_the_mail_installation(tmp_path, monkeypatch
     unit_dir = tmp_path / ".config" / "systemd" / "user"
     monkeypatch.setattr(pr.Path, "home", staticmethod(lambda: tmp_path))
     reloaded = []
-    monkeypatch.setattr(pr.subprocess, "run", lambda argv, **kw: reloaded.append(argv))
+    monkeypatch.setattr(pr, "run_hidden", lambda argv, **kw: reloaded.append(argv))
     hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path / "hub")), get=lambda _: None,
                           facet=lambda _: SimpleNamespace(list=lambda: [
                               {"id": "shared", "mail_accounts": ["*"], "apps": ["phileas", "tantalus"], "name": "Shared"},

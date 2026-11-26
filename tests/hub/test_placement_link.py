@@ -188,7 +188,7 @@ def test_a_new_token_is_told_again():
 def test_the_unit_of_faustus_points_at_the_link_file(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(pr.Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.setattr(pr.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(pr, "run_hidden", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="", stderr=""))
     stack = tmp_path / "stack"
     assert "faustus" in pr.units(str(stack))
     unit = (tmp_path / ".config" / "systemd" / "user" / "faustus.service").read_text(encoding="utf-8")
