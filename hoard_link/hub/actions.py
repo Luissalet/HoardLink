@@ -34,6 +34,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from . import contract as family
+from .isolation import passive_error
 
 _PLACEHOLDER = re.compile(r"\$\{([a-zA-Z0-9_.\-]+)\}")
 KINDS = ("tool", "hub", "event", "start_app", "stop_app", "restart_app", "profile_start", "profile_stop", "brain")
@@ -112,6 +113,8 @@ def validate(actions: Any) -> list[str]:
 def run_one(hub: Any, action: dict[str, Any], ctx: dict[str, Any], *, caller: str = "hub",
             timeout: float = 120.0) -> dict[str, Any]:
     """Run a single action. Never raises; the result says what happened."""
+    if getattr(getattr(hub, "config", None), "isolated", False):
+        return {"kind": action.get("kind"), **passive_error()}
     from . import tools as hub_tools  # late: tools imports core imports this module's siblings
     kind = str(action.get("kind") or "")
     t0 = time.monotonic()

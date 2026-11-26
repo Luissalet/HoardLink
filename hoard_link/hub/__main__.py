@@ -30,9 +30,9 @@ from pathlib import Path
 from typing import Optional
 
 from . import DEFAULT_PORT, HUB_VERSION, SERVICE
-from .config import REPO_DIR, HubConfig
+from .config import HubConfig
 from .core import Hub
-from .lease_remote import RemoteLeaseArbiter
+from .isolation import LinuxJobs, enter_linux_service, service_cgroup
 from . import autostart, desktop, procs, ui_session
 from .server import make_server
 
@@ -126,13 +126,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--autostart-status", action="store_true", help="show whether the login autostart is set")
     parser.add_argument("--window", action="store_true",
                         help="with --install-autostart: open the hub window at login (default: headless)")
+    parser.add_argument("--isolated-unit", help=argparse.SUPPRESS)
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--version", action="version", version=f"hoard-hub {HUB_VERSION}")
     args = parser.parse_args(argv)
-
-    code = _autostart_command(args)
-    if code is not None:
-        return code
 
     env = dict(os.environ)
     if args.data_dir:
@@ -141,8 +138,21 @@ def main(argv: Optional[list[str]] = None) -> int:
         env["HOARD_HUB_ROOTS"] = args.roots
     if args.port:
         env["HOARD_HUB_PORT"] = str(args.port)
-    cfg = HubConfig.load(env=env)
+    fixture_jobs = None
+    try:
+        cfg = HubConfig.load(env=env)
+        if cfg.isolated:
+            cfg.validate_isolation()
+        elif args.isolated_unit:
+            raise ValueError("An isolated unit requires an isolated Hub. La unidad necesita un Hub aislado.")
+    except (OSError, TypeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if cfg.isolated:
+        if args.profile or args.install_autostart or args.uninstall_autostart or args.autostart_status:
+            print("Session and profile startup are unavailable in an isolated Hub. "
+                  "El Hub aislado no admite el inicio de sesión ni de perfiles.", file=sys.stderr)
+            return 2
         try:
             recorded_url = Path(cfg.url_file).read_text(encoding="utf-8").strip()
         except FileNotFoundError:
@@ -150,12 +160,26 @@ def main(argv: Optional[list[str]] = None) -> int:
         except (OSError, UnicodeError) as exc:
             print(f"Could not read the Hub URL. No se pudo leer la URL del Hub: {exc}", file=sys.stderr)
             return 2
-        if (cfg.port == DEFAULT_PORT or recorded_url == f"http://127.0.0.1:{DEFAULT_PORT}"
-                or Path(cfg.data_dir).resolve() == (REPO_DIR / "data").resolve()):
+        if recorded_url == f"http://127.0.0.1:{DEFAULT_PORT}":
             print("An isolated Hub needs its own port and data folder. "
                   "El Hub aislado necesita su propio puerto y carpeta de datos.", file=sys.stderr)
             return 2
         args.no_window = True
+        try:
+            if sys.platform.startswith("linux"):
+                if not args.isolated_unit:
+                    return enter_linux_service(sys.argv[1:] if argv is None else argv, env)
+                fixture_jobs = LinuxJobs(service_cgroup(args.isolated_unit))
+            elif os.name != "nt" or args.isolated_unit:
+                raise OSError("Isolated Hub startup requires Windows or a Linux systemd user service. "
+                              "El Hub aislado necesita Windows o una unidad de usuario de systemd en Linux.")
+        except (OSError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    else:
+        code = _autostart_command(args)
+        if code is not None:
+            return code
     log_kwargs: dict = {}
     if sys.stderr is None:  # pythonw (the login autostart): no console, log to a file
         os.makedirs(cfg.logs_dir, exist_ok=True)
@@ -163,11 +187,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s", **log_kwargs)
 
-    if _already_running(cfg.url):
+    if not cfg.isolated and _already_running(cfg.url):
         print(f"hoard-hub already running at {cfg.url}")
-        if cfg.isolated and recorded_url != cfg.url:
-            print("This port belongs to another Hub. Este puerto pertenece a otro Hub.", file=sys.stderr)
-            return 2
         if args.profile:
             res = _start_profile_remote(cfg.url, args.profile)
             print(f"profile {args.profile}: {'started' if res.get('ok') else res.get('error')}")
@@ -175,16 +196,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             _open_own_window(cfg, "browser" if args.browser else "window")
         return 0
 
-    local_jobs = cfg.jobs_enabled
-    if cfg.port != DEFAULT_PORT:
-        cfg.jobs_enabled = False  # do not start the scheduler until the machine arbiter is connected
-    hub = Hub(cfg)
-    if cfg.port != DEFAULT_PORT:
-        hub.leases = RemoteLeaseArbiter(cfg.port)
-        hub.leases.on_event = hub._lease_event
-        cfg.jobs_enabled = local_jobs
-        if local_jobs:
-            hub.jobs.start()
+    hub = Hub(cfg, fixture_jobs=fixture_jobs) if cfg.isolated else Hub(cfg)
     try:
         server = make_server(hub)
     except OSError as exc:
@@ -194,10 +206,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     hub.write_url_file()
     thread = threading.Thread(target=server.serve_forever, name="hoard-hub-http", daemon=True)
     thread.start()
-    hub.placement.link.start()          # Faustus on a Spark reaches this Hub through a tunnel while it is there
-    keepalive = hub.facet("keepalive")
-    if keepalive is not None and keepalive.serve():   # the apps that live with the Hub come up now and after a fall
-        print("keep-alive: " + ", ".join(keepalive.apps()))
+    if not cfg.isolated:
+        hub.placement.link.start()      # Faustus on a Spark reaches this Hub through a tunnel while it is there
+        keepalive = hub.facet("keepalive")
+        if keepalive is not None and keepalive.serve():
+            print("keep-alive: " + ", ".join(keepalive.apps()))
     print(f"hoard-hub {HUB_VERSION} at {cfg.url} — {len(hub.apps)} apps from {', '.join(cfg.roots)}")
     if args.profile:
         threading.Thread(target=_start_profile, args=(hub, args.profile), name="hoard-hub-profile", daemon=True).start()

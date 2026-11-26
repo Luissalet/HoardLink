@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from . import DEFAULT_PORT
+from .isolation import inside, temporary_root
 from ..atomic import write_json_atomic
 
 REPO_DIR = Path(__file__).resolve().parents[2]
@@ -80,6 +81,31 @@ def _read_config(path, fallback):
 
 def _split_paths(raw: str) -> list[str]:
     return [p.strip() for p in raw.replace(";", os.pathsep).split(os.pathsep) if p.strip()]
+
+
+def _configured_paths(value, key=""):
+    """Path-valued Hub settings, including the nested facet configuration."""
+    if isinstance(value, dict):
+        for name, item in value.items():
+            yield from _configured_paths(item, key if key == "roots" else name)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _configured_paths(item, key)
+    elif isinstance(value, str) and value:
+        if (key in ("roots", "extra", "dir", "path", "cwd", "executable", "faustus_python")
+                or key.endswith(("_dir", "_dirs", "_file", "_path"))
+                or key == "browser" and ("/" in value or "\\" in value)):
+            yield key, value
+
+
+def _isolation_env_paths(env):
+    for key, value in env.items():
+        if not value:
+            continue
+        if key in ("HOARD_HUB_ROOTS", "HOARD_HUB_ICON_DIRS"):
+            yield from ((key, path) for path in _split_paths(value))
+        elif key == "FAUSTUS_DIR" or key.startswith("HOARD_HUB_") and key.endswith(("_DIR", "_FILE", "_PYTHON")):
+            yield key, value
 
 
 @dataclass
@@ -264,6 +290,21 @@ class HubConfig:
             out["web"] = {**web, "brave_api_key": "\u2022\u2022\u2022\u2022" + str(web["brave_api_key"])[-4:]}
         return out
 
+    def validate_isolation(self) -> Path:
+        """Validate all supplied paths before a Hub can scan, forward or start."""
+        if type(self.port) is not int or not 1024 <= self.port <= 65535 or self.port == DEFAULT_PORT:
+            raise ValueError("An isolated Hub needs its own port. El Hub aislado necesita su propio puerto.")
+        root = temporary_root(self.data_dir)
+        paths = [*_configured_paths(self._payload()), *getattr(self, "_isolation_inputs", ())]
+        paths.extend((name, getattr(self, name)) for name in (
+            "backup_dir", "logs_dir", "profiles_dir", "token_file", "events_file", "url_file",
+        ))
+        for name, path in paths:
+            if not inside(os.path.expandvars(path), root):
+                raise ValueError(f"{name} must stay inside the temporary test folder. "
+                                 f"{name} debe estar dentro de la carpeta temporal de la prueba.")
+        return root
+
     @classmethod
     def load(cls, path: Optional[str | Path] = None, env: Optional[Mapping[str, str]] = None) -> "HubConfig":
         env = env if env is not None else os.environ
@@ -272,6 +313,7 @@ class HubConfig:
         if data_dir:
             cfg.data_dir = os.path.abspath(os.path.expanduser(data_dir))
         file = Path(path) if path else Path(cfg.data_dir) / "hub.json"
+        raw = {}
         if file.is_file():
             try:
                 raw = json.loads(file.read_text(encoding="utf-8-sig"))
@@ -304,7 +346,13 @@ class HubConfig:
             cfg.isolated_catalog = True
         cfg.isolated = (cfg.isolated_catalog or cfg.port != DEFAULT_PORT
                         or Path(cfg.data_dir).resolve() != (REPO_DIR / "data").resolve())
-        if cfg.isolated_catalog:
+        if cfg.isolated:
+            raw = raw if isinstance(raw, dict) else {}
+            cfg._isolation_inputs = [*(_configured_paths(raw)), *_isolation_env_paths(env), ("hub.json", file)]
+            if "roots" not in raw and not env.get("HOARD_HUB_ROOTS"):
+                cfg.roots = []
+            if "icon_dirs" not in raw and not env.get("HOARD_HUB_ICON_DIRS"):
+                cfg.icon_dirs = []
             cfg.faustus_urls = []
         if env.get("HOARD_HUB_BACKUP_DIR"):
             cfg.backup = {**(cfg.backup or {}), "dir": env["HOARD_HUB_BACKUP_DIR"]}

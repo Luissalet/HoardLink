@@ -31,6 +31,7 @@ from typing import Any, Callable, Optional
 
 from . import actions
 from .events import EventLog, event_names, matches
+from .isolation import passive_error
 
 DEFAULT_COOLDOWN_S = 5.0
 HISTORY = 100
@@ -91,10 +92,11 @@ def validate_rule(rule: Any) -> list[str]:
 
 class RuleEngine:
     def __init__(self, path: Optional[str], events: EventLog, runner: Callable[[list[dict[str, Any]], dict[str, Any], str], list[dict[str, Any]]],
-                 *, now: Callable[[], float] = time.time, auto_install: Optional[bool] = None):
+                 *, now: Callable[[], float] = time.time, auto_install: Optional[bool] = None, enabled: bool = True):
         self.path = path
         self.events = events
         self._run_actions = runner
+        self.enabled = enabled
         self._now = now
         self._lock = threading.RLock()
         self.rules: list[dict[str, Any]] = []
@@ -108,12 +110,12 @@ class RuleEngine:
         self._load()
         if auto_install is None:
             auto_install = os.environ.get(AUTO_INSTALL_ENV, "1").strip().lower() not in ("0", "false", "no", "off")
-        if auto_install and self.path:
+        if enabled and auto_install and self.path:
             try:
                 self.install_recommended_on_start()
             except Exception:  # noqa: BLE001 - a broken template must never stop the hub
                 pass
-        self._off = events.subscribe(self._on_event)
+        self._off = events.subscribe(self._on_event) if enabled else None
 
     # -- persistence ----------------------------------------------------------
     def _load(self) -> None:
@@ -346,6 +348,8 @@ class RuleEngine:
     def run(self, rule: dict[str, Any], event: dict[str, Any], *, manual: bool = True) -> dict[str, Any]:
         """Run ``rule`` for ``event`` now (the worker calls this; so does
         the "run" button / tool with a synthetic or a past event)."""
+        if not self.enabled:
+            return passive_error()
         ctx = actions.base_context(event=event, rule={"id": rule.get("id"), "name": rule.get("name")})
         t0 = time.monotonic()
         results = self._run_actions(list(rule.get("then") or []), ctx, "rule:" + str(rule.get("id")))
@@ -375,10 +379,11 @@ class RuleEngine:
 
     def close(self) -> None:
         self._stop.set()
-        try:
-            self._off()
-        except Exception:  # noqa: BLE001
-            pass
+        if self._off is not None:
+            try:
+                self._off()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def example_rules() -> list[dict[str, Any]]:

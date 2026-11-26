@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
 from . import actions
+from .isolation import passive_error
 
 TICK_S = 15.0
 HISTORY = 100
@@ -141,9 +142,11 @@ def is_due(job: dict[str, Any], now: float) -> bool:
 
 class Scheduler:
     def __init__(self, path: Optional[str], runner: Callable[[list[dict[str, Any]], dict[str, Any], str], list[dict[str, Any]]],
-                 *, events: Any = None, now: Callable[[], float] = time.time, tick_s: float = TICK_S):
+                 *, events: Any = None, now: Callable[[], float] = time.time, tick_s: float = TICK_S,
+                 enabled: bool = True):
         self.path = path
         self._run_actions = runner
+        self.enabled = enabled
         self.events = events
         self._now = now
         self.tick_s = tick_s
@@ -254,6 +257,8 @@ class Scheduler:
         return self._run(job, manual=manual)
 
     def _run(self, job: dict[str, Any], *, manual: bool) -> dict[str, Any]:
+        if not self.enabled:
+            return passive_error()
         jid = str(job.get("id"))
         with self._lock:
             if self._running == jid:
@@ -293,13 +298,15 @@ class Scheduler:
 
     def tick(self) -> list[dict[str, Any]]:
         """Run every due job (one after another). Returns their summaries."""
+        if not self.enabled:
+            return []
         out = []
         for job in self.due():
             out.append(self._run(job, manual=False))
         return out
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
+        if not self.enabled or (self._thread and self._thread.is_alive()):
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="hoard-hub-jobs", daemon=True)

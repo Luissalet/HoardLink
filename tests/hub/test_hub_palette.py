@@ -1,6 +1,5 @@
 """The Hub page's design layer in a real browser: grouped sidebar, type scale, command palette, keep-alive, theme."""
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -12,8 +11,11 @@ from .conftest import free_port, write_manifest
 
 
 @pytest.mark.parametrize('width', [1280, 390])
-def test_palette_keep_alive_theme_and_scale(tmp_path, width):
+def test_palette_keep_alive_theme_and_scale(tmp_path, width, monkeypatch):
+    from hoard_link.hub import facets
+
     browser_api = pytest.importorskip('playwright.sync_api')
+    monkeypatch.setattr(facets, 'start_all', lambda _: None)
     apps = tmp_path / 'apps'
     launch = {'kind': 'process', 'executable': sys.executable, 'argv': ['-c', 'pass']}
     # Use a generic app so manifest-based isolation does not depend on a Writer source checkout.
@@ -21,20 +23,21 @@ def test_palette_keep_alive_theme_and_scale(tmp_path, width):
     write_manifest(apps / 'Palette', 'palette-app', free_port(), launch=launch, extra={'x-family': isolated})
     write_manifest(apps / 'Manual', 'manual-app', free_port(), launch=launch,
                    extra={'x-family': {**isolated, 'auto_start': False}})
-    write_manifest(apps / 'Legacy', 'legacy-app', free_port(), launch=launch)
-    config = HubConfig.load(env={
-        'HOARD_HUB_ROOTS': str(apps), 'HOARD_HUB_DATA_DIR': str(tmp_path / 'hubdata'),
-        'HOARD_HUB_PORT': str(free_port()), 'HOARD_HUB_ISOLATED_CATALOG': '1', 'HOARD_HUB_JOBS': '0',
-    })
+    write_manifest(apps / 'Legacy', 'legacy-app', free_port())
+    config = HubConfig(port=free_port(), roots=[str(apps)], data_dir=str(tmp_path / 'hubdata'),
+                       icon_dirs=[], faustus_urls=[], jobs_enabled=False, isolated_catalog=True)
     config.agent_watch = {'enabled': False}
     hub = Hub(config)
     server = serve(hub)
     keepalive = hub.facet('keepalive')
     try:
         with browser_api.sync_playwright() as p:
-            if not Path(p.chromium.executable_path).exists():
-                pytest.skip('Headless Chromium is not installed')
-            browser = p.chromium.launch(headless=True)
+            try:
+                browser = p.chromium.launch(channel='chrome', headless=True)
+            except browser_api.Error as exc:
+                if 'distribution' in str(exc) and 'not found' in str(exc):
+                    pytest.skip('Chrome is not installed')
+                raise
             try:
                 page = browser.new_page(viewport={'width': width, 'height': 844}, locale='es-ES')
                 errors = []

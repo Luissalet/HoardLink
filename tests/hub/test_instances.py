@@ -8,7 +8,6 @@ import sys
 import threading
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 
@@ -98,40 +97,13 @@ def test_instances_over_http_and_as_tools(hub, qa_dir):
     assert tools.call(hub, "hub_instance_remove", {"app": "fake"})["removed"] == 1
 
 
-def test_private_catalog_starts_without_desktop_or_token_copy(tmp_path, fake_app, monkeypatch):
+def test_private_catalog_discards_installed_urls_and_tokens(tmp_path, fake_app, monkeypatch):
     app_root = tmp_path / "apps"
     app_port, _ = fake_app
-    script = tmp_path / "isolated.py"
-    script.write_text("""
-import json
-import os
-import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
-
-assert os.environ["HOARD_NO_BROWSER"] == "1"
-assert "HOARD_HUB_TOKEN_FILE" not in os.environ
-assert "HOARD_TOKEN_FILE" not in os.environ
-profile = Path(os.environ["FAKE_DATA"])
-assert profile == Path(sys.argv[2]).parent / "auth"
-token = Path(os.environ["FAKE_TOKEN_FILE"])
-assert token == profile / "mcp-token"
-token.parent.mkdir(exist_ok=True)
-token.write_text("private-fake", encoding="utf-8")
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(json.dumps({"service": "fake-hoard"}).encode())
-
-HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
-""", encoding="utf-8")
-    launch = {"executable": sys.executable, "argv": [str(script)], "env": {"FAKE_PORT": str(app_port)}}
+    launch = {"executable": sys.executable, "argv": ["-c", "pass"]}
     book = write_manifest(app_root / "fake", "fake", app_port, launch=launch, extra={
         "x-family": {"isolated_instance": {
-            "data_env": "FAKE_DATA", "argv": [str(script), "{PORT}", "{INSTANCE_DIR}/files"],
-            "env": {"FAKE_TOKEN_FILE": "{TOKEN_FILE}"}, "data_subdir": "auth",
+            "data_env": "FAKE_DATA", "port_env": "FAKE_PORT",
         }}})
     normal_token = book / "data" / "mcp-token"
     normal_token.parent.mkdir()
@@ -156,96 +128,55 @@ HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
     hub = Hub(config)
     try:
         assert hub.token_owner("real-fake") is None
-        assert hub.start("desktop")["error"] == "Needs shared hardware. Necesita hardware compartido."
+        assert hub.start("desktop")["code"] == "isolated_hub"
+        assert hub.get("desktop").launch_reason == "Needs shared hardware. Necesita hardware compartido."
         assert hub.get("desktop").url == ""
-        opened = hub.open("fake", mode="browser")
-        assert opened["ok"] and opened["ready"] and opened["mode"] == "headless", opened
-        assert hub.get("fake").port != app_port
-        assert Path(hub.get("fake").data_dir) == data / "apps" / "fake" / "auth"
-        assert hub.token_owner("private-fake") == "fake"
+        assert hub.open("fake", mode="browser")["code"] == "isolated_hub"
+        assert hub.get("fake").url == hub.get("fake").data_dir == ""
         hub.rescan()
-        assert hub.get("fake").url == opened["url"]
-        assert hub.stop("fake")["ok"]
+        assert hub.get("fake").url == ""
+        assert hub.stop("fake")["code"] == "isolated_hub"
         assert _http(f"http://127.0.0.1:{app_port}/api/health")[0] == 200
     finally:
         hub.close()
 
 
-@pytest.mark.parametrize("start_apps", [False, True], ids=["manifest", "startup"])
-def test_stock_catalog_isolation(tmp_path, monkeypatch, start_apps):
+def test_stock_manifest_isolation(monkeypatch):
     from hoard_link.hub import registry
     from hoard_link.hub.isolated_apps import (
-        _headless_launcher, _manifest_isolation, _manifest_launcher, _unsupported_reason, isolated_catalog,
+        _headless_launcher, _manifest_isolation, _manifest_launcher, _unsupported_reason,
     )
 
     roots = os.environ.get("HOARD_HUB_ROOTS")
-    if start_apps and (os.environ.get("HOARD_HUB_START_CATALOG_TEST") != "1" or not roots):
-        pytest.skip("Set HOARD_HUB_START_CATALOG_TEST=1 and HOARD_HUB_ROOTS to start the family apps.")
-    env = {"HOARD_HUB_DATA_DIR": str(tmp_path), "HOARD_HUB_PORT": str(free_port()),
-           "HOARD_HUB_ISOLATED_CATALOG": "1", "HOARD_HUB_JOBS": "0"}
-    if roots:
-        env["HOARD_HUB_ROOTS"] = roots
-    config = HubConfig.load(env=env)
+    if not roots:
+        pytest.skip("Set HOARD_HUB_ROOTS to check the family app manifests.")
+    config = HubConfig.load(env={"HOARD_HUB_ROOTS": roots})
     # Check the launch contract on source checkouts before installing app dependencies.
-    if not start_apps:
-        monkeypatch.setattr(registry, "_executable_exists", lambda *_: True)
+    monkeypatch.setattr(registry, "_executable_exists", lambda *_: True)
     apps = registry.scan(config.roots, faustus_dir=config.faustus_dir, faustus_python=config.faustus_python,
                          exclude_ids=[*config.exclude_ids, "hoard-hub", "hoardhub"])
-    if not apps:
-        assert not roots, "HOARD_HUB_ROOTS did not discover any apps"
-        pytest.skip("Set HOARD_HUB_ROOTS to check the family app manifests.")
-
+    assert apps, "HOARD_HUB_ROOTS did not discover any apps"
     missing = []
-    supported = []
     for app in apps:
         if _unsupported_reason(app):
             assert _headless_launcher(app) is None
-        elif _manifest_launcher(_manifest_isolation(app)) and _headless_launcher(app):
-            supported.append(app)
         elif app.launch or app.kind == "window-app" or app.id == "writer":
-            missing.append(f"{app.id}: {app.launch_reason or 'missing or unusable isolated_instance'}")
+            if not (_manifest_launcher(_manifest_isolation(app)) and _headless_launcher(app)):
+                missing.append(f"{app.id}: {app.launch_reason or 'missing or unusable isolated_instance'}")
     assert not missing, "\n".join(missing)
 
-    isolated = isolated_catalog(supported, config)
-    assert len({app.port for app in isolated}) == len(supported)
-    for normal, private in zip(supported, isolated):
-        folder = tmp_path / "apps" / normal.id
-        assert private.launchable and private.host == "127.0.0.1" and private.port != config.port
-        assert Path(private.data_dir).is_relative_to(folder)
-        assert Path(private.token_file).is_relative_to(folder)
-        assert private.launch.env["HOARD_NO_BROWSER"] == "1"
 
-    if start_apps:
-        hub = Hub(config)
-        failures = {}
-        try:
-            for app in supported:
-                try:
-                    started = hub.start(app.id)
-                    if not started.get("ready"):
-                        failures[app.id] = started
-                finally:
-                    stopped = hub.stop(app.id)
-                    if not stopped.get("ok"):
-                        failures[f"{app.id} stop"] = stopped
-        finally:
-            hub.close()
-        assert not failures, failures
-
-
-def test_isolated_command_rejects_shared_data_and_never_opens_hub(tmp_path, monkeypatch):
+def test_isolated_command_rejects_shared_data(tmp_path, monkeypatch):
     from hoard_link.hub import __main__ as cli
 
     tested = tmp_path / "hub"
     port = free_port()
     monkeypatch.delenv("HOARD_HUB_DATA_DIR", raising=False)
     monkeypatch.delenv("HOARD_HUB_ISOLATED_CATALOG", raising=False)
+    monkeypatch.setenv("FAUSTUS_DIR", str(tmp_path / "faustus"))
+    monkeypatch.setattr(cli, "_already_running", lambda *_: pytest.fail("probed the Hub"))
     assert cli.main(["--port", str(port)]) == 2
     tested.mkdir()
     marker = tested / "url"
     marker.write_text("http://127.0.0.1:8810", encoding="utf-8")
     assert cli.main(["--port", str(port), "--data-dir", str(tested)]) == 2
-    monkeypatch.setattr(cli, "_already_running", lambda url: True)
-    monkeypatch.setattr(cli, "_open_own_window", lambda *a: pytest.fail("opened the Hub"))
-    marker.write_text(f"http://127.0.0.1:{port}", encoding="utf-8")
-    assert cli.main(["--port", str(port), "--data-dir", str(tested), "--browser"]) == 0

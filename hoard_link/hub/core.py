@@ -26,6 +26,7 @@ from . import actions as _actions, audit as _audit, contract, desktop, procs
 from .backup import BackupStore
 from .events import EventLog
 from .jobs import Scheduler
+from .isolation import passive_error
 from .linkchat import LinkService
 from .repos import RepoMonitor, RepoSettings
 from .rules import RuleEngine
@@ -48,8 +49,12 @@ def default_call_reason(caller: str) -> str:
     return f"Requested by {who} through the Hub"[:300]
 
 class Hub:
-    def __init__(self, config: Optional[HubConfig] = None, *, gpu_fn: Optional[Callable[[], list[Any]]] = None):
+    def __init__(self, config: Optional[HubConfig] = None, *, gpu_fn: Optional[Callable[[], list[Any]]] = None,
+                 fixture_jobs=None):
         self.config = config or HubConfig.load()
+        fixture_root = self.config.validate_isolation() if self.config.isolated else None
+        self.fixture_root = fixture_root
+        self.fixture_jobs = fixture_jobs
         self._apps: dict[str, App] = {}
         self._lock = threading.RLock()
         # Starts in flight: app id -> (pid, spawned at). A start that is not
@@ -82,7 +87,7 @@ class Hub:
         self.placement = Placement(self)
         self.token = self._load_token()
         # The GPU/VRAM lease arbiter: one queue for every app on this machine.
-        self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=gpu_fn,
+        self.leases = LeaseArbiter(self.config.leases_file, gpu_fn=(lambda: []) if fixture_root else gpu_fn,
                                    headroom_mb=int(self.config.lease_headroom_mb or 0),
                                    protected_gpus=self.config.protected_gpus)
         # Browser lanes: one holder at a time per site / browser profile (Agora #265).
@@ -93,7 +98,8 @@ class Hub:
         from ..launch import Launcher
         from .local_programs import portable_tool_dirs
 
-        self.launcher = Launcher(app="hub", tool_dirs=portable_tool_dirs(self.config.roots))
+        self.launcher = (Launcher(self.config.data_dir, app="hub") if fixture_root
+                         else Launcher(app="hub", tool_dirs=portable_tool_dirs(self.config.roots)))
         self.commands = CommandRunner(os.path.join(self.config.data_dir, "commands.json"), self.config.logs_dir)
         # The family's nervous system: the event log every app writes to,
         # rules that react to it, jobs on a clock, and the backup store.
@@ -101,8 +107,8 @@ class Hub:
         self.leases.on_event = self._lease_event
         self.lanes.on_event = self._lane_event
         runner = lambda acts, ctx, caller: _actions.run_all(self, acts, ctx, caller=caller)  # noqa: E731
-        self.rules = RuleEngine(self.config.rules_file, self.events, runner)
-        self.jobs = Scheduler(self.config.jobs_file, runner, events=self.events)
+        self.rules = RuleEngine(self.config.rules_file, self.events, runner, enabled=not self.config.isolated)
+        self.jobs = Scheduler(self.config.jobs_file, runner, events=self.events, enabled=not self.config.isolated)
         bk = self.config.backup or {}
         self.backups = BackupStore(self.config.backup_dir, exclude=list(bk.get("exclude") or []),
                                    max_file_mb=float(bk.get("max_file_mb") or 512))
@@ -113,14 +119,16 @@ class Hub:
                                  lang_fn=lambda: self.config.language)
         # Models for every app (Hoard Link 0.6): chat/vision over HTTP through the hub's own Link.
         self.link = LinkService(self.config, emit=lambda t, d: self.events.emit(t, d, source="hub"))
-        procs._protected_pids()  # warm the ancestor list once, off the request path
+        if not self.config.isolated:
+            procs._protected_pids()  # warm the ancestor list once, off the request path
         self.rescan()
         # Facets (0.7): notifications, spheres, mail, chats, Today, references, search, jobs view, purchases.
         from . import facets as _facets
         self.facets = _facets.load_all(self)
-        if self.config.jobs_enabled:
-            self.jobs.start()
-        _facets.start_all(self.facets)
+        if not self.config.isolated:
+            if self.config.jobs_enabled:
+                self.jobs.start()
+            _facets.start_all(self.facets)
 
     def facet(self, facet_id: str) -> Any:
         """The facet with that id (``notify``, ``spheres``…) or None."""
@@ -150,13 +158,11 @@ class Hub:
     def close(self) -> None:
         from . import facets as _facets
         _facets.close_all(getattr(self, "facets", []))
-        if self.config.isolated:
-            for app_id in list(self._spawned):
-                self.stop(app_id)
-        try:
-            self.placement.link.stop()
-        except Exception:  # noqa: BLE001
-            pass
+        if not self.config.isolated:
+            try:
+                self.placement.link.stop()
+            except Exception:  # noqa: BLE001
+                pass
         for part in (self.jobs, self.rules, self.link, self.events):
             try:
                 part.close()
@@ -216,6 +222,7 @@ class Hub:
             icon_dirs=self.config.icon_dirs,
             exclude_ids=self.config.exclude_ids + [SERVICE, "hoardhub"],
             launch_overrides=None if self.config.isolated else self._launch_overrides(),
+            fixture_root=self.fixture_root,
         )
         with self._lock:
             if self.config.isolated:
@@ -238,6 +245,10 @@ class Hub:
     def app_status(self, app: App, listeners: Optional[dict[int, int]] = None,
                    windows: Optional[dict[str, list[dict[str, Any]]]] = None,
                    health: Optional[procs.Health] = None) -> dict[str, Any]:
+        if self.config.isolated:
+            return {**app.to_dict(), "state": "down", "health": procs.Health("down").to_dict(),
+                    "process": None, "windows": [], "stoppable": False, "manually_stopped": False,
+                    "log": os.path.join(self.config.logs_dir, f"{app.id}.log")}
         h = health if health is not None else procs.health(app)
         proc = procs.find_app_process(app, listeners)
         if windows is None:
@@ -286,6 +297,9 @@ class Hub:
         self._snapshot_epoch = self.__dict__.get("_snapshot_epoch", 0) + 1
 
     def _snapshot_now(self) -> dict[str, Any]:
+        if self.config.isolated:
+            apps = [self.app_status(app) for app in self.apps]
+            return self._snapshot_data(apps, {}, self.faustus_status())
         apps_now = self.apps
         # Every probe in parallel: a closed loopback port costs ~1s on
         # Windows, and a dozen of them in a row would make the page crawl.
@@ -301,10 +315,14 @@ class Hub:
         if remote_faustus is not None:
             faustus = {**faustus, "where": remote_faustus["where"], "remote_state": remote_faustus["state"],
                        "remote_url": remote_faustus["url"], "remote_detail": remote_faustus["detail"]}
+        return self._snapshot_data(apps, windows, faustus)
+
+    def _snapshot_data(self, apps, windows, faustus):
+        isolated = self.config.isolated
         profiles = self.profiles_status({a["id"]: a["state"] for a in apps})
         running = sum(1 for a in apps if a["state"] == "running")
         keepalive = self.facet("keepalive")
-        kept = set(keepalive.apps()) if keepalive is not None else set()
+        kept = set(keepalive.apps()) if keepalive is not None and not isolated else set()
         for a in apps:
             a["keep_alive"] = a["id"] in kept
         return {
@@ -315,11 +333,12 @@ class Hub:
                        "windows": sum(len(v) for k, v in windows.items() if not k.startswith("_"))},
             "roots": list(self.config.roots),
             "faustus": faustus,
-            "placement": self.placement.status(),
+            "placement": {"ok": True, "location": "pc", "isolated": True} if isolated else self.placement.status(),
             "profiles": profiles["profiles"],
             "hub": {"url": self.config.url, "data_dir": self.config.data_dir, "uptime_s": int(time.time() - self.started_at),
-                    "browser": desktop.find_browser(self.config.browser),
-                    "window_engine": desktop.window_engine(self.config.window_engine), "psutil": procs._psutil() is not None,
+                    "browser": None if isolated else desktop.find_browser(self.config.browser),
+                    "window_engine": "headless" if isolated else desktop.window_engine(self.config.window_engine),
+                    "psutil": procs._psutil() is not None,
                     "events": self.events.last_id, "rules": len(self.rules.rules), "jobs": len(self.jobs.jobs),
                     "backup_dir": self.backups.root},
         }
@@ -342,6 +361,8 @@ class Hub:
             os.replace(tmp, path)
 
     def start(self, app_id: str, wait: bool = True, *, automatic: bool = False) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
@@ -362,8 +383,7 @@ class Hub:
                 res = self._await_ready(app, pending) if wait else {"ok": True, "already": True, "pid": pending,
                                                                        "detail": "already starting"}
             else:
-                allocation = (self._prepare_isolated_start(app) if self.config.isolated
-                              else self.ports.prepare(app, self.apps, self.config.port))
+                allocation = self.ports.prepare(app, self.apps, self.config.port)
                 if not allocation.get("ok"):
                     return dict(allocation, app=app_id)
                 launch_app = app
@@ -371,7 +391,7 @@ class Hub:
                     renderer = programs.vulcan_blender_env()
                     if renderer:
                         launch_app = replace(app, launch=replace(app.launch, env={**app.launch.env, **renderer}))
-                if app_id == "writer" and app.launch and not self.config.isolated:
+                if app_id == "writer" and app.launch:
                     launch_app = replace(app, launch=replace(app.launch, env={
                         **app.launch.env, "HOARD_HUB_URL": self.config.url,
                         "HOARD_HUB_DATA_DIR": self.config.data_dir,
@@ -397,28 +417,6 @@ class Hub:
             self._safe_emit("hub.app.started", {"app": app_id, "pid": res.get("pid"), "ready": res.get("ready")})
         return res
 
-    def _prepare_isolated_start(self, app: App) -> dict[str, Any]:
-        if not app.launchable or not app.launch:
-            return {"ok": False, "error": app.launch_reason}
-        with self._lock:
-            spawned = self._spawned.get(app.id)
-            created = self._spawned_created.get(app.id)
-        if spawned and created is not None and procs.proc_info(spawned).created_at == created:
-            return {"ok": True}
-        ports = [app.port]
-        if app.id == "writer":
-            ports.extend(int(app.launch.env[key]) for key in ("WH_RENDERER_PORT", "MEDIA_DOWNLOADER_PORT"))
-        busy = set(ports).intersection(procs.listening_pids())
-        if busy:
-            port = min(busy)
-            return {"ok": False, "error": f"Isolated port {port} is busy. El puerto aislado {port} está ocupado."}
-        if app.id == "writer":
-            from .isolated_apps import prepare_writer_profile
-            try:
-                prepare_writer_profile(app)
-            except OSError as exc:
-                return {"ok": False, "error": f"Could not prepare the profile. No se pudo preparar el perfil: {exc}"}
-        return {"ok": True}
 
     def _safe_emit(self, type: str, data: dict[str, Any]) -> None:
         try:
@@ -469,6 +467,8 @@ class Hub:
         return {"ok": True, "pid": pid, "ready": False, "detail": f"not ready after {timeout:.0f}s (still starting?)"}
 
     def stop(self, app_id: str) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
@@ -492,12 +492,11 @@ class Hub:
             if tracked.created_at is not None and abs(tracked.created_at - created) < .01:
                 proc = tracked  # stop the launcher too, including a server still booting
                 owned = True
-        if self.config.isolated and not owned:
-            return {"ok": True, "app": app_id, "detail": "No process started by this Hub."}
+
         if proc is None:
             desktop.close_windows(app_id, self.config.profiles_dir)
             return {"ok": True, "app": app_id, "detail": "not running"}
-        if h.state == "foreign" and not (self.config.isolated and owned):
+        if h.state == "foreign":
             return {"ok": False, "app": app_id, "error": "refusing: " + h.detail}
         if h.state == "down" and not owned:
             # Something listens but does not answer: only stop it when it is
@@ -510,8 +509,7 @@ class Hub:
         res["app"] = app_id
         res["pid"] = proc.pid
         # Its windows are pointless without the server behind them.
-        if not self.config.isolated:
-            desktop.close_windows(app_id, self.config.profiles_dir)
+        desktop.close_windows(app_id, self.config.profiles_dir)
         if res.get("ok"):
             with self._lock:
                 self._inflight.pop(app_id, None)
@@ -522,6 +520,8 @@ class Hub:
 
     def restart(self, app_id: str, *, automatic: bool = False) -> dict[str, Any]:
         """Stop then start. An app that declares native module switches gets the ones that were on put back on."""
+        if self.config.isolated:
+            return passive_error()
         production = self.facet("production")
         app = self.get(app_id)
         before = None
@@ -591,6 +591,8 @@ class Hub:
         return None
 
     def open(self, app_id: str, mode: str = "window", autostart: bool = True, *, automatic: bool = False) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         with self._lock:
             lock = self._start_locks.setdefault(app_id, threading.RLock())
         # The stop uses this same lock and closes windows after a pending open finishes.
@@ -603,16 +605,7 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
-        if self.config.isolated:
-            url = app.url
-            if app.id == "writer" and app.launch:
-                url = f"http://127.0.0.1:{app.launch.env['WH_RENDERER_PORT']}"
-            if autostart:
-                result = self.start(app_id, wait=True, automatic=automatic)
-                return {**result, "mode": "headless", "url": url} if result.get("ok") else result
-            if app.url and procs.health(app).state == "healthy":
-                return {"ok": True, "app": app_id, "mode": "headless", "url": url}
-            return {"ok": False, "app": app_id, "error": "The isolated app is stopped. La aplicación aislada está parada."}
+
         remote = self.placement.remote_app(app_id)
         if remote is not None and remote["url"]:
             # Running on the Spark: open it there (its tailnet address) instead of starting a second copy here.
@@ -651,6 +644,8 @@ class Hub:
         return res
 
     def close_windows(self, app_id: str) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         res = desktop.close_windows(app_id, self.config.profiles_dir)
         res["app"] = app_id
         return res
@@ -682,6 +677,8 @@ class Hub:
         return {"ok": True, "app": app_id, "path": path, "lines": procs.tail(path, lines)}
 
     def start_all(self, *, automatic: bool = False) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         results = [self.start(a.id, wait=False, automatic=automatic) for a in self.apps
                    if a.launchable and a.family.get("auto_start") is not False and not self.placement.local_block(a.id)]   # the ones running on a Spark are not "down"
         faustus = (self.faustus_start(automatic=automatic)
@@ -689,6 +686,8 @@ class Hub:
         return {"ok": all(r.get("ok") for r in results) and faustus["ok"], "results": results, "faustus": faustus}
 
     def stop_all(self) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         with self._stop_all_lock:
             self._stopping_all.set()
             try:
@@ -722,6 +721,8 @@ class Hub:
         (id -> state, from a snapshot) avoids probing the apps twice."""
         with self._lock:
             profiles, problems = parse_profiles(self.config.read_profiles())
+        if self.config.isolated:
+            return {"ok": True, "profiles": [], "problems": problems}
         if app_states is None:
             wanted = {a for p in profiles.values() for a in p.members}
             apps = [a for a in self.apps if a.id in wanted]
@@ -754,6 +755,8 @@ class Hub:
     def profile_start(self, name: str, *, automatic: bool = False, startup: bool = False) -> dict[str, Any]:
         """Start the profile's apps and commands together (not waiting for
         each), then open its desktop apps as windows (that waits for them)."""
+        if self.config.isolated:
+            return passive_error()
         p = self.profiles().get(name)
         if p is None:
             return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
@@ -785,6 +788,8 @@ class Hub:
                 "unknown": unknown, **({"error": "unknown apps: " + ", ".join(unknown)} if unknown else {})}
 
     def profile_stop(self, name: str) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         p = self.profiles().get(name)
         if p is None:
             return {"ok": False, "error": f"unknown profile: {name}", "profiles": list(self.profiles())}
@@ -905,6 +910,8 @@ class Hub:
         return res
 
     def family_audit(self, probe: bool = True) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         return _audit.audit(self.apps, self.config.url, probe=probe)
 
     # -- surroundings ---------------------------------------------------------
@@ -914,6 +921,9 @@ class Hub:
         page. The first call probes synchronously; later calls return the
         last answer and refresh it in the background when it is older than
         ``FAUSTUS_CACHE_S``."""
+        if self.config.isolated:
+            return {"reachable": False, "url": None, "status": None, "body": None,
+                    "available": False, "startable": False, "stoppable": False, "manually_stopped": False}
         ts, cached = self._faustus_cache
         age = time.time() - ts
         if cached and age < FAUSTUS_CACHE_S:
@@ -956,6 +966,8 @@ class Hub:
         return result
 
     def faustus_start(self, *, automatic: bool = False) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         with self._lock:
             lock = self._start_locks.setdefault("faustus", threading.RLock())
         elsewhere = self.placement.local_block("faustus")
@@ -973,6 +985,8 @@ class Hub:
             return res
 
     def faustus_stop(self) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         self._manual_stop(["faustus"])
         self.faustus_runtime.cancel_start()
         with self._lock:
@@ -988,12 +1002,16 @@ class Hub:
     def services(self) -> dict[str, Any]:
         """Local backend servers (ComfyUI, Ollama, backends.json commands):
         running, down or startable, who started them."""
+        if self.config.isolated:
+            return {"ok": True, "isolated": True, "items": [], "gpus": [], "config_path": ""}
         from ..launch import list_gpus
 
         items = self.launcher.statuses()
         return {"ok": True, "items": items, "gpus": list_gpus(), "config_path": str(self.launcher.config_path)}
 
     def gpu_memory(self) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         from ..launch import memory
 
         return {"ok": True, **memory(self.launcher)}
@@ -1001,6 +1019,8 @@ class Hub:
     def service_start(self, service_id: str, gpu: Any = None, wait_s: float = 0.0, *,
                       automatic: bool = False, lease_id: str | None = None,
                       work_lease_id: str | None = None) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         if self._stopping_all.is_set() or (automatic and self.automation_blocked("service:" + service_id)):
             return {"ok": False, "error": "stop all is still in progress"}
         self._manual_stop(["service:" + service_id], False)
@@ -1026,6 +1046,8 @@ class Hub:
         return res
 
     def service_stop(self, service_id: str, *, expected_pid: int | None = None) -> dict[str, Any]:
+        if self.config.isolated:
+            return passive_error()
         with self.launcher._lock:
             if expected_pid is not None:
                 try:
@@ -1048,6 +1070,8 @@ class Hub:
         return res
 
     def backends(self, force: bool = False) -> dict[str, Any]:
+        if self.config.isolated:
+            return {"ok": True, "isolated": True, "capabilities": {}, "gpus": []}
         ts, cached = self._backends_cache
         if not force and cached and time.time() - ts < BACKENDS_CACHE_S:
             return cached

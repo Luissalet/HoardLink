@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import re
 from . import autostart
+from .isolation import passive_error
 
 
 def save(hub, name, body):
@@ -89,6 +90,8 @@ def remove(hub, name):
 
 
 def startup(hub, body):
+    if getattr(hub.config, "isolated", False):
+        return passive_error()
     with hub._lock:
         if body.get('enabled') is False:
             return autostart.uninstall()

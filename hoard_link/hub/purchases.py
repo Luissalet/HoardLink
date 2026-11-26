@@ -43,6 +43,7 @@ from typing import Any, Callable, Optional
 from urllib.parse import quote
 
 from .facets import Facet, Reply, Request
+from .isolation import passive_error
 
 STAGES = ("paid", "shipped", "delivered", "filed", "stored", "closed")
 RANK = {s: i for i, s in enumerate(STAGES, 1)}
@@ -672,6 +673,8 @@ class PurchasesFacet(Facet):
 
     def prepare_home(self, pid: int) -> dict[str, Any]:
         """Start HomeHoard on explicit request, then return its prefilled form without saving an item."""
+        if getattr(self.hub.config, "isolated", False):
+            return passive_error()
         p = self._fetch(pid)
         if p is None:
             return {"ok": False, "status": 404, "error": "unknown purchase"}

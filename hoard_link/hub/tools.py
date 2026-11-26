@@ -18,6 +18,7 @@ from .browser_lanes import LaneError
 LANE_TOOL_OWNER = "mcp"            # lanes taken through the tools belong to this owner
 LANE_TOOL_MAX_TTL_S = 600.0        # ...and are short: an agent renews them (hub_lane_renew) or they expire
 from .core import Hub
+from .isolation import passive_error
 from .repos import filter_rows
 
 _PROFILE = {"type": "string", "description": "Profile name as listed by hub_profile_list."}
@@ -872,6 +873,13 @@ def all_tools() -> list[dict[str, Any]]:
 
 def call(hub: Hub, name: str, arguments: dict[str, Any], *, agent: str = "", session: str = "") -> Any:
     from . import facets as _facets
+    if getattr(getattr(hub, "config", None), "isolated", False):
+        if name == "hub_placement_status":
+            return {"ok": True, "location": "pc", "isolated": True}
+        if name in ("hub_placement_switch", "hub_link_status", "hub_link_chat", "hub_copilot_request",
+                    "hub_repos", "hub_repo", "hub_repos_refresh", "hub_repo_fetch", "hub_repo_push_command",
+                    "hub_dojo", "hub_family_audit", "hub_comfy_profile_register", "hub_comfy_profile_unregister"):
+            return passive_error()
     fn = _facets.handlers(getattr(hub, "facets", [])).get(name) or handlers(hub, agent=agent, session=session).get(name)
     if fn is None:
         return {"ok": False, "error": f"unknown tool: {name}"}

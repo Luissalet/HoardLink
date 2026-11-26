@@ -36,6 +36,7 @@ from typing import Any, Optional
 from ..atomic import write_json_atomic
 from . import procs
 from .facets import Facet, Request
+from .isolation import passive_error
 
 logger = logging.getLogger("hoard_hub.keepalive")
 
@@ -109,6 +110,8 @@ class KeepAliveFacet(Facet):
         return None
 
     def set(self, app_id: str, keep: bool) -> dict[str, Any]:
+        if getattr(self.hub.config, "isolated", False):
+            return passive_error()
         app_id = str(app_id or "").strip()
         if not app_id:
             return {"ok": False, "error": "falta la app"}
@@ -137,7 +140,7 @@ class KeepAliveFacet(Facet):
 
     def serve(self) -> bool:
         """Start the watch (the serving Hub calls this once it listens). False when it is turned off."""
-        if disabled_by_env() or self.serving:
+        if getattr(self.hub.config, "isolated", False) or disabled_by_env() or self.serving:
             return False
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="hoard-hub-keepalive", daemon=True)
@@ -167,6 +170,8 @@ class KeepAliveFacet(Facet):
 
     def check(self, boot: bool = False) -> list[dict[str, Any]]:
         """Look at every app on the list once and start the ones that are down. Returns what was done."""
+        if getattr(self.hub.config, "isolated", False):
+            return []
         ids = self.apps()
         if boot:
             # Starting with the Hub: a stop from a previous Hub session does not keep these apps down.
@@ -208,6 +213,8 @@ class KeepAliveFacet(Facet):
 
     # -- views ------------------------------------------------------------------------------------------------------
     def status(self, probe: bool = True) -> dict[str, Any]:
+        if getattr(self.hub.config, "isolated", False):
+            return {"ok": True, "serving": False, "apps": []}
         rows = []
         for app_id in self.apps():
             app = self.hub.get(app_id)

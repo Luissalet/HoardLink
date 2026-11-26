@@ -93,7 +93,8 @@ card of a task whose owner is in the middle of a turn. MCP: `hub_agora_work`; `w
 
 A managed worker can use `commits_by_repo` on `hub_agora_task_submit` to deliver work from several repositories.
 The console checks each group in its registered repository and warns about groups it could not check because their
-repository is unregistered. An isolated Hub starts with automatic quota polling off. See [the Agora reference](docs/AGORA.md).
+repository is unregistered. See [the Agora reference](docs/AGORA.md). The [isolated Hub](docs/ISOLATION.md)
+uses temporary data and starts fixture apps only through `hub_isolated_app`.
 
 The Agora console and space page display provider quotas and when they were measured. Space leads can set
 and undo weekly quota floors for Claude and Codex. A measured dip posts to the space's general channel,

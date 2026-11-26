@@ -19,11 +19,7 @@ USER_OPEN = {
     ("hub/desktop.py", "open_folder", "os.startfile", "path"),
 }
 PENDING = {
-    # fixed after #3782 lands
-    ("hub/procs.py", "_listening_pids_cli", "subprocess.run", "netstat"),
-    ("hub/procs.py", "_listening_pids_cli", "subprocess.run", "ss"),
     # The existing start_app launch supplies CREATE_NO_WINDOW via _detached_kwargs.
-    # fixed after #3782 lands
     ("hub/procs.py", "start_app", "subprocess.Popen", "cmd"),
 }
 EMBEDDED = {"launch.py": "_SPAWNER", "hub/integration_checks.py": "REMOTE_RUNNER"}
