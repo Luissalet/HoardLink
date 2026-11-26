@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from functools import cached_property
 from pathlib import Path
 from urllib.parse import urlsplit
+import math
 import re
 import sqlite3
 import time
@@ -477,22 +478,107 @@ class LinkProbes:
         return Observation(state, "hub_mcp_apps (per app, check=false)", "relay_descriptions", metrics, "declaration")
 
     def mail(self):
+        call = "Mail gateway cadence + last successful pass"
+        if self._isolated():
+            return Observation(UNCHECKED, call, "isolated_hub")
         gate = self._facet("mailgate")
         settings = gate.config()
-        call = "Mail gateway cadence + last successful pass"
         if not settings.get("enabled"):
             return Observation(STOPPED, call, "mail_disabled")
-        # Access the already-open store only. The property would initialise a
-        # database and the ordinary status endpoint also loads account data.
-        store = gate._store
-        last_ok = store.get_state("last_ok_ts") if store is not None else None
-        if not isinstance(last_ok, (int, float)) or last_ok <= 0:
-            return Observation(UNCHECKED, call, "mail_no_pass")
+        last_ok = gate.last_successful_pass()
         interval_s = 60 * settings["interval_min"]
+        if type(last_ok) not in (int, float) or not math.isfinite(last_ok) or last_ok <= 0:
+            started_at = getattr(self.hub, "started_at", gate.clock())
+            uptime = max(0, round(gate.clock() - started_at))
+            metrics = {"uptime_s": uptime, "interval_s": interval_s}
+            if interval_s and uptime > interval_s + gate.first_delay_s:
+                return Observation(FAILED, call, "mail_first_pass_overdue", metrics, "gateway_state")
+            return Observation(RESPONDS, call, "mail_since_start", metrics, "gateway_state")
         age = max(0, round(gate.clock() - last_ok))
-        return Observation(RESPONDS if age <= interval_s else FAILED, call,
-                           "mail_fresh" if age <= interval_s else "mail_stale",
+        on_time = not interval_s or age <= interval_s
+        outcome = "mail_on_demand" if not interval_s else "mail_fresh" if on_time else "mail_stale"
+        return Observation(RESPONDS if on_time else FAILED, call, outcome,
                            {"last_success_at": last_ok, "age_s": age, "interval_s": interval_s}, "recorded_receipt")
+
+    def gateway_reader(self, reader, deadline):
+        from .mailgate import LINK_READERS
+
+        if reader not in LINK_READERS:
+            raise ValueError("Unknown gateway reader")
+        call = "Mail gateway reader receipts"
+        if reader in self.excluded:
+            return Observation(UNCHECKED, "link-check.json", "operator_excluded")
+        if self._isolated():
+            return Observation(UNCHECKED, call, "isolated_hub")
+        gate = self._facet("mailgate")
+        receipt = getattr(gate, "link_readers", {}).get(reader)
+        if receipt is not None:
+            ts, ok, matched = receipt
+            return Observation(RESPONDS if ok else FAILED, call, "mail_reader_scan" if ok else "mail_reader_scan_failed",
+                               {"last_scan_at": ts, "messages_returned": matched}, "recorded_receipt")
+        claim = gate.last_reader_claim(reader)
+        if claim:
+            return Observation(RESPONDS, call, "mail_reader_claim", {"last_claim_at": claim}, "recorded_receipt")
+        return self.fleet(deadline, reader)
+
+    def mail_caller(self):
+        from ..mail_helper import INSTALLATION_FILE
+
+        call = "Mail installation and caller metadata"
+        if self._isolated():
+            return Observation(UNCHECKED, call, "isolated_hub")
+        gate = self._facet("mailgate")
+        last_use = getattr(gate, "last_caller_at", None)
+        root = gate.faustus_dir()
+        data = root / "data" if root is not None else None
+        installed = data is not None and (data / INSTALLATION_FILE).is_file()
+        registered = data is not None and (data / "mail_callers.json").is_file()
+        metrics = {"installation_exists": installed, "registry_exists": registered, "last_used_at": last_use}
+        if last_use is not None:
+            return Observation(RESPONDS, call, "mail_caller_used", metrics, "recorded_receipt")
+        if installed or registered:
+            return Observation(RESPONDS, call, "mail_caller_declared", metrics, "declaration")
+        return Observation(UNCHECKED, call, "mail_caller_unknown", metrics, "declaration")
+
+    def dojo_count(self, deadline):
+        endpoint = self._get_app("faustus", deadline)
+        if isinstance(endpoint, Observation):
+            return endpoint
+        receipt = getattr(self.hub, "dojo_list_receipt", None)
+        call = "Dojo bridge recorded exam count"
+        if receipt is None or receipt[0] != endpoint.app.url.rstrip("/"):
+            return Observation(UNCHECKED, call, "dojo_no_receipt", scope="cached", location=endpoint.location)
+        _, ts, exams = receipt
+        return Observation(RESPONDS, call, "dojo_exam_count", {"exams": exams, "seen_at": ts},
+                           "cached", endpoint.location)
+
+    def quota_measurement(self):
+        agora = self._facet("agora").agora
+        call = "Agora usage measurement metadata"
+        now = agora.clock()
+        rows = agora.db.query(
+            """SELECT p.provider_id, MAX(p.reported_at) AS reported_at,
+                      MAX(CASE WHEN json_extract(w.value, '$.measurement') = 'measured'
+                               THEN p.reported_at END) AS measured_at,
+                      MAX(CASE WHEN json_extract(w.value, '$.measurement') = 'measured'
+                                 AND COALESCE(unixepoch(json_extract(w.value, '$.reset_at')), ?) > ?
+                               THEN p.reported_at END) AS usable_at
+                 FROM agora_usage_pools p
+                 LEFT JOIN json_each(CASE WHEN json_valid(p.windows_json) THEN p.windows_json ELSE '[]' END) w
+                 GROUP BY p.provider_id""",
+            (now + 1, now),
+        )
+        metrics = {}
+        for row in rows:
+            provider = row["provider_id"]
+            if provider in agora._USAGE_PROVIDERS:
+                metrics[f"{provider}_reported_at"] = row["reported_at"]
+                metrics[f"{provider}_measured_at"] = row["measured_at"]
+                metrics[f"{provider}_fresh"] = (row["usable_at"] is not None
+                                                and now - row["usable_at"] <= agora._USAGE_STALE_S)
+        fresh = any(value is True for value in metrics.values())
+        outcome = "quota_measured" if fresh else "quota_stale_or_unknown" if metrics else "quota_no_receipt"
+        return Observation(RESPONDS if fresh else UNCHECKED, call, outcome, metrics, "recorded_receipt")
 
     def fleet(self, deadline, reader=None, *, owner=None):
         location = None
@@ -816,6 +902,10 @@ class LinkProbes:
             "family_catalogues": lambda: self.family_catalogues(deadline),
             "mail": self.mail,
             "mail_reader": lambda: self.fleet(deadline, arg),
+            "gateway_reader": lambda: self.gateway_reader(arg, deadline),
+            "mail_caller": self.mail_caller,
+            "dojo_count": lambda: self.dojo_count(deadline),
+            "quota_measurement": self.quota_measurement,
             "mail_library": lambda: self.mail_library(deadline),
             "fleet": lambda: self.fleet(deadline, owner=arg or None),
             "events": self.events,

@@ -39,6 +39,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import quote
@@ -56,6 +57,8 @@ HELPER = Path(__file__).resolve().parent.parent / "mail_helper.py"        # the 
 HELPER_TIMEOUT_S = 180
 STATUS_TTL_S = 300.0
 PRIORITIES = ("attention", "normal", "low")
+LINK_READERS = frozenset({"kafka", "people"})
+
 DEFAULT_CONFIG: dict[str, Any] = {"enabled": False, "interval_min": 10, "retention_days": 60, "owner": "", "max_per_pass": 300,
                                   "since_days": 14}
 _SHA = re.compile(r"^[0-9a-f]{64}$")
@@ -651,6 +654,8 @@ class MailGate(Facet):
         self._stop: Optional[threading.Event] = None
         self.next_pass_ts: Optional[float] = None
         self.running = False
+        self.link_readers: dict[str, tuple[float, bool, Optional[int]]] = {}
+        self.last_caller_at: Optional[float] = None
 
     # -- store / config ------------------------------------------------------
     @property
@@ -659,6 +664,28 @@ class MailGate(Facet):
             if self._store is None:
                 self._store = MailStore(os.path.join(self.data_dir, "mail.db"), clock=self.clock)
             return self._store
+
+    def _existing_mail_row(self, sql: str, args: tuple):
+        """Read an open store or a checkpointed database without creating WAL sidecars."""
+        with self._store_lock:
+            if self._store is not None:
+                with self._store._lock:
+                    return self._store._db.execute(sql, args).fetchone()
+            path = Path(self.data_dir) / "mail.db"
+            wal = path.with_name("mail.db-wal")
+            if not path.is_file() or (wal.is_file() and wal.stat().st_size):
+                return None  # the ordinary gateway will recover an uncheckpointed store
+            uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
+            with closing(sqlite3.connect(uri, uri=True)) as db:
+                return db.execute(sql, args).fetchone()
+
+    def last_successful_pass(self) -> Optional[float]:
+        row = self._existing_mail_row("SELECT value FROM state WHERE key = ?", ("last_ok_ts",))
+        return _loads(row[0], None) if row else None
+
+    def last_reader_claim(self, reader: str) -> Optional[float]:
+        row = self._existing_mail_row("SELECT MAX(ts) FROM claims WHERE app = ?", (reader,))
+        return row[0] if row else None
 
     def config(self) -> dict[str, Any]:
         cfg = dict(DEFAULT_CONFIG)
@@ -1139,6 +1166,8 @@ class MailGate(Facet):
         if sphere_q in ("all", "*"):
             sphere_q = ""
         if sphere_q and allowed is not None and sphere_q not in allowed:
+            if p == "/api/mail/messages" and who in LINK_READERS:
+                self.link_readers[who] = (self.clock(), False, None)
             return _bad(403, f"app '{who}' is not allowed in sphere '{sphere_q}'")
         spheres = [sphere_q] if sphere_q else (sorted(allowed) if allowed is not None else None)
 
@@ -1162,13 +1191,20 @@ class MailGate(Facet):
             kind = (req.q("kind") or ("any" if priv else "mail")).lower()
             order = (req.q("order") or ("asc" if has_since else "desc")).lower()
             fields = parse_fields(req.q("fields") or "")
-            rows = self.store.query(kind=None if kind == "any" else kind, spheres=spheres, source=req.q("source") or None,
-                                    folder=req.q("folder") or None, since_id=req.q_int("since_id") if has_since else None,
-                                    q=req.q("q") or "", days=float(days) if days else None, interest_app=interest_app,
-                                    unclaimed=req.q_bool("unclaimed"), hide_dismissed=req.q_bool("hide_dismissed"),
-                                    limit=req.q_int("limit", 50), order="asc" if order == "asc" else "desc", with_html="html" in fields)
-            full = req.q_bool("full")
-            views = [self._view(r, full=full, category=req.q_bool("unclaimed"), fields=fields) for r in rows]
+            try:
+                rows = self.store.query(kind=None if kind == "any" else kind, spheres=spheres, source=req.q("source") or None,
+                                        folder=req.q("folder") or None, since_id=req.q_int("since_id") if has_since else None,
+                                        q=req.q("q") or "", days=float(days) if days else None, interest_app=interest_app,
+                                        unclaimed=req.q_bool("unclaimed"), hide_dismissed=req.q_bool("hide_dismissed"),
+                                        limit=req.q_int("limit", 50), order="asc" if order == "asc" else "desc", with_html="html" in fields)
+                full = req.q_bool("full")
+                views = [self._view(r, full=full, category=req.q_bool("unclaimed"), fields=fields) for r in rows]
+            except Exception:
+                if who in LINK_READERS:
+                    self.link_readers[who] = (self.clock(), False, None)
+                raise
+            if who in LINK_READERS:
+                self.link_readers[who] = (self.clock(), True, len(views))
             last = max([v["id"] for v in views], default=req.q_int("since_id"))
             return {"ok": True, "count": len(views), "last_id": last, "messages": views}
         m = re.fullmatch(r"/api/mail/messages/(\d+)", p)

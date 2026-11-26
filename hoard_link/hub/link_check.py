@@ -54,6 +54,8 @@ REASONS = {
     "shared_service_catalogue": ("El catálogo de Funes servido por Talos contiene las herramientas de transcripción.",
                                  "The Funes catalogue served by Talos contains the transcription tools."),
     "mail_fresh": ("La última pasada se completó dentro del intervalo.", "The last successful pass is within its interval."),
+    "mail_on_demand": ("Se registró una pasada correcta. La pasarela funciona bajo demanda.",
+                       "A successful pass is recorded. The gateway runs on demand."),
     "mail_stale": ("La última pasada correcta supera el intervalo configurado.", "The last successful pass is older than the configured interval."),
     "no_event_receipt": ("El bus aún no tiene eventos de ese origen.", "The bus has no events from that source."),
     "no_foreman_heartbeat": ("Falta un latido explícito del capataz.", "An explicit foreman heartbeat is unavailable."),
@@ -73,6 +75,22 @@ REASONS = {
     "fleet_no_receipt": ("Falta un acuse registrado del lector o vigilante.", "No recorded reader or watcher receipt is available."),
     "brain_no_receipt": ("Falta un acuse del puente al Cerebro.", "No Brain bridge receipt is available."),
     "mail_no_pass": ("Falta una pasada de correo registrada.", "No successful mail pass is recorded."),
+    "mail_since_start": ("Sin pasada desde el arranque (hace {uptime_s} s).", "No pass since startup ({uptime_s} s ago)."),
+    "mail_first_pass_overdue": ("La primera pasada supera el intervalo desde el arranque.",
+                                "The first pass is overdue since startup."),
+    "mail_reader_scan": ("La pasarela completó la última lectura del lector.", "The gateway completed the reader's latest scan."),
+    "mail_reader_scan_failed": ("Falló la última lectura del lector en la pasarela.", "The reader's latest gateway scan failed."),
+    "mail_reader_claim": ("La pasarela guarda un acuse del lector.", "The gateway has a recorded reader receipt."),
+    "mail_caller_used": ("El Hub registró una identificación correcta del llamante.", "The Hub recorded successful caller identification."),
+    "mail_caller_declared": ("Hay una declaración de llamantes. Falta registrar su uso desde el arranque.",
+                             "A caller declaration exists. No use is recorded since startup."),
+    "mail_caller_unknown": ("Faltan la declaración y el acuse del llamante.", "The caller declaration and usage receipt are unavailable."),
+    "dojo_exam_count": ("Recuento de exámenes de la última lista del Dojo.", "Exam count from the latest Dojo list."),
+    "dojo_no_receipt": ("Falta un recuento del Dojo de esta instalación.", "No Dojo count is recorded for this installation."),
+    "quota_measured": ("Hay una medida de cuota vigente.", "A current quota measurement is available."),
+    "quota_stale_or_unknown": ("Las medidas de cuota registradas están caducadas o son desconocidas.",
+                               "Recorded quota measurements are stale or unknown."),
+    "quota_no_receipt": ("Falta una medida de cuota registrada.", "No quota measurement is recorded."),
     "deployment_unknown": ("Falta el registro de despliegue o la revisión local.", "A deployment record or local revision is unavailable."),
     "purchase_matching": ("El cotejo de compras requiere datos de compras o una acción.", "Matching purchases requires purchase data or an action."),
     "opens_home": ("La operación de apertura arranca Home Hoard.", "The open operation starts Home Hoard."),
@@ -219,6 +237,8 @@ class LinkCheckFacet(Facet):
             reason = REASONS.get(outcome)
             if reason:
                 detail = reason[lang == "en"]
+                if outcome == "mail_since_start":
+                    detail = detail.format(uptime_s=evidence["metrics"]["uptime_s"])
                 evidence["detail"] = detail
         return result
 
@@ -261,7 +281,7 @@ class LinkCheckFacet(Facet):
             checked_at = _now()
             if observation.state == FAILED:
                 failures.setdefault(link.id, checked_at)
-            elif observation.state in (RESPONDS, STOPPED):
+            elif observation.state in (RESPONDS, STOPPED) and observation.outcome != "mail_since_start":
                 failures.pop(link.id, None)
             metrics = {
                 key: value for key, value in (observation.metrics or {}).items()

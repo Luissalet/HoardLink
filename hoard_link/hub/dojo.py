@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -77,7 +78,12 @@ def call(hub, args, agent):
     opener = build_opener(ProxyHandler({}), _NoRedirect())
     try:
         with opener.open(request, timeout=45) as response:
-            return json.load(response)
+            result = json.load(response)
+        if operation == "list" and isinstance(result, dict) and result.get("ok", True) is True:
+            exams = result.get("exams")
+            if isinstance(exams, list):
+                hub.dojo_list_receipt = (base, time.time(), len(exams))
+        return result
     except HTTPError as exc:
         with exc:
             try:

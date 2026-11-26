@@ -241,8 +241,11 @@ class _HubHandler(BaseHTTPRequestHandler):
         who = self.hub.token_owner(token) if token else None
         if not who or (who == "hub" and token != self.hub.token):
             return self._json({"ok": False, "error": "family bearer token required"}, 401)
+        gate = self.hub.facet("mailgate")
         raw_account = self.headers.get("X-Hoard-Mail-Account")
         if raw_account is None:
+            if gate is not None:
+                gate.last_caller_at = gate.clock()
             return self._json({"ok": True, "app": who, "apps": self._mail_apps()})
         try:
             account = json.loads(raw_account)
@@ -251,7 +254,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 raise ValueError("invalid account descriptor")
         except ValueError:
             return self._json({"ok": False, "error": "invalid account descriptor"}, 400)
-        gate = self.hub.facet("mailgate")
+        if gate is not None:
+            gate.last_caller_at = gate.clock()
         allowed = who == "hub" or (gate is not None and gate.helper_account_allowed(who, *account))
         return self._json({"ok": True, "app": who, "mail_allowed": allowed})
 

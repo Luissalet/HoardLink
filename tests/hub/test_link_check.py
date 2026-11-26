@@ -13,7 +13,9 @@ import webbrowser
 
 import pytest
 
-from hoard_link.hub import agent_routes, facets, link_check, link_probes, mcp, tools
+from hoard_link.hub import agent_routes, dojo, facets, link_check, link_probes, mcp, tools
+from hoard_link.hub.mailgate import MailGate, MailStore
+from hoard_link.hub.server import _HubHandler
 from hoard_link.hub.link_inventory import COMPATIBILITY_LINKS, INVENTORY, LINKS, SERVICE_LINKS
 from hoard_link.hub.link_probes import FAILED, RESPONDS, STOPPED, UNCHECKED, LinkProbes, Observation
 from hoard_link.hub.registry import App
@@ -317,7 +319,8 @@ def test_run_is_private_passive_and_writes_only_its_history(hub, monkeypatch):
                                 list=forbidden, run=forbidden)
     hub.facet_map.update(
         mailgate=SimpleNamespace(config=lambda: {"enabled": True, "interval_min": 10}, clock=lambda: 400.0,
-                                 _store=SimpleNamespace(get_state=lambda key: {"last_ok_ts": 200.0}[key]),
+                                 last_successful_pass=lambda: 200.0, last_reader_claim=lambda reader: None,
+                                 faustus_dir=lambda: None,
                                  helper_status=reject("helper_status"), mail_accounts=reject("mail_accounts"),
                                  send_mail=reject("send_mail"), run_pass=reject("mail_pass")),
         mcp_relay=SimpleNamespace(describe=relay_description, list_apps=reject("mcp_list_all"), handle=reject("mcp_session")),
@@ -537,7 +540,7 @@ def test_facet_get_and_normal_agent_mcp_contract_without_hub_listener(hub, monke
 
 def test_mail_gateway_uses_only_last_success_and_its_interval(hub):
     gate = SimpleNamespace(config=lambda: {"enabled": True, "interval_min": 5},
-                           _store=SimpleNamespace(get_state=lambda key: {"last_ok_ts": 200}[key]),
+                           last_successful_pass=lambda: 200, first_delay_s=20,
                            clock=lambda: 501, helper_status=forbidden, mail_accounts=forbidden, run_pass=forbidden)
     hub.facet_map["mailgate"] = gate
     probes = LinkProbes(hub, listeners=forbidden, request=forbidden)
@@ -546,8 +549,11 @@ def test_mail_gateway_uses_only_last_success_and_its_interval(hub):
     assert stale.metrics == {"age_s": 301, "interval_s": 300, "last_success_at": 200}
     gate.clock = lambda: 500
     assert probes.mail().state == RESPONDS
-    gate._store = None
-    assert probes.mail().state == UNCHECKED
+    gate.last_successful_pass = lambda: None
+    hub.started_at = 480
+    assert probes.mail().outcome == "mail_since_start"
+    gate.clock = lambda: 801
+    assert probes.mail().outcome == "mail_first_pass_overdue"
 
 
 def test_deployment_compares_saved_commits_without_git_or_ssh(hub, tmp_path):
@@ -782,6 +788,140 @@ def test_literal_local_manual_and_not_started_rows_are_distinct(hub, monkeypatch
     assert es["1.7"]["evidence"]["outcome"] == "no_listener"
     assert es["1.7"]["status"] == "parado: sin iniciar"
     assert en["1.7"]["status"] == "stopped: not started"
+
+
+def test_literal_mail_rows_see_previous_process_receipt_twenty_seconds_after_restart(hub, monkeypatch):
+    data = Path(hub.config.data_dir)
+    data.mkdir()
+    (data / "mail.json").write_text('{"enabled":true,"interval_min":10}', encoding="utf-8")
+    first_process = MailStore(str(data / "mail.db"))
+    first_process.set_state("last_ok_ts", 995.0)
+    first_process.set_state("accounts", [PRIVATE])
+    first_process.close()
+    hub.started_at = 1000
+    gate = MailGate(hub, clock=lambda: 1020)
+    gate.call_helper = forbidden
+    hub.facet_map["mailgate"] = gate
+    saved = (data / "mail.db").read_bytes()
+    ids = {"2.1", "2.13", "4.5.mail"}
+    recovered, _ = run_inventory_rows(hub, monkeypatch, ids)
+    for row in recovered.values():
+        assert row["state"] == RESPONDS
+        assert row["evidence"]["outcome"] == "mail_fresh"
+        assert row["evidence"]["metrics"]["last_success_at"] == 995
+        assert row["evidence"]["metrics"]["age_s"] == 25
+    assert gate._store is None and (data / "mail.db").read_bytes() == saved
+    assert not (data / "mail.db-wal").exists() and not (data / "mail.db-shm").exists()
+    assert PRIVATE not in repr(recovered)
+
+    (data / "mail.db").unlink()
+    es, en = run_inventory_rows(hub, monkeypatch, ids)
+    for identity in ids:
+        assert es[identity]["state"] == RESPONDS
+        assert es[identity]["evidence"]["scope"] == "gateway_state"
+        assert es[identity]["evidence"]["detail"] == "Sin pasada desde el arranque (hace 20 s)."
+        assert en[identity]["evidence"]["detail"] == "No pass since startup (20 s ago)."
+        assert "last_success_at" not in es[identity]["evidence"]["metrics"]
+    assert gate._store is None and not (data / "mail.db").exists()
+
+
+def test_literal_reader_caller_dojo_and_quota_rows_read_only_operational_metadata(hub, tmp_path, monkeypatch):
+    hub.token = "fixture-hub-token"
+    hub.token_owner = {"fixture-helper-token": "kafka"}.get
+    hub.config.person_profile = {"id": "fixture-operator"}
+    hub.facet_map["spheres"] = SimpleNamespace(app_allowed=lambda sphere, who: sphere == "personal",
+                                               list=lambda: [{"id": "personal"}])
+    gate = MailGate(hub, clock=lambda: 1020)
+    installation = tmp_path / "faustus" / "data"
+    installation.mkdir()
+    (installation / "mail_installation.json").write_text(PRIVATE, encoding="utf-8")
+    (installation / "mail_callers.json").write_text(PRIVATE, encoding="utf-8")
+    gate.faustus_dir = lambda: installation.parent
+    gate.call_helper = forbidden
+    hub.facet_map["mailgate"] = gate
+
+    try:
+        gate.store.insert_message(subject=PRIVATE, text=PRIVATE, message_id="fixture-only",
+                                  interests=["kafka", "people"])
+        for reader in ("kafka", "people"):
+            request = facets.Request("GET", "/api/mail/messages", {}, {}, lambda: reader, forbidden)
+            assert gate.get(request)["count"] == 1
+        probes = LinkProbes(hub, request=forbidden, listeners=forbidden)
+        people = probes.gateway_reader("people", now_deadline())
+        assert people.state == RESPONDS and people.metrics["last_scan_at"] == 1020
+        denied = facets.Request("GET", "/api/mail/messages", {"sphere": ["work"]}, {}, lambda: "people", forbidden)
+        assert gate.get(denied)["status"] == 403
+
+        handler = _HubHandler.__new__(_HubHandler)
+        handler.hub = hub
+        handler._json = lambda payload, status=200: status
+        handler.headers = {"Authorization": "Bearer rejected"}
+        assert handler._mail_helper_caller() == 401 and gate.last_caller_at is None
+        handler.headers = {"Authorization": "Bearer fixture-helper-token"}
+        assert handler._mail_helper_caller() == 200 and gate.last_caller_at == 1020
+
+        class Response(io.StringIO):
+            pass
+
+        class Opener:
+            def open(self, request, timeout):
+                assert request.full_url == "http://127.0.0.1:7000/api/dojo"
+                assert request.get_method() == "GET"
+                return Response(json.dumps({"exams": [{"title": PRIVATE}, {"title": PRIVATE}]}))
+
+        monkeypatch.setattr(dojo.where, "reachable", lambda urls: urls[0])
+        monkeypatch.setattr(dojo, "build_opener", lambda *_: Opener())
+        assert len(dojo.call(hub, {"operation": "list"}, "fixture-agent")["exams"]) == 2
+        monkeypatch.setattr(dojo, "build_opener", forbidden)
+
+        with closing_quota_db(hub) as db:
+            db.executemany("INSERT INTO agora_usage_pools VALUES (?, ?, ?, ?, ?)", [
+                ("codex", 1019, PRIVATE, PRIVATE, json.dumps([{"label": PRIVATE, "measurement": "measured",
+                                                               "remaining_percent": 87}])),
+                ("claude", 1018, PRIVATE, PRIVATE, json.dumps([{"label": PRIVATE, "measurement": "unknown"}])),
+                ("cursor", 950, PRIVATE, PRIVATE, json.dumps([{"measurement": "measured",
+                                                              "reset_at": "1970-01-01T00:16:40+00:00"}])),
+            ])
+            db.set_authorizer(quota_metadata_only)
+            monkeypatch.setattr(link_probes, "_listener_ports", lambda: {7000})
+            monkeypatch.setattr(link_probes, "_request_app", forbidden)
+            rows, _ = run_inventory_rows(hub, monkeypatch, {"2.2", "2.6", "2.10", "6.5", "7.3"})
+            assert rows["2.2"]["state"] == RESPONDS
+            assert rows["2.2"]["evidence"]["metrics"] == {"last_scan_at": 1020, "messages_returned": 1}
+            assert rows["2.6"]["state"] == FAILED and rows["2.6"]["evidence"]["outcome"] == "mail_reader_scan_failed"
+            assert rows["2.10"]["evidence"]["metrics"] == {
+                "installation_exists": True, "registry_exists": True, "last_used_at": 1020,
+            }
+            assert rows["6.5"]["evidence"]["metrics"]["exams"] == 2
+            quota = rows["7.3"]["evidence"]
+            assert quota["outcome"] == "quota_measured"
+            assert quota["metrics"]["codex_fresh"] and quota["metrics"]["codex_measured_at"] == 1019
+            assert not quota["metrics"]["claude_fresh"] and quota["metrics"]["claude_measured_at"] is None
+            assert not quota["metrics"]["cursor_fresh"] and quota["metrics"]["cursor_measured_at"] == 950
+            assert PRIVATE not in json.dumps(rows)
+    finally:
+        gate.close()
+
+
+def closing_quota_db(hub):
+    from contextlib import closing
+
+    db = sqlite3.connect(":memory:", check_same_thread=False)
+    db.row_factory = sqlite3.Row
+    db.execute("CREATE TABLE agora_usage_pools(provider_id, reported_at, pool_id, source, windows_json)")
+    agora = SimpleNamespace(clock=lambda: 1020.0, db=SimpleNamespace(query=lambda *args: db.execute(*args).fetchall()),
+                            _USAGE_PROVIDERS={"codex", "claude", "cursor", "faustus"}, _USAGE_STALE_S=60)
+    hub.facet_map["agora"] = SimpleNamespace(agora=agora)
+    return closing(db)
+
+
+def quota_metadata_only(action, _table, key, *_):
+    if action == sqlite3.SQLITE_READ and key in {"pool_id", "source"}:
+        return sqlite3.SQLITE_DENY
+    if action in {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION, sqlite3.SQLITE_UPDATE}:
+        # SQLite's json_each virtual table calls authorizer for internal schema setup.
+        return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
 
 
 def test_literal_funes_catalogue_wins_over_foreign_lifecycle_state(hub, monkeypatch):
