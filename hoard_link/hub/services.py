@@ -128,7 +128,7 @@ class ServicesFacet(Facet):
         return [{"name": "hub_cohesion", "description": "Audit family ownership, capability overlaps, shared-code drift and workflow prerequisites without starting apps or models.",
                  "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean", "default": False}}, "additionalProperties": False},
                  "annotations": {"readOnlyHint": True}},
-                {"name": "hub_services_status", "description": "Discover the owners of web, downloads, transcription, voice, documents and embeddings. Checks their tool catalogues without loading models.",
+                {"name": "hub_services_status", "description": "Discover the owners of web, downloads, transcription, dictation, voice, documents and embeddings. Checks their tool catalogues without loading models.",
                  "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean", "default": False}}, "additionalProperties": False},
                  "annotations": {"readOnlyHint": True}},
                 {"name": "hub_media_import", "description": "Download audio, transcribe it with Funes and request indexing of a transcript folder in Borges. Opt-in: changes the selected folder and library. Returns job_id; follow hub_media_import_status. Existing downloads use download_id instead of url.",
