@@ -1,11 +1,12 @@
 """Manage explicitly isolated, headless app processes owned by this Hub."""
 from __future__ import annotations
 
-import json
 import os
 import re
 import secrets
+import shutil
 import socket
+import sys
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -14,6 +15,8 @@ from threading import RLock
 from .. import proc
 from ..atomic import write_json_atomic
 from . import contract
+from .config import _configured_paths
+from .isolation import inside, passive_error
 from .registry import MANIFEST_NAME, App, _writer_source, read_manifest
 
 # These shipped entry points accept the shared service flags. Older manifests
@@ -184,32 +187,12 @@ def prepare_writer_profile(app):
 
 
 def isolated_catalog(apps, config):
-    """Give every launchable app its own data, token, and stable loopback ports."""
-    rows = []
-    assigned = {config.port}
-    for app in apps:
-        launcher = _headless_launcher(app) if re.fullmatch(r"[a-zA-Z0-9_-]+", app.id) else None
-        if not launcher:
-            reason = _isolation_reason(app)
-            rows.append(replace(app, url="", data_dir="", token_file="", runtime_url_file="",
-                                launch=None, launchable=False, launch_reason=reason))
-            continue
-        folder = Path(config.data_dir) / "apps" / app.id
-        marker = folder / "ports.json"
-        count = 3 if launcher == "writer" else 1
-        try:
-            ports = json.loads(marker.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            ports = []
-        if (not isinstance(ports, list) or len(ports) != count
-                or any(type(port) is not int or not 1024 <= port <= 65535 for port in ports)
-                or len(set(ports)) != count or assigned.intersection(ports)):
-            ports = _free_ports(count, exclude=assigned)
-            folder.mkdir(parents=True, exist_ok=True)
-            write_json_atomic(marker, ports)
-        assigned.update(ports)
-        rows.append(_headless_app(app, folder, ports, config, launcher))
-    return rows
+    """Keep fixture metadata while omitting installed URLs, tokens and launch commands."""
+    root = config.validate_isolation()
+    reason = "Starts only as an explicit fixture. Se inicia como prueba explícita."
+    return [replace(app, url="", data_dir="", token_file="", runtime_url_file="", launch=None,
+                    icon_path=app.icon_path if app.icon_path and inside(app.icon_path, root) else "",
+                    launchable=False, launch_reason=_unsupported_reason(app) or reason) for app in apps]
 
 
 class IsolatedApps:
@@ -218,6 +201,46 @@ class IsolatedApps:
         self.hub = instances.hub
         self._lock = RLock()
         self._rows = {}
+        self._jobs = getattr(self.hub, "fixture_jobs", None)
+        self._closed = False
+
+    def _fixture_launch(self, spec, folder, log):
+        root = self.hub.config.validate_isolation()
+        cwd = Path(spec.cwd).resolve()
+        executable = cwd / spec.executable
+        if not executable.is_file() and (resolved := shutil.which(spec.executable)):
+            executable = Path(resolved)
+        executable = executable.resolve()
+        interpreter = Path(sys.executable).resolve()
+        python_executables = {interpreter}
+        if os.name == "nt" and interpreter.name.lower() in {"python.exe", "pythonw.exe"}:
+            python_executables.update(interpreter.with_name(name).resolve() for name in ("python.exe", "pythonw.exe"))
+        if (not inside(cwd, root) or not executable.is_file()
+                or (executable not in python_executables and not inside(executable, root))
+                or (os.name == "nt" and executable.suffix.lower() != ".exe")):
+            raise OSError("Use a direct fixture executable and working directory inside the test folder. "
+                          "Usa un ejecutable directo y un directorio de trabajo dentro de la prueba.")
+        for arg in spec.argv:
+            value = Path(arg.split("=", 1)[-1])
+            if (value.is_absolute() or ".." in value.parts) and not inside(cwd / value, root):
+                raise OSError("A fixture argument refers outside the test folder. "
+                              "Un argumento de la prueba apunta fuera de la carpeta temporal.")
+        for name, value in spec.env.items():
+            for _, path in _configured_paths(value, name.lower()):
+                if not inside(cwd / path, root):
+                    raise OSError(f"Fixture setting {name} points outside the test folder. "
+                                  f"La variable {name} apunta fuera de la carpeta temporal.")
+        env = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "WINDIR", "LANG") if key in os.environ}
+        env.update({key: value for key, value in spec.env.items() if value is not None})
+        env.update({key: str(folder) for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TMPDIR", "TEMP", "TMP")})
+        env["FAUSTUS_DIR"] = self.hub.config.faustus_dir or str(folder / "faustus")
+        if self._jobs is None:
+            if os.name != "nt":
+                raise OSError("The fixture requires an isolated Linux service. La prueba necesita una unidad aislada.")
+            from .windows_job import WindowsJobs
+
+            self._jobs = WindowsJobs()
+        return self._jobs.launch([str(executable), *spec.argv], cwd=str(cwd), env=env, log=log)
 
     def _launch(self, ident, row):
         spec = row.app.launch
@@ -225,17 +248,19 @@ class IsolatedApps:
         app = row.app
         if app.id == "writer":
             prepare_writer_profile(app)
-        env = proc.build_env(**spec.env)
         accepted = self.instances.add(app.id, token_file=app.token_file, label=f"Isolated {ident}")
         if not accepted["ok"]:
             return accepted
         try:
             with (folder / "process.log").open("ab") as log:
-                row.process = proc.popen([spec.executable, *spec.argv], cwd=spec.cwd, env=env,
-                                         stdout=log, stderr=log)
-        except OSError as exc:
+                if self.hub.config.isolated:
+                    row.process = self._fixture_launch(spec, folder, log)
+                else:
+                    row.process = proc.popen([spec.executable, *spec.argv], cwd=spec.cwd, env=proc.build_env(**spec.env),
+                                             stdout=log, stderr=log)
+        except (OSError, ValueError) as exc:
             self.instances.remove(app=app.id, token_file=app.token_file)
-            return _failure(f"Could not start the isolated process: {exc}", 409)
+            return _failure(f"Could not start the isolated process. No se pudo arrancar el proceso aislado: {exc}", 409)
         self._rows[ident] = row
         return {"ok": True, "instance": self._describe(ident, row),
                 "undo": {"action": "stop", "instance_id": ident}}
@@ -251,13 +276,21 @@ class IsolatedApps:
         if not isinstance(worktree, str) or not worktree:
             return _failure("An isolated app worktree is required")
         root = Path(worktree).resolve()
-        if root == Path(registered.folder).resolve() or not (root / ".git").is_file():
+        registered_root = Path(registered.folder).resolve()
+        if self.hub.config.isolated:
+            if (root != registered_root or not inside(root, self.hub.config.validate_isolation())
+                    or not inside(root / MANIFEST_NAME, root)):
+                return _failure("Use a registered fixture inside the test folder. "
+                                "Usa una app de prueba registrada en la carpeta temporal.")
+        elif root == registered_root or not (root / ".git").is_file():
             return _failure("Use a linked worktree separate from the registered installation")
         launcher = read_manifest(root / MANIFEST_NAME, faustus_dir=self.hub.config.faustus_dir)
         if not launcher or launcher.id != app_id or not launcher.launch:
             return _failure("The worktree has no launch manifest for this app")
         ident = secrets.token_hex(12)
         folder = Path(self.hub.config.data_dir).resolve() / "isolated-apps" / ident
+        if self.hub.config.isolated and not inside(folder, self.hub.config.validate_isolation()):
+            return _failure("Fixture data must stay inside the test folder. Los datos deben quedar en la carpeta de prueba.")
         kind = _headless_launcher(launcher)
         if not kind:
             return _failure(_isolation_reason(launcher), 409)
@@ -266,18 +299,20 @@ class IsolatedApps:
         app = _headless_app(launcher, folder, ports, self.hub.config, kind)
         return self._launch(ident, RunningInstance(app, folder, ports))
 
-    @staticmethod
-    def _describe(ident, row):
+    def _describe(self, ident, row):
+        running = row.process is not None and (row.process.running() if self.hub.config.isolated else row.process.poll() is None)
         return {"id": ident, "app": row.app.id, "data_dir": str(row.folder), "url": row.app.url,
                 "log": str(row.folder / "process.log"), "renderer_port": row.ports[1] if len(row.ports) > 1 else None,
                 "media_port": row.ports[2] if len(row.ports) > 1 else None,
-                "state": "running" if row.process and row.process.poll() is None else "stopped"}
+                "state": "running" if running else "stopped"}
 
     def manage(self, args):
         action = args.get("action")
         if action not in ("start", "status", "list", "call", "stop", "resume"):
             return _failure("Choose start, status, list, call, stop or resume")
         with self._lock:
+            if self._closed or (self.hub.config.isolated and args.get("_automatic")):
+                return passive_error()
             if action == "start":
                 return self._new(args)
             if action == "list":
@@ -291,7 +326,13 @@ class IsolatedApps:
                 return {"ok": True, "instance": description}
             if action == "stop":
                 active = description["state"] == "running"
-                if active and not proc.kill_tree(row.process):
+                if self.hub.config.isolated and row.process is not None:
+                    try:
+                        self._jobs.stop(row.process)
+                    except OSError as exc:
+                        return _failure(f"Could not stop the fixture. No se pudo parar la prueba: {exc}", 409)
+                    row.process = None
+                elif active and not proc.kill_tree(row.process):
                     return _failure("The isolated process did not stop", 409)
                 self.instances.remove(app=row.app.id, token_file=row.app.token_file)
                 return {"ok": True, "instance": self._describe(ident, row),
@@ -299,6 +340,9 @@ class IsolatedApps:
             if action == "resume":
                 if description["state"] == "running":
                     return {"ok": True, "instance": description}
+                if self.hub.config.isolated and row.process is not None:
+                    self._jobs.stop(row.process)
+                    row.process = None
                 return self._launch(ident, row)
             if description["state"] != "running":
                 return _failure("The isolated process is not running", 409)
@@ -309,5 +353,13 @@ class IsolatedApps:
                                  agent=args.get("agent") or "hub", timeout=45)
 
     def close(self):
-        for ident in list(self._rows):
-            self.manage({"action": "stop", "instance_id": ident})
+        with self._lock:
+            if self._jobs is not None:
+                self._jobs.close()
+                for row in self._rows.values():
+                    self.instances.remove(app=row.app.id, token_file=row.app.token_file)
+                    row.process = None
+            else:
+                for ident in list(self._rows):
+                    self.manage({"action": "stop", "instance_id": ident})
+            self._closed = True

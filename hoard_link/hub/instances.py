@@ -30,6 +30,7 @@ from typing import Any, Callable, Optional
 from .contract import read_token
 from .facets import Facet, Request
 from .isolated_apps import IsolatedApps
+from .isolation import inside
 
 FILE_NAME = "instance-tokens.json"
 TOKEN_NAME = "mcp-token"
@@ -58,7 +59,11 @@ class InstancesFacet(Facet):
         except (OSError, ValueError):
             return []
         rows = raw.get("instances") if isinstance(raw, dict) else raw
-        return [r for r in (rows or []) if isinstance(r, dict) and r.get("app") and r.get("token_file")]
+        result = [r for r in (rows or []) if isinstance(r, dict) and r.get("app") and r.get("token_file")]
+        if getattr(self.hub.config, "isolated", False):
+            root = self.hub.config.validate_isolation()
+            result = [r for r in result if inside(r["token_file"], root)]
+        return result
 
     def _save(self, rows: list[dict[str, Any]]) -> None:
         tmp = self.path + ".tmp"
@@ -94,6 +99,8 @@ class InstancesFacet(Facet):
         path = self._token_file(token_file, data_dir)
         if not path:
             return {"ok": False, "error": "data_dir or token_file is required"}
+        if getattr(self.hub.config, "isolated", False) and not inside(path, self.hub.config.validate_isolation()):
+            return {"ok": False, "status": 409, "error": "Use a test token file. Usa un fichero de token de prueba."}
         registered = self.hub.get(app_id).token_file
         if registered and os.path.normcase(os.path.abspath(registered)) == os.path.normcase(path):
             return {"ok": True, "instance": {"app": app_id, "token_file": path}, "note": "this is the app's own token file"}
@@ -160,7 +167,8 @@ class InstancesFacet(Facet):
                  "token_file": {"type": "string", "description": "Or the token file itself."}}
         return [
             {"name": "hub_isolated_app",
-             "description": "Start, call or stop an isolated app profile / inicia, llama o para un perfil aislado.",
+             "description": "Start, call or stop an isolated app profile. An isolated Hub only starts registered test fixtures. "
+                            "Inicia, llama o para un perfil aislado. En un Hub aislado se arrancan apps de prueba registradas.",
              "inputSchema": {"type": "object", "required": ["action"], "properties": {
                  "action": {"enum": ["start", "status", "list", "call", "stop", "resume"]},
                  "app": {"type": "string"}, "worktree": {"type": "string"}, "instance_id": {"type": "string"},

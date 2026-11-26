@@ -483,6 +483,7 @@ def scan(
     exclude_ids: Iterable[str] = (),
     launch_overrides: Optional[dict[str, Any]] = None,
     include_mcp_only: bool = False,
+    fixture_root: Optional[Path] = None,
 ) -> list[App]:
     """Every ``<root>/*/faustus-plugin.json`` (one level deep) plus any root
     that is itself an app folder, sorted by name. A duplicate ``id`` keeps
@@ -510,6 +511,8 @@ def scan(
                 if os.path.isfile(p):
                     candidates.append(p)
         for path in candidates:
+            if fixture_root is not None and not Path(path).resolve().is_relative_to(fixture_root):
+                continue
             app = read_manifest(path, faustus_dir=faustus_dir, faustus_python=faustus_python, icon_dirs=icon_dirs,include_mcp_only=include_mcp_only)
             if app is None or app.id in excluded:
                 continue
