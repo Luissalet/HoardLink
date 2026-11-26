@@ -475,6 +475,10 @@ def order_undo(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 raise _err("The task's station or repository changed since this write", 409)
         for change in changes.get("rows") or []:
             table, cond = change["table"], change["where"]
+            if table == "agora_pieces" and (previous := change["row"]):
+                current = self.db.one("SELECT id, order_id, status, title FROM agora_pieces WHERE id=?", (previous["id"],))
+                if current and current["title"] != previous["title"]:
+                    order_gate_readiness.validate_title_edit(self, current, _err)
             if table == "agora_order_attempts" and change["row"] and change["row"]["result"] == "running":
                 attempt = change["row"]
                 if self.db.one("SELECT 1 FROM agora_order_attempts WHERE task_id=? AND id<>? "
@@ -1536,6 +1540,8 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         raise _err("keep is a list of {detail, ok, note}")
     with self.db.tx():
         piece = _piece_row(self, a.get("piece_id"))
+        if "title" in a:
+            order_gate_readiness.validate_title_edit(self, piece, _err)
         journal = _Journal(self, agent, "piece_check")
         journal.before("agora_pieces", piece["id"])
         keep = _load(piece["keep"], [])
@@ -1576,10 +1582,8 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         ) if sources not in (None, []) else []
         title = piece["title"]
         if "title" in a:
-            if (piece["status"] not in ("provisional", "checked") or not ok
-                    or not any(mark.get("comparisons") for mark in clean)):
-                raise _err("title requires a passing visual comparison on a piece still being checked. / "
-                           "title requiere un cotejo visual satisfactorio de una pieza aún en comprobación.", 409)
+            if not ok or not any(mark.get("comparisons") for mark in clean):
+                raise _err("title requires a passing visual comparison. / title requiere un cotejo visual satisfactorio.", 409)
             title = _txt(a["title"], 200, "title", required=True)
         cid = self.db.insert("agora_piece_checks", {"piece_id": piece["id"], "space_id": self.space_id, "agent": agent,
                                                     "ok": 1 if ok else 0, "note": note, "keep": _dump(clean),
@@ -1856,6 +1860,8 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                            error_code="piece_changed", piece_id=piece["id"])
         order_row = _order_row(self, gate["order_id"])
         if decision == "keep":
+            for piece in pieces:
+                order_gate_readiness.validate_piece_defects(self, piece, _err)
             agora_order_references.validate_gate_references(self, order_row, pieces, recheck_defects=True)
         journal = _Journal(self, agent, "gate_decide", undo_for_person=True)
         alternatives = []
@@ -2129,13 +2135,13 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_piece_check",
          "description": "Record a piece check (note, ok, keep by ID or text, optional anchor). Use state=reference_defect with an open "
                         "reference_defect_id in each comparison. Disclose the difference in the piece title. "
-                        "Pass title with the visual check to update the same piece. Use resolves_pending with IDs or piece_note. / "
+                        "Pass title with the visual check before opening a gate. Use resolves_pending with IDs or piece_note. / "
                         "Registra una comprobación (note, ok, keep por ID o texto, ancla opcional). Usa state=reference_defect con el reference_defect_id "
                         "abierto en cada cotejo. Declara la diferencia en el título de la pieza. Pasa title con el cotejo "
-                        "para actualizar la misma pieza. Usa resolves_pending con los IDs pendientes o piece_note." + undo,
+                        "antes de abrir la puerta. Usa resolves_pending con los IDs pendientes o piece_note." + undo,
          "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
                                 "title": {"type": "string", "minLength": 1, "maxLength": 200,
-                                          "description": "Title of the piece being visually compared. / Título de la pieza cotejada."},
+                                          "description": "Title of the piece before opening a gate. / Título de la pieza antes de abrir la puerta."},
                                 "ok": {"type": "boolean"},
                                 "resolves_pending": {"type": "array", "maxItems": 60, "items": {
                                     "anyOf": [{"type": "integer", "minimum": 1}, {"const": "piece_note"}]}},

@@ -153,6 +153,7 @@ Defects are required by default, including older records. For a defect outside t
 use the same short, specific defect description in `piece_defect.note`, the piece title and the first line of its note.
 The title puts the limitation where the person can see it when deciding. The gate note can repeat a disclosed defect.
 For a comparison marked `reference_defect`, the gate checks the result's title and the linked defect's current status.
+An open gate fixes each piece's title. Before keeping a piece, the Hub checks its current defects and their declarations again.
 The Hub recognises common Spanish and English phrases for pending work and defects in free-form notes. Record defects
 explicitly so the rule can evaluate them independently of wording.
 

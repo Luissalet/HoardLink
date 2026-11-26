@@ -308,8 +308,62 @@ def test_agent_route_returns_conflicts_and_persists_the_defect_link(studio, refe
         status, result = call("piece_check", **args, title=f"Candidate – reference defect #{defect_id}")
         assert status == 200 and result["piece"]["id"] == piece["id"]
         assert call("gate_open", **gate_args)[0] == 200
+        status, result = call("piece_check", **args, title=f"New title – reference defect #{defect_id}")
+        assert (status, result.get("code")) == (409, "piece_title_in_open_gate")
+        assert result["message_es"] and result["message_en"]
     finally:
         facet.close()
+
+
+@pytest.mark.parametrize("mutation", ["check", "undo"])
+def test_piece_title_stays_fixed_while_gate_is_open(studio, references_with_defect, mutation):
+    _, sheet, model, defect_id, order, _ = references_with_defect
+    caption = "Faint seam on collar"
+    piece = make_piece(studio, order, "candidate-seam", note=caption)
+    studio.piece_defect({"agent": "reviewer", "piece_id": piece["id"], "note": caption, "required": False})
+    compare_detail(studio, piece, sheet)
+    reference_caption = f"reference defect #{defect_id}"
+    title = f"Candidate – {caption} – {reference_caption}"
+    checked = compare_detail(studio, piece, model, state="reference_defect", defect_id=defect_id, title=title)
+    opened = gate(studio, order, piece)["gate"]
+    undo = {"agent": "reviewer", "token": checked["undo"]}
+
+    with pytest.raises(AgoraError) as refused:
+        if mutation == "check":
+            compare_detail(studio, piece, model, state="reference_defect", defect_id=defect_id,
+                           title=f"Candidate – {reference_caption}")
+        else:
+            studio.order_undo(undo)
+    assert refused.value.status == 409
+    assert refused.value.extra["code"] == "piece_title_in_open_gate"
+    assert refused.value.extra["gate_id"] == opened["id"]
+    current = compare_detail(studio, piece, model, state="reference_defect", defect_id=defect_id)["piece"]
+    assert current["title"] == title
+    assert len(current["checks"]) == len(checked["piece"]["checks"]) + 1
+
+    assert studio.gate_decide({"agent": PERSON_ALIAS, "_person": True, "gate_id": opened["id"], "decision": "keep"})["ok"]
+    with pytest.raises(AgoraError) as decided:
+        studio.order_undo(undo)
+    assert decided.value.status == 409 and decided.value.extra["code"] == "piece_title_locked"
+
+
+@pytest.mark.parametrize(("required", "code"), [(False, "piece_undisclosed_defect"), (True, "piece_required_defect")])
+def test_keep_rechecks_defects_reported_after_gate_opens(studio, references_with_defect, required, code):
+    _, sheet, model, defect_id, order, piece = references_with_defect
+    compare_detail(studio, piece, sheet)
+    compare_detail(studio, piece, model, state="reference_defect", defect_id=defect_id,
+                   title=f"Candidate – reference defect #{defect_id}")
+    opened = gate(studio, order, piece)["gate"]
+    report = studio.piece_defect({"agent": "reviewer", "piece_id": piece["id"],
+                                  "note": "Faint seam on collar", "required": required})
+    decision = {"agent": PERSON_ALIAS, "_person": True, "gate_id": opened["id"]}
+    with pytest.raises(AgoraError) as refused:
+        studio.gate_decide({**decision, "decision": "keep"})
+    assert refused.value.status == 409 and refused.value.extra["code"] == code
+    assert refused.value.extra["defect_id"] == report["defect_id"]
+    waiting = studio.orders({})["waiting"]
+    assert len(waiting) == 1 and waiting[0]["id"] == opened["id"] and waiting[0]["decisions"] == []
+    assert studio.gate_decide({**decision, "decision": "cancel"})["ok"]
 
 
 @pytest.mark.parametrize("action", ["close", "replace"])
@@ -342,12 +396,12 @@ def test_reference_defect_expires_and_requires_a_fresh_comparison(studio, refere
         with pytest.raises(AgoraError, match="was replaced") as old:
             compare_detail(studio, piece, model, state="reference_defect", defect_id=defect_id)
         assert old.value.status == 409
-        checked = compare_detail(studio, piece, replacement, title="Candidate")
+        compare_detail(studio, piece, replacement)
     else:
-        checked = compare_detail(studio, piece, model, title="Candidate")
+        compare_detail(studio, piece, model)
     assert outstanding in expired.value.extra["comparisons"]
-    assert checked["piece"]["title"] == "Candidate"
-    assert gate(studio, order, piece)["gate"]["status"] == "open"
+    assert studio.gate_decide({"agent": PERSON_ALIAS, "_person": True, "gate_id": opened["gate"]["id"],
+                               "decision": "keep"})["ok"]
 
 
 def test_job_comparison_uses_registered_revisions_and_views(studio, tmp_path):

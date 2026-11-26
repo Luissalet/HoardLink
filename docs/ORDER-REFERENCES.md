@@ -54,16 +54,18 @@ reference with `hub_agora_piece_defect`. Include its `reference_defect_id` in ea
 
 The pair passes for that detail while the linked defect is open and the reference revision is current. Make the
 difference visible in the result's title with the registered defect description or `reference defect #42` in English
-or `defecto de referencia #42` in Spanish. For an existing piece, pass the optional `title` in the same check to
-update the title and record the mark together. Both are covered by the check's undo token. The comparison still uses
-the order's existing references, including the identity reference. Closing the defect with `hub_agora_defect_close`
+or `defecto de referencia #42` in Spanish. Before opening a gate, pass the optional `title` in the same check to
+update the piece's title and record the mark together. The check's undo token can restore the title while it is
+still editable. An open gate fixes the title and accepts further comparisons without a `title` argument. The
+comparison still uses the order's existing references, including the identity reference. Closing the defect with `hub_agora_defect_close`
 or retaining a replacement revision invalidates the mark and the gate asks for a fresh comparison. If the gate
 was already open, keeping the result also requires a current comparison.
 
 En castellano, usa `state: "reference_defect"` cuando la diferencia observada provenga de un defecto abierto en la
 pieza de referencia. Enlaza su `reference_defect_id` en cada par afectado. Decláralo en el título de la pieza
 cotejada con la descripción registrada o con `defecto de referencia #42`. Puedes actualizar `title` en esa misma
-comprobación. Si se cierra el defecto o se conserva una revisión que sustituye a la referencia, vuelve a cotejar.
+comprobación antes de abrir la puerta. Con la puerta abierta, registra cotejos sin enviar `title`. Si se cierra el
+defecto o se conserva una revisión que sustituye a la referencia, vuelve a cotejar.
 
 `hub_agora_gate_open` returns HTTP 409 with `kept_reference_comparison` when a new visual piece with order details
 lacks a passing comparison with a required visual reference. The error identifies the piece and reference, reports

@@ -97,6 +97,48 @@ def disclose_reference_defect(piece: dict[str, Any], defect: Any, error: Callabl
     return captions - {""}
 
 
+def validate_title_edit(self: Any, piece: dict[str, Any], error: Callable) -> None:
+    """Keep the title stable while it is shown for a decision and after the decision."""
+    pid = piece["id"]
+    gate_id = self.db.scalar(
+        "SELECT g.id FROM agora_gates g JOIN agora_gate_pieces gp ON gp.gate_id=g.id "
+        "WHERE g.order_id=? AND g.status='open' AND gp.piece_id=? ORDER BY g.id LIMIT 1",
+        (piece["order_id"], pid),
+    )
+    if gate_id:
+        _refuse(error, "piece_title_in_open_gate", f"La pieza #{pid} está en la puerta abierta #{gate_id} y su título está fijado.",
+                f"Piece #{pid} is in open gate #{gate_id} and its title is fixed.", piece_id=pid, gate_id=gate_id)
+    if piece["status"] not in ("provisional", "checked"):
+        _refuse(error, "piece_title_locked", f"La pieza #{pid} ya no admite cambios de título.",
+                f"Piece #{pid} is no longer available for a title change.", piece_id=pid)
+
+
+def validate_piece_defects(self: Any, piece: dict[str, Any], error: Callable) -> set[str]:
+    """Check the piece's current defects and return the disclosures that can be repeated in a gate note."""
+    pid = piece["id"]
+    es, en = f"La pieza #{pid}", f"Piece #{pid}"
+    title = _plain(piece["title"])
+    first_line = _plain(piece["note"].partition("\n")[0])
+    disclosed = set()
+    defects = self.db.query(
+        "SELECT id, note, required FROM agora_piece_defects WHERE piece_id=? "
+        "AND (status='open' OR closed_in<>piece_id) ORDER BY id", (pid,),
+    )
+    for defect in defects:
+        did = defect["id"]
+        if defect["required"]:
+            _refuse(error, "piece_required_defect", f"{es} incumple el encargo. Corrige el defecto #{did}.",
+                    f"{en} fails the brief. Fix defect #{did}.", piece_id=pid, defect_id=did)
+        caption = _plain(defect["note"]).rstrip(".!?")
+        if not caption or not (_listed_in(caption, title) and _listed_in(caption, first_line)):
+            _refuse(error, "piece_undisclosed_defect",
+                    f"{es} debe indicar el defecto #{did} en el título y en la primera línea de su nota.",
+                    f"{en} must show defect #{did} in its title and the first line of its note.",
+                    piece_id=pid, defect_id=did)
+        disclosed.add(caption)
+    return disclosed
+
+
 def validate(self: Any, pieces: list[dict[str, Any]], error: Callable) -> set[str]:
     """Run in the opening transaction, before writing a gate or changing an order."""
     disclosed = set()
@@ -122,24 +164,7 @@ def validate(self: Any, pieces: list[dict[str, Any]], error: Callable) -> set[st
             _refuse(error, "piece_details_unchecked", f"{es} tiene detalles obligatorios sin comprobar o ausentes.",
                     f"{en} has unchecked or missing required details.", piece_id=pid, detail_ids=unchecked)
 
-        title = _plain(piece["title"])
-        first_line = _plain(piece["note"].partition("\n")[0])
-        defects = self.db.query(
-            "SELECT id, note, required FROM agora_piece_defects WHERE piece_id=? "
-            "AND (status='open' OR closed_in<>piece_id) ORDER BY id", (pid,),
-        )
-        for defect in defects:
-            did = defect["id"]
-            if defect["required"]:
-                _refuse(error, "piece_required_defect", f"{es} incumple el encargo. Corrige el defecto #{did}.",
-                        f"{en} fails the brief. Fix defect #{did}.", piece_id=pid, defect_id=did)
-            caption = _plain(defect["note"]).rstrip(".!?")
-            if not caption or not (_listed_in(caption, title) and _listed_in(caption, first_line)):
-                _refuse(error, "piece_undisclosed_defect",
-                        f"{es} debe indicar el defecto #{did} en el título y en la primera línea de su nota.",
-                        f"{en} must show defect #{did} in its title and the first line of its note.",
-                        piece_id=pid, defect_id=did)
-            disclosed.add(caption)
+        disclosed.update(validate_piece_defects(self, piece, error))
     return disclosed
 
 

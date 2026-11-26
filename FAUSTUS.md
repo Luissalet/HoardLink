@@ -26,6 +26,7 @@ next jobs with the person's note. Production gates require passing piece checks 
 For a difference caused by an open defect on a visual reference, `hub_agora_piece_check` records `reference_defect`
 with `reference_defect_id`. The candidate's title discloses the difference, and closing the defect or retaining a
 replacement requires a fresh comparison. See [kept references](docs/ORDER-REFERENCES.md).
+An open gate fixes the piece title. Keeping the piece rechecks its current defects and any required declarations.
 Any non-required defect shown for a decision is disclosed on the affected piece. The Orders page can undo the
 last choice made on that page while its affected work is still current. The Hub desktop window gets a write
 session on load and can restore it in place. A desktop window from an earlier version can still display decisions
