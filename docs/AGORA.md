@@ -223,6 +223,21 @@ is launched without a total deadline (`--no-timeout`). The inactivity watchdog o
 ignores keepalives and defaults to 3600 seconds. Configure it with `HOARD_AGORA_WORKER_IDLE_SECONDS`.
 Stop cancels the exact active run.
 
+Before creating a child, the Hub probes the Faustus service at its current
+placement. The probe leaves the service's start and stop controls alone. If
+Faustus was stopped manually or fails the fresh health check,
+the request returns HTTP 409 with the cause and creates no worker receipt. Agent
+calls receive `faustus_manually_stopped` or `faustus_unreachable` and
+`error_i18n` in Spanish and English. If the service stops responding after
+the probe and setup fails, the launch leaves a failed receipt without a worker process.
+
+The console expects the new identity to register in its Agora space within five
+minutes of launch. If it does not, the receipt shows **No arrancó / Did not start**
+with the cause and the process exit code when known. With a linked task, the Hub
+posts one notice in that task's thread, even if the worker never claimed it. A
+later registration clears the indicator on an active worker. Stop still controls
+the underlying turn.
+
 The Faustus console offers models from local endpoints whose URL host matches a registered Sparks address or
 alias in the placement inventory. The endpoint name is the display label. Launches keep the selected endpoint
 and model ID.
@@ -255,7 +270,12 @@ worker needs their originals, and enter output folders separately. Folder entrie
 use absolute local paths, one per line. On the agent surface, call
 `hub_agora_console_worker` with `action: "propose_files"` and `task_id` to preview.
 For `action: "create"` with `leader_id: "faustus"`, pass the same `task_id` and optional
-`file_scope: {"read_paths": [...], "write_paths": [...]}`. A continued worker keeps
+`file_scope: {"read_paths": [...], "write_paths": [...], "apps": {...}}`. Declaring
+app tools requires a task from an active order job in the selected space. If the
+task has no active job there, creation returns `worker_order_job_required`. Use
+`hub_agora_plan_set` to add the job and pass its resulting `task_id`. A standalone task
+can still launch without app tools. The create response includes a bilingual
+`warning_i18n` explaining that the worker cannot register pieces. A continued worker keeps
 the private workspace and grants from its receipt. A dedicated session with an
 older receipt is reopened in a new private folder, with its explicit grants.
 The saved Hub connector binds the worker's identity and the linked production
@@ -361,9 +381,10 @@ recent list. The worker's card keeps the turn state and shows the process PID, a
 activity from the worker log or result file. A missing activity timestamp is shown as unknown. Use **Stop process**
 and confirm to terminate the displayed process and its children. The turn's receipt and session files are kept.
 
-For agents, `hub_agora_console_overview` adds `orphan_process` to affected workers, and
-`hub_agora_console_worker` with `action: reconcile` and no leader fields lists just those workers for the
-selected space. The directing agent can call `action: stop_orphan` with `worker_id` and
+For agents, `hub_agora_console_overview` adds `orphan_process` to affected workers
+and `startup` to those whose registration timed out. Calling `hub_agora_console_worker`
+with `action: reconcile` and no leader fields returns `orphans` and `not_started`
+for the selected space. The directing agent can call `action: stop_orphan` with `worker_id` and
 `confirm_process: {pid, started_at}` from that listing. The Hub checks that the exact process is still an orphan
 before it signals it. Process termination is irreversible. The separate leader reconciliation still takes
 `leader_id`, `session_id` and `confirm_idle: true`.

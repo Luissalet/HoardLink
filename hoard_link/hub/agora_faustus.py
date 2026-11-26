@@ -26,6 +26,7 @@ STUDIO = "estudio"
 APPRENTICE = "faustus-aprendiz"
 TUTOR_TOOL = "hub_agora_apprentice_instinct"
 WORKER_APPROVAL_MODE = "auto"
+REGISTRATION_TIMEOUT_S = 5 * 60
 DECLARED_PATHS = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -37,6 +38,19 @@ DECLARED_PATHS = {
                                           "items": {"type": "string", "minLength": 1, "maxLength": 100}}},
     },
 }
+
+
+class WorkerLaunchError(ValueError):
+    def __init__(self, code: str, es: str, en: str, status: int = 409):
+        self.code = code
+        self.status = status
+        self.messages = {"es": es, "en": en}
+        super().__init__(f"{en} / {es}")
+
+    def reply(self, lang: str | None) -> dict:
+        return {"ok": False, "status": self.status, "code": self.code,
+                "error": self.messages[lang] if lang in ("es", "en") else str(self),
+                "error_i18n": self.messages}
 
 
 def worker_data(console: Any, agent: str) -> Path:
@@ -183,17 +197,48 @@ def file_scope(workspace: str, declared: Any = None, proposal: dict | None = Non
     return scope
 
 
-def production_scope(console: Any, agent: str, scope: dict, task_id: int | None) -> dict:
+def worker_order(console: Any, task_id: int | None, apps: dict) -> int | None:
+    """Resolve the active order job in the launch space before provisioning."""
     if task_id is not None:
+        if type(task_id) is not int or task_id <= 0:
+            raise WorkerLaunchError("invalid_task_id", "Indica un identificador de tarea positivo.",
+                                    "Use a positive task ID.", status=400)
         agora = console._agora()
-        task = agora._task_row(task_id)
-        if not task["repo"] and not task["paths"]:
+        if agora is not None:
             job = agora.db.one("SELECT order_id FROM agora_order_jobs WHERE task_id=? AND space_id=? AND removed=0",
                                (task_id, console.space_id))
+            if job:
+                return job["order_id"]
+    if apps:
+        es = (f"La tarea #{task_id} no es un trabajo de una orden de este espacio." if task_id is not None
+              else "Indica un trabajo de una orden de este espacio para usar aplicaciones.")
+        en = (f"Task #{task_id} is not a job in an order in this space." if task_id is not None
+              else "Select a job from an order in this space to use app tools.")
+        raise WorkerLaunchError(
+            "worker_order_job_required",
+            f"{es} Añade el trabajo al plan de la orden con hub_agora_plan_set y usa su task_id.",
+            f"{en} Add the job to the order plan with hub_agora_plan_set and use its task_id.",
+            status=400,
+        )
+    return None
+
+
+def order_warning(task_id: int) -> dict[str, str]:
+    return {
+        "es": f"La tarea #{task_id} no es un trabajo de una orden de este espacio. "
+              "Este trabajador no podrá registrar piezas.",
+        "en": f"Task #{task_id} is not a job in an order in this space. "
+              "This worker cannot register pieces.",
+    }
+
+
+def production_scope(console: Any, agent: str, scope: dict, task_id: int | None) -> dict:
+    order_id = worker_order(console, task_id, scope.get("apps", {}))
+    if task_id is not None:
+        task = console._agora()._task_row(task_id)
+        if order_id is not None or (not task["repo"] and not task["paths"]):
             return {**scope, "production": {"space_id": console.space_id, "task_id": task_id,
-                                            "order_id": job["order_id"] if job else None, "agent": agent}}
-    if scope.get("apps"):
-        raise ValueError("Declare app tools for a production task. / Declara herramientas de aplicaciones para una tarea de producción.")
+                                            "order_id": order_id, "agent": agent}}
     return scope
 
 
@@ -223,7 +268,7 @@ def require_app_modules(hub: Any, apps: dict) -> None:
     )
 
 
-def service(hub: Any) -> dict[str, Any]:
+def service(hub: Any, *, fresh: bool = False) -> dict[str, Any]:
     """Read the same location as /api/placement, without starting anything."""
     placement = getattr(hub, "placement", None)
     state = placement.state() if placement is not None else {}
@@ -236,11 +281,104 @@ def service(hub: Any) -> dict[str, Any]:
             return {"reachable": False, "error": "Faustus placement has no URL"}
         status, body = _get(base + "/api/health", "", 6.0)
         return {"url": base, "reachable": status == 200, "body": body, "remote": True}
-    return hub.faustus_status()
+    return hub._refresh_faustus() if fresh else hub.faustus_status()
+
+
+def launch_service(hub: Any) -> dict[str, Any]:
+    """Require a current Faustus health response before leaving a worker receipt."""
+    target = {}
+    try:
+        if not getattr(getattr(hub, "config", None), "isolated", False):
+            target = service(hub, fresh=True)
+    except OSError:
+        pass
+    if target.get("manually_stopped"):
+        raise WorkerLaunchError("faustus_manually_stopped", "Faustus está parado manualmente.",
+                                "Faustus was stopped manually.")
+    health = target.get("body")
+    if (not target.get("reachable") or not target.get("url") or target.get("status", 200) != 200
+            or not isinstance(health, dict) or health.get("service") != "faustus"):
+        raise WorkerLaunchError("faustus_unreachable", "Faustus está parado (no responde).",
+                                "Faustus is not responding.")
+    return target
+
+
+def _registration_seen(agora: Any, worker: Any) -> bool:
+    return agora.db.one(
+        "SELECT 1 FROM coordination_members m JOIN agents a ON a.id=m.agent "
+        "WHERE m.space_id=? AND m.agent=? AND a.last_seen>=?",
+        (agora.space_id, worker["agent_id"], worker["agora_start_at"]),
+    ) is not None
+
+
+def registration_details(worker: Any) -> dict[str, str]:
+    minutes = REGISTRATION_TIMEOUT_S / 60
+    es = f"El trabajador no se registró en el Ágora de este espacio en {minutes:g} minutos."
+    en = f"The worker did not register in this Agora space within {minutes:g} minutes."
+    if (code := worker["process_exit_code"]) is not None:
+        es += f" El proceso terminó con código {code}."
+        en += f" The process exited with code {code}."
+    elif worker["state"] in ("failed", "unavailable") and not worker["pid"]:
+        es += " El proceso del trabajador no llegó a iniciarse."
+        en += " The worker process did not launch."
+    return {"es": es, "en": en}
+
+
+def _notify_registration_timeout(agora: Any, worker: Any) -> None:
+    task_id = worker["agora_task_id"]
+    if task_id is None:
+        return
+    with agora.db.tx():
+        task = agora.db.one("SELECT thread_id FROM tasks WHERE id=? AND space_id=?", (task_id, agora.space_id))
+        if not task or not task["thread_id"]:
+            return
+        thread_id = task["thread_id"]
+        # The same receipt can be reconciled again after posting but before the console saves its state.
+        prefix = f"{worker['agent_id']} ({worker['id'][:8]})"
+        if agora.db.one("SELECT 1 FROM messages WHERE thread_id=? AND author='agora-console' "
+                        "AND kind='system' AND substr(body,1,?)=?", (thread_id, len(prefix), prefix)):
+            return
+        details = registration_details(worker)
+        message_id = agora._msg(thread_id, "agora-console", "system",
+                                f"{prefix} · No arrancó. {details['es']}\n"
+                                f"Did not start. {details['en']}",
+                                [worker["launched_by"]] if worker["launched_by"] else [])
+    agora._bump("agora.thread.message", {"thread_id": thread_id, "message_id": message_id,
+                                        "author": "agora-console", "kind": "system"})
+
+
+def reconcile_registrations(console: Any, *, now: float | None = None) -> None:
+    """Observe first Agora activity independently of the runner's lifecycle."""
+    now = time.time() if now is None else now
+    with console._registration_lock:
+        with console._db_lock, console._db() as db:
+            pending = db.execute(
+                "SELECT * FROM workers WHERE agora_start_state='pending' OR "
+                "(agora_start_state='not_started' AND state IN ('starting','running','paused','unknown'))"
+            ).fetchall()
+        if not pending or (agora := console._agora()) is None or not hasattr(agora, "db"):
+            return
+        for worker in pending:
+            previous = worker["agora_start_state"]
+            if _registration_seen(agora, worker):
+                state = "registered"
+            elif previous == "not_started":
+                continue
+            elif worker["state"] in ("stopping", "stopped") or worker["outcome"] == "hub_restart_stopping":
+                state = "cancelled"
+            elif now >= worker["agora_start_at"] + REGISTRATION_TIMEOUT_S:
+                state = "not_started"
+                _notify_registration_timeout(agora, worker)
+            else:
+                continue
+            with console._db_lock, console._db() as db:
+                db.execute("UPDATE workers SET agora_start_state=? WHERE id=? AND agora_start_state=?",
+                           (state, worker["id"], previous))
 
 
 def prepare(console: Any, agent: str, model: dict, effort: str, *,
-            declared_paths: Any = None, task_id: int | None = None) -> tuple[dict | None, str]:
+            declared_paths: Any = None, task_id: int | None = None,
+            target: dict | None = None) -> tuple[dict | None, str]:
     """Create an independent native project/session when no local controller owns one."""
     root, python = console.hub.faustus_runtime.installation()
     if root is None or python is None:
@@ -250,12 +388,13 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
     space = agora.space_store.get(console.space_id) if hasattr(agora, "space_store") else None
     configured_workspace = (space or {}).get("workspace")
     workspace = str(configured_workspace or root.parent)
-    target = service(console.hub)
+    target = target if target is not None else service(console.hub)
     if not target.get("reachable"):
         return None, str(target.get("error") or "The placed Faustus service is unavailable.")
     base = str(target.get("url") or "").rstrip("/")
     endpoint_id = str(model["endpoint_id"])
     runtime = None
+    warning = None
     dedicated = target.get("remote") or console.space_id == STUDIO
     if not dedicated and (declared_paths is not None or task_id is not None):
         return None, "File scope requires a dedicated PC worker. / El ámbito de ficheros requiere un trabajador aislado en el PC."
@@ -264,6 +403,8 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
     if dedicated:
         scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
         scope = production_scope(console, agent, scope, task_id)
+        if task_id is not None and (scope.get("production") or {}).get("order_id") is None:
+            warning = order_warning(task_id)
         require_app_modules(console.hub, scope.get("apps", {}))
         status, endpoints = console._faustus_session_request("GET", "/api/model-endpoints", base_url=base)
         endpoint = next((row for row in endpoints if row.get("id") == endpoint_id and row.get("is_enabled")), None) if status == 200 and isinstance(endpoints, list) else None
@@ -323,8 +464,11 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
         binding = saved.get("binding") if isinstance(saved, dict) else None
         if status != 200 or not binding or binding.get("actor") != agent or binding.get("project_id") != project["id"]:
             raise RuntimeError("Faustus did not confirm the worker coordination identity")
-        return {"session_id": session, "project_id": project["id"], "workspace": workspace,
-                "url": base, "runtime": runtime, "coordination_threads": thread_ids}, ""
+        prepared = {"session_id": session, "project_id": project["id"], "workspace": workspace,
+                    "url": base, "runtime": runtime, "coordination_threads": thread_ids}
+        if warning:
+            prepared["warning_i18n"] = warning
+        return prepared, ""
     except Exception:
         if runtime:
             stop_pc(runtime)

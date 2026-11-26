@@ -34,14 +34,22 @@ export async function api<T=any>(path:string,body?:unknown):Promise<T>{
     else body={space_id:spaceId,...(body as Record<string,unknown>)};
   }
   let data:any;
+  let status:number|undefined;
   if(isTauri()) data=await native('hub_request',{path,body:body===undefined?null:body});
-  else {const response=await fetch(path,{headers:{'Accept-Language':locale,...(body===undefined?{}:{'Content-Type':'application/json'})},method:body===undefined?'GET':'POST',body:body===undefined?undefined:JSON.stringify(body)});data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error || `Error ${response.status}`),{code:data.code});}
-  if(data.ok===false)throw new Error(data.error || tr('No se pudo completar la operación', 'Could not complete the operation'));
+  else {
+    const response=await fetch(path,{headers:{'Accept-Language':locale,...(body===undefined?{}:{'Content-Type':'application/json'})},method:body===undefined?'GET':'POST',body:body===undefined?undefined:JSON.stringify(body)});
+    data=await response.json();
+    if(!response.ok) status=response.status;
+  }
+  if(status!==undefined || data.ok===false){
+    const fallback=status===undefined ? tr('No se pudo completar la operación', 'Could not complete the operation') : `Error ${status}`;
+    throw Object.assign(new Error(data.error_i18n?.[lang] || data.error || fallback),{code:data.code});
+  }
   return data as T;
 }
 export type Model={id:string;name?:string;efforts?:string[]};
 export type OrphanProcess={pid:number;started_at:number;age_seconds:number;last_activity_at:number|null};
-export type Worker={id:string;parent_id:string;agent_id?:string;model?:string;state:string;task?:string;result?:string;effort?:string;outcome?:string;workspace?:string;faustus_url?:string;tool_approval_mode?:string;detail?:string;detail_i18n?:Partial<Record<"es"|"en",string>>;verification_warnings?:string[];tool_success_count?:number;tool_failure_count?:number;can_continue?:boolean;retry_count?:number;resume_issue?:string;orphan_process?:OrphanProcess;replacement?:{worker_id?:string;task_id?:number;state?:string;detail?:string}};
+export type Worker={id:string;parent_id:string;agent_id?:string;model?:string;state:string;task?:string;result?:string;effort?:string;outcome?:string;workspace?:string;faustus_url?:string;tool_approval_mode?:string;detail?:string;detail_i18n?:Partial<Record<"es"|"en",string>>;startup?:{state:'not_started';detail_i18n:Record<typeof lang,string>};verification_warnings?:string[];tool_success_count?:number;tool_failure_count?:number;can_continue?:boolean;retry_count?:number;resume_issue?:string;orphan_process?:OrphanProcess;replacement?:{worker_id?:string;task_id?:number;state?:string;detail?:string}};
 export type LiveState={state:string;label?:string;last_activity_at?:string|null;source?:string;detail?:string;detail_i18n?:Partial<Record<typeof lang,string>>;open_tasks?:number[];idle_with_work?:boolean};
 export type Leader={id:string;name:string;state:string;detail?:string;model?:string;effort?:string;catalog?:Model[];workers?:Worker[];color?:string|null;live_state?:LiveState|null;idle_with_work?:boolean};
 export type Message={id:number;agent?:string;author?:string;body:string;kind?:string;created?:number;ts?:number};
