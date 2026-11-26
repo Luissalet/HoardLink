@@ -27,6 +27,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
+from .._process import popen_hidden
 from . import agora_person
 from .placement_remote import LINK_PORT, LINK_URL
 
@@ -56,7 +57,7 @@ class HubLink:
     def __init__(self, placement: Any, *, popen: Optional[Callable[..., Any]] = None, clock: Callable[[], float] = time.time,
                  settle_s: float = SETTLE_S):
         self.placement = placement
-        self._popen = popen or subprocess.Popen
+        self._popen = popen or popen_hidden
         self._clock = clock
         self._settle_s = settle_s
         self._lock = threading.RLock()

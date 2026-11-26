@@ -17,6 +17,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
+from .._process import run_hidden
+
 
 class LockError(RuntimeError):
     pass
@@ -32,7 +34,7 @@ def sha256_file(path: str | Path) -> str:
 
 def tool_version(argv: list[str], cwd: Optional[Path] = None) -> str:
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=30, cwd=cwd)
+        r = run_hidden(argv, capture_output=True, text=True, timeout=30, cwd=cwd)
     except (OSError, subprocess.TimeoutExpired):
         return "missing"
     return (r.stdout + r.stderr).strip().splitlines()[0] if (r.stdout + r.stderr).strip() else "unknown"

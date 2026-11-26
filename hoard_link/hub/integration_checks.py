@@ -15,6 +15,8 @@ import xml.etree.ElementTree as ET
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
+from .. import _process
+from .._process import run_hidden
 from .integration_git import IntegrationError, diff_bytes, git, test_path
 
 
@@ -166,7 +168,7 @@ def app_python(repo):
 
 def local_tests(repo, work, files, report, lane, basetemp, *, timeout):
     python = app_python(repo) or Path(sys.executable)
-    return subprocess.run(
+    return run_hidden(
         [str(python), *arguments(files, report, lane, basetemp)], cwd=work, env=test_env(report.with_suffix(".data")),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -188,19 +190,19 @@ with tempfile.TemporaryDirectory(prefix="hoard-tests-") as temp:
     basetemp = pathlib.Path(temp) / "pytest"
     env.update(HOARD_HUB_DATA_DIR=str(data), HOARD_HUB_TOKEN_FILE=str(data / "mcp-token"),
                HOARD_HUB_URL="http://127.0.0.1:1")
-    subprocess.run(["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null",
-                    "worktree", "add", "--detach", str(work), p["base"]],
-                   check=True, capture_output=True, env=env, timeout=60)
+    run_hidden(["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null",
+                "worktree", "add", "--detach", str(work), p["base"]],
+               check=True, capture_output=True, env=env, timeout=60)
     try:
         patch = base64.b64decode(p["patch"])
         if patch:
-            subprocess.run(["git", "apply", "-"], cwd=work, input=patch, check=True,
-                           capture_output=True, env=env, timeout=60)
+            run_hidden(["git", "apply", "-"], cwd=work, input=patch, check=True,
+                       capture_output=True, env=env, timeout=60)
         python = next((str(repo / v / "bin/python") for v in (".venv", "venv")
                        if (repo / v / "bin/python").is_file()), sys.executable)
         args = [{"REPORT": str(report), "PYTEST_TEMP": str(basetemp)}.get(a, a) for a in p["args"]]
         try:
-            r = subprocess.run([python, *args], cwd=work, env=env, capture_output=True, timeout=p["timeout"])
+            r = run_hidden([python, *args], cwd=work, env=env, capture_output=True, timeout=p["timeout"])
         except subprocess.TimeoutExpired:
             print(json.dumps({"timed_out": True}))
         else:
@@ -208,8 +210,8 @@ with tempfile.TemporaryDirectory(prefix="hoard-tests-") as temp:
                               "paths": {"checkout": str(work), "pytest-temp": str(basetemp), "hub-data": str(data)},
                               "output": (r.stdout + r.stderr).decode("utf-8", "replace")[-3500:]}))
     finally:
-        subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(work)],
-                       check=True, capture_output=True, env=env, timeout=60)
+        run_hidden(["git", "-C", str(repo), "worktree", "remove", "--force", str(work)],
+                   check=True, capture_output=True, env=env, timeout=60)
 """
 
 
@@ -221,7 +223,8 @@ def suite(hub, repo, work, files, report, lane, *, remote, base, ref, empty_ok=F
         payload = {"repo": remote, "base": base, "patch": base64.b64encode(delta).decode("ascii"),
                    "args": arguments(files, "REPORT", lane, "PYTEST_TEMP"), "timeout": timeout,
                    "excluded": EXCLUDED_ENV}
-        result = json.loads(hub.placement._ssh("python3 -c " + shlex.quote(REMOTE_RUNNER),
+        script = Path(_process.__file__).read_text(encoding="utf-8") + "\n" + REMOTE_RUNNER
+        result = json.loads(hub.placement._ssh("python3 -c " + shlex.quote(script),
                                                 input=json.dumps(payload), timeout=timeout + 130))
         if result.get("timed_out"):
             raise subprocess.TimeoutExpired("remote pytest", timeout)

@@ -6,6 +6,8 @@ import re
 import subprocess
 from datetime import datetime
 
+from .._process import run_hidden
+
 SCRIPT = r'''
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $names = ConvertFrom-Json $env:HOARD_FLEET_TASK_NAMES
@@ -27,7 +29,7 @@ def read_tasks(names):
     if not names: return {'ok': True, 'items': []}
     env = {**os.environ, 'HOARD_FLEET_TASK_NAMES': json.dumps(names, ensure_ascii=False)}
     try:
-        result = subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',SCRIPT],env=env,
+        result = run_hidden(['powershell.exe','-NoProfile','-NonInteractive','-Command',SCRIPT],env=env,
             capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=8,creationflags=0x08000000)
         if result.returncode: return {'ok': False, 'error': 'task_scheduler_unavailable', 'items': []}
         rows = json.loads(result.stdout or '[]')

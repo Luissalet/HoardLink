@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from uuid import uuid4
 
+from .._process import run_hidden
 from . import agora_orders, print_colours, print_gcode
 
 
@@ -122,7 +123,7 @@ def run(agora, source, artifact, executable, version, args):
         failure = None
         with log.open("wb") as stream:
             try:
-                exit_code = subprocess.run(command, cwd=staging, stdout=stream, stderr=subprocess.STDOUT,
+                exit_code = run_hidden(command, cwd=staging, stdout=stream, stderr=subprocess.STDOUT,
                                            timeout=budget, **options).returncode
             except subprocess.TimeoutExpired:
                 timed_out = True

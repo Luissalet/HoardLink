@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from .._process import run_hidden
 from .agora_capacity import _report_via_agora_cli
 
 LOGGER = logging.getLogger(__name__)
@@ -280,7 +281,7 @@ def probe_claude_sign_in(directory: Path) -> str:
         env.pop("CLAUDECODE", None)
         state = "unknown"
         try:
-            result = subprocess.run(
+            result = run_hidden(
                 [executable, "auth", "status"], env=env, stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                 errors="replace", timeout=8, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

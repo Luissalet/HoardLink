@@ -18,3 +18,9 @@ Repository changes appear in the task's edit history (`agora --json task 42`) wi
 `hub_agora_review_diff` and the CLI report the repository for each commit. For legacy deliveries with no repository, or with a single repository and a flat commit list, the Hub checks its registered Git checkouts for commits that have no known location. It shows the commits it can locate and reports any unresolved ones. An identical commit found in several checkouts lists those repositories. If an abbreviation matches different commits, submit the full hash in a named repository group. Make missing commit objects available in a registered checkout before retrying.
 
 In the Ágora console, select the task from **Trabajo** or the review column in **En directo**. Expand **Delivery diff** for the counts by repository, commit and file. Select **Show changes** and open a file to read the patch. The Hub's **Delivery review** shows the repository alongside the commits and retains line comments and guided review.
+
+## Automatic worker receipt
+
+When a managed turn ends, the console checks the submitted hashes in each registered repository. It looks for them in the main checkout, the worker's recorded checkout for that repository and the checkout for the branch declared in the delivery. It reads the worktree registry once per repository and checks for uncommitted files only in the worker's checkouts. If an older receipt has no matching branch or workspace and its commits are outside the main checkout, record the branch in a new submission to let the console verify it. A missing Git object is reported separately.
+
+Verification runs in the background, including when a stopped turn needs a receipt. The Git checks share an eight-second deadline. If that expires, the worker receipt says the delivery is unverified and the task thread records the timeout. An already submitted task remains available for review.

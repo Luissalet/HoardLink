@@ -40,6 +40,8 @@ from email.message import EmailMessage
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import urlsplit
 
+from ._process import is_native_runner, run_hidden
+
 POWERSHELL_APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
 HTTP_TIMEOUT_S = 10.0
 TOAST_TIMEOUT_S = 20
@@ -208,7 +210,8 @@ def toast_text(body: str, max_lines: int = 4) -> str:
 def run_ps1(script: str, *, runner: Optional[Callable[..., Any]] = None, timeout: float = TOAST_TIMEOUT_S) -> dict[str, Any]:
     """Run a PowerShell script from a temporary ``.ps1`` (UTF-8 with BOM, which Windows PowerShell 5.1 needs to read accents),
     without a console window. ``{"ok": True}`` or ``{"ok": False, "error": "powershell exit N" | "<ExceptionName>"}``."""
-    if (runner is None or runner is subprocess.run) and dry_run():
+    native_runner = is_native_runner(runner)
+    if native_runner and dry_run():
         return {"ok": True, "dry_run": True}
     fd, path = tempfile.mkstemp(suffix=".ps1", prefix="hoard-toast-")
     try:
@@ -216,8 +219,9 @@ def run_ps1(script: str, *, runner: Optional[Callable[..., Any]] = None, timeout
             fh.write(script)
         exe = shutil.which("powershell") or "powershell"
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        done = (runner or subprocess.run)([exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path],
-                                          capture_output=True, text=True, timeout=timeout, creationflags=flags)
+        launch = run_hidden if native_runner else runner
+        done = launch([exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path],
+                      capture_output=True, text=True, timeout=timeout, creationflags=flags)
         code = getattr(done, "returncode", 1)
         return {"ok": True} if code == 0 else {"ok": False, "error": f"powershell exit {code}"}
     except (OSError, subprocess.SubprocessError) as exc:

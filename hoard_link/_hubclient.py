@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
+from ._process import popen_hidden
+
 DEFAULT_URL = "http://127.0.0.1:8810"
 
 
@@ -205,7 +207,7 @@ def start_headless(url: str = DEFAULT_URL, repo: Optional[Path] = None) -> bool:
     else:
         kwargs = {"start_new_session": True}
     try:
-        subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        popen_hidden(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, close_fds=True, **kwargs)
     except Exception:  # noqa: BLE001
         return False

@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 from urllib.parse import quote
 
+from .._process import run_hidden
 from .. import fam_mail, mail_helper as _mail_helper
 from ..atomic import write_json_atomic
 from . import DEFAULT_PORT
@@ -634,7 +635,7 @@ class MailGate(Facet):
 
     def __init__(self, hub: Any, *, runner: Optional[Callable[..., Any]] = None, clock: Callable[[], float] = time.time):
         super().__init__(hub)
-        self.runner = runner or subprocess.run
+        self.runner = runner or run_hidden
         self.clock = clock
         self.data_dir = hub.config.data_dir
         self.config_path = os.path.join(self.data_dir, "mail.json")

@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from .._process import run_hidden
 from ..atomic import write_json_atomic
 from .lock import sha256_file
 
@@ -71,7 +72,7 @@ def affected(root: Path, patterns: Iterable[str], changed: Iterable[str | Path])
 def git_changed(root: Path, base: str) -> list[Path]:
     """Files changed since ``base`` (merge-base with HEAD) plus uncommitted ones, as absolute paths."""
     def git(*a: str) -> str:
-        return subprocess.run(["git", *a], cwd=root, capture_output=True, text=True, check=True).stdout
+        return run_hidden(["git", *a], cwd=root, capture_output=True, text=True, check=True).stdout
     top = Path(git("rev-parse", "--show-toplevel").strip())
     names = set(git("diff", "--name-only", base + "...HEAD").splitlines()) | set(git("diff", "--name-only", "HEAD").splitlines())
     names |= set(git("ls-files", "--others", "--exclude-standard").splitlines())

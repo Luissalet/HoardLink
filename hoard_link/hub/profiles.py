@@ -36,6 +36,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .._process import popen_hidden
 from . import procs
 
 _SLUG = re.compile(r"[^a-z0-9]+")
@@ -200,7 +201,7 @@ class CommandRunner:
             try:
                 log = open(log_path, "ab")
                 log.write(f"\n--- hoard-hub start {time.strftime('%Y-%m-%d %H:%M:%S')}: {cmd.cmd}\n".encode("utf-8"))
-                proc = subprocess.Popen(cmd.argv(), cwd=cmd.cwd or None, env=env, stdin=subprocess.DEVNULL, stdout=log,
+                proc = popen_hidden(cmd.argv(), cwd=cmd.cwd or None, env=env, stdin=subprocess.DEVNULL, stdout=log,
                                         stderr=subprocess.STDOUT, close_fds=True, **procs._detached_kwargs())
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "command": cmd.id, "error": f"could not start: {exc}", "log": log_path}

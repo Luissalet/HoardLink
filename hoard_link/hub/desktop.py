@@ -34,9 +34,10 @@ import os
 import shutil
 import subprocess
 import sys
-import webbrowser
 from typing import Any, Callable, Optional
 
+from .._process import popen_hidden
+from ..net import open_in_browser as open_browser_tab
 from .procs import _psutil, proc_info, terminate_tree
 
 _WINDOWS_CANDIDATES = {
@@ -138,7 +139,7 @@ def open_window(
         url = browser_url()
     exe = find_browser(browser)
     if exe is None:
-        opened = webbrowser.open(url)
+        opened = open_browser_tab(url)
         return {"ok": bool(opened), "mode": "browser-tab", "detail": "no Chromium-based browser found; opened a tab instead"}
     profile = profile_dir(profiles_root, app_id)
     _prepare_profile(profile)
@@ -152,7 +153,7 @@ def open_window(
     else:
         kwargs["start_new_session"] = True
     try:
-        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+        proc = popen_hidden(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"could not open the window: {exc}"}
     return {"ok": True, "mode": "app-window", "pid": proc.pid, "browser": exe, "profile": profile}
@@ -196,7 +197,7 @@ def _open_shell_window(url: str, app_id: str, profiles_root: str, *, size: tuple
     env = dict(os.environ)
     env.pop("ELECTRON_RUN_AS_NODE", None)
     try:
-        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        proc = popen_hidden(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 env=env, **kwargs)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"could not open the window: {exc}"}
@@ -292,7 +293,7 @@ def close_windows(app_id: str, profiles_root: str) -> dict[str, Any]:
 
 def open_in_browser(url: str) -> dict[str, Any]:
     try:
-        return {"ok": bool(webbrowser.open(url)), "mode": "browser-tab"}
+        return {"ok": open_browser_tab(url), "mode": "browser-tab"}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
 
@@ -304,9 +305,9 @@ def open_folder(path: str) -> dict[str, Any]:
         if sys.platform.startswith("win"):
             os.startfile(path)  # type: ignore[attr-defined]
         elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
+            popen_hidden(["open", path])
         else:
-            subprocess.Popen(["xdg-open", path])
+            popen_hidden(["xdg-open", path])
         return {"ok": True}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}

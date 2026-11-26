@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from .._process import popen_hidden, run_hidden
+
 LOGGER = logging.getLogger(__name__)
 SOURCE = "codex-app-server:account/rateLimits/read"
 _CLIENT_INFO = {
@@ -185,7 +187,7 @@ def _read_json_rpc(process: Any, output_queue: "queue.Queue[str]", request_id: i
 
 def _read_codex_account_and_limits(*, executable: Optional[str] = None,
                                    timeout: float = _RPC_TIMEOUT_S,
-                                   popen: Callable[..., Any] = subprocess.Popen
+                                   popen: Callable[..., Any] = popen_hidden
                                    ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Read account identity and rate limits using only app-server read methods."""
     command = executable or codex_executable()
@@ -251,7 +253,7 @@ def _read_codex_account_and_limits(*, executable: Optional[str] = None,
 def collect_codex_usage_report(*, executable: Optional[str] = None,
                                now: Optional[float] = None,
                                timeout: float = _RPC_TIMEOUT_S,
-                               popen: Callable[..., Any] = subprocess.Popen) -> dict[str, Any]:
+                               popen: Callable[..., Any] = popen_hidden) -> dict[str, Any]:
     """Return only the sanitized DTO; raw account/read identity stays local."""
     account, limits = _read_codex_account_and_limits(executable=executable, timeout=timeout, popen=popen)
     return build_usage_report(account, limits, now=now)
@@ -259,7 +261,7 @@ def collect_codex_usage_report(*, executable: Optional[str] = None,
 
 def _report_via_agora_cli(report: Mapping[str, Any], *, repo_root: Optional[Path] = None,
                           env: Optional[Mapping[str, str]] = None,
-                          runner: Callable[..., Any] = subprocess.run,
+                          runner: Callable[..., Any] = run_hidden,
                           timeout: float = 15.0, agent_id: str = "codex-capacity") -> dict[str, Any]:
     root = repo_root or Path(__file__).resolve().parents[2]
     cli = root / "scripts" / "agora.py"

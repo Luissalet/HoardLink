@@ -55,6 +55,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Any, Callable, Iterable, Optional
 
+from ._process import run_hidden
 from . import family as _f
 from ._hubclient import fetch
 
@@ -441,7 +442,7 @@ class FaustusHelper:
                  real_hubs: Any = (), real_data: Any = ()):
         self.setting, self.owner, self.python_setting = setting, owner, python
         self.real_hubs, self.real_data = real_hubs, real_data
-        self.runner = runner or subprocess.run
+        self.runner = runner or run_hidden
         self.env_drop_prefixes = tuple(env_drop_prefixes)
         self.ask_hub = ask_hub
         self.clock = clock

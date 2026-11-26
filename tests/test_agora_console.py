@@ -2483,17 +2483,20 @@ def test_managed_worker_checks_each_repository_in_a_grouped_delivery(tmp_path, s
         assert "verification_warnings" not in worker
         (other_tree / "draft.txt").write_text("dirty", encoding="utf-8")
         verification = facet._verify_worker_delivery(worker)
-        assert verification["issues"] == [f"Hay cambios sin commit en {other_tree.as_posix()}."]
+        assert verification["issues"] == [f"Hay cambios sin commit en {other_tree.as_posix()}."], verification
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
-def test_a_delivery_is_found_by_its_commits_when_the_workers_folder_is_not_known(tmp_path):
+def test_legacy_delivery_stays_unverified_until_its_branch_is_recorded(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     store = _with_real_agora(facet, tmp_path)
     repo = _fixture_repo(tmp_path)
     worktree = tmp_path / "research" / "repo-task"
     subprocess.run(["git", "-C", str(repo), "worktree", "add", "-qb", "task-branch", str(worktree)], check=True)
     commit = _commit_in(worktree, "done.txt")
+    unrelated = tmp_path / "unrelated"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "--detach", str(unrelated), commit], check=True)
+    (unrelated / "unrelated.txt").write_text("another worker's file", encoding="utf-8")
     store.repo_lookup = lambda name: repo if name == "QA" else None
     agent = "faustus-qa"
     task = store.task_add({"agent": agent, "title": "Deliver", "repo": "QA", "paths": ["done.txt"]})["task"]
@@ -2501,14 +2504,35 @@ def test_a_delivery_is_found_by_its_commits_when_the_workers_folder_is_not_known
     store.task_submit({"agent": agent, "task_id": task["id"], "summary": "Fixture", "commits": [commit]})
     worker = {"agent_id": agent, "workspace": "", "created_at": 1}
 
-    assert facet._verify_worker_delivery(worker)["issues"] == []       # no folder recorded, no branch given: found by commit
+    calls = []
+    git = facet._git_worker_info
+
+    def observe(path, *args, **kwargs):
+        calls.append((path, args))
+        return git(path, *args, **kwargs)
+
+    monkeypatch.setattr(facet, "_git_worker_info", observe)
+    result = facet._verify_worker_delivery(worker)
+    assert result["issues"] == []
+    assert "commits sin verificar" in result["warnings"][0]
+    assert not any(args[0] == "status" for _, args in calls)
+
+    store.task_submit({"agent": agent, "task_id": task["id"], "summary": "Branch recorded",
+                       "commits": [commit[:10]], "branch": "task-branch"})
+    calls.clear()
+    result = facet._verify_worker_delivery(worker)
+    assert result["issues"] == result["warnings"] == []
+    assert [args[0] for _, args in calls].count("worktree") == 1
+    assert [(Path(path), args[0]) for path, args in calls if args[0] == "status"] == [(worktree, "status")]
+    assert all(Path(path) != unrelated for path, _ in calls)
     (worktree / "stray.txt").write_text("left over", encoding="utf-8")
     assert facet._verify_worker_delivery(worker)["issues"] == [f"Hay cambios sin commit en {worktree.as_posix()}."]
     (worktree / "stray.txt").unlink()
 
     # the worker moved on: its worktree holds a descendant of the submitted commit
     later = _commit_in(worktree, "more.txt")
-    assert later != commit and facet._verify_worker_delivery(worker)["issues"] == []
+    result = facet._verify_worker_delivery(worker)
+    assert later != commit and result["issues"] == result["warnings"] == []
     (worktree / "stray.txt").write_text("left over", encoding="utf-8")
     assert len(facet._verify_worker_delivery(worker)["issues"]) == 1
 
@@ -2516,8 +2540,74 @@ def test_a_delivery_is_found_by_its_commits_when_the_workers_folder_is_not_known
     unknown = store.task_add({"agent": agent, "title": "Lost", "repo": "QA", "paths": ["x"]})["task"]
     store.task_claim({"agent": agent, "task_id": unknown["id"]})
     store.task_submit({"agent": agent, "task_id": unknown["id"], "summary": "Fixture", "commits": ["f" * 40]})
+    calls.clear()
     issues = facet._verify_worker_delivery(worker)["issues"]
     assert any("no están en el repositorio QA" in issue for issue in issues)
+    assert [args[0] for _, args in calls].count("worktree") == 1
+
+
+def test_delivery_git_checks_share_one_deadline_and_note_timeout(tmp_path, monkeypatch):
+    from hoard_link.hub import agora_console
+
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    store.repo_lookup = lambda name: tmp_path
+    agent = "codex-qa"
+    task_id = store.task_add({"agent": agent, "title": "Bounded verification", "repo": "QA"})["task"]["id"]
+    store.task_claim({"agent": agent, "task_id": task_id})
+    store.task_submit({"agent": agent, "task_id": task_id, "summary": "Fixture", "commits": ["a1b2c3d"]})
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,workspace,created_at,updated_at)"
+                   " VALUES('test','codex',?,'model','','task','running',?,1,1)", (agent, str(tmp_path)))
+    elapsed = 0.0
+    monkeypatch.setattr(agora_console, "time", SimpleNamespace(time=time.time, monotonic=lambda: elapsed))
+    monkeypatch.setattr(agora_console, "DELIVERY_VERIFY_TIMEOUT_S", 3.0)
+    calls = []
+
+    def slow_git(path, *args, timeout, **kwargs):
+        nonlocal elapsed
+        calls.append((args[0], timeout))
+        elapsed += 2.0
+        if timeout < 2.0:
+            raise subprocess.TimeoutExpired(args, timeout)
+        return subprocess.CompletedProcess(args, 0, stdout=tmp_path.as_posix() + "\n")
+
+    monkeypatch.setattr(facet, "_git_worker_info", slow_git)
+    facet._monitor_worker("test", SimpleNamespace(wait=lambda: 0), tmp_path / "no-result")
+    assert calls == [("rev-parse", 3.0), ("worktree", 1.0)]
+    receipt, = facet._worker_rows()
+    assert receipt["outcome"] == "unverified"
+    assert "sin verificar" in receipt["detail_i18n"]["es"]
+    assert "timed out" in receipt["detail_i18n"]["en"]
+    result = store.task({"task_id": task_id})
+    assert result["task"]["status"] == "review"
+    assert any("se agotó el plazo" in message["body"] for message in result["messages"])
+
+
+def test_stop_request_defers_delivery_verification(tmp_path, monkeypatch):
+    facet = _facet(tmp_path)
+    store = _with_real_agora(facet, tmp_path)
+    agent = "faustus-qa"
+    task_id = store.task_add({"agent": agent, "title": "Stop fixture"})["task"]["id"]
+    store.task_claim({"agent": agent, "task_id": task_id})
+    with facet._db() as db:
+        db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,session_id,faustus_url,"
+                   "created_at,updated_at) VALUES('test','faustus',?,'model','','task','running','session',?,1,1)",
+                   (agent, "http://127.0.0.1:1"))
+    monkeypatch.setattr(facet, "_faustus_session_request", lambda method, path, *args, **kw: (
+        (200, {"runs": {"session": "run"}}) if method == "GET" else (200, {"stopped": True})))
+    seen = []
+    monkeypatch.setattr(facet, "_verify_worker_delivery", lambda worker: (
+        seen.append(worker["id"]) or {"tasks": [task_id], "issues": []}))
+    queued = []
+    monkeypatch.setattr(threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: queued.append(kw)))
+    response = facet.worker({"action": "stop", "worker_id": "test"})
+    assert response["ok"] and response["state"] == "stopped"
+    assert not seen
+    job, = queued
+    job["target"](*job["args"])
+    assert seen == ["test"]
+    assert store.task({"task_id": task_id})["task"]["status"] == "blocked"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
