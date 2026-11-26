@@ -223,8 +223,9 @@ is launched without a total deadline (`--no-timeout`). The inactivity watchdog o
 ignores keepalives and defaults to 3600 seconds. Configure it with `HOARD_AGORA_WORKER_IDLE_SECONDS`.
 Stop cancels the exact active run.
 
-Before creating a child, the Hub checks the health of the Faustus service at its
-current placement. If it was stopped manually or fails the fresh health check,
+Before creating a child, the Hub probes the Faustus service at its current
+placement. The probe leaves the service's start and stop controls alone. If
+Faustus was stopped manually or fails the fresh health check,
 the request returns HTTP 409 with the cause and creates no worker receipt. Agent
 calls receive `faustus_manually_stopped` or `faustus_unreachable` and
 `error_i18n` in Spanish and English.
@@ -269,8 +270,9 @@ use absolute local paths, one per line. On the agent surface, call
 `hub_agora_console_worker` with `action: "propose_files"` and `task_id` to preview.
 For `action: "create"` with `leader_id: "faustus"`, pass the same `task_id` and optional
 `file_scope: {"read_paths": [...], "write_paths": [...], "apps": {...}}`. Declaring
-app tools requires a task from an active order job in the selected space. To add
-one, use `hub_agora_plan_set` and pass the resulting `task_id`. A standalone task
+app tools requires a task from an active order job in the selected space. If the
+task has no active job there, creation returns `worker_order_job_required`. Use
+`hub_agora_plan_set` to add the job and pass its resulting `task_id`. A standalone task
 can still launch without app tools. The create response includes a bilingual
 `warning_i18n` explaining that the worker cannot register pieces. A continued worker keeps
 the private workspace and grants from its receipt. A dedicated session with an
