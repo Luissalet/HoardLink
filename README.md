@@ -60,6 +60,7 @@ Limits: no music generation through probing, no websocket progress for ComfyUI, 
 
 **Family layer**
 - Event bus, calls between apps, rules (when an event matches, run an action), scheduled jobs, deduplicated backups of every app's data with verify and restore, and a family audit.
+- Passive family link checks with per-link evidence, status and failure history. See the [link checker](docs/link-check.md).
 - Twelve-plus facets, each with its own tab and tools: spheres (personal, work, freelance, each with its own accounts, quiet hours and routing), notifications (Windows, ntfy, Telegram, mail), a single mail pass for the whole family, Slack and Microsoft 365 chats, Today (agenda, morning digest, subscribable calendar), references between records, cross-app search, long-job tracking, purchases, a polite shared web fetcher, brain rules into Faustus, agent sessions with undo, Spanish/English names, and parity testing.
 - Repos tab: unpushed commits, dirty trees, stray branches, drifted vendored copies, missing README or LICENSE, failing CI and tracked secrets, read-only.
 - Models for every app over HTTP (`/api/link/chat`, `/api/link/status`) so Node apps share the same resolution, leases and reasoning effort.

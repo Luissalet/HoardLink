@@ -17,10 +17,14 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from typing import Any, Optional
 
+from .._hubclient import NoRedirect
 from ..bridge import agent_headers
 from . import DEFAULT_PORT, HUB_VERSION, SERVICE
+from .link_check import TOOL_NAME as LINK_CHECK_TOOL
+from .link_probes import EXCLUDED_PORTS
 from .order_receipts import CALL, CONTEXT, request_context
 from .tools import all_tools as catalogue
 
@@ -45,13 +49,26 @@ def _token() -> str:
         return ""
 
 
-def _request(method: str, path: str, body: Optional[dict[str, Any]] = None, timeout: float = 90.0) -> tuple[Optional[int], Any]:
+def _request(method: str, path: str, body: Optional[dict[str, Any]] = None, timeout: float = 90.0, *,
+             passive: bool = False) -> tuple[Optional[int], Any]:
+    base = _url()
+    if passive:
+        try:
+            parsed = urlsplit(base)
+            if (parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.port in EXCLUDED_PORTS
+                    or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment):
+                return None, None
+        except ValueError:
+            return None, None
     data = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {"Content-Type": "application/json", "Authorization": "Bearer " + _token()}
     if data is not None:
         headers.update(agent_headers())
-    req = urllib.request.Request(_url() + path, data=data, method=method, headers=headers)
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+    handlers = [urllib.request.ProxyHandler({})]
+    if passive:
+        handlers.append(NoRedirect())
+    opener = urllib.request.build_opener(*handlers)
     try:
         with opener.open(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8") or "null")
@@ -65,7 +82,7 @@ def _request(method: str, path: str, body: Optional[dict[str, Any]] = None, time
 
 
 def _hub_up() -> bool:
-    status, body = _request("GET", "/api/health", timeout=1.5)
+    status, body = _request("GET", "/api/health", timeout=1.5, passive=True)
     return status == 200 and isinstance(body, dict) and body.get("service") == SERVICE
 
 
@@ -116,7 +133,7 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
     if method == "tools/call":
         name = str(params.get("name") or "")
         args = dict(params.get("arguments") or {})
-        context = request_context()
+        context = request_context() if name != LINK_CHECK_TOOL else None
         if context is not None:
             args.setdefault(CONTEXT, context)
         default_space = os.environ.get('AGORA_SPACE')
@@ -124,7 +141,11 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
             spec = next((tool for tool in catalogue() if tool['name'] == name), {})
             if 'space_id' in spec.get('inputSchema', {}).get('properties', {}):
                 args['space_id'] = default_space
-        if not _ensure_hub():
+        if name == LINK_CHECK_TOOL and not _hub_up():
+            return {"jsonrpc": "2.0", "id": msg_id, "result": {
+                **_text({"ok": False, "error": "The link checker requires a running Hub / El comprobador requiere un Hub en marcha"}),
+                "isError": True}}
+        if name != LINK_CHECK_TOOL and not _ensure_hub():
             return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text({"ok": False, "error": f"hub not reachable at {_url()} and could not be started"}), "isError": True}}
         wait = 90.0
         if name == "hub_link_chat":   # a model call may legitimately take minutes
@@ -143,14 +164,15 @@ def handle(msg: dict[str, Any]) -> Optional[dict[str, Any]]:
         elif name == "hub_agora_console_worker" and args.get("leader_id") == "faustus":
             # An explicit PC worker may first start its own headless runtime.
             wait = 180.0
-        status, body = _request("POST", "/api/agent/call", {"tool": name, "arguments": args}, timeout=wait)
+        options = {"passive": True} if name == LINK_CHECK_TOOL else {}
+        status, body = _request("POST", "/api/agent/call", {"tool": name, "arguments": args}, timeout=wait, **options)
         if status is None:
             return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text({"ok": False, "error": "hub did not answer"}), "isError": True}}
         result = body.get("result") if isinstance(body, dict) else body
         if isinstance(body, dict) and any(key in body for key in ("receipt_id", "receipt_error")):
             result = {"reply": result, **{key: body[key] for key in ("receipt_id", "receipt_undo", "receipt_error")
                                          if key in body}}
-        is_error = status >= 400
+        is_error = status >= 400 or (name == LINK_CHECK_TOOL and status >= 300)
         if status == 401:
             result = {"ok": False, "error": "hub refused the token: check HOARD_HUB_TOKEN_FILE / data/mcp-token"}
         return {"jsonrpc": "2.0", "id": msg_id, "result": {**_text(result), "isError": is_error}}
