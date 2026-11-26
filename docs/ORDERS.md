@@ -125,8 +125,9 @@ States: `provisional` → `checked` (a passing check left no detail missing or u
   Agents can queue the same modelling job with `hub_agora_draft_model_request`; the order's usual undo applies.
 * **Decisions travel.** A piece made from or looking at a kept piece carries the id of the person's decision that kept
   it.
-* **Checks** (`piece_check`): `note`, `ok`, and per detail (`id` or text) a `state` — `ok`, `missing` or `not_visible`
-  (the detail cannot be seen in this piece, which is not a failure) — with `how` and `evidence`. Inheriting a detail never
+* **Checks** (`piece_check`): `note`, `ok`, and per detail (`id` or text) a `state` — `ok`, `missing`, `not_visible`
+  (the detail cannot be seen in this piece) or [`reference_defect`](ORDER-REFERENCES.md#record-a-visual-comparison)
+  (the comparison links a difference to an open defect on that reference) — with `how` and `evidence`. Inheriting a detail never
   inherits its approval: every piece is checked on its own. When an earlier check or the piece note declares work
   pending, record what you verified and how in a passing check. Send `resolves_pending` with the pending check IDs,
   `"piece_note"`, or both, as identified in the gate refusal. The original notes remain in the history.
@@ -151,6 +152,7 @@ Record known defects on the affected piece with `piece_defect` and route require
 Defects are required by default, including older records. For a defect outside the brief, send `required: false` and
 use the same short, specific defect description in `piece_defect.note`, the piece title and the first line of its note.
 The title puts the limitation where the person can see it when deciding. The gate note can repeat a disclosed defect.
+For a comparison marked `reference_defect`, the gate checks the result's title and the linked defect's current status.
 The Hub recognises common Spanish and English phrases for pending work and defects in free-form notes. Record defects
 explicitly so the rule can evaluate them independently of wording.
 
