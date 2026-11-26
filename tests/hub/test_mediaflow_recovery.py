@@ -221,6 +221,7 @@ def test_known_library_refusal_can_resume_without_inventing_collection_id(tmp_pa
         return {"ok": True, "result": value}
 
     monkeypatch.setattr(contract, "call_app", call)
+    monkeypatch.setattr("hoard_link.hub.voice_routing.select_provider", lambda *_: "boltagon")
     job = flow.start({"download_id": "download", "folder": str(tmp_path)})
     result = flow.status({"job_id": job["job_id"], "wait_s": 5})
     assert result["status"] == "failed" and result["pending"] == ""
