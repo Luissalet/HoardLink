@@ -14,6 +14,7 @@ import webbrowser
 import pytest
 
 from hoard_link.hub import agent_routes, dojo, facets, link_check, link_probes, mcp, tools
+from hoard_link.service_contracts import SERVICES
 from hoard_link.hub.mailgate import MailGate, MailStore
 from hoard_link.hub.server import _HubHandler
 from hoard_link.hub.link_inventory import COMPATIBILITY_LINKS, INVENTORY, LINKS, SERVICE_LINKS
@@ -105,8 +106,10 @@ def test_inventory_covers_all_parent_ids_and_every_compatibility_and_service():
         scheherazade lumiere daedalus gepetto gulliver heron platos babel theseus durer
     """.split()
     assert {row.id for row in COMPATIBILITY_LINKS} == {f"1.17.{app}" for app in expected_bridges}
-    assert {row.id for row in SERVICE_LINKS} == {f"4.5.{service}" for service in "mail media stt tts docs embed storage".split()}
-    assert len({row.id for row in LINKS}) == len(LINKS) == 119
+    assert {(row.id, row.destination, row.probe) for row in SERVICE_LINKS} == {
+        (f"4.5.{service}", owner, f"service:{service}") for service, owner, _ in SERVICES
+    }
+    assert len({row.id for row in LINKS}) == len(LINKS) == len(INVENTORY) + len(COMPATIBILITY_LINKS) + len(SERVICE_LINKS)
     assert all(row.origin and row.destination and row.via and row.probe for row in LINKS)
 
 
@@ -367,8 +370,10 @@ def test_run_is_private_passive_and_writes_only_its_history(hub, monkeypatch):
         assert started["phase"] == "running"
         run = poll(facet, started["run_id"])
         rows = {row["id"]: row for row in run["links"]}
-        assert run["history_saved"] and run["summary"]["total"] == 125
-        assert sum(run["summary"][state] for state in link_check.STATES) == 125
+        expected_total = len(LINKS) + 6  # Catalogue and proxy rows for three registry apps.
+        assert run["history_saved"] and run["summary"]["total"] == expected_total
+        assert sum(run["summary"][state] for state in link_check.STATES) == expected_total
+        assert rows["4.5.dictation"]["destination"] == "cyrano"
         assert rows["3.1"]["evidence"]["metrics"] == {"events": 1, "last_event_at": 123.0}
         assert rows["3.2"]["evidence"]["metrics"]["enabled"] == 1
         assert rows["3.3"]["evidence"]["called"] == "faustus GET /api/health + Hub Brain queue counts"
@@ -844,6 +849,61 @@ def test_placed_catalogues_use_real_published_urls_and_refreshed_services(hub, t
     assert set(placement._remote_health["apps"]) == {"faustus", "hermes", "prometheus", "placed-extra"}
 
 
+def test_placement_refresh_skips_operator_excluded_services_and_aliases(hub):
+    from hoard_link.hub.placement import Placement
+
+    commands, requests = [], []
+
+    def ssh(argv, **kwargs):
+        assert argv[-2] == "fixture-node"
+        commands.append(argv[-1])
+        return SimpleNamespace(returncode=0, stdout=(
+            b"faustus active 200\nhermes active 200\nprometheus active 200\n"
+            b"placed-fixture active 200\n"
+        ))
+
+    def transport(app, method, path, args, **kwargs):
+        requests.append((app.url, method, path, args))
+        return 200, {"tools": [{"name": "sample"}]}
+
+    placement = hub.placement = Placement(hub, runner=ssh)
+    urls = {
+        "placed-fixture": "https://fixture.example.test:55021/portal/",
+        "placed-skip": "https://fixture.example.test:55022/health/",
+        "placed-alias": "https://fixture.example.test:55023/alias/",
+    }
+    state = placement._update(location="sparks", since=time.time(), urls=urls,
+                              node={"name": "Fixture", "ssh": "fixture-node"})
+    previous = {"checked": state["since"] - 60, "ok": True, "apps": {}}
+    placement._remote_health = previous
+    hub.register("placed-fixture", 55021)
+    hub.register("placed-skip", 55022)
+    hub.register("placed-alias", 55023).family["absorbed_by"] = {"id": "placed-skip"}
+    (Path(hub.config.data_dir) / "link-check.json").write_text(
+        '{"excluded_apps":["placed-skip"]}', encoding="utf-8",
+    )
+    facet = link_check.LinkCheckFacet(hub)
+    try:
+        probes = LinkProbes(hub, excluded=facet._settings(), request=transport, listeners=forbidden)
+    finally:
+        facet.close()
+
+    for excluded in ("placed-skip", "placed-alias"):
+        assert probes.catalogue(excluded, now_deadline()).outcome == "operator_excluded"
+    assert not commands and not requests
+    row = probes.run("placement", now_deadline(), {})
+    assert row.state == RESPONDS and row.metrics["services"] == row.metrics["healthy_http"] == 4
+    assert probes.catalogue("placed-fixture", now_deadline()).state == RESPONDS
+    assert len(commands) == 1
+    assert "http://127.0.0.1:55021/portal/" in commands[0]
+    for name in ("placed-skip.service", "placed-alias.service", "55022", "55023"):
+        assert name not in commands[0]
+    assert placement._remote_health is previous
+    assert requests == [
+        ("https://fixture.example.test:55021/portal", "GET", "/api/agent/tools", None),
+    ]
+
+
 def test_literal_local_manual_and_not_started_rows_are_distinct(hub, monkeypatch):
     hub.register("cookhoard", 5210)
     hub.register("ledger", 5180)
@@ -995,6 +1055,35 @@ def quota_metadata_only(action, _table, key, *_):
         # SQLite's json_each virtual table calls authorizer for internal schema setup.
         return sqlite3.SQLITE_OK
     return sqlite3.SQLITE_DENY
+
+
+def test_common_dictation_link_only_reads_the_cyrano_catalogue(hub, monkeypatch):
+    hub.register("cyrano", 55026)
+    expected = [
+        "dictation_understand", "dictation_audio", "dictation_session_open", "dictation_session_get",
+        "dictation_session_turn", "dictation_session_fix", "dictation_session_cancel", "dictation_session_undo",
+    ]
+    advertised = expected.copy()
+    calls = []
+
+    def transport(app, method, path, args, **kwargs):
+        assert (app.id, method, path, args) == ("cyrano", "GET", "/api/agent/tools", None)
+        calls.append(app.id)
+        return 200, {"tools": [{"name": name} for name in advertised]}
+
+    monkeypatch.setattr(link_probes, "_listener_ports", lambda: {55026})
+    monkeypatch.setattr(link_probes, "_request_app", transport)
+    rows, _ = run_inventory_rows(hub, monkeypatch, {"4.5.dictation"})
+    checked = rows["4.5.dictation"]
+    assert checked["destination"] == "cyrano" and checked["state"] == RESPONDS
+    assert checked["evidence"]["metrics"]["matched_tools"] == len(expected)
+    advertised.remove("dictation_session_undo")
+    probes = LinkProbes(hub, request=transport, listeners=lambda: {55026})
+    missing = probes.service("dictation", now_deadline())
+    assert missing.state == FAILED and missing.outcome == "missing_tools"
+    hub.manually_stopped.add("cyrano")
+    assert probes.service("dictation", now_deadline()).outcome == "manually_stopped"
+    assert calls == ["cyrano", "cyrano"]
 
 
 def test_literal_funes_catalogue_wins_over_foreign_lifecycle_state(hub, monkeypatch):

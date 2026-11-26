@@ -143,6 +143,7 @@ class LinkProbes:
         self._request = request if request is not None else _request_app
         self._listen = listeners if listeners is not None else _listener_ports
         self._placement_refresh_key = None
+        self._placement_scoped_health = None
 
     @cached_property
     def listeners(self):
@@ -359,31 +360,58 @@ class LinkProbes:
             return observation
         return replace(observation, called=f"{app_id} bridge.json + {observation.called}")
 
+    def _placement_targets(self, state):
+        targets = remote_health_targets(state.get("urls"))
+        excluded = self.excluded | {
+            alias for alias, owner in COMPATIBILITY_OWNERS.items() if owner in self.excluded
+        }
+        for app in self.hub.apps:
+            if app.id in targets:
+                parent = app.family.get("absorbed_by")
+                owner = parent.get("id") if isinstance(parent, dict) else None
+                if isinstance(owner, str) and owner.casefold() in self.excluded:
+                    excluded |= {app.id}
+        return {app: target for app, target in targets.items() if app not in excluded}
+
     def _remote_health(self, state, deadline):
         placement = self.hub.placement
         since = state.get("since") or 0
+        if not state.get("node") or self._isolated():
+            return None
 
         def fresh(cache):
             checked = (cache or {}).get("checked") or 0
             return bool(checked) and checked >= since and time.time() - checked <= REMOTE_HEALTH_TTL_S
 
         cache = getattr(placement, "_remote_health", None)
-        if not state.get("node") or self._isolated():
-            return None
-        refresh_key = (since, (cache or {}).get("checked"))
-        if not fresh(cache) and self._placement_refresh_key != refresh_key:
-            self._placement_refresh_key = refresh_key
-            cache = placement.remote_health(since=since)
-            while not fresh(cache) and getattr(placement, "_remote_refreshing", False):
+        placement_fields = ("location", "since", "node", "urls")
+        state_key = tuple(state.get(field) for field in placement_fields)
+        if not fresh(cache):
+            targets = self._placement_targets(state)
+            if targets.keys() != remote_health_targets(state.get("urls")).keys():
+                # A selective read must neither contact excluded services nor
+                # publish an incomplete snapshot to the ordinary placement view.
+                key = (state_key, targets)
+                previous = self._placement_scoped_health
+                cache = previous[1] if previous and previous[0] == key else None
                 remaining = deadline - time.monotonic() - 0.15
-                if remaining <= 0:
-                    break
-                time.sleep(min(0.05, remaining))
-                cache = getattr(placement, "_remote_health", None)
+                if not fresh(cache) and remaining > 0:
+                    cache = placement.read_remote_health(targets, timeout=remaining)
+                    self._placement_scoped_health = (key, cache)
+            else:
+                refresh_key = (state_key, (cache or {}).get("checked"))
+                if self._placement_refresh_key != refresh_key:
+                    self._placement_refresh_key = refresh_key
+                    cache = placement.remote_health(since=since)
+                    while not fresh(cache) and getattr(placement, "_remote_refreshing", False):
+                        remaining = deadline - time.monotonic() - 0.15
+                        if remaining <= 0:
+                            break
+                        time.sleep(min(0.05, remaining))
+                        cache = getattr(placement, "_remote_health", None)
         current = placement.state()
-        if (current.get("location") != "sparks" or current.get("since") != state.get("since")
-                or current.get("node") != state.get("node") or current.get("urls") != state.get("urls")
-                or (current.get("job") or {}).get("running")):
+        if ((current.get("job") or {}).get("running")
+                or tuple(current.get(field) for field in placement_fields) != state_key):
             return None
         return cache if fresh(cache) else None
 
@@ -399,6 +427,9 @@ class LinkProbes:
             return Observation(UNCHECKED, "placement.json", "not_placed_remotely")
         if not state.get("node"):
             return Observation(FAILED, "placement.json", "remote_node_missing")
+        included = self._placement_targets(state).keys()
+        if not included:
+            return Observation(UNCHECKED, "link-check.json", "operator_excluded", location="remote")
         cached = self._remote_health(state, deadline)
         call = "placement.json + placement health cache"
         if cached is None:
@@ -406,7 +437,6 @@ class LinkProbes:
         if cached.get("ok") is False:
             return Observation(FAILED, call, "remote_unreachable", location="remote")
         rows = cached.get("apps") or {}
-        included = remote_health_targets(state.get("urls")).keys() - self.excluded
         healthy = sum(1 for app in included if rows.get(app, {}).get("healthy") is True)
         metrics = {"services": len(included), "healthy_http": healthy, "seen_at": cached["checked"]}
         if healthy == len(included) and healthy:

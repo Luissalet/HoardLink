@@ -34,6 +34,9 @@ Para los destinos en marcha se pueden consultar las rutas GET de salud,
 catálogo y capacidades del copiloto de Faustus. El comprobador llama a
 `nightingale_modules` si su catálogo anuncia `readOnlyHint: true`. El
 catálogo del Hub y MCP `tools/list` se generan con la misma definición.
+La fila `4.5.dictation` lee el catálogo del dueño del servicio común de
+dictado, `cyrano`. El GET comprueba las herramientas de texto, audio y
+sesión publicadas en el contrato común.
 
 - `catalogue` comprueba los nombres publicados en un catálogo. Es el alcance de las sondas de Atlas, Mercator, las compatibilidades y los servicios comunes con dueño en una app.
 - `declaration` comprueba el registro de una capacidad, como el relay MCP. `prerequisites` comprueba los requisitos publicados o el catálogo de los extremos. Agenda, Hoy y Búsqueda usan este alcance.
@@ -90,8 +93,10 @@ Prospero y Vitruvius, que devuelven una lista `modules`.
 
 Para excluir más aplicaciones, crea `link-check.json` en la carpeta de datos
 del Hub con un objeto como `{"excluded_apps":["atlas"]}`. La exclusión se
-aplica también a los alias del propietario. Baird y el puerto 5232 están
-excluidos en la configuración base.
+aplica también a los alias del propietario. Si el comprobador necesita
+refrescar la salud de la Spark, filtra las aplicaciones y los alias
+excluidos antes de construir la consulta SSH. El resultado parcial se
+reutiliza en esa pasada. Baird y el puerto 5232 están excluidos por defecto.
 
 Cada sonda dispone de ocho segundos y la pasada reserva 120 segundos para las
 sondas. `link-check-history.json` guarda hasta 20 pasadas y conserva la fecha
@@ -144,6 +149,9 @@ row `9.1`. Both checks use passive running state before sending a request.
 The `4.5.stt` row checks Funes's catalogue at the Talos compatibility
 route, so a valid catalogue can confirm the transcription tools even
 when the process registry does not recognize a standalone service.
+The `4.5.dictation` row reads the catalogue of the registered common
+dictation owner, `cyrano`, and checks the contract's text, audio and session
+tools through the catalogue GET.
 
 The catalogue uses the same HTTP client as `hub_app_tools`. It compares
 sets of names against the app manifest or the owner's compatibility
@@ -163,7 +171,9 @@ also recognizes the existing module-state reads of Daguerre, Prospero and
 Vitruvius, whose replies include a `modules` list.
 
 For additional exclusions, set `{"excluded_apps":["atlas"]}` in
-`link-check.json` in the Hub data directory. Baird and port 5232 are
+`link-check.json` in the Hub data directory. A refresh started by the
+checker filters excluded apps and their aliases before building the SSH
+query. The run reuses that filtered result. Baird and port 5232 are
 excluded by default. The probe and run budgets are eight and 120 seconds.
 The Hub retains up to 20 completed runs in `link-check-history.json`. A
 response or confirmed stop ends a recorded failure. A skipped check or the

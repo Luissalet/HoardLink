@@ -245,14 +245,17 @@ class Placement:
                               "healthy": code.startswith(("2", "3")) or code in ("401", "403")}
         return apps
 
+    def read_remote_health(self, targets: dict[str, tuple[int, str]], *, timeout: float = 30) -> dict[str, Any]:
+        """Read only the selected services, leaving the shared snapshot alone."""
+        try:
+            out = self._ssh(self._health_command(targets), timeout=timeout) if targets else ""
+            return {"checked": time.time(), "ok": True, "apps": self._parse_health(out, targets), "error": ""}
+        except Exception as exc:  # noqa: BLE001 - an unreachable Spark is an answer too
+            return {"checked": time.time(), "ok": False, "apps": {}, "error": str(exc)[-300:]}
+
     def _refresh_remote_health(self) -> None:
         state = self.state()
-        targets = remote_health_targets(state.get("urls"))
-        try:
-            out = self._ssh(self._health_command(targets), timeout=30)
-            result = {"checked": time.time(), "ok": True, "apps": self._parse_health(out, targets), "error": ""}
-        except Exception as exc:  # noqa: BLE001 - an unreachable Spark is an answer too
-            result = {"checked": time.time(), "ok": False, "apps": {}, "error": str(exc)[-300:]}
+        result = self.read_remote_health(remote_health_targets(state.get("urls")))
         current = self.state()
         with self._lock:
             if (not (current.get("job") or {}).get("running")

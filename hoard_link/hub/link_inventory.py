@@ -66,7 +66,7 @@ INVENTORY = (
     Link("4.2", "Cook Hoard", "Talos (Funes), Kafka, Hermes (Tantalus), Ledger, Hub", "manifiesto x-links + server/hub.mjs", "prerequisites:cookhoard,funes,kafka,tantalus,ledger:cook_workflow", "C"),
     Link("4.3", "Cicero", "Nightingale", "dataset_connect kind=nightingale", "prerequisites:cicero,nightingale:dataset_workflow", "C"),
     Link("4.4", "Maxwell", "Vulcan", "directo por puerto VULCAN_URL=http://127.0.0.1:5186", "prerequisites:maxwell,vulcan:maxwell_peer", "C"),
-    Link("4.5", "cualquier app (biblioteca fam_*)", "dueño del servicio", "servicios comunes del Hub: mail→hub, media→Links, stt→Funes (Talos), tts→Prospero, docs/OCR→Kafka, embed→Borges (Writer), storage→Atlas", "services", "C"),
+    Link("4.5", "cualquier app (biblioteca fam_*)", "dueño del servicio", "servicios comunes del Hub: mail→hub, media→Links, stt→Funes (Talos), dictation→Cyrano, tts→Prospero, docs/OCR→Kafka, embed→Borges (Writer), storage→Atlas", "services", "C"),
     Link("4.6", "apps", "Hub (carriles de navegador, un sitio a la vez)", "hub_lane_acquire/release/renew/status", "lanes", "C"),
     Link("4.7", "Faustus", "Hub (salas y registro de coordinación)", "POST /api/agent/call (hub_coordination_*)", "coordination", "C"),
     Link("4.8", "Hub aislado (pruebas)", "Hoards reales", "arranque en aislado y cierre", "no:isolation_launch", "R"),
