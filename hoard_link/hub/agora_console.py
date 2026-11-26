@@ -2830,7 +2830,8 @@ class AgoraConsoleFacet(Facet):
     @staticmethod
     def _git_worker_info(path: str, *args: str, check: bool = False) -> subprocess.CompletedProcess:
         return subprocess.run(["git", "-C", path, *args], capture_output=True, encoding="utf-8",
-                              errors="replace", timeout=10, check=check)
+                              errors="replace", timeout=10, check=check,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def _post_worker_status(self, worker: dict[str, Any], detail: str, verification: dict[str, Any]) -> None:
         agora = self._agora()
