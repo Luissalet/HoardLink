@@ -3,12 +3,12 @@ import json
 from pathlib import Path
 import sqlite3
 from types import SimpleNamespace
-from contextlib import nullcontext
+from contextlib import closing, nullcontext
 
 import pytest
 
 from hoard_link.hub import agora_faustus, agora_lessons, faustus_endpoint_key
-from hoard_link.hub.agora import AgoraFacet
+from hoard_link.hub.agora import Agora, AgoraFacet
 from hoard_link.hub.facets import Request
 from tests.test_agora_console import _facet
 
@@ -40,6 +40,64 @@ def test_missing_or_moving_placement_does_not_use_stale_pc_service(tmp_path, sta
 def test_pc_service_keeps_existing_health_contract(tmp_path):
     facet = _facet(tmp_path)
     assert agora_faustus.service(facet.hub) == facet.hub.faustus_status()
+
+
+@pytest.mark.parametrize(("health", "code"), [
+    ({"reachable": False, "manually_stopped": True}, "faustus_manually_stopped"),
+    ({"reachable": False, "listening": True}, "faustus_unreachable"),
+    ({"reachable": True, "body": {"service": "different"}}, "faustus_unreachable"),
+    ({"reachable": True, "body": {"service": "faustus"}}, None),
+])
+def test_worker_launch_requires_fresh_faustus_health(tmp_path, monkeypatch, health, code):
+    facet = _facet(tmp_path)
+    target = {"url": "http://faustus.example", **health}
+    monkeypatch.setattr(facet.hub, "faustus_status", lambda: pytest.fail("cached health used"))
+    monkeypatch.setattr(facet.hub, "_refresh_faustus", lambda: target, raising=False)
+    if code is None:
+        assert agora_faustus.launch_service(facet.hub) == target
+        return
+    with pytest.raises(agora_faustus.WorkerLaunchError) as rejected:
+        agora_faustus.launch_service(facet.hub)
+    result = rejected.value.reply(None)
+    assert result["code"] == code and result["status"] == 409
+    assert result["error_i18n"]["es"] in result["error"]
+    assert result["error_i18n"]["en"] in result["error"]
+
+
+def test_app_scope_requires_current_order_job_in_launch_space(tmp_path):
+    apps = {"nightingale": ["data_ingest"], "writer": ["wh_document_new"]}
+    with closing(Agora(tmp_path / "agora.db")) as root:
+        actor = "faustus-fixture"
+        root.space_create({"id": "estudio", "title": "Studio", "agent": actor})
+        agora = root.for_space("estudio")
+        console = SimpleNamespace(_agora=lambda: agora, space_id="estudio")
+        standalone = agora.task_add({"agent": actor, "title": "Standalone"})["task"]["id"]
+        scope = agora_faustus.file_scope(str(tmp_path), {"apps": apps})
+
+        def job(space, title):
+            order = space.order_create({"agent": actor, "title": title, "words": title})["order"]
+            task = space.plan_set({"agent": actor, "order_id": order["id"], "jobs": [
+                {"key": "piece", "title": "Piece"},
+            ]})["keys"]["piece"]
+            return order, task
+
+        other_order, other_task = job(root, "Other space")
+        order, task = job(agora, "Studio order")
+        assert order["id"] != other_order["id"]
+        for task_id in (None, standalone, other_task):
+            with pytest.raises(agora_faustus.WorkerLaunchError) as rejected:
+                agora_faustus.production_scope(console, actor, scope, task_id)
+            assert rejected.value.code == "worker_order_job_required"
+            assert all("hub_agora_plan_set" in text for text in rejected.value.messages.values())
+
+        isolated_scope = agora_faustus.file_scope(str(tmp_path))
+        assert agora_faustus.production_scope(console, actor, isolated_scope, standalone)["production"]["order_id"] is None
+        production = agora_faustus.production_scope(console, actor, scope, task)["production"]
+        assert production == {"space_id": "estudio", "task_id": task, "order_id": order["id"], "agent": actor}
+
+        agora.db.execute("UPDATE agora_order_jobs SET removed=1 WHERE task_id=?", (task,))
+        with pytest.raises(agora_faustus.WorkerLaunchError, match="hub_agora_plan_set"):
+            agora_faustus.production_scope(console, actor, scope, task)
 
 
 @pytest.mark.parametrize(("enabled", "error"), [
