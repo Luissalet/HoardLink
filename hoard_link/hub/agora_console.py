@@ -28,7 +28,7 @@ import urllib.request
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import quote, urlencode, urlsplit
 
 from .._process import popen_hidden, run_hidden
@@ -52,6 +52,7 @@ PROBE_TTL_S = 60.0
 AGORA_ACTIVE_HEARTBEAT_S = 3 * 60 * 60
 CONSOLE_TURN_ACTIVE_S = 45 * 60
 MAX_TASK_CHARS = 12000
+DELIVERY_VERIFY_TIMEOUT_S = 8.0
 _COMMIT_REF_RE = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
 CONSOLE_IDENTITIES = {"codex": "codex-agora", "cursor": "cursor-agora"}
 # What `claude --model` takes whatever the account: the aliases of the families, which the CLI resolves to the latest
@@ -882,6 +883,9 @@ class AgoraConsoleFacet(Facet):
         if worker["outcome"] == "hub_restart_stopping" or summary.get("stop") == "cancelled":
             state, outcome = "stopped", "cancelled"
             es, en = "Turno detenido antes de recuperar el Hub.", "The turn stopped before the Hub recovered."
+        elif verification.get("timed_out") and not verification["issues"]:
+            state, outcome = "completed", "unverified"
+            es, en = self._submitted_detail(verification, recovered=True)
         elif not verification["issues"]:
             if verification.get("verdict"):
                 state, outcome = "completed", "reviewed"
@@ -907,7 +911,7 @@ class AgoraConsoleFacet(Facet):
         if not updated:
             return
         self._record("worker", worker["id"], state, detail)
-        if state != "completed":
+        if state != "completed" or verification.get("timed_out"):
             self._post_worker_status(worker, detail, verification)
         if state == "failed" and not worker["retry_count"] and worker["parent_id"] == "faustus":
             if self._continue_worker(worker["id"], automatic=True)["ok"]:
@@ -2671,6 +2675,7 @@ class AgoraConsoleFacet(Facet):
         reviewed = agora_auto_review.review_receipt(self, worker)
         if reviewed is not None:
             return reviewed
+        deadline = time.monotonic() + DELIVERY_VERIFY_TIMEOUT_S
         agora = self._agora()
         issues = []
         issues_en = []
@@ -2682,6 +2687,15 @@ class AgoraConsoleFacet(Facet):
             issues.append(es)
             issues_en.append(en)
 
+        def remaining() -> float:
+            budget = deadline - time.monotonic()
+            if budget <= 0:
+                raise subprocess.TimeoutExpired("worker delivery verification", DELIVERY_VERIFY_TIMEOUT_S)
+            return budget
+
+        def git(path: str, *args: str, **kwargs: Any) -> subprocess.CompletedProcess:
+            return self._git_worker_info(path, *args, timeout=remaining(), **kwargs)
+
         if not worker["agent_id"] or agora is None or not hasattr(agora, "tasks"):
             issue("No se pudo comprobar la entrega en el Ágora.", "Could not verify the delivery in Agora.")
         else:
@@ -2691,7 +2705,7 @@ class AgoraConsoleFacet(Facet):
                 tasks.extend(t for t in page["tasks"] if t["updated"] >= worker["created_at"]
                              or t["status"] in ("claimed", "in_progress", "blocked", "changes"))
                 cursor = page.get("next_cursor")
-                if not cursor:
+                if not cursor or time.monotonic() >= deadline:
                     break
             if not tasks:
                 issue("No hay ninguna entrega del trabajador en el Ágora.", "The worker has no delivery in Agora.")
@@ -2699,140 +2713,175 @@ class AgoraConsoleFacet(Facet):
                 if task["status"] not in ("review", "approved", "done") or not task["submission_revision"]:
                     issue(f"#{task['id']} sigue sin entregar.", f"#{task['id']} is still unsubmitted.")
 
-        workspaces = set()
+        def warn(es: str, en: str) -> None:
+            warnings.append(es)
+            warnings_en.append(en)
+
+        verification = {"issues": issues, "issues_en": issues_en, "warnings": warnings, "warnings_en": warnings_en,
+                        "tasks": [task["id"] for task in tasks]}
+        try:
+            remaining()
+            self._verify_worker_worktrees(worker["workspace"], tasks, getattr(agora, "repo_lookup", None),
+                                          git, issue, warn)
+            remaining()
+        except subprocess.TimeoutExpired:
+            verification["timed_out"] = True
+            warn("Comprobación de la entrega sin verificar: se agotó el plazo.",
+                 "Delivery verification timed out. The delivery is unverified.")
+        return verification
+
+    def _verify_worker_worktrees(
+        self, workspace: str, tasks: list[dict[str, Any]], repo_lookup: Optional[Callable[[str], Any]],
+        git: Callable[..., subprocess.CompletedProcess], issue: Callable[[str, str], None],
+        warn: Callable[[str, str], None],
+    ) -> None:
+        workspaces: set[str] = set()
         recorded_root = ""
-        workspace = worker["workspace"]
+
+        def path_key(path: str) -> str:
+            return os.path.normcase(os.path.normpath(path))
+
         if workspace:
             try:
                 if not Path(workspace).is_dir():
                     raise FileNotFoundError(workspace)
-                root = self._git_worker_info(workspace, "rev-parse", "--show-toplevel")
+                root = git(workspace, "rev-parse", "--show-toplevel")
                 if root.returncode == 0:
                     recorded_root = root.stdout.strip()
                 elif (Path(workspace) / ".git").exists():
-                    issue(f"No se pudo verificar el estado Git de {workspace}.", f"Could not check Git status in {workspace}.")
-            except (OSError, subprocess.SubprocessError):
+                    raise OSError(workspace)
+            except (OSError, subprocess.CalledProcessError):
                 issue(f"No se pudo verificar el estado Git de {workspace}.", f"Could not check Git status in {workspace}.")
 
-        repo_lookup = getattr(agora, "repo_lookup", None)
+        inventories: dict[str, tuple[str, dict[str, str], dict[str, str], dict[str, str]]] = {}
+
+        def worktrees(repo: str) -> tuple[str, dict[str, str], dict[str, str], dict[str, str]]:
+            key = path_key(repo)
+            if key not in inventories:
+                listing = git(repo, "worktree", "list", "--porcelain", "-z", check=True)
+                primary = ""
+                by_branch, by_path, heads = {}, {}, {}
+                for entry in listing.stdout.split("\0\0"):
+                    fields = entry.split("\0")
+                    if not fields[0].startswith("worktree "):
+                        continue
+                    folder = fields[0].removeprefix("worktree ")
+                    if not primary:
+                        primary = folder
+                    if any(field.startswith("prunable") for field in fields[1:]):
+                        continue
+                    by_path[path_key(folder)] = folder
+                    for field in fields[1:]:
+                        if field.startswith("branch "):
+                            by_branch[field.removeprefix("branch ")] = folder
+                        elif field.startswith("HEAD "):
+                            heads[folder] = field.removeprefix("HEAD ")
+                inventories[key] = primary or repo, by_branch, by_path, heads
+            return inventories[key]
+
         has_repository_scope = False
         for task in tasks:
             commits = task.get("commits")
             groups = task.get("commits_by_repo") or {}
             if not task.get("paths") and not commits and not groups:
                 continue
-            branch = task.get("branch")
             repo_name = task.get("repo") or ""
             repo = repo_lookup(repo_name) if repo_name and repo_lookup else None
-            if repo or groups:
-                has_repository_scope = True
-            if repo and branch:
-                branch = branch.removeprefix("refs/heads/")
-                try:
-                    entries = self._git_worker_info(str(repo), "worktree", "list", "--porcelain", "-z", check=True)
-                    for entry in entries.stdout.split("\0\0"):
-                        fields = entry.split("\0")
-                        if fields[0].startswith("worktree ") and f"branch refs/heads/{branch}" in fields:
-                            workspaces.add(fields[0].removeprefix("worktree "))
-                            break
-                    else:
-                        if recorded_root and self._same_repository(recorded_root, repo):
-                            workspaces.add(recorded_root)
-                        elif not commits and not groups:
-                            issue(f"#{task['id']}: no se encontró la carpeta de la rama {branch}.",
-                                  f"#{task['id']}: no worktree was found for branch {branch}.")
-                except (OSError, subprocess.SubprocessError):
-                    issue(f"#{task['id']}: no se pudo localizar la carpeta de la rama {branch}.",
-                          f"#{task['id']}: could not locate the worktree for branch {branch}.")
-            if not groups and repo and commits:
-                groups = {repo_name: commits}
-            for name, refs in groups.items():
-                target = repo if name.casefold() == repo_name.casefold() else (repo_lookup(name) if repo_lookup else None)
-                if not target:
-                    warnings.append(f"#{task['id']}: el repositorio {name} no está registrado. Sus commits quedan sin comprobar.")
-                    warnings_en.append(f"#{task['id']}: repository {name} is unregistered. Its commits could not be checked.")
-                    continue
-                found, missing = self._locate_submitted_commits(target, refs)
-                workspaces.update(found)
-                if missing:
-                    hashes = ", ".join(commit[:12] for commit in missing)
-                    issue(f"#{task['id']}: los commits {hashes} no están en el repositorio {name}.",
-                          f"#{task['id']}: commits {hashes} are missing from repository {name}.")
-                if recorded_root and self._same_repository(recorded_root, target):
-                    workspaces.add(recorded_root)
-            if not repo and not groups:
+            branch = task.get("branch") or ""
+            scope = dict(groups)
+            if repo and not any(name.casefold() == repo_name.casefold() for name in scope):
+                scope[repo_name] = (commits or []) if not groups else []
+            if not scope:
                 if recorded_root:
                     workspaces.add(recorded_root)
                 else:
                     issue(f"#{task['id']}: no consta la carpeta de trabajo para comprobar los commits.",
                           f"#{task['id']}: no worktree is recorded for checking the commits.")
+                continue
+            has_repository_scope = True
+            for name, refs in scope.items():
+                target = repo if name.casefold() == repo_name.casefold() else (repo_lookup(name) if repo_lookup else None)
+                if not target:
+                    warn(f"#{task['id']}: el repositorio {name} no está registrado. Sus commits quedan sin comprobar.",
+                         f"#{task['id']}: repository {name} is unregistered. Its commits could not be checked.")
+                    continue
+                try:
+                    primary, by_branch, by_path, heads = worktrees(str(target))
+                    candidates = set()
+                    recorded = by_path.get(path_key(recorded_root))
+                    if recorded:
+                        candidates.add(recorded)
+                    branch_folder = by_branch.get("refs/heads/" + branch.removeprefix("refs/heads/"))
+                    if branch_folder and branch_folder != primary:
+                        candidates.add(branch_folder)
+                    workspaces.update(candidates)
+                    if branch and not commits and not groups and not (candidates or branch_folder):
+                        issue(f"#{task['id']}: no se encontró la carpeta de la rama {branch}.",
+                              f"#{task['id']}: no worktree was found for branch {branch}.")
+                    missing, unreachable = self._locate_submitted_commits(primary, candidates, heads, refs, git)
+                except (OSError, subprocess.CalledProcessError):
+                    issue(f"#{task['id']}: no se pudo comprobar Git en el repositorio {name}.",
+                          f"#{task['id']}: could not check Git in repository {name}.")
+                    continue
+                if missing:
+                    hashes = ", ".join(commit[:12] for commit in missing)
+                    issue(f"#{task['id']}: los commits {hashes} no están en el repositorio {name}.",
+                          f"#{task['id']}: commits {hashes} are missing from repository {name}.")
+                if unreachable:
+                    hashes = ", ".join(commit[:12] for commit in unreachable)
+                    warn(f"#{task['id']}: commits sin verificar en {name} ({hashes}). "
+                         "No están en la copia principal ni en una carpeta de trabajo registrada para la entrega.",
+                         f"#{task['id']}: unverified commits in {name} ({hashes}). "
+                         "They are not in the main checkout or a worktree recorded for the delivery.")
         if not workspaces and recorded_root and not has_repository_scope:
             workspaces.add(recorded_root)
         for path in sorted(workspaces):
             try:
-                dirty = self._git_worker_info(path, "status", "--porcelain", "--untracked-files=normal", check=True)
+                dirty = git(path, "status", "--porcelain", "--untracked-files=normal", check=True)
                 if dirty.stdout.strip():
                     issue(f"Hay cambios sin commit en {path}.", f"There are uncommitted changes in {path}.")
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.CalledProcessError):
                 issue(f"No se pudo verificar el estado Git de {path}.", f"Could not check Git status in {path}.")
-        return {"issues": issues, "issues_en": issues_en, "warnings": warnings, "warnings_en": warnings_en,
-                "tasks": [task["id"] for task in tasks]}
-
-    def _same_repository(self, path: Any, repo: Any) -> bool:
-        """True when both folders belong to one repository (the checkout and its worktrees share a common git dir)."""
-        try:
-            def common(folder: Any) -> str:
-                done = self._git_worker_info(str(folder), "rev-parse", "--path-format=absolute", "--git-common-dir")
-                return os.path.normcase(os.path.realpath(done.stdout.strip())) if done.returncode == 0 else ""
-            mine = common(path)
-            return bool(mine) and mine == common(repo)
-        except (OSError, subprocess.SubprocessError):
-            return False
-
-    def _locate_submitted_commits(self, repo: Any, commits: list[str]) -> tuple[set[str], list[str]]:
-        """Where the commits of a submit are. Answers (the worktrees of the repository that hold them unintegrated,
-        the commits the repository does not have). Worktrees share the repository's objects, so one look at the
-        repository finds a commit made in any of them. A worktree is the worker's when its HEAD is one of the commits,
-        or a descendant of one that the shared checkout has not taken in yet; the shared checkout itself is never
-        looked at for stray files, because it is everybody's."""
-        repo = str(repo)
-        if self._git_worker_info(repo, "rev-parse", "--git-dir").returncode != 0:
-            return set(), []                       # not a repository: there is nothing to look in
-        full, missing = [], []
-        for commit in commits:
-            done = self._git_worker_info(repo, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}")
-            if done.returncode == 0 and done.stdout.strip():
-                full.append(done.stdout.strip())
-            else:
-                missing.append(commit)
-        found: set[str] = set()
-        if not full:
-            return found, missing
-        primary = os.path.normcase(os.path.realpath(repo))
-        listing = self._git_worker_info(repo, "worktree", "list", "--porcelain", "-z")
-        if listing.returncode != 0:
-            return found, missing
-        for entry in listing.stdout.split("\0\0"):
-            fields = entry.split("\0")
-            if not fields or not fields[0].startswith("worktree "):
-                continue
-            folder = fields[0].removeprefix("worktree ")
-            head = next((f.removeprefix("HEAD ") for f in fields if f.startswith("HEAD ")), "")
-            if not head or os.path.normcase(os.path.realpath(folder)) == primary or not Path(folder).is_dir():
-                continue
-            for commit in full:
-                if head == commit or (
-                        self._git_worker_info(repo, "merge-base", "--is-ancestor", commit, head).returncode == 0
-                        and self._git_worker_info(repo, "merge-base", "--is-ancestor", commit, "HEAD").returncode != 0):
-                    found.add(folder)
-                    break
-        return found, missing
 
     @staticmethod
-    def _git_worker_info(path: str, *args: str, check: bool = False) -> subprocess.CompletedProcess:
-        return run_hidden(["git", "-C", path, *args], capture_output=True, encoding="utf-8",
-                              errors="replace", timeout=10, check=check,
-                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    def _locate_submitted_commits(primary: str, candidates: set[str], heads: dict[str, str],
+                                  commits: list[str], git: Callable[..., subprocess.CompletedProcess]
+                                  ) -> tuple[list[str], list[str]]:
+        """Resolve the shared objects once and test reachability only from the permitted checkouts."""
+        if not commits:
+            return [], []
+        requested = "".join(f"{commit}^{{commit}}\n" for commit in commits)
+        objects = git(primary, "cat-file", "--batch-check=%(objectname) %(objecttype)",
+                      input=requested, check=True).stdout.splitlines()
+        if len(objects) != len(commits):
+            raise OSError("git cat-file returned an incomplete result")
+        checkouts = [primary, *sorted(candidates - {primary})]
+        tips = {heads[path] for path in checkouts if path in heads}
+        missing, unreachable = [], []
+        for submitted, record in zip(commits, objects):
+            commit, _, kind = record.partition(" ")
+            if kind != "commit":
+                missing.append(submitted)
+                continue
+            if commit in tips:
+                continue
+            for path in checkouts:
+                result = git(path, "merge-base", "--is-ancestor", commit, "HEAD")
+                if result.returncode == 0:
+                    break
+                if result.returncode != 1:
+                    raise subprocess.CalledProcessError(result.returncode, result.args, stderr=result.stderr)
+            else:
+                unreachable.append(submitted)
+        return missing, unreachable
+
+    @staticmethod
+    def _git_worker_info(path: str, *args: str, check: bool = False, timeout: float = 10.0,
+                         input: Optional[str] = None) -> subprocess.CompletedProcess:
+        env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_LAZY_FETCH": "1"}
+        return run_hidden(["git", "-C", path, "-c", "core.fsmonitor=false", *args],
+                          input=input, capture_output=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, check=check, env=env)
 
     def _post_worker_status(self, worker: dict[str, Any], detail: str, verification: dict[str, Any]) -> None:
         agora = self._agora()
@@ -3307,6 +3356,9 @@ class AgoraConsoleFacet(Facet):
                 elif verification["issues"]:
                     state, outcome = "incomplete", "incomplete"
                     es, en = "Trabajo incompleto:", "Incomplete work:"
+                elif verification.get("timed_out"):
+                    state, outcome = "completed", "unverified"
+                    es, en = self._submitted_detail(verification)
                 elif verification.get("verdict"):
                     state, outcome = "completed", "reviewed"
                     es, en = "Voto de revisión comprobado en el Ágora.", "Review vote verified in Agora."
@@ -3325,7 +3377,7 @@ class AgoraConsoleFacet(Facet):
                 if receipts is not None:
                     skill_bench.finish(receipts, worker_id)
                 return
-            if state != "completed":
+            if state != "completed" or verification.get("timed_out"):
                 self._post_worker_status(worker, detail, verification)
             if state == "failed" and leader == "faustus" and not worker["retry_count"] and verification["issues"]:
                 if self._continue_worker(worker_id, automatic=True, previous_process=process)["ok"]:
@@ -3560,6 +3612,14 @@ class AgoraConsoleFacet(Facet):
             return {"ok": True, "worker_id": worker_id, "stop": stopped,
                     "undo": None, "irreversible": True}
 
+    def _notify_stopped_worker(self, worker: dict[str, Any]) -> None:
+        try:
+            verification = self._verify_worker_delivery(worker)
+            detail = self._delivery_detail(verification, "Faustus: turno detenido.", "Faustus: turn stopped.")
+            self._post_worker_status(worker, detail, verification)
+        except Exception:
+            logger.exception("Could not record the stopped worker's delivery status for %s", worker["id"])
+
     def _stop_worker(self, worker_id: str) -> dict[str, Any]:
         with self._db_lock, self._db() as db:
             worker = db.execute("SELECT * FROM workers WHERE id=?", (worker_id,)).fetchone()
@@ -3602,8 +3662,8 @@ class AgoraConsoleFacet(Facet):
                     self._adopt_worker_runtime(worker)
                     self._close_worker_runtime(worker_id)
             if state == "stopped" and updated:
-                verification = self._verify_worker_delivery(dict(worker))
-                self._post_worker_status(dict(worker), "Faustus: turno detenido.", verification)
+                threading.Thread(target=self._notify_stopped_worker, args=(dict(worker),), daemon=True,
+                                 name="agora-worker-stop-receipt").start()
             self._record("worker", worker_id, state, "Faustus confirmed cancellation of the worker turn.")
             return {"ok": True, "worker_id": worker_id, "state": state, "stop": stopped}
         process = self._processes.get(worker_id)
