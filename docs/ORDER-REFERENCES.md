@@ -35,8 +35,38 @@ observation and evidence on the existing piece. This mark in `keep` compares a c
 Add `reference_preview` to select a retained preview of the reference. Without a preview index the comparison uses
 the retained image file. The successful write returns an undo token and a check with both view URLs, both revision
 numbers and their hashes. Use `state: "missing"` for a mismatch. `not_visible` records an observation about a detail
-that cannot be seen in the pair. At least one applicable detail must match each source. These records document what
+that cannot be seen in the pair. At least one applicable detail must pass for each source. These records document what
 the inspecting worker saw. A different piece revision needs its own observations.
+
+Use `state: "reference_defect"` when an observed difference comes from a specific open defect recorded on the
+reference with `hub_agora_piece_defect`. Include its `reference_defect_id` in each affected comparison.
+
+```json
+{
+  "id": "k1",
+  "state": "reference_defect",
+  "comparisons": [
+    {"reference_piece": 31, "reference_preview": 4, "reference_defect_id": 42,
+     "observed": "The reference has a gap in the cape edge at the neck. The result has a continuous edge."}
+  ]
+}
+```
+
+The pair passes for that detail while the linked defect is open and the reference revision is current. Make the
+difference visible in the result's title with the registered defect description or `reference defect #42` in English
+or `defecto de referencia #42` in Spanish. Before opening a gate, pass the optional `title` in the same check to
+update the piece's title and record the mark together. The check's undo token can restore the title while it is
+still editable. An open gate accepts further comparisons without a `title` argument. An edit or undo that changes
+the title returns HTTP 409 with `piece_title_in_open_gate`. The comparison still uses the order's existing
+references, including the identity reference. Closing the defect with `hub_agora_defect_close`
+or retaining a replacement revision invalidates the mark and the gate asks for a fresh comparison. If the gate
+was already open, keeping the result also requires a current comparison.
+
+En castellano, usa `state: "reference_defect"` cuando la diferencia observada provenga de un defecto abierto en la
+pieza de referencia. Enlaza su `reference_defect_id` en cada par afectado. Decláralo en el título de la pieza
+cotejada con la descripción registrada o con `defecto de referencia #42`. Puedes actualizar `title` en esa misma
+comprobación antes de abrir la puerta. Con la puerta abierta, registra cotejos sin enviar `title`. Si se cierra el
+defecto o se conserva una revisión que sustituye a la referencia, vuelve a cotejar.
 
 `hub_agora_gate_open` returns HTTP 409 with `kept_reference_comparison` when a new visual piece with order details
 lacks a passing comparison with a required visual reference. The error identifies the piece and reference, reports

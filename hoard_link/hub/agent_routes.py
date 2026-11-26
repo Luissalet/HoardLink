@@ -5,6 +5,19 @@ from .order_receipts import CALL, CONTEXT
 
 PREFIX = "/api/agent/tools/"
 
+# These order conflicts are part of the agent HTTP contract.
+_ORDER_CONFLICTS = (
+    "kept_reference_comparison",
+    "piece_title_in_open_gate",
+    "piece_title_locked",
+    "piece_undisclosed_reference_defect",
+    "reference_defect_closed",
+    "reference_defect_missing",
+    "reference_defect_required",
+    "reference_defect_wrong_piece",
+    "reference_replaced",
+)
+
 
 def describe(path):
     name = path.removeprefix(PREFIX)
@@ -37,7 +50,9 @@ def invoke(hub, name, arguments, **identity):
     ok = not (isinstance(result, dict) and result.get("ok") is False)
     if ok:
         status = 200
-    elif result.get("code") == "worker_name_in_use":
+    elif result.get("code") == "worker_name_in_use" or (
+        result.get("status") == 409 and (result.get("error_code") or result.get("code")) in _ORDER_CONFLICTS
+    ):
         status = 409
     else:
         status = 400

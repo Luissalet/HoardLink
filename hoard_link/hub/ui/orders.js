@@ -170,7 +170,8 @@
     for (const k of piece.keep) {
       const li = el("li", "ord-keep-" + (k.state || "pending"));
       const mark = { ok: tr("comprobado", "checked"), missing: tr("falta", "missing"), pending: tr("sin comprobar", "not checked"),
-        not_visible: tr("no se ve aquí", "not visible here") }[k.state || "pending"];
+        not_visible: tr("no se ve aquí", "not visible here"),
+        reference_defect: tr("difiere por un defecto de la referencia", "differs due to a reference defect") }[k.state || "pending"];
       const detail = el("span", "", k.detail);
       li.append(el("span", "ord-keep-dot"), detail, el("small", "", mark));
       const origin = k.source === "order" ? tr("de la orden", "from the order")
@@ -202,7 +203,11 @@
     const res = await ctx.api("/api/agora/gate_decide", body).catch(e => ({ ok: false, error: String(e) }));
     busy = false; buttons.forEach(b => { b.disabled = false; });
     if (!res?.ok && res?.error_code === "piece_changed") { ctx.toast(tr("No se ha decidido: el fichero de una pieza ha cambiado desde que se registró", "Not decided: a piece's file changed since it was registered"), "err", tr("Su puesto tiene que registrarla de nuevo.", "Its station has to register it again.")); return; }
-    if (!res?.ok) { ctx.toast(tr("No se ha guardado la decisión", "The decision was not saved"), "err", res?.error || ""); return; }
+    if (!res?.ok) {
+      const message = tr(res?.es || res?.message_es, res?.en || res?.message_en) || res?.error || "";
+      ctx.toast(tr("No se ha guardado la decisión", "The decision was not saved"), "err", message);
+      return;
+    }
     drafts.delete(gate.id);
     const stale = (res.decided || []).reduce((n, d) => n + (d.stale?.length || 0), 0);
     ctx.toast(decision === "keep" ? tr("Conservado", "Kept")
