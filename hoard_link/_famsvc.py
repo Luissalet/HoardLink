@@ -29,7 +29,7 @@ from typing import Any, Callable, Mapping, Optional
 from . import family as _f
 from ._hubclient import fetch
 from .waiting import DONE_STATES, MAX_WAIT_S, clamp_wait
-from .service_contracts import OWNERS
+from .service_contracts import OWNERS, VOICE_SERVICES, service_owners
 
 #: service name -> the app that owns it (docs/commons/services.md)
 
@@ -99,25 +99,27 @@ def call_tool(owner: str, tool: str, args: Optional[Mapping[str, Any]] = None, *
     status = raw.get("status")
     ms = raw.get("ms")
     error = _text(raw.get("error"))
+    extra = {"service_owner": raw["service_owner"]} if "service_owner" in raw else {}
+    owner = extra.get("service_owner", owner)
     if status is None and not raw.get("ok"):
         if elapsed >= timeout * 0.95:
-            return fail("timeout", f"timeout after {timeout:.0f}s", ms=ms)
+            return fail("timeout", f"timeout after {timeout:.0f}s", ms=ms, **extra)
         if "hub not reachable" in error or "contract" not in raw:
-            return fail("hub_down", "hub unreachable", detail=error)
-        return fail("app_down", f"{owner} unreachable", detail=error, ms=ms)
+            return fail("hub_down", "hub unreachable", detail=error, **extra)
+        return fail("app_down", f"{owner} unreachable", detail=error, ms=ms, **extra)
     if not raw.get("ok"):
         low = error.lower()
         if status == 401:
-            return fail("auth", error or "the hub refused this app's token", status=401, ms=ms)
+            return fail("auth", error or "the hub refused this app's token", status=401, ms=ms, **extra)
         if status == 404 and "unknown app" in low:
-            return fail("app_missing", f"{owner} is not registered in the hub", status=404, ms=ms)
+            return fail("app_missing", f"{owner} is not registered in the hub", status=404, ms=ms, **extra)
         if status == 404 and _unknown_tool(low):
-            return fail("tool_missing", f"{owner} has no tool {tool} (update the app)", status=404, detail=error, ms=ms)
-        return fail("tool_error", error or f"HTTP {status}", status=status, ms=ms)
+            return fail("tool_missing", f"{owner} has no tool {tool} (update the app)", status=404, detail=error, ms=ms, **extra)
+        return fail("tool_error", error or f"HTTP {status}", status=status, ms=ms, **extra)
     data = raw.get("result")
     if isinstance(data, Mapping) and data.get("ok") is False and "status" not in data:      # a job view says ok: false while it runs
-        return fail("tool_error", _text(data) or "the tool failed", status=status, data=dict(data), ms=ms)
-    return {"ok": True, "kind": "", "error": "", "data": data, "status": status, "ms": ms}
+        return fail("tool_error", _text(data) or "the tool failed", status=status, data=dict(data), ms=ms, **extra)
+    return {"ok": True, "kind": "", "error": "", "data": data, "status": status, "ms": ms, **extra}
 
 
 def public_error(res: Mapping[str, Any], via: str) -> dict[str, Any]:
@@ -195,10 +197,14 @@ def run_job(owner: str, start_tool: str, start_args: Mapping[str, Any], status_t
         remaining = deadline - time.monotonic()
         if not job_id or remaining <= 0.5:
             return {**fail("timeout", f"still running after {timeout_s:.0f}s", status=res.get("status")),
-                    "data": dict(data) if isinstance(data, Mapping) else None, "job_id": job_id}
+                    "data": dict(data) if isinstance(data, Mapping) else None, "job_id": job_id,
+                    **({"service_owner": res["service_owner"]} if "service_owner" in res else {})}
         chunk = max(clamp_wait(min(MAX_WAIT_S, remaining)), min_wait)
         polled = time.monotonic()
+        previous = res
         res = call_tool(owner, status_tool, {id_arg: job_id, (status_wait_arg or wait_arg): chunk}, timeout_s=chunk + HUB_MARGIN_S)
+        if not res["ok"] and "service_owner" in previous:
+            return {**res, "service_owner": previous["service_owner"], "job_id": job_id, "data": data}
         if res["ok"] and not is_done(res["data"]) and time.monotonic() - polled < 0.2:
             time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))      # an owner that ignores wait_s must not be hammered
 
@@ -211,14 +217,28 @@ def available(service: str, timeout: float = 1.0) -> bool:
     """True when the hub answers and the app that owns ``service`` (``media``, ``stt``, ``tts``, ``docs``, ``embed``, or an
     app id) is running. Cached for 30 seconds; a failed probe is cached too, so a loop does not retry every call."""
     owner = owner_of(service)
-    key = (_f._hub(), owner, _f._token())
+    service = str(service or "").strip().lower()
+    key = (_f._hub(), service if service in VOICE_SERVICES else owner, _f._token())
     now = time.monotonic()
     with _lock:
         hit = _cache.get(key)
         if hit and now - hit[0] < CACHE_S:
             return hit[1]
-    status, body = fetch(_f._hub() + "/api/apps/" + owner, timeout=timeout, headers=_f._headers())
-    ok = status == 200 and isinstance(body, dict) and body.get("state") == "running"
+    ok = False
+    if service in VOICE_SERVICES:
+        status, body = fetch(_f._hub() + "/api/services/status", timeout=timeout, headers=_f._headers())
+        if status == 200 and isinstance(body, dict) and isinstance(body.get("services"), list):
+            ok = any(row.get("service") == service and row.get("available") is True
+                     for row in body["services"] if isinstance(row, dict))
+            with _lock:
+                _cache[key] = (now, ok)
+            return ok
+    addresses = service_owners(service) if service in VOICE_SERVICES else (owner,)
+    for address in addresses:
+        status, body = fetch(_f._hub() + "/api/apps/" + address, timeout=timeout, headers=_f._headers())
+        if status == 200 and isinstance(body, dict) and body.get("state") == "running":
+            ok = True
+            break
     with _lock:
         _cache[key] = (now, ok)
     return ok

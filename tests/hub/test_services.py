@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from hoard_link.hub import tools
+from hoard_link.hub import services as family_services
 from hoard_link.hub.server import make_server
 from hoard_link.launch import Launcher
 
@@ -37,6 +38,25 @@ def _req(url: str, body=None):
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read() or b"null")
+
+
+def test_common_voice_status_is_passive_with_the_registered_provider(monkeypatch):
+    names = {name for key in ("stt", "tts", "dictation") for name in family_services.SERVICE_TOOLS[key]}
+    provider = SimpleNamespace(id="boltagon", name="Voice", url="http://fixture.invalid")
+    apps = {"boltagon": provider, "cyrano": provider}
+    observed = []
+
+    def catalogue(app, timeout):
+        observed.append(app.id)
+        return {"ok": True, "tools": [{"name": name} for name in names]}
+
+    monkeypatch.setattr(family_services.contract, "app_tools", catalogue)
+    hub = SimpleNamespace(get=apps.get, facet=lambda name: None, automation_blocked=lambda app: False)
+    result = family_services.ServicesFacet(hub).handlers()["hub_services_status"]({})
+    voice = {row["service"]: row for row in result["services"] if row["service"] in {"stt", "tts", "dictation"}}
+    assert set(voice) == {"stt", "tts", "dictation"}
+    assert all(row["available"] and row["owner"] == "boltagon" for row in voice.values())
+    assert observed == ["boltagon"] * 3
 
 
 def test_services_are_listed_as_tools(hub):

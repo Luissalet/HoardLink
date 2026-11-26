@@ -1,4 +1,4 @@
-"""Checkpointed Links -> Funes -> Borges workflow. Restart pauses; explicit
+"""Checkpointed media download, transcription and indexing. Restart pauses; explicit
 resume follows saved owner job IDs. Lost mutation replies are never replayed."""
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ from urllib.parse import urlsplit, urlunsplit
 from ..atomic import write_text_atomic, write_json_atomic
 from ..ids import new_id
 from ..paths import unsafe_folder, unsafe_file, is_inside
+from ..service_contracts import PREVIOUS_OWNERS, SERVICE_TOOLS
 from ..waiting import DONE_STATES, clamp_wait
-from . import contract
+from . import contract, voice_routing
 
 
 class _Paused(RuntimeError):
@@ -40,6 +41,8 @@ class MediaFlow:
                 raise ValueError("unsupported media import journal; preserve it for recovery")
             for value in saved["jobs"]:
                 job = dict(value, done=threading.Event(), worker=False)
+                if not job.get("transcribe_owner") and (job.get("transcribe_job_id") or job.get("pending") == "transcribe_file"):
+                    job["transcribe_owner"] = PREVIOUS_OWNERS["stt"]
                 if job["status"] == "running":
                     job.update(status="paused", error="Hub restarted; resume explicitly using the saved owner job IDs")
                 job["done"].set()
@@ -191,13 +194,13 @@ class MediaFlow:
             raise RuntimeError(data.get("error") or f"{app_id}.{tool} failed")
         return data
 
-    def _mutate(self, job, app, tool, args, key=None, field=None):
+    def _mutate(self, job, app, tool, args, key=None, field=None, **checkpoint):
         self._check_open()
-        self._checkpoint(job, pending=tool)
+        self._checkpoint(job, pending=tool, **checkpoint)
         try:
             data = self._call(app, tool, args)
         except _Rejected:
-            self._checkpoint(job, pending="")
+            self._checkpoint(job, pending="", **dict.fromkeys(checkpoint))
             raise
         fields = {field: data.get(key) if key else True} if field else {}
         if key and not fields[field]:
@@ -246,12 +249,16 @@ class MediaFlow:
                 self._checkpoint(job, stage="transcription", audio_path=str(audio))
                 self._event(job, "progress")
                 if job.get("transcribe_job_id"):
-                    transcript = self._call("funes", "transcribe_status", {"job_id": job["transcribe_job_id"], "wait_s": 30})
+                    owner = job["transcribe_owner"]
+                    transcript = self._call(owner, "transcribe_status", {"job_id": job["transcribe_job_id"], "wait_s": 30})
                 else:
-                    transcript = self._mutate(job, "funes", "transcribe_file", {"path": str(audio),
+                    owner = voice_routing.select_provider(self.hub, "stt", SERVICE_TOOLS["stt"])
+                    if owner is None:
+                        raise _Rejected("speech owner unavailable")
+                    transcript = self._mutate(job, owner, "transcribe_file", {"path": str(audio),
                                 "language": args.get("language") or "auto", "model": args.get("model"), "wait_s": 30},
-                                "job_id", "transcribe_job_id")
-                transcript = self._finish_job("funes", "transcribe_status", "job_id", transcript)
+                                "job_id", "transcribe_job_id", transcribe_owner=owner)
+                transcript = self._finish_job(owner, "transcribe_status", "job_id", transcript)
                 text = str(transcript.get("text") or "").strip()
                 if not text:
                     raise RuntimeError("no speech was recovered; nothing was indexed")
@@ -264,7 +271,7 @@ class MediaFlow:
                 digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 provenance = {"schema": 1, "workflow": "hub_media_import", "job_id": job["job_id"],
                     "source": self._source(args, audio), "download_id": job.get("download_id"),
-                    "transcribe_job_id": job.get("transcribe_job_id"), "transcript_sha256": digest,
+                    "transcribe_job_id": job.get("transcribe_job_id"), "transcribe_owner": owner, "transcript_sha256": digest,
                     "language": transcript.get("language"), "model": transcript.get("model"), "created_at": time.time()}
                 write_json_atomic(path.with_suffix(".provenance.json"), provenance)
                 self._checkpoint(job, stage="indexing", transcript_path=str(path), transcript_sha256=digest)

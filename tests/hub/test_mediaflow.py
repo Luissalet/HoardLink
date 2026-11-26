@@ -4,14 +4,24 @@ import pytest
 from hoard_link.hub.mediaflow import MediaFlow
 from hoard_link.hub import contract
 from hoard_link.hub.rules import example_rules
+from hoard_link.service_contracts import SERVICE_TOOLS
 
 
-def test_chain_waits_for_owners_and_saves_only_the_transcript(tmp_path, monkeypatch):
+@pytest.mark.parametrize("availability", ["ready", "down", "missing_tool"])
+def test_chain_waits_for_owners_and_saves_only_the_transcript(tmp_path, monkeypatch, availability):
     audio = tmp_path / "audio.mp3"
     audio.write_bytes(b"fixture")
     calls = []
+    def catalogue(app, timeout):
+        if app.id == "boltagon" and availability == "down":
+            return {"ok": False}
+        names = SERVICE_TOOLS["stt"]
+        if app.id == "boltagon" and availability == "missing_tool":
+            names = ("transcribe_file",)
+        return {"ok": True, "tools": [{"name": name} for name in names]}
+
     def call(app, tool, args, **kwargs):
-        calls.append((app, tool, args))
+        calls.append((app.id, tool, args))
         results = {
             "media_download": {"id": "download", "status": "downloading"},
             "media_status": {"id": "download", "status": "done", "files": [{"path": str(audio)}]},
@@ -22,12 +32,17 @@ def test_chain_waits_for_owners_and_saves_only_the_transcript(tmp_path, monkeypa
         }
         return {"ok": True, "result": results[tool]}
     monkeypatch.setattr(contract, "call_app", call)
-    flow = MediaFlow(SimpleNamespace(get=lambda app: app))
+    monkeypatch.setattr(contract, "app_tools", catalogue)
+    apps = {app_id: SimpleNamespace(id=app_id, url="http://fixture.invalid") for app_id in ("links", "boltagon", "funes", "borges")}
+    flow = MediaFlow(SimpleNamespace(get=apps.get, automation_blocked=lambda app_id: False))
     job = flow.start({"url": "https://example.com/audio", "folder": str(tmp_path)})
     done = flow.status({"job_id": job["job_id"], "wait_s": 5})
     assert done["status"] == "done" and done["stage"] == "index_requested"
     assert "A citable transcript." in Path(done["transcript_path"]).read_text()
     assert [c[1] for c in calls] == ["media_download", "media_status", "transcribe_file", "transcribe_status", "library_add_collection", "library_reindex"]
+    expected = "boltagon" if availability == "ready" else "funes"
+    assert done["transcribe_owner"] == expected
+    assert [c[0] for c in calls if c[1].startswith("transcribe_")] == [expected, expected]
     assert calls[-1][2] == {"collection_id": 7}
     assert calls[-2][2]["include"] == ["*.transcript.txt"]
     flow.close()
@@ -41,6 +56,7 @@ def test_failed_transcription_never_indexes_or_claims_success(tmp_path, monkeypa
         calls.append(tool)
         return {"ok": True, "result": {"status": "done", "files": [{"path": str(audio)}]}} if tool == "media_status" else {"ok": False, "error": "speech owner unavailable"}
     monkeypatch.setattr(contract, "call_app", call)
+    monkeypatch.setattr("hoard_link.hub.voice_routing.select_provider", lambda *args: "boltagon")
     flow = MediaFlow(SimpleNamespace(get=lambda app: app))
     job = flow.start({"download_id": "d", "folder": str(tmp_path)})
     done = flow.status({"job_id": job["job_id"], "wait_s": 5})

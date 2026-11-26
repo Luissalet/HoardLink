@@ -9,7 +9,7 @@ from typing import Any
 
 from . import contract
 from .facets import Facet, Request
-from ..service_contracts import SERVICES
+from ..service_contracts import SERVICE_TOOLS, SERVICES, service_owners
 
 # Names are contract names, not ports: the registry resolves each owner.
 
@@ -45,11 +45,31 @@ class ServicesFacet(Facet):
             return {"service": key, "owner": owner, "name": "Hoard Hub", "url": "", "tools": list(required),
                     "available": ready, "state": "ready" if ready else "unavailable",
                     "error": result.get("error") or ("" if ready else "no connected sending account")}
-        app = self.hub.get(owner)
+        first = None
+        seen = set()
+        for candidate in service_owners(key):
+            app = self.hub.get(candidate)
+            resolved = getattr(app, "id", candidate)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            row = self._app_probe(key, candidate, required, app)
+            if first is None or (first["state"] == "missing" and row["state"] != "missing"):
+                first = row
+            if row["available"]:
+                if row["owner"] != owner:
+                    row.update(registered_owner=owner, fallback=True)
+                return row
+        return first
+
+    def _app_probe(self, key, owner, required, app):
         row = {"service": key, "owner": owner, "name": app.name if app else owner,
                "url": app.url if app else "", "tools": list(required), "available": False}
         if app is None:
             return {**row, "state": "missing", "error": "owner is not registered"}
+        row["owner"] = getattr(app, "id", owner)
+        if getattr(self.hub, "automation_blocked", lambda _: False)(row["owner"]):
+            return {**row, "state": "stopped", "error": "owner is manually stopped"}
         try:
             catalog = contract.app_tools(app, timeout=2.0)
         except Exception as exc:
@@ -67,8 +87,11 @@ class ServicesFacet(Facet):
                 return self._cached
             with ThreadPoolExecutor(max_workers=len(SERVICES)) as pool:
                 rows = list(pool.map(self._probe, SERVICES))
-            catalogues = {r["owner"]: set(r.pop("catalogue_tools", [])) for r in rows}
-            requirements = {"links": ("media_download", "media_status"), "funes": ("transcribe_file", "transcribe_status"),
+            stt = next(row for row in rows if row["service"] == "stt")
+            catalogues = defaultdict(set)
+            for row in rows:
+                catalogues[row["owner"]].update(row.pop("catalogue_tools", []))
+            requirements = {"links": ("media_download", "media_status"), stt["owner"]: SERVICE_TOOLS["stt"],
                             "borges": ("library_add_collection", "library_reindex")}
             missing = [{"owner": owner, "tool": tool} for owner, tools in requirements.items()
                        for tool in tools if tool not in catalogues.get(owner, set())]
@@ -131,7 +154,7 @@ class ServicesFacet(Facet):
                 {"name": "hub_services_status", "description": "Discover the owners of web, downloads, transcription, dictation, voice, documents and embeddings. Checks their tool catalogues without loading models.",
                  "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean", "default": False}}, "additionalProperties": False},
                  "annotations": {"readOnlyHint": True}},
-                {"name": "hub_media_import", "description": "Download audio, transcribe it with Funes and request indexing of a transcript folder in Borges. Opt-in: changes the selected folder and library. Returns job_id; follow hub_media_import_status. Existing downloads use download_id instead of url.",
+                {"name": "hub_media_import", "description": "Download audio, transcribe it with the shared STT service and request indexing of a transcript folder in Borges. Opt-in: changes the selected folder and library. Returns job_id; follow hub_media_import_status. Existing downloads use download_id instead of url.",
                  "inputSchema": {"type": "object", "properties": {"folder": {"type": "string", "minLength": 1}, "url": {"type": "string"}, "download_id": {"type": "string"}, "language": {"type": "string", "default": "auto"}, "model": {"type": "string"}}, "required": ["folder"], "additionalProperties": False}},
                 {"name": "hub_media_import_status", "description": "Follow a media import job. done means transcription is saved and Borges accepted an indexing request; library_status reports when indexing completes.",
                  "inputSchema": {"type": "object", "properties": {"job_id": {"type": "string"}, "wait_s": {"type": "number", "minimum": 0, "maximum": 150, "default": 0}}, "required": ["job_id"], "additionalProperties": False}, "annotations": {"readOnlyHint": True}},

@@ -34,7 +34,9 @@ const CACHE_MS = 30000;
 const UNAVAILABLE = new Set(["hub_down", "app_down", "app_missing", "tool_missing"]);
 const DONE_STATES = ["done", "error", "cancelled", "interrupted", "failed"];
 const ACTIVE_DOWNLOAD = ["queued", "downloading", "processing"];
-const { media: LINKS, stt: FUNES, tts: PROSPERO, docs: KAFKA, embed: BORGES } = OWNERS;
+const { media: LINKS, docs: KAFKA, embed: BORGES } = OWNERS;
+const previousOwners = serviceContract.previous_owners || {};
+const { stt: FUNES = OWNERS.stt, tts: PROSPERO = OWNERS.tts } = previousOwners;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -82,21 +84,22 @@ export async function callTool(owner, tool, args = {}, { timeoutS = 120 } = {}) 
   const st = raw.status === undefined ? null : raw.status;
   const ms = raw.ms;
   const error = errText(raw.error);
+  const routing = raw.service_owner ? { serviceOwner: raw.service_owner } : {};
   if (st === null && !raw.ok) {
-    if (elapsed >= timeout * 0.95) return fail("timeout", `timeout after ${Math.round(timeout)}s`, { ms });
-    if (error.includes("hub not reachable") || !("contract" in raw)) return fail("hub_down", "hub unreachable", { detail: error });
-    return fail("app_down", `${owner} unreachable`, { detail: error, ms });
+    if (elapsed >= timeout * 0.95) return fail("timeout", `timeout after ${Math.round(timeout)}s`, { ms, ...routing });
+    if (error.includes("hub not reachable") || !("contract" in raw)) return fail("hub_down", "hub unreachable", { detail: error, ...routing });
+    return fail("app_down", `${routing.serviceOwner || owner} unreachable`, { detail: error, ms, ...routing });
   }
   if (!raw.ok) {
     const low = error.toLowerCase();
-    if (st === 401) return fail("auth", error || "the hub refused this app's token", { status: 401, ms });
-    if (st === 404 && low.includes("unknown app")) return fail("app_missing", `${owner} is not registered in the hub`, { status: 404, ms });
-    if (st === 404 && unknownTool(low)) return fail("tool_missing", `${owner} has no tool ${tool} (update the app)`, { status: 404, detail: error, ms });
-    return fail("tool_error", error || `HTTP ${st}`, { status: st, ms });
+    if (st === 401) return fail("auth", error || "the hub refused this app's token", { status: 401, ms, ...routing });
+    if (st === 404 && low.includes("unknown app")) return fail("app_missing", `${routing.serviceOwner || owner} is not registered in the hub`, { status: 404, ms, ...routing });
+    if (st === 404 && unknownTool(low)) return fail("tool_missing", `${routing.serviceOwner || owner} has no tool ${tool} (update the app)`, { status: 404, detail: error, ms, ...routing });
+    return fail("tool_error", error || `HTTP ${st}`, { status: st, ms, ...routing });
   }
   const data = raw.result;
-  if (isObj(data) && data.ok === false && !("status" in data)) return fail("tool_error", errText(data) || "the tool failed", { status: st, data, ms });
-  return { ok: true, kind: "", error: "", data, status: st, ms };
+  if (isObj(data) && data.ok === false && !("status" in data)) return fail("tool_error", errText(data) || "the tool failed", { status: st, data, ms, ...routing });
+  return { ok: true, kind: "", error: "", data, status: st, ms, ...routing };
 }
 
 function publicError(res, via) {
@@ -143,10 +146,13 @@ export async function runJob(owner, startTool, startArgs, statusTool, { timeoutS
     if (isDone(data)) return res;
     const jobId = isObj(data) ? data[idField] : null;
     const remaining = (deadline - Date.now()) / 1000;
-    if (!jobId || remaining <= 0.5) return { ...fail("timeout", `still running after ${Math.round(timeoutS)}s`, { status: res.status }), data: isObj(data) ? data : null, jobId };
+    if (!jobId || remaining <= 0.5) return { ...fail("timeout", `still running after ${Math.round(timeoutS)}s`, { status: res.status }),
+      data: isObj(data) ? data : null, jobId, serviceOwner: res.serviceOwner };
     chunk = Math.max(clampWait(Math.min(MAX_WAIT_S, remaining)), minWait);
     const polled = Date.now();
+    const previous = res;
     res = await callTool(owner, statusTool, { [idArg]: jobId, [statusWaitArg || waitArg]: chunk }, { timeoutS: chunk + HUB_MARGIN_S });
+    if (!res.ok && previous.serviceOwner) return { ...res, serviceOwner: previous.serviceOwner, jobId, data };
     if (res.ok && !isDone(res.data) && Date.now() - polled < 200) await sleep(Math.min(250, Math.max(0, deadline - Date.now())));
   }
 }
@@ -157,10 +163,12 @@ const availCache = new Map();
 
 /** True when the hub answers and the app that owns `service` ("media", "stt", "tts", "docs", "embed" or an app id) is running. Cached 30 s. */
 export async function serviceAvailable(service, timeoutMs = 1000) {
-  if (String(service).toLowerCase() === "mail") return Boolean((await mailStatus({ timeoutS: timeoutMs / 1000 })).available);
-  const owner = OWNERS[String(service || "").toLowerCase()] || String(service || "");
+  const name = String(service || "").toLowerCase();
+  if (name === "mail") return Boolean((await mailStatus({ timeoutS: timeoutMs / 1000 })).available);
+  const owner = OWNERS[name] || String(service || "");
+  const voice = ["stt", "tts", "dictation"].includes(name);
   const st = familyStatus();
-  const key = `${st.hub}|${owner}`;
+  const key = `${st.hub}|${voice ? name : owner}`;
   const hit = availCache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.ok;
   let ok = false;
@@ -169,9 +177,22 @@ export async function serviceAvailable(service, timeoutMs = 1000) {
   try {
     let token = "";
     try { token = fs.readFileSync(st.tokenFile, "utf8").replace(/^﻿/, "").trim(); } catch { token = ""; }
-    const res = await fetch(`${st.hub}/api/apps/${encodeURIComponent(owner)}`, { headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, signal: ctl.signal });
-    const body = res.status === 200 ? await res.json().catch(() => null) : null;
-    ok = Boolean(body && (body.state === "running" || body.state === "foreign")); // foreign: healthy, served by another app (Funes inside Talos)
+    const options = { headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, signal: ctl.signal };
+    async function get(route) {
+      const res = await fetch(st.hub + route, options);
+      return res.status === 200 ? res.json().catch(() => null) : null;
+    }
+    const status = voice ? await get("/api/services/status") : null;
+    if (Array.isArray(status?.services)) {
+      ok = status.services.some(row => row?.service === name && row.available === true);
+    } else {
+      const aliasMap = serviceContract.voice_aliases || {};
+      const aliases = voice ? Object.keys(aliasMap).filter(alias => aliasMap[alias] === owner) : [];
+      for (const app of new Set([owner, ...aliases, previousOwners[name]].filter(Boolean))) {
+        const body = await get("/api/apps/" + encodeURIComponent(app));
+        if (body && (body.state === "running" || body.state === "foreign")) { ok = true; break; }
+      }
+    }
   } catch { ok = false; } finally { clearTimeout(timer); }
   availCache.set(key, { at: Date.now(), ok });
   return ok;
@@ -329,21 +350,22 @@ function transcriptOf(data, via) {
 
 const isDoneOk = (s) => ["done", "completed", "ok"].includes(String(s ?? "done").toLowerCase());
 
-/** Speech to text through Funes. Options: language ("auto"), model, wordTimestamps, initialPrompt, vad, timeoutS (600), progress(fraction).
- *  Returns { ok, language, language_probability, duration_s, text, segments: [{start_s, end_s, text, words}], model, device, note, stats, via: "funes" }. */
+/** Speech to text through the Hub. Options: language ("auto"), model, wordTimestamps, initialPrompt, vad, timeoutS (600), progress(fraction).
+ *  Returns the transcript with its provider in via. Keep job_id for status or cancellation. */
 export const transcribe = safe(FUNES, async (file, { language = "auto", model = null, wordTimestamps = true, initialPrompt = "", vad = true, timeoutS = 600, progress = null } = {}) => {
   const src = asPath(file);
   if (!src) return { ok: false, error: "path is required", via: FUNES, kind: "client_error" };
   const args = cleanArgs({ path: src, language: String(language || "auto"), model, word_timestamps: Boolean(wordTimestamps), initial_prompt: String(initialPrompt || ""), vad: Boolean(vad) });
   const onData = progress ? (d) => { const f = fraction(d.progress); if (f !== null) progress(f); } : null;
   const res = await runJob(FUNES, "transcribe_file", args, "transcribe_status", { timeoutS: Number(timeoutS), onData });
+  const via = res.serviceOwner || FUNES;
   if (res.ok) {
     const data = isObj(res.data) ? res.data : {};
-    if (isDoneOk(data.status)) { if (progress) { try { progress(1); } catch { /* ignore */ } } return transcriptOf(data, FUNES); }
-    return { ...publicError(fail("tool_error", String(data.error || `transcription ${data.status}`), { data }), FUNES), status: data.status, job_id: data.job_id };
+    if (isDoneOk(data.status)) { if (progress) { try { progress(1); } catch { /* ignore */ } } return transcriptOf(data, via); }
+    return { ...publicError(fail("tool_error", String(data.error || `transcription ${data.status}`), { data }), via), status: data.status, job_id: data.job_id };
   }
-  const out = publicError(res, FUNES);
-  if (res.kind === "timeout") {
+  const out = publicError(res, via);
+  if (res.kind === "timeout" || res.jobId) {
     const job = isObj(res.data) ? res.data : {};
     Object.assign(out, { job_id: res.jobId || job.job_id, status: job.status || "running", still_running: true });
   }
@@ -353,35 +375,37 @@ export const transcribe = safe(FUNES, async (file, { language = "auto", model = 
 export const transcribeStatus = safe(FUNES, async (jobId, { waitS = 0 } = {}) => {
   const w = clampWait(waitS);
   const r = await callTool(FUNES, "transcribe_status", { job_id: String(jobId), wait_s: w }, { timeoutS: w + HUB_MARGIN_S });
-  if (!r.ok) return publicError(r, FUNES);
+  const via = r.serviceOwner || FUNES;
+  if (!r.ok) return publicError(r, via);
   const data = isObj(r.data) ? r.data : {};
   const st = String(data.status ?? "done").toLowerCase();
-  if (isDoneOk(st)) return transcriptOf(data, FUNES);
-  if (DONE_STATES.includes(st)) return { ok: false, error: String(data.error || `transcription ${st}`), via: FUNES, kind: "tool_error", status: st, job_id: jobId };
-  return { ok: false, error: `still running (${st})`, via: FUNES, kind: "timeout", still_running: true, status: st, job_id: jobId, progress: data.progress };
+  if (isDoneOk(st)) return transcriptOf(data, via);
+  if (DONE_STATES.includes(st)) return { ok: false, error: String(data.error || `transcription ${st}`), via, kind: "tool_error", status: st, job_id: jobId };
+  return { ok: false, error: `still running (${st})`, via, kind: "timeout", still_running: true, status: st, job_id: jobId, progress: data.progress };
 });
 
 export const transcribeCancel = safe(FUNES, async (jobId) => {
   const r = await callTool(FUNES, "transcribe_cancel", { job_id: String(jobId) }, { timeoutS: 30 });
-  if (!r.ok) return publicError(r, FUNES);
-  return { ok: true, job_id: jobId, status: (isObj(r.data) && r.data.status) || "cancelled", via: FUNES };
+  if (!r.ok) return publicError(r, r.serviceOwner || FUNES);
+  return { ok: true, job_id: jobId, status: (isObj(r.data) && r.data.status) || "cancelled", via: r.serviceOwner || FUNES };
 });
 
 // ---- text to speech (Prospero) ---------------------------------------------------------------------------------------------------
 
-/** Read `text` aloud with Prospero. Options: voice, engine, lang, speed, timeoutS (300). Returns { ok, path, bytes, engine_id, via: "prospero" }. */
+/** Read `text` aloud through the Hub. Options: voice, engine, lang, speed, timeoutS (300). Returns { ok, path, bytes, engine_id, via }. */
 export const speak = safe(PROSPERO, async (text, { voice = null, engine = null, lang = null, speed = null, timeoutS = 300 } = {}) => {
   const body = String(text ?? "").trim();
   if (!body) return { ok: false, error: "empty text", via: PROSPERO, kind: "client_error" };
   if (body.length > MAX_TTS_CHARS) return { ok: false, error: `text too long (${body.length} characters; at most ${MAX_TTS_CHARS} per call: split it)`, via: PROSPERO, kind: "client_error" };
   const r = await callTool(PROSPERO, "voice_tts", cleanArgs({ text: body, voice, engine, lang, speed }), { timeoutS: Number(timeoutS) });
-  if (!r.ok) return publicError(r, PROSPERO);
+  const via = r.serviceOwner || PROSPERO;
+  if (!r.ok) return publicError(r, via);
   const d = isObj(r.data) ? r.data : {};
   const p = String(d.path || "");
-  if (!p) return { ok: false, error: "Prospero returned no audio path", via: PROSPERO, kind: "tool_error" };
+  if (!p) return { ok: false, error: `${via === PROSPERO ? "Prospero" : via} returned no audio path`, via, kind: "tool_error" };
   let size = Number.isInteger(d.bytes) ? d.bytes : 0;
   if (!size) { try { size = fs.statSync(p).size; } catch { size = 0; } }
-  return { ok: true, path: p, bytes: size, engine_id: String(d.engine_id || ""), via: PROSPERO };
+  return { ok: true, path: p, bytes: size, engine_id: String(d.engine_id || ""), via };
 });
 
 // ---- documents: PDF operations, extraction, OCR (Kafka) ---------------------------------------------------------------------------

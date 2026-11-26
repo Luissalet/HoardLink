@@ -31,6 +31,26 @@ def _isolated_state():
     fam_media._reset_local()
 
 
+def test_common_transcript_poll_failure_preserves_job_and_provider_without_local_replay(monkeypatch):
+    handle = "hoard-stt:boltagon:accepted"
+    calls = []
+
+    def call(owner, tool, args, **kwargs):
+        calls.append((owner, tool, args))
+        if tool == "transcribe_file":
+            return {"ok": True, "status": 200, "service_owner": "boltagon",
+                    "result": {"status": "running", "job_id": handle}}
+        return {"ok": False, "status": None, "contract": "shared", "error": "not reachable"}
+
+    monkeypatch.setattr(family, "call", call)
+    monkeypatch.setattr(fam_media, "_local_transcribe", lambda *a, **kw: pytest.fail("accepted job replayed"))
+    result = fam_media.transcribe("fixture.wav")
+    assert not result["ok"] and result["via"] == "boltagon"
+    assert result["still_running"] and result["job_id"] == handle
+    assert [name for _, name, _ in calls] == ["transcribe_file", "transcribe_status"]
+    assert calls[1][2]["job_id"] == handle
+
+
 @pytest.fixture
 def hub(tmp_path):
     h = FakeHub()

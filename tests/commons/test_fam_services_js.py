@@ -46,6 +46,43 @@ def view(**extra):
     return {"id": "m1", "ok": True, "status": "done", "kind": "video", "files": [{"path": "/dl/a.mp4", "name": "a.mp4", "size": 3, "kind": "video"}], **extra}
 
 
+def test_common_voice_migration_reports_selected_provider_and_keeps_the_handle(tmp_path):
+    out = run("http://127.0.0.1:9", tmp_path / "mcp-token", """
+      const handle = "hoard-stt:boltagon:fixture";
+      const calls = [];
+      globalThis.fetch = async (url, req) => {
+        const path = new URL(url).pathname;
+        if (path === "/api/services/status") return { status: 200, json: async () => ({ services: [
+          { service: "stt", available: true }, { service: "tts", available: false }
+        ] }) };
+        const { tool, arguments: args } = JSON.parse(req.body);
+        calls.push([path, tool, args.job_id || ""]);
+        if (tool === "transcribe_status") return { status: 502, json: async () => ({
+          ok: false, status: null, contract: "shared", error: "not reachable"
+        }) };
+        const result = tool === "voice_tts" ? { path: "fixture.wav", bytes: 10 } :
+          { job_id: handle, status: tool === "transcribe_file" ? "running" : "cancelled" };
+        return { status: 200, json: async () => ({ ok: true, service_owner: "boltagon", result }) };
+      };
+      const states = [await fam.serviceAvailable("stt"), await fam.serviceAvailable("tts")];
+      const transcript = await fam.transcribe("fixture.wav");
+      const cancelled = await fam.transcribeCancel(transcript.job_id);
+      const spoken = await fam.speak("Hola");
+      return { states, transcript, cancelled, spoken, calls };
+    """)
+    handle = "hoard-stt:boltagon:fixture"
+    assert out["states"] == [True, False]
+    assert out["transcript"]["job_id"] == handle and out["transcript"]["via"] == "boltagon"
+    assert out["transcript"]["still_running"] and out["cancelled"]["job_id"] == handle
+    assert out["spoken"]["via"] == "boltagon"
+    assert out["calls"] == [
+        ["/api/apps/funes/call", "transcribe_file", ""],
+        ["/api/apps/funes/call", "transcribe_status", handle],
+        ["/api/apps/funes/call", "transcribe_cancel", handle],
+        ["/api/apps/prospero/call", "voice_tts", ""],
+    ]
+
+
 def test_media_download_info_subtitles_and_the_polling(hub, tmp_path):
     running = {"id": "m2", "ok": False, "status": "downloading", "kind": "video", "files": []}
     hub.on("links", "media_download", sequence(lambda a, c: view() if a["url"].endswith("/one") else running))

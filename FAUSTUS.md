@@ -6,6 +6,12 @@ The Hub forwards optional agent and session identifiers from the worker CLI, MCP
 HTTP tool calls. Apps with a write journal record that identity and session for review and undo.
 See [the agent command reference](docs/worker-cli.md).
 
+Use `hub_services_status` to see which catalogue currently serves transcription,
+speech synthesis and dictation. Boltagon is the registered owner. The Hub
+keeps the previous voice routes available during the transition. To resume
+an existing media import, use `hub_media_imports` and follow the saved
+transcription provider with `hub_media_import_resume`.
+
 Faustus workers can find Hub tools through `lookup_tools` using their exact MCP IDs in
 `query` or `names`. For production work, use `hub_piece_validate` to check a piece,
 `hub_piece_validate_record` to save the result with its undo, and `hub_eyes_look` and

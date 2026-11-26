@@ -36,9 +36,11 @@ def test_restart_preserves_ids_and_resume_does_not_resubmit_jobs(tmp_path, monke
             return {"ok": True, "result": {"queued": True}}
         pytest.fail(tool)
     monkeypatch.setattr(contract, "call_app", call)
+    monkeypatch.setattr("hoard_link.hub.voice_routing.select_provider", lambda *_: "boltagon")
     started = first.start({"url": "https://example.com/audio?token=private#secret", "folder": str(tmp_path)})
     paused = first.status({"job_id": started["job_id"], "wait_s": 5})
     assert paused["status"] == "paused" and paused["transcribe_job_id"] == "speech"
+    assert paused["transcribe_owner"] == "boltagon"
     second = MediaFlow(hub(tmp_path))
     assert second.list()["jobs"][0]["status"] == "paused"
     assert len(calls) == 2  # construction never resumes work automatically
@@ -49,6 +51,7 @@ def test_restart_preserves_ids_and_resume_does_not_resubmit_jobs(tmp_path, monke
     path = Path(done["transcript_path"])
     provenance = json.loads(path.with_suffix(".provenance.json").read_text())
     assert provenance["transcript_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert provenance["transcribe_owner"] == "boltagon"
     assert "private" not in path.read_text() and "secret" not in json.dumps(provenance)
     assert "arguments" not in done
     second.close()
@@ -70,6 +73,54 @@ def test_lost_reply_requires_reconciliation_and_never_duplicates_work(tmp_path, 
     restored.close()
 
 
+@pytest.mark.parametrize("stored_job", [True, False])
+def test_legacy_journal_keeps_funes_for_saved_and_uncertain_transcriptions(tmp_path, monkeypatch, stored_job):
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"sample")
+    data = tmp_path / "hub"
+    data.mkdir()
+    job = {"job_id": "old-import", "created_at": 1, "status": "running", "stage": "transcription",
+           "arguments": {}, "folder": str(tmp_path), "download_id": "existing-download"}
+    if stored_job:
+        job["transcribe_job_id"] = "old-job"
+    else:
+        job["pending"] = "transcribe_file"
+    journal = data / "media-imports.json"
+    journal.write_text(json.dumps({"schema": 1, "jobs": [job]}), encoding="utf-8")
+    called = []
+
+    def call(app, tool, args, **kwargs):
+        called.append((app, tool))
+        if tool == "media_status":
+            value = {"status": "done", "files": [{"path": str(audio)}]}
+        elif tool == "transcribe_status":
+            assert app == "funes" and args["job_id"] == "old-job"
+            value = {"status": "done", "text": "Transcript."}
+        elif tool == "library_add_collection":
+            value = {"collection": {"id": 5}}
+        elif tool == "library_reindex":
+            value = {"queued": True}
+        else:
+            pytest.fail(tool)
+        return {"ok": True, "result": value}
+
+    monkeypatch.setattr(contract, "call_app", call)
+    monkeypatch.setattr("hoard_link.hub.voice_routing.select_provider",
+                        lambda *_: pytest.fail("a persisted job must keep its provider"))
+    flow = MediaFlow(hub(tmp_path))
+    assert json.loads(journal.read_text(encoding="utf-8"))["jobs"][0]["transcribe_owner"] == "funes"
+    args = {"job_id": "old-import"}
+    if not stored_job:
+        with pytest.raises(ValueError, match="provide transcribe_job_id"):
+            flow.resume(args)
+        args["transcribe_job_id"] = "old-job"
+    flow.resume(args)
+    done = flow.status({"job_id": "old-import", "wait_s": 5})
+    assert done["status"] == "done" and done["transcribe_owner"] == "funes"
+    assert ("funes", "transcribe_status") in called
+    flow.close()
+
+
 def test_restart_during_index_request_does_not_requeue_it(tmp_path, monkeypatch):
     audio = tmp_path / "audio.mp3"
     audio.write_bytes(b"sample")
@@ -88,6 +139,7 @@ def test_restart_during_index_request_does_not_requeue_it(tmp_path, monkeypatch)
             value = {"queued": True}
         return {"ok": True, "result": value}
     monkeypatch.setattr(contract, "call_app", call)
+    monkeypatch.setattr("hoard_link.hub.voice_routing.select_provider", lambda *_: "boltagon")
     job = flow.start({"download_id": "download", "folder": str(tmp_path)})
     paused = flow.status({"job_id": job["job_id"], "wait_s": 5})
     assert paused["status"] == "paused" and paused["index_requested"] is True

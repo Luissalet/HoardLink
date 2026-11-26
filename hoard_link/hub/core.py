@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -22,7 +23,7 @@ from .browser_lanes import LaneArbiter
 from .lease import LeaseArbiter
 from .profiles import CommandRunner, Profile, parse as parse_profiles
 from .registry import App, scan
-from . import actions as _actions, audit as _audit, contract, desktop, procs
+from . import actions as _actions, audit as _audit, contract, desktop, procs, voice_routing
 from .backup import BackupStore
 from .events import EventLog
 from .jobs import Scheduler
@@ -34,6 +35,9 @@ from .faustus import FaustusRuntime
 
 BACKENDS_CACHE_S = 8.0
 FAUSTUS_CACHE_S = 6.0
+# During the voice app rename, both installed IDs can address the same registration.
+_VOICE_APP_TRANSITION = {"cyrano": "boltagon", "boltagon": "cyrano"}
+log = logging.getLogger(__name__)
 
 
 
@@ -240,7 +244,14 @@ class Hub:
 
     def get(self, app_id: str) -> Optional[App]:
         with self._lock:
-            return self._apps.get(app_id)
+            app = self._apps.get(app_id)
+            if app is not None:
+                return app
+            alternate = _VOICE_APP_TRANSITION.get(app_id)
+            app = self._apps.get(alternate) if alternate else None
+        if app is not None:
+            log.warning("App ID %s resolved to %s during the voice app transition", app_id, app.id)
+        return app
 
     def app_status(self, app: App, listeners: Optional[dict[int, int]] = None,
                    windows: Optional[dict[str, list[dict[str, Any]]]] = None,
@@ -346,6 +357,8 @@ class Hub:
     # -- actions --------------------------------------------------------------
     def automation_blocked(self, target: str) -> bool:
         with self._lock:
+            if target in _VOICE_APP_TRANSITION and (app := self.get(target)) is not None:
+                target = app.id
             return self._stopping_all.is_set() or target in self._manual_stops
 
     def _manual_stop(self, targets: list[str], stopped: bool = True) -> None:
@@ -366,6 +379,7 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        app_id = app.id
         if automatic and app.family.get("auto_start") is False:
             return {"ok": False, "app": app_id, "error": "This app must be started explicitly."}
         elsewhere = self.placement.local_block(app_id)
@@ -472,6 +486,7 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}"}
+        app_id = app.id
         # Record intent before probing/killing: a queued recovery rule must not undo it.
         self._manual_stop([app_id])
         with self._lock:
@@ -524,6 +539,8 @@ class Hub:
             return passive_error()
         production = self.facet("production")
         app = self.get(app_id)
+        if app is not None:
+            app_id = app.id
         before = None
         if production is not None and app is not None and app.family.get("module_controls"):
             try:
@@ -546,6 +563,7 @@ class Hub:
             app = self.get(app_id)
             if app is None:
                 return {"ok": False, "error": f"unknown app: {app_id}"}
+            app_id = app.id
             if app.family.get("auto_start") is False:
                 return {"ok": True, "app": app_id, "skipped": True, "reason": "This app must be started explicitly."}
             with self._lock:
@@ -593,6 +611,8 @@ class Hub:
     def open(self, app_id: str, mode: str = "window", autostart: bool = True, *, automatic: bool = False) -> dict[str, Any]:
         if self.config.isolated:
             return passive_error()
+        if (app := self.get(app_id)) is not None:
+            app_id = app.id
         with self._lock:
             lock = self._start_locks.setdefault(app_id, threading.RLock())
         # The stop uses this same lock and closes windows after a pending open finishes.
@@ -646,6 +666,8 @@ class Hub:
     def close_windows(self, app_id: str) -> dict[str, Any]:
         if self.config.isolated:
             return passive_error()
+        if (app := self.get(app_id)) is not None:
+            app_id = app.id
         res = desktop.close_windows(app_id, self.config.profiles_dir)
         res["app"] = app_id
         return res
@@ -805,6 +827,19 @@ class Hub:
     def call_app(self, app_id: str, tool: str, arguments: Optional[dict[str, Any]] = None, *,
                  caller: str = "hub", timeout: float = 120.0, reason: Optional[str] = None,
                  agent: Optional[str] = None, session: Optional[str] = None) -> dict[str, Any]:
+        """Route common voice tools, preserving explicit calls to other tools."""
+        service = voice_routing.requested_service(app_id, tool)
+        context = {"caller": caller, "timeout": timeout, "reason": reason, "agent": agent, "session": session}
+        if service is not None:
+            return voice_routing.call(
+                self, service, app_id, tool, arguments if isinstance(arguments, dict) else {}, caller,
+                lambda owner, name, args: self._call_app_direct(owner, name, args, **context),
+            )
+        return self._call_app_direct(app_id, tool, arguments, **context)
+
+    def _call_app_direct(self, app_id: str, tool: str, arguments: Optional[dict[str, Any]] = None, *,
+                         caller: str = "hub", timeout: float = 120.0, reason: Optional[str] = None,
+                         agent: Optional[str] = None, session: Optional[str] = None) -> dict[str, Any]:
         """Run a tool of one app with that app's own token (the proxy).
 
         Apps with accountable agents refuse writes without a ``reason``. The hub's own steps (rules, jobs, purchases,
@@ -814,6 +849,7 @@ class Hub:
         app = self.get(app_id)
         if app is None:
             return {"ok": False, "error": f"unknown app: {app_id}", "apps": [a.id for a in self.apps]}
+        app_id = app.id
         args = arguments if isinstance(arguments, dict) else {}
         shelf = self.facet("skills")
         if shelf is not None and tool in ("skills_list", "skill_read"):
