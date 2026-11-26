@@ -13,6 +13,7 @@ SERVICES = tuple((name, spec["owner"], tuple(spec["tools"])) for name, spec in _
 VOICE_ALIASES = MappingProxyType(_DATA.get("voice_aliases", {}))
 PREVIOUS_OWNERS = MappingProxyType(_DATA.get("previous_owners", {}))
 VOICE_SERVICES = frozenset({"stt", "tts", "dictation"})
+VOICE_CATALOGUE_TIMEOUT_S = 2.0
 SERVICE_TOOLS = MappingProxyType({name: tools for name, _, tools in SERVICES})
 
 

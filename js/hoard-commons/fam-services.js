@@ -161,41 +161,56 @@ export async function runJob(owner, startTool, startArgs, statusTool, { timeoutS
 
 const availCache = new Map();
 
-/** True when the hub answers and the app that owns `service` ("media", "stt", "tts", "docs", "embed" or an app id) is running. Cached 30 s. */
-export async function serviceAvailable(service, timeoutMs = 1000) {
+/** Voice checks cache confirmed states for 30 s and retry indeterminate results. */
+export async function serviceAvailable(service, timeoutMs) {
   const name = String(service || "").toLowerCase();
-  if (name === "mail") return Boolean((await mailStatus({ timeoutS: timeoutMs / 1000 })).available);
+  if (name === "mail") return Boolean((await mailStatus({ timeoutS: (timeoutMs ?? 1000) / 1000 })).available);
   const owner = OWNERS[name] || String(service || "");
   const voice = ["stt", "tts", "dictation"].includes(name);
   const st = familyStatus();
   const key = `${st.hub}|${voice ? name : owner}`;
   const hit = availCache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.ok;
-  let ok = false;
+  const aliases = serviceContract.voice_aliases || {};
+  const addresses = [...new Set([owner, ...Object.keys(aliases).filter(alias => aliases[alias] === owner), previousOwners[name]].filter(Boolean))];
+  // The Hub tries each voice catalogue for up to two seconds.
+  const budget = timeoutMs ?? (voice ? 1000 + 2000 * addresses.length : 1000);
+  let ok = null;
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  const timer = setTimeout(() => ctl.abort(), budget);
   try {
     let token = "";
     try { token = fs.readFileSync(st.tokenFile, "utf8").replace(/^﻿/, "").trim(); } catch { token = ""; }
     const options = { headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, signal: ctl.signal };
     async function get(route) {
       const res = await fetch(st.hub + route, options);
-      return res.status === 200 ? res.json().catch(() => null) : null;
+      return { status: res.status, body: res.status === 200 ? await res.json().catch(() => null) : null };
     }
-    const status = voice ? await get("/api/services/status") : null;
-    if (Array.isArray(status?.services)) {
-      ok = status.services.some(row => row?.service === name && row.available === true);
-    } else {
-      const aliasMap = serviceContract.voice_aliases || {};
-      const aliases = voice ? Object.keys(aliasMap).filter(alias => aliasMap[alias] === owner) : [];
-      for (const app of new Set([owner, ...aliases, previousOwners[name]].filter(Boolean))) {
-        const body = await get("/api/apps/" + encodeURIComponent(app));
-        if (body && (body.state === "running" || body.state === "foreign")) { ok = true; break; }
+    if (voice) {
+      const { status, body } = await get("/api/services/status");
+      const rows = Array.isArray(body?.services) ? body.services : null;
+      const row = rows?.find(value => value?.service === name);
+      if (row) {
+        if (row.state !== "timed_out" && typeof row.available === "boolean") ok = row.available;
+      } else if (rows || status === 404 || status === 405) {
+        for (const app of addresses) {
+          const route = "/api/apps/" + encodeURIComponent(app);
+          const { body: current } = await get(route);
+          if (current?.state === "running") { ok = true; break; }
+          if (current?.state === "foreign") {
+            const { body: catalogue } = await get(route + "/tools");
+            const names = new Set(Array.isArray(catalogue?.tools) ? catalogue.tools.map(tool => tool?.name) : []);
+            if (serviceContract.services[name].tools.every(tool => names.has(tool))) { ok = true; break; }
+          }
+        }
       }
+    } else {
+      const { body } = await get("/api/apps/" + encodeURIComponent(owner));
+      ok = body?.state === "running" || body?.state === "foreign";
     }
-  } catch { ok = false; } finally { clearTimeout(timer); }
-  availCache.set(key, { at: Date.now(), ok });
-  return ok;
+  } catch { if (!voice) ok = false; } finally { clearTimeout(timer); }
+  if (ok !== null) availCache.set(key, { at: Date.now(), ok });
+  return ok === true;
 }
 
 export function forgetAvailability() { availCache.clear(); }

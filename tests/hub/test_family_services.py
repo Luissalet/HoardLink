@@ -37,3 +37,31 @@ def test_owner_catalogues_and_missing_services_do_not_start_models(monkeypatch):
     assert facet.status()["services"] == list(rows.values()) and len(calls) == calls_at_refresh
     facet.status(refresh=True)
     assert len(calls) == 2 * calls_at_refresh
+
+
+def test_slow_voice_catalogue_is_retried_and_available_fallback_wins(monkeypatch):
+    app_ids = ("boltagon", "funes", "prospero")
+    apps = {app: SimpleNamespace(id=app, name=app, url="http://fixture.invalid") for app in app_ids}
+    apps["cyrano"] = apps["boltagon"]
+    hub = SimpleNamespace(get=apps.get, facet=lambda key: None)
+    slow = {"boltagon", "funes"}
+
+    def catalogue(app, timeout):
+        assert timeout == 2
+        if app.id in slow:
+            return {"ok": False, "transport": "timeout"}
+        tools = services.SERVICE_TOOLS["stt" if app.id == "funes" else "tts"]
+        return {"ok": True, "tools": [{"name": name} for name in tools]}
+
+    monkeypatch.setattr(services.contract, "app_tools", catalogue)
+    facet = services.ServicesFacet(hub)
+
+    def stt():
+        return next(row for row in facet.status()["services"] if row["service"] == "stt")
+
+    timed_out = stt()
+    assert timed_out["state"] == "timed_out" and not timed_out["available"]
+    slow.remove("funes")
+    found = stt()
+    assert found["state"] == "ready" and found["available"]
+    assert found["owner"] == "funes" and found["registered_owner"] == "boltagon"

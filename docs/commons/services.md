@@ -400,7 +400,11 @@ Voice rows identify the provider selected by the catalogue check.
 When a compatibility provider serves the request, the row includes the
 registered owner and `fallback: true`. The catalogue check uses a two-second
 timeout per provider and a fifteen-second cache. `ready` confirms the tool
-names and does not guarantee inference.
+names and does not guarantee inference. A catalogue that runs out of time
+is reported as `timed_out` until it can be checked again. The Python and
+Node voice clients allow time for the registered provider and its reserves
+by default. An explicit shorter deadline can return an unconfirmed result,
+which does not enter the availability cache.
 Missing owners, unreachable apps and incompatible catalogues have distinct states.
 
 `hub_media_import({url|download_id, folder, language?, model?})` starts an asynchronous

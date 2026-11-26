@@ -9,7 +9,7 @@ from typing import Any
 
 from . import contract
 from .facets import Facet, Request
-from ..service_contracts import SERVICE_TOOLS, SERVICES, service_owners
+from ..service_contracts import SERVICE_TOOLS, SERVICES, VOICE_CATALOGUE_TIMEOUT_S, service_owners
 
 # Names are contract names, not ports: the registry resolves each owner.
 
@@ -54,7 +54,7 @@ class ServicesFacet(Facet):
                 continue
             seen.add(resolved)
             row = self._app_probe(key, candidate, required, app)
-            if first is None or (first["state"] == "missing" and row["state"] != "missing"):
+            if first is None or row["state"] == "timed_out" or (first["state"] == "missing" and row["state"] != "missing"):
                 first = row
             if row["available"]:
                 if row["owner"] != owner:
@@ -71,11 +71,14 @@ class ServicesFacet(Facet):
         if getattr(self.hub, "automation_blocked", lambda _: False)(row["owner"]):
             return {**row, "state": "stopped", "error": "owner is manually stopped"}
         try:
-            catalog = contract.app_tools(app, timeout=2.0)
+            catalog = contract.app_tools(app, timeout=VOICE_CATALOGUE_TIMEOUT_S)
+        except TimeoutError as exc:
+            return {**row, "state": "timed_out", "error": str(exc)}
         except Exception as exc:
             return {**row, "state": "down", "error": str(exc)}
         if not catalog.get("ok"):
-            return {**row, "state": "down", "error": catalog.get("error", "not reachable")}
+            state = "timed_out" if catalog.get("transport") == "timeout" else "down"
+            return {**row, "state": state, "error": catalog.get("error", "not reachable")}
         names = {t["name"] for t in catalog.get("tools", []) if isinstance(t, dict) and isinstance(t.get("name"), str)}
         missing = [name for name in required if name not in names]
         return {**row, "state": "incompatible" if missing else "ready", "available": not missing, "catalogue_tools": sorted(names),
@@ -99,11 +102,12 @@ class ServicesFacet(Facet):
             web_up = bool(web is not None and web.settings().get("enabled"))
             rows.insert(0, {"service": "web", "owner": "hub", "name": "Hoard Hub", "url": "",
                            "available": web_up, "state": "ready" if web_up else "disabled", "error": ""})
-            self._cached = {"ok": True, "services": rows, "checked_at": time.time(),
+            result = {"ok": True, "services": rows, "checked_at": time.time(),
                             "probe": "tool_catalogue", "workflows": [{"id": "media_import", "owners": list(requirements),
                             "available": not missing, "missing": missing, "opt_in": True, "model_readiness": "checked_on_execution"}]}
+            self._cached = None if any(row["state"] == "timed_out" for row in rows) else result
             self._at = time.monotonic()
-            return self._cached
+            return result
 
     def get(self, req: Request) -> Any:
         if req.path == "/api/services/status":

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from . import contract
-from ..service_contracts import OWNERS, PREVIOUS_OWNERS, SERVICE_TOOLS, VOICE_ALIASES, VOICE_SERVICES, service_owners
+from ..service_contracts import (
+    OWNERS, PREVIOUS_OWNERS, SERVICE_TOOLS, VOICE_ALIASES, VOICE_CATALOGUE_TIMEOUT_S, VOICE_SERVICES, service_owners,
+)
 
 _FOLLOW_STT = frozenset({"transcribe_status", "transcribe_cancel"})
 _STT_HANDLE = "hoard-stt:"
@@ -36,7 +38,7 @@ def select_provider(hub, service, tools, *, caller=""):
         seen.add(app.id)
         if hub.automation_blocked(app.id):
             continue
-        catalog = contract.app_tools(app, timeout=2)
+        catalog = contract.app_tools(app, timeout=VOICE_CATALOGUE_TIMEOUT_S)
         names = {entry.get("name") for entry in catalog.get("tools", ()) if isinstance(entry, dict)}
         if catalog.get("ok") and all(tool in names for tool in tools):
             return app.id

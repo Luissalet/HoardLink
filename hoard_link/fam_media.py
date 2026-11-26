@@ -59,7 +59,7 @@ _FORMATS = {"auto": "auto", "video": "video", "audio": "audio", "image": "image"
             "photos": "image", "images": "image"}
 
 
-def available(service: str = "media", timeout: float = 1.0) -> bool:
+def available(service: str = "media", timeout: Optional[float] = None) -> bool:
     """True when the hub is up and the owner of ``service`` (``"media"`` = Links, ``"stt"`` = Funes, ``"tts"`` = Prospero) is running.
     Cached for 30 seconds."""
     return _s.available(service, timeout)

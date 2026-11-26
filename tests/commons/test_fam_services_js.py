@@ -83,6 +83,40 @@ def test_common_voice_migration_reports_selected_provider_and_keeps_the_handle(t
     ]
 
 
+def test_slow_voice_status_retries_after_client_and_provider_deadlines(tmp_path):
+    out = run("http://127.0.0.1:9", tmp_path / "mcp-token", """
+      const realTimer = globalThis.setTimeout;
+      const budgets = [];
+      let fetches = 0;
+      globalThis.setTimeout = (callback, budget) => {
+        budgets.push(budget);
+        return realTimer(callback, budget < 2000 ? 0 : budget);
+      };
+      globalThis.fetch = (url, { signal }) => {
+        if (!url.endsWith("/api/services/status")) throw new Error("Unexpected fallback route");
+        fetches++;
+        if (fetches === 1) {
+          return new Promise((resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        }
+        const row = fetches === 2 ? { available: false, state: "timed_out" } :
+          { available: true, state: "ready", owner: "funes", fallback: true };
+        return Promise.resolve({status: 200, json: async () => ({services: [{service: "stt", ...row}]})});
+      };
+      const first = await fam.serviceAvailable("stt", 1000);
+      const second = await fam.serviceAvailable("stt", 1000);
+      const third = await fam.serviceAvailable("stt");
+      const cached = await fam.serviceAvailable("stt", 1000);
+      fam.forgetAvailability();
+      const cold = await fam.serviceAvailable("stt");
+      return { first, second, third, cached, cold, budgets, fetches };
+    """)
+    assert (out["first"], out["second"], out["third"], out["cached"], out["cold"]) == (False, False, True, True, True)
+    assert out["fetches"] == 4 and out["budgets"][:2] == [1000, 1000]
+    assert len(out["budgets"]) == 4 and min(out["budgets"][2:]) > 2000
+
+
 def test_media_download_info_subtitles_and_the_polling(hub, tmp_path):
     running = {"id": "m2", "ok": False, "status": "downloading", "kind": "video", "files": []}
     hub.on("links", "media_download", sequence(lambda a, c: view() if a["url"].endswith("/one") else running))

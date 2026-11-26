@@ -10,6 +10,7 @@
     mail: ["Correo saliente", "Outgoing mail"] };
   const states = { ready: ["Responde", "Responding"], down: ["No responde", "Not responding"],
     missing: ["Sin registrar", "Not registered"], incompatible: ["Pendiente de actualizar", "Update needed"], disabled: ["Apagado", "Disabled"],
+    timed_out: ["Sin confirmar a tiempo", "Unconfirmed at deadline"], stopped: ["Parado", "Stopped"],
     unavailable: ["No disponible", "Unavailable"] };
   let list, note, button;
   async function load(quiet) {

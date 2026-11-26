@@ -29,7 +29,7 @@ from typing import Any, Callable, Mapping, Optional
 from . import family as _f
 from ._hubclient import fetch
 from .waiting import DONE_STATES, MAX_WAIT_S, clamp_wait
-from .service_contracts import OWNERS, VOICE_SERVICES, service_owners
+from .service_contracts import OWNERS, SERVICE_TOOLS, VOICE_CATALOGUE_TIMEOUT_S, VOICE_SERVICES, service_owners
 
 #: service name -> the app that owns it (docs/commons/services.md)
 
@@ -213,9 +213,8 @@ def run_job(owner: str, start_tool: str, start_args: Mapping[str, Any], status_t
 # availability
 # ---------------------------------------------------------------------------------------------------------------------
 
-def available(service: str, timeout: float = 1.0) -> bool:
-    """True when the hub answers and the app that owns ``service`` (``media``, ``stt``, ``tts``, ``docs``, ``embed``, or an
-    app id) is running. Cached for 30 seconds; a failed probe is cached too, so a loop does not retry every call."""
+def available(service: str, timeout: Optional[float] = None) -> bool:
+    """Check availability. Voice checks cache confirmed states for 30 s and retry indeterminate results."""
     owner = owner_of(service)
     service = str(service or "").strip().lower()
     key = (_f._hub(), service if service in VOICE_SERVICES else owner, _f._token())
@@ -224,24 +223,48 @@ def available(service: str, timeout: float = 1.0) -> bool:
         hit = _cache.get(key)
         if hit and now - hit[0] < CACHE_S:
             return hit[1]
-    ok = False
     if service in VOICE_SERVICES:
-        status, body = fetch(_f._hub() + "/api/services/status", timeout=timeout, headers=_f._headers())
-        if status == 200 and isinstance(body, dict) and isinstance(body.get("services"), list):
-            ok = any(row.get("service") == service and row.get("available") is True
-                     for row in body["services"] if isinstance(row, dict))
-            with _lock:
-                _cache[key] = (now, ok)
-            return ok
-    addresses = service_owners(service) if service in VOICE_SERVICES else (owner,)
-    for address in addresses:
-        status, body = fetch(_f._hub() + "/api/apps/" + address, timeout=timeout, headers=_f._headers())
-        if status == 200 and isinstance(body, dict) and body.get("state") == "running":
-            ok = True
-            break
+        ok = _voice_available(service, timeout)
+        if ok is None:
+            return False
+    else:
+        status, body = fetch(_f._hub() + "/api/apps/" + owner, timeout=1.0 if timeout is None else timeout, headers=_f._headers())
+        ok = status == 200 and isinstance(body, dict) and body.get("state") == "running"
     with _lock:
-        _cache[key] = (now, ok)
+        _cache[key] = (time.monotonic(), ok)
     return ok
+
+
+def _voice_available(service: str, timeout: Optional[float]) -> Optional[bool]:
+    addresses = service_owners(service)
+    budget = len(addresses) * VOICE_CATALOGUE_TIMEOUT_S + 1 if timeout is None else timeout
+    deadline = time.monotonic() + budget
+    base, headers = _f._hub(), _f._headers()
+    status, body = fetch(base + "/api/services/status", timeout=budget, headers=headers)
+    if status == 200 and isinstance(body, dict) and isinstance(body.get("services"), list):
+        row = next((row for row in body["services"] if isinstance(row, dict) and row.get("service") == service), None)
+        if row is not None:
+            available = row.get("available")
+            return available if isinstance(available, bool) and row.get("state") != "timed_out" else None
+    elif status not in (404, 405):
+        return None
+
+    # Older hubs can have an app route even when they lack the service catalogue.
+    for address in addresses:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        url = base + "/api/apps/" + address
+        status, body = fetch(url, timeout=remaining, headers=headers)
+        if status == 200 and isinstance(body, dict):
+            if body.get("state") == "running":
+                return True
+            if body.get("state") == "foreign" and (remaining := deadline - time.monotonic()) > 0:
+                status, catalog = fetch(url + "/tools", timeout=remaining, headers=headers)
+                names = {row.get("name") for row in catalog.get("tools", ()) if isinstance(row, dict)} if isinstance(catalog, dict) else set()
+                if status == 200 and set(SERVICE_TOOLS[service]) <= names:
+                    return True
+    return None
 
 
 def forget_availability() -> None:
