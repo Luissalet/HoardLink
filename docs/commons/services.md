@@ -10,6 +10,7 @@ call exactly these tools, and the migration table at the end says which app swit
 |---|---|---|---|
 | Media download from a link | `links` (Links Hoard, Node) | `fam_media.download`, `status`, `cancel`, `info`, `subtitles`, `audio_for_asr`, `tools` | `mediaDownload`, `mediaStatus`, `mediaCancel`, `mediaInfo`, `mediaSubtitles`, `mediaAudioForAsr`, `mediaTools` |
 | Speech to text | `funes` (Funes's Hoard, Python) | `fam_media.transcribe`, `transcribe_status`, `transcribe_cancel` | `transcribe`, `transcribeStatus`, `transcribeCancel` |
+| Natural dictation and structured fields | `cyrano` (Cyrano's Hoard, Python) | `cyrano_hoard.client.DictationClient` | `cyrano-client.js` from the app |
 | Text to speech | `prospero` (Prospero's Hoard, Python) | `fam_media.speak`, `speak_bytes` | `speak` |
 | PDF operations, extraction, OCR | `kafka` (Kafka's Hoard, Python) | `fam_docs.*` | `pdf*`, `imagesToPdf`, `imagesCompress`, `docsExtract`, `docsOcr*` |
 | Text embeddings | `borges` (Borges's Hoard, Python) | `fam_embed.status`, `embed_texts`, `embed_query` | `embedStatus`, `embedTexts`, `embedQuery` |
@@ -418,6 +419,26 @@ view; paused imports are not falsely reported as running or swept away as stale.
 
 HTTP operator routes: `GET /api/services/imports`,
 `POST /api/services/imports/resume`. They require the Hub operator or its token.
+
+### Local dictation
+
+Cyrano owns `dictation` on loopback port 5253. Its manifest registers the
+app and its local stdio bridge. Discovery checks the tool catalogue
+without starting Cyrano, the transcription owner, or a model.
+
+- `dictation_understand` processes text. `dictation_audio` takes an absolute
+  path on the shared machine and delegates raw recognition through the
+  existing `stt` service. Both return `cyrano.dictation/v0`.
+- The result contains the raw and clean text, edits, validated fields with
+  literal evidence, missing and ambiguous fields, changed fields, final
+  status, and stage timings. The caller supplies the field schema and
+  keeps responsibility for dialogue and application actions.
+- `dictation_session_open`, `dictation_session_get`, `dictation_session_turn`,
+  `dictation_session_fix`, `dictation_session_cancel`, and
+  `dictation_session_undo` cover incremental input and typed field overrides.
+  Session writes return undo tokens. Sessions expire after inactivity.
+- Browser clients can send one audio turn directly to the app HTTP API.
+  Use an application-side proxy for exports with a different origin.
 
 ### Machine-readable ownership and cohesion
 

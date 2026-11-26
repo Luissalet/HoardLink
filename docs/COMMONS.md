@@ -21,6 +21,7 @@ Two shapes:
 | Browser (Playwright, one family profile) | `hoard_link.web.browser` | hub facet `web` | `fam_web.fetch(tier="browser")` |
 | Download media from a link (yt-dlp, gallery-dl) | `hoard_link.media.bins` | Links Hoard | `fam_media.download` |
 | Speech to text | `hoard_link.media.stt` | Funes's Hoard | `fam_media.transcribe` |
+| Natural dictation and structured fields | — | Cyrano's Hoard | Python and JS clients in the owner |
 | Text to speech | — | Prospero's Hoard | `fam_media.speak` |
 | PDF operations, document extraction, OCR | `hoard_link.docs.*` (light readers) | Kafka's Hoard | `fam_docs` |
 | Text embeddings | `hoard_link.docs.vecmath` | Borges's Hoard | `fam_embed` |

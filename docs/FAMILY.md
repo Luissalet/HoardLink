@@ -488,6 +488,7 @@ port, check this list and the manifests under the roots the hub scans
 | 5232 | Baird's | 5233 | Darwin's |
 | 5241 | Dantzig's | 5243 | Maxwell's |
 | 5245 | Shannon's | 5246 | Drucker's |
+| 5253 | Cyrano's | | |
 | 8766 | Writer's (desktop) | 8767 | Gepetto's |
 | 8810 | Hoard Hub | 8811–8817 | Babel, Laplace, Funes, Daguerre, Prospero, Scheherazade, DiskHoard |
 

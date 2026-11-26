@@ -19,6 +19,11 @@ def test_owner_catalogues_and_missing_services_do_not_start_models(monkeypatch):
     rows = {r["service"]: r for r in facet.status()["services"]}
     assert rows["media"]["available"] and rows["docs"]["available"] and rows["web"]["available"]
     assert rows["stt"]["state"] == "down"
+    assert rows["dictation"]["available"] and rows["dictation"]["owner"] == "cyrano"
+    assert rows["dictation"]["tools"] == [
+        "dictation_understand", "dictation_audio", "dictation_session_open", "dictation_session_get",
+        "dictation_session_turn", "dictation_session_fix", "dictation_session_cancel", "dictation_session_undo",
+    ]
     assert rows["tts"]["state"] == "incompatible" and rows["tts"]["missing_tools"] == ["voice_tts"]
     assert rows["embed"]["state"] == "missing"
     assert rows["storage"]["available"] and rows["storage"]["owner"] == "atlas"
