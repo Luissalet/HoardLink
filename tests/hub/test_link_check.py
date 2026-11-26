@@ -1,0 +1,601 @@
+from collections import Counter
+from pathlib import Path
+from types import SimpleNamespace
+import io
+import json
+import sqlite3
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.request
+import webbrowser
+
+import pytest
+
+from hoard_link.hub import agent_routes, facets, link_check, link_probes, mcp, tools
+from hoard_link.hub.link_inventory import COMPATIBILITY_LINKS, INVENTORY, LINKS, SERVICE_LINKS
+from hoard_link.hub.link_probes import FAILED, RESPONDS, STOPPED, UNCHECKED, LinkProbes, Observation
+from hoard_link.hub.registry import App
+
+
+PRIVATE = "private payload abc@example.test C:/private-directory"
+
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("The checker called a forbidden operation")
+
+
+def now_deadline():
+    return time.monotonic() + 2
+
+
+class HubDouble:
+    start = stop = restart = open = call_app = app_tools = snapshot = faustus_status = emit = forbidden
+
+    def __init__(self, path):
+        self.config = SimpleNamespace(data_dir=str(path), language="es", faustus_urls=["http://127.0.0.1:7000"])
+        self.registry = {}
+        self.manually_stopped = set()
+        self.lookups = []
+        self.placement_state = {"location": "pc"}
+        self.placement = SimpleNamespace(state=lambda: self.placement_state, status=forbidden, remote_health=forbidden,
+                                         remote_app=forbidden, _ssh=forbidden)
+        self.facet_map = {}
+        self.facets = []
+
+    @property
+    def apps(self):
+        return list(self.registry.values())
+
+    def get(self, name):
+        assert name != "baird", "Baird must be excluded before registry lookup"
+        self.lookups.append(name)
+        return self.registry.get(name)
+
+    def automation_blocked(self, app):
+        assert app != "baird"
+        return app in self.manually_stopped
+
+    def facet(self, name):
+        assert name not in {"notify", "chats", "today", "search", "purchases", "order_receipts"}
+        return self.facet_map.get(name)
+
+    def register(self, name, port, *, prefix="", folder="", role=None):
+        manifest = str(Path(folder) / "faustus-plugin.json") if folder else ""
+        app = App(name, name, "", folder, f"http://127.0.0.1:{port}{prefix}", "/api/health",
+                  role, manifest_path=manifest)
+        self.registry[name] = app
+        return app
+
+
+@pytest.fixture
+def hub(tmp_path, monkeypatch):
+    base = tmp_path / "hub"
+    faustus = tmp_path / "faustus"
+    faustus.mkdir()
+    monkeypatch.setenv("FAUSTUS_DIR", str(faustus))
+    monkeypatch.setenv("HOARD_HUB_DATA_DIR", str(base))
+    return HubDouble(base)
+
+
+def poll(facet, run_id, lang="es"):
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        run = facet.call({"run_id": run_id, "lang": lang})
+        if run.get("phase") == "completed":
+            return run
+        threading.Event().wait(0.005)
+    pytest.fail("Background run did not complete")
+
+
+def test_inventory_covers_all_parent_ids_and_every_compatibility_and_service():
+    expected_c = """
+        1.3 1.7 1.8 1.9 1.10 1.11 1.12 1.13 1.15 1.16 1.17 1.18 1.19
+        2.9 2.12 3.1 3.2 3.3 3.4 3.6 3.7 3.9
+        4.1 4.2 4.3 4.4 4.5 4.6 4.7 4.9 5.3 5.4 5.5 5.6
+        6.2 6.3 6.4 6.5 6.8 6.9 6.10 6.11 8.2 8.8 8.11 8.13 9.1
+    """.split()
+    assert {row.id for row in INVENTORY if row.inventory_status == "C"} == set(expected_c)
+    assert Counter(row.inventory_status for row in INVENTORY) == {"C": 47, "P": 23, "D": 6, "R": 14}
+    expected_bridges = """
+        tantalus phileas cassandra argus echo funes diskhoard galton laplace midas borges gutenberg
+        scheherazade lumiere daedalus gepetto gulliver heron platos babel theseus durer
+    """.split()
+    assert {row.id for row in COMPATIBILITY_LINKS} == {f"1.17.{app}" for app in expected_bridges}
+    assert {row.id for row in SERVICE_LINKS} == {f"4.5.{service}" for service in "mail media stt tts docs embed storage".split()}
+    assert len({row.id for row in LINKS}) == len(LINKS) == 119
+    assert all(row.origin and row.destination and row.via and row.probe for row in LINKS)
+
+
+def test_stopped_apps_and_excluded_bridge_owners_never_reach_transport(hub):
+    hub.register("cookhoard", 5210)
+    hub.register("ledger", 5180)
+    hub.register("talos", 5220)
+    hub.register("funes", 5220, prefix="/legacy/funes")
+    hub.register("nightingale", 5189)
+    hub.manually_stopped.add("nightingale")
+    attempted = []
+
+    def transport(*args, **kwargs):
+        attempted.append((args, kwargs))
+        forbidden()
+
+    probes = LinkProbes(hub, ["talos"], request=transport, listeners=lambda: {5189, 5220})
+    assert probes.run("prerequisites:cookhoard,funes,kafka,tantalus,ledger:cook_workflow", now_deadline(), {}).state == STOPPED
+    assert probes.run("mail_reader:ledger", now_deadline(), {}).state == STOPPED
+    assert probes.run("faustus", now_deadline(), {}).state == STOPPED
+    assert probes.native_tool("nightingale", "nightingale_modules", now_deadline()).outcome == "manually_stopped"
+    assert probes.run("bridge:funes", now_deadline(), {}).outcome == "operator_excluded"
+    assert probes.run("service:stt", now_deadline(), {}).outcome == "operator_excluded"
+    assert not attempted
+    assert "funes" not in hub.lookups
+
+
+def test_baird_id_and_port_are_excluded_before_any_connection(hub, monkeypatch):
+    hub.register("atlas", 5232)
+    hub.register("baird", 5232, folder="not-a-test-input")
+    reads = []
+    transport = lambda *args, **kwargs: reads.append((args, kwargs))
+    probes = LinkProbes(hub, request=transport, listeners=forbidden)
+    assert probes.health("baird", now_deadline()).outcome == "operator_excluded"
+    assert probes.catalogue("atlas", now_deadline()).outcome == "endpoint_not_verified"
+    assert probes.run("excluded:baird", now_deadline(), {}).outcome == "operator_excluded"
+    assert not reads
+    assert hub.lookups == ["atlas"]
+
+
+def test_remote_absorbed_app_uses_active_owner_and_never_calls_placement_refresh(hub):
+    hub.register("phileas", 5221, prefix="/shipments")
+    hub.placement_state = {"location": "sparks", "node": {"name": "test"},
+                           "urls": {"hermes": "https://fake.invalid:8443"}}
+    hub.placement._remote_health = {"checked": time.time(), "ok": True,
+                                     "apps": {"hermes": {"service": "inactive", "healthy": False}}}
+    called = []
+
+    def transport(app, method, path, args, **kwargs):
+        called.append((app.url, method, path))
+        return 200, {"tools": [{"name": "mail_status"}]}
+
+    probes = LinkProbes(hub, request=transport, listeners=forbidden)
+    assert probes.catalogue("phileas", now_deadline()).state == STOPPED
+    assert not called
+    hub.placement._remote_health["apps"]["hermes"]["service"] = "active"
+    assert probes.catalogue("phileas", now_deadline(), ["mail_status"]).state == RESPONDS
+    assert called == [("https://fake.invalid:8443/shipments", "GET", "/api/agent/tools")]
+    hub.placement_state["since"] = time.time() + 1
+    assert probes.catalogue("phileas", now_deadline()).outcome == "remote_state_unknown"
+    assert len(called) == 1
+
+
+def test_native_tool_boundary_and_bridge_catalogue_are_explicitly_read_only(hub, tmp_path):
+    hub.register("nightingale", 5189, role="nightingale-hoard")
+    hub.register("atlas", 5203)
+    hub.register("cassandra", 5220, prefix="/services", folder=tmp_path)
+    (tmp_path / "bridge.json").write_text(json.dumps({
+        "owner": "talos", "tools": [{"schema": {"name": "svc_incidents"}}],
+    }), encoding="utf-8")
+    called = []
+
+    def transport(app, method, path, args, *, timeout):
+        assert 0 < timeout <= 2
+        called.append((app.id, method, path, args))
+        if path == "/api/health":
+            return 200, {"service": "nightingale-hoard", "private": PRIVATE}
+        if method == "POST":
+            return 200, {"modules": [{"name": PRIVATE, "data_dir": PRIVATE}]}
+        return 200, {"tools": [{"name": "svc_incidents", "description": PRIVATE}]}
+
+    probes = LinkProbes(hub, request=transport, listeners=lambda: {5189, 5203, 5220})
+    results = [
+        probes.run("app_tool:nightingale:nightingale_modules", now_deadline(), {}),
+        probes.run("bridge:cassandra", now_deadline(), {}),
+        probes.run("app_catalog:atlas:atlas_projects", now_deadline(), {}),
+    ]
+    assert [result.state for result in results] == [RESPONDS, RESPONDS, FAILED]
+    assert results[-1].outcome == "missing_tools"
+    assert PRIVATE not in repr(results)
+    assert called == [
+        ("nightingale", "GET", "/api/health", None),
+        ("nightingale", "POST", "/api/agent/call",
+         {"name": "nightingale_modules", "tool": "nightingale_modules", "arguments": {}}),
+        ("cassandra", "GET", "/api/agent/tools", None),
+        ("atlas", "GET", "/api/agent/tools", None),
+    ]
+    with pytest.raises(ValueError, match="allowlist"):
+        probes.native_tool("nightingale", "nightingale_set_module", now_deadline())
+    with pytest.raises(ValueError, match="allowlist"):
+        probes._http(hub.get("nightingale"), "/api/mail/search", now_deadline())
+    assert len(called) == 4
+
+
+def test_app_transport_never_follows_redirects_to_the_excluded_port(hub, monkeypatch):
+    hub.register("atlas", 5203)
+    opened = []
+
+    class Opener:
+        def open(self, req, *, timeout):
+            opened.append(req.full_url)
+            raise urllib.error.HTTPError(req.full_url, 302, "Found", {}, io.BytesIO(b"{}"))
+
+    def build(*handlers):
+        redirect_handler = next(handler for handler in handlers if isinstance(handler, link_probes.contract.NoRedirect))
+        new_url = "http://127.0.0.1:5232/api/health"
+        assert redirect_handler.redirect_request(None, None, 302, "Found", {}, new_url) is None
+        return Opener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", build)
+    probes = LinkProbes(hub, listeners=lambda: {5203, 5232})
+    check = probes.catalogue("atlas", now_deadline())
+    assert check.state == FAILED and check.metrics == {"http_status": 302}
+    assert opened == ["http://127.0.0.1:5203/api/agent/tools"]
+
+
+def test_run_is_private_passive_and_writes_only_its_history(hub, monkeypatch):
+    cfg = Path(hub.config.data_dir)
+    cfg.mkdir()
+    codes = cfg.parent / "atlas-source"
+    codes.mkdir()
+    atlas = hub.register("atlas", 5203, folder=codes)
+    Path(atlas.manifest_path).write_text('{"mcp":{"command":"test"}}', encoding="utf-8")
+    hub.register("mercator", 5195)
+    hub.register("nightingale", 5189, role="nightingale-hoard")
+    hub.register("baird", 5232, folder="not-a-test-input")
+    violations = []
+    metadata_calls = []
+
+    def reject(name):
+        def record(*args, **kwargs):
+            violations.append(name)
+            forbidden()
+        return record
+
+    for name in ("start", "stop", "restart", "open", "call_app", "app_tools", "snapshot", "faustus_status", "emit"):
+        monkeypatch.setattr(hub, name, reject(name))
+
+    def relay_description(app, *, check):
+        metadata_calls.append((app, check))
+        assert app == "atlas" and check is False
+        return {"mcp_path": "/api/mcp/apps/atlas/mcp"}
+
+    exclusion = cfg / "link-check.json"
+    exclusion.write_text('{"excluded_apps":["mercator"]}', encoding="utf-8")
+    db = sqlite3.connect(":memory:", check_same_thread=False)
+    db.execute("CREATE TABLE events(ts, source, data)")
+    db.execute("INSERT INTO events VALUES(?, ?, ?)", (123.0, "faustus", PRIVATE))
+    # A cursor attempting to read the payload or write immediately fails.
+    def authorizer(action, _table, column, _db_name, _cause):
+        if action == sqlite3.SQLITE_READ and column == "data":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION) else sqlite3.SQLITE_DENY
+
+    db.set_authorizer(authorizer)
+    hub.events = SimpleNamespace(_db=db, _lock=threading.Lock(), emit=forbidden, query=forbidden)
+    hub.rules = SimpleNamespace(_lock=threading.Lock(), rules=[{"last": {"ok": True, "ts": 124, "error": PRIVATE}}],
+                                list=forbidden, run=forbidden)
+    hub.facet_map.update(
+        mailgate=SimpleNamespace(config=lambda: {"enabled": True, "interval_min": 10}, clock=lambda: 400.0,
+                                 _store=SimpleNamespace(get_state=lambda key: {"last_ok_ts": 200.0}[key]),
+                                 helper_status=reject("helper_status"), mail_accounts=reject("mail_accounts"),
+                                 send_mail=reject("send_mail"), run_pass=reject("mail_pass")),
+        mcp_relay=SimpleNamespace(describe=relay_description, list_apps=reject("mcp_list_all"), handle=reject("mcp_session")),
+        brain=SimpleNamespace(target=lambda: {"base": "http://127.0.0.1:7000"},
+                              counts=lambda: {"done": 8}, submit=reject("brain_submit"), client=reject("brain_client")),
+        fleet=SimpleNamespace(cached=None, status=reject("fleet_status"), reconcile=reject("fleet_reconcile")),
+    )
+    hub.link = SimpleNamespace(_status_cache=(0, None), status=reject("link_status"), chat=reject("link_chat"))
+    monkeypatch.setattr(subprocess, "Popen", reject("Popen"))
+    monkeypatch.setattr(subprocess, "run", reject("subprocess.run"))
+    monkeypatch.setattr(webbrowser, "open", reject("browser"))
+    monkeypatch.setattr(link_probes.procs, "_listening_pids_cli", reject("listener CLI"))
+    monkeypatch.setattr(link_probes, "_listener_ports", lambda: {5189, 5203, 5195, 7000, 5232})
+    called = []
+
+    def transport(app, method, path, args, **kw):
+        called.append((app.id, method, path))
+        assert app.id not in {"baird", "mercator"} and app.port != 5232
+        if path == "/api/health":
+            return 200, {"service": "nightingale-hoard" if app.id == "nightingale" else "faustus", "private": PRIVATE}
+        if path == "/api/hoard-copilot/capabilities":
+            return 200, {"contract_version": "1.0", "private": PRIVATE}
+        if path == "/api/agent/tools":
+            return 200, {"tools": [{"name": "atlas_projects", "description": PRIVATE}]}
+        if method == "POST" and args["name"] == "nightingale_modules":
+            return 200, {"modules": [{"path": PRIVATE}]}
+        forbidden()
+
+    monkeypatch.setattr(link_probes, "_request_app", transport)
+    facet = link_check.LinkCheckFacet(hub)
+    try:
+        started = facet.call({})
+        assert started["phase"] == "running"
+        run = poll(facet, started["run_id"])
+        rows = {row["id"]: row for row in run["links"]}
+        assert run["history_saved"] and run["summary"]["total"] == 119
+        assert sum(run["summary"][state] for state in link_check.STATES) == 119
+        assert rows["3.1"]["evidence"]["metrics"] == {"events": 1, "last_event_at": 123.0}
+        assert rows["3.2"]["evidence"]["metrics"]["enabled"] == 1
+        assert rows["3.3"]["evidence"]["called"] == "faustus GET /api/health + Hub Brain queue counts"
+        assert rows["3.6"]["evidence"]["scope"] == "prerequisites"
+        assert rows["1.7"]["status"] == "responde"
+        assert rows["1.16"]["evidence"]["metrics"] == {"declared": 1, "described": 1}
+        assert metadata_calls and set(metadata_calls) == {("atlas", False)}
+        assert not violations
+        assert all(app not in {"baird", "mercator"} for app, _, _ in called)
+        assert rows["1.8"]["evidence"]["outcome"] == "operator_excluded"
+        assert rows["2.1"]["evidence"]["metrics"]["age_s"] == 200
+        assert rows["9.1"]["status"] == "no comprobado"
+        assert rows["9.1"]["evidence"]["detail"] == "No comprobado por orden de la persona."
+        assert (cfg / "link-check-history.json").is_file()
+        assert {p.name for p in cfg.iterdir()} == {"link-check.json", "link-check-history.json"}
+        assert PRIVATE not in json.dumps(run)
+        assert PRIVATE not in (cfg / "link-check-history.json").read_text(encoding="utf-8")
+        assert called and all(path in link_probes.GET_PATHS for _, method, path in called if method == "GET")
+        assert {(app, path) for app, method, path in called if method == "POST"} == {("nightingale", "/api/agent/call")}
+    finally:
+        facet.close()
+        db.close()
+
+
+def test_history_persists_first_failure_and_reports_recovery(hub, monkeypatch):
+    link = next(row for row in INVENTORY if row.id == "1.7")
+    monkeypatch.setattr(link_check, "LINKS", (link,))
+    states = iter([FAILED, UNCHECKED, FAILED, RESPONDS, FAILED])
+
+    class ProbeDouble:
+        def __init__(self, *_):
+            pass
+
+        def run(self, probe, deadline, results):
+            return Observation(next(states), "fixture", "fixture")
+
+    monkeypatch.setattr(link_check, "LinkProbes", ProbeDouble)
+
+    def run_once():
+        facet = link_check.LinkCheckFacet(hub)
+        try:
+            run = poll(facet, facet.call({})["run_id"])
+            return run["links"][0]
+        finally:
+            facet.close()
+
+    first = run_once()
+    assert first["failure_since"] == first["checked_at"]
+    assert run_once()["failure_since"] == first["failure_since"]
+    assert run_once()["failure_since"] == first["failure_since"]
+    assert run_once()["failure_since"] is None
+    later = run_once()
+    assert later["failure_since"] == later["checked_at"] > first["checked_at"]
+
+
+def test_background_run_coalesces_requests_and_enforces_probe_deadlines(hub, monkeypatch):
+    monkeypatch.setattr(link_check, "LINKS", INVENTORY[:2])
+    entered = threading.Event()
+    release = threading.Event()
+    returned = threading.Event()
+
+    class ProbeDouble:
+        def __init__(self, *_):
+            pass
+
+        def run(self, probe, deadline, results):
+            if not results:
+                entered.set()
+                release.wait(3)
+                returned.set()
+            return Observation(RESPONDS, "fixture", "fixture")
+
+    monkeypatch.setattr(link_check, "LinkProbes", ProbeDouble)
+    facet = link_check.LinkCheckFacet(hub, probe_timeout=0.25, run_timeout=1.5)
+    try:
+        start = facet.call({})
+        assert entered.wait(1)
+        assert facet.call({})["run_id"] == start["run_id"]
+        assert facet.call({"run_id": start["run_id"]})["phase"] == "running"
+        run = poll(facet, start["run_id"], "en")
+        first, second = run["links"]
+        assert first["evidence"]["outcome"] == "probe_timeout"
+        assert first["status"] == "not responding"
+        assert second["state"] == RESPONDS
+        assert not returned.is_set()
+    finally:
+        release.set()
+        facet.close()
+        assert returned.wait(1)
+
+
+def test_global_budget_marks_remaining_checks_and_retains_baird_exclusion(hub, monkeypatch):
+    baird = next(row for row in INVENTORY if row.id == "9.1")
+    monkeypatch.setattr(link_check, "LINKS", (*INVENTORY[:2], baird))
+    release = threading.Event()
+    returned = threading.Event()
+
+    class SlowProbe:
+        def __init__(self, *_):
+            pass
+
+        def run(self, probe, deadline, results):
+            release.wait(3)
+            returned.set()
+            return Observation(RESPONDS, "fixture", "fixture")
+
+    monkeypatch.setattr(link_check, "LinkProbes", SlowProbe)
+    facet = link_check.LinkCheckFacet(hub, probe_timeout=2, run_timeout=0.25)
+    try:
+        run = poll(facet, facet.call({})["run_id"])
+        assert [row["evidence"]["outcome"] for row in run["links"]] == [
+            "probe_timeout", "run_timeout", "operator_excluded",
+        ]
+    finally:
+        release.set()
+        facet.close()
+        assert returned.wait(1)
+
+
+def test_facet_get_and_normal_agent_mcp_contract_without_hub_listener(hub, monkeypatch):
+    monkeypatch.setattr(link_check, "LINKS", tuple(row for row in INVENTORY if row.id == "9.1"))
+    hub.facets = facets.load_all(hub, modules=("link_check",))
+    facet = hub.facets[0]
+    name = "hub_link_check"
+    spec = next(tool for tool in tools.all_tools() if tool["name"] == name)
+    assert spec["annotations"]["readOnlyHint"] is True
+    described = agent_routes.describe(f"/api/agent/tools/{name}")
+    assert described == spec
+
+    def get(query, agent=lambda: True):
+        request = facets.Request("GET", "/api/link-check", query, {}, forbidden, agent)
+        return facets.dispatch(hub.facets, request)
+
+    def fake_request(method, path, body, **kwargs):
+        assert method == "POST" and path == "/api/agent/call"
+        assert kwargs.get("passive") is True
+        assert agent_routes.CONTEXT not in body["arguments"]
+        args = {**body["arguments"], agent_routes.CONTEXT: {"order_id": 123}}
+        answer, status = agent_routes.invoke(hub, body["tool"], args)
+        assert "receipt_id" not in answer
+        return status, answer
+
+    monkeypatch.setattr(mcp, "_hub_up", lambda: True)
+    monkeypatch.setattr(mcp, "_ensure_hub", forbidden)
+    monkeypatch.setattr(mcp, "request_context", forbidden)
+    monkeypatch.setattr(mcp, "_request", fake_request)
+
+    try:
+        assert get({}).get("status") == 404
+        assert get({}, lambda: False).status == 401
+        discover = mcp.handle({"id": 1, "method": "tools/list"})["result"]["tools"]
+        assert next(tool for tool in discover if tool["name"] == name)["annotations"]["readOnlyHint"] is True
+        reply = mcp.handle({"id": 2, "method": "tools/call", "params": {"name": name}})["result"]
+        started = json.loads(reply["content"][0]["text"])
+        run = poll(facet, started["run_id"])
+        latest = get({"lang": ["en"]})
+        assert latest["run_id"] == run["run_id"] and latest["links"][0]["status"] == "not checked"
+        assert get({"run_id": [run["run_id"]]}) == run
+        monkeypatch.setattr(mcp, "_hub_up", lambda: False)
+        monkeypatch.setattr(mcp, "_request", forbidden)
+        reply = mcp.handle({"id": 3, "method": "tools/call", "params": {"name": name}})["result"]
+        assert reply["isError"] is True
+    finally:
+        facet.close()
+
+
+def test_mail_gateway_uses_only_last_success_and_its_interval(hub):
+    gate = SimpleNamespace(config=lambda: {"enabled": True, "interval_min": 5},
+                           _store=SimpleNamespace(get_state=lambda key: {"last_ok_ts": 200}[key]),
+                           clock=lambda: 501, helper_status=forbidden, mail_accounts=forbidden, run_pass=forbidden)
+    hub.facet_map["mailgate"] = gate
+    probes = LinkProbes(hub, listeners=forbidden, request=forbidden)
+    stale = probes.mail()
+    assert stale.state == FAILED and stale.outcome == "mail_stale"
+    assert stale.metrics == {"age_s": 301, "interval_s": 300, "last_success_at": 200}
+    gate.clock = lambda: 500
+    assert probes.mail().state == RESPONDS
+    gate._store = None
+    assert probes.mail().state == UNCHECKED
+
+
+def test_deployment_compares_saved_commits_without_git_or_ssh(hub, tmp_path):
+    paths = {}
+    sha = "a" * 40
+    for app in ("faustus", "hermes", "prometheus"):
+        folder = tmp_path / app
+        (folder / ".git" / "refs").mkdir(parents=True)
+        (folder / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="ascii")
+        (folder / ".git" / "packed-refs").write_text(f"{sha} refs/heads/main\n", encoding="ascii")
+        paths[app] = folder
+    hub.placement.local_dirs = lambda: paths
+    hub.placement_state = {"location": "sparks", "deployed": {app: sha + "|marker" for app in paths}}
+    probes = LinkProbes(hub, listeners=forbidden, request=forbidden)
+    matches = probes.deployment()
+    assert matches.state == RESPONDS and matches.metrics == {"expected": 3, "compared": 3, "matching": 3}
+    hub.placement_state["deployed"]["faustus"] = "b" * 40
+    assert probes.deployment().outcome == "deployment_differs"
+
+
+
+def test_console_orphan_probe_reads_only_metadata_from_existing_databases(hub, tmp_path, monkeypatch):
+    from hoard_link.hub import agora_worker_processes
+
+    path = tmp_path / "console.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE workers(id, pid, state, log_path, process_started_at, created_at, updated_at, parent_id, session_id, task)")
+        db.execute("INSERT INTO workers VALUES('worker', 555, 'unknown', 'worker.jsonl', 1, 1, 2, 'parent', 'sid', ?)", (PRIVATE,))
+        db.execute("INSERT INTO workers VALUES('legacy', 556, 'unknown', 'legacy.jsonl', NULL, 1, 2, 'parent', 'sid', ?)", (PRIVATE,))
+
+    def inspect_orphan(row):
+        assert row["pid"] == 555
+        assert "task" not in row.keys()
+        return {"age_seconds": 40, "private": PRIVATE}
+
+    unopened = SimpleNamespace(_db_path=tmp_path / "unopened.db")
+    console = SimpleNamespace(
+        _db_lock=threading.RLock(), _db_path=path, _space_views={"unopened": unopened},
+        _orphan_process=inspect_orphan, for_space=forbidden, overview=forbidden, _db=forbidden,
+    )
+    hub.facet_map["agora_console"] = console
+    monkeypatch.setattr(agora_worker_processes, "live_pids", lambda: {555, 556})
+    before = path.read_bytes()
+    obs = LinkProbes(hub, request=forbidden, listeners=forbidden).console_orphans()
+    assert obs.state == FAILED
+    assert obs.metrics == {"spaces_checked": 1, "orphans": 1, "legacy_unverified": 1}
+    assert PRIVATE not in repr(obs)
+    assert path.read_bytes() == before
+    assert {p.name for p in tmp_path.glob("*.db*")} == {"console.db"}
+
+
+def test_mcp_checks_the_hub_url_before_opening_a_connection(monkeypatch):
+    monkeypatch.setattr(mcp, "_url", lambda: "http://127.0.0.1:5232")
+    monkeypatch.setattr(mcp, "_token", forbidden)
+    monkeypatch.setattr(urllib.request, "build_opener", forbidden)
+    assert mcp._hub_up() is False
+    assert mcp._request("POST", "/api/agent/call", {"tool": "hub_link_check"}, passive=True) == (None, None)
+
+
+def test_invalid_exclusion_settings_skip_probes_and_keep_baird_excluded(hub, monkeypatch):
+    def probes(*args):
+        forbidden()
+
+    path = Path(hub.config.data_dir)
+    path.mkdir()
+    settings = path / "link-check.json"
+    settings.write_text('{"excluded_apps": "atlas"}', encoding="utf-8")
+    links = tuple(row for row in INVENTORY if row.id in {"1.7", "9.1"})
+    monkeypatch.setattr(link_check, "LINKS", links)
+    monkeypatch.setattr(link_check, "LinkProbes", probes)
+    facet = link_check.LinkCheckFacet(hub)
+    try:
+        run = poll(facet, facet.call({})["run_id"])
+        assert [(r["state"], r["evidence"]["outcome"]) for r in run["links"]] == [
+            (UNCHECKED, "invalid_config"), (UNCHECKED, "operator_excluded"),
+        ]
+        assert settings.read_text(encoding="utf-8") == '{"excluded_apps": "atlas"}'
+    finally:
+        facet.close()
+
+
+
+def test_native_compatibility_uses_module_catalogue_and_owner_listener(hub):
+    hub.register("coase", 54901)
+    alias = hub.register("midas", 5240)
+    alias.family["absorbed_by"] = {"id": "coase", "module": "markets"}
+    hub.register("writer", 54902)
+    fiction = hub.register("scheherazade", 8766)
+    fiction.family["absorbed_by"] = {"id": "writer", "module": "fiction"}
+    called = []
+
+    def transport(app, method, path, args, *, timeout):
+        called.append((app.url, method, path))
+        if app.id == "scheherazade":
+            return 200, {"tools": [{"name": "wh_story_modules"}]}
+        return 200, {"module": "markets", "tools": [{"name": "market_catalogue"}]}
+
+    probes = LinkProbes(hub, request=transport, listeners=lambda: {54901, 54902})
+    assert probes.compatibility("midas", now_deadline()).state == RESPONDS
+    assert probes.compatibility("scheherazade", now_deadline()).state == RESPONDS
+    assert called == [
+        ("http://127.0.0.1:54901/compat/markets", "GET", "/api/agent/tools"),
+        ("http://127.0.0.1:54902", "GET", "/api/agent/tools"),
+    ]
+    alias.family["absorbed_by"]["module"] = "wrong"
+    assert probes.compatibility("midas", now_deadline()).outcome == "bridge_owner_missing"
+    assert len(called) == 2
