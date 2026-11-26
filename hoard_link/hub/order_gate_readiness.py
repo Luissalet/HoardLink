@@ -13,6 +13,9 @@ MIGRATION = """
     ALTER TABLE agora_piece_defects ADD COLUMN required INTEGER NOT NULL DEFAULT 1;
 """
 
+REFERENCE_DEFECT = "reference_defect"
+PASSING_DETAIL_STATES = ("ok", "not_visible", REFERENCE_DEFECT)
+
 _PENDING = re.compile(
     r"\b(?:pendientes? de (?:comprobacion|revision|validacion|verificacion|confirmacion|inspeccion|cotejo|mirar|"
     r"comprobar|revisar|validar|verificar|confirmar)|(?:por|falta) (?:comprobar|revisar|validar|verificar|confirmar)|"
@@ -82,7 +85,19 @@ def _listed_in(caption: str, text: str) -> bool:
     return bool(re.search(r"(?<!\w)" + re.escape(caption) + r"(?!\w)", text))
 
 
-def validate(self: Any, pieces: list[dict[str, Any]], gate_note: str, error: Callable) -> None:
+def disclose_reference_defect(piece: dict[str, Any], defect: Any, error: Callable) -> set[str]:
+    pid, did = piece["id"], defect["id"]
+    title = _plain(piece["title"])
+    captions = {_plain(defect["note"]).rstrip(".!?"), f"defecto de referencia #{did}", f"reference defect #{did}"}
+    if not any(caption and _listed_in(caption, title) for caption in captions):
+        _refuse(error, "piece_undisclosed_reference_defect",
+                f"La pieza #{pid} debe declarar en su título «defecto de referencia #{did}» o su descripción registrada.",
+                f"Piece #{pid} must disclose ‘reference defect #{did}’ or its registered description in its title.",
+                piece_id=pid, defect_id=did, reference_piece=defect["piece_id"])
+    return captions - {""}
+
+
+def validate(self: Any, pieces: list[dict[str, Any]], error: Callable) -> set[str]:
     """Run in the opening transaction, before writing a gate or changing an order."""
     disclosed = set()
     for piece in pieces:
@@ -102,7 +117,7 @@ def validate(self: Any, pieces: list[dict[str, Any]], gate_note: str, error: Cal
         if pending:
             _refuse(error, "piece_check_pending", f"{es} declara comprobaciones pendientes. Registra su resultado.",
                     f"{en} declares pending checks. Record their result.", piece_id=pid, pending=pending)
-        unchecked = [k["id"] for k in json.loads(piece["keep"]) if k.get("state") not in ("ok", "not_visible")]
+        unchecked = [k["id"] for k in json.loads(piece["keep"]) if k.get("state") not in PASSING_DETAIL_STATES]
         if unchecked:
             _refuse(error, "piece_details_unchecked", f"{es} tiene detalles obligatorios sin comprobar o ausentes.",
                     f"{en} has unchecked or missing required details.", piece_id=pid, detail_ids=unchecked)
@@ -125,7 +140,10 @@ def validate(self: Any, pieces: list[dict[str, Any]], gate_note: str, error: Cal
                         f"{en} must show defect #{did} in its title and the first line of its note.",
                         piece_id=pid, defect_id=did)
             disclosed.add(caption)
+    return disclosed
 
+
+def validate_gate_note(gate_note: str, disclosed: set[str], error: Callable) -> None:
     context = _plain(gate_note)
     if _PENDING.search(context):
         _refuse(error, "gate_note_pending", "La nota de la puerta declara una comprobación pendiente.",

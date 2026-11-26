@@ -6,17 +6,21 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import agora_orders as orders
+from . import order_gate_readiness as readiness
 
 
 COMPARISONS = {
-    "description": "Visual comparisons with kept references required by the order or in the piece's lineage, "
-                   "using registered image files or previews.",
+    "description": "Visual comparisons with kept references using registered images or previews. For reference_defect, "
+                   "link each pair to an open defect on reference_piece. / Cotejos con referencias conservadas mediante "
+                   "imágenes o vistas registradas. Para reference_defect, enlaza cada par a un defecto abierto de reference_piece.",
     "type": "array", "maxItems": 200, "items": {
         "type": "object", "additionalProperties": False, "required": ["reference_piece", "observed"],
         "properties": {
             "reference_piece": {"type": "integer", "minimum": 1},
             "piece_preview": {"type": "integer", "minimum": 0},
             "reference_preview": {"type": "integer", "minimum": 0},
+            "reference_defect_id": {"type": "integer", "minimum": 1,
+                                    "description": "Open defect on reference_piece. / Defecto abierto de reference_piece."},
             "observed": {"type": "string", "maxLength": 1000},
         },
     },
@@ -182,8 +186,37 @@ def _is_image(path):
     return header.startswith(signatures[suffix])
 
 
-def check_comparisons(self, piece, mark):
+def _reference_defect(self, reference, defect_id):
+    defect = self.db.one("SELECT id, piece_id, note, status FROM agora_piece_defects WHERE id=? AND space_id=?",
+                         (str(defect_id), self.space_id))
+    if not defect:
+        return None, "reference_defect_missing", f"No existe el defecto #{defect_id} en este espacio.", (
+            f"Defect #{defect_id} does not exist in this space.")
+    if defect["piece_id"] != reference:
+        return None, "reference_defect_wrong_piece", f"El defecto #{defect_id} no pertenece a la referencia #{reference}.", (
+            f"Defect #{defect_id} does not belong to reference #{reference}.")
+    if defect["status"] != "open":
+        return None, "reference_defect_closed", f"El defecto #{defect_id} está cerrado.", f"Defect #{defect_id} is closed."
+    return defect, "", "", ""
+
+
+def _replaced_by(self, reference):
+    return self.db.scalar(
+        "WITH RECURSIVE later(id, status) AS ("
+        "SELECT id, status FROM agora_pieces WHERE supersedes=? AND space_id=? UNION "
+        "SELECT p.id, p.status FROM agora_pieces p JOIN later l ON p.supersedes=l.id WHERE p.space_id=?"
+        ") SELECT id FROM later WHERE status='kept' AND EXISTS (SELECT 1 FROM agora_order_decisions d "
+        "WHERE d.piece_id=later.id AND d.decision='keep' AND d.gate_id<>0) ORDER BY id DESC LIMIT 1",
+        (reference, self.space_id, self.space_id),
+    )
+
+
+def check_comparisons(self, piece, mark, state):
     raw = mark.get("comparisons")
+    if state == readiness.REFERENCE_DEFECT and not raw:
+        raise orders._err("reference_defect requires an image comparison linked to an open defect. / "
+                          "reference_defect requiere un cotejo enlazado a un defecto abierto.", 409,
+                          error_code="reference_defect_required")
     if not isinstance(raw, list) or not 1 <= len(raw) <= COMPARISONS["maxItems"]:
         raise orders._err("comparisons must be a nonempty list of image comparisons")
     order = orders._order_row(self, piece["order_id"])
@@ -191,58 +224,118 @@ def check_comparisons(self, piece, mark):
     evidence = {}
     for item in raw:
         if not isinstance(item, dict) or item.keys() - COMPARISONS["items"]["properties"].keys():
-            raise orders._err("each comparison names a reference_piece, optional previews and what was observed")
+            raise orders._err("each comparison names a reference_piece, optional previews, what was observed and, "
+                              "for reference_defect, reference_defect_id")
         if not isinstance(item.get("observed"), str):
             raise orders._err("comparison.observed must describe what was seen in the pair")
         reference = orders._int(item.get("reference_piece"), "reference_piece")
         if reference not in references or reference in evidence:
             raise orders._err("comparison must name a distinct kept visual reference required by the order "
                               "or in the piece's lineage", 409)
+        defect_id = orders._int(item.get("reference_defect_id"), "reference_defect_id", required=False)
+        if state == readiness.REFERENCE_DEFECT:
+            if defect_id is None:
+                raise orders._err("Link the open defect with reference_defect_id. / "
+                                  "Enlaza el defecto abierto con reference_defect_id.", 409,
+                                  error_code="reference_defect_required", reference_piece=reference)
+            _, code, es, en = _reference_defect(self, reference, defect_id)
+            if code:
+                raise orders._err(en, 409, error_code=code, es=es, en=en, defect_id=defect_id, reference_piece=reference)
+            if replacement := _replaced_by(self, reference):
+                en = f"Reference #{reference} was replaced by #{replacement}. Compare the current revision."
+                es = f"La referencia #{reference} se ha sustituido por #{replacement}. Coteja la revisión actual."
+                raise orders._err(en, 409, error_code="reference_replaced", es=es, en=en, reference_piece=reference,
+                                  replacement_piece=replacement, defect_id=defect_id)
+        elif "reference_defect_id" in item:
+            raise orders._err("reference_defect_id requires state=reference_defect")
         evidence[reference] = {
             "reference_piece": reference, "result": _image_evidence(piece, item.get("piece_preview")),
             "reference": _image_evidence(references[reference], item.get("reference_preview")),
             "observed": orders._txt(item.get("observed"), 1000, "comparison.observed", required=True),
         }
+        if defect_id is not None:
+            evidence[reference]["reference_defect_id"] = defect_id
     return list(evidence.values())
 
 
-def validate_gate_references(self, order, piece_ids):
-    """Reject before the gate write, even when the producer omitted a required reference entirely."""
+def validate_gate_references(self, order, pieces, *, recheck_defects=False):
+    """Require current comparisons at opening and recheck linked defects before a keep decision."""
     details = orders._load(order["keep"], [])
-    if not details:
-        return
-    required = required_rows(self, order)
+    required = None
     failures = []
-    for piece_id in piece_ids:
-        piece = orders._piece_row(self, piece_id)
-        if piece["status"] == "kept" or not _visual(piece):
+    declarations = []
+    for piece in pieces:
+        keep = orders._load(piece["keep"], [])
+        marked = {k["id"] for k in keep if k.get("state") == readiness.REFERENCE_DEFECT}
+        detail_ids = {detail["detail"].casefold(): detail["id"] for detail in keep}
+        required_ids = ({detail_ids.get(detail.casefold()) for detail in details}
+                        if piece["status"] != "kept" and _visual(piece) else set())
+        selected = marked | required_ids
+        if not selected:
             continue
+        if required is None:
+            required = required_rows(self, order)
         references = _comparison_references(self, piece, required)
-        if not references:
+        if not references and not marked:
             continue
         latest = {}
         for check in self.db.query("SELECT ok, keep FROM agora_piece_checks WHERE piece_id=? ORDER BY id", (piece["id"],)):
             for mark in orders._load(check["keep"], []):
                 for evidence in mark.get("comparisons", []):
                     latest[mark["id"], evidence["reference_piece"]] = (check["ok"], mark["state"], evidence)
-        detail_ids = {detail["detail"].casefold(): detail["id"] for detail in orders._load(piece["keep"], [])}
-        for reference, reference_row in references.items():
-            states = []
-            for detail in details:
-                ok, state, evidence = latest.get((detail_ids.get(detail.casefold()), reference), (False, "pending", None))
-                if evidence:
-                    current = (evidence["result"] == _image_evidence(piece, evidence["result"]["preview"])
-                               and evidence["reference"] == _image_evidence(
-                                   reference_row, evidence["reference"]["preview"]))
-                    states.append(state if ok and current else "missing")
+        if recheck_defects and not any(state == readiness.REFERENCE_DEFECT and detail in selected
+                                       for (detail, _), (_, state, _) in latest.items()):
+            continue
+        states = {}
+        checked_defects = set()
+        superseded = {}
+        for (detail, reference), (ok, state, evidence) in latest.items():
+            if reference not in references or detail not in selected:
+                continue
+            current = (evidence["result"] == _image_evidence(piece, evidence["result"]["preview"])
+                       and evidence["reference"] == _image_evidence(references[reference], evidence["reference"]["preview"]))
+            if not (ok and current):
+                state = "missing"
+            elif state == readiness.REFERENCE_DEFECT:
+                checked_defects.add(detail)
+                defect_id = evidence["reference_defect_id"]
+                if replacement := _replaced_by(self, reference):
+                    superseded[detail, reference] = (replacement, defect_id)
+                    continue
+                defect, code, _, _ = _reference_defect(self, reference, defect_id)
+                if not defect:
+                    failures.append({"piece": piece["id"], "reference_piece": reference, "defect_id": defect_id,
+                                     "reason": "comparison_pending", "cause": code})
                 else:
-                    states.append("pending")
-            if "ok" not in states or any(state not in ("ok", "not_visible") for state in states):
+                    declarations.append((piece, defect))
+            states[detail, reference] = state
+        renewed = set()
+        for (detail, reference), (replacement, defect_id) in superseded.items():
+            if states.get((detail, replacement)) not in readiness.PASSING_DETAIL_STATES:
+                failures.append({"piece": piece["id"], "reference_piece": reference, "defect_id": defect_id,
+                                 "reason": "comparison_pending", "cause": "reference_replaced",
+                                 "replacement_piece": replacement})
+            elif detail in required_ids:
+                renewed.add(reference)
+        for reference in references:
+            grades = {states.get((detail, reference), "pending") for detail in required_ids
+                      if (detail, reference) not in superseded}
+            if grades and ((reference not in renewed and not grades.intersection(("ok", readiness.REFERENCE_DEFECT)))
+                           or grades.difference(readiness.PASSING_DETAIL_STATES)):
                 failures.append({"piece": piece["id"], "reference_piece": reference,
-                                 "reason": "comparison_failed" if "missing" in states else "comparison_pending"})
+                                 "reason": "comparison_failed" if "missing" in grades else "comparison_pending"})
+        # A persisted mark still needs an applicable comparison if its reference has left the required set.
+        for detail in sorted(marked - checked_defects):
+            reference = next((rid for (key, rid), (_, state, _) in latest.items()
+                              if key == detail and state == readiness.REFERENCE_DEFECT), None)
+            failures.append({"piece": piece["id"], "reference_piece": reference, "reason": "comparison_pending"})
     if failures:
         es = ("Falta un cotejo visual satisfactorio con las referencias conservadas. "
               "Regístralo con hub_agora_piece_check en keep[].comparisons.")
         en = ("A passing visual comparison with the kept references is required. "
               "Record it with hub_agora_piece_check in keep[].comparisons.")
         raise orders._err(en, 409, error_code="kept_reference_comparison", es=es, en=en, comparisons=failures)
+    disclosed = set()
+    for piece, defect in declarations:
+        disclosed.update(readiness.disclose_reference_defect(piece, defect, orders._err))
+    return disclosed

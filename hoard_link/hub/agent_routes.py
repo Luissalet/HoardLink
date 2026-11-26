@@ -37,7 +37,7 @@ def invoke(hub, name, arguments, **identity):
     ok = not (isinstance(result, dict) and result.get("ok") is False)
     if ok:
         status = 200
-    elif result.get("code") == "worker_name_in_use":
+    elif result.get("status") == 409 or result.get("code") == "worker_name_in_use":
         status = 409
     else:
         status = 400

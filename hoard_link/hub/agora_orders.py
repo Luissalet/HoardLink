@@ -52,7 +52,7 @@ DECISIONS = ("keep", "cancel")
 #: (reference: it stays valid and says that its reference was cancelled).
 ROLES = ("material", "reference")
 #: What a check says of a detail to keep. not_visible is not a failure: the detail cannot be seen in this piece.
-DETAIL_STATES = ("pending", "ok", "missing", "not_visible")
+DETAIL_STATES = ("pending", "ok", "missing", "not_visible", order_gate_readiness.REFERENCE_DEFECT)
 MAX_ITEMS = 200
 #: A registered file is copied, by content, into the Agora's own folder so that each revision keeps its bytes even when
 #: the station overwrites the file. Bigger files are not copied and are checked against their print instead.
@@ -1526,8 +1526,8 @@ def piece_add(self: Any, a: dict[str, Any]) -> dict[str, Any]:
 
 def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     """Note a check of a piece: what was looked at (note), whether it passed (ok) and, for each detail to keep, whether
-    it is there (keep: [{id or detail, state ok|missing|not_visible, how, evidence, note}]). A passed check with no
-    detail missing or unchecked marks the piece checked."""
+    it is there. A reference_defect mark links a visual comparison to an open defect in its reference. A passed
+    check with no detail missing or unchecked marks the piece checked."""
     agent = self._agent(a.get("agent"), allow_person=bool(a.get("_person")))
     note = _txt(a.get("note"), TEXT_MAX, "note", required=True)
     ok = a.get("ok", True) not in (False, "false", "0", 0)
@@ -1555,7 +1555,7 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             state = str(mark.get("state") or "").lower() or (
                 "ok" if mark.get("ok", True) not in (False, "false", "0", 0) else "missing")
             if state not in DETAIL_STATES[1:]:
-                raise _err("keep state is ok, missing or not_visible")
+                raise _err("keep state is ok, missing, not_visible or reference_defect")
             if "anchor" in mark:
                 raw = mark["anchor"]
                 target = _piece_row(self, raw.get("piece")) if isinstance(raw, dict) else piece
@@ -1565,8 +1565,8 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                 anchor_changed = True
             item.update({"state": state, "by": agent, "check_rev": int(piece["revision"]),
                          **{k: _txt(mark.get(k), 1000, f"keep.{k}") for k in ("note", "how", "evidence") if mark.get(k)}})
-            comparison = ({"comparisons": agora_order_references.check_comparisons(self, piece, mark)}
-                          if "comparisons" in mark else {})
+            comparison = ({"comparisons": agora_order_references.check_comparisons(self, piece, mark, state)}
+                          if "comparisons" in mark or state == order_gate_readiness.REFERENCE_DEFECT else {})
             clean.append({"id": item["id"], "detail": item["detail"], "state": state, **comparison,
                           **{k: item[k] for k in ("note", "how", "evidence", "anchor") if k in item}})
         sources = a.get("resolves_pending")
@@ -1574,16 +1574,23 @@ def piece_check(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             piece, self.db.query("SELECT * FROM agora_piece_checks WHERE piece_id=? ORDER BY id", (piece["id"],)),
             sources, ok=ok, note=note, marks=clean, error=_err,
         ) if sources not in (None, []) else []
+        title = piece["title"]
+        if "title" in a:
+            if (piece["status"] not in ("provisional", "checked") or not ok
+                    or not any(mark.get("comparisons") for mark in clean)):
+                raise _err("title requires a passing visual comparison on a piece still being checked. / "
+                           "title requiere un cotejo visual satisfactorio de una pieza aún en comprobación.", 409)
+            title = _txt(a["title"], 200, "title", required=True)
         cid = self.db.insert("agora_piece_checks", {"piece_id": piece["id"], "space_id": self.space_id, "agent": agent,
                                                     "ok": 1 if ok else 0, "note": note, "keep": _dump(clean),
                                                     "resolves_pending": _dump(resolved),
                                                     "created": _now(self)})
         journal.created("agora_piece_checks", cid)
         status = piece["status"]
-        if ok and status == "provisional" and all(k.get("state") in ("ok", "not_visible") for k in keep):
+        if ok and status == "provisional" and all(k.get("state") in order_gate_readiness.PASSING_DETAIL_STATES for k in keep):
             status = "checked"
-        self.db.execute("UPDATE agora_pieces SET keep=?, status=?, updated=? WHERE id=?",
-                        (_dump(keep), status, _now(self), piece["id"]))
+        self.db.execute("UPDATE agora_pieces SET keep=?, status=?, title=?, updated=? WHERE id=?",
+                        (_dump(keep), status, title, _now(self), piece["id"]))
         if anchor_changed:
             journal.before("agora_orders", piece["order_id"])
             self.db.execute("UPDATE agora_orders SET updated=? WHERE id=?", (_now(self), piece["order_id"]))
@@ -1718,9 +1725,10 @@ def gate_open(self: Any, a: dict[str, Any]) -> dict[str, Any]:
             if not p or p["order_id"] != order_row["id"]:
                 raise _err(f"piece #{pid} is not a piece of order #{order_row['id']}", 404)
             pieces.append(dict(p))
-        order_gate_readiness.validate(self, pieces, note, _err)
+        disclosed = order_gate_readiness.validate(self, pieces, _err)
+        disclosed.update(agora_order_references.validate_gate_references(self, order_row, pieces))
+        order_gate_readiness.validate_gate_note(note, disclosed, _err)
         title = _txt(a.get("title"), 200, "title") or f"Puerta de «{order_row['title']}»"
-        agora_order_references.validate_gate_references(self, order_row, ids)
         journal = _Journal(self, agent, "gate_open")
         gid = self.db.insert("agora_gates", {"order_id": order_row["id"], "space_id": self.space_id, "title": title,
                                              "note": note, "status": "open",
@@ -1840,12 +1848,15 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
         targets = [p for p in ([only] if only else in_gate) if p not in done]
         if not targets:
             raise _err("every piece of this gate is already decided", 409)
-        for pid in targets:
-            if not _bytes_ok(self, _piece_row(self, pid)):
-                raise _err(f"piece #{pid}: its file changed since it was registered and no copy of that revision is "
+        pieces = [_piece_row(self, pid) for pid in targets]
+        for piece in pieces:
+            if not _bytes_ok(self, piece):
+                raise _err(f"piece #{piece['id']}: its file changed since it was registered and no copy of that revision is "
                            "kept; the station has to register it again before it can be decided", 409,
-                           error_code="piece_changed", piece_id=pid)
+                           error_code="piece_changed", piece_id=piece["id"])
         order_row = _order_row(self, gate["order_id"])
+        if decision == "keep":
+            agora_order_references.validate_gate_references(self, order_row, pieces, recheck_defects=True)
         journal = _Journal(self, agent, "gate_decide", undo_for_person=True)
         alternatives = []
         for pid in in_gate:
@@ -1856,8 +1867,8 @@ def gate_decide(self: Any, a: dict[str, Any]) -> dict[str, Any]:
                      "deadline": order_row["deadline"], "gate": {"id": gate["id"], "title": gate["title"]},
                      "alternatives": alternatives, "decided_by": agent}
         result = []
-        for pid in targets:
-            piece = _piece_row(self, pid)
+        for piece in pieces:
+            pid = piece["id"]
             journal.before("agora_pieces", pid)
             did = self.db.insert("agora_order_decisions", {
                 "order_id": order_row["id"], "gate_id": gate["id"], "piece_id": pid, "space_id": self.space_id,
@@ -2116,11 +2127,15 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                                 "source_rev": {"type": "string", "maxLength": 200, "description": "Revision of an app object."},
                                 "note": {"type": "string", "maxLength": 4000}}, ["agent", "order_id", "kind", "title"])},
         {"name": "hub_agora_piece_check",
-         "description": "Note a check of a piece: what you looked at (note), ok, and per detail to keep (by id or "
-                        "detail) its state, evidence and an optional anchor to a registered reference. Passing with "
-                        "no detail missing or unchecked marks it checked. Use resolves_pending to close earlier pending "
-                        "checks by ID or piece_note for a pending statement on the piece." + undo,
+         "description": "Record a piece check (note, ok, keep by ID or text, optional anchor). Use state=reference_defect with an open "
+                        "reference_defect_id in each comparison. Disclose the difference in the piece title. "
+                        "Pass title with the visual check to update the same piece. Use resolves_pending with IDs or piece_note. / "
+                        "Registra una comprobación (note, ok, keep por ID o texto, ancla opcional). Usa state=reference_defect con el reference_defect_id "
+                        "abierto en cada cotejo. Declara la diferencia en el título de la pieza. Pasa title con el cotejo "
+                        "para actualizar la misma pieza. Usa resolves_pending con los IDs pendientes o piece_note." + undo,
          "inputSchema": schema({"agent": agent_prop, "piece_id": piece_id, "note": {"type": "string", "maxLength": TEXT_MAX},
+                                "title": {"type": "string", "minLength": 1, "maxLength": 200,
+                                          "description": "Title of the piece being visually compared. / Título de la pieza cotejada."},
                                 "ok": {"type": "boolean"},
                                 "resolves_pending": {"type": "array", "maxItems": 60, "items": {
                                     "anyOf": [{"type": "integer", "minimum": 1}, {"const": "piece_note"}]}},
@@ -2155,7 +2170,8 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
         {"name": "hub_agora_gate_open",
          "description": "Show pieces of an order to the person for one keep-or-cancel decision, made on their page; the "
                         "order waits for it. Every piece must pass its checks and disclose any non-required defect "
-                        "on the piece itself. Required defects block the gate." + undo,
+                        "on the piece itself. Required defects block the gate. A reference_defect comparison must "
+                        "link an open defect on the current reference and disclose it in the result's title." + undo,
          "inputSchema": schema({"agent": agent_prop, "order_id": order_id, "piece_ids": ids,
                                 "title": {"type": "string", "maxLength": 200}, "note": {"type": "string", "maxLength": TEXT_MAX}},
                                ["agent", "order_id", "piece_ids"])},
