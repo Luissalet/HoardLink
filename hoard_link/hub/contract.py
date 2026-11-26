@@ -185,13 +185,15 @@ def _identity(value: Any, limit: int) -> str:
 
 def call_app(app: App, tool: str, arguments: Optional[dict[str, Any]] = None, *, timeout: float = 120.0,
              caller: str = "hub", reason: Optional[str] = None, agent: Optional[str] = None,
-             session: Optional[str] = None) -> dict[str, Any]:
+             session: Optional[str] = None, shared_only: bool = False) -> dict[str, Any]:
     """Run ``tool`` on ``app`` with its own token. Result:
     ``{ok, app, tool, status, result|error, contract, ms}``.
 
     ``reason``, ``agent`` and ``session`` are forwarded to the shared route (body fields and the ``X-Agent-Id`` /
     ``X-Agent-Session`` headers) so that an app with accountable agents (0.8.2, ``reasons=True``) can journal and undo
-    a write made through the hub instead of refusing it with ``reason_required``."""
+    a write made through the hub instead of refusing it with ``reason_required``.
+    Passive checks set ``shared_only`` to exercise the catalogue's shared HTTP
+    contract without retrying on a different route."""
     tool = str(tool or "").strip()
     args = arguments if isinstance(arguments, dict) else {}
     if not tool:
@@ -215,7 +217,7 @@ def call_app(app: App, tool: str, arguments: Optional[dict[str, Any]] = None, *,
             headers["X-Agent-Session"] = session_id
     status, body = _post(app.url + "/api/agent/call", payload, token, timeout, headers)
     contract = "shared"
-    if status == 404 and _missing_route(body):
+    if not shared_only and status == 404 and _missing_route(body):
         # No shared route: the per-tool shape of the first six apps.
         contract = "per-tool"
         status, body = _post(app.url + f"/api/agent/{tool}", args, token, timeout)
