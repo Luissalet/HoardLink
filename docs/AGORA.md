@@ -373,8 +373,12 @@ replacement receives the previous report, assignment and task thread. The select
 after the replacement checks in, preserving the review and its revision. Worker details show the handover state.
 The response includes the stop request. After transfer, the handover receipt also includes the reverse handover
 request, subject to the usual Agora rules. The API can choose another provider and model for the replacement.
-After a Hub restart, running workers are re-identified from their stored process and runtime, and finished ones are
-reconciled from their run receipts.
+After a Hub restart, the console resumes monitoring a live worker when the PID and process start time match its
+receipt. When the receipt stores a command, the console also checks its arguments, excluding the redacted task
+prompt. An older receipt without a start time needs a matching provider command and a start time within the
+recorded launch window. The console records that verified start time for future restarts. The live worker keeps
+its original turn, session and log. Its usual stop, continue and replacement rules still apply. Readoption
+only attaches a monitor to the original process. Finished workers are reconciled from their run receipts.
 
 The console flags live worker processes that have outlasted their managed turn, including older receipts outside the
 recent list. The worker's card keeps the turn state and shows the process PID, age, assignment and latest recorded
@@ -383,8 +387,10 @@ and confirm to terminate the displayed process and its children. The turn's rece
 
 For agents, `hub_agora_console_overview` adds `orphan_process` to affected workers
 and `startup` to those whose registration timed out. Calling `hub_agora_console_worker`
-with `action: reconcile` and no leader fields returns `orphans` and `not_started`
-for the selected space. The directing agent can call `action: stop_orphan` with `worker_id` and
+with `action: reconcile` and no leader fields returns `orphans`, `unverified` and `not_started`
+for the selected space. The `unverified` list reports workers whose live PID failed the restart identity check,
+with a `restart_issue` and bilingual detail. Those workers have no process controls while the identity is
+unverified. The directing agent can call `action: stop_orphan` with `worker_id` and
 `confirm_process: {pid, started_at}` from that listing. The Hub checks that the exact process is still an orphan
 before it signals it. Process termination is irreversible. The separate leader reconciliation still takes
 `leader_id`, `session_id` and `confirm_idle: true`.
