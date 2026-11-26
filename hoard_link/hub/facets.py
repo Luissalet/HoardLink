@@ -75,6 +75,12 @@ FACET_MODULES = (
     "keepalive",
 )
 
+# These facets can create processes independently of the app fixture launcher.
+_PROCESS_FACETS = frozenset({
+    "agent_sessions", "agora_console", "compiled_ui", "executors", "eyes", "integration",
+    "local_programs", "mailgate", "mcp_relay", "parity", "piece_checks", "web",
+})
+
 
 @dataclass
 class Reply:
@@ -157,6 +163,8 @@ def load_all(hub: Any, modules: tuple[str, ...] = FACET_MODULES) -> list[Facet]:
     out: list[Facet] = []
     hub._facets_by_id = {}
     for name in modules:
+        if getattr(getattr(hub, "config", None), "isolated", False) and name in _PROCESS_FACETS:
+            continue
         try:
             mod = importlib.import_module(f"{__package__}.{name}")
         except ModuleNotFoundError as exc:

@@ -88,6 +88,7 @@ from ..agent_journal import clean_identity
 from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools, autostart, profile_editor, portable_profiles
+from .isolation import passive_error
 from . import agent_routes, ui_session
 from .browser_lanes import LaneError
 from .lease import LeaseError
@@ -551,7 +552,7 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/programs":
                 return self._file(os.path.join(UI_DIR, "programs.html"))
             if path == "/api/copilot/info":
-                if hub.config.isolated_catalog:
+                if hub.config.isolated or hub.config.isolated_catalog:
                     return self._json({"ok": False, "code": "isolated_catalog"}, 503)
                 from .copilot import host_info
                 try:
@@ -559,7 +560,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 except OSError as exc:
                     return self._json({"ok": False, "code": "faustus_unavailable", "error": str(exc)}, 503)
             if path in ("/api/copilot/panel.js", "/api/copilot/launcher.js"):
-                if hub.config.isolated_catalog:
+                if hub.config.isolated or hub.config.isolated_catalog:
                     self.send_response(204)
                     self.send_header("Cache-Control", "no-store")
                     self.end_headers()
@@ -588,13 +589,15 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/faustus":
                 return self._json(hub.faustus_status())
             if path == "/api/placement":
+                if hub.config.isolated:
+                    return self._json({"ok": True, "location": "pc", "isolated": True})
                 return self._json(hub.placement.status())
             if path == "/api/backends":
                 if hub.config.isolated_catalog:
                     return self._json({"ok": True, "isolated": True, "capabilities": {}, "gpus": []})
                 return self._json(hub.backends(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path == "/api/services/comfy-profiles":
-                items = [] if hub.config.isolated_catalog else hub.launcher.statuses(named_only=True)
+                items = [] if hub.config.isolated or hub.config.isolated_catalog else hub.launcher.statuses(named_only=True)
                 return self._json({"ok": True, "items": items})
             if path == "/api/services":
                 if hub.config.isolated_catalog:
@@ -655,10 +658,16 @@ class _HubHandler(BaseHTTPRequestHandler):
             if path == "/api/audit":
                 return self._json(hub.family_audit(probe=query.get("probe", ["1"])[0] not in ("0", "false")))
             if path == "/api/link/status":
+                if hub.config.isolated:
+                    return self._json(passive_error(), 409)
                 return self._json(hub.link.status(force=query.get("force", ["0"])[0] in ("1", "true")))
             if path == "/api/repos":
+                if hub.config.isolated:
+                    return self._json(passive_error(), 409)
                 return self._json(hub.repos.snapshot())
             if path.startswith("/api/repos/"):
+                if hub.config.isolated:
+                    return self._json(passive_error(), 409)
                 rest = path[len("/api/repos/"):].split("/")
                 name = unquote(rest[0])
                 if len(rest) == 1:
@@ -670,9 +679,9 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": "not found"}, 404)
             if path == "/api/config":
                 cfg = hub.config.to_dict()
-                cfg["browser_found"] = desktop.find_browser(hub.config.browser)
-                cfg["native_window"] = desktop.hub_window_native_available()
-                cfg["window_engine_used"] = desktop.window_engine(hub.config.window_engine)
+                cfg["browser_found"] = None if hub.config.isolated else desktop.find_browser(hub.config.browser)
+                cfg["native_window"] = not hub.config.isolated and desktop.hub_window_native_available()
+                cfg["window_engine_used"] = "headless" if hub.config.isolated else desktop.window_engine(hub.config.window_engine)
                 return self._json(cfg)
             if path == "/api/agent/tools":
                 if not self._agent_ok():
@@ -730,6 +739,9 @@ class _HubHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self.close_connection = True
             return self._ui_denied(path)
+        if hub.config.isolated and path in ("/api/link/copilot", "/api/copilot/proxy", "/api/link/chat"):
+            self.close_connection = True
+            return self._json(passive_error(), 409)
         if path == "/api/link/copilot":
             return self._copilot()
         if path == "/api/copilot/proxy":
@@ -838,9 +850,13 @@ class _HubHandler(BaseHTTPRequestHandler):
                                          dest=body.get("dest"), in_place=bool(body.get("in_place", False)))
                 return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/repos/refresh":
+                if hub.config.isolated:
+                    return self._json(passive_error(), 409)
                 res = hub.repos.refresh(wait=bool(body.get("wait", False)))
                 return self._json({**res, "summary": hub.repos.snapshot()["summary"]})
             if path.startswith("/api/repos/"):
+                if hub.config.isolated:
+                    return self._json(passive_error(), 409)
                 rest = path[len("/api/repos/"):].split("/")
                 if len(rest) == 2 and rest[1] in ("fetch", "folder"):
                     name = unquote(rest[0])
@@ -855,6 +871,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                 res = hub.faustus_start() if path.endswith("/start") else hub.faustus_stop()
                 return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/placement/switch":
+                if hub.config.isolated:
+                    return self._json(passive_error(), 409)
                 res = hub.placement.switch(str(body.get("to") or ""), str(body.get("node") or ""))
                 return self._json(res, 200 if res.get("ok") else 409)
             if path == "/api/apps/start-all":
