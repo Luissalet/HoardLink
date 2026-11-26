@@ -373,7 +373,7 @@ def test_run_is_private_passive_and_writes_only_its_history(hub, monkeypatch):
         expected_total = len(LINKS) + 6  # Catalogue and proxy rows for three registry apps.
         assert run["history_saved"] and run["summary"]["total"] == expected_total
         assert sum(run["summary"][state] for state in link_check.STATES) == expected_total
-        assert rows["4.5.dictation"]["destination"] == "cyrano"
+        assert rows["4.5.dictation"]["destination"] == "boltagon"
         assert rows["3.1"]["evidence"]["metrics"] == {"events": 1, "last_event_at": 123.0}
         assert rows["3.2"]["evidence"]["metrics"]["enabled"] == 1
         assert rows["3.3"]["evidence"]["called"] == "faustus GET /api/health + Hub Brain queue counts"
@@ -1057,8 +1057,8 @@ def quota_metadata_only(action, _table, key, *_):
     return sqlite3.SQLITE_DENY
 
 
-def test_common_dictation_link_only_reads_the_cyrano_catalogue(hub, monkeypatch):
-    hub.register("cyrano", 55026)
+def test_common_dictation_link_only_reads_the_registered_catalogue(hub, monkeypatch):
+    hub.register("boltagon", 55026)
     expected = [
         "dictation_understand", "dictation_audio", "dictation_session_open", "dictation_session_get",
         "dictation_session_turn", "dictation_session_fix", "dictation_session_cancel", "dictation_session_undo",
@@ -1067,7 +1067,7 @@ def test_common_dictation_link_only_reads_the_cyrano_catalogue(hub, monkeypatch)
     calls = []
 
     def transport(app, method, path, args, **kwargs):
-        assert (app.id, method, path, args) == ("cyrano", "GET", "/api/agent/tools", None)
+        assert (app.id, method, path, args) == ("boltagon", "GET", "/api/agent/tools", None)
         calls.append(app.id)
         return 200, {"tools": [{"name": name} for name in advertised]}
 
@@ -1075,15 +1075,15 @@ def test_common_dictation_link_only_reads_the_cyrano_catalogue(hub, monkeypatch)
     monkeypatch.setattr(link_probes, "_request_app", transport)
     rows, _ = run_inventory_rows(hub, monkeypatch, {"4.5.dictation"})
     checked = rows["4.5.dictation"]
-    assert checked["destination"] == "cyrano" and checked["state"] == RESPONDS
+    assert checked["destination"] == "boltagon" and checked["state"] == RESPONDS
     assert checked["evidence"]["metrics"]["matched_tools"] == len(expected)
     advertised.remove("dictation_session_undo")
     probes = LinkProbes(hub, request=transport, listeners=lambda: {55026})
     missing = probes.service("dictation", now_deadline())
     assert missing.state == FAILED and missing.outcome == "missing_tools"
-    hub.manually_stopped.add("cyrano")
+    hub.manually_stopped.add("boltagon")
     assert probes.service("dictation", now_deadline()).outcome == "manually_stopped"
-    assert calls == ["cyrano", "cyrano"]
+    assert calls == ["boltagon", "boltagon"]
 
 
 def test_literal_funes_catalogue_wins_over_foreign_lifecycle_state(hub, monkeypatch):
@@ -1095,13 +1095,18 @@ def test_literal_funes_catalogue_wins_over_foreign_lifecycle_state(hub, monkeypa
     monkeypatch.setattr(_famsvc._f, "_hub", lambda: "http://fixture.invalid")
     monkeypatch.setattr(_famsvc._f, "_token", lambda: "fixture-token")
     monkeypatch.setattr(_famsvc._f, "_headers", lambda: {})
-    monkeypatch.setattr(_famsvc, "fetch", lambda url, **_: (
-        (200, {"state": "foreign"}) if url.endswith("/api/apps/funes") else forbidden()
-    ))
+    def fetch(url, **kwargs):
+        if url.endswith("/api/services/status"):
+            return 200, {"services": [{"service": "stt", "available": True, "owner": "funes"}]}
+        if url.endswith("/api/apps/funes"):
+            return 200, {"state": "foreign"}
+        forbidden()
+
+    monkeypatch.setattr(_famsvc, "fetch", fetch)
     monkeypatch.setattr(_famsvc._f, "call", lambda owner, tool, args, **kw: {
         "ok": owner == "funes", "status": 200, "result": {"fixture": True},
     })
-    assert not _famsvc.available("stt")
+    assert _famsvc.available("stt")
     assert _famsvc.call_tool("funes", "transcribe_status", {"job_id": "fixture"})["ok"]
 
     required = link_probes.SERVICE_SPECS["stt"][1]
@@ -1116,9 +1121,40 @@ def test_literal_funes_catalogue_wins_over_foreign_lifecycle_state(hub, monkeypa
     monkeypatch.setattr(link_probes, "_request_app", transport)
     rows, _ = run_inventory_rows(hub, monkeypatch, {"4.5.stt"})
     row = rows["4.5.stt"]
-    assert row["state"] == RESPONDS and row["evidence"]["outcome"] == "shared_service_catalogue"
+    assert row["state"] == RESPONDS and row["evidence"]["outcome"] == "legacy_service_catalogue"
     tools_returned.pop()
     assert LinkProbes(hub, request=transport, listeners=lambda: {55120}).service("stt", now_deadline()).outcome == "missing_tools"
+
+
+@pytest.mark.parametrize("state, provider", [
+    ("ready", "boltagon"), ("down", "funes"), ("missing_tool", "funes"),
+])
+def test_media_and_voice_catalogues_cover_before_and_after_owner_change(hub, state, provider):
+    hub.register("boltagon", 55451)
+    hub.register("talos", 55452)
+    hub.register("funes", 55453, prefix="/compat/funes")
+    hub.register("borges", 55454)
+    hub.register("writer", 55454)
+    required = link_probes.SERVICE_SPECS["stt"][1]
+    visited = []
+
+    def catalogue(app, method, path, arguments, **kwargs):
+        assert (method, path, arguments) == ("GET", "/api/agent/tools", None)
+        visited.append(app.id)
+        names = ("library_reindex",) if app.id == "borges" else required
+        if app.id == "boltagon" and state == "missing_tool":
+            names = ("transcribe_file",)
+        return 200, {"tools": [{"name": tool} for tool in names]}
+
+    ports = {55452, 55454} | ({55451} if state != "down" else set())
+    probe = LinkProbes(hub, request=catalogue, listeners=lambda: ports)
+    voice = probe.service("stt", now_deadline())
+    media = probe.run("media_owners", now_deadline(), {})
+    assert voice.state == media.state == RESPONDS
+    assert voice.called.startswith(f"{provider} GET ")
+    assert media.called.startswith(f"{provider} GET ") and media.metrics["stt_fallback"] == int(provider == "funes")
+    assert "borges" in visited
+    assert ("funes" in visited) == (provider == "funes")
 
 
 def test_literal_vendored_copies_distinguish_versions_and_unpublished_drift(hub, tmp_path, monkeypatch):

@@ -6,7 +6,7 @@ inventory. Compatibility bridges and common services retain their parent ID.
 
 from dataclasses import dataclass
 
-from ..service_contracts import SERVICES
+from ..service_contracts import OWNERS, SERVICES, service_owners
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ INVENTORY = (
     Link("1.6", "Hub", "Prospero, Vulcan (y cualquier app con módulos)", "hub_module_set + start_app/stop_app", "app_catalog:prospero,vulcan", "P"),
     Link("1.7", "Hub", "Atlas", "hub_atlas_* (18) + hub_workspace → call_app(\"atlas\", …)", "app_catalog:atlas:atlas_projects", "C"),
     Link("1.8", "Hub", "Mercator", "hub_website_publish_piece → call_app(\"mercator\",\"website_publish\")", "app_catalog:mercator:website_publish", "C"),
-    Link("1.9", "Hub", "Talos (Funes) y Writer (Borges)", "hub_media_import* → funes.transcribe_file, borges.library_reindex (por ids de compatibilidad)", "media_owners", "C"),
+    Link("1.9", "Hub", f"{OWNERS['stt']} (STT) y Writer (Borges)", "hub_media_import* → stt.transcribe_file/status, borges.library_reindex", "media_owners", "C"),
     Link("1.10", "Hub", "Hermes (Tantalus)", "hub_purchase → tantalus.watchers_match_purchase / watcher_mark_bought", "no:purchase_matching", "C"),
     Link("1.11", "Hub", "Home Hoard", "hub_purchase_open_home", "prerequisites:homehoard:opens_home", "C"),
     Link("1.12", "Hub (hub_today)", "Talos (Cassandra)", "call_app(\"cassandra\",\"svc_incidents\")", "app_catalog:cassandra:svc_incidents", "C"),
@@ -66,7 +66,7 @@ INVENTORY = (
     Link("4.2", "Cook Hoard", "Talos (Funes), Kafka, Hermes (Tantalus), Ledger, Hub", "manifiesto x-links + server/hub.mjs", "prerequisites:cookhoard,funes,kafka,tantalus,ledger:cook_workflow", "C"),
     Link("4.3", "Cicero", "Nightingale", "dataset_connect kind=nightingale", "prerequisites:cicero,nightingale:dataset_workflow", "C"),
     Link("4.4", "Maxwell", "Vulcan", "directo por puerto VULCAN_URL=http://127.0.0.1:5186", "prerequisites:maxwell,vulcan:maxwell_peer", "C"),
-    Link("4.5", "cualquier app (biblioteca fam_*)", "dueño del servicio", "servicios comunes del Hub: mail→hub, media→Links, stt→Funes (Talos), dictation→Cyrano, tts→Prospero, docs/OCR→Kafka, embed→Borges (Writer), storage→Atlas", "services", "C"),
+    Link("4.5", "cualquier app (biblioteca fam_*)", "dueño del servicio", "servicios comunes del Hub: " + ", ".join(f"{key}→{owner}" for key, owner, _ in SERVICES), "services", "C"),
     Link("4.6", "apps", "Hub (carriles de navegador, un sitio a la vez)", "hub_lane_acquire/release/renew/status", "lanes", "C"),
     Link("4.7", "Faustus", "Hub (salas y registro de coordinación)", "POST /api/agent/call (hub_coordination_*)", "coordination", "C"),
     Link("4.8", "Hub aislado (pruebas)", "Hoards reales", "arranque en aislado y cierre", "no:isolation_launch", "R"),
@@ -139,7 +139,7 @@ COMPATIBILITY_LINKS = tuple(
 )
 
 SERVICE_LINKS = tuple(
-    Link(f"4.5.{service}", "Family apps", owner, f"Common service {service}", f"service:{service}", "C", "4.5")
+    Link(f"4.5.{service}", "Family apps", owner, f"Common service {service} · {', '.join(service_owners(service))}", f"service:{service}", "C", "4.5")
     for service, owner, _ in SERVICES
 )
 

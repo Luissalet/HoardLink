@@ -16,7 +16,7 @@ import sqlite3
 import time
 
 from ..atomic import read_json
-from ..service_contracts import SERVICES
+from ..service_contracts import SERVICES, service_owners
 from . import contract, procs
 from .link_inventory import COMPATIBILITY_OWNERS, NATIVE_COMPATIBILITY
 from .placement import (
@@ -935,10 +935,27 @@ class LinkProbes:
                 return replace(gateway, called=obs.called + " + " + gateway.called,
                                metrics={**obs.metrics, **(gateway.metrics or {})})
             return obs
-        observation = self.catalogue(owner, deadline, required)
-        if key == "stt" and observation.state == RESPONDS:
-            return replace(observation, outcome="shared_service_catalogue")
-        return observation
+        first = None
+        seen = set()
+        for candidate in service_owners(key):
+            endpoint = self._get_app(candidate, deadline)
+            if isinstance(endpoint, Observation):
+                observation = endpoint
+            else:
+                candidate = endpoint.app.id
+                identity = (candidate, endpoint.app.url)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                observation = self._catalogue(endpoint, deadline, required)
+            if first is None or (first.outcome == "app_missing" and observation.outcome != "app_missing"):
+                first = observation
+            if observation.state == RESPONDS:
+                outcome = "legacy_service_catalogue" if candidate != owner else observation.outcome
+                if candidate == owner and key in ("stt", "tts"):
+                    outcome = "shared_service_catalogue"
+                return replace(observation, outcome=outcome)
+        return first
 
     def run(self, probe, deadline, results):
         kind, _, arg = probe.partition(":")
@@ -965,10 +982,11 @@ class LinkProbes:
             prefix = "4.5." if kind == "services" else "1.17."
             return self.combine([row for key, row in results.items() if key.startswith(prefix)], "Child link checks")
         if kind == "media_owners":
-            rows = [self.catalogue(app, deadline, required) for app, required in (
-                ("funes", ("transcribe_file",)), ("borges", ("library_reindex",)),
-            )]
-            return self.combine(rows, f"funes, borges GET {CATALOGUE_PATH}", "prerequisites")
+            stt = self.service("stt", deadline)
+            indexing = self.catalogue("borges", deadline, ("library_reindex",))
+            observation = self.combine([stt, indexing], f"{stt.called} + {indexing.called}", "prerequisites")
+            return replace(observation, metrics={**observation.metrics,
+                                                 "stt_fallback": int(stt.outcome == "legacy_service_catalogue")})
         probes = {
             "hub_catalog": lambda: self.hub_catalogue(("hub_link_check", "hub_event_stats")),
             "relay": lambda: self.relay(deadline),

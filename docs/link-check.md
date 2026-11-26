@@ -34,9 +34,12 @@ Para los destinos en marcha se pueden consultar las rutas GET de salud,
 catálogo y capacidades del copiloto de Faustus. El comprobador llama a
 `nightingale_modules` si su catálogo anuncia `readOnlyHint: true`. El
 catálogo del Hub y MCP `tools/list` se generan con la misma definición.
-La fila `4.5.dictation` lee el catálogo del dueño del servicio común de
-dictado, `cyrano`. El GET comprueba las herramientas de texto, audio y
-sesión publicadas en el contrato común.
+Las filas `4.5.stt`, `4.5.tts` y `4.5.dictation` comprueban las herramientas
+del proveedor registrado y las rutas de compatibilidad. Una reserva válida
+se identifica como `legacy_service_catalogue`. En STT, el catálogo de Funes
+servido por Talos puede acreditar la reserva aunque la ficha de Funes indique
+`foreign`. La fila `1.9` usa la misma comprobación de STT y el catálogo de
+indexación. Estas sondas solo leen catálogos.
 
 - `catalogue` comprueba los nombres publicados en un catálogo. Es el alcance de las sondas de Atlas, Mercator, las compatibilidades y los servicios comunes con dueño en una app.
 - `declaration` comprueba el registro de una capacidad, como el relay MCP. `prerequisites` comprueba los requisitos publicados o el catálogo de los extremos. Agenda, Hoy y Búsqueda usan este alcance.
@@ -146,12 +149,12 @@ Production handoffs are checked through their own orders.
 Each registry ID gets a catalogue row (`1.2.app.<id>`) and a proxy row
 (`1.3.app.<id>`), including registered compatibility IDs. Baird remains excluded in
 row `9.1`. Both checks use passive running state before sending a request.
-The `4.5.stt` row checks Funes's catalogue at the Talos compatibility
-route, so a valid catalogue can confirm the transcription tools even
-when the process registry does not recognize a standalone service.
-The `4.5.dictation` row reads the catalogue of the registered common
-dictation owner, `cyrano`, and checks the contract's text, audio and session
-tools through the catalogue GET.
+The `4.5.stt`, `4.5.tts` and `4.5.dictation` rows check catalogue tools
+from the registered provider and compatibility routes. A working fallback
+is reported as `legacy_service_catalogue`. The Funes catalogue served by
+Talos can confirm the STT fallback even when Funes is reported as `foreign`.
+Row `1.9` uses the same STT check and reads the indexing catalogue. All
+these checks read catalogues only.
 
 The catalogue uses the same HTTP client as `hub_app_tools`. It compares
 sets of names against the app manifest or the owner's compatibility
