@@ -307,10 +307,19 @@ def test_agent_route_returns_conflicts_and_persists_the_defect_link(studio, refe
         assert (status, result["code"]) == (409, "piece_undisclosed_reference_defect")
         status, result = call("piece_check", **args, title=f"Candidate – reference defect #{defect_id}")
         assert status == 200 and result["piece"]["id"] == piece["id"]
+        title_undo = result["undo"]
         assert call("gate_open", **gate_args)[0] == 200
         status, result = call("piece_check", **args, title=f"New title – reference defect #{defect_id}")
         assert (status, result.get("code")) == (409, "piece_title_in_open_gate")
         assert result["message_es"] and result["message_en"]
+        status, result = call("order_undo", token=title_undo)
+        assert (status, result.get("code")) == (409, "piece_title_in_open_gate")
+
+        assert call("defect_close", defect_id=defect_id, note="Checked the repair")[0] == 200
+        status, result = call("piece_check", **args)
+        assert (status, result.get("error_code")) == (409, "reference_defect_closed")
+        status, result = call("gate_open", **gate_args)
+        assert (status, result.get("error_code")) == (409, "kept_reference_comparison")
     finally:
         facet.close()
 

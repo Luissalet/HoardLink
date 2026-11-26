@@ -56,8 +56,9 @@ The pair passes for that detail while the linked defect is open and the referenc
 difference visible in the result's title with the registered defect description or `reference defect #42` in English
 or `defecto de referencia #42` in Spanish. Before opening a gate, pass the optional `title` in the same check to
 update the piece's title and record the mark together. The check's undo token can restore the title while it is
-still editable. An open gate fixes the title and accepts further comparisons without a `title` argument. The
-comparison still uses the order's existing references, including the identity reference. Closing the defect with `hub_agora_defect_close`
+still editable. An open gate accepts further comparisons without a `title` argument. An edit or undo that changes
+the title returns HTTP 409 with `piece_title_in_open_gate`. The comparison still uses the order's existing
+references, including the identity reference. Closing the defect with `hub_agora_defect_close`
 or retaining a replacement revision invalidates the mark and the gate asks for a fresh comparison. If the gate
 was already open, keeping the result also requires a current comparison.
 
