@@ -611,23 +611,55 @@ class LinkProbes:
 
     def mail_library(self, deadline):
         from .drift import find_vendored
-        canonical = Path(__file__).resolve().parents[1]
-        py = (canonical / "fam_mail.py").read_bytes()
-        js = (canonical.parent / "js" / "hoard-link.js").read_bytes()
-        total = differing = 0
+        from .link_vendor_history import published_blobs
+
+        canonical = Path(__file__).resolve().parents[2]
+        py = "hoard_link/fam_mail.py"
+        js = "js/hoard-link.js"
+        sources = {name: (canonical / name).read_bytes() for name in (py, js)}
+        call = "Vendored mail library bytes and canonical Git history"
+        histories = {}
+        counts = {"copies": 0, "differing": 0, "outdated": 0, "unmatched": 0, "history_unavailable": 0}
+        behind = {}
         for app in self.hub.apps:
-            if time.monotonic() >= deadline:
-                return Observation(FAILED, "Vendored mail library bytes", "probe_timeout")
             if app.id in self.excluded or app.id in COMPATIBILITY_OWNERS or app.port in EXCLUDED_PORTS or not app.folder:
                 continue
-            candidates = [(path / "fam_mail.py", py) for path in find_vendored(app.folder, canonical)]
+            if time.monotonic() >= deadline:
+                return Observation(UNCHECKED, call, "probe_timeout")
+            candidates = [(path / "fam_mail.py", py) for path in find_vendored(app.folder, canonical / "hoard_link")]
             candidates.append((Path(app.folder) / "server" / "hoard-link.js", js))
-            for path, source in candidates:
-                if path.is_file() and not path.is_symlink():
-                    total += 1
-                    differing += path.read_bytes() != source
-        state = FAILED if differing else RESPONDS if total else UNCHECKED
-        return Observation(state, "Vendored mail library bytes", "vendor_copies", {"copies": total, "differing": differing}, "source")
+            for path, name in candidates:
+                if time.monotonic() >= deadline:
+                    return Observation(UNCHECKED, call, "probe_timeout")
+                if path.is_symlink() or not path.is_file():
+                    continue
+                counts["copies"] += 1
+                content = path.read_bytes()
+                if content == sources[name]:
+                    continue
+                counts["differing"] += 1
+                if name not in histories:
+                    histories[name] = published_blobs(canonical, name, sources[name], deadline)
+                history = histories[name]
+                if history is None:
+                    counts["history_unavailable"] += 1
+                    continue
+                lag = history.versions.get(history.blob_id(content))
+                if lag is not None:
+                    counts["outdated"] += 1
+                    behind[lag] = behind.get(lag, 0) + 1
+                else:
+                    counts["unmatched" if history.complete else "history_unavailable"] += 1
+        metrics = {**counts, **{f"versions_behind_{lag}": count for lag, count in sorted(behind.items())}}
+        if behind:
+            metrics.update(min_versions_behind=min(behind), max_versions_behind=max(behind))
+        if counts["unmatched"]:
+            return Observation(FAILED, call, "vendor_copies_unmatched", metrics, "source")
+        if counts["history_unavailable"]:
+            return Observation(UNCHECKED, call, "vendor_history_unavailable", metrics, "source")
+        if counts["outdated"]:
+            return Observation(RESPONDS, call, "vendor_copies_behind", metrics, "source")
+        return Observation(RESPONDS if counts["copies"] else UNCHECKED, call, "vendor_copies", metrics, "source")
 
     def events(self, source=None):
         events = self.hub.events

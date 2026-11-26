@@ -957,3 +957,62 @@ def test_literal_funes_catalogue_wins_over_foreign_lifecycle_state(hub, monkeypa
     assert row["state"] == RESPONDS and row["evidence"]["outcome"] == "shared_service_catalogue"
     tools_returned.pop()
     assert LinkProbes(hub, request=transport, listeners=lambda: {55120}).service("stt", now_deadline()).outcome == "missing_tools"
+
+
+def test_literal_vendored_copies_distinguish_versions_and_unpublished_drift(hub, tmp_path, monkeypatch):
+    import shutil
+
+    from hoard_link.hub.repos import run_git
+
+    if shutil.which("git") is None:
+        pytest.skip("Git is required to build a synthetic repository")
+    root = tmp_path / "canonical"
+    root.mkdir()
+    package = root / "hoard_link"
+    package.mkdir()
+    js = root / "js"
+    js.mkdir()
+    python_file = package / "fam_mail.py"
+    node_file = js / "hoard-link.js"
+
+    def git(*args):
+        result = run_git(str(root), *args)
+        assert result.ok, result.err
+        return result.out
+
+    git("init", "-q")
+    for version in range(3):
+        python_file.write_bytes(f"python version {version}\n".encode())
+        node_file.write_bytes(f"node version {version}\n".encode())
+        git("add", "--", "hoard_link/fam_mail.py", "js/hoard-link.js")
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+            "-c", "commit.gpgsign=false", "commit", "-qm", f"Publish {version}")
+    monkeypatch.setattr(link_probes, "__file__", str(package / "hub" / "link_probes.py"))
+
+    app_dir = tmp_path / "consumer"
+    py_copy = app_dir / "hoard_link"
+    py_copy.mkdir(parents=True)
+    (py_copy / "__init__.py").touch()
+    node_copy = app_dir / "server"
+    node_copy.mkdir()
+    (py_copy / "fam_mail.py").write_bytes(b"python version 1\n")
+    (node_copy / "hoard-link.js").write_bytes(b"node version 2\n")
+    hub.register("mail-consumer-fixture", 55000, folder=app_dir)
+
+    es, en = run_inventory_rows(hub, monkeypatch, {"2.9"})
+    row = es["2.9"]
+    assert row["state"] == RESPONDS and row["evidence"]["outcome"] == "vendor_copies_behind"
+    assert row["evidence"]["metrics"]["versions_behind_1"] == 1
+    assert row["evidence"]["metrics"]["unmatched"] == 0
+    assert "atrasadas 1 versión" in row["evidence"]["detail"]
+    assert "1 version behind" in en["2.9"]["evidence"]["detail"]
+
+    (node_copy / "hoard-link.js").write_bytes(b"node version 0\n")
+    probes = LinkProbes(hub, request=forbidden, listeners=forbidden)
+    check = probes.mail_library(now_deadline())
+    assert check.metrics["versions_behind_1"] == check.metrics["versions_behind_2"] == 1
+    (node_copy / "hoard-link.js").write_bytes(b"node version 0\r\n")
+    check = probes.mail_library(now_deadline())
+    assert check.state == FAILED and check.metrics["unmatched"] == 1
+    assert check.metrics["versions_behind_1"] == 1
+    assert git("status", "--porcelain") == ""

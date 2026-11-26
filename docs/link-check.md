@@ -16,23 +16,38 @@ operación, el resultado resumido y el alcance de la observación. Los recuentos
 de la pasada incluyen todas las filas y `checked_at` y `failure_since` se
 expresan en UTC.
 
-El estado de las aplicaciones se obtiene del registro, las paradas manuales
-y las escuchas locales o la caché remota del Hub. Para los destinos en marcha,
-la lista de sondas admite GET de salud, catálogo y capacidades del copiloto de
-Faustus, además de la herramienta de lectura `nightingale_modules` cuando su catálogo HTTP la anuncia
-con `readOnlyHint: true`. Los resultados guardan códigos, recuentos y marcas de tiempo.
-El catálogo del Hub y MCP `tools/list` se generan con la misma definición.
+La colocación determina dónde se comprueba cada aplicación. Para Faustus,
+Hermes, sus compatibilidades y las demás apps de la Spark se usa la salud
+de esa máquina. Si la caché falta, caduca o es anterior al traslado, el
+comprobador pide la misma lectura pasiva que usa `hub_placement_status`
+y espera dentro del plazo de la sonda. `evidence.location` vale `remote`
+y el texto añade «en otra máquina». En el PC, `manually_stopped` indica
+una parada manual y `no_listener` indica que el puerto registrado carece
+de escucha. Ambos conservan `state: stopped`. Una parada en la Spark
+se comunica como fallo de la comprobación remota.
+
+Para los destinos en marcha se pueden consultar las rutas GET de salud,
+catálogo y capacidades del copiloto de Faustus. El comprobador llama a
+`nightingale_modules` si su catálogo anuncia `readOnlyHint: true`. El
+catálogo del Hub y MCP `tools/list` se generan con la misma definición.
 
 - `catalogue` comprueba los nombres publicados en un catálogo. Es el alcance de las sondas de Atlas, Mercator, las compatibilidades y los servicios comunes con dueño en una app.
 - `declaration` comprueba el registro de una capacidad, como el relay MCP. `prerequisites` comprueba los requisitos publicados o el catálogo de los extremos. Agenda, Hoy y Búsqueda usan este alcance.
-- `cached` y `recorded_receipt` usan observaciones previas. La pasarela de correo compara la última pasada correcta con su intervalo. Los lectores requieren un acuse de correo en la flota. La colocación usa la salud remota registrada y el estado del túnel. La consola busca procesos huérfanos en los espacios cargados.
+- `cached` y `recorded_receipt` usan observaciones previas. La consola busca procesos huérfanos en los espacios cargados.
+- Las filas de correo `2.1`, `2.13` y `4.5.mail` reutilizan la última pasada correcta de `mail.db` y la comparan con el intervalo. Si todavía falta una pasada al arrancar, la fila confirma que se pudo leer el estado de la pasarela y muestra «Sin pasada desde el arranque (hace N s)». Superado el plazo inicial y el intervalo, la ausencia de pasada cuenta como fallo.
+- Kafka y People muestran la última lectura ordinaria de la pasarela y su resultado. Si aún falta esa lectura, un acuse persistido de una reclamación o un vigilante de correo puede acreditar una lectura anterior. Hermes usa los acuses de flota. La identificación de llamantes muestra si existen sus declaraciones y la última identificación correcta que ha observado este proceso del Hub.
+- La cuota publica las horas de registro y medida y su vigencia por proveedor. El Dojo publica el recuento observado en la última operación habitual `hub_dojo list` de la colocación activa. Hasta el primer listado válido, falta ese recuento.
+- Las copias de correo se comparan con los bytes actuales y con el historial publicado de cada archivo canónico. Una coincidencia anterior responde con el número de versiones de diferencia. `versions_behind_N` cuenta las copias a esa distancia. Solo quedan en rojo los bytes que no coinciden con ninguna versión de un historial completo.
 - El puente al Cerebro combina la salud de Faustus con los recuentos de la cola. Los relevos de producción se verifican en su orden correspondiente.
 
 Cada ID del registro añade las filas `1.2.app.<id>` (catálogo) y
 `1.3.app.<id>` (proxy). También se desglosan los IDs de compatibilidad
-registrados. Baird conserva su exclusión en la fila `9.1`. Una parada
-manual, una ausencia de escucha local o una parada remota confirmada da
-«parado» antes de leer el catálogo o invocar herramientas.
+registrados. Baird conserva su exclusión en la fila `9.1`. En el PC,
+una parada manual o la ausencia de escucha se detectan antes de leer
+el catálogo o invocar herramientas. Para la transcripción, la fila
+`4.5.stt` comprueba el catálogo de Funes en la ruta de compatibilidad
+de Talos. Una respuesta válida acredita ese catálogo aunque el registro
+de procesos no reconozca un servicio independiente en el puerto.
 
 - `manifest_catalogue` usa el mismo cliente HTTP que `hub_app_tools`.
   Compara los nombres como conjuntos y cuenta los declarados, servidos,
@@ -77,7 +92,8 @@ excluidos en la configuración base.
 Cada sonda dispone de ocho segundos y la pasada reserva 120 segundos para las
 sondas. `link-check-history.json` guarda hasta 20 pasadas y conserva la fecha
 del primer fallo observado. Una respuesta o parada confirmada cierra ese
-fallo. Una comprobación omitida conserva su fecha.
+fallo. Una comprobación omitida o la espera de la primera pasada de correo
+conserva su fecha.
 
 ## Family link checker
 
@@ -95,17 +111,32 @@ A catalogue observation checks published tool names. A declaration
 observation checks registration. A cached observation reports earlier
 evidence.
 
-The checker uses passive app state, reviewed GET routes, the allowlisted
-`nightingale_modules` read when its served schema advertises `readOnlyHint: true`,
-and operational metadata. Mail readers need
-recorded mail receipts. Spark revision checks compare the deployment record
-with local Git HEAD. Brain bridge checks use the service health and queue
-counts. Production handoffs are checked through their own orders.
+Placement determines which machine the checker uses. For apps on the
+Spark and their compatibility IDs, it uses placement health and requests
+the same passive refresh as `hub_placement_status` when the cache is
+absent, stale or older than the move. The result carries
+`evidence.location: remote` and shows “on another machine”. On the PC,
+`manually_stopped` means the person stopped the app and `no_listener`
+means its registered port has no listener. Both keep `state: stopped`.
+An inactive remote service fails its remote check.
+
+The checker uses reviewed GET routes and the allowlisted
+`nightingale_modules` read when its schema advertises `readOnlyHint: true`.
+The Brain bridge check uses service health and queue counts. Spark
+revision checks compare the deployment record with local Git HEAD.
+Production handoffs are checked through their own orders.
+
+- Mail rows `2.1`, `2.13` and `4.5.mail` read the last successful pass from `mail.db`. If a pass is still due after startup, the gateway state responds with “No pass since startup (N s ago)”. Once the initial delay and interval have elapsed, the missing pass is a failure.
+- Kafka and People show their latest ordinary gateway read and its outcome. A stored claim or fleet mail watcher can provide evidence of an earlier read. Hermes uses fleet receipts. Caller identification shows whether registry declarations exist and the last successful identification observed by the current Hub process.
+- Quota evidence contains measurement timestamps and freshness by provider. Dojo evidence contains the exam count from the latest ordinary `hub_dojo list` call to the active placement, once one has been observed.
+- A vendored mail copy matching an older published revision responds with its version lag. `versions_behind_N` counts copies with that lag. A copy is marked as a failure when its bytes match no revision in a complete history.
 
 Each registry ID gets a catalogue row (`1.2.app.<id>`) and a proxy row
-(`1.3.app.<id>`), including registered compatibility IDs. Baird remains
-excluded in row `9.1`. Both checks use passive running state before any
-request and report confirmed stops as «stopped».
+(`1.3.app.<id>`), including registered compatibility IDs. Baird remains excluded in
+row `9.1`. Both checks use passive running state before sending a request.
+The `4.5.stt` row checks Funes's catalogue at the Talos compatibility
+route, so a valid catalogue can confirm the transcription tools even
+when the process registry does not recognize a standalone service.
 
 The catalogue uses the same HTTP client as `hub_app_tools`. It compares
 sets of names against the app manifest or the owner's compatibility
@@ -128,5 +159,5 @@ For additional exclusions, set `{"excluded_apps":["atlas"]}` in
 `link-check.json` in the Hub data directory. Baird and port 5232 are
 excluded by default. The probe and run budgets are eight and 120 seconds.
 The Hub retains up to 20 completed runs in `link-check-history.json`. A
-response or confirmed stop ends a recorded failure. A skipped check preserves
-its date.
+response or confirmed stop ends a recorded failure. A skipped check or the
+gateway's initial wait for its first pass preserves its date.

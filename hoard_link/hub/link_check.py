@@ -91,6 +91,10 @@ REASONS = {
     "quota_stale_or_unknown": ("Las medidas de cuota registradas están caducadas o son desconocidas.",
                                "Recorded quota measurements are stale or unknown."),
     "quota_no_receipt": ("Falta una medida de cuota registrada.", "No quota measurement is recorded."),
+    "vendor_copies_unmatched": ("Hay copias que no coinciden con una versión publicada.",
+                                "Some copies match no published version."),
+    "vendor_history_unavailable": ("El historial disponible no basta para clasificar todas las copias.",
+                                   "The available history cannot classify all copies."),
     "deployment_unknown": ("Falta el registro de despliegue o la revisión local.", "A deployment record or local revision is unavailable."),
     "purchase_matching": ("El cotejo de compras requiere datos de compras o una acción.", "Matching purchases requires purchase data or an action."),
     "opens_home": ("La operación de apertura arranca Home Hoard.", "The open operation starts Home Hoard."),
@@ -240,6 +244,14 @@ class LinkCheckFacet(Facet):
                 if outcome == "mail_since_start":
                     detail = detail.format(uptime_s=evidence["metrics"]["uptime_s"])
                 evidence["detail"] = detail
+            if outcome == "vendor_copies_behind":
+                metrics = evidence["metrics"]
+                lo, hi = metrics["min_versions_behind"], metrics["max_versions_behind"]
+                versions = str(lo) if lo == hi else f"{lo}–{hi}"
+                if lang == "en":
+                    evidence["detail"] = f"Published copies are {versions} {'version' if hi == 1 else 'versions'} behind."
+                else:
+                    evidence["detail"] = f"Copias publicadas atrasadas {versions} {'versión' if hi == 1 else 'versiones'}."
         return result
 
     def _settings(self):
