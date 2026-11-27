@@ -1,0 +1,13 @@
+{
+  "id": "boltagon",
+  "aliases": ["cyrano"],
+  "services": ["boltagon-hoard", "cyrano-hoard"],
+  "x-family": {
+    "stream_routes": [
+      {"route": "voice/speak", "method": "POST", "path": "/api/voice/speak", "body": "json"},
+      {"route": "voice/jobs/{job_id}/stream", "method": "GET", "path": "/api/voice/jobs/{job_id}/stream", "response": "ndjson", "cancel": "voice/jobs/{job_id}/cancel"},
+      {"route": "voice/jobs/{job_id}/cancel", "method": "DELETE", "path": "/api/voice/jobs/{job_id}"},
+      {"route": "dictation/understand", "method": "POST", "path": "/api/dictation/understand", "body": "audio"}
+    ]
+  }
+}
