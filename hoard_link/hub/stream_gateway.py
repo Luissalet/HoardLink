@@ -13,6 +13,7 @@ from threading import BoundedSemaphore
 from time import monotonic
 from urllib.parse import urlsplit
 
+from ..service_contracts import OWNERS, VOICE_ALIASES, VOICE_SERVICES
 from . import contract, stream_routes
 from .stream_trace import HEADER, GatewayTrace
 
@@ -320,10 +321,11 @@ def handle(handler, matched, url):
     if url.query or url.fragment or url.netloc:
         return _error(handler, 400, "invalid_stream_url")
     app_id, path = matched.groups()
-    app = hub.get("boltagon" if app_id == "cyrano" else app_id)
+    app = hub.get(VOICE_ALIASES.get(app_id, app_id))
     if app is None:
         return _error(handler, 404, "unknown_app")
-    selected = stream_routes.resolve(app, path)
+    voice_services = {service for service in VOICE_SERVICES if hub.get(OWNERS[service]) is app}
+    selected = stream_routes.resolve(app, path, voice_services=voice_services)
     if selected is None:
         return _error(handler, 404, "route_not_allowed")
     if selected[0].method != "DELETE" and hub.automation_blocked(app.id):
