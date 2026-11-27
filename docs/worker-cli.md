@@ -53,6 +53,26 @@ For `hub_call_app`, set `X-Agent-Id` and `X-Agent-Session` on either endpoint, o
 and `session` alongside `arguments` in a shared `POST /api/agent/call` request. Headers take
 precedence. Put the reason for a write in the `hub_call_app` arguments.
 
+## App tool discovery
+
+Use `hub_app_tools {"app":"vitruvius"}` to discover an app's tools. Workers
+with a declared app scope receive only the entries in that scope. Each entry
+has a `name`, a one-line `description` and a `required` list of argument names.
+Get one full schema with `{"app":"vitruvius","tool":"app_project_get"}`.
+The worker can request schemas for tools in its scope. Other callers receive
+the full catalogue by default and can pass `"summary":true` for compact entries.
+
+### Descubrir herramientas de una aplicación
+
+Usa `hub_app_tools {"app":"vitruvius"}` para consultar las herramientas de una
+aplicación. Los trabajadores con un ámbito de aplicaciones declarado reciben
+solo las entradas de su ámbito. Cada entrada incluye `name`, una línea en
+`description` y los nombres de los argumentos obligatorios en `required`.
+Pide un esquema completo con `{"app":"vitruvius","tool":"app_project_get"}`.
+El trabajador puede pedir esquemas de las herramientas de su ámbito. Los demás
+llamadores reciben el catálogo completo por defecto y pueden pasar
+`"summary":true` para obtener entradas resumidas.
+
 ## Local programs
 
 Open **System → Capabilities → Local programs** in the Hub. The page and `hub_programs` show the

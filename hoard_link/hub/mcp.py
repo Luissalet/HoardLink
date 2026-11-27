@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 from .._hubclient import NoRedirect
 from ..bridge import agent_headers
-from . import DEFAULT_PORT, HUB_VERSION, SERVICE
+from . import DEFAULT_PORT, HUB_VERSION, SERVICE, app_catalogue
 from .link_check import TOOL_NAME as LINK_CHECK_TOOL
 from .link_probes import EXCLUDED_PORTS
 from .order_receipts import CALL, CONTEXT, request_context
@@ -62,8 +62,12 @@ def _request(method: str, path: str, body: Optional[dict[str, Any]] = None, time
             return None, None
     data = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {"Content-Type": "application/json", "Authorization": "Bearer " + _token()}
-    if data is not None:
+    if body is not None:
         headers.update(agent_headers())
+        scope = os.environ.get(app_catalogue.SCOPE_ENV)
+        if body.get("tool") == app_catalogue.NAME and scope is not None:
+            app = (body.get("arguments") or {}).get("app")
+            headers[app_catalogue.SCOPE_HEADER] = app_catalogue.app_scope_header(scope, app)
     req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
     handlers = [urllib.request.ProxyHandler({})]
     if passive:

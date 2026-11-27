@@ -93,7 +93,7 @@ from .directory import AppDirectory
 from .hub_app_calls import HUB_IDS
 from . import desktop, tools, autostart, profile_editor, portable_profiles
 from .isolation import passive_error
-from . import agent_routes, stream_gateway, ui_session, voice_routing
+from . import agent_routes, app_catalogue, stream_gateway, ui_session, voice_routing
 from .browser_lanes import LaneError
 from .lease import LeaseError
 from .rules import example_rules
@@ -547,6 +547,8 @@ class _HubHandler(BaseHTTPRequestHandler):
         self._json({"ok": False, "code": "agora_busy", "error": "The Agora is busy. Try again shortly."}, 503)
 
     def _invoke_agent(self, name, args, identity):
+        if name == app_catalogue.NAME:
+            args = app_catalogue.request_arguments(args, self.headers.get(app_catalogue.SCOPE_HEADER))
         invoke = lambda: agent_routes.invoke(self.hub, name, args, **identity)
         if not name.startswith("hub_agora_"):
             return invoke()

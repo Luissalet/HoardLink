@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
-from . import dojo, website_handoff
+from . import app_catalogue, dojo, website_handoff
 from .browser_lanes import LaneError
 
 LANE_TOOL_OWNER = "mcp"            # lanes taken through the tools belong to this owner
@@ -399,9 +399,14 @@ def catalogue() -> list[dict[str, Any]]:
                             "required": ["app", "tool"], "additionalProperties": False},
         },
         {
-            "name": "hub_app_tools",
-            "description": "The tool catalogue of one app (names, descriptions, schemas). Keywords: qué sabe hacer, herramientas de.",
-            "inputSchema": {"type": "object", "properties": {"app": _APP_ID}, "required": ["app"], "additionalProperties": False},
+            "name": app_catalogue.NAME,
+            "description": "List an app's tools or inspect one schema. Keywords: catálogo, herramientas de."
+                           "\nScoped workers get summaries of their allowed tools. Use tool for one full schema.",
+            "inputSchema": {"type": "object", "properties": {
+                "app": _APP_ID,
+                "summary": {"type": "boolean", "description": "List names, one-line descriptions and required arguments."},
+                "tool": {"type": "string", "minLength": 1, "description": "Exact tool ID for its full schema."},
+            }, "required": ["app"], "additionalProperties": False},
             "annotations": {"readOnlyHint": True},
         },
         {
@@ -752,7 +757,7 @@ def handlers(hub: Hub, *, agent: str = "", session: str = "") -> dict[str, Calla
         "hub_event_stats": lambda a: {"ok": True, **hub.events.stats(a.get("since"))},
         "hub_call_app": call_app,
         website_handoff.NAME: lambda a: website_handoff.publish_piece(hub, a),
-        "hub_app_tools": lambda a: hub.app_tools(str(a.get("app") or "")),
+        app_catalogue.NAME: lambda a: app_catalogue.list_tools(hub, a),
         "hub_rules": lambda _: {"ok": True, "rules": hub.rules.list(), "history": hub.rules.history[-20:]},
         "hub_rule_add": lambda a: hub.rules.add(a),
         "hub_rule_install_defaults": lambda a: hub.rules.install_examples(refresh=bool(a.get("refresh"))),
