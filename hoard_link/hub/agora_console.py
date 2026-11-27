@@ -3286,7 +3286,7 @@ class AgoraConsoleFacet(Facet):
         if leader == "faustus" and row["worker_file_scope"] and row["tool_approval_mode"]:
             previous = json.loads(row["worker_file_scope"])
             scope = {"task_id": task["id"], "file_scope": args.get("file_scope") or {
-                key: previous[key] for key in ("read_paths", "write_paths")}}
+                key: previous[key] for key in ("read_paths", "write_paths", "read_budget") if key in previous}}
             if related_task_ids:
                 scope.update(task_id=row["agora_task_id"], related_task_ids=related_task_ids)
                 if not args.get("file_scope") and previous.get("apps"):

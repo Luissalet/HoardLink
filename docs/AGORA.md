@@ -274,7 +274,17 @@ For `action: "create"` with `leader_id: "faustus"`, pass the same `task_id` and 
 app tools requires a task from an active order job in the selected space. If the
 task has no active job there, creation returns `worker_order_job_required`. Use
 `hub_agora_plan_set` to add the job and pass its resulting `task_id`. A standalone task
-can still launch without app tools. The create response includes a bilingual
+can still launch without app tools. Set `file_scope.read_budget` to a non-negative
+integer to change the draft reminder interval. Omit it for 15 reads or set it
+to `0` to disable the reminders. A replacement that inherits the file scope keeps
+the configured interval and starts a fresh count.
+
+En el alta con `hub_agora_console_worker`, usa `file_scope.read_budget` para
+cambiar el intervalo del aviso de borrador. Omite el campo para usar
+15 lecturas o indica `0` para desactivar los avisos. Un relevo que hereda el
+ámbito conserva el intervalo y empieza a contar de cero.
+
+The create response includes a bilingual
 `warning_i18n` explaining that the worker cannot register pieces. A continued worker keeps
 the private workspace and grants from its receipt. A dedicated session with an
 older receipt is reopened in a new private folder, with its explicit grants.
