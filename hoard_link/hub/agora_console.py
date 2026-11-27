@@ -31,9 +31,10 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import quote, urlencode, urlsplit
 
-from .._process import popen_hidden, run_hidden
+from .._process import run_hidden
 from . import agora_faustus
 from . import agora_auto_review, agora_liveness, agora_quota_floors, agora_ranks, agora_worker_processes, agora_worker_profiles
+from .agora_worker_launch import WorkerProcess, launch_worker
 from . import work_admission
 from .agora import Agora, AgoraError, FINAL
 from .agora_capacity import codex_executable, codex_observation
@@ -90,6 +91,8 @@ WORKER_RESTART_ISSUES = {
                                    "The legacy receipt does not establish the process identity."),
     "process_unavailable": ("No se pudo consultar la identidad del proceso.",
                             "The process identity could not be read."),
+    "worker_job_unavailable": ("No se pudo verificar el grupo de procesos del trabajador.",
+                               "The worker process group could not be verified."),
 }
 ORPHAN_BUSY = "The original worker process is still alive. / El proceso original del trabajador sigue vivo."
 RESUME_ISSUES = {
@@ -136,7 +139,7 @@ class AgoraConsoleFacet(Facet):
         self._provider_at = 0.0
         self._provider_cache: dict[str, dict[str, Any]] = {}
         self._provider_epoch = _CATALOG_EPOCH[0]
-        self._processes: dict[str, subprocess.Popen[str] | agora_worker_processes.AdoptedWorker] = {}
+        self._processes: dict[str, WorkerProcess | agora_worker_processes.AdoptedWorker] = {}
         self._faustus_runtimes: dict[str, dict[str, Any]] = {}
         self._recovery_stop = threading.Event()
         self._registration_lock = threading.Lock()
@@ -322,6 +325,7 @@ class AgoraConsoleFacet(Facet):
                                       ("process_started_at", "REAL"), ("launched_by", "TEXT NOT NULL DEFAULT ''"),
                                       ("retry_count", "INTEGER NOT NULL DEFAULT 0"), ("runtime_endpoint", "TEXT NOT NULL DEFAULT ''"),
                                       ("runtime_pid", "INTEGER"), ("runtime_started_at", "REAL"),
+                                      ("worker_job", "TEXT NOT NULL DEFAULT ''"), ("runtime_job", "TEXT NOT NULL DEFAULT ''"),
                                       ("tool_approval_mode", "TEXT NOT NULL DEFAULT ''"),
                                       ("worker_file_scope", "TEXT NOT NULL DEFAULT ''"),
                                       ("template", "TEXT NOT NULL DEFAULT ''"),
@@ -886,6 +890,11 @@ class AgoraConsoleFacet(Facet):
                 if row["id"] in self._processes:
                     continue
                 process, issue = agora_worker_processes.identify(row, directory)
+                if process is not None and row["worker_job"]:
+                    try:
+                        process.attach_job(row["worker_job"])
+                    except OSError:
+                        process, issue = None, "worker_job_unavailable"
                 state, outcome = row["state"], row["outcome"]
                 stopping = state == "stopping" or outcome == "hub_restart_stopping"
                 verification = json.loads(row["verification"] or "{}")
@@ -2686,9 +2695,7 @@ class AgoraConsoleFacet(Facet):
         launching_at = time.time()
         try:
             with open(log_path, "a", encoding="utf-8") as log:
-                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                           text=True, cwd=str(worker_cwd), env=process_env,
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                process = launch_worker(self.hub.config, command, cwd=str(worker_cwd), env=process_env, log=log)
         except OSError as exc:
             runtime = self._faustus_runtimes.pop(worker_id, None)
             if runtime:
@@ -2701,12 +2708,12 @@ class AgoraConsoleFacet(Facet):
                 if leader_id == "faustus":
                     self._track_faustus_start(db, worker_id, scope.get("task_id"), actor, launching_at)
             return {"ok": False, "status": 503, "error": f"Could not start {leader_id.title()} worker: {type(exc).__name__}"}
-        self._processes[worker_id] = process
-        with self._db_lock, self._db() as db:
+        with self._record_worker_launch(worker_id, process) as db:
             db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,"
-                       "created_at,updated_at,process_started_at,launched_by) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?,?,?)",
+                       "created_at,updated_at,process_started_at,launched_by,worker_job) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?)",
                        (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id,
-                        model_source, now, time.time(), agora_worker_processes.started_at(process.pid), actor))
+                        model_source, now, time.time(), agora_worker_processes.started_at(process.pid), actor,
+                        getattr(process, "job_name", "")))
             if template:
                 db.execute("UPDATE workers SET template=? WHERE id=?", (template, worker_id))
             if leader_id == "claude":
@@ -2717,9 +2724,9 @@ class AgoraConsoleFacet(Facet):
                 resume_command = command.copy()
                 resume_command[resume_command.index("-p") + 1] = ""
                 db.execute("UPDATE workers SET faustus_url=?,workspace=?,runtime_endpoint=?,runtime_pid=?,"
-                           "runtime_started_at=?,launch_command=?,launch_cwd=?,tool_approval_mode=?,worker_file_scope=? WHERE id=?",
+                           "runtime_started_at=?,runtime_job=?,launch_command=?,launch_cwd=?,tool_approval_mode=?,worker_file_scope=? WHERE id=?",
                            (base_url, workspace, runtime.get("endpoint", ""), runtime.get("pid"), runtime.get("created_at"),
-                            json.dumps(resume_command), str(worker_cwd), runtime.get("tool_approval_mode", ""),
+                            runtime.get("job_name", ""), json.dumps(resume_command), str(worker_cwd), runtime.get("tool_approval_mode", ""),
                             json.dumps(runtime.get("file_scope") or {}), worker_id))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         # Its rank is written once the session exists: one that never started leaves none behind under its name.
@@ -3053,7 +3060,8 @@ class AgoraConsoleFacet(Facet):
         if not pid or started_at is None or worker_id in self._faustus_runtimes:
             return
         if procs.proc_info(pid).created_at == started_at:
-            self._faustus_runtimes[worker_id] = {"pid": pid, "created_at": started_at}
+            name = row["runtime_job"] if "runtime_job" in row.keys() else ""
+            self._faustus_runtimes[worker_id] = {"pid": pid, "created_at": started_at, "job_name": name}
 
     def _close_worker_runtime(self, worker_id: str) -> None:
         with self._db_lock:
@@ -3158,23 +3166,20 @@ class AgoraConsoleFacet(Facet):
             if not executable:
                 raise FileNotFoundError(f"{leader.title()} runner unavailable")
             with log_path.open("w", encoding="utf-8") as log:
-                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                           text=True, cwd=str(cwd), env=self._runner_env(),
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                process = launch_worker(self.hub.config, command, cwd=str(cwd), env=self._runner_env(), log=log)
         except (OSError, ValueError) as exc:
             with self._db_lock, self._db() as db:
                 db.execute("UPDATE workers SET state=?,updated_at=? WHERE id=?", (row["state"], time.time(), row["id"]))
             return {"ok": False, "status": 503, "error": f"Could not start the original runner. / No se pudo iniciar el ejecutor original. ({type(exc).__name__})"}
         detail = "Se ha solicitado continuar el turno. / A follow-up turn was requested."
-        with self._db_lock, self._db() as db:
-            self._processes[row["id"]] = process
+        with self._record_worker_launch(row["id"], process) as db:
             db.execute("UPDATE workers SET state='running',pid=?,log_path=?,workspace=?,detail=?,outcome='unverified',"
-                       "process_exit_code=NULL,process_started_at=?,updated_at=? WHERE id=?",
+                       "process_exit_code=NULL,process_started_at=?,worker_job=?,updated_at=? WHERE id=?",
                        (process.pid, str(log_path), str(cwd), detail, agora_worker_processes.started_at(process.pid),
-                        time.time(), row["id"]))
+                            getattr(process, "job_name", ""), time.time(), row["id"]))
         return self._resumed_worker(row, process, result_path, detail)
 
-    def _resumed_worker(self, row: Any, process: subprocess.Popen[str], result_path: Path, detail: str) -> dict[str, Any]:
+    def _resumed_worker(self, row: Any, process: WorkerProcess, result_path: Path, detail: str) -> dict[str, Any]:
         worker_id = row["id"]
         self._record("worker", worker_id, "running", detail)
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
@@ -3182,6 +3187,23 @@ class AgoraConsoleFacet(Facet):
         return {"ok": True, "worker_id": worker_id, "session_id": row["session_id"], "state": "running",
                 "undo": {"tool": "hub_agora_console_worker", "arguments": {"action": "stop", "worker_id": worker_id,
                                                                               "space_id": self.space_id}}}
+
+    @contextmanager
+    def _record_worker_launch(self, worker_id: str, process: WorkerProcess):
+        with self._db_lock:
+            try:
+                with self._db() as db:
+                    yield db
+            except Exception:
+                if getattr(process, "job_name", ""):
+                    # A persistent job without a saved receipt cannot be readopted.
+                    try:
+                        process.terminate()
+                        self._close_worker_runtime(worker_id)
+                    except (OSError, subprocess.TimeoutExpired):
+                        logger.exception("Could not clean up the unrecorded worker %s", worker_id)
+                raise
+            self._processes[worker_id] = process
 
     def _replace_worker(self, args: dict[str, Any], actor: str, message: str) -> dict[str, Any]:
         worker_id = str(args.get("worker_id") or "")
@@ -3326,7 +3348,7 @@ class AgoraConsoleFacet(Facet):
                        (json.dumps({**replacement, "state": state, "detail": detail}), time.time(), worker_id))
 
     def _continue_worker(self, worker_id: str, automatic: bool = False,
-                         previous_process: subprocess.Popen[str] | agora_worker_processes.AdoptedWorker | None = None,
+                         previous_process: WorkerProcess | agora_worker_processes.AdoptedWorker | None = None,
                          message: str = "") -> dict[str, Any]:
         from .agora_faustus import (APPRENTICE, STUDIO, file_scope, new_worker_workspace, owns_worker_workspace,
                                     reactivate_apprentice_binding, start_pc)
@@ -3442,9 +3464,7 @@ class AgoraConsoleFacet(Facet):
                 prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(launch_scope, ensure_ascii=False)
             command[command.index("-p") + 1] = prompt + "\n\nPrior stop: " + row["detail"]
             with log_path.open("w", encoding="utf-8") as log:
-                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                           text=True, cwd=cwd, env=self._faustus_runner_env(),
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                process = launch_worker(self.hub.config, command, cwd=cwd, env=self._faustus_runner_env(), log=log)
         except (OSError, RuntimeError, ValueError) as exc:
             if not session_busy:
                 self._close_worker_runtime(worker_id)
@@ -3455,23 +3475,23 @@ class AgoraConsoleFacet(Facet):
                            (state, detail, time.time(), worker_id))
             self._record("worker", worker_id, state, detail)
             return {"ok": False, "status": 409, "error": detail}
-        with self._db_lock, self._db() as db:
-            self._processes[worker_id] = process
+        with self._record_worker_launch(worker_id, process) as db:
             detail = ("Continuación automática. " if automatic else "Continuación solicitada. ") + row["detail"]
             runtime = self._faustus_runtimes.get(worker_id, {})
             resume_command = command.copy()
             resume_command[resume_command.index("-p") + 1] = ""
             db.execute("UPDATE workers SET state='running',pid=?,log_path=?,faustus_url=?,workspace=?,detail=?,"
-                       "runtime_pid=?,runtime_started_at=?,launch_command=?,launch_cwd=?,"
+                       "runtime_pid=?,runtime_started_at=?,runtime_job=?,launch_command=?,launch_cwd=?,worker_job=?,"
                        "outcome='unverified',process_exit_code=NULL,process_started_at=?,updated_at=?,"
                        "tool_approval_mode=?,worker_file_scope=? WHERE id=?",
                        (process.pid, str(log_path), base_url, workspace, detail, runtime.get("pid"), runtime.get("created_at"),
-                        json.dumps(resume_command), cwd, agora_worker_processes.started_at(process.pid),
+                        runtime.get("job_name", ""), json.dumps(resume_command), cwd, getattr(process, "job_name", ""),
+                        agora_worker_processes.started_at(process.pid),
                         time.time(), approval_mode, json.dumps(launch_scope), worker_id))
         return self._resumed_worker(row, process, result_path, detail)
 
     def _monitor_worker(self, worker_id: str,
-                        process: subprocess.Popen[str] | agora_worker_processes.AdoptedWorker, result_path: Path) -> None:
+                        process: WorkerProcess | agora_worker_processes.AdoptedWorker, result_path: Path) -> None:
         adopted = isinstance(process, agora_worker_processes.AdoptedWorker)
         try:
             code = process.wait(self._recovery_stop) if adopted else process.wait()
@@ -3788,7 +3808,14 @@ class AgoraConsoleFacet(Facet):
             orphan = self._orphan_process(row)
             if orphan is None or any(confirmed[key] != orphan[key] for key in ("pid", "started_at")):
                 return {"ok": False, "status": 409, "error": "The process has changed or exited. Refresh the console. / El proceso ha cambiado o ha terminado. Actualiza la consola."}
-            stopped = procs.terminate_tree(orphan["pid"], created_at=orphan["started_at"], exact_identity=True)
+            if row["worker_job"]:
+                try:
+                    agora_worker_processes.terminate_recorded_job(row["worker_job"], orphan["pid"], orphan["started_at"])
+                    stopped = {"ok": True, "pid": orphan["pid"]}
+                except OSError:
+                    stopped = {"ok": False, "pid": orphan["pid"]}
+            else:
+                stopped = procs.terminate_tree(orphan["pid"], created_at=orphan["started_at"], exact_identity=True)
             if not stopped["ok"]:
                 return {"ok": False, "status": 409, "error": "Could not stop the process. / No se ha podido detener el proceso.", "stop": stopped}
             with self._db() as db:
@@ -3843,8 +3870,15 @@ class AgoraConsoleFacet(Facet):
                 {"scope": "work"}, base_url=base_url, expected_run_id=run_id)
             if status != 200 or not isinstance(stopped, dict) or not stopped.get("stopped"):
                 return {"ok": False, "status": 409, "error": "Faustus has not confirmed that the worker turn stopped", "stop": stopped}
-            state = "stopping" if worker_id in self._processes else "stopped"
             with self._db_lock, self._db() as db:
+                process = self._processes.get(worker_id)
+                if process is not None and getattr(process, "job_name", ""):
+                    try:
+                        process.terminate()
+                    except OSError:
+                        return {"ok": False, "status": 409, "stop": stopped,
+                                "error": "Could not stop the worker process group. / No se ha podido detener el grupo de procesos."}
+                state = "stopping" if process is not None else "stopped"
                 updated = db.execute("UPDATE workers SET state=?,detail='Faustus confirmed cancellation of the worker turn.',updated_at=? WHERE id=? AND state IN ('running','paused','unknown','stopping')",
                                      (state, time.time(), worker_id)).rowcount
                 current = db.execute("SELECT state FROM workers WHERE id=?", (worker_id,)).fetchone()
