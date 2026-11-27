@@ -17,14 +17,18 @@ from hoard_link.hub.registry import App
 from hoard_link.hub.server import serve_in_thread
 
 
-def _http(port, path, *, body=None, token=""):
+def _exchange(conn, path, *, body=None, token=""):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Authorization": f"Bearer {token}"} if token else {}
+    conn.request("POST" if data is not None else "GET", path, data, headers)
+    response = conn.getresponse()
+    raw = response.read()
+    return response.status, json.loads(raw), len(raw)
+
+
+def _http(port, path, *, body=None, token=""):
     with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=8)) as conn:
-        conn.request("POST" if data is not None else "GET", path, data, headers)
-        response = conn.getresponse()
-        raw = response.read()
-        return response.status, json.loads(raw), len(raw)
+        return _exchange(conn, path, body=body, token=token)
 
 
 def _wait_until(predicate, timeout=5):
@@ -147,8 +151,11 @@ def test_health_and_directory_under_agora_saturation(tmp_path, monkeypatch):
             return real_heartbeat(args)
 
         def overview(*args, **kwargs):
-            assert threading.current_thread().name.startswith("hoard-agora-overview")
-            block("leads")
+            if kwargs.get("live"):
+                assert threading.current_thread().name.startswith("hoard-agora-snapshots")
+            else:
+                assert threading.current_thread().name.startswith("hoard-agora-overview")
+                block("leads")
             return real_overview(*args, **kwargs)
 
         def slow_probe():
@@ -174,11 +181,14 @@ def test_health_and_directory_under_agora_saturation(tmp_path, monkeypatch):
                 routes = ("/api/health", "/api/apps", "/api/apps/lookup", "/api/apps/lookup/status")
                 timings = {path: [] for path in routes}
                 # Simulate unrelated Hub work holding its catalog writer lock.
-                with hub._lock:
+                with hub._lock, closing(http.client.HTTPConnection("127.0.0.1", port, timeout=8)) as checks:
+                    checks.connect()
+                    checks.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    assert _exchange(checks, "/api/health")[0] == 200
                     for _ in range(8):
                         for path in routes:
                             started = time.perf_counter()
-                            status, body, _ = _http(port, path)
+                            status, body, _ = _exchange(checks, path)
                             timings[path].append(1000 * (time.perf_counter() - started))
                             assert status == 200
                             if path == "/api/apps":
@@ -250,7 +260,8 @@ def test_incremental_console_history_and_delta(tmp_path, monkeypatch):
             ("/api/apps/hub/call", {"tool": "hub_agora_console_overview", "arguments": arguments}),
         ):
             status, result, _ = _http(port, path, body=body, token=hub.token)
-            assert status == 200 and result["result"]["revision"] == cursor
+            assert status == 200, (path, result)
+            assert result["result"]["revision"] == cursor
             assert "workers" not in result["result"]
         with console._db() as db:
             db.execute("INSERT INTO leader_colors VALUES('codex', '#123456', 'tester', 0)")

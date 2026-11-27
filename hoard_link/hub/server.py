@@ -161,6 +161,7 @@ class _HubHandler(BaseHTTPRequestHandler):
     ui_sessions: ui_session.BrowserSessions
     server_version = f"hoard-hub/{HUB_VERSION}"
     protocol_version = "HTTP/1.1"
+    disable_nagle_algorithm = True
 
     # -- plumbing -----------------------------------------------------------
     def log_message(self, fmt: str, *args: Any) -> None:  # quieter than the default
@@ -539,9 +540,10 @@ class _HubHandler(BaseHTTPRequestHandler):
         invoke = lambda: agent_routes.invoke(self.hub, name, args, **identity)
         if not name.startswith("hub_agora_"):
             return invoke()
+        operation = name
         if name == "hub_agora_console_overview" and (args.get("view") or args.get("since")):
-            name = "overview_delta"
-        return self.server.agora_work.call(name, invoke, wait_s=args.get("wait_s"))
+            operation = "overview_delta"
+        return self.server.agora_work.call(operation, invoke, wait_s=args.get("wait_s"))
 
     def _facet(self, method: str, path: str, query: dict[str, list[str]], body: dict[str, Any]) -> bool:
         """Let the facets answer; True when one did."""

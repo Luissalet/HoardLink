@@ -83,6 +83,7 @@ class AgoraHTTP:
     def __init__(self):
         self._ordinary = AgoraWorkPool("request", workers=8, capacity=32)
         self._console = AgoraWorkPool("overview", workers=3, capacity=8)
+        self._snapshots = AgoraWorkPool("snapshot-read", workers=2, capacity=8)
         self._inbox = AgoraWorkPool("inbox", workers=24, capacity=24)
 
     def call(self, name, invoke, *, wait_s=None):
@@ -92,6 +93,8 @@ class AgoraHTTP:
             raise AgoraBusy from exc
 
     def _lane(self, name, wait_s):
+        if name == "overview_delta":
+            return self._snapshots
         if name in ("overview", "hub_agora_console_overview"):
             return self._console
         if name in ("inbox", "hub_agora_inbox"):
@@ -103,5 +106,5 @@ class AgoraHTTP:
         return self._ordinary
 
     def close(self):
-        for lane in (self._ordinary, self._console, self._inbox):
+        for lane in (self._ordinary, self._console, self._snapshots, self._inbox):
             lane.close()
