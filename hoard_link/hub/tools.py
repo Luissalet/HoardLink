@@ -116,7 +116,8 @@ def catalogue() -> list[dict[str, Any]]:
         },
         {
             "name": "hub_restart_app",
-            "description": "Stop then start an app; native modules that were on are switched on again and the result lists them. Keywords: reiniciar, restart.",
+            "description": "Restart an app. Keywords: reiniciar, restart.\n"
+                           "Stop and start the app, restore its active native modules, and list them in the result.",
             "inputSchema": {"type": "object", "properties": {"app": _APP_ID}, "required": ["app"], "additionalProperties": False},
         },
         {
