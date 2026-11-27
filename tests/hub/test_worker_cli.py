@@ -12,7 +12,7 @@ import pytest
 from hoard_link.hub import cli
 
 from ._hub_fakes import FakeApp, make_hub, serve
-from .test_hub_and_server import _http
+from .test_hub_and_server import _http, _observed_app
 
 
 @pytest.fixture
@@ -35,6 +35,9 @@ def test_autodiscovery_status_tool_and_arguments_file(served, monkeypatch, tmp_p
     monkeypatch.setenv("HOARD_HUB_DATA_DIR", hub.config.data_dir)
     hub.write_url_file()
 
+    # The directory serves a provisional state until its background probe completes.
+    status, observed = _observed_app(url, "/api/apps/fake/status")
+    assert status == 200 and observed["state"] == "running"
     assert cli.main(["--json", "state", "fake"]) == 0
     assert json.loads(capsys.readouterr().out)["state"] == "running"
 

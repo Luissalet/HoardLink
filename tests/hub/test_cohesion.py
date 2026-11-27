@@ -7,9 +7,11 @@ from ._hub_fakes import make_hub, http, serve
 
 def test_embeddings_ready_does_not_mean_library_import_is_ready(monkeypatch):
     apps = {owner: SimpleNamespace(name=owner, url="http://127.0.0.1:1") for _, owner, _ in services.SERVICES}
-    expected = {id(apps[owner]): list(required) for _, owner, required in services.SERVICES}
+    expected = {owner: set() for owner in apps}
+    for _, owner, required in services.SERVICES:
+        expected[owner].update(required)
     def catalogue(app, timeout):
-        return {"ok": True, "tools": [{"name": t} for t in expected[id(app)]]}
+        return {"ok": True, "tools": [{"name": t} for t in sorted(expected[app.name])]}
     monkeypatch.setattr(services.contract, "app_tools", catalogue)
     hub = SimpleNamespace(get=apps.get, apps=[], facet=lambda k: None)
     facet = services.ServicesFacet(hub)
@@ -17,7 +19,7 @@ def test_embeddings_ready_does_not_mean_library_import_is_ready(monkeypatch):
     assert next(r for r in result["services"] if r["service"] == "embed")["available"]
     assert result["workflows"][0]["missing"] == [{"owner": "borges", "tool": "library_add_collection"},
                                                  {"owner": "borges", "tool": "library_reindex"}]
-    expected[id(apps["borges"])].extend(["library_add_collection", "library_reindex"])
+    expected["borges"].update(["library_add_collection", "library_reindex"])
     assert facet.status(refresh=True)["workflows"][0]["available"]
     facet.close()
 

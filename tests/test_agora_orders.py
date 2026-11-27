@@ -430,7 +430,12 @@ def test_a_deferred_script_of_a_local_page_runs_after_the_page_inside_the_sandbo
             page = browser.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
-            page.set_content("<iframe sandbox='allow-scripts allow-forms'></iframe>")
+            # Give the parent a real origin, as in the Hub. A synthetic route keeps it offline.
+            origin = "http://127.0.0.1:9/orders-test"
+            page.route(origin, lambda route: route.fulfill(
+                content_type="text/html", body="<iframe sandbox='allow-scripts allow-forms'></iframe>",
+            ))
+            page.goto(origin)
             # the same frame the Orders page builds: sandboxed, no same-origin, the page given as srcdoc
             page.eval_on_selector("iframe", "(f, doc) => { f.srcdoc = doc; }", doc)
             page.wait_for_function("document.querySelector('iframe').contentDocument === null")

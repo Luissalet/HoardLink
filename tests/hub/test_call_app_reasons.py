@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from hoard_link.hub import contract
-from hoard_link.hub.core import default_call_reason
+from hoard_link.hub.core import Hub, default_call_reason
 
 
 class _Recorder(BaseHTTPRequestHandler):
@@ -46,6 +46,17 @@ def app(tmp_path):
     token.write_text("t", encoding="utf-8")
     yield SimpleNamespace(id="demo", url=f"http://127.0.0.1:{srv.server_address[1]}", token_file=str(token))
     srv.shutdown()
+    srv.server_close()
+
+
+@pytest.fixture
+def proxy_hub(app, monkeypatch):
+    # Use the actual routing and direct dispatch methods without starting Hub services.
+    hub = Hub.__new__(Hub)
+    monkeypatch.setattr(hub, "get", lambda _id: app)
+    monkeypatch.setattr(hub, "facet", lambda _name: None)
+    monkeypatch.setattr(hub, "_safe_emit", lambda *args, **kwargs: None)
+    return hub
 
 
 def test_reason_agent_and_session_are_forwarded(app):
@@ -82,22 +93,18 @@ def test_default_reasons(caller, expected):
     assert 3 <= len(default_call_reason(caller)) <= 300
 
 
-def test_hub_gives_default_reason_but_not_to_agents(app, monkeypatch):
-    from hoard_link.hub import core
-    hub = SimpleNamespace(get=lambda _id: app, facet=lambda _name: None, _safe_emit=lambda *a, **k: None)
-    res = core.Hub.call_app(hub, "demo", "note_add", {"text": "x"}, caller="rule:daily", timeout=5)
+def test_hub_gives_default_reason_but_not_to_agents(proxy_hub):
+    res = proxy_hub.call_app("demo", "note_add", {"text": "x"}, caller="rule:daily", timeout=5)
     assert res["ok"] is True and _Recorder.seen[-1]["body"]["reason"] == "Automatic step of the Hub rule daily"
     assert _Recorder.seen[-1]["agent"] == "rule:daily"
-    res = core.Hub.call_app(hub, "demo", "note_add", {"text": "x"}, caller="hub-tool", timeout=5)
+    res = proxy_hub.call_app("demo", "note_add", {"text": "x"}, caller="hub-tool", timeout=5)
     assert res["ok"] is False and res["status"] == 400
-    res = core.Hub.call_app(hub, "demo", "note_add", {"text": "x", "reason": "From the arguments"}, caller="hub-tool", timeout=5)
+    res = proxy_hub.call_app("demo", "note_add", {"text": "x", "reason": "From the arguments"}, caller="hub-tool", timeout=5)
     assert res["ok"] is True and _Recorder.seen[-1]["body"]["reason"] == "From the arguments"
 
 
-def test_default_reason_names_the_agent_behind_a_hub_token(app):
-    from hoard_link.hub import core
-    hub = SimpleNamespace(get=lambda _id: app, facet=lambda _name: None, _safe_emit=lambda *a, **k: None)
-    res = core.Hub.call_app(hub, "demo", "note_add", {"text": "x"}, caller="hub", agent="claude-live", session="s1", timeout=5)
+def test_default_reason_names_the_agent_behind_a_hub_token(proxy_hub):
+    res = proxy_hub.call_app("demo", "note_add", {"text": "x"}, caller="hub", agent="claude-live", session="s1", timeout=5)
     assert res["ok"] is True
     assert _Recorder.seen[-1]["body"]["reason"] == "Requested by claude-live through the Hub"
     assert _Recorder.seen[-1]["agent"] == "claude-live" and _Recorder.seen[-1]["session"] == "s1"

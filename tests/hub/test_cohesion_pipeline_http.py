@@ -9,8 +9,9 @@ def test_download_transcript_library_share_auth_jobs_provenance_and_dedup(tmp_pa
     handlers = {
         "links": {"media_download": lambda a: {"id": "d1", "status": "done", "files": [{"path": str(audio)}]},
                   "media_status": lambda a: {"id": "d1", "status": "done", "files": [{"path": str(audio)}]}},
-        "funes": {"transcribe_file": lambda a: {"job_id": "t1", "status": "done", "text": "Synthetic citable speech."},
-                  "transcribe_status": lambda a: {"job_id": "t1", "status": "done", "text": "Synthetic citable speech."}},
+        "boltagon": {"transcribe_file": lambda a: {"job_id": "t1", "status": "done", "text": "Synthetic citable speech."},
+                     "transcribe_status": lambda a: {"job_id": "t1", "status": "done", "text": "Synthetic citable speech."},
+                     "transcribe_cancel": lambda a: {"ok": True}},
         "borges": {"library_add_collection": lambda a: {"collection": {"id": 7}},
                    "library_reindex": lambda a: {"queued": True}},
     }

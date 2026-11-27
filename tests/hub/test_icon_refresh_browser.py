@@ -16,6 +16,11 @@ from hoard_link.hub.core import Hub
 from hoard_link.hub.server import make_server
 
 
+# The five-second browser poll can just miss expiry of the directory sample.
+# A later poll requests the background refresh and the next one sees its result.
+ICON_POLL_TIMEOUT_MS = 17_000
+
+
 def _png(color: tuple[int, int, int]) -> bytes:
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", binascii.crc32(kind + data) & 0xFFFFFFFF)
@@ -70,7 +75,7 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
         app = hub.get("iconfixture")
         assert app is not None and app.icon_path is None
         with playwright.sync_playwright() as p:
-            browser = p.chromium.launch()
+            browser = p.chromium.launch(channel=os.environ.get("AGORA_TEST_BROWSER_CHANNEL"), headless=True)
             page = browser.new_page()
             page_errors = []
             icon_requests: list[str] = []
@@ -93,7 +98,7 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
             page.wait_for_function("""() => {
               const img = document.querySelector('#grid .card[data-id="iconfixture"] .icon');
               return img && img.complete && img.naturalWidth && new URL(img.currentSrc).searchParams.get('revision') !== 'missing';
-            }""", timeout=9_000)
+            }""", timeout=ICON_POLL_TIMEOUT_MS)
             assert _app_icon_state(page, color=(220, 25, 35), available=True)
             shared_revision = app.to_dict()["icon_revision"]
 
@@ -105,7 +110,7 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
               const c = document.createElement('canvas'); c.width = c.height = 1;
               const x = c.getContext('2d'); x.drawImage(img, 0, 0, 1, 1);
               return Array.from(x.getImageData(0, 0, 1, 1).data).slice(0,3).join(',') === '25,55,220';
-            }""", timeout=9_000)
+            }""", timeout=ICON_POLL_TIMEOUT_MS)
             lower_revision = app.to_dict()["icon_revision"]
             assert lower_revision != shared_revision
 
@@ -121,7 +126,7 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
               const c = document.createElement('canvas'); c.width = c.height = 1;
               const x = c.getContext('2d'); x.drawImage(img, 0, 0, 1, 1);
               return Array.from(x.getImageData(0, 0, 1, 1).data).slice(0,3).join(',') === '20,180,55';
-            }""", timeout=9_000)
+            }""", timeout=ICON_POLL_TIMEOUT_MS)
             higher_revision = app.to_dict()["icon_revision"]
             assert higher_revision != lower_revision  # path identity invalidates identical mtime/size.
 
@@ -137,7 +142,7 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
               const c = document.createElement('canvas'); c.width = c.height = 1;
               const x = c.getContext('2d'); x.drawImage(img, 0, 0, 1, 1);
               return Array.from(x.getImageData(0, 0, 1, 1).data).slice(0,3).join(',') === '225,135,15';
-            }""", timeout=9_000)
+            }""", timeout=ICON_POLL_TIMEOUT_MS)
 
             # Shared DOM-contract probe for image nodes used by refs/family/search/work.
             # The central dashboard poll upgrades them without per-image timers.
@@ -151,7 +156,7 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
               if (!img.complete || !img.naturalWidth) return false;
               const url = new URL(img.currentSrc);
               return url.searchParams.get('revision') && url.searchParams.get('revision') !== 'missing';
-            })""", timeout=9_000)
+            })""", timeout=ICON_POLL_TIMEOUT_MS)
             assert page.evaluate("""() => [...document.querySelectorAll('[data-surface]')].every(img => {
               const c = document.createElement('canvas'); c.width = c.height = 1;
               const x = c.getContext('2d'); x.drawImage(img, 0, 0, 1, 1);
@@ -174,7 +179,7 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
               const c = document.createElement('canvas'); c.width = c.height = 1;
               const x = c.getContext('2d'); x.drawImage(img, 0, 0, 1, 1);
               return Array.from(x.getImageData(0, 0, 1, 1).data).slice(0,3).join(',') === '25,55,220';
-            }""", timeout=9_000)
+            }""", timeout=ICON_POLL_TIMEOUT_MS)
             local_lower.unlink()
             page.wait_for_function("""() => {
               const img = document.querySelector('#grid .card[data-id="iconfixture"] .icon');
@@ -182,12 +187,12 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
               const c = document.createElement('canvas'); c.width = c.height = 1;
               const x = c.getContext('2d'); x.drawImage(img, 0, 0, 1, 1);
               return Array.from(x.getImageData(0, 0, 1, 1).data).slice(0,3).join(',') === '220,25,35';
-            }""", timeout=9_000)
+            }""", timeout=ICON_POLL_TIMEOUT_MS)
             shared.unlink()
             page.wait_for_function("""() => {
               const img = document.querySelector('#grid .card[data-id="iconfixture"] .icon');
               return img && img.complete && img.naturalWidth && new URL(img.currentSrc).searchParams.get('available') === '0';
-            }""", timeout=9_000)
+            }""", timeout=ICON_POLL_TIMEOUT_MS)
             reappeared = app_dir / "app-icon.png"
             reappeared.write_bytes(_png((120, 25, 180)))
             page.wait_for_function("""() => {
@@ -196,7 +201,7 @@ def test_hub_browser_refreshes_missing_replaced_and_priority_icons_on_normal_pol
               const c = document.createElement('canvas'); c.width = c.height = 1;
               const x = c.getContext('2d'); x.drawImage(img, 0, 0, 1, 1);
               return Array.from(x.getImageData(0, 0, 1, 1).data).slice(0,3).join(',') === '120,25,180';
-            }""", timeout=9_000)
+            }""", timeout=ICON_POLL_TIMEOUT_MS)
             assert navigations == [f"http://127.0.0.1:{server.server_port}/"]
             assert not page_errors, page_errors
             assert len(icon_requests) <= 16, icon_requests

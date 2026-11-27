@@ -86,18 +86,22 @@ def test_windows_batch_preserves_percent_and_unicode_paths(tmp_path):
     assert json.loads(probe.with_suffix('.json').read_text(encoding='utf-8')) == ['literal %TEMP% á']
 
 
-def test_cli_on_windows(windows, capsys, tmp_path):
-    assert cli.main(["--install-autostart", "--profile", "video", "--data-dir", str(tmp_path / "d")]) == 1
+def test_cli_on_windows(windows, capsys, tmp_path, monkeypatch):
+    from hoard_link.hub import config
+
+    # Exercise installed-mode command rendering with a fixture repository and Startup folder.
+    monkeypatch.setattr(config, "REPO_DIR", tmp_path)
+    data_dir = str(tmp_path / "data")
+    assert cli.main(["--install-autostart", "--profile", "video", "--data-dir", data_dir]) == 1
     assert not (windows / "Hoard Hub.cmd").exists()
-    from hoard_link.hub.config import HubConfig
-    HubConfig(data_dir=str(tmp_path / "d"), profiles={"video":{"apps":["a"]}}).save()
-    assert cli.main(["--install-autostart", "--profile", "video", "--data-dir", str(tmp_path / "d")]) == 0
+    config.HubConfig(data_dir=data_dir, profiles={"video": {"apps": ["a"]}}).save()
+    assert cli.main(["--install-autostart", "--profile", "video", "--data-dir", data_dir]) == 0
     out = capsys.readouterr().out
     assert "installed" in out and "unknown profile" in out
     text = (windows / "Hoard Hub.cmd").read_text(encoding="utf-8")
     assert "--data-dir" in text and "--profile video" in text
-    assert cli.main(["--autostart-status"]) == 0 and "profile video" in capsys.readouterr().out
-    assert cli.main(["--uninstall-autostart"]) == 0 and "removed" in capsys.readouterr().out
+    assert cli.main(["--autostart-status", "--data-dir", data_dir]) == 0 and "profile video" in capsys.readouterr().out
+    assert cli.main(["--uninstall-autostart", "--data-dir", data_dir]) == 0 and "removed" in capsys.readouterr().out
 
 
 def test_cli_elsewhere_is_a_clear_no_op(monkeypatch, capsys, tmp_path):

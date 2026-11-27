@@ -150,7 +150,12 @@ def hub(family, tmp_path: Path):
     cfg = HubConfig(port=free_port(), data_dir=str(tmp_path / "data"), roots=[str(family["root"])], icon_dirs=[],
                     faustus_urls=["http://127.0.0.1:1"])
     h = Hub(cfg)
-    yield h
-    for app in h.apps:
-        if app.launchable:
-            h.stop(app.id)
+    try:
+        yield h
+    finally:
+        try:
+            for app in h.apps:
+                if app.launchable:
+                    h.stop(app.id)
+        finally:
+            h.close()
