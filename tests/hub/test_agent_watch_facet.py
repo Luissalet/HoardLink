@@ -9,7 +9,7 @@ from pathlib import Path
 
 from hoard_link.hub import tools
 
-from ._hub_fakes import http, make_hub, serve, ui_headers
+from ._hub_fakes import http, make_hub, serve, ui_headers, wait_for
 from ._transcripts import (clock, cursor_file, codex_file, cur_text, cur_user, cx_exec, cx_head, cx_start, roots)  # noqa: F401
 
 
@@ -41,7 +41,14 @@ def test_facet_routes_tools_and_board_merge(tmp_path, roots):
         # the board carries the observation of every agent it knows, whether the agent announced itself or not
         http(base + "/api/agora/heartbeat", {"agent": "codex-sparks", "doing": "obs", "state": "idle"}, headers=hdr)
         http(base + "/api/agora/heartbeat", {"agent": "builder", "doing": "x"}, headers=hdr)
-        status, board = http(base + "/api/agora/board")
+        def board_with_observation(agent):
+            status, board = http(base + "/api/agora/board")
+            assert status == 200
+            if any(row["id"] == agent and row["observed"] for row in board["agents"]):
+                return board
+
+        board = wait_for(lambda: board_with_observation("codex-sparks"))
+        assert board is not None
         by = {a["id"]: a for a in board["agents"]}
         assert by["codex-sparks"]["observed"]["state"] == "tool" and by["codex-sparks"]["observed"]["tool"]["name"] == "exec"
         assert by["codex-sparks"]["observed"]["title"] == "Arregla el bucle del agente" and by["builder"]["observed"] is None
@@ -56,7 +63,8 @@ def test_facet_routes_tools_and_board_merge(tmp_path, roots):
         assert status == 404 and not bad["ok"]
         status, bad = http(base + "/api/agora/watch/bind", {"session_key": "cursor:abc-123", "agent": "person"}, headers=page)
         assert status == 400
-        status, board = http(base + "/api/agora/board")
+        board = wait_for(lambda: board_with_observation("builder"))
+        assert board is not None
         assert {a["id"]: a for a in board["agents"]}["builder"]["observed"]["engine"] == "cursor"
         assert json.loads(Path(hub.config.data_dir, "agent_watch.json").read_text(encoding="utf-8"))["bindings"] == {
             "cursor:abc-123": "builder"}
@@ -79,6 +87,7 @@ def test_facet_routes_tools_and_board_merge(tmp_path, roots):
         assert hub.facet("agora").agora.board()["ok"] and "observed" not in hub.facet("agora").agora.board()["agents"][0]
     finally:
         server.shutdown()
+        server.server_close()
         hub.close()
 
 

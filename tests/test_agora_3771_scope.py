@@ -150,7 +150,7 @@ def test_a_deck_hyperlink_outside_the_scope_is_not_measured(tmp_path, spied_disk
         links = facet.validate({"piece_id": piece["id"], "_worker_read_files": [piece["stored"]]})["measures"]["links"]
         row = next(item for item in links if item["external"])
         assert row["resolved"] is None and "scope" in row["reason"]
-        assert [item for item in spied_disk if "secret" in item] == []
+        assert [item for item in spied_disk if Path(item).is_relative_to(outside.parent)] == []
 
 
 def test_the_gate_forwards_the_declared_folders(tmp_path):

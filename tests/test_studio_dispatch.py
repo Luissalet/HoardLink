@@ -11,6 +11,8 @@ from hoard_link.hub import agora_worker_profiles, dispatch_proxy
 from hoard_link.hub.core import Hub
 from hoard_link.hub.instances import InstancesFacet
 from hoard_link.hub.server import _HubHandler, _client_disconnected, serve_in_thread
+from tests.hub._hub_fakes import free_port
+from tests.hub.test_hub_and_server import _observed_app
 
 
 def test_codex_account_primary_is_measured_even_when_only_extras_in_scoped_map():
@@ -35,11 +37,15 @@ def test_claude_session_diagnostic_uses_no_model_and_tells_explicit_logout(monke
 
 def test_auto_review_ignores_interactive_preference_and_uses_economical_other_provider(monkeypatch):
     def quota(provider, remaining):
-        return {"provider_id": provider, "pools": [{"windows": [{"measurement": "measured",
-                                                                 "remaining_percent": remaining}]}]}
+        return [{"agent_ids": [f"{provider}-capacity"],
+                 "windows": [{"measurement": "measured", "remaining_percent": remaining}]}]
 
     console = SimpleNamespace(
-        _agora=lambda: SimpleNamespace(usage=lambda: {"providers": [quota("claude", 10), quota("codex", 30)]}),
+        _agora=lambda: SimpleNamespace(
+            _quota_pools=lambda: {"claude": quota("claude", 10), "codex": quota("codex", 30)},
+            space_id="test",
+            db=SimpleNamespace(one=lambda *_: None),
+        ),
         _provider_data=lambda: {
             "codex": {"state": "available", "current_model": "gpt-premium-astra",
                       "catalog": [{"id": "gpt-premium-astra", "efforts": ["high"]}]},
@@ -121,13 +127,17 @@ def test_app_status_alias_and_native_shelf_proxy(tmp_path):
     (root / "faustus-plugin.json").write_text(json.dumps({
         "id": "testapp", "name": "Test app", "app": {"url_default": "http://127.0.0.1:1"}
     }), encoding="utf-8")
-    cfg = HubConfig.load(env={"HOARD_HUB_DATA_DIR": str(tmp_path / "hub"), "HOARD_HUB_ROOTS": str(roots)})
+    cfg = HubConfig(port=free_port(), data_dir=str(tmp_path / "hub"), roots=[str(roots)],
+                    faustus_urls=[], icon_dirs=[], jobs_enabled=False)
     hub = Hub(cfg)
     srv, thread = serve_in_thread(hub, port=0)
     try:
-        base = f"http://127.0.0.1:{srv.server_port}/api/apps/testapp"
-        with urlopen(base) as original, urlopen(base + "/status") as alias:
-            assert json.load(original)["state"] == json.load(alias)["state"]
+        base = f"http://127.0.0.1:{srv.server_port}"
+        path = "/api/apps/testapp"
+        status, original = _observed_app(base, path)
+        assert status == 200
+        with urlopen(base + path + "/status") as alias:
+            assert original["state"] == json.load(alias)["state"]
         found = hub.call_app("testapp", "skills_list")
         assert found["ok"] and found["contract"] == "shelf" and "skills" in found["result"]
         missing = hub.call_app("testapp", "skill_read", {"slug": "missing"})
@@ -153,7 +163,8 @@ def test_isolated_instances_create_own_data_use_own_token_and_undo(monkeypatch, 
             "launch_hint": {"kind": "process", "executable": "python", "argv": ["-V"], "cwd": "{SAMPLE_DIR}"}},
         "x-family": {"isolated_instance": {"data_env": "SAMPLE_DATA", "port_env": "SAMPLE_PORT"}},
     }), encoding="utf-8")
-    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(data), faustus_dir=None, url="http://127.0.0.1:8888"),
+    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(data), faustus_dir=None,
+                                                url="http://127.0.0.1:8888", isolated=False),
                           get=lambda _: SimpleNamespace(folder=str(original), token_file=str(original / "mcp-token")))
     children = []
 
