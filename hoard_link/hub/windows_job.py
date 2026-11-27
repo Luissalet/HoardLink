@@ -1,4 +1,4 @@
-"""Private Windows jobs for fixture processes, assigned at process creation."""
+"""Private Windows jobs, assigned at process creation."""
 from __future__ import annotations
 
 import ctypes as c
@@ -6,8 +6,11 @@ from contextlib import ExitStack
 from ctypes import wintypes as w
 import msvcrt
 import os
-from subprocess import list2cmdline
+from subprocess import BELOW_NORMAL_PRIORITY_CLASS, TimeoutExpired, list2cmdline
+from threading import Lock
 from time import monotonic, sleep
+from uuid import uuid4
+from weakref import finalize
 
 from .. import _process
 
@@ -16,6 +19,8 @@ _JOB_LIST = 0x2000D
 _EXTENDED_STARTUPINFO = 0x80000
 _UNICODE_ENVIRONMENT = 0x400
 _KILL_ON_CLOSE = 0x2000
+_WAIT_TIMEOUT = 258
+_INFINITE = 0xFFFFFFFF
 
 
 class _BasicLimits(c.Structure):
@@ -53,10 +58,11 @@ class _ProcessInfo(c.Structure):
 
 
 _kernel = c.WinDLL("kernel32", use_last_error=True)
+_user = c.WinDLL("user32", use_last_error=True)
 
 
-def _api(name, result, *args):
-    fn = getattr(_kernel, name)
+def _api(name, result, *args, library=_kernel):
+    fn = getattr(library, name)
     fn.restype = result
     fn.argtypes = args
     return fn
@@ -77,6 +83,14 @@ _update_attrs = _api("UpdateProcThreadAttribute", w.BOOL, c.c_void_p, w.DWORD, c
 _delete_attrs = _api("DeleteProcThreadAttributeList", None, c.c_void_p)
 _create_process = _api("CreateProcessW", w.BOOL, w.LPCWSTR, w.LPWSTR, c.c_void_p, c.c_void_p,
                        w.BOOL, w.DWORD, c.c_void_p, w.LPCWSTR, c.POINTER(_StartupEx), c.POINTER(_ProcessInfo))
+_wait = _api("WaitForSingleObject", w.DWORD, w.HANDLE, w.DWORD)
+_exit_code = _api("GetExitCodeProcess", w.BOOL, w.HANDLE, c.POINTER(w.DWORD))
+_get_station = _api("GetProcessWindowStation", w.HANDLE, library=_user)
+_object_info = _api("GetUserObjectInformationW", w.BOOL, w.HANDLE, c.c_int, c.c_void_p, w.DWORD,
+                    c.c_void_p, library=_user)
+_create_desktop = _api("CreateDesktopW", w.HANDLE, w.LPCWSTR, w.LPCWSTR, c.c_void_p, w.DWORD,
+                       w.DWORD, c.c_void_p, library=_user)
+_close_desktop = _api("CloseDesktop", w.BOOL, w.HANDLE, library=_user)
 
 
 def _check(result):
@@ -117,7 +131,7 @@ def _inherit(file, stack):
     return result.value
 
 
-def _launch(jobs, argv, cwd, env, log):
+def _launch(jobs, argv, cwd, env, log, *, desktop=None, creationflags=0):
     command = c.create_unicode_buffer(list2cmdline(argv))
     environment = c.create_unicode_buffer("\0".join(f"{key}={value}" for key, value in
                                                      sorted(env.items(), key=lambda item: item[0].upper())) + "\0")
@@ -136,15 +150,81 @@ def _launch(jobs, argv, cwd, env, log):
         start = _StartupEx()
         start.info.size = c.sizeof(start)
         start.info.flags = 0x100  # STARTF_USESTDHANDLES
+        start.info.desktop = desktop
         start.info.stdin, start.info.stdout, start.info.stderr = stdin, output, output
         start.attributes = c.cast(attributes, c.c_void_p)
         info = _ProcessInfo()
-        options = {"creationflags": _EXTENDED_STARTUPINFO | _UNICODE_ENVIRONMENT}
+        options = {"creationflags": _EXTENDED_STARTUPINFO | _UNICODE_ENVIRONMENT | creationflags}
         _process._hide_console(options)
         _check(_create_process(argv[0], command, None, None, True, options["creationflags"],
                                environment, cwd, c.byref(start), c.byref(info)))
         _close(info.thread)
-        _close(info.process)
+        return info
+
+
+class DesktopWorker:
+    """The process operations used by the worker monitor and stop controls."""
+
+    def __init__(self, argv, info, job, resources):
+        self.args = argv
+        self.pid = info.pid
+        self.returncode = None
+        self._handle = info.process
+        self._job = job
+        self._group = resources
+        self._lock = Lock()
+        self._cleanup = finalize(self, _close_worker, resources, self._handle)
+
+    def wait(self, timeout=None):
+        milliseconds = _INFINITE if timeout is None else min(_INFINITE - 1, max(0, round(timeout * 1000)))
+        state = _wait(self._handle, milliseconds)
+        if state == _WAIT_TIMEOUT:
+            raise TimeoutExpired(self.args, timeout)
+        if state != 0:
+            raise c.WinError(c.get_last_error())
+        with self._lock:
+            if self.returncode is None:
+                code = w.DWORD()
+                _check(_exit_code(self._handle, c.byref(code)))
+                self.returncode = code.value
+                # Close the job first to reap any descendants before dropping the desktop.
+                self._group.close()
+            return self.returncode
+
+    def poll(self):
+        try:
+            return self.wait(0)
+        except TimeoutExpired:
+            return None
+
+    def terminate(self):
+        with self._lock:
+            if self._job.handle is not None:
+                _check(_terminate_job(self._job.handle, 1))
+
+    kill = terminate
+
+
+def _close_worker(resources, process_handle):
+    try:
+        resources.close()
+    finally:
+        _close(process_handle)
+
+
+def launch_on_private_desktop(argv, *, cwd, env, log):
+    name = "HoardWorker_" + uuid4().hex
+    station = c.create_unicode_buffer(256)
+    _check(_object_info(_check(_get_station()), 2, station, c.sizeof(station), None))  # UOI_NAME
+    desktop = station.value + "\\" + name
+    with ExitStack() as resources:
+        handle = _check(_create_desktop(name, None, None, 0, 0x1FF, None))
+        resources.callback(_close_desktop, handle)
+        job = _Job()
+        resources.callback(job.close)
+        info = _launch((job,), argv, cwd, env, log, desktop=desktop,
+                       creationflags=BELOW_NORMAL_PRIORITY_CLASS)
+        return DesktopWorker(argv, info, job, resources.pop_all())
 
 
 class WindowsJobs:
@@ -157,7 +237,8 @@ class WindowsJobs:
             raise OSError("The Hub job is closed")
         child = _Job()
         try:
-            _launch((self._hub, child), argv, cwd, env, log)
+            info = _launch((self._hub, child), argv, cwd, env, log)
+            _close(info.process)
         except (OSError, ValueError) as exc:
             child.close()
             raise OSError(f"Could not create the process in the Hub jobs: {exc}") from exc

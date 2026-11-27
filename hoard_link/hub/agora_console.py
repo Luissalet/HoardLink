@@ -31,9 +31,10 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import quote, urlencode, urlsplit
 
-from .._process import popen_hidden, run_hidden
+from .._process import run_hidden
 from . import agora_faustus
 from . import agora_auto_review, agora_liveness, agora_quota_floors, agora_ranks, agora_worker_processes, agora_worker_profiles
+from .agora_worker_launch import WorkerProcess, launch_worker
 from . import work_admission
 from .agora import Agora, AgoraError, FINAL
 from .agora_capacity import codex_executable, codex_observation
@@ -136,7 +137,7 @@ class AgoraConsoleFacet(Facet):
         self._provider_at = 0.0
         self._provider_cache: dict[str, dict[str, Any]] = {}
         self._provider_epoch = _CATALOG_EPOCH[0]
-        self._processes: dict[str, subprocess.Popen[str] | agora_worker_processes.AdoptedWorker] = {}
+        self._processes: dict[str, WorkerProcess | agora_worker_processes.AdoptedWorker] = {}
         self._faustus_runtimes: dict[str, dict[str, Any]] = {}
         self._recovery_stop = threading.Event()
         self._registration_lock = threading.Lock()
@@ -2686,9 +2687,7 @@ class AgoraConsoleFacet(Facet):
         launching_at = time.time()
         try:
             with open(log_path, "a", encoding="utf-8") as log:
-                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                           text=True, cwd=str(worker_cwd), env=process_env,
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                process = launch_worker(self.hub.config, command, cwd=str(worker_cwd), env=process_env, log=log)
         except OSError as exc:
             runtime = self._faustus_runtimes.pop(worker_id, None)
             if runtime:
@@ -3158,9 +3157,7 @@ class AgoraConsoleFacet(Facet):
             if not executable:
                 raise FileNotFoundError(f"{leader.title()} runner unavailable")
             with log_path.open("w", encoding="utf-8") as log:
-                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                           text=True, cwd=str(cwd), env=self._runner_env(),
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                process = launch_worker(self.hub.config, command, cwd=str(cwd), env=self._runner_env(), log=log)
         except (OSError, ValueError) as exc:
             with self._db_lock, self._db() as db:
                 db.execute("UPDATE workers SET state=?,updated_at=? WHERE id=?", (row["state"], time.time(), row["id"]))
@@ -3174,7 +3171,7 @@ class AgoraConsoleFacet(Facet):
                         time.time(), row["id"]))
         return self._resumed_worker(row, process, result_path, detail)
 
-    def _resumed_worker(self, row: Any, process: subprocess.Popen[str], result_path: Path, detail: str) -> dict[str, Any]:
+    def _resumed_worker(self, row: Any, process: WorkerProcess, result_path: Path, detail: str) -> dict[str, Any]:
         worker_id = row["id"]
         self._record("worker", worker_id, "running", detail)
         threading.Thread(target=self._monitor_worker, args=(worker_id, process, result_path), daemon=True,
@@ -3326,7 +3323,7 @@ class AgoraConsoleFacet(Facet):
                        (json.dumps({**replacement, "state": state, "detail": detail}), time.time(), worker_id))
 
     def _continue_worker(self, worker_id: str, automatic: bool = False,
-                         previous_process: subprocess.Popen[str] | agora_worker_processes.AdoptedWorker | None = None,
+                         previous_process: WorkerProcess | agora_worker_processes.AdoptedWorker | None = None,
                          message: str = "") -> dict[str, Any]:
         from .agora_faustus import (APPRENTICE, STUDIO, file_scope, new_worker_workspace, owns_worker_workspace,
                                     reactivate_apprentice_binding, start_pc)
@@ -3442,9 +3439,7 @@ class AgoraConsoleFacet(Facet):
                 prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(launch_scope, ensure_ascii=False)
             command[command.index("-p") + 1] = prompt + "\n\nPrior stop: " + row["detail"]
             with log_path.open("w", encoding="utf-8") as log:
-                process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                           text=True, cwd=cwd, env=self._faustus_runner_env(),
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                process = launch_worker(self.hub.config, command, cwd=cwd, env=self._faustus_runner_env(), log=log)
         except (OSError, RuntimeError, ValueError) as exc:
             if not session_busy:
                 self._close_worker_runtime(worker_id)
@@ -3471,7 +3466,7 @@ class AgoraConsoleFacet(Facet):
         return self._resumed_worker(row, process, result_path, detail)
 
     def _monitor_worker(self, worker_id: str,
-                        process: subprocess.Popen[str] | agora_worker_processes.AdoptedWorker, result_path: Path) -> None:
+                        process: WorkerProcess | agora_worker_processes.AdoptedWorker, result_path: Path) -> None:
         adopted = isinstance(process, agora_worker_processes.AdoptedWorker)
         try:
             code = process.wait(self._recovery_stop) if adopted else process.wait()

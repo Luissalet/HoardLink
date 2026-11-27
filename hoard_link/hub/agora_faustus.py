@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .._process import popen_hidden
+from .agora_worker_launch import launch_worker
 from .faustus_endpoint_key import read_endpoint_key
 
 STUDIO = "estudio"
@@ -530,8 +530,7 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     if console.space_id == STUDIO:
         command.extend(["--agora-studio", agent])
     with (data / "server.log").open("a", encoding="utf-8") as log:
-        process = popen_hidden(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
-            stdout=log, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        process = launch_worker(console.hub.config, command, cwd=str(root), env=env, log=log)
     from . import procs
     from .contract import _get
     runtime = {"url": base, "process": process, "data": str(data), "endpoint": endpoint,

@@ -1,12 +1,11 @@
-# Aislamiento de escritorio de los trabajadores de Ágora
+# Escritorios privados para trabajadores de Ágora
 
-**Decisión pendiente (#4158).** Separar los escritorios dentro de una sesión interactiva deja abierta la delegación de consolas. Falta un ejecutor autorizado de Session 0 o un entorno Windows aislado donde completar la prueba. Esta nota registra la barrera necesaria antes de activar una opción por defecto.
+En Windows, cada arranque, reanudación o relevo de un trabajador de Ágora crea un escritorio privado. Se incluyen los trabajadores de Faustus en el PC. El inicio del Hub y la apertura de aplicaciones usan sus lanzadores habituales. En otros sistemas se conserva el lanzamiento anterior.
 
-## Lo que cubre el lanzamiento actual
+La opción `agora.worker_private_desktop` viene activada. Para volver temporalmente al lanzador anterior, configura `"agora": {"worker_private_desktop": false}`. Si Windows rechaza el escritorio o el proceso, el Hub devuelve un error de arranque. Los trabajadores requieren un ejecutable nativo. Para una instalación npm de Claude, el Hub ejecuta directamente Node y el script del paquete.
 
-En la base `fb501f8`, `agora_console.py` usa `popen_hidden` al lanzar, reanudar o sustituir trabajadores en los puntos 2689, 3161 y 3445. `agora_faustus.py:533` usa la misma llamada para trabajadores locales de Faustus. `hoard_link/_process.py` aplica `CREATE_NO_WINDOW` a ese lanzamiento directo y quita los indicadores incompatibles. Windows deja a ese proceso de consola sin consola adjunta. Un descendiente puede pedir otro tipo de arranque. [Indicadores de creación](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags)
+El lanzador asigna la estación y el escritorio por `STARTUPINFO.lpDesktop` y el Job al crear el proceso con `CREATE_NO_WINDOW`. Este arranque está diseñado para programas ordinarios que heredan la consola. Detener al trabajador termina su Job. Al salir, se cierra el Job y se libera el escritorio. [Creación de procesos](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags) · [Conexión a un escritorio](https://learn.microsoft.com/en-us/windows/win32/winstation/thread-connection-to-a-desktop) · [Jobs](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
 
-Un nombre completo de estación y escritorio en `STARTUPINFO.lpDesktop` ubica al proceso inicial. Los descendientes ordinarios heredan ese escritorio. Un Job asignado antes de reanudar el proceso permite limpiar sus miembros con `KILL_ON_JOB_CLOSE`. Los límites de interfaces afectan a los miembros del Job. Los lanzamientos que un servicio externo realiza por encargo quedan fuera de esa herencia. [Conexión de un hilo a un escritorio](https://learn.microsoft.com/en-us/windows/win32/winstation/thread-connection-to-a-desktop) · [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
 
 ## Por qué puede aparecer una consola en Default
 
@@ -14,12 +13,10 @@ En el código de Microsoft Terminal, `_isInteractiveUserSession` consulta el PID
 
 Esto explica cómo se puede alcanzar Default aunque los procesos ordinarios usen otro escritorio. Los cinco avisos de ventanas reales de #4133, registrados por dirección en el hilo 5066, ya muestran que repetir la prueba adversa en esta sesión puede afectar al escritorio de la persona. Una enumeración de Default que dispare un aborto sirve de detección después del hecho. La ausencia de ventanas en una compilación ordinaria no demuestra que una petición de consola nueva quede contenida.
 
-## Barrera propuesta sin cambiar los ajustes de Windows
+La delegación sigue siendo posible cuando se solicita expresamente otra consola con el iniciador de procesos de PowerShell o el comando de inicio de CMD. La vigilancia de #4134 es independiente. La verificación de #4158 cubre el uso ordinario de la consola heredada.
 
-El Hub conservaría su sesión. Un ejecutor autorizado en Session 0, con una identidad de servicio con acceso a los worktrees de la prueba y sin acceso a la sesión interactiva, recibiría exclusivamente los arranques de trabajadores de Ágora. Validaría la sesión y la estación no interactiva antes de crear un escritorio por trabajador. Asignaría el proceso suspendido al Job y conservaría ambos handles hasta que salga el árbol. Una reanudación o sustitución usaría la misma vía. Esta separación permite aprovechar el rechazo de Session 0 del código de Microsoft sin modificar el registro ni los ajustes de Terminal. La barrera depende de disponer de esa identidad y de verificar el comportamiento del Windows concreto. [Servicios no interactivos](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services) · [Privilegios de creación con otro token](https://learn.microsoft.com/en-us/windows/win32/secauthz/processes-in-the-client-security-context)
+## Private desktops for Agora workers
 
-`nw.ps1` evita la consola inicial y no constituye por sí solo ese ejecutor. Con un Hub en la sesión interactiva y sin un ejecutor autorizado, el candidato no tiene una ruta demostrada para mantener a la vez el lanzamiento por defecto y la garantía de que las solicitudes de consola de un trabajador no lleguen a Default.
+On Windows the Hub starts each Agora worker on a private desktop by default. This covers start, resume, automatic follow-ups, and local Faustus workers. The Hub and interactive apps use their established launch policies. Set `agora.worker_private_desktop` to `false` to use the previous worker launcher.
 
-## Verificación pendiente
-
-Dirección debe confirmar en el hilo 5091 el ejecutor autorizado de Session 0 o un entorno Windows aislado. El ensayo usaría un Hub con datos y raíces temporales y un puerto propio, en un escritorio A. El trabajador sintético se ejecutaría en B. El ensayo comprobaría `git`, Python, Node, pytest y el navegador headless, enumeraría ventanas de A y de Default antes, durante y después, y registraría la aparición de anfitriones de consola. Se incluirían las solicitudes adversas de la tarea cuando el revisor haya leído la prueba y el entorno pueda contenerlas. En Session 0, la observación del Default de la persona requeriría un observador independiente de solo lectura en la sesión interactiva. El ensayo queda pendiente hasta que se pueda montar ese entorno.
+Workers need a native executable or the supported npm entry point. The launcher assigns the desktop and Job when it creates the process with `CREATE_NO_WINDOW`. Stopping the worker terminates its Job. Worker exit closes the Job and releases the desktop. An explicit request for a new console can still reach Windows Terminal outside the worker Job. The separate watcher in #4134 remains in place.
