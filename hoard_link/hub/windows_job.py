@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from ctypes import wintypes as w
 import msvcrt
 import os
+import re
 from subprocess import BELOW_NORMAL_PRIORITY_CLASS, TimeoutExpired, list2cmdline
 from threading import Lock
 from time import monotonic, sleep
@@ -21,6 +22,7 @@ _UNICODE_ENVIRONMENT = 0x400
 _KILL_ON_CLOSE = 0x2000
 _WAIT_TIMEOUT = 258
 _INFINITE = 0xFFFFFFFF
+_WORKER_NAME = re.compile(r"HoardWorker_[0-9a-f]{32}")
 
 
 class _BasicLimits(c.Structure):
@@ -57,6 +59,10 @@ class _ProcessInfo(c.Structure):
     _fields_ = [("process", w.HANDLE), ("thread", w.HANDLE), ("pid", w.DWORD), ("tid", w.DWORD)]
 
 
+class _SecurityAttributes(c.Structure):
+    _fields_ = [("size", w.DWORD), ("descriptor", c.c_void_p), ("inherit", w.BOOL)]
+
+
 _kernel = c.WinDLL("kernel32", use_last_error=True)
 _user = c.WinDLL("user32", use_last_error=True)
 
@@ -69,6 +75,9 @@ def _api(name, result, *args, library=_kernel):
 
 
 _create_job = _api("CreateJobObjectW", w.HANDLE, c.c_void_p, w.LPCWSTR)
+_open_job = _api("OpenJobObjectW", w.HANDLE, w.DWORD, w.BOOL, w.LPCWSTR)
+_open_process = _api("OpenProcess", w.HANDLE, w.DWORD, w.BOOL, w.DWORD)
+_in_job = _api("IsProcessInJob", w.BOOL, w.HANDLE, w.HANDLE, c.POINTER(w.BOOL))
 _set_job = _api("SetInformationJobObject", w.BOOL, w.HANDLE, c.c_int, c.c_void_p, w.DWORD)
 _query_job = _api("QueryInformationJobObject", w.BOOL, w.HANDLE, c.c_int, c.c_void_p, w.DWORD, c.c_void_p)
 _terminate_job = _api("TerminateJobObject", w.BOOL, w.HANDLE, w.UINT)
@@ -100,8 +109,16 @@ def _check(result):
 
 
 class _Job:
-    def __init__(self):
-        self.handle = _check(_create_job(None, None))  # unnamed and non-inheritable
+    def __init__(self, name=None):
+        self.name = name
+        c.set_last_error(0)
+        self.handle = _check(_create_job(None, name))  # non-inheritable
+        if name is not None:
+            if c.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+                self.close()
+                raise FileExistsError(name)
+            # Worker membership holds the named job alive across Hub restarts.
+            return
         limits = _ExtendedLimits()
         limits.basic.flags = _KILL_ON_CLOSE
         try:
@@ -122,6 +139,31 @@ class _Job:
             _check(_close(self.handle))
             self.handle = None
 
+    def terminate(self):
+        if self.handle is not None:
+            _check(_terminate_job(self.handle, 1))
+
+
+def open_worker_job(name, pid):
+    """Reopen only a worker job containing the verified process."""
+    if not _WORKER_NAME.fullmatch(name):
+        raise OSError("Invalid worker job name")
+    with ExitStack() as resources:
+        process = _check(_open_process(0x1000, False, pid))  # PROCESS_QUERY_LIMITED_INFORMATION
+        resources.callback(_close, process)
+        handle = _check(_open_job(0xC, False, name))  # JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE
+        try:
+            member = w.BOOL()
+            _check(_in_job(process, handle, c.byref(member)))
+            if not member.value:
+                raise OSError("The process does not belong to the recorded worker job")
+        except OSError:
+            _close(handle)
+            raise
+    job = _Job.__new__(_Job)
+    job.name, job.handle = name, handle
+    return job
+
 
 def _inherit(file, stack):
     result = w.HANDLE()
@@ -131,14 +173,15 @@ def _inherit(file, stack):
     return result.value
 
 
-def _launch(jobs, argv, cwd, env, log, *, desktop=None, creationflags=0):
+def _launch(jobs, argv, cwd, env, log, *, desktop=None, desktop_handle=None, creationflags=0):
     command = c.create_unicode_buffer(list2cmdline(argv))
     environment = c.create_unicode_buffer("\0".join(f"{key}={value}" for key, value in
                                                      sorted(env.items(), key=lambda item: item[0].upper())) + "\0")
     with ExitStack() as stack:
         null = stack.enter_context(open(os.devnull, "rb"))
         stdin, output = _inherit(null, stack), _inherit(log, stack)
-        handles = (w.HANDLE * 2)(stdin, output)
+        inherited = (stdin, output) if desktop_handle is None else (stdin, output, desktop_handle)
+        handles = (w.HANDLE * len(inherited))(*inherited)
         job_handles = (w.HANDLE * len(jobs))(*(job.handle for job in jobs))
         size = c.c_size_t()
         _init_attrs(None, 2, 0, c.byref(size))  # first call obtains the buffer size
@@ -168,6 +211,7 @@ class DesktopWorker:
     def __init__(self, argv, info, job, resources):
         self.args = argv
         self.pid = info.pid
+        self.job_name = job.name
         self.returncode = None
         self._handle = info.process
         self._job = job
@@ -187,8 +231,11 @@ class DesktopWorker:
                 code = w.DWORD()
                 _check(_exit_code(self._handle, c.byref(code)))
                 self.returncode = code.value
-                # Close the job first to reap any descendants before dropping the desktop.
-                self._group.close()
+                try:
+                    if self._job.running():
+                        self._job.terminate()
+                finally:
+                    self._group.close()
             return self.returncode
 
     def poll(self):
@@ -199,8 +246,7 @@ class DesktopWorker:
 
     def terminate(self):
         with self._lock:
-            if self._job.handle is not None:
-                _check(_terminate_job(self._job.handle, 1))
+            self._job.terminate()
 
     kill = terminate
 
@@ -218,11 +264,13 @@ def launch_on_private_desktop(argv, *, cwd, env, log):
     _check(_object_info(_check(_get_station()), 2, station, c.sizeof(station), None))  # UOI_NAME
     desktop = station.value + "\\" + name
     with ExitStack() as resources:
-        handle = _check(_create_desktop(name, None, None, 0, 0x1FF, None))
+        # Keep the desktop in the worker's handle table even before it uses USER32.
+        security = _SecurityAttributes(c.sizeof(_SecurityAttributes), None, True)
+        handle = _check(_create_desktop(name, None, None, 0, 0x1FF, c.byref(security)))
         resources.callback(_close_desktop, handle)
-        job = _Job()
+        job = _Job(name)
         resources.callback(job.close)
-        info = _launch((job,), argv, cwd, env, log, desktop=desktop,
+        info = _launch((job,), argv, cwd, env, log, desktop=desktop, desktop_handle=handle,
                        creationflags=BELOW_NORMAL_PRIORITY_CLASS)
         return DesktopWorker(argv, info, job, resources.pop_all())
 

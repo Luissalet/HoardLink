@@ -535,6 +535,7 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     from .contract import _get
     runtime = {"url": base, "process": process, "data": str(data), "endpoint": endpoint,
                "pid": process.pid, "created_at": procs.proc_info(process.pid).created_at,
+               "job_name": getattr(process, "job_name", ""),
                "file_scope": file_scope, "tool_approval_mode": WORKER_APPROVAL_MODE}
     try:
         deadline = time.monotonic() + 120
@@ -563,6 +564,16 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
 
 def stop_pc(runtime: dict) -> None:
     process = runtime.get("process")
+    if name := runtime.get("job_name"):
+        if process is None:
+            from .agora_worker_processes import started_at, terminate_recorded_job
+
+            if runtime["created_at"] is not None and started_at(runtime["pid"]) == runtime["created_at"]:
+                terminate_recorded_job(name, runtime["pid"], runtime["created_at"])
+        else:
+            process.terminate()
+            process.wait(timeout=10)
+        return
     if process is None:
         # After a Hub restart only the verified PID and creation time remain.
         from . import procs

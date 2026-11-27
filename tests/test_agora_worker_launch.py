@@ -84,8 +84,14 @@ def test_private_desktop_and_job_share_process_lifetime(monkeypatch, tmp_path):
     from hoard_link.hub import windows_job
 
     order = []
-    job = SimpleNamespace(handle=21, close=lambda: order.append(("job", 21)))
-    monkeypatch.setattr(windows_job, "_Job", lambda: job)
+    job = SimpleNamespace(handle=21, close=lambda: order.append(("job", 21)),
+                          running=lambda: False, terminate=Mock())
+
+    def new_job(name):
+        job.name = name
+        return job
+
+    monkeypatch.setattr(windows_job, "_Job", new_job)
     monkeypatch.setattr(windows_job, "_get_station", lambda: 1)
 
     def station(handle, info, output, *_):
@@ -93,7 +99,8 @@ def test_private_desktop_and_job_share_process_lifetime(monkeypatch, tmp_path):
         output.value = "TestStation"
         return True
 
-    def create(name, *_):
+    def create(name, device, mode, flags, access, security):
+        assert cast(security, POINTER(windows_job._SecurityAttributes))[0].inherit
         order.append(("create", name))
         return 11
 
@@ -105,8 +112,6 @@ def test_private_desktop_and_job_share_process_lifetime(monkeypatch, tmp_path):
     monkeypatch.setattr(windows_job, "_launch", launch_native)
     states = iter([windows_job._WAIT_TIMEOUT, 0, 0])
     monkeypatch.setattr(windows_job, "_wait", lambda handle, timeout: next(states))
-    stop = Mock(return_value=True)
-    monkeypatch.setattr(windows_job, "_terminate_job", stop)
 
     def exit_code(handle, output):
         assert handle == 31
@@ -119,19 +124,18 @@ def test_private_desktop_and_job_share_process_lifetime(monkeypatch, tmp_path):
     name = order[0][1]
     assert name.startswith("HoardWorker_")
     launch_native.assert_called_once_with((job,), argv, str(tmp_path), env, log,
-                                          desktop="TestStation\\" + name,
+                                          desktop="TestStation\\" + name, desktop_handle=11,
                                           creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS)
     assert worker.pid == 41
+    assert worker.job_name == name
     assert worker.poll() is None
     assert order == [("create", name)]
     worker.terminate()
-    stop.assert_called_once_with(21, 1)
+    job.terminate.assert_called_once_with()
     assert worker.wait(1) == worker.poll() == 7
     assert order == [("create", name), ("job", 21), ("desktop", 11)]
     worker._cleanup()
     assert order[-1] == ("process", 31)
-
-
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows API declarations")
@@ -171,8 +175,85 @@ def test_create_process_assigns_job_and_desktop_without_console_window(monkeypat
     monkeypatch.setattr(windows_job, "_create_process", create)
     monkeypatch.setattr(windows_job, "_close", close)
     info = windows_job._launch((SimpleNamespace(handle=35),), ["runner.exe"], str(tmp_path),
-                               {}, object(), desktop="Station\\Worker",
+                               {}, object(), desktop="Station\\Worker", desktop_handle=13,
                                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS)
     assert info.pid == 43
-    assert attrs == {windows_job._HANDLE_LIST: [11, 12], windows_job._JOB_LIST: [35]}
+    assert attrs == {windows_job._HANDLE_LIST: [11, 12, 13], windows_job._JOB_LIST: [35]}
     close.assert_called_once_with(42)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows API declarations")
+def test_only_fixture_jobs_kill_when_their_handle_closes(monkeypatch):
+    from hoard_link.hub import windows_job
+
+    create = Mock(return_value=21)
+    set_limits = Mock(return_value=True)
+    close = Mock(return_value=True)
+    stop = Mock(return_value=True)
+    monkeypatch.setattr(windows_job, "_create_job", create)
+    monkeypatch.setattr(windows_job, "_set_job", set_limits)
+    monkeypatch.setattr(windows_job, "_close", close)
+    monkeypatch.setattr(windows_job, "_terminate_job", stop)
+    name = "HoardWorker_" + "0" * 32
+    worker = windows_job._Job(name)
+    create.assert_called_once_with(None, name)
+    set_limits.assert_not_called()
+    worker.close()
+    close.assert_called_once_with(21)
+    stop.assert_not_called()
+    fixture = windows_job._Job()
+    set_limits.assert_called_once()
+    fixture.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows API declarations")
+@pytest.mark.parametrize("member", [True, False])
+def test_reopen_worker_job_checks_membership(monkeypatch, member):
+    from ctypes import cast, POINTER
+    from ctypes.wintypes import BOOL
+    from hoard_link.hub import windows_job
+
+    name = "HoardWorker_" + "a" * 32
+    close = Mock(return_value=True)
+    stop = Mock(return_value=True)
+    monkeypatch.setattr(windows_job, "_open_process", Mock(return_value=31))
+    monkeypatch.setattr(windows_job, "_open_job", Mock(return_value=41))
+    monkeypatch.setattr(windows_job, "_close", close)
+    monkeypatch.setattr(windows_job, "_terminate_job", stop)
+
+    def check(process, job, result):
+        assert (process, job) == (31, 41)
+        cast(result, POINTER(BOOL))[0] = member
+        return True
+
+    monkeypatch.setattr(windows_job, "_in_job", check)
+    if member:
+        job = windows_job.open_worker_job(name, 71)
+        job.terminate()
+        job.close()
+        stop.assert_called_once_with(41, 1)
+    else:
+        with pytest.raises(OSError, match="does not belong"):
+            windows_job.open_worker_job(name, 71)
+        stop.assert_not_called()
+    assert {call.args[0] for call in close.call_args_list} == {31, 41}
+
+
+@pytest.mark.parametrize("shutting_down", [False, True])
+def test_adopted_job_closes_without_killing_on_hub_shutdown(monkeypatch, shutting_down):
+    from threading import Event
+    from hoard_link.hub.agora_worker_processes import AdoptedWorker
+
+    stopping = Event()
+    if shutting_down:
+        stopping.set()
+    worker = AdoptedWorker(SimpleNamespace(pid=71, is_running=lambda: True), 10, ())
+    job = Mock()
+    reopen = Mock(return_value=job)
+    monkeypatch.setitem(sys.modules, "hoard_link.hub.windows_job", SimpleNamespace(open_worker_job=reopen))
+    monkeypatch.setattr(worker, "_wait_process", lambda _: 0)
+    worker.attach_job("recorded-job")
+    reopen.assert_called_once_with("recorded-job", 71)
+    assert worker.wait(stopping) == 0
+    assert job.terminate.call_count == int(not shutting_down)
+    job.close.assert_called_once_with()
