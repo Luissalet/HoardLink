@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 import http.client
 import json
+import secrets
 import socket
 import threading
 import time
@@ -53,8 +54,16 @@ def _private_hub(root, monkeypatch):
         "agent_watch": {"roots": {"codex": [str(observers)]}},
     }), encoding="utf-8")
     with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+        for _ in range(20):
+            # Stay outside the installed service ports and the normal Windows dynamic range.
+            port = 45000 + secrets.randbelow(2500)
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            break
+        else:
+            pytest.fail("No isolated loopback port available")
     cfg = HubConfig.load(env={
         "HOARD_HUB_PORT": str(port), "HOARD_HUB_DATA_DIR": str(data),
         "HOARD_HUB_ROOTS": str(roots),
@@ -229,6 +238,7 @@ def test_health_and_directory_under_agora_saturation(tmp_path, monkeypatch):
 def test_incremental_console_history_and_delta(tmp_path, monkeypatch):
     with _private_hub(tmp_path, monkeypatch) as (hub, console), _serve(hub) as port:
         with console._db() as db:
+            assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
             for n in range(40):
                 db.execute("INSERT INTO leader_turns(id,leader_id,message_id,prompt,model,effort,state,result,"
                            "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
