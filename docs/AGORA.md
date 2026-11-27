@@ -326,6 +326,24 @@ the Hub reads the app's Data module state. If the module is off or its state
 cannot be confirmed, the launch is rejected with a message in English and Spanish.
 Open the app and enable Data there before launching a task that needs those tools.
 
+In `estudio`, a Vitruvius scope that grants `app_project_update` also gets
+`app_project_patch` when the app's catalogue lists it. Keep `app_project_undo`
+in the scope to undo edits. At the 16-tool limit, the patch takes the slot of
+`app_project_edit_source` because literal replacements can also edit HTML
+source. This leaves the grant for archiving the finished project in place.
+A full custom scope without that slot keeps its grants and gets a warning.
+If the catalogue is unavailable or lacks the patch, creation continues and
+shows a warning. Create a new worker once the catalogue lists the patch.
+
+En `estudio`, un ámbito de Vitruvius con `app_project_update` también recibe
+`app_project_patch` cuando figura en el catálogo. Conserva `app_project_undo`
+para deshacer ediciones. Al llegar a 16 herramientas, el parche ocupa el hueco
+de `app_project_edit_source` porque los reemplazos literales también permiten
+editar el HTML. Así se conserva el permiso para archivar el proyecto terminado.
+Un ámbito personalizado lleno sin ese hueco conserva sus permisos y muestra un
+aviso. Si el catálogo no está disponible o carece del parche, el alta continúa
+y muestra un aviso. Crea otro trabajador cuando el parche figure en el catálogo.
+
 For a reversible DOCX, declare `wh_document_new`, `wh_document_save_new`,
 `wh_document_open`, `wh_document_text`, `wh_document_close` and
 `wh_document_save_undo`. The exclusive save creates a new file in a declared

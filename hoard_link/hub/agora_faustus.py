@@ -30,6 +30,7 @@ TUTOR_TOOL = "hub_agora_apprentice_instinct"
 WORKER_APPROVAL_MODE = "auto"
 REGISTRATION_TIMEOUT_S = 5 * 60
 MAX_RELATED_TASK_IDS = 8
+MAX_APP_TOOLS = 16
 DECLARED_PATHS = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -37,7 +38,7 @@ DECLARED_PATHS = {
            for key in ("read_paths", "write_paths")},
         "apps": {"type": "object", "maxProperties": 8,
                  "description": "App IDs and exact tool IDs for this production task. IDs de aplicaciones y herramientas de esta tarea.",
-                 "additionalProperties": {"type": "array", "minItems": 1, "maxItems": 16,
+                 "additionalProperties": {"type": "array", "minItems": 1, "maxItems": MAX_APP_TOOLS,
                                           "items": {"type": "string", "minLength": 1, "maxLength": 100}}},
     },
 }
@@ -191,13 +192,58 @@ def file_scope(workspace: str, declared: Any = None, proposal: dict | None = Non
     apps = (declared or {}).get("apps", {})
     if (not isinstance(apps, dict) or len(apps) > 8
             or any(not isinstance(app, str) or not 1 <= len(app) <= 64
-                   or not isinstance(tools, list) or not 1 <= len(tools) <= 16
+                   or not isinstance(tools, list) or not 1 <= len(tools) <= MAX_APP_TOOLS
                    or any(not isinstance(tool, str) or not 1 <= len(tool) <= 100 for tool in tools)
                    for app, tools in apps.items())):
         raise ValueError("Declare exact app and tool IDs. / Declara los identificadores exactos de aplicaciones y herramientas.")
     if apps:
         scope["apps"] = apps
     return scope
+
+
+def frontend_patch_scope(hub: Any, scope: dict, *, studio: bool) -> tuple[dict, dict[str, str] | None]:
+    """Resolve the optional source patch for a worker with an explicit Vitruvius grant."""
+    apps = scope.get("apps", {})
+    tools = apps.get("vitruvius", [])
+    patch = "app_project_patch"
+    update = "app_project_update"
+    source_edit = "app_project_edit_source"
+    if patch not in tools and (not studio or update not in tools):
+        return scope, None
+
+    tools = list(dict.fromkeys(tools))
+    catalogue = hub.app_tools("vitruvius")  # Passive discovery, including when the app is closed.
+    warning = None
+    if not catalogue.get("ok"):
+        warning = {
+            "es": f"No se pudo consultar el catálogo de Vitruvius. El trabajador se ha creado sin {patch}.",
+            "en": f"The Vitruvius catalogue could not be read. The worker was created without {patch}.",
+        }
+    elif not any(isinstance(spec, dict) and spec.get("name") == patch for spec in catalogue["tools"]):
+        warning = {
+            "es": f"La versión disponible de Vitruvius no ofrece {patch}. El trabajador se ha creado sin esa herramienta.",
+            "en": f"The available version of Vitruvius does not offer {patch}. The worker was created without it.",
+        }
+    if warning:
+        tools = [tool for tool in tools if tool != patch]
+    elif patch not in tools:
+        if len(tools) == MAX_APP_TOOLS and source_edit not in tools:
+            return scope, {
+                "es": f"Vitruvius ya tiene {MAX_APP_TOOLS} herramientas en esta alta. El trabajador se ha creado sin {patch}. "
+                      "Libera un hueco en el ámbito y crea otro trabajador para usarla.",
+                "en": f"This launch already grants {MAX_APP_TOOLS} Vitruvius tools. The worker was created without {patch}. "
+                      "Free a slot in the scope and create another worker to use it.",
+            }
+        if len(tools) == MAX_APP_TOOLS:
+            tools = [patch if tool == source_edit else tool for tool in tools]
+        else:
+            tools = [*tools, patch]
+
+    apps = {**apps, "vitruvius": tools} if tools else {app: grant for app, grant in apps.items() if app != "vitruvius"}
+    scope = {key: value for key, value in scope.items() if key != "apps"}
+    if apps:
+        scope["apps"] = apps
+    return scope, warning
 
 
 def worker_order(console: Any, task_id: int | None, apps: dict) -> int | None:
@@ -445,6 +491,7 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
     if dedicated:
         scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
         scope = production_scope(console, agent, scope, task_id)
+        scope, warning = frontend_patch_scope(console.hub, scope, studio=console.space_id == STUDIO)
         if task_id is not None and (scope.get("production") or {}).get("order_id") is None:
             warning = order_warning(task_id)
         require_app_modules(console.hub, scope.get("apps", {}))
