@@ -87,6 +87,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from ..agent_journal import clean_identity
 from . import HUB_VERSION, SERVICE
 from .core import Hub
+from .agora_http import AgoraBusy, AgoraHTTP
+from .directory import AppDirectory
+from .hub_app_calls import HUB_IDS
 from . import desktop, tools, autostart, profile_editor, portable_profiles
 from .isolation import passive_error
 from . import agent_routes, ui_session, voice_routing
@@ -103,6 +106,7 @@ UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 #: The family's shared theme (hoard_link/ui/hoard-theme.css), served as /ui/hoard-theme.css.
 THEME_CSS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "hoard-theme.css")
 MAX_BODY = 256 * 1024
+HUB_APP_CALLS = frozenset(f"/api/apps/{app}/call" for app in HUB_IDS)
 PROXY_MAX_BODY = 4 * 1024 * 1024  # authenticated chapter/document handoffs
 
 
@@ -116,6 +120,31 @@ def _client_disconnected(exc: BaseException) -> bool:
             or getattr(exc, "errno", None) in (errno.EPIPE, errno.ECONNRESET, errno.ECONNABORTED))
 
 
+class _HubServer(ThreadingHTTPServer):
+    # A short burst of simultaneous worker heartbeats must not fill the TCP listen queue.
+    request_queue_size = 128
+    daemon_threads = True
+
+    def __init__(self, address, handler, hub):
+        super().__init__(address, handler)
+        self.agora_work = AgoraHTTP()
+        self.directory = AppDirectory(hub)
+        self.directory.start()
+
+    def shutdown(self):
+        super().shutdown()
+        self._close_workers()
+
+    def server_close(self):
+        self._close_workers()
+        super().server_close()
+
+    def _close_workers(self):
+        if hasattr(self, "directory"):
+            self.directory.close()
+            self.agora_work.close()
+
+
 def make_server(hub: Hub, host: str = "127.0.0.1", port: Optional[int] = None) -> ThreadingHTTPServer:
     port = hub.config.port if port is None else port
 
@@ -124,9 +153,7 @@ def make_server(hub: Hub, host: str = "127.0.0.1", port: Optional[int] = None) -
 
     Handler.hub = hub
     Handler.ui_sessions = ui_session.BrowserSessions(hub.config.data_dir, hub.config.url)
-    server = ThreadingHTTPServer((host, port), Handler)
-    server.daemon_threads = True
-    return server
+    return _HubServer((host, port), Handler, hub)
 
 
 class _HubHandler(BaseHTTPRequestHandler):
@@ -505,6 +532,17 @@ class _HubHandler(BaseHTTPRequestHandler):
             raise
 
     # -- facets (0.7) ----------------------------------------------------------
+    def _agora_busy(self):
+        self._json({"ok": False, "code": "agora_busy", "error": "The Agora is busy. Try again shortly."}, 503)
+
+    def _invoke_agent(self, name, args, identity):
+        invoke = lambda: agent_routes.invoke(self.hub, name, args, **identity)
+        if not name.startswith("hub_agora_"):
+            return invoke()
+        if name == "hub_agora_console_overview" and (args.get("view") or args.get("since")):
+            name = "overview_delta"
+        return self.server.agora_work.call(name, invoke, wait_s=args.get("wait_s"))
+
     def _facet(self, method: str, path: str, query: dict[str, list[str]], body: dict[str, Any]) -> bool:
         """Let the facets answer; True when one did."""
         from . import facets as _facets
@@ -514,7 +552,22 @@ class _HubHandler(BaseHTTPRequestHandler):
 
         req = _facets.Request(method=method, path=path, query=query, body=body, caller=self._family_caller,
                               agent=agent, headers=self.headers)
-        res = _facets.dispatch(getattr(self.hub, "facets", []), req)
+        dispatch = lambda: _facets.dispatch(getattr(self.hub, "facets", []), req)
+        operation = ""
+        wait_s = req.q("wait_s")
+        if path == "/api/agora" or path.startswith("/api/agora/"):
+            operation = path.rsplit("/", 1)[-1]
+            if operation == "overview" and (req.q("view") or req.q("since")):
+                operation = "overview_delta"
+        elif method == "POST" and path in HUB_APP_CALLS:
+            name = str(body.get("tool") or body.get("name") or "")
+            if name.startswith("hub_agora_"):
+                args = body.get("arguments") or body.get("args") or {}
+                args = args if isinstance(args, dict) else {}
+                operation = "overview_delta" if name == "hub_agora_console_overview" and (
+                    args.get("view") or args.get("since")) else name
+                wait_s = args.get("wait_s")
+        res = self.server.agora_work.call(operation, dispatch, wait_s=wait_s) if operation else dispatch()
         if res is None:
             return False
         if isinstance(res, _facets.Reply):
@@ -579,17 +632,23 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if rel.startswith("..") or rel.startswith("/"):
                     return self._json({"ok": False, "error": "not found"}, 404)
                 return self._file(os.path.join(UI_DIR, rel), cache=False)
+            if path == "/api/health":
+                return self._json({"ok": True, "service": SERVICE, "version": HUB_VERSION, "apps": hub.app_count,
+                                   "url": hub.config.url})
+            if path == "/api/apps":
+                return self._json(self.server.directory.list())
+            parts = path.split("/")
+            if parts[1:3] == ["api", "apps"] and (len(parts) == 4 or (len(parts) == 5 and parts[4] == "status")):
+                app = hub.get(parts[3])
+                if app is None:
+                    return self._json({"ok": False, "error": "unknown app"}, 404)
+                return self._json(self.server.directory.status(app))
             if self._facet("GET", path, query, {}):
                 return None
-            if path == "/api/health":
-                return self._json({"ok": True, "service": SERVICE, "version": HUB_VERSION, "apps": len(hub.apps),
-                                   "url": hub.config.url})
             if path == "/api/family/caller":
                 return self._mail_helper_caller()
             if path == "/api/family/mail-apps":
                 return self._json({"ok": True, "apps": self._mail_apps()})
-            if path == "/api/apps":
-                return self._json(hub.snapshot())
             if path == "/api/faustus":
                 return self._json(hub.faustus_status())
             if path == "/api/placement":
@@ -696,14 +755,11 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return None
                 tool = agent_routes.describe(path)
                 return self._json(tool if tool else {"ok": False, "error": "unknown tool"}, 200 if tool else 404)
-            parts = path.split("/")
             if len(parts) >= 4 and parts[1] == "api" and parts[2] == "apps":
                 app = hub.get(parts[3])
                 if app is None:
                     return self._json({"ok": False, "error": "unknown app"}, 404)
                 sub = parts[4] if len(parts) > 4 else ""
-                if sub == "" or (sub == "status" and len(parts) == 5):
-                    return self._json(hub.app_status(app))
                 if sub == "icon":
                     icon_path = app.icon_path      # read once: a snapshot on another thread may reset it meanwhile
                     if icon_path and os.path.isfile(icon_path):
@@ -720,6 +776,8 @@ class _HubHandler(BaseHTTPRequestHandler):
             if _client_disconnected(exc):
                 self.close_connection = True
                 return None
+            if isinstance(exc, AgoraBusy):
+                return self._agora_busy()
             logger.exception("GET %s failed", path)
             return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
 
@@ -790,7 +848,7 @@ class _HubHandler(BaseHTTPRequestHandler):
                 tool = agent_routes.describe(path)
                 if tool is None:
                     return self._json({"ok": False, "error": "unknown tool"}, 404)
-                result, status = agent_routes.invoke(hub, tool["name"], body, **self._agent_identity())
+                result, status = self._invoke_agent(tool["name"], body, self._agent_identity())
                 return self._json(result, status)
             if self._facet("POST", path, parse_qs(urlsplit(self.path).query), body):
                 return None
@@ -799,8 +857,8 @@ class _HubHandler(BaseHTTPRequestHandler):
                     return None
                 name = str(body.get("tool") or body.get("name") or "")
                 args = body.get("arguments") or body.get("args") or {}
-                result, status = agent_routes.invoke(hub, name, args if isinstance(args, dict) else {},
-                                                     **self._agent_identity(body))
+                result, status = self._invoke_agent(name, args if isinstance(args, dict) else {},
+                                                    self._agent_identity(body))
                 return self._json(result, status)
             if path in ("/api/lease/request", "/api/lease/renew", "/api/lease/release",
                         "/api/lease/bind-process", "/api/lease/reserve-service"):
@@ -986,6 +1044,8 @@ class _HubHandler(BaseHTTPRequestHandler):
             if _client_disconnected(exc):
                 self.close_connection = True
                 return None
+            if isinstance(exc, AgoraBusy):
+                return self._agora_busy()
             logger.exception("POST %s failed", path)
             return self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
 

@@ -60,6 +60,7 @@ class Hub:
         self.fixture_root = fixture_root
         self.fixture_jobs = fixture_jobs
         self._apps: dict[str, App] = {}
+        self._snapshot_epoch = object()
         self._lock = threading.RLock()
         # Starts in flight: app id -> (pid, spawned at). A start that is not
         # ready yet must not be spawned a second time (open() right after a
@@ -239,16 +240,20 @@ class Hub:
 
     @property
     def apps(self) -> list[App]:
-        with self._lock:
-            return list(self._apps.values())
+        # Rescan publishes a new map as a whole. Readers need no lock while it is prepared.
+        return list(self._apps.values())
+
+    @property
+    def app_count(self) -> int:
+        return len(self._apps)
 
     def get(self, app_id: str) -> Optional[App]:
-        with self._lock:
-            app = self._apps.get(app_id)
-            if app is not None:
-                return app
-            alternate = _VOICE_APP_TRANSITION.get(app_id)
-            app = self._apps.get(alternate) if alternate else None
+        apps = self._apps
+        app = apps.get(app_id)
+        if app is not None:
+            return app
+        alternate = _VOICE_APP_TRANSITION.get(app_id)
+        app = apps.get(alternate) if alternate else None
         if app is not None:
             log.warning("App ID %s resolved to %s during the voice app transition", app_id, app.id)
         return app
@@ -297,15 +302,16 @@ class Hub:
         lock = self.__dict__.setdefault("_snapshot_lock", threading.Lock())
         with lock:
             cached = self.__dict__.get("_snapshot_cache")
-            if cached and time.monotonic() - cached[0] < self.SNAPSHOT_REUSE_S and cached[1] == self.__dict__.get("_snapshot_epoch", 0):
+            if cached and time.monotonic() - cached[0] < self.SNAPSHOT_REUSE_S and cached[1] is self._snapshot_epoch:
                 return cached[2]
+            epoch = self._snapshot_epoch
             data = self._snapshot_now()
-            self._snapshot_cache = (time.monotonic(), self.__dict__.get("_snapshot_epoch", 0), data)
+            self._snapshot_cache = (time.monotonic(), epoch, data)
             return data
 
     def invalidate_snapshot(self) -> None:
         """After an action the next read must probe again, not reuse the moment-old answer."""
-        self._snapshot_epoch = self.__dict__.get("_snapshot_epoch", 0) + 1
+        self._snapshot_epoch = object()
 
     def _snapshot_now(self) -> dict[str, Any]:
         if self.config.isolated:
@@ -328,12 +334,12 @@ class Hub:
                        "remote_url": remote_faustus["url"], "remote_detail": remote_faustus["detail"]}
         return self._snapshot_data(apps, windows, faustus)
 
-    def _snapshot_data(self, apps, windows, faustus):
+    def _snapshot_data(self, apps, windows, faustus, *, sampled=True):
         isolated = self.config.isolated
-        profiles = self.profiles_status({a["id"]: a["state"] for a in apps})
+        profiles = self.profiles_status({a["id"]: a["state"] for a in apps}) if sampled else {"profiles": []}
         running = sum(1 for a in apps if a["state"] == "running")
         keepalive = self.facet("keepalive")
-        kept = set(keepalive.apps()) if keepalive is not None and not isolated else set()
+        kept = set(keepalive.apps()) if sampled and keepalive is not None and not isolated else set()
         for a in apps:
             a["keep_alive"] = a["id"] in kept
         return {
@@ -344,12 +350,14 @@ class Hub:
                        "windows": sum(len(v) for k, v in windows.items() if not k.startswith("_"))},
             "roots": list(self.config.roots),
             "faustus": faustus,
-            "placement": {"ok": True, "location": "pc", "isolated": True} if isolated else self.placement.status(),
+            "placement": ({"ok": True, "location": "pc", "isolated": True} if isolated
+                          else self.placement.status() if sampled else {"ok": False, "location": "unknown"}),
             "profiles": profiles["profiles"],
             "hub": {"url": self.config.url, "data_dir": self.config.data_dir, "uptime_s": int(time.time() - self.started_at),
-                    "browser": None if isolated else desktop.find_browser(self.config.browser),
-                    "window_engine": "headless" if isolated else desktop.window_engine(self.config.window_engine),
-                    "psutil": procs._psutil() is not None,
+                    "browser": desktop.find_browser(self.config.browser) if sampled and not isolated else None,
+                    "window_engine": ("headless" if isolated else desktop.window_engine(self.config.window_engine)
+                                      if sampled else self.config.window_engine),
+                    "psutil": procs._psutil() is not None if sampled else None,
                     "events": self.events.last_id, "rules": len(self.rules.rules), "jobs": len(self.jobs.jobs),
                     "backup_dir": self.backups.root},
         }
