@@ -174,12 +174,66 @@ def test_create_process_assigns_job_and_desktop_without_console_window(monkeypat
     monkeypatch.setattr(windows_job, "_delete_attrs", Mock())
     monkeypatch.setattr(windows_job, "_create_process", create)
     monkeypatch.setattr(windows_job, "_close", close)
-    info = windows_job._launch((SimpleNamespace(handle=35),), ["runner.exe"], str(tmp_path),
+    info = windows_job._launch((SimpleNamespace(handle=35, name=None),), ["runner.exe"], str(tmp_path),
                                {}, object(), desktop="Station\\Worker", desktop_handle=13,
                                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS)
     assert info.pid == 43
     assert attrs == {windows_job._HANDLE_LIST: [11, 12, 13], windows_job._JOB_LIST: [35]}
     close.assert_called_once_with(42)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows API declarations")
+@pytest.mark.parametrize("named, created", [(True, True), (True, False), (False, True)],
+                         ids=["named-job", "launch-failed", "fixture-job"])
+def test_worker_job_name_has_a_query_handle_in_the_child(monkeypatch, tmp_path, named, created):
+    from ctypes import POINTER, c_size_t, cast
+    from ctypes.wintypes import HANDLE
+    from hoard_link.hub import windows_job
+
+    file_handles = iter([11, 12])
+    monkeypatch.setattr(windows_job, "_inherit", lambda file, stack: next(file_handles))
+    monkeypatch.setattr(windows_job, "_current", lambda: 91)
+
+    def duplicate(source, handle, destination, result, access, inheritable, options):
+        assert (source, handle, destination, access, inheritable, options) == (91, 35, 91, 4, True, 0)
+        cast(result, POINTER(HANDLE))[0] = 56
+        return True
+
+    def initialize(buffer, count, flags, size):
+        cast(size, POINTER(c_size_t))[0] = 64
+        return buffer is not None
+
+    def create(*args):
+        assert args[4] is True  # bInheritHandles
+        if not created:
+            windows_job.c.set_last_error(5)
+            return False
+        cast(args[-1], POINTER(windows_job._ProcessInfo))[0].thread = 42
+        return True
+
+    dup, update, close = Mock(side_effect=duplicate), Mock(return_value=True), Mock()
+    monkeypatch.setattr(windows_job, "_duplicate", dup)
+    monkeypatch.setattr(windows_job, "_init_attrs", initialize)
+    monkeypatch.setattr(windows_job, "_update_attrs", update)
+    monkeypatch.setattr(windows_job, "_delete_attrs", Mock())
+    monkeypatch.setattr(windows_job, "_create_process", create)
+    monkeypatch.setattr(windows_job, "_close", close)
+    job = SimpleNamespace(name="HoardWorker_" + "a" * 32 if named else None, handle=35)
+    args = ((job,), ["runner.exe"], str(tmp_path), {}, object())
+    if created:
+        windows_job._launch(*args, desktop_handle=13)
+    else:
+        with pytest.raises(OSError) as error:
+            windows_job._launch(*args, desktop_handle=13)
+        assert error.value.winerror == 5
+
+    handles = [11, 12, 13, 56] if named else [11, 12, 13]
+    assert {call.args[2]: list(call.args[3]) for call in update.call_args_list} == {
+        windows_job._HANDLE_LIST: handles, windows_job._JOB_LIST: [35],
+    }
+    assert dup.call_count == int(named)
+    # The Hub drops its temporary duplicate on either outcome, keeping its control handle.
+    assert [call.args[0] for call in close.call_args_list] == ([42] if created else []) + ([56] if named else [])
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows API declarations")

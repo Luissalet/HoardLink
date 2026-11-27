@@ -20,6 +20,8 @@ _JOB_LIST = 0x2000D
 _EXTENDED_STARTUPINFO = 0x80000
 _UNICODE_ENVIRONMENT = 0x400
 _KILL_ON_CLOSE = 0x2000
+_JOB_QUERY = 0x0004
+_JOB_TERMINATE = 0x0008
 _WAIT_TIMEOUT = 258
 _INFINITE = 0xFFFFFFFF
 _WORKER_NAME = re.compile(r"HoardWorker_[0-9a-f]{32}")
@@ -117,7 +119,7 @@ class _Job:
             if c.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
                 self.close()
                 raise FileExistsError(name)
-            # Worker membership holds the named job alive across Hub restarts.
+            # The worker keeps a query handle so its job name can be reopened.
             return
         limits = _ExtendedLimits()
         limits.basic.flags = _KILL_ON_CLOSE
@@ -151,7 +153,7 @@ def open_worker_job(name, pid):
     with ExitStack() as resources:
         process = _check(_open_process(0x1000, False, pid))  # PROCESS_QUERY_LIMITED_INFORMATION
         resources.callback(_close, process)
-        handle = _check(_open_job(0xC, False, name))  # JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE
+        handle = _check(_open_job(_JOB_QUERY | _JOB_TERMINATE, False, name))
         try:
             member = w.BOOL()
             _check(_in_job(process, handle, c.byref(member)))
@@ -165,12 +167,17 @@ def open_worker_job(name, pid):
     return job
 
 
-def _inherit(file, stack):
+def _inherit_handle(handle, stack, *, access=None):
     result = w.HANDLE()
     current = _current()
-    _check(_duplicate(current, msvcrt.get_osfhandle(file.fileno()), current, c.byref(result), 0, True, 2))
-    stack.callback(_close, result)
+    options = 2 if access is None else 0  # DUPLICATE_SAME_ACCESS for file handles
+    _check(_duplicate(current, handle, current, c.byref(result), access or 0, True, options))
+    stack.callback(_close, result.value)
     return result.value
+
+
+def _inherit(file, stack):
+    return _inherit_handle(msvcrt.get_osfhandle(file.fileno()), stack)
 
 
 def _launch(jobs, argv, cwd, env, log, *, desktop=None, desktop_handle=None, creationflags=0):
@@ -180,7 +187,13 @@ def _launch(jobs, argv, cwd, env, log, *, desktop=None, desktop_handle=None, cre
     with ExitStack() as stack:
         null = stack.enter_context(open(os.devnull, "rb"))
         stdin, output = _inherit(null, stack), _inherit(log, stack)
-        inherited = (stdin, output) if desktop_handle is None else (stdin, output, desktop_handle)
+        inherited = [stdin, output]
+        if desktop_handle is not None:
+            inherited.append(desktop_handle)
+        # A process can remain in a job after its name is no longer openable.
+        # Retain the name with a worker-owned handle that grants only query access.
+        inherited.extend(_inherit_handle(job.handle, stack, access=_JOB_QUERY)
+                         for job in jobs if job.name is not None)
         handles = (w.HANDLE * len(inherited))(*inherited)
         job_handles = (w.HANDLE * len(jobs))(*(job.handle for job in jobs))
         size = c.c_size_t()
