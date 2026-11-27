@@ -23,6 +23,7 @@ from typing import Any, Optional
 from .._hubclient import NoRedirect
 from ..bridge import agent_headers
 from . import DEFAULT_PORT, HUB_VERSION, SERVICE, app_catalogue
+from .agora_orders import ORDER_TOOL, WORKER_ORDER_TASK_ENV, WORKER_ORDER_TASK_HEADER
 from .link_check import TOOL_NAME as LINK_CHECK_TOOL
 from .link_probes import EXCLUDED_PORTS
 from .order_receipts import CALL, CONTEXT, request_context
@@ -68,6 +69,8 @@ def _request(method: str, path: str, body: Optional[dict[str, Any]] = None, time
         if body.get("tool") == app_catalogue.NAME and scope is not None:
             app = (body.get("arguments") or {}).get("app")
             headers[app_catalogue.SCOPE_HEADER] = app_catalogue.app_scope_header(scope, app)
+        if body.get("tool") == ORDER_TOOL and (task_scope := os.environ.get(WORKER_ORDER_TASK_ENV)) is not None:
+            headers[WORKER_ORDER_TASK_HEADER] = task_scope
     req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
     handlers = [urllib.request.ProxyHandler({})]
     if passive:

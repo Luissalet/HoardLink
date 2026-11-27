@@ -93,7 +93,7 @@ from .directory import AppDirectory
 from .hub_app_calls import HUB_IDS
 from . import desktop, tools, autostart, profile_editor, portable_profiles
 from .isolation import passive_error
-from . import agent_routes, app_catalogue, stream_gateway, ui_session, voice_routing
+from . import agent_routes, agora_orders, app_catalogue, stream_gateway, ui_session, voice_routing
 from .browser_lanes import LaneError
 from .lease import LeaseError
 from .rules import example_rules
@@ -549,6 +549,8 @@ class _HubHandler(BaseHTTPRequestHandler):
     def _invoke_agent(self, name, args, identity):
         if name == app_catalogue.NAME:
             args = app_catalogue.request_arguments(args, self.headers.get(app_catalogue.SCOPE_HEADER))
+        if name == agora_orders.ORDER_TOOL:
+            args = agora_orders.order_read_arguments(args, self.headers.get(agora_orders.WORKER_ORDER_TASK_HEADER))
         invoke = lambda: agent_routes.invoke(self.hub, name, args, **identity)
         if not name.startswith("hub_agora_"):
             return invoke()

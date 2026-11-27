@@ -60,6 +60,12 @@ STORE_MAX = 2 * 1024 ** 3
 #: A local web page is kept with its folder (styles, scripts, images) up to this size.
 SITE_MAX = 64 * 1024 ** 2
 TEXT_MAX = 20000
+ORDER_TOOL = "hub_agora_order"
+WORKER_ORDER_TASK_ENV = "HOARD_WORKER_ORDER_TASK"
+WORKER_ORDER_TASK_HEADER = "X-Hoard-Worker-Order-Task"
+_WORKER_ORDER_TASK = "_worker_order_task"
+_ORDER_SUMMARY_BYTES = 7400
+_ORDER_SUMMARY_JOBS = 10
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"}
 VIDEO_EXT = {".mp4", ".webm", ".mov", ".m4v"}
@@ -936,10 +942,82 @@ def pending_decisions(self: Any, a: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "rows": rows, "counts": counts}
 
 
+def order_read_arguments(args: dict, task_header: str | None) -> dict:
+    """The bridge supplies worker context separately from model arguments."""
+    args = {key: value for key, value in args.items() if key != _WORKER_ORDER_TASK}
+    if task_header is not None:
+        task_id = int(task_header) if re.fullmatch(r"[0-9]{1,19}", task_header) else 0
+        args[_WORKER_ORDER_TASK] = task_id if task_id < 2**63 else 0
+    return args
+
+
+def _order_excerpt(value: str | None, length: int) -> str:
+    value = value or ""
+    return value[:length] + "…" if len(value) > length else value
+
+
+def _fits_order_summary(result: dict) -> bool:
+    # The stdio bridge embeds pretty-printed JSON as text in its JSON-RPC reply.
+    text = json.dumps(result, ensure_ascii=False, indent=1)
+    return len(json.dumps(text, ensure_ascii=False).encode("utf-8")) <= _ORDER_SUMMARY_BYTES
+
+
+def _with_task_body(self: Any, detail: dict[str, Any]) -> dict[str, Any]:
+    if detail["task"] is not None:
+        detail["task"]["body"] = self.db.scalar("SELECT body FROM tasks WHERE id=?", (detail["task_id"],), "")
+    return detail
+
+
+def _worker_order_summary(self: Any, row: dict[str, Any], task_id: int) -> dict[str, Any]:
+    oid = row["id"]
+    params = (oid, self.space_id)
+    plan = []
+    total = self.db.scalar("SELECT COUNT(*) FROM agora_order_jobs WHERE order_id=? AND space_id=? AND removed=0",
+                           params, 0)
+    out = {"id": oid, "title": _order_excerpt(row["title"], 100), "status": row["status"],
+           "words": _order_excerpt(row["words"], 400), "plan": plan, "summary": True,
+           "jobs_omitted": total}
+    result = {"ok": True, "order": out}
+    own = self.db.one("SELECT * FROM agora_order_jobs WHERE order_id=? AND space_id=? AND removed=0 AND task_id=?",
+                      (*params, task_id))
+    if own is not None:
+        detail = _with_task_body(self, _job_dict(self, dict(own)))
+        plan.append(detail)
+        if not _fits_order_summary(result):
+            task = detail["task"] or {}
+            plan[0] = {
+                "task_id": task_id, "station": _order_excerpt(detail["station"], 60),
+                "skill": _order_excerpt(detail["skill"], 60), "check_how": _order_excerpt(detail["check_how"], 80),
+                "task": {"id": task_id, "title": _order_excerpt(task.get("title"), 100),
+                         "status": task.get("status"), "body": _order_excerpt(task.get("body"), 160)},
+                "detail_truncated": True,
+            }
+    for peer in self.db.query(
+        "SELECT j.task_id, t.title, t.status FROM agora_order_jobs j LEFT JOIN tasks t ON t.id=j.task_id "
+        "WHERE j.order_id=? AND j.space_id=? AND j.removed=0 AND j.task_id<>? "
+        "ORDER BY j.position, j.task_id LIMIT ?", (*params, task_id, _ORDER_SUMMARY_JOBS),
+    ):
+        plan.append({"task_id": peer["task_id"], "title": _order_excerpt(peer["title"], 72), "status": peer["status"]})
+        if not _fits_order_summary(result):
+            plan.pop()
+            break
+    out["jobs_omitted"] = total - len(plan)
+    return result
+
+
 def order(self: Any, a: dict[str, Any]) -> dict[str, Any]:
-    """One order whole: its words and references, the plan with each job's task state, every piece with its
-    checks and defects, the gates and the person's decisions."""
+    """Read the full order, a worker's summary or one explicitly requested job."""
     row = _order_row(self, a.get("order_id"))
+    if a.get("job") is not None:
+        tid = _int(a["job"], "job")
+        if not self.db.one("SELECT 1 FROM agora_order_jobs WHERE order_id=? AND space_id=? AND task_id=?",
+                           (row["id"], self.space_id, tid)):
+            raise _err(f"task #{tid} is not a job of order #{row['id']} in space {self.space_id}", 404)
+        selected = job(self, {"task_id": tid})
+        _with_task_body(self, selected["job"])
+        return selected
+    if _WORKER_ORDER_TASK in a and a.get("full") is not True:
+        return _worker_order_summary(self, row, a[_WORKER_ORDER_TASK])
     out = _with_dossier(self, _summary(self, row), row)
     oid = row["id"]
     out["plan"] = _plan(self, oid)
@@ -2077,10 +2155,13 @@ def tools(schema: Any, agent_prop: dict[str, Any]) -> list[dict[str, Any]]:
                         "thumbnails, pending gates, and the date and reason for automatic deliveries.",
          "inputSchema": schema({"status": {"type": "string", "enum": list(ORDER_STATES)}, "all_spaces": {"type": "boolean"},
                                 "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, [])},
-        {"name": "hub_agora_order", "read": True,
-         "description": "One order whole: the person's words, references and live app checks, the plan with each job's task state, every "
-                        "piece with checks, defects and what derives from it, the gates and the decisions.",
-         "inputSchema": schema({"order_id": order_id}, ["order_id"])},
+        {"name": ORDER_TOOL, "read": True,
+         "description": "Read a production order. Scoped workers get a short order and their own job by default. "
+                        "Use full for the complete order or job with a task ID for that job's packet. / "
+                        "Trabajadores acotados: resumen y trabajo propio. Usa full para la orden completa o job para un trabajo.",
+         "inputSchema": schema({"order_id": order_id, "full": {"type": "boolean"},
+                                "job": {"type": "integer", "minimum": 1, "description": "Task ID in this order."}},
+                               ["order_id"])},
         {"name": "hub_agora_order_create",
          "description": "Create an order with starting materials (refs), deliverables, details to keep and an optional "
                         "dossier (audience, constraints, native context). Reports live app reference checks." + undo,

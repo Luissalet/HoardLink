@@ -21,6 +21,7 @@ from typing import Any
 
 from .agora_worker_launch import launch_worker
 from .app_catalogue import SCOPE_ENV
+from .agora_orders import WORKER_ORDER_TASK_ENV
 from .faustus_endpoint_key import read_endpoint_key
 
 STUDIO = "estudio"
@@ -508,6 +509,7 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
     base = f"http://127.0.0.1:{port}"
     env = console._runner_env()
     env.pop(SCOPE_ENV, None)
+    env[WORKER_ORDER_TASK_ENV] = str(production["task_id"]) if production else "0"
     if file_scope.get("apps"):
         env[SCOPE_ENV] = json.dumps(file_scope["apps"])
     env["FAUSTUS_AGORA_WORKER_SPACE"] = console.space_id
