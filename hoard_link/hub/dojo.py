@@ -30,7 +30,8 @@ OPERATIONS = {
 
 TOOL = {
     "name": "hub_dojo",
-    "description": "Use Dojo as a teacher: exams and keys, launch, compare attempts, mark, lessons, round import and undo. Keywords: examen, nota.",
+    "description": "Use Dojo as a teacher for exams, attempts, marks and lessons. Keywords: examen, nota.\n"
+                   "Manage exam keys, launch and compare attempts, import rounds, and undo changes.",
     "inputSchema": {"type": "object", "properties": {
         "operation": {"type": "string", "enum": list(OPERATIONS)},
         "arguments": {"type": "object", "description": "Arguments of the matching dojo_<operation> tool."},
