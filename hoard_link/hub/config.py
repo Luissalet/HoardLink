@@ -155,6 +155,7 @@ class HubConfig:
     # having read what others wrote there since (never a block; docs/AGORA.md). Default warn.
     agora: dict[str, Any] = field(default_factory=dict)
     person: dict[str, str] = field(default_factory=dict)  # stable id and editable display name
+    directory_health_excluded_apps: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self._saved_payload = self._payload()

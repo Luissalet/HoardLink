@@ -103,6 +103,8 @@ python -m hoard_link.hub --install-autostart  # arranca al iniciar sesión en Wi
 
 En Windows, doble clic en `Hoard Hub.cmd`. La configuración vive en `data/hub.json` (`roots`, `browser`, `window_engine`, `faustus_dir`, `profiles`, `launch_overrides`, `lease_headroom_mb`, `language`, `repos` y más) o en variables `HOARD_HUB_*`. Cerrar la ventana para el Hub; las apps que arrancó siguen funcionando.
 
+Para omitir las consultas automáticas de salud local de algunas apps, añade `"directory_health_excluded_apps": ["app-de-ejemplo"]` en `data/hub.json`. El Hub lee esta lista al arrancar. Está vacía de forma predeterminada. Usa los identificadores del directorio. Las apps siguen visibles, y en la API aparecen con `health_check_excluded: true` y sin hora de comprobación. La salud local figura como desconocida. Las acciones explícitas y el comprobador de enlaces de la familia tienen sus propios ajustes.
+
 Usar Hoard Link en una app: copia entero el directorio `hoard_link/` dentro de la app (sin editar la copia) y usa
 
 ```python

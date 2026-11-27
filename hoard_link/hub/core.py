@@ -318,16 +318,31 @@ class Hub:
             apps = [self.app_status(app) for app in self.apps]
             return self._snapshot_data(apps, {}, self.faustus_status())
         apps_now = self.apps
+        excluded_apps = self.config.directory_health_excluded_apps
+        if not isinstance(excluded_apps, list) or any(
+            not isinstance(app_id, str) or not app_id.strip() for app_id in excluded_apps
+        ):
+            raise ValueError("directory_health_excluded_apps must be a list of app IDs")
+        excluded_ids = {app_id.strip().casefold() for app_id in excluded_apps}
+
+        def directory_health(app):
+            if app.id.casefold() in excluded_ids:
+                return procs.Health("unknown")
+            return procs.health(app, listeners)
+
         # Every probe in parallel: a closed loopback port costs ~1s on
         # Windows, and a dozen of them in a row would make the page crawl.
         with ThreadPoolExecutor(max_workers=max(4, len(apps_now) + 3)) as pool:
             fut_windows = pool.submit(desktop.list_windows, self.config.profiles_dir)
             fut_faustus = pool.submit(self.faustus_status)
             listeners = procs.listening_pids()
-            healths = list(pool.map(lambda a: procs.health(a, listeners), apps_now))
+            healths = list(pool.map(directory_health, apps_now))
             windows = fut_windows.result()
             faustus = fut_faustus.result()
             apps = list(pool.map(lambda ah: self.app_status(ah[0], listeners, windows, ah[1]), zip(apps_now, healths)))
+        for app in apps:
+            if app["id"].casefold() in excluded_ids:
+                app["health_check_excluded"] = True
         remote_faustus = self.placement.remote_app("faustus")
         if remote_faustus is not None:
             faustus = {**faustus, "where": remote_faustus["where"], "remote_state": remote_faustus["state"],

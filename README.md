@@ -105,6 +105,8 @@ python -m hoard_link.hub --install-autostart  # start at Windows login (also --u
 
 On Windows, double-click `Hoard Hub.cmd`. Configuration lives in `data/hub.json` (`roots`, `browser`, `window_engine`, `faustus_dir`, `profiles`, `launch_overrides`, `lease_headroom_mb`, `language`, `repos` and more) or in `HOARD_HUB_*` environment variables. Closing the window stops the Hub; the apps it started keep running.
 
+To skip automatic local health requests for selected apps, set `"directory_health_excluded_apps": ["example-app"]` in `data/hub.json`. The Hub reads the list on startup. It is empty by default. Use app IDs from the directory. The apps stay visible, and their API rows show `health_check_excluded: true` with no health check timestamp. Local health appears as unknown. Explicit app actions and the family link check have their own settings.
+
 Using Hoard Link in an app: copy the whole `hoard_link/` directory into the app (never edit the copy), and use
 
 ```python
