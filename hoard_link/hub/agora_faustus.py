@@ -32,6 +32,11 @@ DECLARED_PATHS = {
     "properties": {
         **{key: {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 1024}}
            for key in ("read_paths", "write_paths")},
+        "read_budget": {
+            "type": "integer", "minimum": 0,
+            "description": "Reads before a draft reminder. Omit for 15 or set 0 to disable. "
+                           "Lecturas antes del aviso de borrador. Omite el valor para usar 15 o indica 0 para desactivar.",
+        },
         "apps": {"type": "object", "maxProperties": 8,
                  "description": "App IDs and exact tool IDs for this production task. IDs de aplicaciones y herramientas de esta tarea.",
                  "additionalProperties": {"type": "array", "minItems": 1, "maxItems": 16,
@@ -118,7 +123,8 @@ def _declared_paths(raw: Any) -> dict[str, list[str]]:
     if raw is None:
         raw = {}
     if not isinstance(raw, dict) or set(raw) - DECLARED_PATHS["properties"].keys():
-        raise ValueError("Use read_paths, write_paths and apps. / Usa read_paths, write_paths y apps.")
+        raise ValueError("Use read_paths, write_paths, apps and read_budget. "
+                         "/ Usa read_paths, write_paths, apps y read_budget.")
     out = {}
     for key in ("read_paths", "write_paths"):
         values = raw.get(key, [])
@@ -185,7 +191,14 @@ def file_scope(workspace: str, declared: Any = None, proposal: dict | None = Non
     scope = {"workspace": workspace,
              "read_paths": list(dict.fromkeys(roots["read_paths"] + proposal.get("read_paths", []))),
              "write_paths": roots["write_paths"], "read_files": proposal.get("read_files", [])}
-    apps = (declared or {}).get("apps", {})
+    declared = declared or {}
+    if "read_budget" in declared:
+        budget = declared["read_budget"]
+        if type(budget) is not int or budget < 0:
+            raise ValueError("read_budget must be a non-negative integer. "
+                             "/ read_budget debe ser un número entero igual o mayor que cero.")
+        scope["read_budget"] = budget
+    apps = declared.get("apps", {})
     if (not isinstance(apps, dict) or len(apps) > 8
             or any(not isinstance(app, str) or not 1 <= len(app) <= 64
                    or not isinstance(tools, list) or not 1 <= len(tools) <= 16

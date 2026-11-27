@@ -371,7 +371,8 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     custom_token = str(tmp_path / "fixture-connection.dat")
     facet.hub.apps = [SimpleNamespace(token_file=custom_token)]
     monkeypatch.setenv("FAUSTUS_AGORA_WORKER_TASK_THREAD", "999")
-    scope = agora_faustus.file_scope(workspace)
+    budget = 0 if resume else 7
+    scope = agora_faustus.file_scope(workspace, {"read_budget": budget})
     thread_id = None
     if space == "estudio":
         scope["production"] = {"space_id": space, "task_id": 74, "order_id": 6, "agent": "faustus-qa"}
@@ -392,6 +393,7 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     assert custom_token in json.loads(env["FAUSTUS_AGORA_PROTECTED_PATHS"])
     assert ("--agora-studio" in command) == (space == "estudio")
     assert json.loads(command[command.index("--agora-file-scope") + 1]) == runtime["file_scope"]
+    assert runtime["file_scope"]["read_budget"] == budget
     assert json.loads(command[command.index("--settings") + 1]) == {"tool_approval_mode": "auto"}
     assert runtime["tool_approval_mode"] == "auto"
     assert command[command.index("--endpoint-url") + 1] == ("" if resume else "http://models.example/v1")
@@ -584,6 +586,12 @@ def test_validates_separate_file_grants(tmp_path):
                     {"workspace": str(tmp_path)}, {"write_paths": [str(tmp_path.anchor)]}):
         with pytest.raises(ValueError):
             agora_faustus.file_scope(str(tmp_path), invalid)
+
+
+@pytest.mark.parametrize("invalid", [False, -1, "15", None])
+def test_invalid_worker_read_budget_is_rejected_at_launch(tmp_path, invalid):
+    with pytest.raises(ValueError, match="read_budget"):
+        agora_faustus.file_scope(str(tmp_path), {"read_budget": invalid})
 
 
 def test_dedicated_workspaces_are_empty_and_distinct_for_the_same_agent(tmp_path):

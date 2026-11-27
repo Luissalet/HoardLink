@@ -2666,10 +2666,12 @@ def test_completed_codex_worker_resumes_exact_session_with_follow_up(tmp_path, m
     assert len(launches) == 1
 
 
-def test_missing_worker_session_offers_replacement_with_context_and_lock_handover(tmp_path, monkeypatch):
+@pytest.mark.parametrize("provider", ["codex", "faustus"])
+def test_missing_worker_session_offers_replacement_with_context_and_lock_handover(tmp_path, monkeypatch, provider):
     facet = _facet(tmp_path)
     store = _with_real_agora(facet, tmp_path)
-    original, caller = "codex-fixture", "codex-reviewer"
+    original, caller = f"{provider}-fixture", "codex-reviewer"
+    declared = {"read_paths": [], "write_paths": [str(tmp_path)], "read_budget": 0} if provider == "faustus" else {}
     task = store.task_add({"agent": original, "title": "Replace fixture"})["task"]
     store.task_claim({"agent": original, "task_id": task["id"], "locks": ["path:qa/draft.txt"]})
     store.task_submit({"agent": original, "task_id": task["id"], "summary": "Initial delivery", "reviewer": caller})
@@ -2679,8 +2681,10 @@ def test_missing_worker_session_offers_replacement_with_context_and_lock_handove
     set_rank(store, original, "support", caller, "ecosystem")
     with facet._db() as db:
         db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,result,session_id,log_path,"
-                   "created_at,updated_at) VALUES('worker','codex',?,'model','low','Previous assignment','completed',"
-                   "'Previous result','no-session',?,1,1)", (original, str(tmp_path / "old.jsonl")))
+                   "created_at,updated_at,worker_file_scope,tool_approval_mode) "
+                   "VALUES('worker',?,?,'model','low','Previous assignment','completed','Previous result',?,?,1,1,?,?)",
+                   (provider, original, "" if declared else "no-session", str(tmp_path / "old.jsonl"),
+                    json.dumps(declared), "auto" if declared else ""))
     assert facet.worker({"action": "continue", "worker_id": "worker"}, caller)["reason"] == "missing_session"
 
     started = []
@@ -2698,6 +2702,7 @@ def test_missing_worker_session_offers_replacement_with_context_and_lock_handove
     assert first["ok"] and first["handover"]["state"] == "waiting_for_worker"
     assert facet.worker(options, caller)["worker_id"] == first["worker_id"]
     assert len(started) == 1 and started[0][1] == caller
+    assert started[0][0].get("file_scope", {}) == declared
     prompt = started[0][0]["task"]
     assert all(text in prompt for text in ("Previous assignment", "Previous result", options["message"], f"#{task['id']}"))
     assert store.task({"task_id": task["id"]})["task"]["owner"] == original

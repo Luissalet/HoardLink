@@ -3236,7 +3236,7 @@ class AgoraConsoleFacet(Facet):
         if leader == "faustus" and row["worker_file_scope"] and row["tool_approval_mode"]:
             previous = json.loads(row["worker_file_scope"])
             scope = {"task_id": task["id"], "file_scope": args.get("file_scope") or {
-                key: previous[key] for key in ("read_paths", "write_paths")}}
+                key: previous[key] for key in ("read_paths", "write_paths", "read_budget") if key in previous}}
         try:
             launched = self._create_worker({"leader_id": leader, "task": prompt, "rank": "support",
                                             "model": args.get("model") or (row["model"] if same_model else ""),
