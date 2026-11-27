@@ -79,6 +79,27 @@ El trabajador puede pedir esquemas de las herramientas de su ámbito. Los demás
 llamadores reciben el catálogo completo por defecto y pueden pasar
 `"summary":true` para obtener entradas resumidas.
 
+## Production order reads
+
+A dedicated scoped worker's `hub_agora_order` call returns a short brief,
+its assigned job, and a short list of other jobs with task ID, title and
+status. `summary` marks this response, and `jobs_omitted` counts jobs beyond
+the preview. `detail_truncated` marks an oversized own job. Pass `full:true`
+for the whole order or `job:<task_id>` for a complete job in that order.
+`hub_agora_job` already selects a single job by task ID and returns its packet.
+Other callers receive the whole order by default.
+
+### Lectura de órdenes de producción
+
+Para un trabajador dedicado con ámbito, `hub_agora_order` devuelve un
+encargo breve, su trabajo asignado y una lista corta de los demás trabajos
+con ID de tarea, título y estado. `summary` identifica la vista y `jobs_omitted`
+cuenta los trabajos omitidos. `detail_truncated` señala si se ha recortado
+su propio trabajo. Usa `full:true` para la orden completa o `job:<task_id>`
+para un trabajo de esa orden. `hub_agora_job` ya elige un solo trabajo por ID
+de tarea y devuelve su ficha. Los demás llamadores reciben la orden completa
+por defecto.
+
 ## Local programs
 
 Open **System → Capabilities → Local programs** in the Hub. The page and `hub_programs` show the

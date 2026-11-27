@@ -399,6 +399,7 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     assert env["FAUSTUS_AGORA_WORKER_SPACE"] == space
     assert json.loads(env.get("HOARD_WORKER_APP_SCOPE", "{}")) == apps
     assert ("HOARD_WORKER_APP_SCOPE" in env) == bool(apps)
+    assert env["HOARD_WORKER_ORDER_TASK"] == ("74" if space == "estudio" else "0")
     assert env.get("FAUSTUS_AGORA_WORKER_TASK_THREAD") == thread_id
     assert custom_token in json.loads(env["FAUSTUS_AGORA_PROTECTED_PATHS"])
     assert ("--agora-studio" in command) == (space == "estudio")
