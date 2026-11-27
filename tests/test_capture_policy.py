@@ -60,10 +60,14 @@ def test_permit_checks_the_scope_revision_and_medium(policy):
         assert granted is True
 
 
-@pytest.mark.parametrize(("statement", "field"), [
-    ("INSERT INTO settings VALUES ('private', 'true') ON CONFLICT(key) DO UPDATE SET value=excluded.value", "private"),
-    ("INSERT INTO exclusions VALUES (1, 'app', 'test.exe', 1, 0)", "excluded"),
-])
+PRIVACY_CHANGES = [
+    pytest.param("INSERT INTO settings VALUES ('private', 'true') ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                 "private", id="private"),
+    pytest.param("INSERT INTO exclusions VALUES (1, 'app', 'test.exe', 1, 0)", "excluded", id="exclusion"),
+]
+
+
+@pytest.mark.parametrize(("statement", "field"), PRIVACY_CHANGES)
 def test_cutoff_waits_for_the_issued_acquisition(database, policy, statement, field):
     attempting = Event()
     confirmed = Event()
@@ -93,6 +97,51 @@ def test_cutoff_waits_for_the_issued_acquisition(database, policy, statement, fi
         with policy.lease(MONITOR, LAYOUT, state.revision, medium) as granted:
             assert granted is False
     assert acquisitions == ["audio"]
+
+
+@pytest.mark.parametrize(("statement", "field"), PRIVACY_CHANGES)
+def test_timeout_without_acknowledgement_keeps_cutoff_unconfirmed(database, policy, statement, field):
+    permitted = Event()
+    proceed = Event()
+    acknowledged = Event()
+    samples = []
+
+    def delayed_helper():
+        permitted.set()
+        if proceed.wait(3):
+            samples.append("audio")
+            acknowledged.set()
+
+    helper = Thread(target=delayed_helper)
+    try:
+        with pytest.raises(TimeoutError, match="Still running"):
+            with policy.lease(MONITOR, LAYOUT, 1, "audio") as granted:
+                assert granted is True
+                helper.start()
+                assert permitted.wait(3)
+                raise TimeoutError("Still running without acknowledgement")
+
+        assert helper.is_alive() and not acknowledged.is_set()
+        with sqlite3.connect(database) as conn:
+            with pytest.raises(sqlite3.IntegrityError, match="Outstanding"):
+                conn.execute(statement)
+        assert policy.read(MONITOR, LAYOUT) is None
+        with policy.lease(MONITOR, LAYOUT, 1, "video") as granted:
+            assert granted is False
+        proceed.set()
+        assert acknowledged.wait(3)
+        assert samples == ["audio"]
+        # The provider cannot observe an acknowledgement after the caller left.
+        # The cutoff is still unconfirmed even after the double has completed.
+        with sqlite3.connect(database) as conn:
+            if field == "private":
+                assert conn.execute("SELECT value FROM settings WHERE key = 'private'").fetchone() == ("false",)
+            else:
+                assert conn.execute("SELECT COUNT(*) FROM exclusions").fetchone() == (0,)
+    finally:
+        proceed.set()
+        if helper.ident is not None:
+            helper.join(4)
 
 
 def test_abandoned_permission_survives_reopening_and_denies_edits(database, policy):

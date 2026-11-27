@@ -151,14 +151,22 @@ class ScreenCapturePolicy:
             conn.execute("INSERT INTO capture_policy_grant VALUES (1, ?, ?, ?)", (receipt, revision, medium))
             conn.commit()
             conn.execute("BEGIN IMMEDIATE")
-            abandoned = False
+            settled = False
             try:
                 yield True
-            except BaseException as error:
-                abandoned = not isinstance(error, Exception)
+            except TimeoutError:
+                # The caller could have lost contact while a helper can still act.
+                # Keep the durable fence when there is no settlement signal.
                 raise
+            except Exception:
+                # The producer reports an ordinary failure only after settling
+                # the call (including a confirmed exit of its audio helper).
+                settled = True
+                raise
+            else:
+                settled = True
             finally:
-                if not abandoned:
+                if settled:
                     conn.execute("DELETE FROM capture_policy_grant WHERE receipt = ?", (receipt,))
                     conn.commit()  # Keep the acknowledgement when a settled call raised.
 
