@@ -599,13 +599,24 @@ class _HubHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if not self._guard():
             return
-        if self._mcp_relay():
-            return
         url = urlsplit(self.path)
         path = url.path.rstrip("/") or "/"
         query = parse_qs(url.query)
         hub = self.hub
         try:
+            if path == "/api/health":
+                return self._json({"ok": True, "service": SERVICE, "version": HUB_VERSION, "apps": hub.app_count,
+                                   "url": hub.config.url})
+            if path == "/api/apps":
+                return self._json(self.server.directory.list())
+            parts = path.split("/")
+            if parts[1:3] == ["api", "apps"] and (len(parts) == 4 or (len(parts) == 5 and parts[4] == "status")):
+                app = hub.get(parts[3])
+                if app is None:
+                    return self._json({"ok": False, "error": "unknown app"}, 404)
+                return self._json(self.server.directory.status(app))
+            if self._mcp_relay():
+                return None
             if path == "/":
                 return self._file(os.path.join(UI_DIR, "index.html"))
             if path == "/programs":
@@ -634,17 +645,6 @@ class _HubHandler(BaseHTTPRequestHandler):
                 if rel.startswith("..") or rel.startswith("/"):
                     return self._json({"ok": False, "error": "not found"}, 404)
                 return self._file(os.path.join(UI_DIR, rel), cache=False)
-            if path == "/api/health":
-                return self._json({"ok": True, "service": SERVICE, "version": HUB_VERSION, "apps": hub.app_count,
-                                   "url": hub.config.url})
-            if path == "/api/apps":
-                return self._json(self.server.directory.list())
-            parts = path.split("/")
-            if parts[1:3] == ["api", "apps"] and (len(parts) == 4 or (len(parts) == 5 and parts[4] == "status")):
-                app = hub.get(parts[3])
-                if app is None:
-                    return self._json({"ok": False, "error": "unknown app"}, 404)
-                return self._json(self.server.directory.status(app))
             if self._facet("GET", path, query, {}):
                 return None
             if path == "/api/family/caller":
