@@ -29,6 +29,7 @@ APPRENTICE = "faustus-aprendiz"
 TUTOR_TOOL = "hub_agora_apprentice_instinct"
 WORKER_APPROVAL_MODE = "auto"
 REGISTRATION_TIMEOUT_S = 5 * 60
+MAX_RELATED_TASK_IDS = 8
 DECLARED_PATHS = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -225,6 +226,43 @@ def worker_order(console: Any, task_id: int | None, apps: dict) -> int | None:
     return None
 
 
+def related_task_threads(console: Any, task_id: int | None, related_task_ids: Any) -> list[int]:
+    if (not isinstance(related_task_ids, list) or len(related_task_ids) > MAX_RELATED_TASK_IDS
+            or any(type(tid) is not int or tid <= 0 for tid in related_task_ids)):
+        raise WorkerLaunchError(
+            "invalid_related_task_ids",
+            f"Indica una lista de hasta {MAX_RELATED_TASK_IDS} identificadores de tarea enteros positivos.",
+            f"Use a list of up to {MAX_RELATED_TASK_IDS} positive integer task IDs.", status=400,
+        )
+    if not related_task_ids:
+        return []
+    if type(task_id) is not int or not 0 < task_id <= 2**63 - 1 or worker_order(console, task_id, {}) is None:
+        raise WorkerLaunchError(
+            "related_task_order_required",
+            "Para añadir tareas relacionadas, el task_id principal debe ser un trabajo activo de una orden de este espacio.",
+            "To add related tasks, the primary task_id must be an active order job in this space.", status=400,
+        )
+    agora = console._agora()
+    threads = []
+    for related_id in dict.fromkeys(related_task_ids):
+        row = agora.db.one(
+            "SELECT t.thread_id FROM agora_order_jobs p JOIN agora_order_jobs r "
+            "ON r.order_id=p.order_id AND r.space_id=p.space_id "
+            "JOIN tasks t ON t.id=r.task_id AND t.space_id=r.space_id "
+            "WHERE p.task_id=? AND p.space_id=? AND p.removed=0 AND r.task_id=? AND r.removed=0",
+            (task_id, console.space_id, str(related_id)),
+        )
+        if not row or not row["thread_id"]:
+            raise WorkerLaunchError(
+                "related_task_outside_order",
+                f"La tarea relacionada #{related_id} debe ser un trabajo activo de la misma orden y del mismo espacio que la tarea #{task_id} y tener un hilo.",
+                f"Related task #{related_id} must be an active job in the same order and space as task #{task_id} and have a thread.",
+                status=400,
+            )
+        threads.append(row["thread_id"])
+    return threads
+
+
 def order_warning(task_id: int) -> dict[str, str]:
     return {
         "es": f"La tarea #{task_id} no es un trabajo de una orden de este espacio. "
@@ -380,6 +418,7 @@ def reconcile_registrations(console: Any, *, now: float | None = None) -> None:
 
 def prepare(console: Any, agent: str, model: dict, effort: str, *,
             declared_paths: Any = None, task_id: int | None = None,
+            related_task_ids: list[int] | None = None,
             target: dict | None = None) -> tuple[dict | None, str]:
     """Create an independent native project/session when no local controller owns one."""
     root, python = console.hub.faustus_runtime.installation()
@@ -402,6 +441,7 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
         return None, "File scope requires a dedicated PC worker. / El ámbito de ficheros requiere un trabajador aislado en el PC."
     if not dedicated and ntpath.splitdrive(workspace)[0] and not Path(workspace).is_dir():
         return None, "The space's PC workspace directory is unavailable."
+    related_threads = related_task_threads(console, task_id, related_task_ids) if related_task_ids is not None else []
     if dedicated:
         scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
         scope = production_scope(console, agent, scope, task_id)
@@ -459,6 +499,8 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
             task = agora.db.one("SELECT thread_id FROM tasks WHERE id=? AND space_id=?", (task_id, console.space_id))
             if task and task["thread_id"] and task["thread_id"] not in thread_ids:
                 thread_ids.append(task["thread_id"])
+        report_thread_id = thread_ids[-1]
+        thread_ids = list(dict.fromkeys(thread_ids + related_threads))
         status, saved = request("PUT", "/api/coordination/" + session, {"connector_id": connector["id"],
             "actor": agent, "space_id": console.space_id, "active": True,
             "operations": ["poll", "detail", "task", "board", "heartbeat", "add", "claim", "checkpoint", "post", "submit", "review", "done", "lock", "unlock"],
@@ -467,7 +509,8 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
         if status != 200 or not binding or binding.get("actor") != agent or binding.get("project_id") != project["id"]:
             raise RuntimeError("Faustus did not confirm the worker coordination identity")
         prepared = {"session_id": session, "project_id": project["id"], "workspace": workspace,
-                    "url": base, "runtime": runtime, "coordination_threads": thread_ids}
+                    "url": base, "runtime": runtime, "coordination_threads": thread_ids,
+                    "report_thread_id": report_thread_id}
         if warning:
             prepared["warning_i18n"] = warning
         return prepared, ""
