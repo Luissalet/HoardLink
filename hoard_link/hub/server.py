@@ -49,6 +49,7 @@ GET  /api/events/stats         counts by type/source
 POST /api/events               (family token or the UI) {type, data, source?}
 GET  /api/apps/<id>/tools      the app's own tool catalogue
 POST /api/apps/<id>/call       (family token or the UI) {tool, arguments} → run it with that app's token
+POST /api/apps/<id>/stream/<route> (family bearer) relay an allowlisted app HTTP stream
 GET  /api/rules | POST /api/rules (add) | POST /api/rules/<id>/update|remove|run|test
 GET  /api/jobs  | POST /api/jobs  (add) | POST /api/jobs/<id>/update|remove|run
 GET  /api/backups | /api/backups/<id> | POST /api/backups/run|prune|verify|restore
@@ -89,7 +90,7 @@ from . import HUB_VERSION, SERVICE
 from .core import Hub
 from . import desktop, tools, autostart, profile_editor, portable_profiles
 from .isolation import passive_error
-from . import agent_routes, ui_session, voice_routing
+from . import agent_routes, stream_gateway, ui_session, voice_routing
 from .browser_lanes import LaneError
 from .lease import LeaseError
 from .rules import example_rules
@@ -139,6 +140,13 @@ class _HubHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:  # quieter than the default
         logger.debug("%s " + fmt, self.address_string(), *args)
 
+    def log_request(self, code: Any = "-", size: Any = "-") -> None:
+        path = getattr(self, "path", "").partition("?")[0]
+        if "/api/apps/" in path and "/stream/" in path:
+            self.log_message("app stream %s %s", code, size)
+            return
+        super().log_request(code, size)
+
     def handle_one_request(self) -> None:
         try:
             super().handle_one_request()
@@ -147,13 +155,15 @@ class _HubHandler(BaseHTTPRequestHandler):
                 raise
             self.close_connection = True
 
-    def _json(self, payload: Any, status: int = 200) -> None:
+    def _json(self, payload: Any, status: int = 200, *, headers: Optional[dict[str, str]] = None) -> None:
         body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
         try:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
@@ -726,9 +736,12 @@ class _HubHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if not self._guard():
             return
+        url = urlsplit(self.path)
+        if (route := stream_gateway.match(url.path)) is not None:
+            return stream_gateway.handle(self, route, url)
         if self._mcp_relay():
             return
-        path = urlsplit(self.path).path.rstrip("/")
+        path = url.path.rstrip("/")
         hub = self.hub
         if path in (ui_session.LAUNCH_PATH, ui_session.SESSION_PATH):
             try:
