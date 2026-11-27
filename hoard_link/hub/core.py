@@ -11,6 +11,7 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from ipaddress import ip_address
 import secrets
 import threading
 from urllib.parse import urlsplit
@@ -69,6 +70,7 @@ class Hub:
         self._spawned: dict[str, int] = {}   # app id -> pid of the last process the hub spawned for it
         self._start_locks: dict[str, threading.Lock] = {}
         self._spawned_created: dict[str, float] = {}
+        self._adopted_services: dict[str, tuple[int, float]] = {}
         self._stopping_all = threading.Event()
         self._stop_all_lock = threading.Lock()
         self._manual_stops: set[str] = set()
@@ -292,7 +294,26 @@ class Hub:
                       "health": {**d["health"], "state": remote["state"], "detail": remote["detail"]},
                       "process": None, "stoppable": False, "launchable": False,
                       "launch_reason": f"Corre en {remote['where']}; se mueve desde «Ejecutar en»."})
+        elif procs.IS_WINDOWS:
+            self._adopt_service_process(app, h, proc)
         return d
+
+    def _adopt_service_process(self, app: App, health: procs.Health, process: Optional[procs.ProcInfo]) -> None:
+        if (app.kind != "app" or not app.launchable or not app.expect_service or health.state != "healthy"
+                or process is None or process.protected or process.created_at is None):
+            return
+        if app.host != "localhost":
+            try:
+                if not ip_address(app.host).is_loopback:
+                    return
+            except ValueError:
+                return
+        identity = (process.pid, process.created_at)
+        with self._lock:
+            if self._adopted_services.get(app.id) == identity:
+                return
+            self._adopted_services[app.id] = identity
+        procs.set_tree_priority(*identity, procs.NORMAL_PRIORITY_CLASS)
 
     SNAPSHOT_REUSE_S = 1.5
 

@@ -9,6 +9,7 @@ import sys
 from typing import Protocol
 
 from .._process import popen_hidden
+from .procs import BELOW_NORMAL_PRIORITY_CLASS
 
 IS_WINDOWS = sys.platform == "win32"
 NPM_ENTRY_POINTS = {
@@ -52,7 +53,8 @@ def launch_worker(config, command, *, cwd, env, log) -> WorkerProcess:
     settings = getattr(config, "agora", None) or {}
     if not IS_WINDOWS or settings.get("worker_private_desktop") is False:
         return popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                            text=True, cwd=cwd, env=env)
+                            text=True, cwd=cwd, env=env,
+                            creationflags=BELOW_NORMAL_PRIORITY_CLASS if IS_WINDOWS else 0)
     from .windows_job import launch_on_private_desktop
 
     return launch_on_private_desktop(_native_command(command, env), cwd=cwd, env=env, log=log)

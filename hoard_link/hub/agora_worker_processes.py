@@ -12,6 +12,10 @@ from typing import Any
 from . import procs
 
 
+def restore_priority(pid: int, created_at: float) -> None:
+    procs.set_tree_priority(pid, created_at, procs.BELOW_NORMAL_PRIORITY_CLASS)
+
+
 def live_pids():
     ps = procs._psutil()
     if ps is not None:

@@ -35,7 +35,8 @@ def test_legacy_launch_only_when_disabled_or_not_windows(launchers, monkeypatch,
     result = launch.launch_worker(SimpleNamespace(agora=settings), command, **options)
     assert result is previous.return_value
     previous.assert_called_once_with(command, stdin=subprocess.DEVNULL, stdout=options["log"],
-                                     stderr=subprocess.STDOUT, text=True, cwd=options["cwd"], env={})
+                                     stderr=subprocess.STDOUT, text=True, cwd=options["cwd"], env={},
+                                     creationflags=0x00004000 if windows else 0)
     native.assert_not_called()
 
 

@@ -924,6 +924,7 @@ class AgoraConsoleFacet(Facet):
                            "session_id=?,workspace=?,resume_issue='',updated_at=? WHERE id=?",
                            (state, outcome, detail, json.dumps(verification), process.started_at,
                             session, workspace, time.time(), row["id"]))
+                agora_worker_processes.restore_priority(process.pid, process.started_at)
                 self._adopt_worker_runtime(row)
                 self._processes[row["id"]] = process
             # A CLI request may have reached the provider before the Hub died.
@@ -3060,6 +3061,7 @@ class AgoraConsoleFacet(Facet):
         if not pid or started_at is None or worker_id in self._faustus_runtimes:
             return
         if procs.proc_info(pid).created_at == started_at:
+            agora_worker_processes.restore_priority(pid, started_at)
             name = row["runtime_job"] if "runtime_job" in row.keys() else ""
             self._faustus_runtimes[worker_id] = {"pid": pid, "created_at": started_at, "job_name": name}
 
