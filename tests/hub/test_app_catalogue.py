@@ -2,7 +2,6 @@
 
 import json
 import os
-import subprocess
 import sys
 from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from hoard_link._process import run_hidden
 from hoard_link.hub import app_catalogue, agora_faustus
 from hoard_link.hub.config import HubConfig
 from hoard_link.hub.core import Hub
@@ -70,6 +70,7 @@ def app_catalogue_server(tmp_path):
         config = HubConfig.load(env={
             "HOARD_HUB_PORT": str(free_port()),
             "HOARD_HUB_DATA_DIR": str(tmp_path / "hub"),
+            "FAUSTUS_DIR": str(tmp_path / "faustus"),
         })
         assert config.isolated
         hub = Hub(config)
@@ -84,6 +85,22 @@ def app_catalogue_server(tmp_path):
             stack.callback(thread.join)
             stack.callback(listener.shutdown)
         yield config, hub, catalogue, app_reads
+
+
+@pytest.mark.parametrize("tool", [None, "allowed"])
+def test_scoped_catalogue_keeps_app_instructions(tool):
+    instructions = "Open the project before editing.\nUse the current project ID."
+    allowed = {"name": "allowed", "description": "Read.\nDetails.", "inputSchema": {"required": ["id"]}}
+    catalogue = {"ok": True, "app": APP, "contract": "shared", "instructions": instructions,
+                 "tools": [allowed, {"name": "outside_scope"}]}
+    hub = SimpleNamespace(app_tools=lambda _app: catalogue)
+    args = app_catalogue.request_arguments({"app": APP, "tool": tool}, json.dumps({APP: ["allowed"]}))
+
+    result = app_catalogue.list_tools(hub, args)
+
+    assert result["instructions"] == instructions
+    assert result["tools"] == ([allowed] if tool else [{"name": "allowed", "description": "Read.",
+                                                       "required": ["id"]}])
 
 
 def test_scoped_worker_uses_compact_catalogue_via_stdio(app_catalogue_server):
@@ -106,9 +123,9 @@ def test_scoped_worker_uses_compact_catalogue_via_stdio(app_catalogue_server):
          "params": {"name": app_catalogue.NAME, "arguments": args}}
         for index, args in enumerate(calls, start=1)
     ]
-    ipc = subprocess.run([sys.executable, "-m", "hoard_link.hub.mcp"],
-                         input="".join(json.dumps(line) + "\n" for line in incoming),
-                         env=env, encoding="utf-8", capture_output=True, check=True, timeout=25)
+    ipc = run_hidden([sys.executable, "-m", "hoard_link.hub.mcp"],
+                     input="".join(json.dumps(line) + "\n" for line in incoming),
+                     env=env, encoding="utf-8", capture_output=True, check=True, timeout=25)
     wire = [json.loads(line) for line in ipc.stdout.splitlines()]
     assert [row["id"] for row in wire] == [row["id"] for row in incoming]
     result = [row["result"] for row in wire]
@@ -117,12 +134,12 @@ def test_scoped_worker_uses_compact_catalogue_via_stdio(app_catalogue_server):
     assert [row["isError"] for row in result] == [False, False, False, True, True]
     assert len(texts[0].encode("utf-8")) < 20_000
     assert summary == forced
-    assert "instructions" not in summary
+    assert summary["instructions"] == catalogue["instructions"]
     assert summary["tools"] == [
         {"name": name, "description": f"Read {name}.", "required": ["id"]} for name in ALLOWED
     ]
     assert single["tools"] == catalogue["tools"][:1]
-    assert "instructions" not in single
+    assert single["instructions"] == catalogue["instructions"]
     assert denied_tool["code"] == "worker_app_tool_not_allowed"
     assert denied_app["code"] == "worker_app_not_allowed"
     assert len(app_reads) == 3

@@ -75,4 +75,7 @@ def list_tools(hub: Any, args: dict) -> dict:
         return {"ok": False, "code": "unknown_app_tool",
                 "error": "Tool absent from the app catalogue. / La herramienta no figura en el catálogo."}
     entries = [_summary(spec) for spec in specs] if tool is None else specs[:1]
-    return {"ok": True, "app": catalogue["app"], "contract": catalogue["contract"], "tools": entries}
+    return {
+        "ok": True, "app": catalogue["app"], "contract": catalogue["contract"],
+        "instructions": catalogue.get("instructions", ""), "tools": entries,
+    }
