@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .._process import popen_hidden
+from .app_catalogue import SCOPE_ENV
 from .faustus_endpoint_key import read_endpoint_key
 
 STUDIO = "estudio"
@@ -506,6 +507,9 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
         port = listener.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     env = console._runner_env()
+    env.pop(SCOPE_ENV, None)
+    if file_scope.get("apps"):
+        env[SCOPE_ENV] = json.dumps(file_scope["apps"])
     env["FAUSTUS_AGORA_WORKER_SPACE"] = console.space_id
     env.pop("FAUSTUS_AGORA_WORKER_TASK_THREAD", None)
     if production:

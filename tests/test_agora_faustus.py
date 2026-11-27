@@ -371,7 +371,9 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     custom_token = str(tmp_path / "fixture-connection.dat")
     facet.hub.apps = [SimpleNamespace(token_file=custom_token)]
     monkeypatch.setenv("FAUSTUS_AGORA_WORKER_TASK_THREAD", "999")
-    scope = agora_faustus.file_scope(workspace)
+    monkeypatch.setenv("HOARD_WORKER_APP_SCOPE", '{"unrelated": ["do_not_inherit"]}')
+    apps = {"vitruvius": ["app_project_create"]} if space == "estudio" else {}
+    scope = agora_faustus.file_scope(workspace, {"apps": apps})
     thread_id = None
     if space == "estudio":
         scope["production"] = {"space_id": space, "task_id": 74, "order_id": 6, "agent": "faustus-qa"}
@@ -388,6 +390,8 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
                                      api_key="" if resume else key, resume=resume)
     command, env = launches[0]
     assert env["FAUSTUS_AGORA_WORKER_SPACE"] == space
+    assert json.loads(env.get("HOARD_WORKER_APP_SCOPE", "{}")) == apps
+    assert ("HOARD_WORKER_APP_SCOPE" in env) == bool(apps)
     assert env.get("FAUSTUS_AGORA_WORKER_TASK_THREAD") == thread_id
     assert custom_token in json.loads(env["FAUSTUS_AGORA_PROTECTED_PATHS"])
     assert ("--agora-studio" in command) == (space == "estudio")
