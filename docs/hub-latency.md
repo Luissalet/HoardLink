@@ -1,0 +1,26 @@
+# Hub latency and Agora console snapshots
+
+`GET /api/health` reads the in-memory app count. `GET /api/apps`, `GET /api/apps/<id>` and its `/status` alias serve the latest directory sample and queue a refresh when it is older than five seconds. The configured app and URL are available before the first probe. The last observation remains available for the same registered app and address during a refresh, with `status_stale: true`. A new app or a changed address has `status_checked_at: null` until sampled and may report `unknown`. Consumers can use the configured address and retry the status check.
+
+Agora HTTP operations and agent calls run in dedicated bounded lanes. Ordinary work, waiting inbox requests and full console requests use separate lanes. When a lane fills, the Hub returns HTTP `503` with `code: "agora_busy"`. Retry reads with backoff. For a write that reached the Hub and later timed out, check its result before resending. The app directory uses its own refresh thread.
+
+For incremental console reads, use either of the following:
+
+- HTTP `GET /api/agora/console/overview?view=live`
+- MCP `hub_agora_console_overview` with `{"view":"live"}`
+
+Send the returned `revision` as `since` on the next poll. A new view initially returns `pending: true` with a null revision while its background build runs. While rebuilding a previously sampled view, the last revision is immediately available with `pending: true`. A matching cursor returns metadata only. A cursor from the previous revision returns changed top-level fields. When `reset` is true and the revision is present, use the complete returned view as the new base. Cursors belong to a view and space. `refresh=true` queues a refresh, coalesced with any build already in progress.
+
+Use `view=full` for an incremental view that also includes the recent console turn history, activity, messages, quota pools and native preferences. Requests without a view or cursor retain the synchronous full response. A matching revision can be polled again from either transport under the same space and view.
+
+The loopback test `tests/hub/test_agora_latency.py` checks a 50 ms per-request budget for health and directory while 20 synthetic workers and three console pollers contend. Real host scheduling and connection delays can affect measurements on other machines.
+
+## Latencia del Hub e instantáneas de la consola del Ágora
+
+`GET /api/health` lee en memoria el número de aplicaciones. `GET /api/apps`, `GET /api/apps/<id>` y su alias `/status` devuelven la última muestra del directorio y encolan una actualización si han pasado cinco segundos. La aplicación y su URL configurada están disponibles desde el arranque. Durante la actualización, la misma aplicación registrada y la misma dirección conservan la última observación con `status_stale: true`. Una aplicación nueva o una dirección modificada tiene `status_checked_at: null` hasta la primera muestra y puede figurar como `unknown`. Se puede usar la dirección configurada y volver a consultar el estado.
+
+El trabajo HTTP y las llamadas de agentes al Ágora se reparten entre grupos de hilos con capacidad limitada. Las operaciones ordinarias, las esperas de bandeja y las consultas completas de consola tienen grupos independientes. Al llenarse uno, el Hub devuelve HTTP `503` con `code: "agora_busy"`. Espacia los reintentos de lectura. Si una escritura llegó al Hub y después agotó el tiempo de espera, consulta su resultado antes de reenviarla. El directorio se actualiza en su propio hilo.
+
+Para consultar la consola de forma incremental usa `GET /api/agora/console/overview?view=live` o llama a `hub_agora_console_overview` por MCP con `{"view":"live"}`. Envía la `revision` recibida como `since` en la siguiente consulta. Una vista nueva indica `pending: true` y revisión nula mientras se prepara. Si ya hay una muestra, la última revisión sigue disponible durante la actualización. Una revisión coincidente devuelve solo metadatos. La revisión anterior devuelve los campos de primer nivel que han cambiado. Cuando `reset` es verdadero y hay revisión, toma la vista completa recibida como base. Cada cursor pertenece a una vista y un espacio. `refresh=true` encola una actualización y se agrupa con la que ya esté en curso.
+
+`view=full` incluye también los turnos recientes, la actividad, los mensajes, las cuotas y las preferencias nativas. Una consulta sin vista ni cursor conserva la respuesta completa síncrona. La prueba `tests/hub/test_agora_latency.py` verifica un presupuesto de 50 ms por petición de salud o directorio con 20 trabajadores y tres consultas de consola sintéticas.
