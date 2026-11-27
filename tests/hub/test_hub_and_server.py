@@ -27,6 +27,16 @@ def _http(url: str, body=None, headers=None, method=None):
         return exc.code, json.loads(exc.read() or b"null")
 
 
+def _observed_app(url, path):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        status, body = _http(url + path)
+        if status != 200 or body.get("status_checked_at") is not None:
+            return status, body
+        time.sleep(0.05)
+    pytest.fail(f"No app status sample published for {path}")
+
+
 @pytest.fixture
 def served(hub):
     server = make_server(hub, port=hub.config.port)
@@ -145,7 +155,7 @@ def test_api_apps_and_actions(served):
     hub, url = served
     status, snap = _http(url + "/api/apps")
     assert status == 200 and {a["id"] for a in snap["apps"]} == {"fake", "dead", "launch"}
-    status, one = _http(url + "/api/apps/fake")
+    status, one = _observed_app(url, "/api/apps/fake")
     assert status == 200 and one["state"] == "running"
     assert _http(url + "/api/apps/nope")[0] == 404
     status, res = _http(url + "/api/apps/launch/start", {})

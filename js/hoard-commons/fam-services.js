@@ -207,6 +207,7 @@ export async function serviceAvailable(service, timeoutMs) {
     } else {
       const { body } = await get("/api/apps/" + encodeURIComponent(owner));
       ok = body?.state === "running" || body?.state === "foreign";
+      if (body?.status_stale || body?.state === "unknown") return ok;
     }
   } catch { if (!voice) ok = false; } finally { clearTimeout(timer); }
   if (ok !== null) availCache.set(key, { at: Date.now(), ok });

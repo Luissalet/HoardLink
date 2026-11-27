@@ -9,10 +9,10 @@
   const gb = mb => (mb / 1024).toFixed(1);
   let snap = null, apps = [], busy = new Set(), fPending = new Set(), batchBusy = false, gpu = null;
   const mounts = new Set();
-  const STATES = {running: ['En marcha', 'Running'], starting: ['Arrancando', 'Starting'], foreign: ['Puerto ocupado', 'Port busy'], down: ['Parada', 'Stopped'], unavailable: ['No disponible', 'Unavailable']};
+  const STATES = {running: ['En marcha', 'Running'], starting: ['Arrancando', 'Starting'], unknown: ['Comprobando', 'Checking'], foreign: ['Puerto ocupado', 'Port busy'], down: ['Parada', 'Stopped'], unavailable: ['No disponible', 'Unavailable']};
   const stateOf = app => app.state === 'down' && !app.launchable ? 'unavailable' : app.state;
   const stateText = state => tr(...(STATES[state] || [state, state]));
-  const rank = {running: 0, starting: 1, foreign: 2, down: 3, unavailable: 4};
+  const rank = {running: 0, starting: 1, unknown: 2, foreign: 3, down: 4, unavailable: 5};
   const sorted = list => [...list].sort((a, b) => (rank[stateOf(a)] - rank[stateOf(b)]) || a.name.localeCompare(b.name));
   const icon = app => window.hubAppIcon ? window.hubAppIcon(app.id) : '/api/apps/' + encodeURIComponent(app.id) + '/icon';
   function img(app, size) {
@@ -28,7 +28,7 @@
       else if (s === 'starting') { c.starting++; c.attention++; }
       else if (s === 'foreign') c.attention++;
       else if (s === 'unavailable') c.unavailable++;
-      else c.stopped++;
+      else if (s === 'down') c.stopped++;
     }
     return c;
   }

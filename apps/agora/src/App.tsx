@@ -191,17 +191,30 @@ export default function App(){
  const colorOf=(agent?:string)=>{const id=providerOf(agent);if(!id)return undefined;return leaders.find(l=>l.id===id)?.color||defaultColors[id];};
  async function pickColor(l:Leader,color:string){setLeaders(prev=>prev.map(x=>x.id===l.id?{...x,color}:x));try{await api('/api/agora/console/color',{leader_id:l.id,color});}catch(e){setError((e as Error).message);}}
  const inflight=useRef(new Set<string>()),routeHealth=useRef(new Map<string,boolean>());
- const overviewAvailable=useRef(false);
+ const overviewAvailable=useRef(false), overviewRevision=useRef('');
  async function refresh(){
   const routes=['/api/agora/console/overview','/api/agora/console/usage',`/api/agora/threads/${workThread.current}/recent?limit=60`,'/api/agora/board'];
   await Promise.allSettled(routes.map(async(path,i)=>{
    if((i===2&&!workThread.current)||inflight.current.has(path))return;
    inflight.current.add(path);
    try{
-    const d=await api(path);routeHealth.current.set(path,true);
+    const endpoint=i===0 ? path+'?'+new URLSearchParams({view:'live',since:overviewRevision.current}) : path;
+    const d=await api(endpoint);routeHealth.current.set(path,true);
     if(d.person)setPerson(d.person);
-    if(i===0)setForeman(d.foreman ?? null);
-    if(i===0){overviewAvailable.current=true;if(d.thread_id)workThread.current=d.thread_id;const overviewMessages=Array.isArray(d.messages)?d.messages:d.messages?.messages;if(overviewMessages)setMessages(overviewMessages.map((m:Message)=>({...m,agent:m.agent||m.author})));if(d.leaders)setLeaders(d.leaders);if(d.workers)setWorkers(d.workers);setCodexQuotaFailed(d.capacity_observations?.codex?.ok===false);}
+    if(i===0){
+     if(d.revision){overviewRevision.current=d.revision;overviewAvailable.current=true;}
+     if(d.thread_id && d.thread_id!==workThread.current){
+      workThread.current=d.thread_id;
+      try{
+       const recent=await api(`/api/agora/threads/${d.thread_id}/recent?limit=60`);
+       setMessages((recent.messages||recent.posts||[]).map((m:Message)=>({...m,agent:m.agent||m.author})));
+      }catch{/* The regular poll retries the conversation. */}
+     }
+     if('foreman' in d)setForeman(d.foreman ?? null);
+     if(d.leaders){overviewAvailable.current=true;setLeaders(d.leaders);}
+     if(d.workers)setWorkers(d.workers);
+     if(d.capacity_observations)setCodexQuotaFailed(d.capacity_observations.codex?.ok===false);
+    }
     if(i===1)setUsage(d.providers||[]);
     if(i===2)setMessages((d.messages||d.posts||[]).map((m:Message)=>({...m,agent:m.agent||m.author})));
     if(i===3){setQuotaFloors(d.quota_floors ?? null);setTasks((d.tasks||[]).map((t:Task)=>({...t,state:t.state||t.status||'unknown'})));setCounts(d.counts||d.task_counts||{});

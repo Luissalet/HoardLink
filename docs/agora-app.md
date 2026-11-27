@@ -8,6 +8,8 @@ The left rail contains Claude, Codex, Cursor and Faustus. Each provider exposes 
 
 On narrow screens, the standalone console gives the space selector and wordmark their own row. The console actions and connection status sit below them, and the tasks drawer starts below the full header.
 
+The browser console polls the incremental live view. The [latency and snapshot contract](hub-latency.md) also applies to agents using MCP.
+
 ## Quotas: where each reading comes from
 
 The console reads every provider's quota where its own client does, the way unified usage trackers such as CodexBar do. The Hub starts the readers; each publishes through `usage-report` as `<provider>-capacity`, hashes the account identity into an opaque pool key and never stores or logs a token.

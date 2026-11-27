@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -194,6 +195,10 @@ def test_observer_progress_is_consistent_across_transport_views(tmp_path):
             def view(self):
                 return view
         facet._watch = Observer()
+        deadline = time.monotonic() + 5
+        while "builder" not in facet._watch_for_request()["agents"]:
+            assert time.monotonic() < deadline, "Observer did not publish its first sample"
+            time.sleep(0.01)
         sync = facet._sync({"agent": "builder"})
         for item in [facet._board()["tasks"][0], facet._tasks({})["tasks"][0],
                      facet._task({"task_id": task["id"]})["task"], sync["leased_tasks"][0], sync["board"]["tasks"][0]]:

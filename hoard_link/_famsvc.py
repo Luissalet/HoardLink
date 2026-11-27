@@ -230,6 +230,8 @@ def available(service: str, timeout: Optional[float] = None) -> bool:
     else:
         status, body = fetch(_f._hub() + "/api/apps/" + owner, timeout=1.0 if timeout is None else timeout, headers=_f._headers())
         ok = status == 200 and isinstance(body, dict) and body.get("state") == "running"
+        if status == 200 and isinstance(body, dict) and (body.get("status_stale") or body.get("state") == "unknown"):
+            return ok  # this sample must not occupy the availability cache
     with _lock:
         _cache[key] = (time.monotonic(), ok)
     return ok

@@ -1927,6 +1927,11 @@ class Agora:
         now = self.clock()
         out = []
         pools = self._quota_pools()
+        locks_by_owner: dict[str, list[dict[str, Any]]] = {}
+        for lock in self.db.query(
+                "SELECT l.* FROM locks l JOIN coordination_members m ON m.agent=l.owner "
+                "WHERE m.space_id=? AND l.expires>?", (self.space_id, now)):
+            locks_by_owner.setdefault(lock["owner"], []).append(dict(lock))
         for r in self.db.query("SELECT a.*, m.declared_model, m.declared_effort, m.declared_at "
                                "FROM agents a JOIN coordination_members m ON m.agent=a.id "
                                "WHERE m.space_id=? ORDER BY a.last_seen DESC", (self.space_id,)):
@@ -1935,7 +1940,7 @@ class Agora:
                 d["name"] = self.person_name
             d["stale"] = (now - float(d.get("last_seen") or 0)) > STALE_AGENT_S
             d["quota"] = self._quota_state_from(d["id"], pools)
-            mine = [dict(x) for x in self.db.query("SELECT * FROM locks WHERE owner=? AND expires>?", (d["id"], now))]
+            mine = locks_by_owner.get(d["id"], [])
             d["locks"] = [x["resource"] for x in mine]
             d["lock_groups"] = [{k: g[k] for k in ("task_id", "kind", "repo", "count", "label")} for g in group_locks(mine)]
             out.append(d)
@@ -3938,9 +3943,48 @@ class AgoraFacet(Facet):
 
         self._watch: Optional[agent_watch.AgentWatch] = None
         self._watch_lock = threading.Lock()
+        self._watch_wanted = threading.Event()
+        self._watch_closed = threading.Event()
+        self._watch_sample = None
+        self._watch_thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if self._watch_enabled() and self._watch_thread is None:
+            self._watch_thread = threading.Thread(
+                target=self._refresh_watch, name="hoard-agora-observer", daemon=True)
+            self._watch_thread.start()
 
     def close(self) -> None:
+        self._watch_closed.set()
+        self._watch_wanted.set()
         self.agora.close()
+
+    def _refresh_watch(self) -> None:
+        while True:
+            self._watch_wanted.wait()
+            self._watch_wanted.clear()
+            if self._watch_closed.is_set():
+                return
+            sample = self._watch_sample
+            if sample is not None and time.monotonic() < sample[0]:
+                continue
+            try:
+                view = self.watch.view()
+            except Exception as exc:  # noqa: BLE001 - a transient I/O error must not stop the observer
+                view = {**(sample[1] if sample else self._empty_watch()), "watch_error": str(exc)[:200]}
+            self._watch_sample = (time.monotonic() + agent_watch.REFRESH_S, view)
+
+    @staticmethod
+    def _empty_watch() -> dict[str, Any]:
+        return {"agents": {}, "questions": [], "unbound": [], "sessions": []}
+
+    def _watch_for_request(self) -> dict[str, Any]:
+        if self._watch_thread is None:
+            return self.watch.view()
+        sample = self._watch_sample
+        if sample is None or time.monotonic() >= sample[0]:
+            self._watch_wanted.set()
+        return sample[1] if sample is not None else self._empty_watch()
 
     def _quota_foreman(self, sid: str) -> Optional[str]:
         facet = getattr(self.hub, "facet", lambda _: None)("agora_foreman")
@@ -3968,6 +4012,8 @@ class AgoraFacet(Facet):
 
     def _watch_enabled(self) -> bool:
         cfg = getattr(self.hub.config, "agent_watch", None)
+        if getattr(self.hub.config, "isolated", False) and not (isinstance(cfg, dict) and cfg.get("roots")):
+            return False
         return not (isinstance(cfg, dict) and cfg.get("enabled") is False)
 
     def _watch_view(self, a: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -3986,7 +4032,9 @@ class AgoraFacet(Facet):
         if not self._watch_enabled():
             return {"ok": False, "status": 404, "error": "the agent observer is disabled (hub.json agent_watch.enabled)"}
         try:
-            return self.watch.bind(a.get("session_key"), a.get("agent"))
+            result = self.watch.bind(a.get("session_key"), a.get("agent"))
+            self._watch_sample = None
+            return result
         except agent_watch.WatchError as exc:
             return {"ok": False, "status": exc.status, "error": str(exc)}
 
@@ -3996,7 +4044,7 @@ class AgoraFacet(Facet):
         messages = self.agora.channel_read({"space_id": board["space"]["id"], "channel": channel,
                                             "limit": 40, "peek": True})["messages"]
         try:
-            watch = self._watch_view({})
+            watch = self._watch_for_request() if self._watch_enabled() else self._empty_watch()
         except Exception as exc:
             watch = {"ok": False, "error": str(exc)[:200]}
         console = self.hub.facet("agora_console")
@@ -4046,7 +4094,7 @@ class AgoraFacet(Facet):
         if not out.get("ok") or not self._watch_enabled():
             return out
         try:
-            view = self.watch.view()
+            view = self._watch_for_request()
         except Exception as exc:  # noqa: BLE001 - the board must not depend on the filesystem being readable
             out["watch_error"] = str(exc)[:200]
             return out
@@ -4055,6 +4103,8 @@ class AgoraFacet(Facet):
         self._apply_observations(out.get("tasks", []), view)
         known = {x.get("id") for x in out.get("agents", [])}
         out["observed_only"] = {k: _observed(v) for k, v in view["agents"].items() if k not in known}
+        if view.get("watch_error"):
+            out["watch_error"] = view["watch_error"]
         out["watch"] = {"questions": len(view["questions"]), "unbound": len(view["unbound"]),
                         "sessions": len(view["sessions"])}
         return out
@@ -4069,7 +4119,10 @@ class AgoraFacet(Facet):
     def _enrich(self, out: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, Any]:
         if out.get("ok") and self._watch_enabled():
             try:
-                self._apply_observations(tasks, self.watch.view())
+                view = self._watch_for_request()
+                self._apply_observations(tasks, view)
+                if view.get("watch_error"):
+                    out["watch_error"] = view["watch_error"]
             except Exception as exc:
                 out["watch_error"] = str(exc)[:200]
         return out
@@ -4104,7 +4157,7 @@ class AgoraFacet(Facet):
         task["activity"] = out["activity"]
         if self._watch_enabled():
             try:
-                self._apply_observations([task], self.watch.view(), volatile=True)
+                self._apply_observations([task], self._watch_for_request(), volatile=True)
             except Exception as exc:
                 out["watch_error"] = str(exc)[:200]
         out["activity"] = task["activity"]
@@ -4259,7 +4312,7 @@ class AgoraFacet(Facet):
             if task["owner"] in live and task.get("status") in ("claimed", "in_progress"):
                 task["live"] = live[task["owner"]]
         try:
-            view = self.watch.view()
+            view = self._watch_for_request()
         except Exception as exc:  # noqa: BLE001 - the view must not depend on the filesystem being readable
             out["watch_error"] = str(exc)[:200]
             return out

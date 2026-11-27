@@ -40,6 +40,8 @@ from .agora_capacity import codex_executable, codex_observation
 from .agora_leader_state import build_leader_states, resolve_paths
 from .facets import Facet, Reply, Request
 
+from .agora_overview import OverviewSnapshots
+
 logger = logging.getLogger("hoard_hub.agora_console")
 THREAD_ID = 32
 LEADERS = (
@@ -126,7 +128,9 @@ class AgoraConsoleFacet(Facet):
         self._db_path = data_dir / "agora-console.db"
         self.space_id = 'ecosystem'
         self._space_views: dict[str, Any] = {}
+        self._space_views_lock = threading.RLock()
         self._db_lock = threading.RLock()
+        self._overview_snapshots = OverviewSnapshots()
         self._provider_lock = threading.Lock()
         self._native_preference_lock = threading.Lock()
         self._provider_at = 0.0
@@ -204,7 +208,7 @@ class AgoraConsoleFacet(Facet):
 
     def _watch_worker_registrations(self) -> None:
         while not self._recovery_stop.wait(5):
-            with self._db_lock:
+            with self._space_views_lock:
                 views = (self, *self._space_views.values())
             for view in views:
                 try:
@@ -217,10 +221,13 @@ class AgoraConsoleFacet(Facet):
         if self._registration_monitor is not None and self.space_id == "ecosystem":
             self._registration_monitor.join(timeout=1)
         if self.space_id == 'ecosystem':
+            self._overview_snapshots.close()
             self._auto_review.close()
-        for view in list(self._space_views.values()):
+        with self._space_views_lock:
+            views = list(self._space_views.values())
+            self._space_views.clear()
+        for view in views:
             view.close()
-        self._space_views.clear()
         for timer in list(self._wakeups.values()):
             timer.cancel()
         self._wakeups.clear()
@@ -263,6 +270,7 @@ class AgoraConsoleFacet(Facet):
 
     def _init_db(self) -> None:
         with self._db() as db:
+            db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS preferences (
                     leader_id TEXT PRIMARY KEY, model TEXT NOT NULL, effort TEXT NOT NULL,
@@ -784,7 +792,8 @@ class AgoraConsoleFacet(Facet):
             rows = db.execute("SELECT * FROM workers ORDER BY created_at DESC LIMIT 100").fetchall()
             pending = db.execute("SELECT * FROM workers WHERE state='unknown' AND outcome LIKE 'hub_restart%' "
                                  "AND verification LIKE '%\"restart_issue\"%'").fetchall()
-            orphans = self._orphan_workers(db)
+            candidates = db.execute("SELECT * FROM workers WHERE pid IS NOT NULL AND log_path<>''").fetchall()
+        orphans = self._orphan_workers(candidates)
         priority = {row["id"]: row for row in pending}
         priority.update({worker_id: row for worker_id, (row, _) in orphans.items()})
         rows = list(priority.values()) + [row for row in rows if row["id"] not in priority]
@@ -836,10 +845,19 @@ class AgoraConsoleFacet(Facet):
         directory = Path(self.hub.config.data_dir).resolve() / "agora-console" / "workers"
         return agora_worker_processes.observe(row, directory)
 
-    def _orphan_workers(self, db: sqlite3.Connection) -> dict[str, tuple[sqlite3.Row, dict[str, Any]]]:
+    def _orphan_workers(self, candidates: list[sqlite3.Row]) -> dict[str, tuple[sqlite3.Row, dict[str, Any]]]:
+        unchecked = []
+        for row in candidates:
+            managed = self._processes.get(row["id"])
+            if row["state"] == "starting" or (
+                    row["state"] in ACTIVE_WORKER_STATES and managed is not None and managed.pid == row["pid"]):
+                continue
+            unchecked.append(row)
+        if not unchecked:
+            return {}
         pids = agora_worker_processes.live_pids()
         found = {}
-        for row in db.execute("SELECT * FROM workers WHERE pid IS NOT NULL AND log_path<>''"):
+        for row in unchecked:
             if row["pid"] not in pids:
                 continue
             orphan = self._orphan_process(row)
@@ -1522,7 +1540,18 @@ class AgoraConsoleFacet(Facet):
             pass
         return {"tool_success_count": successes, "tool_failure_count": failures, "provider_error": provider_error}
 
-    def overview(self, refresh: bool = False) -> dict[str, Any]:
+    def read_overview(self, *, refresh=False, view="", since=""):
+        if not view and not since:
+            return self.overview(refresh)
+        view = view or "full"
+        if view not in ("live", "full"):
+            return {"ok": False, "status": 400, "error": "view must be live or full"}
+        if not isinstance(since, str) or len(since) > 32:
+            return {"ok": False, "status": 400, "error": "since must be a console revision"}
+        build = lambda: self.overview(refresh, live=view == "live")
+        return self._overview_snapshots.read((self.space_id, view), build, since, refresh)
+
+    def overview(self, refresh: bool = False, *, live: bool = False) -> dict[str, Any]:
         # A previously selected Faustus preference may have been queued while
         # the watched session was busy. Retry only that explicit pending choice
         # after checking the trusted session binding and live idle state.
@@ -1598,31 +1627,28 @@ class AgoraConsoleFacet(Facet):
             if leader_id == "faustus":
                 leader.update(faustus_current)
             leaders.append(leader)
-        usage = agora.usage() if agora is not None else {"ok": False, "providers": []}
-        with self._db_lock, self._db() as db:
-            activity = [dict(row) for row in db.execute("SELECT id,kind,subject,state,detail,created_at FROM activity ORDER BY id DESC LIMIT 40")]
-            console_turns = [dict(row) for row in db.execute("SELECT id,leader_id,message_id,model,effort,state,result,detail,session_id,process_exit_code,outcome,tool_success_count,tool_failure_count,provider_error,liveness,liveness_reasons,root_turn_id,continuation_n,not_before,created_at,updated_at FROM leader_turns ORDER BY created_at DESC LIMIT 40")]
-            console_sessions = [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM leader_sessions")]
-            native_preferences = [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM native_preferences")]
-        messages = None
-        if agora is not None:
-            recent = agora.thread_recent({"thread_id": self.thread_id, "limit": 40})
-            if recent.get("ok"):
-                messages = recent
         workers = self._worker_rows()
         for worker in workers:
             observed = agents.get(worker.get("agent_id")) or {}
             worker.update({key: observed.get(key) for key in ("declared_model", "declared_effort", "declared_at")})
         foreman = self.hub.facet("agora_foreman") if hasattr(self.hub, "facet") else None
-        return {"ok": True, "thread_id": self.thread_id, "leaders": leaders,
-                "person": self.hub.config.person_profile,
-                "foreman": foreman.status({"space_id": self.space_id}).get("foreman") if foreman else None,
-                "agents": list(agents.values()), "workers": workers, "quota_pools": usage.get("providers", []),
+        out = {"ok": True, "thread_id": self.thread_id, "leaders": leaders, "workers": workers,
+               "person": self.hub.config.person_profile,
+               "foreman": foreman.status({"space_id": self.space_id}).get("foreman") if foreman else None,
+               "capacity_observations": {"codex": codex_observation()}, "checked_at": time.time()}
+        if live:
+            return out
+
+        usage = agora.usage() if agora is not None else {"ok": False, "providers": []}
+        with self._db_lock, self._db() as db:
+            activity = [dict(row) for row in db.execute("SELECT id,kind,subject,state,detail,created_at FROM activity ORDER BY id DESC LIMIT 40")]
+            console_turns = [dict(row) for row in db.execute("SELECT id,leader_id,message_id,model,effort,state,result,detail,session_id,process_exit_code,outcome,tool_success_count,tool_failure_count,provider_error,liveness,liveness_reasons,root_turn_id,continuation_n,not_before,created_at,updated_at FROM leader_turns ORDER BY created_at DESC LIMIT 40")]
+            native_preferences = [dict(row) for row in db.execute("SELECT leader_id,session_id,model,effort,state,detail,updated_at FROM native_preferences")]
+        recent = agora.thread_recent({"thread_id": self.thread_id, "limit": 40}) if agora is not None else {}
+        return {**out, "agents": list(agents.values()), "quota_pools": usage.get("providers", []),
                 "quota_floors": agora_quota_floors.view(agora, usage) if isinstance(agora, Agora) else None,
-                "capacity_observations": {"codex": codex_observation()},
-                "activity": activity, "messages": messages, "console_turns": console_turns,
-                "console_sessions": console_sessions, "native_preferences": native_preferences,
-                "checked_at": time.time()}
+                "activity": activity, "messages": recent if recent.get("ok") else None, "console_turns": console_turns,
+                "console_sessions": list(console_sessions.values()), "native_preferences": native_preferences}
 
     def _agora_agents(self) -> list[dict[str, Any]]:
         """The Agora's agents with their last heartbeat or action; empty when the Agora is unreachable."""
@@ -1729,10 +1755,12 @@ class AgoraConsoleFacet(Facet):
         if sid == self.space_id:
             return self
         self._agora().for_space(sid)
-        with self._db_lock:
+        with self._space_views_lock:
             if sid not in self._space_views:
                 view = copy.copy(self)
                 view._space_views = {}
+                view._space_views_lock = threading.RLock()
+                view._db_lock = threading.RLock()
                 view.space_id = sid
                 # Provider execution sessions are per space; messages/tasks
                 # remain canonical in Agora's one coordination database.
@@ -4098,7 +4126,7 @@ class AgoraConsoleFacet(Facet):
         if sid != self.space_id:
             return self.for_space(sid).get(req)
         if req.path == "/api/agora/console/overview":
-            return self.overview(req.q_bool("refresh"))
+            return self.read_overview(refresh=req.q_bool("refresh"), view=req.q("view", ""), since=req.q("since", ""))
         if req.path == "/api/agora/console/quota_floors":
             return self.quota_floors()
         if req.path == "/api/agora/console/leaders":
@@ -4212,8 +4240,11 @@ class AgoraConsoleFacet(Facet):
                  "actor": {"type": "string", "maxLength": 64}},
                  "required": ["action", "actor"], "additionalProperties": False},
              "annotations": {"readOnlyHint": False}},
-            {"name": "hub_agora_console_overview", "description": "Read the Agora team console: live provider catalogs where the official local interface exposes them, shared quota pools, child workers and canonical group messages. console_turns carry a liveness class per finished turn (completed, advanced, plan_only, empty_response, blocked, failed, needs_followup) with its reasons, and the root_turn_id/continuation_n of automatic continuations. Catalogs may be unavailable; no model call is made.",
-             "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},
+            {"name": "hub_agora_console_overview", "description": "Read the Agora team console: live provider catalogs where the official local interface exposes them, shared quota pools, child workers and canonical group messages. console_turns carry a liveness class per finished turn (completed, advanced, plan_only, empty_response, blocked, failed, needs_followup) with its reasons, and the root_turn_id/continuation_n of automatic continuations. Catalogs may be unavailable; no model call is made. Use view=live or view=full for an incremental snapshot, then pass its revision as since.",
+             "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"},
+                                                              "view": {"enum": ["live", "full"]},
+                                                              "since": {"type": "string", "maxLength": 32}},
+                             "additionalProperties": False},
              "annotations": {"readOnlyHint": True}},
             {"name": "hub_agora_console_leaders", "description": "Live state of each leader's CLI (Claude, Codex, Cursor, Faustus): working, waiting, idle since <time>, auth_expired, error or unknown, read from its local session files (event kinds and timestamps only, never message contents), with last_activity_at, source, detail, the open Agora task ids it owns and idle_with_work when it is idle, logged out or failed while owning open tasks. No model call is made.",
              "inputSchema": {"type": "object", "properties": {"refresh": {"type": "boolean"}}, "additionalProperties": False},
@@ -4291,7 +4322,8 @@ class AgoraConsoleFacet(Facet):
             actor, error = self._mcp_actor(values)
             return error or method(values, actor)
         return {
-            'hub_agora_console_overview': lambda a: self.overview(bool(a.get('refresh'))),
+            'hub_agora_console_overview': lambda a: self.read_overview(
+                refresh=bool(a.get('refresh')), view=a.get('view', ''), since=a.get('since', '')),
             'hub_agora_console_leaders': lambda a: self.leader_states(bool(a.get('refresh'))),
             'hub_agora_console_message': lambda a: write(self.send_message, a),
             'hub_agora_console_preferences': lambda a: write(self.set_preferences, a),

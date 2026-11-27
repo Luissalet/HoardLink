@@ -121,8 +121,8 @@ class App:
     def health_url(self) -> str:
         return self.url.rstrip("/") + self.health_path
 
-    def to_dict(self) -> dict[str, Any]:
-        icon_revision = self.icon_revision
+    def to_dict(self, *, check_icon: bool = True) -> dict[str, Any]:
+        icon_revision = self.icon_revision if check_icon else None
         return {
             "id": self.id,
             "name": self.name,

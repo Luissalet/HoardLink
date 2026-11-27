@@ -4,7 +4,7 @@ import pytest
 
 from hoard_link.hub import facets, tools
 
-from .test_hub_and_server import _http, served  # noqa: F401
+from .test_hub_and_server import _http, _observed_app, served  # noqa: F401
 
 
 def test_all_catalogue_tools_have_named_routes(served, monkeypatch):
@@ -40,7 +40,7 @@ def test_named_agent_routes_require_the_hub_token(served, method):
 
 def test_status_alias_keeps_legacy_app_status_shape(served):
     hub, url = served
-    canonical, current = _http(url + "/api/apps/fake/status")
+    canonical, current = _observed_app(url, "/api/apps/fake/status")
     legacy, original = _http(url + "/api/apps/fake")
     assert canonical == legacy == 200
     assert current.keys() == original.keys()
