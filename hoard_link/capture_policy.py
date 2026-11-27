@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import time
 from uuid import uuid4
 
 
@@ -29,6 +30,8 @@ _TRIGGERS = {
     for table in _POLICY_TABLES
     for verb in _OPERATIONS
 }
+_WAIT_TIMEOUT = 0.5
+_RECEIPT_POLL_INTERVAL = 0.01
 
 
 def _scope(monitor: str, layout: str) -> None:
@@ -43,7 +46,7 @@ def _transaction(db: Path, *, write: bool = False):
         raise ValueError("An explicit absolute policy database path is required")
     mode = "rw" if write else "ro"
     with closing(sqlite3.connect(f"{db.as_uri()}?mode={mode}", uri=True,
-                                 timeout=0.5, isolation_level=None)) as conn:
+                                 timeout=_WAIT_TIMEOUT, isolation_level=None)) as conn:
         conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield conn
@@ -121,7 +124,7 @@ class ScreenCapturePolicy:
             return None
         row = conn.execute("SELECT revision FROM capture_policy_scope WHERE monitor = ? AND layout = ?",
                            (monitor, layout)).fetchone()
-        if not row or conn.execute("SELECT 1 FROM capture_policy_grant").fetchone():
+        if not row:
             return None
         private = _private(conn)
         # A whole-display pull cannot fence a compositor visibility change.
@@ -129,19 +132,36 @@ class ScreenCapturePolicy:
         excluded = conn.execute("SELECT 1 FROM exclusions WHERE enabled <> 0 LIMIT 1").fetchone() is not None
         return self.snapshot(row[0], private, excluded, False)
 
+    @contextmanager
+    def _settled_state(self, monitor: str, layout: str, *, write: bool = False):
+        deadline = time.monotonic() + _WAIT_TIMEOUT
+        while True:
+            with _transaction(self.db, write=write) as conn:
+                state = self._read(conn, monitor, layout)
+                if state is None or not conn.execute("SELECT 1 FROM capture_policy_grant").fetchone():
+                    yield conn, state
+                    return
+            # The selector and the worker can overlap. Release this transaction
+            # so an active owner can finish, then read the committed policy again.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                yield None, None
+                return
+            time.sleep(min(remaining, _RECEIPT_POLL_INTERVAL))
+
     def read(self, monitor: str, layout: str):
-        with _transaction(self.db) as conn:
-            return self._read(conn, monitor, layout)
+        with self._settled_state(monitor, layout) as (_, state):
+            return state
 
     @contextmanager
     def lease(self, monitor: str, layout: str, revision: int, medium: str):
         if medium not in ("video", "audio") or type(revision) is not int:
             yield False
             return
-        with _transaction(self.db, write=True) as conn:
-            state = self._read(conn, monitor, layout)
+        with self._settled_state(monitor, layout, write=True) as (conn, state):
             if state is None or state.revision != revision or state.private or state.excluded:
-                conn.rollback()
+                if conn is not None:
+                    conn.rollback()
                 yield False
                 return
 

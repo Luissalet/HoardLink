@@ -1,5 +1,6 @@
 """The screen-memory writer and the capture producer share one durable fence."""
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from threading import Event, Thread
 import sqlite3
@@ -58,6 +59,25 @@ def test_permit_checks_the_scope_revision_and_medium(policy):
             assert granted is False
     with policy.lease(MONITOR, LAYOUT, 1, "audio") as granted:
         assert granted is True
+
+
+def test_policy_read_waits_for_a_concurrent_grant(database, policy):
+    reader_started = Event()
+    # Open a separate reader connection, as a selector in a different process does.
+    reader = capture_policy.ScreenCapturePolicy(database, Snapshot)
+
+    def read():
+        reader_started.set()
+        return reader.read(MONITOR, LAYOUT)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with policy.lease(MONITOR, LAYOUT, 1, "audio") as granted:
+            assert granted is True
+            waiting = pool.submit(read)
+            assert reader_started.wait(2)
+            with pytest.raises(FutureTimeout):
+                waiting.result(timeout=0.05)
+        assert waiting.result(timeout=2) == Snapshot(1, False, False, False)
 
 
 PRIVACY_CHANGES = [
