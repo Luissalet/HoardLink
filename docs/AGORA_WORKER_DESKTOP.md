@@ -1,0 +1,25 @@
+# Aislamiento de escritorio de los trabajadores de Ágora
+
+**Decisión pendiente (#4158).** Separar los escritorios dentro de una sesión interactiva deja abierta la delegación de consolas. Falta un ejecutor autorizado de Session 0 o un entorno Windows aislado donde completar la prueba. Esta nota registra la barrera necesaria antes de activar una opción por defecto.
+
+## Lo que cubre el lanzamiento actual
+
+En la base `fb501f8`, `agora_console.py` usa `popen_hidden` al lanzar, reanudar o sustituir trabajadores en los puntos 2689, 3161 y 3445. `agora_faustus.py:533` usa la misma llamada para trabajadores locales de Faustus. `hoard_link/_process.py` aplica `CREATE_NO_WINDOW` a ese lanzamiento directo y quita los indicadores incompatibles. Windows deja a ese proceso de consola sin consola adjunta. Un descendiente puede pedir otro tipo de arranque. [Indicadores de creación](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags)
+
+Un nombre completo de estación y escritorio en `STARTUPINFO.lpDesktop` ubica al proceso inicial. Los descendientes ordinarios heredan ese escritorio. Un Job asignado antes de reanudar el proceso permite limpiar sus miembros con `KILL_ON_JOB_CLOSE`. Los límites de interfaces afectan a los miembros del Job. Los lanzamientos que un servicio externo realiza por encargo quedan fuera de esa herencia. [Conexión de un hilo a un escritorio](https://learn.microsoft.com/en-us/windows/win32/winstation/thread-connection-to-a-desktop) · [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+
+## Por qué puede aparecer una consola en Default
+
+En el código de Microsoft Terminal, `_isInteractiveUserSession` consulta el PID y la estación del **anfitrión** de la consola. Devuelve falso en Session 0 o si la estación carece de `WSF_VISIBLE`. El nombre del escritorio del cliente no forma parte de ese filtro. Según el código, un escritorio B bajo la misma estación interactiva `WinSta0` tampoco cambia el resultado del filtro. Si el nuevo cliente solicita una consola visible y supera el resto de las comprobaciones, `attemptHandoff` activa `IConsoleHandoff` como servidor COM local fuera de proceso. El flujo puede crear `OpenConsole -Embedding` y llegar a la interfaz de Terminal. [Filtro de sesión y delegación](https://github.com/microsoft/terminal/blob/main/src/server/IoDispatchers.cpp#L124-L291) · [Cadena de activación COM](https://github.com/microsoft/terminal/blob/main/src/host/exe/exemain.cpp#L231-L263)
+
+Esto explica cómo se puede alcanzar Default aunque los procesos ordinarios usen otro escritorio. Los cinco avisos de ventanas reales de #4133, registrados por dirección en el hilo 5066, ya muestran que repetir la prueba adversa en esta sesión puede afectar al escritorio de la persona. Una enumeración de Default que dispare un aborto sirve de detección después del hecho. La ausencia de ventanas en una compilación ordinaria no demuestra que una petición de consola nueva quede contenida.
+
+## Barrera propuesta sin cambiar los ajustes de Windows
+
+El Hub conservaría su sesión. Un ejecutor autorizado en Session 0, con una identidad de servicio con acceso a los worktrees de la prueba y sin acceso a la sesión interactiva, recibiría exclusivamente los arranques de trabajadores de Ágora. Validaría la sesión y la estación no interactiva antes de crear un escritorio por trabajador. Asignaría el proceso suspendido al Job y conservaría ambos handles hasta que salga el árbol. Una reanudación o sustitución usaría la misma vía. Esta separación permite aprovechar el rechazo de Session 0 del código de Microsoft sin modificar el registro ni los ajustes de Terminal. La barrera depende de disponer de esa identidad y de verificar el comportamiento del Windows concreto. [Servicios no interactivos](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services) · [Privilegios de creación con otro token](https://learn.microsoft.com/en-us/windows/win32/secauthz/processes-in-the-client-security-context)
+
+`nw.ps1` evita la consola inicial y no constituye por sí solo ese ejecutor. Con un Hub en la sesión interactiva y sin un ejecutor autorizado, el candidato no tiene una ruta demostrada para mantener a la vez el lanzamiento por defecto y la garantía de que las solicitudes de consola de un trabajador no lleguen a Default.
+
+## Verificación pendiente
+
+Dirección debe confirmar en el hilo 5091 el ejecutor autorizado de Session 0 o un entorno Windows aislado. El ensayo usaría un Hub con datos y raíces temporales y un puerto propio, en un escritorio A. El trabajador sintético se ejecutaría en B. El ensayo comprobaría `git`, Python, Node, pytest y el navegador headless, enumeraría ventanas de A y de Default antes, durante y después, y registraría la aparición de anfitriones de consola. Se incluirían las solicitudes adversas de la tarea cuando el revisor haya leído la prueba y el entorno pueda contenerlas. En Session 0, la observación del Default de la persona requeriría un observador independiente de solo lectura en la sesión interactiva. El ensayo queda pendiente hasta que se pueda montar ese entorno.
