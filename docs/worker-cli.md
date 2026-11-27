@@ -65,6 +65,12 @@ Get one full schema with `{"app":"vitruvius","tool":"app_project_get"}`.
 The worker can request schemas for tools in its scope. Other callers receive
 the full catalogue by default and can pass `"summary":true` for compact entries.
 
+When `hub_agora_console_worker` replaces a confined Faustus worker on the same
+production task, the replacement inherits the declared Vitruvius tools unless
+the caller supplies a new app scope. With Vitruvius in scope, the replacement
+can recover the original project's ID and revision from its receipt, including
+after further replacements on that task.
+
 ### Descubrir herramientas de una aplicación
 
 Usa `hub_app_tools {"app":"vitruvius"}` para consultar las herramientas de una
@@ -78,6 +84,12 @@ Pide un esquema completo con `{"app":"vitruvius","tool":"app_project_get"}`.
 El trabajador puede pedir esquemas de las herramientas de su ámbito. Los demás
 llamadores reciben el catálogo completo por defecto y pueden pasar
 `"summary":true` para obtener entradas resumidas.
+
+Cuando `hub_agora_console_worker` releva a un trabajador confinado de Faustus
+en la misma tarea de producción, conserva las herramientas declaradas de
+Vitruvius salvo que se indique un nuevo ámbito de aplicaciones. Si Vitruvius
+está en el ámbito, el relevo puede recuperar del recibo el ID y la revisión del
+proyecto original, también tras otros relevos en esa tarea.
 
 ## Production order reads
 

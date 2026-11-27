@@ -1299,7 +1299,9 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
                         {"action": action, "space_id": "estudio", "actor": actor, **args})
 
         options = {"leader_id": "faustus", "task": "Synthetic production assignment."}
-        app_scope = {"apps": {"nightingale": ["data_ingest"], "writer": ["wh_document_new"]}}
+        app_scope = {"apps": {"nightingale": ["data_ingest"], "writer": ["wh_document_new"],
+                              "vitruvius": ["app_project_create", "app_project_get",
+                                            "app_project_update", "app_project_preview"]}}
         rejected = tool("create", **options, task_id=standalone["id"], file_scope=app_scope)
         assert not rejected["ok"] and rejected["code"] == "worker_order_job_required"
         assert "hub_agora_plan_set" in rejected["error_i18n"]["es"]
@@ -1349,7 +1351,7 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
         agora.heartbeat({"agent": registered_agent})
 
         related_args = {"related_task_ids": [related["id"]]} if with_related else {}
-        declared_scope = {**app_scope, "read_budget": 0} if with_related else app_scope
+        declared_scope = {**app_scope, "read_budget": 0 if with_related else 7}
         created = tool("create", **options, **related_args, task_id=task_id, file_scope=declared_scope)
         worker = created["worker"]
         assert created["ok"] and worker["state"] == "running" and "warning" not in created and created["undo"]
@@ -1357,6 +1359,7 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
             "space_id": "estudio", "order_id": order["id"], "task_id": task_id, "agent": worker["agent_id"],
         }
         assert scopes[1]["apps"] == app_scope["apps"]
+        assert "vitruvius_receipt_agent" not in scopes[1]
         assert [Path(path).read_text(encoding="utf-8") for path in scopes[1]["read_files"]] == ["primary"]
         expected_threads = [console.thread_id, task["thread_id"]]
         if with_related:
@@ -1418,6 +1421,37 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
             assert scopes[-1]["production"]["task_id"] == task_id and scopes[-1]["apps"] == app_scope["apps"]
             assert scopes[-1]["read_budget"] == 0
             assert scopes[-1]["read_files"] == scopes[1]["read_files"]
+            assert "vitruvius_receipt_agent" not in scopes[-1]
+        else:
+            monkeypatch.setattr(facet, "_recovery_stop", threading.Event())
+            original = worker["agent_id"]
+            agora.task_claim({"agent": original, "task_id": task_id})
+            for overrides in ({}, {"file_scope": {"write_paths": [str(tmp_path / "output")]}}):
+                console._processes.pop(worker["id"], None)
+                with console._db() as db:
+                    db.execute("UPDATE workers SET state='failed',session_id='' WHERE id=?", (worker["id"],))
+                assert tool("continue", worker_id=worker["id"])["code"] == "worker_session_unavailable"
+                reply = tool("replace", actor=worker["agent_id"], task_id=task_id, worker_id=worker["id"], **overrides)
+                assert reply["ok"], reply
+                relief = next(item for item in console._worker_rows() if item["id"] == reply["worker_id"])
+                assert scopes[-1]["apps"] == app_scope["apps"]
+                assert scopes[-1]["production"] == {**scopes[1]["production"], "agent": relief["agent_id"]}
+                assert scopes[-1]["vitruvius_receipt_agent"] == original
+                if overrides:
+                    assert "read_budget" not in scopes[-1]
+                else:
+                    assert scopes[-1]["read_budget"] == 7
+                assert scopes[-1]["read_files"] == scopes[1]["read_files"]
+                assert scopes[-1]["workspace"] != worker["workspace"]
+                assert scopes[-1]["write_paths"] == overrides.get("file_scope", {}).get("write_paths", [])
+                assert "vitruvius_receipt_agent" not in relief["file_scope"]
+                command = commands[-1][0]
+                assert "vitruvius_receipt_agent" not in command[command.index("-p") + 1]
+
+                agora.heartbeat({"agent": relief["agent_id"]})
+                console._replacement_handoff(worker["id"])
+                assert agora._task_row(task_id)["owner"] == relief["agent_id"]
+                worker = relief
 
 
 def test_claude_auth_status_is_live_sanitized_and_does_not_invent_catalog(tmp_path, monkeypatch):
@@ -2795,7 +2829,8 @@ def test_missing_worker_session_offers_replacement_with_context_and_lock_handove
     assert facet.worker({"action": "continue", "worker_id": "worker"}, caller)["reason"] == "missing_session"
 
     started = []
-    def launch(args, actor, *, worker_id):
+    def launch(args, actor, *, worker_id, vitruvius_receipt_agent):
+        assert not vitruvius_receipt_agent
         started.append((args, actor, worker_id))
         with facet._db() as db:
             db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,created_at,updated_at) "
