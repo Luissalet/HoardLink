@@ -467,6 +467,17 @@ def test_worker_prompt_and_receipt_use_a_distinct_child_identity(tmp_path, monke
     assert commands[0][1]["cwd"] == str(Path(__file__).resolve().parents[1])
 
 
+def test_unrecorded_persistent_worker_is_stopped(tmp_path):
+    facet = _facet(tmp_path)
+    stopped = []
+    process = SimpleNamespace(job_name="fixture", terminate=lambda: stopped.append(True))
+    with pytest.raises(ValueError, match="receipt failed"):
+        with facet._record_worker_launch("worker", process):
+            raise ValueError("receipt failed")
+    assert stopped == [True]
+    assert "worker" not in facet._processes
+
+
 def test_external_worker_registration_requires_real_receipt_and_tracks_lifecycle(tmp_path):
     facet = _facet(tmp_path)
     incomplete = facet.worker({"action": "register", "worker_id": "child-1", "leader_id": "codex"})

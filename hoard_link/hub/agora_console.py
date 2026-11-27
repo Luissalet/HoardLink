@@ -2708,8 +2708,7 @@ class AgoraConsoleFacet(Facet):
                 if leader_id == "faustus":
                     self._track_faustus_start(db, worker_id, scope.get("task_id"), actor, launching_at)
             return {"ok": False, "status": 503, "error": f"Could not start {leader_id.title()} worker: {type(exc).__name__}"}
-        self._processes[worker_id] = process
-        with self._db_lock, self._db() as db:
+        with self._record_worker_launch(worker_id, process) as db:
             db.execute("INSERT INTO workers(id,parent_id,agent_id,model,effort,task,state,pid,log_path,session_id,model_source,"
                        "created_at,updated_at,process_started_at,launched_by,worker_job) VALUES(?,?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?)",
                        (worker_id, leader_id, agent_id, model, effort, task, process.pid, str(log_path), session_id,
@@ -3173,8 +3172,7 @@ class AgoraConsoleFacet(Facet):
                 db.execute("UPDATE workers SET state=?,updated_at=? WHERE id=?", (row["state"], time.time(), row["id"]))
             return {"ok": False, "status": 503, "error": f"Could not start the original runner. / No se pudo iniciar el ejecutor original. ({type(exc).__name__})"}
         detail = "Se ha solicitado continuar el turno. / A follow-up turn was requested."
-        with self._db_lock, self._db() as db:
-            self._processes[row["id"]] = process
+        with self._record_worker_launch(row["id"], process) as db:
             db.execute("UPDATE workers SET state='running',pid=?,log_path=?,workspace=?,detail=?,outcome='unverified',"
                        "process_exit_code=NULL,process_started_at=?,worker_job=?,updated_at=? WHERE id=?",
                        (process.pid, str(log_path), str(cwd), detail, agora_worker_processes.started_at(process.pid),
@@ -3189,6 +3187,23 @@ class AgoraConsoleFacet(Facet):
         return {"ok": True, "worker_id": worker_id, "session_id": row["session_id"], "state": "running",
                 "undo": {"tool": "hub_agora_console_worker", "arguments": {"action": "stop", "worker_id": worker_id,
                                                                               "space_id": self.space_id}}}
+
+    @contextmanager
+    def _record_worker_launch(self, worker_id: str, process: WorkerProcess):
+        with self._db_lock:
+            try:
+                with self._db() as db:
+                    yield db
+            except Exception:
+                if getattr(process, "job_name", ""):
+                    # A persistent job without a saved receipt cannot be readopted.
+                    try:
+                        process.terminate()
+                        self._close_worker_runtime(worker_id)
+                    except (OSError, subprocess.TimeoutExpired):
+                        logger.exception("Could not clean up the unrecorded worker %s", worker_id)
+                raise
+            self._processes[worker_id] = process
 
     def _replace_worker(self, args: dict[str, Any], actor: str, message: str) -> dict[str, Any]:
         worker_id = str(args.get("worker_id") or "")
@@ -3460,8 +3475,7 @@ class AgoraConsoleFacet(Facet):
                            (state, detail, time.time(), worker_id))
             self._record("worker", worker_id, state, detail)
             return {"ok": False, "status": 409, "error": detail}
-        with self._db_lock, self._db() as db:
-            self._processes[worker_id] = process
+        with self._record_worker_launch(worker_id, process) as db:
             detail = ("Continuación automática. " if automatic else "Continuación solicitada. ") + row["detail"]
             runtime = self._faustus_runtimes.get(worker_id, {})
             resume_command = command.copy()
