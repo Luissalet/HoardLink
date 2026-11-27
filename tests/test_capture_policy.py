@@ -21,10 +21,11 @@ class Snapshot:
     audio_excluded: bool
 
 
-@pytest.fixture
-def database(tmp_path):
+@pytest.fixture(params=("DELETE", "WAL"))
+def database(tmp_path, request):
     path = tmp_path / "argus-hoard.db"
     with sqlite3.connect(path) as conn:
+        assert conn.execute(f"PRAGMA journal_mode = {request.param}").fetchone()[0].upper() == request.param
         conn.executescript("""
             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE exclusions (id INTEGER PRIMARY KEY, kind TEXT NOT NULL,
@@ -60,7 +61,7 @@ def test_permit_checks_the_scope_revision_and_medium(policy):
 
 
 @pytest.mark.parametrize(("statement", "field"), [
-    ("UPDATE settings SET value = 'true' WHERE key = 'private'", "private"),
+    ("INSERT INTO settings VALUES ('private', 'true') ON CONFLICT(key) DO UPDATE SET value=excluded.value", "private"),
     ("INSERT INTO exclusions VALUES (1, 'app', 'test.exe', 1, 0)", "excluded"),
 ])
 def test_cutoff_waits_for_the_issued_acquisition(database, policy, statement, field):
