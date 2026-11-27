@@ -14,6 +14,8 @@ A permit checks the selected monitor, layout, policy revision and medium. It rec
 
 The selector and worker share this authority. When a receipt is visible, a policy read or competing permit gives its owner a bounded opportunity to settle it, then reads the committed policy again. An unresolved receipt continues to deny both reads and permits.
 
+Publishing a prepared image or transport batch uses a short writer transaction scoped to the same revision. It issues no device permission. A native grant that never reached its recipient is settled immediately. After an acknowledged call, transient SQLite contention is retried for a bounded settlement period. The worker drains admitted calls before a normal exit.
+
 Any enabled Talos exclusion currently blocks capture of both picture and loopback for the entire display. A foreground or title sample cannot order a compositor visibility change with whole-display acquisition. This conservative behavior also applies to exclusions for an application that happens to be closed. The provider copies no app names, window titles, pictures or audio. Test the production setup and its latency with the actual monitor only in the separately authorized hardware check.
 
 ## Castellano
@@ -23,5 +25,7 @@ La fábrica `hoard_link.capture_policy:create` está apagada por defecto. Direcc
 Cada adquisición pide permiso con la revisión vigente. El permiso queda guardado antes de la llamada física. El productor espera al acuse del ayudante de audio o a la confirmación de que ha salido, incluso si vence el plazo y falla la terminación. Talos puede confirmar un cambio de modo privado o de exclusiones cuando se han resuelto los permisos ya emitidos. Si sale un `TimeoutError` del contexto o se interrumpe el productor antes del acuse, el registro sigue bloqueando aperturas y cambios hasta una recuperación autorizada con los procesos implicados detenidos. `remove` revierte la integración cuando el permiso está resuelto.
 
 El selector y el productor comparten la misma autoridad. Si ven un permiso pendiente, esperan un plazo acotado a que se resuelva y vuelven a leer la política confirmada. Si sigue pendiente, se deniegan tanto las lecturas como los permisos nuevos.
+
+La publicación de una imagen preparada o un lote de transporte usa una transacción de escritura breve para la misma revisión. No emite permisos de adquisición. Si el permiso no llegó al dispositivo, se liquida de inmediato. Tras el acuse se reintentan durante un plazo acotado los bloqueos transitorios de SQLite. El productor espera a que se liquiden las llamadas admitidas antes de un cierre normal.
 
 Mientras el productor mire un monitor completo, cualquier exclusión habilitada bloquea vídeo y audio. Los cambios de ventana del compositor requieren otro mecanismo de sincronización antes de permitir exclusiones por visibilidad. Los datos de verificación deben ser sintéticos.

@@ -31,6 +31,7 @@ _TRIGGERS = {
     for verb in _OPERATIONS
 }
 _WAIT_TIMEOUT = 0.5
+_SETTLE_TIMEOUT = 2.0
 _RECEIPT_POLL_INTERVAL = 0.01
 
 
@@ -154,6 +155,30 @@ class ScreenCapturePolicy:
             return state
 
     @contextmanager
+    def publication(self, monitor: str, layout: str, revision: int):
+        """Serialize an in-process publication without issuing a native grant."""
+        with self._settled_state(monitor, layout, write=True) as (_, state):
+            yield bool(state is not None and state.revision == revision
+                       and not (state.private or state.excluded or state.audio_excluded))
+
+    @staticmethod
+    def _release(conn, receipt: str) -> None:
+        deadline = time.monotonic() + _SETTLE_TIMEOUT
+        while True:
+            try:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                conn.execute("DELETE FROM capture_policy_grant WHERE receipt = ?", (receipt,))
+                conn.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                conn.rollback()
+                code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
+                if code not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(_RECEIPT_POLL_INTERVAL)
+
+    @contextmanager
     def lease(self, monitor: str, layout: str, revision: int, medium: str):
         if medium not in ("video", "audio") or type(revision) is not int:
             yield False
@@ -170,9 +195,10 @@ class ScreenCapturePolicy:
             receipt = uuid4().hex
             conn.execute("INSERT INTO capture_policy_grant VALUES (1, ?, ?, ?)", (receipt, revision, medium))
             conn.commit()
-            conn.execute("BEGIN IMMEDIATE")
-            settled = False
+            settled = True  # A failed transaction before handoff cannot authorize a device.
             try:
+                conn.execute("BEGIN IMMEDIATE")
+                settled = False
                 yield True
             except TimeoutError:
                 # The caller could have lost contact while a helper can still act.
@@ -187,8 +213,7 @@ class ScreenCapturePolicy:
                 settled = True
             finally:
                 if settled:
-                    conn.execute("DELETE FROM capture_policy_grant WHERE receipt = ?", (receipt,))
-                    conn.commit()  # Keep the acknowledgement when a settled call raised.
+                    self._release(conn, receipt)
 
 
 def create():

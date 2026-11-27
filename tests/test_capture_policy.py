@@ -197,6 +197,78 @@ def test_settled_error_releases_permit_and_removal_restores_policy_edits(databas
         conn.execute("UPDATE settings SET value='true' WHERE key='private'")
 
 
+def test_publication_serializes_privacy_without_a_durable_native_grant(database, policy):
+    attempted = Event()
+
+    def change():
+        with sqlite3.connect(database, timeout=4) as conn:
+            attempted.set()
+            conn.execute("UPDATE settings SET value='true' WHERE key='private'")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with pytest.raises(RuntimeError, match="staged media failed"):
+            with policy.publication(MONITOR, LAYOUT, 1) as granted:
+                assert granted is True
+                with sqlite3.connect(database) as conn:
+                    assert conn.execute("SELECT count(*) FROM capture_policy_grant").fetchone() == (0,)
+                waiting = pool.submit(change)
+                assert attempted.wait(2)
+                with pytest.raises(FutureTimeout):
+                    waiting.result(timeout=0.05)
+                raise RuntimeError("staged media failed")
+        waiting.result(timeout=2)
+    with policy.publication(MONITOR, LAYOUT, 1) as granted:
+        assert granted is False
+    assert policy.read(MONITOR, LAYOUT).private
+
+
+@pytest.mark.parametrize("busy_phase", ["before_native", "settlement"])
+def test_transient_database_contention_does_not_abandon_a_settled_grant(database, policy, monkeypatch, busy_phase):
+    connect = sqlite3.connect
+    faulted = False
+
+    def busy():
+        nonlocal faulted
+        faulted = True
+        error = sqlite3.OperationalError("database is locked")
+        error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        raise error
+
+    class Connection(sqlite3.Connection):
+        began = 0
+        commits = 0
+
+        def execute(self, sql, *args):
+            if sql == "BEGIN IMMEDIATE":
+                self.began += 1
+                if busy_phase == "before_native" and self.began == 2 and not faulted:
+                    busy()
+            return super().execute(sql, *args)
+
+        def commit(self):
+            self.commits += 1
+            if busy_phase == "settlement" and self.commits == 2 and not faulted:
+                busy()
+            return super().commit()
+
+    monkeypatch.setattr(capture_policy.sqlite3, "connect", lambda *args, **kwargs: connect(
+        *args, **kwargs, factory=Connection,
+    ))
+    samples = []
+    try:
+        with policy.lease(MONITOR, LAYOUT, 1, "video") as granted:
+            assert granted is True
+            samples.append("video")
+    except sqlite3.OperationalError:
+        assert busy_phase == "before_native"
+
+    assert faulted and samples == ([] if busy_phase == "before_native" else ["video"])
+    assert policy.read(MONITOR, LAYOUT) == Snapshot(1, False, False, False)
+    with connect(database) as conn:
+        assert conn.execute("SELECT count(*) FROM capture_policy_grant").fetchone() == (0,)
+        conn.execute("UPDATE settings SET value='true' WHERE key='private'")
+
+
 def test_provision_and_runtime_are_closed_on_unknown_or_incomplete_policy(database, policy):
     with sqlite3.connect(database) as conn:
         conn.execute("UPDATE settings SET value='null' WHERE key='private'")
