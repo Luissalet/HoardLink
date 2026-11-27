@@ -11,6 +11,10 @@ from typing import Protocol
 from .._process import popen_hidden
 
 IS_WINDOWS = sys.platform == "win32"
+NPM_ENTRY_POINTS = {
+    "claude": Path("@anthropic-ai", "claude-code", "cli.js"),
+    "codex": Path("@openai", "codex", "bin", "codex.js"),
+}
 
 
 class WorkerProcess(Protocol):
@@ -24,9 +28,11 @@ class WorkerProcess(Protocol):
 def _native_command(command, env):
     argv = [os.fspath(part) for part in command]
     entry = Path(argv[0])
-    if entry.name.casefold() in {"claude.cmd", "claude.bat"}:
-        # Supported npm install: call its JS entry directly, without a console shell.
-        script = entry.parent / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+    shim = NPM_ENTRY_POINTS.get(entry.stem.casefold())
+    if entry.suffix.casefold() in {".cmd", ".bat"} and shim is not None:
+        # Invoke the supported npm entry directly, without a command shell.
+        modules = entry.parent.parent if entry.parent.name.casefold() == ".bin" else entry.parent / "node_modules"
+        script = modules / shim
         local_node = entry.parent / "node.exe"
         node = str(local_node) if local_node.is_file() else shutil.which("node.exe", path=env.get("PATH"))
         if node and script.is_file():

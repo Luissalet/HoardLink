@@ -13,6 +13,13 @@ from hoard_link.hub.facets import Request
 from tests.test_agora_console import _facet
 
 
+
+@pytest.fixture(autouse=True)
+def use_mockable_worker_launcher(monkeypatch):
+    # These tests stub the portable subprocess path. Native APIs have their own tests.
+    monkeypatch.setattr("hoard_link.hub.agora_worker_launch.IS_WINDOWS", False)
+
+
 def test_service_follows_placement_without_probing_localhost(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     facet.hub.placement = SimpleNamespace(state=lambda: {

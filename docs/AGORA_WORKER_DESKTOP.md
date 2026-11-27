@@ -2,7 +2,7 @@
 
 En Windows, cada arranque, reanudación o relevo de un trabajador de Ágora crea un escritorio privado. Se incluyen los trabajadores de Faustus en el PC. El inicio del Hub y la apertura de aplicaciones usan sus lanzadores habituales. En otros sistemas se conserva el lanzamiento anterior.
 
-La opción `agora.worker_private_desktop` viene activada. Para volver temporalmente al lanzador anterior, configura `"agora": {"worker_private_desktop": false}`. Si Windows rechaza el escritorio o el proceso, el Hub devuelve un error de arranque. Los trabajadores requieren un ejecutable nativo. Para una instalación npm de Claude, el Hub ejecuta directamente Node y el script del paquete.
+La opción `agora.worker_private_desktop` viene activada. Para volver temporalmente al lanzador anterior, configura `"agora": {"worker_private_desktop": false}`. Si Windows rechaza el escritorio o el proceso, el Hub devuelve un error de arranque. Los trabajadores requieren un ejecutable nativo. Para las instalaciones npm de Claude y Codex, el Hub ejecuta directamente Node y el script del paquete.
 
 El lanzador asigna la estación y el escritorio por `STARTUPINFO.lpDesktop` y el Job al crear el proceso con `CREATE_NO_WINDOW`. Este arranque está diseñado para programas ordinarios que heredan la consola. Detener al trabajador termina su Job. Al salir, se cierra el Job y se libera el escritorio. [Creación de procesos](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags) · [Conexión a un escritorio](https://learn.microsoft.com/en-us/windows/win32/winstation/thread-connection-to-a-desktop) · [Jobs](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
 

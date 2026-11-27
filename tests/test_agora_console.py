@@ -20,6 +20,13 @@ from hoard_link.hub.placement import Placement
 from hoard_link.hub.tools import call
 
 
+
+@pytest.fixture(autouse=True)
+def use_mockable_worker_launcher(monkeypatch):
+    # These tests stub the portable subprocess path. Native APIs have their own tests.
+    monkeypatch.setattr("hoard_link.hub.agora_worker_launch.IS_WINDOWS", False)
+
+
 class FakeAgora:
     def __init__(self):
         self.posts = []
