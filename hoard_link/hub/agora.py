@@ -4044,7 +4044,9 @@ class AgoraFacet(Facet):
         messages = self.agora.channel_read({"space_id": board["space"]["id"], "channel": channel,
                                             "limit": 40, "peek": True})["messages"]
         try:
-            watch = self._watch_for_request() if self._watch_enabled() else self._empty_watch()
+            # A live view needs the recorded action on its first read. HTTP calls
+            # already run this work in the Agora lane, away from app discovery.
+            watch = self._watch_view({})
         except Exception as exc:
             watch = {"ok": False, "error": str(exc)[:200]}
         console = self.hub.facet("agora_console")

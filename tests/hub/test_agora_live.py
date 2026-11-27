@@ -91,7 +91,9 @@ def test_http_mcp_and_completed_tool_retention(tmp_path, roots):
         actor = view["actors"][0]
         assert actor["session"]["last_action"]["input"].endswith("+run()")
         assert actor["target"]["kind"] == "file"
-        assert tools.call(hub,"hub_agora_live",{})["actors"][0]["id"] == "codex-one"
+        tool_actor = tools.call(hub, "hub_agora_live", {})["actors"][0]
+        assert tool_actor["id"] == "codex-one"
+        assert tool_actor["session"]["last_action"] == actor["session"]["last_action"]
         spec = next(t for t in tools.all_tools() if t["name"] == "hub_agora_live")
         assert spec["annotations"]["readOnlyHint"]
         ag.space_create({"agent":"codex-one","id":"empty","title":"Empty"})
