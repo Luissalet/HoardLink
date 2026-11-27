@@ -331,3 +331,9 @@ returns the first one whose health check passes, falling back to the configured 
 placement state instead of calling its own API. `Link.resolve` finds Faustus the same way (the placed address is read
 with `where.placed`, the one rule every Hoard shares). `where.app_url("hermes")` and `appUrl("prometheus")` answer the same
 for the other apps that move.
+
+### Local monitor capture policy
+
+The opt-in [monitor capture policy](docs/CAPTURE-POLICY.md) lets a worker validate each
+acquisition against the screen-memory database. Changes and issued permissions
+share the database's ordering. Provisioning and removal are explicit operator actions.
