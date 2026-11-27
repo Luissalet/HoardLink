@@ -175,6 +175,13 @@ def _response_media(response, expected):
     return media
 
 
+def _write_timeout(handler, deadline):
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise TimeoutError
+    handler.connection.settimeout(min(remaining, _CLIENT_IDLE_S))
+
+
 def _start_reply(handler, status, media, trace):
     try:
         handler.send_response(status)
@@ -187,14 +194,19 @@ def _start_reply(handler, status, media, trace):
         for name, value in trace.headers.items():
             handler.send_header(name, value)
         handler.end_headers()
+    except TimeoutError:
+        raise
     except OSError as exc:
         raise _ClientClosed from exc
 
 
-def _send_chunk(handler, frame):
+def _send_chunk(handler, frame, deadline):
+    _write_timeout(handler, deadline)
     try:
         handler.wfile.write(frame)
         handler.wfile.flush()
+    except TimeoutError:
+        raise
     except OSError as exc:
         raise _ClientClosed from exc
 
@@ -209,12 +221,12 @@ def _copy_reply(handler, upstream, media, deadline, trace):
         if not chunk:
             if upstream.length:
                 raise IncompleteRead(b"", upstream.length)
-            _send_chunk(handler, b"0\r\n\r\n")
+            _send_chunk(handler, b"0\r\n\r\n", deadline)
             return
         forwarded += len(chunk)
         if forwarded > _REPLY_LIMIT[media]:
             raise _Problem(502, "upstream_body_too_large")
-        _send_chunk(handler, f"{len(chunk):x}\r\n".encode("ascii") + chunk + b"\r\n")
+        _send_chunk(handler, f"{len(chunk):x}\r\n".encode("ascii") + chunk + b"\r\n", deadline)
         trace.forwarded(arrived)
 
 
@@ -271,6 +283,7 @@ def _relay(handler, origin, selected, token, trace):
             requested = True
             with connection.getresponse() as response:
                 media = _response_media(response, route.response)
+                _write_timeout(handler, deadline)
                 started_reply = True
                 _start_reply(handler, response.status, media, trace)
                 _copy_reply(handler, response, media, deadline, trace)

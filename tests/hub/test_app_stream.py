@@ -144,6 +144,10 @@ class VoiceDouble:
                     self.event({"type": "audio", "offset_frames": 0, "frames": 1, "data_base64": "AAA="})
                     if peer.mode == "partial":
                         return
+                    if peer.mode == "stalled_reader":
+                        for _ in range(256):
+                            self.event({"type": "audio", "data_base64": "A" * 32768})
+                        return
                     if not peer.release.wait(4) or peer.cancelled.is_set():
                         return
                     self.event({"type": "audio", "offset_frames": 1, "frames": 1, "data_base64": "AQA="})
@@ -491,3 +495,14 @@ def test_explicit_cancellation_has_separate_capacity(rig, monkeypatch):
     assert _speak(rig)[0] == 429
     assert _reply(rig, HUB_ROUTE + f"voice/jobs/{JOB}/cancel")[0] == 200
     assert [row[0] for row in rig.double.calls] == ["DELETE"]
+
+
+def test_downstream_backpressure_respects_deadline(rig, monkeypatch):
+    rig.double.mode = "stalled_reader"
+    monkeypatch.setitem(stream_gateway._TIME_LIMIT, "", 0.25)
+    with rig.request(HUB_ROUTE + f"voice/jobs/{JOB}/stream") as response:
+        assert response.status == 200
+        # Leave the response unread while the app produces enough to fill the socket.
+        assert rig.double.cancelled.wait(2)
+    rig.double.pairs.close()
+    assert rig.traces[0][1]["outcome"] == "timeout"
