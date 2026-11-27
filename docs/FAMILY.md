@@ -103,6 +103,9 @@ No app needs another app's port or token file any more (Funes's federated
 "cards_suggest", {...})`. `GET /api/apps/<id>/tools` lists what an app
 offers.
 
+For voice NDJSON and dictation audio uploads over the same Hub origin, see
+the [app stream gateway](commons/app-stream.md).
+
 ## 5. Rules and jobs
 
 A **rule** is `when` (an event pattern) → `then` (actions); a **job** is a
