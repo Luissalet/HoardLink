@@ -171,9 +171,9 @@ The `skills` block of `faustus-plugin.json` names the procedures of the family's
 
 ## App and worker priorities
 
-On Windows the Hub starts service apps at Normal priority and Agora worker trees at BelowNormal. When a new Hub observes a verified local service listener or recovers a verified worker, it corrects the priority of that process and its existing descendants. Unknown or protected processes keep their existing priority.
+On Windows the Hub starts service apps at Normal priority and Agora worker trees at BelowNormal. When a new Hub observes a verified local service listener or recovers a verified worker, it corrects the priority of that process and its existing descendants. Unknown or protected processes keep their existing priority. Priority errors are logged and readoption continues. Profile commands inherit their usual priority.
 
-En Windows, el Hub arranca las apps de servicio con prioridad Normal y los árboles de trabajadores del Ágora con BelowNormal. Al recuperar un servicio local o un trabajador identificado, corrige la prioridad del proceso y de sus descendientes existentes. Los procesos desconocidos o protegidos conservan su prioridad.
+En Windows, el Hub arranca las apps de servicio con prioridad Normal y los árboles de trabajadores del Ágora con BelowNormal. Al recuperar un servicio local o un trabajador identificado, corrige la prioridad del proceso y de sus descendientes existentes. Los procesos desconocidos o protegidos conservan su prioridad. Si falla el ajuste, el Hub lo registra y completa la readopción. Los comandos de perfil siguen heredando la prioridad habitual.
 
 ## Apps kept alive
 

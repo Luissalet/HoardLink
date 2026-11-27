@@ -382,38 +382,34 @@ def set_tree_priority(pid: int, created_at: Optional[float], priority: int) -> N
     """Correct the class of a verified Windows process and its existing descendants."""
     if not IS_WINDOWS or created_at is None:
         return
-    ps = _psutil()
-    if ps is None:
-        return
-    protected = _protected_pids()
-    if pid in protected:
-        return
+
     def correct(process):
+        process_pid = None
         try:
-            if process.pid not in protected and process.is_running() and process.nice() != priority:
+            process_pid = process.pid
+            if process_pid not in protected and process.is_running() and process.nice() != priority:
                 process.nice(priority)
-        except ps.NoSuchProcess:
-            pass
-        except (ps.Error, OSError) as exc:
-            log.warning("Could not correct priority for process %d: %s", process.pid, exc)
+        except Exception as exc:  # noqa: BLE001 - adjustment must not interrupt readoption
+            log.warning("Could not correct priority for process %s in tree %d: %s", process_pid, pid, exc)
 
     try:
+        ps = _psutil()
+        if ps is None:
+            return
+        protected = _protected_pids()
+        if pid in protected:
+            return
         root = ps.Process(pid)
         if root.create_time() != created_at or not root.is_running():
             return
         correct(root)  # New children can inherit the class before the tree is enumerated.
-        descendants = root.children(recursive=True)
-    except ps.NoSuchProcess:
-        return
-    except (ps.Error, OSError) as exc:
+        for child in root.children(recursive=True):
+            correct(child)
+    except Exception as exc:  # noqa: BLE001 - tree inspection is also best effort
         log.warning("Could not inspect process %d for priority correction: %s", pid, exc)
-        return
-
-    for child in descendants:
-        correct(child)
 
 
-def _detached_kwargs(*, service: bool) -> dict[str, Any]:
+def _detached_kwargs(*, service: bool = False) -> dict[str, Any]:
     if IS_WINDOWS:
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
         if service:

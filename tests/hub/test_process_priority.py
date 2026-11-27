@@ -71,6 +71,29 @@ def test_readopted_worker_corrects_live_tree_with_verified_identity(monkeypatch)
     assert already.writes == protected.writes == []
 
 
+@pytest.mark.parametrize("failure", [None, "AccessDenied", "NoSuchProcess"])
+def test_worker_tree_priority_failure_is_logged_and_other_processes_are_corrected(monkeypatch, caplog, failure):
+    psutil = pytest.importorskip("psutil")
+    monkeypatch.setattr(procs, "IS_WINDOWS", True)
+    monkeypatch.setattr(procs, "_protected_pids", lambda: set())
+    normal, below = procs.NORMAL_PRIORITY_CLASS, procs.BELOW_NORMAL_PRIORITY_CLASS
+    child = FakeProcess(42, normal)
+    root = SimpleNamespace(pid=41, create_time=lambda: 123.0, is_running=lambda: True,
+                           children=lambda *, recursive: [child])
+    if failure is not None:
+        def nice(priority=None):
+            if priority is not None:
+                raise getattr(psutil, failure)(root.pid)
+            return normal
+        root.nice = nice
+    monkeypatch.setattr(procs, "_psutil", lambda: SimpleNamespace(Process=lambda _pid: root))
+
+    agora_worker_processes.restore_priority(41, 123.0)
+
+    assert child.writes == [below]
+    assert "Could not correct priority for process 41" in caplog.text
+
+
 def test_worker_runtime_is_readopted_at_below_normal_once(monkeypatch):
     console = AgoraConsoleFacet.__new__(AgoraConsoleFacet)
     console._faustus_runtimes = {}
