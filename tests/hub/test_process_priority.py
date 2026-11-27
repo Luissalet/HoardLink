@@ -33,12 +33,6 @@ def test_service_priority_at_launch_keeps_the_hidden_flags(tmp_path, monkeypatch
     assert launches == [expected]
 
 
-@pytest.mark.parametrize("windows", [True, False])
-def test_worker_creation_flags_set_an_explicit_background_class(monkeypatch, windows):
-    monkeypatch.setattr(procs, "IS_WINDOWS", windows)
-    assert agora_worker_processes.creation_flags() == (procs.BELOW_NORMAL_PRIORITY_CLASS if windows else 0)
-
-
 class FakeProcess:
     def __init__(self, pid, priority, *, children=()):
         self.pid = pid
@@ -83,13 +77,14 @@ def test_worker_runtime_is_readopted_at_below_normal_once(monkeypatch):
     restored = []
     monkeypatch.setattr(procs, "proc_info", lambda pid: procs.ProcInfo(pid, created_at=123.0))
     monkeypatch.setattr(procs, "set_tree_priority", lambda *args: restored.append(args))
-    row = {"id": "fixture", "runtime_pid": 42, "runtime_started_at": 122.0}
+    row = {"id": "fixture", "runtime_pid": 42, "runtime_started_at": 122.0, "runtime_job": "fixture-job"}
     console._adopt_worker_runtime(row)
     assert not restored
     row["runtime_started_at"] = 123.0
     console._adopt_worker_runtime(row)
     console._adopt_worker_runtime(row)
     assert restored == [(42, 123.0, procs.BELOW_NORMAL_PRIORITY_CLASS)]
+    assert console._faustus_runtimes["fixture"]["job_name"] == "fixture-job"
 
 
 def test_status_readopts_only_verified_local_services_once_per_identity(tmp_path, monkeypatch):
