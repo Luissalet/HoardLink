@@ -20,6 +20,13 @@ from hoard_link.hub.placement import Placement
 from hoard_link.hub.tools import call
 
 
+
+@pytest.fixture(autouse=True)
+def use_mockable_worker_launcher(monkeypatch):
+    # These tests stub the portable subprocess path. Native APIs have their own tests.
+    monkeypatch.setattr("hoard_link.hub.agora_worker_launch.IS_WINDOWS", False)
+
+
 class FakeAgora:
     def __init__(self):
         self.posts = []
@@ -458,6 +465,17 @@ def test_worker_prompt_and_receipt_use_a_distinct_child_identity(tmp_path, monke
     assert "create or claim an Agora task" in prompt
     assert "CRITERIOS.md" in prompt and "MEMORY.md" in prompt
     assert commands[0][1]["cwd"] == str(Path(__file__).resolve().parents[1])
+
+
+def test_unrecorded_persistent_worker_is_stopped(tmp_path):
+    facet = _facet(tmp_path)
+    stopped = []
+    process = SimpleNamespace(job_name="fixture", terminate=lambda: stopped.append(True))
+    with pytest.raises(ValueError, match="receipt failed"):
+        with facet._record_worker_launch("worker", process):
+            raise ValueError("receipt failed")
+    assert stopped == [True]
+    assert "worker" not in facet._processes
 
 
 def test_external_worker_registration_requires_real_receipt_and_tracks_lifecycle(tmp_path):

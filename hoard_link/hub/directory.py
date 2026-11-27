@@ -56,8 +56,11 @@ class AppDirectory:
                 catalog = {app.id: (app, app.url) for app in self.hub.apps}
                 data = self.hub.snapshot()
                 checked_at = time.time()
-                rows = {row["id"]: {**row, "status_checked_at": checked_at, "status_stale": False}
-                        for row in data["apps"]}
+                rows = {
+                    row["id"]: {**row, "status_stale": False,
+                                "status_checked_at": None if row.get("health_check_excluded") else checked_at}
+                    for row in data["apps"]
+                }
                 listing = {**data, "apps": list(rows.values()), "status_checked_at": checked_at, "status_stale": False}
                 if epoch is self.hub._snapshot_epoch:
                     self._latest = _Sample(epoch, time.monotonic() + self.MAX_AGE_S, catalog, listing, rows)

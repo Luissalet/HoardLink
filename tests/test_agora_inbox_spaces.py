@@ -19,8 +19,15 @@ def test_console_scopes_http_mcp_threads_and_worker_context(tmp_path, monkeypatc
     commands = []
     monkeypatch.setattr(AgoraConsoleFacet, '_codex_executable', lambda self:'private-fixture.exe')
     environments = []
-    monkeypatch.setattr('hoard_link.hub.agora_console.subprocess.Popen', lambda cmd, **kw:
-        environments.append(kw.get('env') or {}) or commands.append(cmd) or SimpleNamespace(pid=1234))
+
+    def launch(config, command, *, cwd, env, log):
+        assert config is hub.config
+        commands.append(command)
+        environments.append(env)
+        return SimpleNamespace(pid=1234)
+
+    monkeypatch.setattr('hoard_link.hub.agora_console.launch_worker', launch)
+
     class DeferredThread:
         def __init__(self, *args, **kw):pass
         def start(self):pass
@@ -39,7 +46,8 @@ def test_console_scopes_http_mcp_threads_and_worker_context(tmp_path, monkeypatc
         assert facet.post(request)['ok']
         assert a._colors()['codex'] == '#123456' and b._colors()['codex'] == '#654321'
         worker = a.worker({'leader_id':'codex','model':'fixture','effort':'low','task':'Private scoped task'},'tester')
-        assert worker['ok'] and '--space project-a --as ' in commands[-1][-1]
+        assert worker['ok'], worker
+        assert '--space project-a --as ' in commands[-1][-1]
         assert environments[-1]['AGORA_SPACE'] == 'project-a'
         assert environments[-1]['HOARD_HUB_URL'] == hub.config.url
         assert not b._worker_rows()

@@ -11,6 +11,7 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from ipaddress import ip_address
 import secrets
 import threading
 from urllib.parse import urlsplit
@@ -69,6 +70,7 @@ class Hub:
         self._spawned: dict[str, int] = {}   # app id -> pid of the last process the hub spawned for it
         self._start_locks: dict[str, threading.Lock] = {}
         self._spawned_created: dict[str, float] = {}
+        self._adopted_services: dict[str, tuple[int, float]] = {}
         self._stopping_all = threading.Event()
         self._stop_all_lock = threading.Lock()
         self._manual_stops: set[str] = set()
@@ -292,7 +294,26 @@ class Hub:
                       "health": {**d["health"], "state": remote["state"], "detail": remote["detail"]},
                       "process": None, "stoppable": False, "launchable": False,
                       "launch_reason": f"Corre en {remote['where']}; se mueve desde «Ejecutar en»."})
+        elif procs.IS_WINDOWS:
+            self._adopt_service_process(app, h, proc)
         return d
+
+    def _adopt_service_process(self, app: App, health: procs.Health, process: Optional[procs.ProcInfo]) -> None:
+        if (app.kind != "app" or not app.launchable or not app.expect_service or health.state != "healthy"
+                or process is None or process.protected or process.created_at is None):
+            return
+        if app.host != "localhost":
+            try:
+                if not ip_address(app.host).is_loopback:
+                    return
+            except ValueError:
+                return
+        identity = (process.pid, process.created_at)
+        with self._lock:
+            if self._adopted_services.get(app.id) == identity:
+                return
+            self._adopted_services[app.id] = identity
+        procs.set_tree_priority(*identity, procs.NORMAL_PRIORITY_CLASS)
 
     SNAPSHOT_REUSE_S = 1.5
 
@@ -318,16 +339,31 @@ class Hub:
             apps = [self.app_status(app) for app in self.apps]
             return self._snapshot_data(apps, {}, self.faustus_status())
         apps_now = self.apps
+        excluded_apps = self.config.directory_health_excluded_apps
+        if not isinstance(excluded_apps, list) or any(
+            not isinstance(app_id, str) or not app_id.strip() for app_id in excluded_apps
+        ):
+            raise ValueError("directory_health_excluded_apps must be a list of app IDs")
+        excluded_ids = {app_id.strip().casefold() for app_id in excluded_apps}
+
+        def directory_health(app):
+            if app.id.casefold() in excluded_ids:
+                return procs.Health("unknown")
+            return procs.health(app, listeners)
+
         # Every probe in parallel: a closed loopback port costs ~1s on
         # Windows, and a dozen of them in a row would make the page crawl.
         with ThreadPoolExecutor(max_workers=max(4, len(apps_now) + 3)) as pool:
             fut_windows = pool.submit(desktop.list_windows, self.config.profiles_dir)
             fut_faustus = pool.submit(self.faustus_status)
             listeners = procs.listening_pids()
-            healths = list(pool.map(lambda a: procs.health(a, listeners), apps_now))
+            healths = list(pool.map(directory_health, apps_now))
             windows = fut_windows.result()
             faustus = fut_faustus.result()
             apps = list(pool.map(lambda ah: self.app_status(ah[0], listeners, windows, ah[1]), zip(apps_now, healths)))
+        for app in apps:
+            if app["id"].casefold() in excluded_ids:
+                app["health_check_excluded"] = True
         remote_faustus = self.placement.remote_app("faustus")
         if remote_faustus is not None:
             faustus = {**faustus, "where": remote_faustus["where"], "remote_state": remote_faustus["state"],

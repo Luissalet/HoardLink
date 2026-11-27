@@ -4,11 +4,16 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from . import procs
+
+
+def restore_priority(pid: int, created_at: float) -> None:
+    procs.set_tree_priority(pid, created_at, procs.BELOW_NORMAL_PRIORITY_CLASS)
 
 
 def live_pids():
@@ -95,12 +100,35 @@ class AdoptedWorker:
     process: Any
     started_at: float
     paths: tuple[Path, Path]
+    job_name: str = ""
+    _job: Any = field(default=None, init=False, repr=False)
+    _job_lock: Any = field(default_factory=Lock, init=False, repr=False)
 
     @property
     def pid(self):
         return self.process.pid
 
+    def attach_job(self, name):
+        from .windows_job import open_worker_job
+
+        if not self.process.is_running():
+            raise OSError("The worker process has exited")
+        self._job = open_worker_job(name, self.pid)
+        self.job_name = name
+
     def wait(self, hub_stopping):
+        try:
+            return self._wait_process(hub_stopping)
+        finally:
+            with self._job_lock:
+                if self._job is not None:
+                    try:
+                        if not hub_stopping.is_set() and self._job.running():
+                            self._job.terminate()
+                    finally:
+                        self._job.close()
+
+    def _wait_process(self, hub_stopping):
         ps = procs._psutil()
         while not hub_stopping.is_set():
             try:
@@ -122,6 +150,10 @@ class AdoptedWorker:
         return None
 
     def terminate(self):
+        if self.job_name:
+            with self._job_lock:
+                self._job.terminate()
+            return
         ps = procs._psutil()
         try:
             # psutil checks the original PID and creation time before signalling.
@@ -130,6 +162,19 @@ class AdoptedWorker:
             pass
         except ps.AccessDenied as exc:
             raise PermissionError("Could not stop the verified worker process.") from exc
+
+
+def terminate_recorded_job(name, pid, created_at):
+    """Stop a job recorded for a runtime or orphan after rechecking its identity."""
+    from .windows_job import open_worker_job
+
+    if created_at is None or started_at(pid) != created_at:
+        raise OSError("The recorded worker process has changed or exited")
+    job = open_worker_job(name, pid)
+    try:
+        job.terminate()
+    finally:
+        job.close()
 
 
 def identify(row, directory):

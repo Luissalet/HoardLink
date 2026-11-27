@@ -169,6 +169,12 @@ updated library on their next ordinary restart.
 
 The `skills` block of `faustus-plugin.json` names the procedures of the family's skill library that fit this app's work: `hoard-daily-digest`, `hoard-family-recap`, `hoard-what-happened`, `hoard-meeting-prep`, `team-agent-orchestration`. The hub's Skills tab shows and changes them. This app does not hand them to connecting agents yet.
 
+## App and worker priorities
+
+On Windows the Hub starts service apps at Normal priority and Agora worker trees at BelowNormal. When a new Hub observes a verified local service listener or recovers a verified worker, it corrects the priority of that process and its existing descendants. Unknown or protected processes keep their existing priority. Priority errors are logged and readoption continues. Profile commands inherit their usual priority.
+
+En Windows, el Hub arranca las apps de servicio con prioridad Normal y los árboles de trabajadores del Ágora con BelowNormal. Al recuperar un servicio local o un trabajador identificado, corrige la prioridad del proceso y de sus descendientes existentes. Los procesos desconocidos o protegidos conservan su prioridad. Si falla el ajuste, el Hub lo registra y completa la readopción. Los comandos de perfil siguen heredando la prioridad habitual.
+
 ## Apps kept alive
 
 The Hub keeps a list of apps that live as long as it does (`data/keep-alive.json`,
@@ -331,3 +337,9 @@ returns the first one whose health check passes, falling back to the configured 
 placement state instead of calling its own API. `Link.resolve` finds Faustus the same way (the placed address is read
 with `where.placed`, the one rule every Hoard shares). `where.app_url("hermes")` and `appUrl("prometheus")` answer the same
 for the other apps that move.
+
+### Local monitor capture policy
+
+The opt-in [monitor capture policy](docs/CAPTURE-POLICY.md) lets a worker validate each
+acquisition against the screen-memory database. Changes and issued permissions
+share the database's ordering. Provisioning and removal are explicit operator actions.

@@ -53,6 +53,53 @@ For `hub_call_app`, set `X-Agent-Id` and `X-Agent-Session` on either endpoint, o
 and `session` alongside `arguments` in a shared `POST /api/agent/call` request. Headers take
 precedence. Put the reason for a write in the `hub_call_app` arguments.
 
+## App tool discovery
+
+Use `hub_app_tools {"app":"vitruvius"}` to discover an app's tools. Workers
+with a declared app scope receive only the entries in that scope. Each entry
+has a `name`, a one-line `description` and a `required` list of argument names.
+Scoped responses return up to 512 characters of the app-wide `instructions` by
+default. If `instructions_truncated` is true, repeat the request with
+`"include_instructions":true` to get the full instructions.
+Get one full schema with `{"app":"vitruvius","tool":"app_project_get"}`.
+The worker can request schemas for tools in its scope. Other callers receive
+the full catalogue by default and can pass `"summary":true` for compact entries.
+
+### Descubrir herramientas de una aplicación
+
+Usa `hub_app_tools {"app":"vitruvius"}` para consultar las herramientas de una
+aplicación. Los trabajadores con un ámbito de aplicaciones declarado reciben
+solo las entradas de su ámbito. Cada entrada incluye `name`, una línea en
+`description` y los nombres de los argumentos obligatorios en `required`.
+Las respuestas acotadas devuelven hasta 512 caracteres de las instrucciones
+generales de la app en `instructions`. Si `instructions_truncated` es
+`true`, repite la petición con `"include_instructions":true` para obtenerlas completas.
+Pide un esquema completo con `{"app":"vitruvius","tool":"app_project_get"}`.
+El trabajador puede pedir esquemas de las herramientas de su ámbito. Los demás
+llamadores reciben el catálogo completo por defecto y pueden pasar
+`"summary":true` para obtener entradas resumidas.
+
+## Production order reads
+
+A dedicated scoped worker's `hub_agora_order` call returns a short brief,
+its assigned job, and a short list of other jobs with task ID, title and
+status. `summary` marks this response, and `jobs_omitted` counts jobs beyond
+the preview. `detail_truncated` marks an oversized own job. Pass `full:true`
+for the whole order or `job:<task_id>` for a complete job in that order.
+`hub_agora_job` already selects a single job by task ID and returns its packet.
+Other callers receive the whole order by default.
+
+### Lectura de órdenes de producción
+
+Para un trabajador dedicado con ámbito, `hub_agora_order` devuelve un
+encargo breve, su trabajo asignado y una lista corta de los demás trabajos
+con ID de tarea, título y estado. `summary` identifica la vista y `jobs_omitted`
+cuenta los trabajos omitidos. `detail_truncated` señala si se ha recortado
+su propio trabajo. Usa `full:true` para la orden completa o `job:<task_id>`
+para un trabajo de esa orden. `hub_agora_job` ya elige un solo trabajo por ID
+de tarea y devuelve su ficha. Los demás llamadores reciben la orden completa
+por defecto.
+
 ## Local programs
 
 Open **System → Capabilities → Local programs** in the Hub. The page and `hub_programs` show the

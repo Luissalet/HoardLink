@@ -13,6 +13,13 @@ from hoard_link.hub.facets import Request
 from tests.test_agora_console import _facet
 
 
+
+@pytest.fixture(autouse=True)
+def use_mockable_worker_launcher(monkeypatch):
+    # These tests stub the portable subprocess path. Native APIs have their own tests.
+    monkeypatch.setattr("hoard_link.hub.agora_worker_launch.IS_WINDOWS", False)
+
+
 def test_service_follows_placement_without_probing_localhost(tmp_path, monkeypatch):
     facet = _facet(tmp_path)
     facet.hub.placement = SimpleNamespace(state=lambda: {
@@ -371,8 +378,10 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
     custom_token = str(tmp_path / "fixture-connection.dat")
     facet.hub.apps = [SimpleNamespace(token_file=custom_token)]
     monkeypatch.setenv("FAUSTUS_AGORA_WORKER_TASK_THREAD", "999")
+    monkeypatch.setenv("HOARD_WORKER_APP_SCOPE", '{"unrelated": ["do_not_inherit"]}')
+    apps = {"vitruvius": ["app_project_create"]} if space == "estudio" else {}
     budget = 0 if resume else 7
-    scope = agora_faustus.file_scope(workspace, {"read_budget": budget})
+    scope = agora_faustus.file_scope(workspace, {"apps": apps, "read_budget": budget})
     thread_id = None
     if space == "estudio":
         scope["production"] = {"space_id": space, "task_id": 74, "order_id": 6, "agent": "faustus-qa"}
@@ -389,6 +398,9 @@ def test_pc_runtime_installs_key_privately_and_preserves_it_on_resume(tmp_path, 
                                      api_key="" if resume else key, resume=resume)
     command, env = launches[0]
     assert env["FAUSTUS_AGORA_WORKER_SPACE"] == space
+    assert json.loads(env.get("HOARD_WORKER_APP_SCOPE", "{}")) == apps
+    assert ("HOARD_WORKER_APP_SCOPE" in env) == bool(apps)
+    assert env["HOARD_WORKER_ORDER_TASK"] == ("74" if space == "estudio" else "0")
     assert env.get("FAUSTUS_AGORA_WORKER_TASK_THREAD") == thread_id
     assert custom_token in json.loads(env["FAUSTUS_AGORA_PROTECTED_PATHS"])
     assert ("--agora-studio" in command) == (space == "estudio")
