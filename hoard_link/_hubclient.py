@@ -25,19 +25,23 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from http.client import IncompleteRead
 from pathlib import Path
+from socket import gaierror
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
 from ._process import popen_hidden
 
 DEFAULT_URL = "http://127.0.0.1:8810"
+_JSON_WHITESPACE = re.compile(r"[ \t\r\n]*")
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -142,10 +146,67 @@ def fetch(url: str, body: Optional[dict[str, Any]] = None, *, method: Optional[s
         return status, None
 
 
+def _incomplete_receipt(partial: bytes) -> Any:
+    """Keep a complete reply, or recover only complete receipt IDs from its JSON prefix."""
+    try:
+        return json.loads(partial)
+    except (ValueError, RecursionError):
+        pass
+    try:
+        text = partial.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        # The cut may be inside a UTF-8 character in a later field.
+        text = partial[:exc.start].decode("utf-8")
+
+    decoder = json.JSONDecoder()
+
+    def skip_space(index: int) -> int:
+        return _JSON_WHITESPACE.match(text, index).end()
+
+    def read_object(index: int, receipt: dict, *, envelope: bool = False) -> int:
+        index = skip_space(index + 1)
+        while text[index:index + 1] == '"':
+            key, index = decoder.raw_decode(text, index)
+            index = skip_space(index)
+            if text[index:index + 1] != ":":
+                break
+            index = skip_space(index + 1)
+            if envelope and key == "result" and text[index:index + 1] == "{":
+                nested: dict = {}
+                try:
+                    index = skip_space(read_object(index, nested))
+                finally:
+                    if nested:
+                        receipt["result"] = nested
+            else:
+                value, index = decoder.raw_decode(text, index)
+                index = skip_space(index)
+                if (key in ("job_id", "request_id") and isinstance(value, str)
+                        and text[index:index + 1] in ("", ",", "}")):
+                    receipt[key] = value
+            if text[index:index + 1] != ",":
+                break
+            index = skip_space(index + 1)
+        if text[index:index + 1] != "}":
+            raise ValueError("Incomplete receipt object")
+        return index + 1
+
+    receipt: dict = {}
+    start = skip_space(0)
+    if text[start:start + 1] == "{":
+        try:
+            read_object(start, receipt, envelope=True)
+        except (ValueError, RecursionError):
+            pass
+    return receipt or None
+
+
 def fetch_detailed(url: str, body: Optional[dict[str, Any]] = None, *, method: Optional[str] = None,
                    timeout: float = 5.0, headers: Optional[dict[str, str]] = None) -> tuple[Optional[int], Any, str]:
     """Like :func:`fetch` but also says why nothing answered: ``(status, json, "")`` when something did,
-    else ``(None, None, "timeout" | "unreachable")``."""
+    else a missing status and ``"timeout"``, ``"unreachable"`` for a known connection failure,
+    or ``"response_lost"`` if a request may have reached the server. An incomplete read
+    may still carry a JSON receipt with the IDs that arrived in full."""
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method or ("POST" if data is not None else "GET"),
                                  headers={"Content-Type": "application/json", "Accept": "application/json",
@@ -157,13 +218,20 @@ def fetch_detailed(url: str, body: Optional[dict[str, Any]] = None, *, method: O
     except urllib.error.HTTPError as exc:
         try:
             raw = exc.read()
+        except IncompleteRead as interrupted:
+            return None, _incomplete_receipt(interrupted.partial), "response_lost"
         except Exception:  # noqa: BLE001
             raw = b""
         status = exc.code
     except Exception as exc:  # noqa: BLE001
         reason = getattr(exc, "reason", exc)
-        timed_out = isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError) or "timed out" in str(reason).lower()
-        return None, None, "timeout" if timed_out else "unreachable"
+        if isinstance(reason, (ConnectionRefusedError, gaierror)) or str(reason).lower() == "unreachable":
+            return None, None, "unreachable"
+        if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
+            return None, None, "timeout"
+        if isinstance(reason, IncompleteRead):
+            return None, _incomplete_receipt(reason.partial), "response_lost"
+        return None, None, "response_lost"
     try:
         return status, json.loads(raw.decode("utf-8", "replace")) if raw else None, ""
     except ValueError:

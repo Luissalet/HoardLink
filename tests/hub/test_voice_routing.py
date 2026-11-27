@@ -9,6 +9,9 @@ from hoard_link.hub.core import Hub
 from hoard_link.service_contracts import SERVICE_TOOLS
 
 
+REAL_APP_CALL = contract.call_app
+
+
 @pytest.fixture
 def voice_hub(monkeypatch):
     hub = object.__new__(Hub)
@@ -120,3 +123,43 @@ def test_an_ambiguous_work_reply_is_never_replayed(voice_hub, monkeypatch):
     assert not result["ok"] and result["error"] == "response lost"
     assert result["status"] == 502 and result["submission_unknown"]
     assert state["probes"] == ["boltagon"]
+
+
+def test_common_stt_uncertain_keeps_receipt_through_agent_route(monkeypatch, voice_hub):
+    hub, state = voice_hub
+    args = {"path": "fixture.wav"}
+    hops = []
+    details = {
+        "provider": "funes",
+        "kind": "outcome_unknown",
+        "outcome_unknown": True,
+        "tool": "transcribe_file",
+        "reconcile_action": "read_current_state_before_retry",
+        "request_id": "request-fixture-5",
+        "job_id": "funes-fixture-job",
+    }
+
+    def post(url, body, token, timeout, extra_headers=None):
+        assert url.endswith("/api/agent/call")
+        hops.append((body["caller"], body["tool"], body["arguments"]))
+        if body["caller"] == "boltagon":
+            return 200, {"job_id": details["job_id"], "status": "queued"}
+        accepted = hub.call_app("funes", "transcribe_file", args, caller="boltagon")
+        assert accepted["service_owner"] == "funes" and accepted["result"]["job_id"] == details["job_id"]
+        return 502, {
+            **details, "details": details, "code": "outcome_unknown", "error": "The Hub response was lost",
+        }
+
+    monkeypatch.setattr(contract, "call_app", REAL_APP_CALL)
+    monkeypatch.setattr(contract, "_post", post)
+    envelope, status = agent_routes.invoke(hub, "hub_call_app", {"app": "stt", "tool": "transcribe_file", "arguments": args})
+    assert status == 400 and not envelope["ok"]
+    reply = envelope["result"]
+    assert reply == {
+        "ok": False, "app": "boltagon", "tool": "transcribe_file", "status": 502, "contract": "shared",
+        "ms": reply["ms"], "service_owner": "boltagon", "error": "The Hub response was lost",
+        "code": "outcome_unknown", "outcome_unknown": True, "job_id": details["job_id"],
+        "request_id": details["request_id"], "reconcile_action": details["reconcile_action"], "details": details,
+    }
+    assert hops == [("hub-tool", "transcribe_file", args), ("boltagon", "transcribe_file", args)]
+    assert state["probes"] == ["boltagon", "funes"]

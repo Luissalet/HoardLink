@@ -237,10 +237,30 @@ def call_app(app: App, tool: str, arguments: Optional[dict[str, Any]] = None, *,
         else:
             out["result"] = body
     else:
+        out.update(_error_metadata(body))
         out["error"] = _error_text(body) or f"HTTP {status}"
         if status == 401:
             out["error"] = "the app refused the token in " + app.token_file + " (restart the app or the hub?)"
     return out
+
+
+def _error_metadata(body: Any) -> dict[str, Any]:
+    """Carry a provider's structured error and receipt through the proxy."""
+    if not isinstance(body, dict):
+        return {}
+    fields = {
+        "code": str, "outcome_unknown": bool, "submission_unknown": bool,
+        "job_id": str, "request_id": str, "reconcile_action": str,
+    }
+    details = body.get("details")
+    metadata: dict[str, Any] = {}
+    if isinstance(details, dict):
+        metadata = {key: details[key] for key, kind in fields.items() if isinstance(details.get(key), kind)}
+        context = {key: details[key] for key in ("provider", "kind", "tool") if isinstance(details.get(key), str)}
+        if metadata or context:
+            metadata["details"] = {**metadata, **context}
+    metadata.update({key: body[key] for key, kind in fields.items() if isinstance(body.get(key), kind)})
+    return metadata
 
 
 def _missing_route(body: Any) -> bool:

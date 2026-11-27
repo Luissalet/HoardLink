@@ -272,3 +272,44 @@ def test_http_openers_are_separate_across_threads(monkeypatch):
     assert results == [(200, {"ok": True})] * 2
     assert len(openers) == 2 and openers[0] is not openers[1]
     assert not ({id(h) for h in openers[0].handlers} & {id(h) for h in openers[1].handlers})
+
+
+@pytest.mark.parametrize("status", [200, pytest.param(502, id="hub-502-receipt-truncated")])
+def test_detailed_recovers_receipt_from_interrupted_http_body(monkeypatch, status):
+    partial = (b'{"ok":false,"submission_unknown":true,"request_id":"request-fixture-5",'
+               b'"result":{"job_id":"funes-fixture-job","status":"')
+    calls = []
+
+    def read():
+        raise http.client.IncompleteRead(partial, 10)
+
+    def opened(self, request):
+        calls.append(request)
+        response = reply(status=status, url=request.full_url)
+        response.read = read
+        return response
+
+    monkeypatch.setattr(urllib.request.HTTPHandler, "http_open", opened)
+    assert client.fetch_detailed("http://127.0.0.1:9/api/apps/funes/call", {"tool": "transcribe_file"}) == (
+        None, {"request_id": "request-fixture-5", "result": {"job_id": "funes-fixture-job"}}, "response_lost",
+    )
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(("partial", "expected"), [
+    (b'{"result":{"job_id":"real","status":"\xc3', {"result": {"job_id": "real"}}),
+    (b'{"request_id":"real","result":{"job_id":"unfinished', {"request_id": "real"}),
+    (b'{"note":"job_id: fake","other":{"request_id":"fake"},"cut":', None),
+    (b'{"result":{"job_id":"real","status":"done"}}', {"result": {"job_id": "real", "status": "done"}}),
+])
+def test_detailed_accepts_only_complete_receipt_fields(monkeypatch, partial, expected):
+    def opened(self, request):
+        def read():
+            raise http.client.IncompleteRead(partial, 8)
+
+        response = reply(url=request.full_url)
+        response.read = read
+        return response
+
+    monkeypatch.setattr(urllib.request.HTTPHandler, "http_open", opened)
+    assert client.fetch_detailed("http://127.0.0.1:9/api") == (None, expected, "response_lost")

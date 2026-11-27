@@ -177,6 +177,12 @@ opaque `job_id` for jobs issued by the new provider and routes status and
 cancellation back to that provider. Unqualified legacy IDs continue to use
 Funes at the historical address. Keep the returned ID intact.
 
+If the provider reports an uncertain submission, the Hub proxy returns its
+error code, outcome flag and available receipt IDs alongside the HTTP status.
+The Python transport also recovers complete receipt IDs from an interrupted
+response body, including non-2xx responses. Use the IDs to check the
+provider's state before attempting another submission.
+
 Media imports save `transcribe_owner` with `transcribe_job_id`, and record
 the submitted owner before sending the request so a lost reply can be
 reconciled without resubmitting work. Journals from before the change use
