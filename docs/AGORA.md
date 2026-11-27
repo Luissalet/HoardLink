@@ -280,7 +280,24 @@ the private workspace and grants from its receipt. A dedicated session with an
 older receipt is reopened in a new private folder, with its explicit grants.
 The saved Hub connector binds the worker's identity and the linked production
 task. Use `coordination_claim` and `coordination_submit` for that task even
-when it has no code repository. The direct task claim, progress and submission
+when it has no code repository. In `action: "create"`, an optional
+`related_task_ids` list adds the coordination threads of up to eight explicit
+active jobs in the same order and space as the primary `task_id`. For example,
+`task_id: 101, related_task_ids: [102]` also authorizes the thread of job 102.
+Every entry must be a positive integer. Continue uses the same binding, and a
+Faustus replacement inherits the list and checks it again. The handover can
+transfer the primary task or one of the listed tasks. The primary
+`task_id` still determines file suggestions, app access and piece registration.
+
+Al crear un trabajador de Faustus, `related_task_ids` admite hasta ocho
+identificadores enteros positivos de trabajos activos de la misma orden y del
+mismo espacio que el `task_id` principal. Solo se añaden sus hilos a la
+coordinación. La lista se conserva al continuar y se vuelve a validar en un
+relevo de Faustus, que puede traspasar la tarea principal o una de la lista.
+La tarea principal sigue determinando los ficheros, las
+aplicaciones y el registro de piezas.
+
+The direct task claim, progress and submission
 tools also run without confirmation after reading external context if their
 `space_id`, `task_id` and `agent` match the launch. For a job of an order, the
 worker can register a file in its output roots with `hub_agora_piece_add` and

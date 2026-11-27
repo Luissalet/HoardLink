@@ -333,6 +333,7 @@ class AgoraConsoleFacet(Facet):
                                       ("resume_issue", "TEXT NOT NULL DEFAULT ''"),
                                       ("replacement", "TEXT NOT NULL DEFAULT '{}'"),
                                       ("agora_start_at", "REAL"), ("agora_task_id", "INTEGER"),
+                                      ("related_task_ids", "TEXT NOT NULL DEFAULT '[]'"),
                                       ("agora_start_state", "TEXT NOT NULL DEFAULT ''")):
                 if name not in columns:
                     db.execute(f"ALTER TABLE workers ADD COLUMN {name} {declaration}")
@@ -809,6 +810,8 @@ class AgoraConsoleFacet(Facet):
                 worker["file_scope"] = json.loads(row["worker_file_scope"])
             if row["agora_task_id"] is not None:
                 worker["task_id"] = row["agora_task_id"]
+            if row["related_task_ids"] != "[]":
+                worker["related_task_ids"] = json.loads(row["related_task_ids"])
             if row["agora_start_state"] == "not_started":
                 worker["startup"] = {"state": "not_started", "code": "agora_registration_timeout",
                                      "detail_i18n": agora_faustus.registration_details(row)}
@@ -2344,6 +2347,17 @@ class AgoraConsoleFacet(Facet):
 
         reserved: list[str] = []
         try:
+            if "related_task_ids" in args:
+                if str(args.get("leader_id") or "").strip().lower() != "faustus":
+                    return agora_faustus.WorkerLaunchError(
+                        "related_tasks_require_faustus",
+                        "Las tareas relacionadas requieren leader_id faustus.",
+                        "Related tasks require leader_id faustus.", status=400,
+                    ).reply(args.get("lang"))
+                try:
+                    agora_faustus.related_task_threads(self, args.get("task_id"), args["related_task_ids"])
+                except agora_faustus.WorkerLaunchError as exc:
+                    return exc.reply(args.get("lang"))
             if benchmark_prompt is not None:
                 return self._create_worker_now(args, actor, reserved, worker_id or str(uuid.uuid4()),
                                                benchmark_prompt=benchmark_prompt)
@@ -2405,6 +2419,8 @@ class AgoraConsoleFacet(Facet):
                 scope["declared_paths"] = args["file_scope"]
             if "task_id" in args:
                 scope["task_id"] = args["task_id"]
+            if args.get("related_task_ids"):
+                scope["related_task_ids"] = args["related_task_ids"]
             try:
                 with _STARTING_LOCK:
                     faustus_target = agora_faustus.launch_service(self.hub)
@@ -2662,8 +2678,9 @@ class AgoraConsoleFacet(Facet):
             if allowed:
                 prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(allowed, ensure_ascii=False)
                 threads = faustus_session.get("coordination_threads") or [self.thread_id]
+                report_thread_id = faustus_session.get("report_thread_id", threads[-1])
                 prompt += ("\nUse coordination_heartbeat for a heartbeat, hub_agora_order to read production orders, "
-                           f"and coordination_post (thread_id={threads[-1]}, body=your report) to publish your results. "
+                           f"and coordination_post (thread_id={report_thread_id}, body=your report) to publish your results. "
                            "These tools use the worker's saved Hub connector. "
                            "Use inspect_image for local measurements and write_file for result files.")
             context = []
@@ -2725,10 +2742,11 @@ class AgoraConsoleFacet(Facet):
                 resume_command = command.copy()
                 resume_command[resume_command.index("-p") + 1] = ""
                 db.execute("UPDATE workers SET faustus_url=?,workspace=?,runtime_endpoint=?,runtime_pid=?,"
-                           "runtime_started_at=?,runtime_job=?,launch_command=?,launch_cwd=?,tool_approval_mode=?,worker_file_scope=? WHERE id=?",
+                           "runtime_started_at=?,runtime_job=?,launch_command=?,launch_cwd=?,tool_approval_mode=?,worker_file_scope=?,"
+                           "related_task_ids=? WHERE id=?",
                            (base_url, workspace, runtime.get("endpoint", ""), runtime.get("pid"), runtime.get("created_at"),
                             runtime.get("job_name", ""), json.dumps(resume_command), str(worker_cwd), runtime.get("tool_approval_mode", ""),
-                            json.dumps(runtime.get("file_scope") or {}), worker_id))
+                            json.dumps(runtime.get("file_scope") or {}), json.dumps(scope.get("related_task_ids", [])), worker_id))
         self._record("worker", worker_id, "running", f"{leader_id.title()} child process {process.pid}; model={model}; effort={effort}")
         # Its rank is written once the session exists: one that never started leaves none behind under its name.
         self._give_worker_rank(agent_id, rank, self.person_id if by_person else actor)
@@ -3242,6 +3260,15 @@ class AgoraConsoleFacet(Facet):
                     and agora.clock() - seen["last_seen"] < agora.handover_idle_s
                     and not agora_ranks.outranks(agora, actor, source)):
                 return {"ok": False, "status": 403, "error": "A higher-ranked agent can hand this task over now. / Un agente de mayor rango puede traspasar ya esta tarea."}
+            leader = str(args.get("leader_id") or row["parent_id"])
+            related_task_ids = json.loads(row["related_task_ids"])
+            if (leader == "faustus" and related_task_ids
+                    and task["id"] != row["agora_task_id"] and task["id"] not in related_task_ids):
+                return agora_faustus.WorkerLaunchError(
+                    "replacement_task_outside_scope",
+                    "Elige la tarea principal o una tarea relacionada del trabajador.",
+                    "Select the worker's primary task or one of its related tasks.", status=400,
+                ).reply(args.get("lang"))
             replacement = {"worker_id": str(uuid.uuid4()), "task_id": task["id"], "state": "waiting_for_worker",
                            "actor": actor, "started_at": time.time()}
             db.execute("UPDATE workers SET replacement=? WHERE id=?", (json.dumps(replacement), worker_id))
@@ -3254,13 +3281,16 @@ class AgoraConsoleFacet(Facet):
         )
         if message:
             prompt += "\n\nFollow-up from the console:\n" + message
-        leader = str(args.get("leader_id") or row["parent_id"])
         same_model = leader == row["parent_id"] and not args.get("model")
         scope = {}
         if leader == "faustus" and row["worker_file_scope"] and row["tool_approval_mode"]:
             previous = json.loads(row["worker_file_scope"])
             scope = {"task_id": task["id"], "file_scope": args.get("file_scope") or {
                 key: previous[key] for key in ("read_paths", "write_paths")}}
+            if related_task_ids:
+                scope.update(task_id=row["agora_task_id"], related_task_ids=related_task_ids)
+                if not args.get("file_scope") and previous.get("apps"):
+                    scope["file_scope"]["apps"] = previous["apps"]
         try:
             launched = self._create_worker({"leader_id": leader, "task": prompt, "rank": "support",
                                             "model": args.get("model") or (row["model"] if same_model else ""),
@@ -3275,7 +3305,7 @@ class AgoraConsoleFacet(Facet):
         if (launched.get("worker") or {}).get("state") not in ("running", "completed", "incomplete"):
             detail = launched.get("error") or launched.get("warning") or "Replacement could not start. / No se pudo iniciar el relevo."
             self._finish_replacement(worker_id, replacement, "failed", detail)
-            if launched.get("code") == "quota_below_floor":
+            if launched.get("code") in ("quota_below_floor", "related_task_order_required", "related_task_outside_order"):
                 return launched
             return {"ok": False, "status": launched.get("status", 409), "error": detail}
         self._start_replacement_handoff(worker_id)
@@ -4322,6 +4352,9 @@ class AgoraConsoleFacet(Facet):
                                      "required": ["pid", "started_at"], "additionalProperties": False},
                  "message": {"type": "string", "maxLength": 4000, "description": "Follow-up instruction for continue or replace."},
                  "task_id": {"type": "integer", "minimum": 1, "description": "Linked task for a Faustus worker or file suggestions, order job for the check template, or task to transfer with replace."},
+                 "related_task_ids": {"type": "array", "maxItems": agora_faustus.MAX_RELATED_TASK_IDS,
+                                      "items": {"type": "integer", "minimum": 1},
+                                      "description": "With create for Faustus: explicit active jobs of the same order and space as task_id. Grants coordination threads only."},
                  "file_scope": agora_faustus.DECLARED_PATHS,
                  "leader_id": {"type": "string", "enum": ["codex", "claude", "cursor", "faustus"]},
                  "model": {"type": "string"}, "effort": {"type": "string"},

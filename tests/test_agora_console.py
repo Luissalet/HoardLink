@@ -1211,12 +1211,13 @@ def test_faustus_worker_mcp_loses_service_after_health_check(tmp_path, monkeypat
         assert not root.for_space("estudio").db.one("SELECT 1 FROM agents WHERE id='faustus-race'")
 
 
-def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_related", [False, True], ids=["primary", "with-related"])
+def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_related):
     from hoard_link.hub import agora_console, agora_faustus
     from hoard_link.hub.agora import Agora
 
     now = time.time()
-    clock = SimpleNamespace(time=lambda: now)
+    clock = SimpleNamespace(time=lambda: now, time_ns=lambda: int(now * 1_000_000_000))
     monkeypatch.setattr(agora_console, "time", clock)
     monkeypatch.setattr(agora_faustus, "time", clock)
     monkeypatch.setattr(agora_console, "codex_observation", lambda: {})
@@ -1240,6 +1241,9 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
     bindings = []
     sessions = []
     scopes = []
+    service_checks = []
+    launch_service = agora_faustus.launch_service
+    monkeypatch.setattr(agora_faustus, "launch_service", lambda hub: service_checks.append(hub) or launch_service(hub))
 
     def request(method, path, body=None, **kwargs):
         if path == "/api/model-endpoints":
@@ -1252,6 +1256,10 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
             session = f"session-{len(sessions) + 1}"
             sessions.append(session)
             return 200, {"id": session, "model": "fixture"}
+        if path == "/api/chat/activity":
+            return 200, {"running": [], "runs": {}}
+        if path == "/api/sessions":
+            return 200, [{"id": session} for session in sessions]
         if path.startswith("/api/coordination/"):
             bindings.append(body)
             return 200, {"binding": {"actor": body["actor"], "project_id": "project-fixture"}}
@@ -1271,10 +1279,20 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
         agora = root.for_space("estudio")
         standalone = agora.task_add({"agent": actor, "title": "Standalone task"})["task"]
         order = agora.order_create({"agent": actor, "title": "Fixture order", "words": "Create one piece."})["order"]
-        task_id = agora.plan_set({"agent": actor, "order_id": order["id"], "jobs": [
-            {"key": "piece", "title": "Create piece"},
-        ]})["keys"]["piece"]
+        inputs = []
+        for name in ("primary", "related"):
+            file = tmp_path / f"{name}.txt"
+            file.write_text(name, encoding="utf-8")
+            inputs.append(agora.piece_add({"agent": actor, "order_id": order["id"], "title": name,
+                                           "kind": "text", "path": str(file)})["piece"]["id"])
+        jobs = agora.plan_set({"agent": actor, "order_id": order["id"], "jobs": [
+            {"key": "piece", "title": "Create piece", "inputs": [inputs[0]]},
+            {"key": "related", "title": "Check piece", "inputs": [inputs[1]]},
+            {"key": "unlisted", "title": "Prepare next piece"},
+        ]})["keys"]
+        task_id = jobs["piece"]
         task = agora._task_row(task_id)
+        related = agora._task_row(jobs["related"])
 
         def tool(action, **args):
             return call(facet.hub, "hub_agora_console_worker",
@@ -1289,6 +1307,38 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
         console = facet.for_space("estudio")
         assert console._worker_rows() == []
 
+        if with_related:
+            def other_job(view):
+                new_order = view.order_create({"agent": actor, "title": "Other order"})["order"]
+                return view.plan_set({"agent": actor, "order_id": new_order["id"], "jobs": [
+                    {"key": "other", "title": "Other job"},
+                ]})["keys"]["other"]
+
+            root.space_create({"agent": actor, "id": "other-studio", "title": "Other studio"})
+            other_space = root.for_space("other-studio")
+            invalid = [
+                ([other_job(agora)], "related_task_outside_order"),
+                ([other_job(other_space)], "related_task_outside_order"),
+                ([999_999], "related_task_outside_order"),
+                ([2**63], "related_task_outside_order"),
+                ([str(related["id"])], "invalid_related_task_ids"),
+                ([True], "invalid_related_task_ids"),
+                ([1.5], "invalid_related_task_ids"),
+                ([0], "invalid_related_task_ids"),
+                ([related["id"]] * 9, "invalid_related_task_ids"),
+                (None, "invalid_related_task_ids"),
+            ]
+            prior_checks = len(service_checks)
+            for ids, code in invalid:
+                reply = tool("create", **options, task_id=task_id, related_task_ids=ids, lang="es")
+                assert reply["status"] == 400 and reply["code"] == code
+                assert reply["error"] == reply["error_i18n"]["es"]
+            for primary in (None, standalone["id"]):
+                reply = tool("create", **options, task_id=primary, related_task_ids=[related["id"]])
+                assert reply["status"] == 400 and reply["code"] == "related_task_order_required"
+            assert len(service_checks) == prior_checks
+            assert commands == sessions == scopes == bindings == console._worker_rows() == []
+
         warning = tool("create", **options, task_id=standalone["id"], lang="en")
         assert warning["ok"] and warning["worker"]["state"] == "running"
         assert warning["warning"] == warning["warning_i18n"]["en"]
@@ -1298,13 +1348,23 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
         now += 1
         agora.heartbeat({"agent": registered_agent})
 
-        created = tool("create", **options, task_id=task_id, file_scope=app_scope)
+        related_args = {"related_task_ids": [related["id"]]} if with_related else {}
+        created = tool("create", **options, **related_args, task_id=task_id, file_scope=app_scope)
         worker = created["worker"]
         assert created["ok"] and worker["state"] == "running" and "warning" not in created and created["undo"]
-        assert scopes[1]["production"]["order_id"] == order["id"]
+        assert scopes[1]["production"] == {
+            "space_id": "estudio", "order_id": order["id"], "task_id": task_id, "agent": worker["agent_id"],
+        }
         assert scopes[1]["apps"] == app_scope["apps"]
-        assert bindings[1]["actor"] == worker["agent_id"] and task["thread_id"] in bindings[1]["thread_ids"]
+        assert [Path(path).read_text(encoding="utf-8") for path in scopes[1]["read_files"]] == ["primary"]
+        expected_threads = [console.thread_id, task["thread_id"]]
+        if with_related:
+            expected_threads.append(related["thread_id"])
+            assert worker["related_task_ids"] == [related["id"]]
+        assert bindings[1]["actor"] == worker["agent_id"] and bindings[1]["thread_ids"] == expected_threads
+        assert bindings[1]["repos"] == bindings[1]["resources"] == []
         assert len(commands) == 2
+        assert f"thread_id={task['thread_id']}, body=your report" in commands[1][0][commands[1][0].index("-p") + 1]
         root.heartbeat({"agent": worker["agent_id"]})
         with console._db() as db:
             db.execute("UPDATE workers SET state='failed',process_exit_code=3 WHERE id=?", (worker["id"],))
@@ -1329,6 +1389,32 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch):
         assert len(notices) == 1 and notices[0]["author"] == "agora-console"
         assert worker["agent_id"] in notices[0]["body"] and actor in notices[0]["mentions"]
         assert agora._task_row(task_id)["owner"] is None
+        if with_related:
+            console._processes.pop(worker["id"], None)
+            continued = tool("continue", worker_id=worker["id"])
+            assert continued["ok"], continued
+            resumed = next(item for item in console._worker_rows() if item["id"] == worker["id"])
+            assert resumed["related_task_ids"] == worker["related_task_ids"]
+            assert resumed["session_id"] == worker["session_id"]
+            assert len(bindings) == 2 and bindings[1]["thread_ids"] == expected_threads
+
+            agora.task_claim({"agent": worker["agent_id"], "task_id": related["id"]})
+            agora.task_claim({"agent": worker["agent_id"], "task_id": jobs["unlisted"]})
+            console._processes.pop(worker["id"], None)
+            with console._db() as db:
+                db.execute("UPDATE workers SET state='failed',session_id='' WHERE id=?", (worker["id"],))
+            assert tool("continue", worker_id=worker["id"])["code"] == "worker_session_unavailable"
+            replace = {"action": "replace", "space_id": "estudio", "actor": worker["agent_id"],
+                       "worker_id": worker["id"]}
+            outside = call(facet.hub, "hub_agora_console_worker", {**replace, "task_id": jobs["unlisted"]})
+            assert outside["code"] == "replacement_task_outside_scope"
+            replacement = call(facet.hub, "hub_agora_console_worker", {**replace, "task_id": related["id"]})
+            assert replacement["ok"] and replacement["handover"]["task_id"] == related["id"]
+            new_worker = next(item for item in console._worker_rows() if item["id"] == replacement["worker_id"])
+            assert new_worker["related_task_ids"] == [related["id"]] and new_worker["task_id"] == task_id
+            assert bindings[-1]["thread_ids"] == expected_threads and bindings[-1]["actor"] == new_worker["agent_id"]
+            assert scopes[-1]["production"]["task_id"] == task_id and scopes[-1]["apps"] == app_scope["apps"]
+            assert scopes[-1]["read_files"] == scopes[1]["read_files"]
 
 
 def test_claude_auth_status_is_live_sanitized_and_does_not_invent_catalog(tmp_path, monkeypatch):
