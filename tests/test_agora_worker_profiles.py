@@ -85,14 +85,16 @@ def test_manual_runner_receives_rules_context_paths_and_selected_template(tmp_pa
     monkeypatch.setattr(console, "_monitor_worker", lambda *args: None)
     calls = []
 
-    def process(command, **kwargs):
-        calls.append((command, kwargs["env"]))
+    def launch(config, command, *, cwd, env, log):
+        assert config is console.hub.config
+        calls.append((command, env))
         return SimpleNamespace(pid=123)
 
-    monkeypatch.setattr("hoard_link.hub.agora_console.subprocess.Popen", process)
+    monkeypatch.setattr("hoard_link.hub.agora_console.launch_worker", launch)
     try:
         result = console.worker({"leader_id": "codex", "model": "small", "template": "probe", "task": "Tour the sample"})
-        assert result["ok"] and result["undo"]["arguments"]["worker_id"] == result["worker"]["id"]
+        assert result["ok"], result
+        assert result["undo"]["arguments"]["worker_id"] == result["worker"]["id"]
         prompt, env = calls[0][0][-1], calls[0][1]
         assert "Permanent space rules" in prompt and "Project context" in prompt and "Repositories" in prompt
         assert "Run the scenario" in prompt and "Task: Tour the sample" in prompt
