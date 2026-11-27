@@ -400,11 +400,13 @@ def catalogue() -> list[dict[str, Any]]:
         },
         {
             "name": app_catalogue.NAME,
-            "description": "List an app's tools or inspect one schema. Keywords: catálogo, herramientas de."
-                           "\nScoped workers get summaries of their allowed tools. Use tool for one full schema.",
+            "description": "List an app's tools or inspect one schema. Keywords: catálogo, herramientas de, qué sabe hacer."
+                           "\nScoped workers get a preview of the app instructions and summaries of their allowed tools. "
+                           "Use tool for one full schema.",
             "inputSchema": {"type": "object", "properties": {
                 "app": _APP_ID,
                 "summary": {"type": "boolean", "description": "List names, one-line descriptions and required arguments."},
+                "include_instructions": {"type": "boolean", "description": "Return the full app instructions."},
                 "tool": {"type": "string", "minLength": 1, "description": "Exact tool ID for its full schema."},
             }, "required": ["app"], "additionalProperties": False},
             "annotations": {"readOnlyHint": True},

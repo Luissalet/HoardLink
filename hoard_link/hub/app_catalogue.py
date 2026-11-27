@@ -7,6 +7,7 @@ NAME = "hub_app_tools"
 SCOPE_ENV = "HOARD_WORKER_APP_SCOPE"
 SCOPE_HEADER = "X-Hoard-Worker-App-Scope"
 _SCOPE_ARG = "_worker_app_scope"
+_INSTRUCTIONS_PREVIEW_CHARS = 512
 
 
 def _parse_scope(value: str) -> dict:
@@ -75,4 +76,14 @@ def list_tools(hub: Any, args: dict) -> dict:
         return {"ok": False, "code": "unknown_app_tool",
                 "error": "Tool absent from the app catalogue. / La herramienta no figura en el catálogo."}
     entries = [_summary(spec) for spec in specs] if tool is None else specs[:1]
-    return {"ok": True, "app": catalogue["app"], "contract": catalogue["contract"], "tools": entries}
+    instructions = catalogue.get("instructions", "")
+    result = {
+        "ok": True, "app": catalogue["app"], "contract": catalogue["contract"],
+        "instructions": instructions, "tools": entries,
+    }
+    if scoped and args.get("include_instructions") is not True:
+        preview = instructions[:_INSTRUCTIONS_PREVIEW_CHARS] if isinstance(instructions, str) else ""
+        result["instructions"] = preview
+        if preview != instructions:
+            result["instructions_truncated"] = True
+    return result
