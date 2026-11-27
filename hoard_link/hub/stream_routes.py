@@ -1,4 +1,4 @@
-"""Resolve only the relative routes declared in a discovered app's manifest."""
+"""Resolve explicit manifest routes and the closed voice compatibility routes."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ _SEGMENT = re.compile(r"[a-z0-9_-]{1,64}")
 _JOB_ID = re.compile(r"[0-9a-f]{32}")
 _PARAMETER = "{job_id}"
 _KEY = "stream_routes"
+_COMPATIBILITY_SERVICE = {"voice": "tts", "dictation": "dictation"}
 
 
 def _parts(value):
@@ -74,22 +75,24 @@ def _voice_manifest():
     return json.loads(files("hoard_link").joinpath("_data/boltagon-stream-manifest.json").read_text(encoding="utf-8"))
 
 
-def resolve(app, path):
-    """Return the single allowed route and its cancellation target, if declared."""
+def resolve(app, path, *, voice_services=()):
+    """Return a declared route or one granted to the registered service owner."""
     try:
-        if _KEY in app.family:
-            entries = app.family[_KEY]
-        else:
-            manifest = _voice_manifest()
-            if app.id not in (manifest["id"], *manifest["aliases"]) or app.expect_service not in manifest["services"]:
+        compatibility = _KEY not in app.family
+        if compatibility:
+            if not voice_services:
                 return None
-            entries = manifest["x-family"][_KEY]
+            entries = _voice_manifest()["x-family"][_KEY]
+        else:
+            entries = app.family[_KEY]
         if not isinstance(entries, list) or len(entries) > 32:
             return None
         parts = _parts(path)
         if _PARAMETER in parts:
             return None
         routes = [_route(entry) for entry in entries]
+        if compatibility:
+            routes = [route for route in routes if _COMPATIBILITY_SERVICE.get(route.parts[0]) in voice_services]
         matches = [route for route in routes if route.match(parts)]
         if len(matches) != 1:
             return None
