@@ -807,7 +807,7 @@ class AgoraConsoleFacet(Facet):
             worker = {key: row[key] for key in ("id", "parent_id", "agent_id", "model", "effort", "task", "state", "result", "detail", "session_id", "model_source", "faustus_url", "workspace", "process_exit_code", "outcome", "tool_success_count", "tool_failure_count", "provider_error", "created_at", "updated_at")}
             if row["tool_approval_mode"]:
                 worker["tool_approval_mode"] = row["tool_approval_mode"]
-                worker["file_scope"] = json.loads(row["worker_file_scope"])
+                worker["file_scope"] = agora_faustus.public_file_scope(json.loads(row["worker_file_scope"]))
             if row["agora_task_id"] is not None:
                 worker["task_id"] = row["agora_task_id"]
             if row["related_task_ids"] != "[]":
@@ -2342,7 +2342,8 @@ class AgoraConsoleFacet(Facet):
                 "dispatch": dispatch, "delivery_semantics": "queued; a mention does not wake an idle agent immediately"}
 
     def _create_worker(self, args: dict[str, Any], actor: str = "codex-console", *,
-                       worker_id: Optional[str] = None, benchmark_prompt: Optional[str] = None) -> dict[str, Any]:
+                       worker_id: Optional[str] = None, benchmark_prompt: Optional[str] = None,
+                       vitruvius_receipt_agent: str = "") -> dict[str, Any]:
         from .worker_capabilities import PROVIDERS, candidates
 
         reserved: list[str] = []
@@ -2363,7 +2364,8 @@ class AgoraConsoleFacet(Facet):
                                                benchmark_prompt=benchmark_prompt)
             capability = args.get("capability")
             if capability is None:
-                return self._create_worker_now(args, actor, reserved, worker_id or str(uuid.uuid4()))
+                return self._create_worker_now(args, actor, reserved, worker_id or str(uuid.uuid4()),
+                                               vitruvius_receipt_agent=vitruvius_receipt_agent)
             if not isinstance(capability, str) or capability not in PROVIDERS or args.get("model") or args.get("effort"):
                 return {"ok": False, "status": 400, "error": "Choose a capability or a specific model and effort"}
             provider = args.get("leader_id")
@@ -2394,7 +2396,7 @@ class AgoraConsoleFacet(Facet):
                     _STARTING_NAMES.pop(name, None)
 
     def _create_worker_now(self, args: dict[str, Any], actor: str, reserved: list[str], worker_id: str, *,
-                           benchmark_prompt: Optional[str] = None) -> dict[str, Any]:
+                           benchmark_prompt: Optional[str] = None, vitruvius_receipt_agent: str = "") -> dict[str, Any]:
         leader_id = str(args.get("leader_id") or "").strip().lower()
         model = str(args.get("model") or "").strip()
         effort = str(args.get("effort") or "").strip().lower()
@@ -2421,6 +2423,8 @@ class AgoraConsoleFacet(Facet):
                 scope["task_id"] = args["task_id"]
             if args.get("related_task_ids"):
                 scope["related_task_ids"] = args["related_task_ids"]
+            if vitruvius_receipt_agent:
+                scope["vitruvius_receipt_agent"] = vitruvius_receipt_agent
             try:
                 with _STARTING_LOCK:
                     faustus_target = agora_faustus.launch_service(self.hub)
@@ -2674,7 +2678,7 @@ class AgoraConsoleFacet(Facet):
             runtime = faustus_session.get("runtime") or {}
             if runtime:
                 self._faustus_runtimes[worker_id] = runtime
-            allowed = runtime.get("file_scope") or {}
+            allowed = agora_faustus.public_file_scope(runtime.get("file_scope") or {})
             if allowed:
                 prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(allowed, ensure_ascii=False)
                 threads = faustus_session.get("coordination_threads") or [self.thread_id]
@@ -3260,7 +3264,7 @@ class AgoraConsoleFacet(Facet):
                     and agora.clock() - seen["last_seen"] < agora.handover_idle_s
                     and not agora_ranks.outranks(agora, actor, source)):
                 return {"ok": False, "status": 403, "error": "A higher-ranked agent can hand this task over now. / Un agente de mayor rango puede traspasar ya esta tarea."}
-            leader = str(args.get("leader_id") or row["parent_id"])
+            leader = str(args.get("leader_id") or row["parent_id"]).strip().lower()
             related_task_ids = json.loads(row["related_task_ids"])
             if (leader == "faustus" and related_task_ids
                     and task["id"] != row["agora_task_id"] and task["id"] not in related_task_ids):
@@ -3283,14 +3287,21 @@ class AgoraConsoleFacet(Facet):
             prompt += "\n\nFollow-up from the console:\n" + message
         same_model = leader == row["parent_id"] and not args.get("model")
         scope = {}
+        receipt_agent = ""
         if leader == "faustus" and row["worker_file_scope"] and row["tool_approval_mode"]:
             previous = json.loads(row["worker_file_scope"])
-            scope = {"task_id": task["id"], "file_scope": args.get("file_scope") or {
-                key: previous[key] for key in ("read_paths", "write_paths")}}
+            declared = args.get("file_scope") or {key: previous[key] for key in ("read_paths", "write_paths")}
+            apps = previous.get("apps", {})
+            if related_task_ids and apps and not args.get("file_scope"):
+                declared["apps"] = apps
+            # Related jobs share coordination threads, while the receipt belongs to the project task.
+            if "vitruvius" in apps and (previous.get("production") or {}).get("task_id") == task["id"]:
+                if isinstance(declared, dict) and "apps" not in declared:
+                    declared = {**declared, "apps": apps}
+                receipt_agent = previous.get("vitruvius_receipt_agent") or source
+            scope = {"task_id": task["id"], "file_scope": declared}
             if related_task_ids:
                 scope.update(task_id=row["agora_task_id"], related_task_ids=related_task_ids)
-                if not args.get("file_scope") and previous.get("apps"):
-                    scope["file_scope"]["apps"] = previous["apps"]
         try:
             launched = self._create_worker({"leader_id": leader, "task": prompt, "rank": "support",
                                             "model": args.get("model") or (row["model"] if same_model else ""),
@@ -3298,7 +3309,8 @@ class AgoraConsoleFacet(Facet):
                                             "confirm_quota_floor": args.get("confirm_quota_floor"),
                                             "lang": args.get("lang"),
                                             **scope},
-                                           actor, worker_id=replacement["worker_id"])
+                                           actor, worker_id=replacement["worker_id"],
+                                           vitruvius_receipt_agent=receipt_agent)
         except Exception:
             self._finish_replacement(worker_id, replacement, "failed", "Replacement could not start. / No se pudo iniciar el relevo.")
             raise
@@ -3493,7 +3505,8 @@ class AgoraConsoleFacet(Facet):
                 reactivate_apprentice_binding(self, base_url, row["session_id"])
             command[command.index("--url") + 1] = base_url
             if launch_scope:
-                prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(launch_scope, ensure_ascii=False)
+                prompt += "\n\nWorker file scope (paths supplied by the console):\n" + json.dumps(
+                    agora_faustus.public_file_scope(launch_scope), ensure_ascii=False)
             command[command.index("-p") + 1] = prompt + "\n\nPrior stop: " + row["detail"]
             with log_path.open("w", encoding="utf-8") as log:
                 process = launch_worker(self.hub.config, command, cwd=cwd, env=self._faustus_runner_env(), log=log)

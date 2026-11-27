@@ -200,6 +200,10 @@ def file_scope(workspace: str, declared: Any = None, proposal: dict | None = Non
     return scope
 
 
+def public_file_scope(scope: dict) -> dict:
+    return {key: value for key, value in scope.items() if key != "vitruvius_receipt_agent"}
+
+
 def worker_order(console: Any, task_id: int | None, apps: dict) -> int | None:
     """Resolve the active order job in the launch space before provisioning."""
     if task_id is not None:
@@ -419,6 +423,7 @@ def reconcile_registrations(console: Any, *, now: float | None = None) -> None:
 def prepare(console: Any, agent: str, model: dict, effort: str, *,
             declared_paths: Any = None, task_id: int | None = None,
             related_task_ids: list[int] | None = None,
+            vitruvius_receipt_agent: str = "",
             target: dict | None = None) -> tuple[dict | None, str]:
     """Create an independent native project/session when no local controller owns one."""
     root, python = console.hub.faustus_runtime.installation()
@@ -445,6 +450,8 @@ def prepare(console: Any, agent: str, model: dict, effort: str, *,
     if dedicated:
         scope = file_scope(workspace, declared_paths, proposed_files(console, task_id))
         scope = production_scope(console, agent, scope, task_id)
+        if vitruvius_receipt_agent and "vitruvius" in scope.get("apps", {}):
+            scope["vitruvius_receipt_agent"] = vitruvius_receipt_agent
         if task_id is not None and (scope.get("production") or {}).get("order_id") is None:
             warning = order_warning(task_id)
         require_app_modules(console.hub, scope.get("apps", {}))
