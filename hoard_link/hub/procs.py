@@ -25,6 +25,7 @@ and an MCP tool.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -41,6 +42,10 @@ from .registry import App
 
 HEALTH_TIMEOUT_S = 1.5
 STOP_GRACE_S = 4.0
+NORMAL_PRIORITY_CLASS = getattr(subprocess, "NORMAL_PRIORITY_CLASS", 0x00000020)
+BELOW_NORMAL_PRIORITY_CLASS = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0x00004000)
+IS_WINDOWS = sys.platform.startswith("win")
+log = logging.getLogger(__name__)
 
 
 def _psutil():
@@ -373,9 +378,46 @@ def terminate_tree(pid: int, grace_s: float = STOP_GRACE_S, *, created_at: Optio
 # start
 # ---------------------------------------------------------------------------
 
-def _detached_kwargs() -> dict[str, Any]:
-    if sys.platform.startswith("win"):
+def set_tree_priority(pid: int, created_at: Optional[float], priority: int) -> None:
+    """Correct the class of a verified Windows process and its existing descendants."""
+    if not IS_WINDOWS or created_at is None:
+        return
+    ps = _psutil()
+    if ps is None:
+        return
+    protected = _protected_pids()
+    if pid in protected:
+        return
+    def correct(process):
+        try:
+            if process.pid not in protected and process.is_running() and process.nice() != priority:
+                process.nice(priority)
+        except ps.NoSuchProcess:
+            pass
+        except (ps.Error, OSError) as exc:
+            log.warning("Could not correct priority for process %d: %s", process.pid, exc)
+
+    try:
+        root = ps.Process(pid)
+        if root.create_time() != created_at or not root.is_running():
+            return
+        correct(root)  # New children can inherit the class before the tree is enumerated.
+        descendants = root.children(recursive=True)
+    except ps.NoSuchProcess:
+        return
+    except (ps.Error, OSError) as exc:
+        log.warning("Could not inspect process %d for priority correction: %s", pid, exc)
+        return
+
+    for child in descendants:
+        correct(child)
+
+
+def _detached_kwargs(*, service: bool) -> dict[str, Any]:
+    if IS_WINDOWS:
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if service:
+            flags |= NORMAL_PRIORITY_CLASS
         return {"creationflags": flags}
     return {"start_new_session": True}
 
@@ -407,7 +449,7 @@ def start_app(app: App, logs_dir: str, *, wait: bool = True) -> dict[str, Any]:
         log.write(f"\n--- hoard-hub start {time.strftime('%Y-%m-%d %H:%M:%S')}: {' '.join(cmd)}\n".encode("utf-8"))
         proc = subprocess.Popen(
             cmd, cwd=spec.cwd, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-            close_fds=True, **_detached_kwargs(),
+            close_fds=True, **_detached_kwargs(service=app.kind == "app"),
         )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"could not start: {exc}", "log": log_path}

@@ -169,6 +169,12 @@ updated library on their next ordinary restart.
 
 The `skills` block of `faustus-plugin.json` names the procedures of the family's skill library that fit this app's work: `hoard-daily-digest`, `hoard-family-recap`, `hoard-what-happened`, `hoard-meeting-prep`, `team-agent-orchestration`. The hub's Skills tab shows and changes them. This app does not hand them to connecting agents yet.
 
+## App and worker priorities
+
+On Windows the Hub starts service apps at Normal priority and Agora worker trees at BelowNormal. When a new Hub observes a verified local service listener or recovers a verified worker, it corrects the priority of that process and its existing descendants. Unknown or protected processes keep their existing priority.
+
+En Windows, el Hub arranca las apps de servicio con prioridad Normal y los árboles de trabajadores del Ágora con BelowNormal. Al recuperar un servicio local o un trabajador identificado, corrige la prioridad del proceso y de sus descendientes existentes. Los procesos desconocidos o protegidos conservan su prioridad.
+
 ## Apps kept alive
 
 The Hub keeps a list of apps that live as long as it does (`data/keep-alive.json`,

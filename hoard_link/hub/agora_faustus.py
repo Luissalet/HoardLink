@@ -533,10 +533,11 @@ def start_pc(console: Any, agent: str, root: Path, python: str, endpoint: str, m
                "--agora-file-scope", json.dumps(file_scope)]
     if console.space_id == STUDIO:
         command.extend(["--agora-studio", agent])
+    from . import agora_worker_processes, procs
+
     with (data / "server.log").open("a", encoding="utf-8") as log:
         process = popen_hidden(command, cwd=root, env=env, stdin=subprocess.DEVNULL,
-            stdout=log, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    from . import procs
+            stdout=log, stderr=subprocess.STDOUT, creationflags=agora_worker_processes.creation_flags())
     from .contract import _get
     runtime = {"url": base, "process": process, "data": str(data), "endpoint": endpoint,
                "pid": process.pid, "created_at": procs.proc_info(process.pid).created_at,

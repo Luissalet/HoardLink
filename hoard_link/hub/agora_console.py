@@ -915,6 +915,7 @@ class AgoraConsoleFacet(Facet):
                            "session_id=?,workspace=?,resume_issue='',updated_at=? WHERE id=?",
                            (state, outcome, detail, json.dumps(verification), process.started_at,
                             session, workspace, time.time(), row["id"]))
+                agora_worker_processes.restore_priority(process.pid, process.started_at)
                 self._adopt_worker_runtime(row)
                 self._processes[row["id"]] = process
             # A CLI request may have reached the provider before the Hub died.
@@ -2688,7 +2689,7 @@ class AgoraConsoleFacet(Facet):
             with open(log_path, "a", encoding="utf-8") as log:
                 process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                            text=True, cwd=str(worker_cwd), env=process_env,
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                           creationflags=agora_worker_processes.creation_flags())
         except OSError as exc:
             runtime = self._faustus_runtimes.pop(worker_id, None)
             if runtime:
@@ -3053,6 +3054,7 @@ class AgoraConsoleFacet(Facet):
         if not pid or started_at is None or worker_id in self._faustus_runtimes:
             return
         if procs.proc_info(pid).created_at == started_at:
+            agora_worker_processes.restore_priority(pid, started_at)
             self._faustus_runtimes[worker_id] = {"pid": pid, "created_at": started_at}
 
     def _close_worker_runtime(self, worker_id: str) -> None:
@@ -3160,7 +3162,7 @@ class AgoraConsoleFacet(Facet):
             with log_path.open("w", encoding="utf-8") as log:
                 process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                            text=True, cwd=str(cwd), env=self._runner_env(),
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                           creationflags=agora_worker_processes.creation_flags())
         except (OSError, ValueError) as exc:
             with self._db_lock, self._db() as db:
                 db.execute("UPDATE workers SET state=?,updated_at=? WHERE id=?", (row["state"], time.time(), row["id"]))
@@ -3444,7 +3446,7 @@ class AgoraConsoleFacet(Facet):
             with log_path.open("w", encoding="utf-8") as log:
                 process = popen_hidden(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                            text=True, cwd=cwd, env=self._faustus_runner_env(),
-                                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                           creationflags=agora_worker_processes.creation_flags())
         except (OSError, RuntimeError, ValueError) as exc:
             if not session_busy:
                 self._close_worker_runtime(worker_id)
