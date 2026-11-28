@@ -418,6 +418,14 @@ def _detached_kwargs(*, service: bool = False) -> dict[str, Any]:
     return {"start_new_session": True}
 
 
+def app_launch_env(env: dict[str, Optional[str]], hub_url: str) -> dict[str, Optional[str]]:
+    """Point a child at its Hub without passing on the Hub's credentials."""
+    overrides = {"HOARD_HUB_URL": hub_url, "HOARD_HUB_TOKEN_FILE": None, "HOARD_HUB_TOKEN": None}
+    # A differently cased environment name is the same variable on Windows.
+    shared = {key: value for key, value in env.items() if key.upper() not in overrides}
+    return {**shared, **overrides}
+
+
 def start_app(app: App, logs_dir: str, *, wait: bool = True) -> dict[str, Any]:
     """Spawn the manifest's launch hint and (optionally) wait for its
     readiness URL. The child is detached and its output appended to

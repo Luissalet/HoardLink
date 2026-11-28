@@ -445,16 +445,14 @@ class Hub:
                 if not allocation.get("ok"):
                     return dict(allocation, app=app_id)
                 launch_app = app
-                if app_id == "vulcan" and app.launch and (programs := self.facet("local_programs")):
-                    renderer = programs.vulcan_blender_env()
-                    if renderer:
-                        launch_app = replace(app, launch=replace(app.launch, env={**app.launch.env, **renderer}))
-                if app_id == "writer" and app.launch:
-                    launch_app = replace(app, launch=replace(app.launch, env={
-                        **app.launch.env, "HOARD_HUB_URL": self.config.url,
-                        "HOARD_HUB_DATA_DIR": self.config.data_dir,
-                        "HOARD_HUB_TOKEN_FILE": self.config.token_file,
-                    }))
+                if app.launch:
+                    env = dict(app.launch.env)
+                    if app_id == "vulcan" and (programs := self.facet("local_programs")):
+                        env.update(programs.vulcan_blender_env() or {})
+                    if app_id == "writer":
+                        env["HOARD_HUB_DATA_DIR"] = self.config.data_dir
+                    launch_app = replace(app, launch=replace(
+                        app.launch, env=procs.app_launch_env(env, self.config.url)))
                 res = procs.start_app(launch_app, self.config.logs_dir, wait=wait)
                 if allocation.get("previous_port"):
                     res.update(previous_port=allocation["previous_port"], port=allocation["port"])

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 import urllib.error
@@ -82,6 +83,53 @@ def test_start_stop_launchable(hub, family):
     time.sleep(0.3)
     assert hub.app_status(hub.get("launch"))["state"] == "down"
     assert hub.stop("launch")["detail"] == "not running"
+
+
+@pytest.mark.parametrize("app_id", ["launch-env", "writer"])
+def test_started_app_gets_hub_url_without_master_credentials(hub, family, tmp_path, monkeypatch, app_id):
+    from .conftest import free_port, write_manifest
+
+    script = tmp_path / "capture_launch_env.py"
+    script.write_text(
+        "import json, os, pathlib, sys\n"
+        "env = {key.upper(): value for key, value in os.environ.items()}\n"
+        "destination = pathlib.Path(sys.argv[1])\n"
+        "temp = destination.with_suffix('.tmp')\n"
+        "temp.write_text(json.dumps({\n"
+        "    'url': env.get('HOARD_HUB_URL'), 'hub_data': env.get('HOARD_HUB_DATA_DIR'),\n"
+        "    'master_file': 'HOARD_HUB_TOKEN_FILE' in env, 'master_value': 'HOARD_HUB_TOKEN' in env,\n"
+        "    'app_token_file': env.get('QA_APP_TOKEN_FILE'),\n"
+        "}), encoding='utf-8')\n"
+        "temp.replace(destination)\n",
+        encoding="utf-8",
+    )
+    captured = tmp_path / "env.json"
+    own_token_file = str(tmp_path / "app-token")
+    monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("HOARD_HUB_TOKEN_FILE", hub.config.token_file)
+    monkeypatch.setenv("HOARD_HUB_TOKEN", "synthetic-inherited-token")
+    monkeypatch.setenv("HOARD_HUB_DATA_DIR", str(tmp_path / "inherited"))
+    folder = family["root"] / app_id
+    write_manifest(folder, app_id, free_port(), launch={
+        "kind": "process", "executable": sys.executable,
+        "argv": [str(script), str(captured)], "cwd": str(folder),
+        "env": {"QA_APP_TOKEN_FILE": own_token_file,
+                "hoard_hub_token_file": "synthetic-manifest-master-path"},
+    })
+    hub.rescan()
+
+    result = hub.start(app_id, wait=False)
+    assert result["ok"], result
+    deadline = time.monotonic() + 10
+    while not captured.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert json.loads(captured.read_text(encoding="utf-8")) == {
+        "url": hub.config.url,
+        "hub_data": hub.config.data_dir if app_id == "writer" else str(tmp_path / "inherited"),
+        "master_file": False,
+        "master_value": False,
+        "app_token_file": own_token_file,
+    }
 
 
 def test_start_refuses_unlaunchable_and_unknown(hub):

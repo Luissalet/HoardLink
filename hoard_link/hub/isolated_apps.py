@@ -14,7 +14,7 @@ from threading import RLock
 
 from .. import proc
 from ..atomic import write_json_atomic
-from . import contract
+from . import contract, procs
 from .config import _configured_paths
 from .isolation import inside, passive_error
 from .registry import MANIFEST_NAME, App, _writer_source, read_manifest
@@ -172,8 +172,11 @@ def _headless_app(app, folder, ports, config, launcher):
         for field, value in (("data_env", data_path), ("port_env", port), ("token_env", token)):
             if field in descriptor:
                 changes[descriptor[field]] = str(value)
-    env = {**spec.env, "HOARD_TOKEN_FILE": None, **changes, "PORT_STRICT": "1", "HOARD_NO_BROWSER": "1",
-           "HOARD_HUB_URL": config.url, "HOARD_HUB_DATA_DIR": config.data_dir, "HOARD_HUB_TOKEN_FILE": None}
+    env = procs.app_launch_env(
+        {**spec.env, "HOARD_TOKEN_FILE": None, **changes, "PORT_STRICT": "1", "HOARD_NO_BROWSER": "1",
+         "HOARD_HUB_DATA_DIR": config.data_dir},
+        config.url,
+    )
     return replace(app, url=url, data_dir=str(data_path), token_file=str(token), kind="app",
                    runtime_url_file="", launch=replace(spec, argv=argv, env=env,
                                                         readiness_url=url + app.health_path, port_argument=""))

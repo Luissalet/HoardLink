@@ -159,7 +159,8 @@ def test_p1_agent_route_requires_an_explicit_fixture(isolated_config, tmp_path):
         assert options["cwd"] == str(fixture)
         assert options["env"]["FAUSTUS_DIR"] == isolated_config.faustus_dir
         assert Path(options["env"]["TEST_DATA_DIR"]).is_relative_to(tmp_path)
-        assert "HOARD_HUB_TOKEN_FILE" not in options["env"]
+        assert options["env"]["HOARD_HUB_URL"] == isolated_config.url
+        assert not {"HOARD_HUB_TOKEN_FILE", "HOARD_HUB_TOKEN"} & options["env"].keys()
         assert call("hub_isolated_app", **result["undo"])[1]["instance"]["state"] == "stopped"
         jobs.stop.assert_called_once_with(process)
     finally:

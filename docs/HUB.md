@@ -60,6 +60,10 @@ Use `hoard_link.proc` for background commands that need the common UTF-8, proces
 A process launch hint may declare `opens_window: true` when a source launcher
 opens the app's native window itself.
 
+Apps started by the Hub receive its active URL in `HOARD_HUB_URL`. Launch
+environments omit `HOARD_HUB_TOKEN_FILE` and `HOARD_HUB_TOKEN`. Apps authenticate
+with their own family credentials. Writer still receives `HOARD_HUB_DATA_DIR`.
+
 `POST /api/apps/<id>/open` (`hub_open_app`, the **Open window** button)
 opens the app's UI as a desktop window through one of two routes, picked by
 `window_engine` in `data/hub.json` (`HOARD_HUB_WINDOW_ENGINE`):
