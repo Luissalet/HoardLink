@@ -40,6 +40,7 @@ from contextlib import aclosing
 from collections import deque
 from typing import Any, Callable, Optional
 
+from .. import _chat_timing
 from .config import HubConfig
 
 #: Largest request body (messages plus base64 images) the hub reads on this route.
@@ -148,6 +149,7 @@ class ChatRequest:
     chat_template_kwargs: Optional[dict[str, Any]] = None
 
 
+@_chat_timing.measure("parse_request")
 def parse_request(body: Any) -> ChatRequest:
     if not isinstance(body, dict):
         raise BadRequest("the body must be a JSON object")
@@ -409,6 +411,7 @@ class LinkService:
 
         return Link(self.link_config(app))
 
+    @_chat_timing.measure("link_instance")
     def _link(self, app: str) -> Any:
         app = (app or "hub")[:80]
         with self._links_lock:
@@ -421,6 +424,7 @@ class LinkService:
                     link = self._links[app] = self._factory(app)
             return link
 
+    @_chat_timing.measure("receipt_record")
     def _record(self, app: str, req_cap: str, ok: bool, started: float, model: Optional[str], error: Optional[str]) -> None:
         if self._emit is None:
             return
@@ -558,11 +562,12 @@ class LinkService:
                                 tool_deltas.append(item.get("delta"))
                             if kind == "finish":
                                 item = {**item, "json": None, "queued_ms": queued_ms}
-                                if req.json_mode:
-                                    value, found = parse_json_loose(item.get("text"))
-                                    item["json"] = value
-                                    if not found:
-                                        item["json_error"] = "the model's answer contains no parseable JSON; read text"
+                                with _chat_timing.stage("mediation"):
+                                    if req.json_mode:
+                                        value, found = parse_json_loose(item.get("text"))
+                                        item["json"] = value
+                                        if not found:
+                                            item["json_error"] = "the model's answer contains no parseable JSON; read text"
                                 finished = item
                                 break
                             await put(item)
@@ -728,9 +733,10 @@ class LinkService:
             payload.update(finish_reason=res.finish_reason, completed=res.completed)
         if getattr(res, "reasoning_controls", None) is not None:
             payload["reasoning_controls"] = res.reasoning_controls
-        if req.json_mode:
-            value, found = parse_json_loose(res.text)
-            payload["json"] = value
-            if not found:
-                payload["json_error"] = "the model's answer contains no parseable JSON; read text"
+        with _chat_timing.stage("mediation"):
+            if req.json_mode:
+                value, found = parse_json_loose(res.text)
+                payload["json"] = value
+                if not found:
+                    payload["json_error"] = "the model's answer contains no parseable JSON; read text"
         return 200, payload

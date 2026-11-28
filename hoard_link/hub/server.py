@@ -85,6 +85,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from .. import _chat_timing
 from ..agent_journal import clean_identity
 from . import HUB_VERSION, SERVICE
 from .core import Hub
@@ -387,9 +388,14 @@ class _HubHandler(BaseHTTPRequestHandler):
 
     # -- models for every app -----------------------------------------------------
     def _link_chat(self) -> None:
+        with _chat_timing.request():
+            self._serve_link_chat()
+
+    def _serve_link_chat(self) -> None:
         """POST /api/link/chat. Authenticated before the body is read (it may hold 12 MB of images), so a
         refusal closes the connection instead of leaving unread bytes on a keep-alive socket."""
-        who = self._family_caller()
+        with _chat_timing.stage("identity"):
+            who = self._family_caller()
         if who is None:
             self.close_connection = True
             return self._json({"ok": False, "error": "a family bearer token is required: the hub's data/mcp-token or any app's own"}, 401)
@@ -400,11 +406,12 @@ class _HubHandler(BaseHTTPRequestHandler):
         if length > LINK_MAX_BODY:
             self.close_connection = True
             return self._json({"ok": False, "error": "too_large", "detail": f"the request is over {LINK_MAX_BODY // (1024 * 1024)} MB"}, 413)
-        raw = self.rfile.read(length) if length > 0 else b""
-        try:
-            body = json.loads(raw.decode("utf-8")) if raw else {}
-        except ValueError:
-            body = None
+        with _chat_timing.stage("request_body"):
+            raw = self.rfile.read(length) if length > 0 else b""
+            try:
+                body = json.loads(raw.decode("utf-8")) if raw else {}
+            except ValueError:
+                body = None
         if not isinstance(body, dict):
             return self._json({"ok": False, "error": "bad_request", "detail": "the body must be a JSON object"}, 400)
         if body.get("stream"):
@@ -430,16 +437,20 @@ class _HubHandler(BaseHTTPRequestHandler):
             stream = self.hub.link.stream_chat(who, body, disconnected=disconnected)
             try:
                 for item in stream:
-                    payload = json.dumps(item, ensure_ascii=False)
-                    self.wfile.write(f"id: {item['request_id']}:{item['seq']}\nevent: {item['type']}\ndata: {payload}\n\n".encode("utf-8"))
-                    self.wfile.flush()
+                    if item["type"] in ("finish", "error"):
+                        item = _chat_timing.receipt(item)
+                    with _chat_timing.stage("reply_write"):
+                        payload = json.dumps(item, ensure_ascii=False)
+                        self.wfile.write(f"id: {item['request_id']}:{item['seq']}\nevent: {item['type']}\ndata: {payload}\n\n".encode("utf-8"))
+                        self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:
                 stream.close()
             return
         status, payload = self.hub.link.chat(who, body)
-        return self._json(payload, status)
+        with _chat_timing.stage("reply_write"):
+            return self._json(_chat_timing.receipt(payload), status)
 
     def _copilot(self) -> None:
         """Relay the shared agent response, including SSE, without buffering it."""

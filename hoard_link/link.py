@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ._process import run_hidden
-from . import _faustus, _probes
+from . import _chat_timing, _faustus, _probes
 from ._comfy import ComfyClient
 from ._sync import SyncFacade
 from .config import CapabilityConfig, LinkConfig
@@ -463,12 +463,15 @@ class Link:
 
     async def _faustus_url(self) -> Optional[str]:
         async def find() -> Optional[str]:
-            url = await _faustus.find_reachable(self._client, self.config.faustus_urls)
+            with _chat_timing.stage("discovery_health"):
+                url = await _faustus.find_reachable(self._client, self.config.faustus_urls)
             if url:
                 return url
             # Not on this PC: the Hub may have moved it to a Spark ("Run on"); it says where it answers now.
-            moved = await _faustus.placement_urls(self._client, self.config.hub_url)
-            return await _faustus.find_reachable(self._client, moved) if moved else None
+            with _chat_timing.stage("placement"):
+                moved = await _faustus.placement_urls(self._client, self.config.hub_url)
+            with _chat_timing.stage("discovery_health"):
+                return await _faustus.find_reachable(self._client, moved) if moved else None
 
         return await self._cached("faustus_url", find)
 
@@ -587,7 +590,8 @@ class Link:
         token = self.config.faustus_token
         headers = _faustus.auth_headers(token)
         if faustus_url:
-            status, data = await _faustus.get(self._client, f"{faustus_url}/api/models", headers=headers)
+            with _chat_timing.stage("registry"):
+                status, data = await _faustus.get(self._client, f"{faustus_url}/api/models", headers=headers)
         else:
             status, data = None, None
         if status == 200 and isinstance(data, dict):
@@ -616,7 +620,8 @@ class Link:
             elif not matches:
                 reasons.append(f"Faustus registry has no server for capability '{capability}'")
             for item in local:
-                res = await self._resolution_from_registry_item(capability, item, reasons, ctx)
+                with _chat_timing.stage("provider_catalogue"):
+                    res = await self._resolution_from_registry_item(capability, item, reasons, ctx)
                 if res is not None:
                     return res
         elif status in (401, 403):
@@ -1083,7 +1088,8 @@ class Link:
         typically a stale explicit URL or a server that just went away.
         """
         try:
-            resp = await self._client.post(url, json=payload, headers=headers, timeout=timeout)
+            resp = await self._client.post(url, json=payload, headers=headers, timeout=timeout,
+                                           **_chat_timing.http_options())
         except httpx.HTTPError as exc:
             raise BackendError(provider, 0, f"{type(exc).__name__} at {_host(url)}: {exc}"[:200]) from exc
         if resp.status_code >= 400:
@@ -1129,6 +1135,7 @@ class Link:
             return await self._post_json(provider, url, payload, timeout=remaining())
 
     @staticmethod
+    @_chat_timing.measure("backend_decode")
     def _json(provider: Optional[str], resp: httpx.Response) -> Any:
         try:
             return resp.json()
@@ -1173,7 +1180,8 @@ class Link:
             level = _reasoning.normalize(effort)
             if level is None and (effort is None or str(effort).strip().lower() in ("", "auto")):
                 level = _reasoning.normalize(self.config.capability(capability).effort)
-            res = await self.resolve(capability, task)
+            with _chat_timing.stage("resolution"):
+                res = await self.resolve(capability, task)
             if not res.resolved:
                 raise Unavailable(capability, res.details.get("reasons", [res.reason]))
             if not res.url:
@@ -1181,7 +1189,9 @@ class Link:
 
             start = self._now()
             controls_meta = None
-            async with self._load_lease(res):
+            async with AsyncExitStack() as stack:
+                with _chat_timing.stage("lease"):
+                    await stack.enter_async_context(self._load_lease(res))
                 if res.api == "ollama":
                     text, extra_reasoning, raw = await self._chat_ollama(
                         res, messages, images, max_tokens, temperature, response_format, level
@@ -1247,7 +1257,8 @@ class Link:
 
         remaining()
         yield {"type": "status", "state": "resolving"}
-        res = await bounded(self.resolve(capability, task))
+        with _chat_timing.stage("resolution"):
+            res = await bounded(self.resolve(capability, task))
         if not res.resolved or not res.url:
             raise Unavailable(capability, res.details.get("reasons", [res.reason]))
         meta = {"model": res.model, "provider": res.provider, "effort": level}
@@ -1271,10 +1282,11 @@ class Link:
         try:
             async with AsyncExitStack() as stack:
                 remaining()
-                await bounded(stack.enter_async_context(self._load_lease(res)))
+                with _chat_timing.stage("lease"):
+                    await bounded(stack.enter_async_context(self._load_lease(res)))
                 remaining()
                 response = await bounded(stack.enter_async_context(self._client.stream("POST", endpoint, json=payload,
-                    timeout=httpx.Timeout(None, connect=min(idle_timeout, 15.0)))))
+                    timeout=httpx.Timeout(None, connect=min(idle_timeout, 15.0)), **_chat_timing.http_options())))
                 if response.status_code >= 400:
                     raw = await bounded(response.aread())
                     raise BackendError(res.provider, response.status_code, raw.decode("utf-8", "replace")[:300])
@@ -1343,6 +1355,8 @@ class Link:
                             isinstance(function.get(key), (str, dict)) and bool(function[key])
                             for key in ("name", "arguments"))
                     if activity:
+                        if last_activity is None:
+                            _chat_timing.first_activity()
                         last_activity = time.monotonic()
                     for kind, value, parts in (("text", content, text), ("reasoning", think, reasoning)):
                         if isinstance(value, str) and value:
