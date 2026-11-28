@@ -9,6 +9,13 @@ class HoardLinkError(Exception):
     """Base class for every error this package raises on purpose."""
 
 
+class InvalidModel(HoardLinkError):
+    """The request names a model outside the capability's registered choices."""
+
+    def __init__(self, model: str, capability: str):
+        super().__init__(f"model {model!r} is not registered for capability {capability!r}")
+
+
 class Unavailable(HoardLinkError):
     """No server could be resolved for a capability.
 
@@ -36,6 +43,7 @@ class BackendError(HoardLinkError):
         self.provider = provider
         self.status = status
         self.body_excerpt = body_excerpt
+        self.model: Optional[str] = None
         who = provider or "backend"
         if status == 0:
             message = f"{who} unreachable: {body_excerpt}"

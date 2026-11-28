@@ -211,6 +211,7 @@ wait for an idle server. Loopback only, like the rest of the hub.
 ```
 POST /api/link/chat      Authorization: Bearer <the app's own token | the hub's data/mcp-token>
 body: {"capability": "llm" | "vision",               default "llm"
+       "model": "<registered model ID>",            optional exact selection for this capability
        "messages": [{"role": "system"|"user"|"assistant", "content": "..."}],
        "images": ["<base64 png/jpg>", ...],          vision only; attached to the last user message
        "json": true | {<JSON Schema>},               ask for JSON; the hub parses it
@@ -224,6 +225,7 @@ body: {"capability": "llm" | "vision",               default "llm"
 | Status | `error` | Meaning |
 |---|---|---|
 | 400 | `bad_request` | The body is not what the contract says (`detail` names the field). |
+| 400 | `invalid_model` | The named model is outside the capability's registered choices. |
 | 401 | — | No family token, or one the hub does not know. |
 | 413 | `too_large` | Over 12 MB (messages and base64 images together). Refused before the body is read. |
 | 503 | `no_model` | Nothing can serve that capability right now; `detail` has the reasons the resolution collected. |
@@ -233,6 +235,20 @@ body: {"capability": "llm" | "vision",               default "llm"
 
 Never a made-up answer: with no model the answer is `503 no_model`, and an
 app must show that state (or use its deterministic fallback), not pretend.
+
+With `model`, the Hub accepts the model pinned for the explicitly configured
+capability, or an exact model ID from a compatible local registry entry. The
+normal checks for residency and vision still apply. Selection never switches
+to a different model. The JSON receipt or terminal SSE event includes
+`requested_model` and `resolved_model`. The resolved model is null when selection
+was unavailable to the receipt. With the field omitted,
+the response keeps the usual model selection and receipt.
+
+Con `model` se puede pedir un identificador exacto del catálogo local
+compatible con la capacidad o el modelo fijado en su configuración explícita.
+Se mantienen las comprobaciones de residencia y visión. El recibo JSON o el
+evento final SSE incluye `requested_model` y `resolved_model`. Al omitir
+el campo se conserva la selección habitual.
 
 **JSON.** `"json": true` asks for one JSON object. A schema object is passed
 to the server as its response format when it supports one (a server that
@@ -253,6 +269,21 @@ any reasoning/format negotiation. An explicit long timeout is not shortened by
 Link's default backend read timeout. Native Python callers can also use
 `await link.chat(messages, timeout=900)`; omitting `timeout` retains the existing
 timeout selected for the reasoning effort.
+
+The Hub shares its HTTP connection pool across family callers while keeping the
+caller as the model lease owner. A verified chat route can be reused for 15
+seconds, keyed by capability and requested model. Backend configuration,
+placement and routing-file changes invalidate it. A failed backend request
+can invalidate the route for the next call. Generation is never replayed
+because of a connection or routing failure. A failure to find a route is
+checked again on the next request.
+
+Set `HOARD_LINK_CHAT_TIMINGS=1` in the Hub process to include timing in the JSON
+receipt or final SSE event and log the final write. No request text, models'
+output, credentials or backend addresses are logged by the timing hook.
+`backend_first_response` ends when HTTP response headers have been read.
+SSE also measures time to the first model activity. The sub-stages within
+resolution and transport overlap their parent stage and are not additive.
 
 **What it resolves with.** The hub's own Link, configured from
 `<hub data>/backend.json` (the same schema as an app's, see the README) plus

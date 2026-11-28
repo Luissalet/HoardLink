@@ -41,6 +41,7 @@ from collections import deque
 from typing import Any, Callable, Optional
 
 from .. import _chat_timing
+from ..types import CAPABILITIES
 from .config import HubConfig
 
 #: Largest request body (messages plus base64 images) the hub reads on this route.
@@ -55,6 +56,9 @@ STATUS_CAPABILITIES = (("llm", "llm"), ("vision", "vision"), ("embed", "embeddin
 ROLES = ("system", "user", "assistant")
 EFFORTS = ("off", "low", "medium", "high", "max", "auto")
 MAX_LINKS = 64
+_LINK_ENV_KEYS = ("HOARD_FAUSTUS_URL", "HOARD_FAUSTUS_TOKEN", "HOARD_COMFY_URL", "HOARD_GPU_LEASE",
+                  "HOARD_ROUTES", "HOARD_ROUTES_FILE", "HOARD_HOME",
+                  *(f"HOARD_{cap.upper()}_{part}" for cap in CAPABILITIES for part in ("URL", "MODEL", "EFFORT")))
 
 _FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(.*?)```", re.DOTALL)
 
@@ -147,6 +151,7 @@ class ChatRequest:
     tools: Optional[list[dict[str, Any]]] = None
     tool_choice: Any = None
     chat_template_kwargs: Optional[dict[str, Any]] = None
+    model: Optional[str] = None
 
 
 @_chat_timing.measure("parse_request")
@@ -156,6 +161,11 @@ def parse_request(body: Any) -> ChatRequest:
     capability = str(body.get("capability") or "llm").strip().lower()
     if capability not in CHAT_CAPABILITIES:
         raise BadRequest(f"capability must be one of {', '.join(CHAT_CAPABILITIES)}")
+    model = body.get("model")
+    if model is not None:
+        if not isinstance(model, str) or not 1 <= len(model.strip()) <= 256 or not model.isprintable():
+            raise BadRequest("model must be a non-empty registered model ID of at most 256 characters")
+        model = model.strip()
     raw_msgs = body.get("messages")
     if not isinstance(raw_msgs, list) or not raw_msgs:
         raise BadRequest("messages must be a non-empty list of {role, content}")
@@ -242,7 +252,22 @@ def parse_request(body: Any) -> ChatRequest:
     return ChatRequest(messages=messages, capability=capability, images=images, json_mode=json_mode, schema=schema,
                        effort=effort, max_tokens=max_tokens, temperature=temperature, timeout_s=timeout_s,
                        idle_timeout_s=min(float(idle), MAX_TIMEOUT_S), tools=tools, tool_choice=body.get("tool_choice"),
-                       chat_template_kwargs=ctk)
+                       chat_template_kwargs=ctk, model=model)
+
+
+def _model_receipt(req: ChatRequest, payload: dict[str, Any]) -> dict[str, Any]:
+    if req.model is None:
+        return payload
+    return {**payload, "requested_model": req.model,
+            "resolved_model": payload.get("resolved_model", payload.get("model"))}
+
+
+def _file_revision(path):
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    return info.st_ino, info.st_mtime_ns, info.st_size
 
 
 def with_json_instruction(messages: list[dict[str, Any]], schema: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -347,11 +372,16 @@ class LinkService:
                  link_factory: Optional[Callable[[str], Any]] = None, now: Callable[[], float] = time.time):
         self.config = config
         self._emit = emit
-        self._factory = link_factory or self._default_link
+        self._factory = link_factory
         self._now = now
         self.gate = Gate(int(config.link_chat_concurrency or 2))
         self._links: dict[str, Any] = {}
         self._links_lock = threading.Lock()
+        self._shared_client = None
+        self._routing = None
+        self._config_revision = None
+        self._routes_file = None
+        self._routes_revision = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._loop_lock = threading.Lock()
@@ -382,9 +412,13 @@ class LinkService:
     def close(self) -> None:
         with self._loop_lock:
             loop, self._loop = self._loop, None
+        with self._links_lock:
+            links, self._links = list(self._links.values()), {}
+            client, self._shared_client = self._shared_client, None
+            self._routing = None
         if loop is not None:
-            with self._links_lock:
-                links, self._links = list(self._links.values()), {}
+            if client is not None:
+                links.append(client)
             for link in links:
                 aclose = getattr(link, "aclose", None)
                 if aclose is not None:
@@ -393,6 +427,8 @@ class LinkService:
                     except Exception:  # noqa: BLE001
                         pass
             loop.call_soon_threadsafe(loop.stop)
+        elif client is not None:
+            asyncio.run(client.aclose())
 
     def link_config(self, app: str):
         """The Link configuration the hub serves with: ``<data>/backend.json`` (the same schema as an
@@ -407,21 +443,50 @@ class LinkService:
         return dataclasses.replace(cfg, **changes)
 
     def _default_link(self, app: str) -> Any:
-        from ..link import Link
+        import httpx
 
-        return Link(self.link_config(app))
+        from ..link import ChatRouting, Link
+        from ..routes import routes_path
+
+        if self._shared_client is None:
+            self._shared_client = httpx.AsyncClient(
+                trust_env=False, limits=httpx.Limits(max_connections=100, max_keepalive_connections=20,
+                                                    keepalive_expiry=30.0),
+            )
+        if self._routing is None:
+            self._routing = ChatRouting()
+        config = self.link_config(app)
+        self._routes_file = routes_path(config.routes_file) if config.use_routes else None
+        self._routes_revision = _file_revision(self._routes_file) if self._routes_file is not None else None
+        return Link(config, client=self._shared_client, chat_routing=self._routing)
+
+    def _check_link_revision(self):
+        revision = (
+            _file_revision(self.config.backend_file),
+            _file_revision(os.path.join(self.config.data_dir, "placement.json")),
+            tuple(self.config.faustus_urls), self.config.url,
+            tuple(os.environ.get(name) for name in _LINK_ENV_KEYS),
+        )
+        routes_changed = self._routes_file is not None and _file_revision(self._routes_file) != self._routes_revision
+        if revision != self._config_revision or routes_changed:
+            self._links.clear()
+            self._routing = None
+            self._routes_file = None
+            self._config_revision = revision
 
     @_chat_timing.measure("link_instance")
     def _link(self, app: str) -> Any:
         app = (app or "hub")[:80]
         with self._links_lock:
+            if self._factory is None:
+                self._check_link_revision()
             link = self._links.get(app)
             if link is None:
                 if len(self._links) >= MAX_LINKS:
                     app = "hub"
                     link = self._links.get(app)
                 if link is None:
-                    link = self._links[app] = self._factory(app)
+                    link = self._links[app] = (self._factory or self._default_link)(app)
             return link
 
     @_chat_timing.measure("receipt_record")
@@ -487,7 +552,7 @@ class LinkService:
     def stream_chat(self, app: str, body: Any, *, disconnected: Optional[Callable[[], bool]] = None,
                     heartbeat_s: float = 5.0):
         """SSE event iterator. Closing it cancels upstream and withdraws its FIFO ticket."""
-        from ..errors import BackendError, Unavailable
+        from ..errors import BackendError, InvalidModel, Unavailable
 
         req = parse_request(body)
         started = time.monotonic()
@@ -518,6 +583,8 @@ class LinkService:
             seq += 1
             if value.get("state"):
                 phase = value["state"]
+            if value.get("type") in ("finish", "error"):
+                value = _model_receipt(req, value)
             return {**value, "request_id": request_id, "seq": seq,
                     "elapsed_ms": int((time.monotonic() - started) * 1000)}
 
@@ -550,6 +617,7 @@ class LinkService:
                             max_tokens=req.max_tokens, temperature=req.temperature, capability=req.capability,
                             response_format=fmt, effort=req.effort, timeout=left,
                             idle_timeout=req.idle_timeout_s, tools=req.tools, tool_choice=req.tool_choice,
+                            **({"model": req.model} if req.model is not None else {}),
                             **({"chat_template_kwargs": req.chat_template_kwargs} if req.chat_template_kwargs is not None else {}))) as stream:
                         async for item in stream:
                             if cancelled.is_set():
@@ -582,6 +650,8 @@ class LinkService:
                 code = "backend_error"
                 if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
                     code = "timeout"
+                elif isinstance(exc, InvalidModel):
+                    code = "invalid_model"
                 elif isinstance(exc, Unavailable):
                     code = "gpu_busy" if any("GPU busy" in r for r in exc.reasons) else "no_model"
                 release()
@@ -662,9 +732,9 @@ class LinkService:
         deadline = started + req.timeout_s
         if not self.gate.acquire(req.timeout_s):
             self._record(app, req.capability, False, started, None, "timeout")
-            return 504, {"ok": False, "error": "timeout",
+            return 504, _model_receipt(req, {"ok": False, "error": "timeout",
                          "detail": f"waited {req.timeout_s:.0f}s in the queue behind other model calls "
-                                   f"(link_chat_concurrency={self.gate.limit})"}
+                                   f"(link_chat_concurrency={self.gate.limit})"})
         try:
             status, payload = self._run(app, req, started, deadline)
         except Exception as exc:  # noqa: BLE001
@@ -673,10 +743,10 @@ class LinkService:
             self.gate.release()
         self._record(app, req.capability, bool(payload.get("ok")), started, payload.get("model"),
                      None if payload.get("ok") else str(payload.get("error")))
-        return status, payload
+        return status, _model_receipt(req, payload)
 
     def _run(self, app: str, req: ChatRequest, started: float, deadline: float) -> tuple[int, dict[str, Any]]:
-        from ..errors import BackendError, Unavailable
+        from ..errors import BackendError, InvalidModel, Unavailable
 
         left = deadline - time.monotonic()
         if left <= 0:
@@ -700,6 +770,7 @@ class LinkService:
                     return await link.chat(messages, images=req.images or None, max_tokens=req.max_tokens,
                                            temperature=req.temperature, capability=req.capability,
                                            response_format=fmt, effort=req.effort, timeout=remaining,
+                                           **({"model": req.model} if req.model is not None else {}),
                                            **({"chat_template_kwargs": req.chat_template_kwargs} if req.chat_template_kwargs is not None else {}))
                 except BackendError as exc:
                     last = exc
@@ -712,6 +783,8 @@ class LinkService:
         try:
             fut = asyncio.run_coroutine_threadsafe(asyncio.wait_for(go(), left), self._ensure_loop())
             res = fut.result(left + 5)
+        except InvalidModel as exc:
+            return 400, {"ok": False, "error": "invalid_model", "detail": str(exc)}
         except Unavailable as exc:
             detail = "; ".join(exc.reasons) or str(exc)
             if any("GPU busy" in r for r in exc.reasons):
@@ -720,10 +793,12 @@ class LinkService:
         except (asyncio.TimeoutError, TimeoutError):
             return 504, {"ok": False, "error": "timeout", "detail": f"no answer within {req.timeout_s:.0f}s"}
         except BackendError as exc:
+            selection = {"resolved_model": exc.model} if req.model is not None else {}
             if exc.status == 0 and "timeout" in str(exc).lower():
-                return 504, {"ok": False, "error": "timeout", "detail": str(exc)[:300], "provider": exc.provider}
+                return 504, {"ok": False, "error": "timeout", "detail": str(exc)[:300], "provider": exc.provider,
+                             **selection}
             return 502, {"ok": False, "error": "backend_error", "detail": str(exc)[:300], "provider": exc.provider,
-                         "backend_status": exc.status}
+                         "backend_status": exc.status, **selection}
         payload: dict[str, Any] = {
             "ok": True, "text": res.text, "json": None, "model": res.model, "provider": res.provider,
             "ms": int(res.elapsed_ms), "queued_ms": queued_ms, "effort": res.effort,

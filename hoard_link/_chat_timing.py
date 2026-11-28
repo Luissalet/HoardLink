@@ -43,7 +43,8 @@ class ChatTiming:
         self.counts["backend_requests"] = self.counts.get("backend_requests", 0) + 1
 
         async def trace(event, _info):
-            method, state = event.rsplit(".", 2)[-2:]
+            name, _, state = event.rpartition(".")
+            method = name.rsplit(".", 1)[-1]
             if method not in _http_stages:
                 return
             if state == "started":
@@ -57,7 +58,7 @@ class ChatTiming:
 
     def snapshot(self):
         return {
-            "ms": {**{key: round(value, 3) for key, value in self.elapsed.items()},
+            "ms": {**{key: round(value, 3) for key, value in self.elapsed.copy().items()},
                    "total": round((perf_counter() - self.started) * 1000, 3)},
             "counts": {"backend_requests": 0, "backend_connections": 0, **self.counts},
         }

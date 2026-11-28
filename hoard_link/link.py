@@ -33,7 +33,7 @@ from . import _chat_timing, _faustus, _probes
 from ._comfy import ComfyClient
 from ._sync import SyncFacade
 from .config import CapabilityConfig, LinkConfig
-from .errors import BackendError, Unavailable
+from .errors import BackendError, InvalidModel, Unavailable
 from .gpu import GpuMemory, gpu_free_mb
 from .lease import Lease, LeaseError, LeaseTimeout
 from . import reasoning as _reasoning
@@ -62,6 +62,7 @@ _CACHE_TTL_S = 30.0
 _BASE_PROBE_CACHE_TTL_S = 2.5
 # The last model registry Faustus returned, kept for when it is too busy to answer within the short timeout.
 _REGISTRY_MEMORY_TTL_S = 900.0
+_CHAT_ROUTE_TTL_S = 15.0
 _last_registry: Optional[tuple[dict, float]] = None
 
 
@@ -72,10 +73,15 @@ def _remember_registry(data: dict) -> None:
 
 def _remembered_registry() -> Optional[tuple[dict, float]]:
     """``(registry, age_s)`` while the last registry is recent enough to try, else None."""
-    if _last_registry is None:
+    return _registry_snapshot(_last_registry)
+
+
+def _registry_snapshot(snapshot: Optional[tuple[dict, float]]) -> Optional[tuple[dict, float]]:
+    if snapshot is None:
         return None
-    age = time.monotonic() - _last_registry[1]
-    return (_last_registry[0], age) if age <= _REGISTRY_MEMORY_TTL_S else None
+    data, observed = snapshot
+    age = time.monotonic() - observed
+    return (data, age) if age <= _REGISTRY_MEMORY_TTL_S else None
 
 
 _log = logging.getLogger("hoard_link")
@@ -349,17 +355,29 @@ def _promoted(model: Optional[str], ranked: list[str], base: list[str]) -> bool:
     return model in ranked and model in base and ranked.index(model) < base.index(model)
 
 
+class ChatRouting:
+    """Shared discovery for Links with one Hub configuration."""
+
+    def __init__(self):
+        self.probes: dict[str | tuple, tuple[float, asyncio.Future[Any], Any]] = {}
+        self.registry: Optional[tuple[dict, float]] = None
+
+
 class Link:
     """Resolves and calls the shared model backend for one app."""
 
-    def __init__(self, config: LinkConfig, client: Optional[httpx.AsyncClient] = None):
+    def __init__(self, config: LinkConfig, client: Optional[httpx.AsyncClient] = None, *,
+                 chat_routing: Optional[ChatRouting] = None):
         self.config = config
         # trust_env=False: loopback traffic must never be routed through an
         # HTTP(S)_PROXY from the environment (a proxy would answer instead
         # of "connection refused", and nothing here should leave the box).
         self._client = client or httpx.AsyncClient(trust_env=False)
         self._owns_client = client is None
-        self._cache: dict[str, tuple[float, "asyncio.Future[Any]", Any]] = {}
+        self._chat_routing = chat_routing
+        self._cache: dict[str | tuple, tuple[float, asyncio.Future[Any], Any]] = (
+            chat_routing.probes if chat_routing is not None else {}
+        )
         # Overridable by tests: replace with a fake clock / no-op sleep to
         # test wait_idle() timing without real delays.
         self._now = time.monotonic
@@ -381,7 +399,7 @@ class Link:
     # caching of probes (30 s, single-flight)
     # ------------------------------------------------------------------
 
-    async def _cached(self, key: str, factory: Any, ttl_s: float | None = None) -> Any:
+    async def _cached(self, key: str | tuple, factory: Any, ttl_s: float | None = None) -> Any:
         """Cache a probe; concurrent callers share one in-flight probe.
 
         Without single-flight, ``status()`` resolving eight capabilities in
@@ -473,7 +491,10 @@ class Link:
             with _chat_timing.stage("discovery_health"):
                 return await _faustus.find_reachable(self._client, moved) if moved else None
 
-        return await self._cached("faustus_url", find)
+        url = await self._cached("faustus_url", find)
+        if self._chat_routing is not None and url is None:
+            self._drop_cached("faustus_url", None)
+        return url
 
     # ------------------------------------------------------------------
     # resolution
@@ -506,12 +527,42 @@ class Link:
             return base, base
         return _prefer(_prefer_many(names, list(ctx.prefs)), preferred), base
 
-    async def resolve(self, capability: str, task: Optional[str] = None) -> Resolution:
+    async def _resolve_chat(self, capability, task, model):
+        async def resolve():
+            return await self.resolve(capability, task, **({"model": model} if model is not None else {}))
+
+        with _chat_timing.stage("resolution"):
+            if self._chat_routing is None:
+                return await resolve()
+            key = ("chat", capability, task, model)
+            result = await self._cached(key, resolve, _CHAT_ROUTE_TTL_S)
+            if not result.resolved or not result.url or result.details.get("resident") is False:
+                self._drop_cached(key, result)
+            return result
+
+    def _drop_cached(self, key, result):
+        entry = self._cache.get(key)
+        if entry is not None and entry[1].done() and not entry[1].cancelled() and entry[1].exception() is None:
+            if entry[1].result() is result:
+                del self._cache[key]
+
+    def _chat_failure(self, capability, task, model, result, status):
+        if self._chat_routing is not None and (status == 0 or status in (401, 403, 404, 410, 421, 429) or status >= 500):
+            self._drop_cached(("chat", capability, task, model), result)
+
+    def _known_registry(self):
+        if self._chat_routing is None:
+            return _remembered_registry()
+        return _registry_snapshot(self._chat_routing.registry)
+
+    async def resolve(self, capability: str, task: Optional[str] = None, *, model: Optional[str] = None) -> Resolution:
         """Which server and model to use for ``capability``.
 
         ``task`` (e.g. ``"code"``) names a measured route from
         ``~/.hoard/routes.json``: among the candidates resolution already
-        considers, the model measured best for that task is preferred."""
+        considers, the model measured best for that task is preferred.
+        An explicit model is restricted to the capability's configured model
+        or an exact, compatible registry entry. It never falls back to another model."""
         if capability not in CAPABILITIES:
             raise ValueError(f"unknown capability {capability!r}, expected one of {CAPABILITIES}")
 
@@ -520,26 +571,30 @@ class Link:
 
         explicit = self._resolve_explicit(capability)
         if explicit is not None:
+            if model is not None and explicit.model != model:
+                raise InvalidModel(model, capability)
             return explicit
 
+        requested = {"model": model} if model is not None else {}
         faustus_url = await self._faustus_url()
         if faustus_url:
-            res = await self._resolve_from_faustus(capability, faustus_url, reasons, ctx)
+            res = await self._resolve_from_faustus(capability, faustus_url, reasons, ctx, **requested)
             if res is not None:
                 return res
-        elif _remembered_registry() is not None:
+        elif self._known_registry() is not None:
             # Faustus did not answer its health check in time (a long turn can hold it), but it listed its
             # servers recently: try those (each one is verified) before loading anything on this PC.
             reasons.append("Faustus not reachable on configured/default ports right now")
-            res = await self._resolve_from_faustus(capability, None, reasons, ctx)
+            res = await self._resolve_from_faustus(capability, None, reasons, ctx, **requested)
             if res is not None:
                 return res
         else:
             reasons.append("Faustus not reachable on configured/default ports")
 
-        res = await self._resolve_from_loopback(capability, reasons, ctx)
-        if res is not None:
-            return res
+        if model is None:
+            res = await self._resolve_from_loopback(capability, reasons, ctx)
+            if res is not None:
+                return res
 
         return Resolution(
             capability=capability,
@@ -584,7 +639,8 @@ class Link:
         )
 
     async def _resolve_from_faustus(
-        self, capability: str, faustus_url: Optional[str], reasons: list[str], ctx: Optional[_RouteCtx] = None
+        self, capability: str, faustus_url: Optional[str], reasons: list[str], ctx: Optional[_RouteCtx] = None,
+        *, model: Optional[str] = None,
     ) -> Optional[Resolution]:
         """``faustus_url`` None means Faustus did not answer its health check: only a recent registry is tried."""
         token = self.config.faustus_token
@@ -594,10 +650,14 @@ class Link:
                 status, data = await _faustus.get(self._client, f"{faustus_url}/api/models", headers=headers)
         else:
             status, data = None, None
+        fresh_catalogue = status == 200 and isinstance(data, dict) and isinstance(data.get("items"), list)
         if status == 200 and isinstance(data, dict):
-            _remember_registry(data)
+            if self._chat_routing is None:
+                _remember_registry(data)
+            else:
+                self._chat_routing.registry = (data, time.monotonic())
         elif status is None:
-            remembered = _remembered_registry()
+            remembered = self._known_registry()
             if remembered is not None:
                 # A busy Faustus can miss the short timeout; the servers it listed a moment ago are still
                 # verified one by one below, so a stale entry is skipped rather than trusted.
@@ -609,6 +669,11 @@ class Link:
         if status == 200 and isinstance(data, dict):
             matches = _faustus.find_model_items(_faustus.model_items(data), capability)
             local = [i for i in matches if _faustus.is_local_item(i)]
+            if model is not None:
+                local = [{**item, "models": [model]} for item in local
+                         if isinstance(item.get("models"), list) and model in item["models"]]
+                if not local and fresh_catalogue:
+                    raise InvalidModel(model, capability)
             # A model another of the person's machines is already serving (the Sparks) goes before anything this
             # PC would have to hold or load on its own GPUs; the registry's order decides within each group.
             local.sort(key=lambda i: 0 if _faustus.is_lan_item(i) else 1)
@@ -782,7 +847,9 @@ class Link:
             served = [m.get("id") for m in (served_data or {}).get("data", []) if isinstance(m, dict) and m.get("id")] \
                 if status == 200 and isinstance(served_data, dict) else []
             if not served:
-                reasons.append(f"Faustus registry names {backend} at {_host(url)} but it does not answer /v1/models")
+                outcome = ("no HTTP response" if status is None else f"HTTP {status}" if status != 200
+                           else "no model IDs returned")
+                reasons.append(f"{backend} at {_host(url)}: /v1/models verification failed ({outcome})")
                 return None
             matching = [m for m in listed if m in served] or ([] if listed else served)
             if not matching:
@@ -1154,6 +1221,8 @@ class Link:
         task: Optional[str] = None,
         chat_template_kwargs: Optional[dict[str, Any]] = None,
         timeout: Optional[float] = None,
+        *,
+        model: Optional[str] = None,
     ) -> ChatResult:
         """One chat call to the resolved model.
 
@@ -1180,8 +1249,7 @@ class Link:
             level = _reasoning.normalize(effort)
             if level is None and (effort is None or str(effort).strip().lower() in ("", "auto")):
                 level = _reasoning.normalize(self.config.capability(capability).effort)
-            with _chat_timing.stage("resolution"):
-                res = await self.resolve(capability, task)
+            res = await self._resolve_chat(capability, task, model)
             if not res.resolved:
                 raise Unavailable(capability, res.details.get("reasons", [res.reason]))
             if not res.url:
@@ -1189,17 +1257,22 @@ class Link:
 
             start = self._now()
             controls_meta = None
-            async with AsyncExitStack() as stack:
-                with _chat_timing.stage("lease"):
-                    await stack.enter_async_context(self._load_lease(res))
-                if res.api == "ollama":
-                    text, extra_reasoning, raw = await self._chat_ollama(
-                        res, messages, images, max_tokens, temperature, response_format, level
-                    )
-                else:
-                    text, extra_reasoning, raw, controls_meta = await self._chat_openai(
-                        res, messages, images, max_tokens, temperature, response_format, level, chat_template_kwargs
-                    )
+            try:
+                async with AsyncExitStack() as stack:
+                    with _chat_timing.stage("lease"):
+                        await stack.enter_async_context(self._load_lease(res))
+                    if res.api == "ollama":
+                        text, extra_reasoning, raw = await self._chat_ollama(
+                            res, messages, images, max_tokens, temperature, response_format, level
+                        )
+                    else:
+                        text, extra_reasoning, raw, controls_meta = await self._chat_openai(
+                            res, messages, images, max_tokens, temperature, response_format, level, chat_template_kwargs
+                        )
+            except BackendError as exc:
+                exc.model = res.model
+                self._chat_failure(capability, task, model, res, exc.status)
+                raise
             elapsed_ms = (self._now() - start) * 1000.0
 
             clean_text, think = _strip_think(text)
@@ -1225,6 +1298,8 @@ class Link:
         timeout: float = 300.0, idle_timeout: float = 120.0,
         tools: Optional[list[dict[str, Any]]] = None, tool_choice: Any = None,
         chat_template_kwargs: Optional[dict[str, Any]] = None,
+        *,
+        model: Optional[str] = None,
     ):
         """Yield real status/text/reasoning/tool_call/usage/finish events.
 
@@ -1257,8 +1332,7 @@ class Link:
 
         remaining()
         yield {"type": "status", "state": "resolving"}
-        with _chat_timing.stage("resolution"):
-            res = await bounded(self.resolve(capability, task))
+        res = await bounded(self._resolve_chat(capability, task, model))
         if not res.resolved or not res.url:
             raise Unavailable(capability, res.details.get("reasons", [res.reason]))
         meta = {"model": res.model, "provider": res.provider, "effort": level}
@@ -1383,9 +1457,14 @@ class Link:
                     if res.api == "ollama" and chunk.get("done"):
                         break
         except httpx.ReadTimeout as exc:
+            self._chat_failure(capability, task, model, res, 0)
             raise TimeoutError("upstream inactivity timeout") from exc
         except httpx.HTTPError as exc:
+            self._chat_failure(capability, task, model, res, 0)
             raise BackendError(res.provider, 0, f"{type(exc).__name__}: {exc}"[:200]) from exc
+        except BackendError as exc:
+            self._chat_failure(capability, task, model, res, exc.status)
+            raise
         if finish_reason is None:
             raise BackendError(res.provider, 200, "stream ended without a finish reason")
         remaining()

@@ -36,7 +36,7 @@ from typing import Any
 __version__ = "0.8.2"
 
 from .config import CapabilityConfig, LinkConfig
-from .errors import BackendError, HoardLinkError, Unavailable
+from .errors import BackendError, HoardLinkError, InvalidModel, Unavailable
 from .gpu import GpuMemory, gpu_free_mb
 from .browser_lane import Lane, LaneBusy, LaneError, lane, lane_status, registrable_domain
 from .lease import Lease, LeaseError, LeaseTimeout, lease
@@ -50,7 +50,7 @@ _LAZY: dict[str, tuple[str, str]] = {
 
 __all__ = [
     "__version__", "Link", "LinkConfig", "CapabilityConfig", "ComfyClient", "Resolution", "ChatResult", "Usage",
-    "OutputFile", "Unavailable", "BackendError", "HoardLinkError", "gpu_free_mb", "GpuMemory", "lease", "Lease",
+    "OutputFile", "Unavailable", "BackendError", "HoardLinkError", "InvalidModel", "gpu_free_mb", "GpuMemory", "lease", "Lease",
     "LeaseError", "LeaseTimeout", "CAPABILITIES", "family", "lane", "Lane", "LaneBusy", "LaneError", "lane_status",
     "registrable_domain",
 ]

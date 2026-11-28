@@ -607,6 +607,7 @@ def catalogue() -> list[dict[str, Any]]:
                 "messages": {"type": "array", "items": {"type": "object"},
                              "description": "[{role: system|user|assistant, content}], used instead of prompt."},
                 "capability": {"type": "string", "enum": ["llm", "vision"], "default": "llm"},
+                "model": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Exact registered model ID for this capability."},
                 "images": {"type": "array", "items": {"type": "string"}, "description": "Base64 images (vision only)."},
                 "json": {"description": "true, or a JSON Schema object, to get a JSON answer in `json`."},
                 "effort": {"type": "string", "enum": ["off", "low", "medium", "high", "max"]},

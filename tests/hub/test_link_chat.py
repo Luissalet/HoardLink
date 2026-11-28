@@ -11,9 +11,11 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+import httpx
 import pytest
 
 from hoard_link.errors import BackendError, Unavailable
@@ -96,6 +98,153 @@ def _auth(hub) -> dict:
 
 def _msgs(text="hola") -> list[dict]:
     return [{"role": "user", "content": text}]
+
+
+@pytest.fixture
+def model_catalogue(lhub, monkeypatch, tmp_path):
+    hub, url = lhub
+    calls = Counter()
+    state = {"catalogue": 200, "generation": 200}
+    real_client = httpx.AsyncClient
+
+    def backend(req):
+        calls[(req.method, req.url.path)] += 1
+        if req.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "healthy"})
+        if req.url.path == "/api/models":
+            return httpx.Response(200, json={"items": [{
+                "model_type": "llm", "category": "local", "backend": "openai", "url": "http://127.0.0.1:18216/v1",
+                "models": ["default-text", "other-text", "with-vision"], "models_vision": ["with-vision"],
+            }]})
+        if req.url.port == 18216 and req.url.path == "/v1/models":
+            calls["provider_catalogue"] += 1
+            return httpx.Response(state["catalogue"], json={"data": [
+                {"id": name} for name in ("default-text", "other-text", "with-vision")]})
+        if req.url.path == "/v1/chat/completions":
+            body = json.loads(req.content)
+            chosen = body["model"]
+            calls[chosen] += 1
+            if state["generation"] != 200:
+                return httpx.Response(state["generation"], json={"error": "not ready"})
+            if body.get("stream"):
+                delta = json.dumps({"choices": [{"delta": {"content": chosen}, "finish_reason": "stop"}]})
+                return httpx.Response(200, text=f"data: {delta}\n\ndata: [DONE]\n\n")
+            return httpx.Response(200, json={"choices": [{"message": {"content": chosen}, "finish_reason": "stop"}]})
+        return httpx.Response(404)
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: real_client(
+        *a, **kw, transport=httpx.MockTransport(backend)))
+    monkeypatch.setenv("HOARD_FAUSTUS_URL", "http://127.0.0.1:18215")
+    monkeypatch.delenv("HOARD_LLM_URL", raising=False)
+    monkeypatch.delenv("HOARD_VISION_URL", raising=False)
+    monkeypatch.setenv("HOARD_ROUTES_FILE", str(tmp_path / "routes.json"))
+    hub.link.close()
+    hub.link = LinkService(hub.config)
+    return hub, url, calls, state
+
+
+def test_registered_model_selection_preserves_default_and_sse(model_catalogue):
+    hub, url, calls, state = model_catalogue
+
+    def chat(**options):
+        return _http(url + "/api/link/chat", {"messages": _msgs(), **options}, _auth(hub))
+
+    code, explicit = chat(model="other-text")
+    assert code == 200
+    assert explicit["text"] == explicit["model"] == explicit["requested_model"] == explicit["resolved_model"] == "other-text"
+    code, default = chat()
+    assert code == 200 and default["text"] == "default-text"
+    assert {"requested_model", "resolved_model", "timing"}.isdisjoint(default)
+    assert chat(model="missing")[0] == 400
+    status, wrong = chat(model="other-text", capability="vision", images=[PNG])
+    assert status == 400 and wrong["error"] == "invalid_model" and wrong["resolved_model"] is None
+    assert calls[("POST", "/v1/chat/completions")] == 2
+
+    for model, terminal in (("other-text", "finish"), ("missing", "error")):
+        conn = http.client.HTTPConnection("127.0.0.1", hub.config.port, timeout=5)
+        try:
+            conn.request("POST", "/api/link/chat", json.dumps({"messages": _msgs(), "model": model, "stream": True}),
+                         {"Content-Type": "application/json", **_auth(hub)})
+            with conn.getresponse() as response:
+                assert response.status == 200 and response.headers["Content-Type"].startswith("text/event-stream")
+                events = [json.loads(line[6:]) for line in response if line.startswith(b"data: ")]
+            finish = events[-1]
+            assert finish["type"] == terminal and finish["requested_model"] == model
+            assert finish["resolved_model"] == (model if terminal == "finish" else None)
+            if terminal == "error":
+                assert finish["error"] == "invalid_model"
+        finally:
+            conn.close()
+    state["generation"] = 503
+    code, failure = chat(model="other-text")
+    assert code == 502 and failure["requested_model"] == failure["resolved_model"] == "other-text"
+
+
+@pytest.mark.parametrize("value", ["", " ", "invalid\nID", 7, [], "m" * 257])
+def test_parse_request_rejects_invalid_model_id(value):
+    with pytest.raises(BadRequest, match="model"):
+        parse_request({"messages": _msgs(), "model": value})
+
+
+def test_verified_route_reuses_pool_and_invalidates_on_failure_and_placement(model_catalogue):
+    hub, url, calls, state = model_catalogue
+
+    def chat():
+        return _http(url + "/api/link/chat", {"messages": _msgs()}, _auth(hub))
+
+    assert chat()[0] == chat()[0] == 200
+    assert calls["provider_catalogue"] == 1
+    link = hub.link._link("hub")
+    other = hub.link._link("another-app")
+    assert other.config.app == "another-app" and other._client is link._client
+
+    state["generation"] = 503
+    assert chat()[0] == 502
+    assert calls[("POST", "/v1/chat/completions")] == 3
+    state["generation"] = 200
+    assert chat()[0] == 200 and calls["provider_catalogue"] == 2
+
+    placement = Path(hub.config.data_dir) / "placement.json"
+    placement.write_text('{"location":"pc"}', encoding="utf-8")
+    assert chat()[0] == 200 and calls["provider_catalogue"] == 3
+    replacement = hub.link._link("hub")
+    assert replacement is not link and replacement._client is link._client
+
+    replacement._now = lambda: time.monotonic() + 16
+    assert chat()[0] == 200 and calls["provider_catalogue"] == 4
+    backend_file = Path(hub.config.backend_file)
+    backend_file.write_text(json.dumps({"capabilities": {"llm": {
+        "url": "http://127.0.0.1:18216/v1", "model": "other-text", "api": "openai",
+    }}}), encoding="utf-8")
+    code, changed = chat()
+    assert code == 200 and changed["model"] == "other-text" and calls["provider_catalogue"] == 4
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_no_model_verification_failure_is_not_cached(model_catalogue, explicit):
+    hub, url, calls, state = model_catalogue
+    state["catalogue"] = 503
+    body = {"messages": _msgs(), **({"model": "default-text"} if explicit else {})}
+    code, failed = _http(url + "/api/link/chat", body, _auth(hub))
+    assert code == 503 and failed["error"] == "no_model" and "HTTP 503" in failed["detail"]
+    if explicit:
+        assert failed["requested_model"] == "default-text" and failed["resolved_model"] is None
+    assert calls[("POST", "/v1/chat/completions")] == 0
+    state["catalogue"] = 200
+    code, recovered = _http(url + "/api/link/chat", body, _auth(hub))
+    assert code == 200 and recovered["model"] == "default-text"
+    assert calls["provider_catalogue"] == 2 and calls[("POST", "/v1/chat/completions")] == 1
+
+
+def test_chat_timings_are_opt_in_and_cover_resolution(model_catalogue, monkeypatch):
+    hub, url, _, _ = model_catalogue
+    monkeypatch.setenv("HOARD_LINK_CHAT_TIMINGS", "1")
+    status, receipt = _http(url + "/api/link/chat", {"messages": _msgs()}, _auth(hub))
+    assert status == 200
+    stages = receipt["timing"]["ms"]
+    assert {"identity", "parse_request", "link_instance", "resolution", "provider_catalogue",
+            "lease", "backend_decode", "mediation", "receipt_record"} <= stages.keys()
+    assert receipt["timing"]["counts"]["backend_requests"] == 1
 
 
 # ---- JSON parsing -----------------------------------------------------------------------
