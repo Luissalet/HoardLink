@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
+from hoard_link import Link, _faustus
+from hoard_link._chat_routing import ChatRouting
 from hoard_link.config import LinkConfig
 from tests.conftest import ISOLATED_HUB_PORT, Router, make_link
 
@@ -26,6 +30,106 @@ LLM_REGISTRY = httpx.Response(
 )
 
 EMPTY_REGISTRY = httpx.Response(200, json={"items": []})
+
+
+def _moved_to(url):
+    return {"location": "sparks", "job": {"running": False}, "urls": {"faustus": url}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spark_healthy", [True, False])
+async def test_faustus_probes_the_active_placement_before_configured_fallback(spark_healthy):
+    hub, spark = "http://hub.test", "https://spark.test"
+    config = LinkConfig(hub_url=hub)
+    first_local = config.faustus_urls[0] + "/api/health"
+    hits = []
+
+    async def send(request):
+        address = str(request.url)
+        hits.append(address)
+        if address == hub + "/api/placement":
+            return httpx.Response(200, json=_moved_to(spark))
+        if address == spark + "/api/health" and not spark_healthy:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"status": "healthy"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+        link = Link(config, client=client)
+        assert await link._faustus_url() == (spark if spark_healthy else config.faustus_urls[0])
+    assert hits[:2] == [hub + "/api/placement", spark + "/api/health"]
+    assert (first_local in hits) is not spark_healthy
+    if spark_healthy:
+        assert len(hits) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preferred_answers", [True, False])
+async def test_local_health_probes_overlap_without_demoting_a_connected_preferred_service(preferred_answers):
+    first, second = LinkConfig().faustus_urls
+    second_started = asyncio.Event()
+    calls = []
+
+    async def send(request):
+        calls.append(request)
+        if str(request.url) == first + "/api/health":
+            await asyncio.wait_for(second_started.wait(), 0.2)
+            if not preferred_answers:
+                raise httpx.ConnectTimeout("first local socket did not connect")
+            await asyncio.sleep(0)
+        else:
+            second_started.set()
+        return httpx.Response(200, json={"status": "healthy"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+        assert await _faustus.find_reachable(client, (first, second)) == (first if preferred_answers else second)
+    assert len(calls) == 2
+    for call in calls:
+        limits = call.extensions["timeout"]
+        assert limits["connect"] <= 0.3
+        assert limits["read"] == _faustus.TIMEOUT_S
+
+
+@pytest.mark.asyncio
+async def test_placed_registry_preparation_is_shared_with_the_first_lookup():
+    spark = "https://spark.test"
+    backend = "http://preferred.local"
+    registry_started, release = asyncio.Event(), asyncio.Event()
+    clocks = [1.0]
+    hits = []
+    registered = {"url": backend, "models": ["example"], "endpoint_id": "preferred",
+                  "model_type": "llm", "category": "local", "backend": "openai"}
+
+    async def send(request):
+        assert request.method == "GET"
+        hits.append(str(request.url))
+        if request.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "healthy"})
+        if request.url.path == "/api/models":
+            assert request.headers["Authorization"] == "Bearer synthetic"
+            registry_started.set()
+            await release.wait()
+            return httpx.Response(200, json={"items": [registered]})
+        assert request.url.path == "/v1/models"
+        return httpx.Response(200, json={"data": [{"id": "example"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+        routing = ChatRouting()
+        config = LinkConfig(faustus_token="synthetic")
+        startup = Link(config, client, chat_routing=routing, placement=lambda: _moved_to(spark))
+        caller = Link(config, client, chat_routing=routing, placement=lambda: _moved_to(spark))
+        startup._now = caller._now = lambda: clocks[0]
+        warm = asyncio.create_task(startup.warm_placed_registry(spark))
+        await asyncio.wait_for(registry_started.wait(), 1)
+        first = asyncio.create_task(caller._resolve_chat("llm", None, None))
+        await asyncio.sleep(0)
+        release.set()
+        answer = await first
+        await warm
+        assert answer.details["endpoint_id"] == "preferred"
+        assert hits == [spark + "/api/health", spark + "/api/models", backend + "/v1/models"]
+        clocks[0] += 5
+        await caller.resolve("llm")
+    assert hits.count(spark + "/api/models") == 2
 
 
 def llamacpp_ready(router: Router, port: int = 8081, model: str = "qwen3.8-27b-q8-llamacpp") -> Router:

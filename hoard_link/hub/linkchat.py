@@ -40,7 +40,7 @@ from contextlib import aclosing
 from collections import deque
 from typing import Any, Callable, Optional
 
-from .. import _chat_timing
+from .. import _chat_timing, where
 from ..types import CAPABILITIES
 from .config import HubConfig
 
@@ -374,10 +374,12 @@ class LinkService:
     """
 
     def __init__(self, config: HubConfig, *, emit: Optional[Callable[[str, dict[str, Any]], Any]] = None,
-                 link_factory: Optional[Callable[[str], Any]] = None, now: Callable[[], float] = time.time):
+                 link_factory: Optional[Callable[[str], Any]] = None, now: Callable[[], float] = time.time,
+                 placement: Optional[Callable[[], dict]] = None):
         self.config = config
         self._emit = emit
         self._factory = link_factory
+        self._placement = placement
         self._now = now
         self.gate = Gate(int(config.link_chat_concurrency or 2))
         self._links: dict[str, Any] = {}
@@ -442,6 +444,17 @@ class LinkService:
         elif client is not None:
             asyncio.run(client.aclose())
 
+    def warm_placed_registry(self) -> None:
+        if self._placement is None or self._factory is not None:
+            return
+        if placed := where.placed("faustus", self._placement()):
+            async def warm() -> None:
+                link = self._link("hoard-hub")
+                if not link.config.capability("llm").explicit:
+                    await link.warm_placed_registry(placed)
+
+            asyncio.run_coroutine_threadsafe(warm(), self._ensure_loop())
+
     def link_config(self, app: str):
         """The Link configuration the hub serves with: ``<data>/backend.json`` (the same schema as an
         app's) plus ``HOARD_*`` variables, the hub's own Faustus URLs, and the hub itself as lease arbiter."""
@@ -469,7 +482,7 @@ class LinkService:
         config = self.link_config(app)
         self._routes_file = routes_path(config.routes_file) if config.use_routes else None
         self._routes_revision = _file_revision(self._routes_file) if self._routes_file is not None else None
-        return Link(config, client=self._shared_client, chat_routing=self._routing)
+        return Link(config, client=self._shared_client, chat_routing=self._routing, placement=self._placement)
 
     def _check_link_revision(self):
         revision = (

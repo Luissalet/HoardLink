@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -29,7 +30,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ._process import run_hidden
-from . import _chat_timing, _faustus, _probes
+from . import _chat_timing, _faustus, _probes, where
 from ._chat_routing import ChatRouting
 from ._comfy import ComfyClient
 from ._sync import SyncFacade
@@ -44,6 +45,7 @@ from .types import CAPABILITIES, ChatResult, Resolution, Usage
 # Keep extension hooks callable with their historical argument lists. Context
 # follows this chat task (including super() calls), never another concurrent call.
 _CHAT_DEADLINE: ContextVar[Optional[float]] = ContextVar("hoard_link_chat_deadline", default=None)
+_STARTUP_REGISTRY_TTL_S = 3.0
 
 
 @asynccontextmanager
@@ -377,7 +379,8 @@ class Link:
     """Resolves and calls the shared model backend for one app."""
 
     def __init__(self, config: LinkConfig, client: Optional[httpx.AsyncClient] = None, *,
-                 chat_routing: Optional[ChatRouting] = None):
+                 chat_routing: Optional[ChatRouting] = None,
+                 placement: Optional[Callable[[], dict]] = None):
         self.config = config
         # trust_env=False: loopback traffic must never be routed through an
         # HTTP(S)_PROXY from the environment (a proxy would answer instead
@@ -385,6 +388,7 @@ class Link:
         self._client = client or httpx.AsyncClient(trust_env=False)
         self._owns_client = client is None
         self._chat_routing = chat_routing
+        self._placement = placement
         self._cache: dict[str | tuple, tuple[float, asyncio.Future[Any], Any]] = (
             chat_routing.probes if chat_routing is not None else {}
         )
@@ -491,20 +495,46 @@ class Link:
 
     async def _faustus_url(self) -> Optional[str]:
         async def find() -> Optional[str]:
+            if self._placement is not None:
+                placed = where.placed("faustus", self._placement())
+                moved = (placed,) if placed else ()
+            else:
+                with _chat_timing.stage("placement"):
+                    moved = await _faustus.placement_urls(self._client, self.config.hub_url)
             with _chat_timing.stage("discovery_health"):
-                url = await _faustus.find_reachable(self._client, self.config.faustus_urls)
-            if url:
-                return url
-            # Not on this PC: the Hub may have moved it to a Spark ("Run on"); it says where it answers now.
-            with _chat_timing.stage("placement"):
-                moved = await _faustus.placement_urls(self._client, self.config.hub_url)
-            with _chat_timing.stage("discovery_health"):
-                return await _faustus.find_reachable(self._client, moved) if moved else None
+                if moved and (url := await _faustus.find_reachable(self._client, moved)):
+                    return url
+                configured = tuple(url for url in self.config.faustus_urls if url.rstrip("/") not in moved)
+                return await _faustus.find_reachable(self._client, configured)
 
         url = await self._cached("faustus_url", find)
         if self._chat_routing is not None and url is None:
             self._drop_cached("faustus_url", None)
         return url
+
+    async def _faustus_registry(self, url: str, *, startup: bool = False) -> tuple[int | None, Any]:
+        token = self.config.faustus_token
+
+        async def read():
+            return await _faustus.get(self._client, f"{url}/api/models", headers=_faustus.auth_headers(token))
+
+        key = ("faustus_registry", url, token)
+        entry = self._cache.get(key)
+        if not startup:
+            if entry is None:
+                return await read()
+            if entry[1].done() and self._now() - entry[0] >= _STARTUP_REGISTRY_TTL_S:
+                self._cache.pop(key)
+                return await read()
+        result = await self._cached(key, read, ttl_s=_STARTUP_REGISTRY_TTL_S)
+        if result[0] != 200:
+            self._drop_cached(key, result)
+        return result
+
+    async def warm_placed_registry(self, placed: str) -> None:
+        """Read metadata during Hub startup using the same probes as the first request."""
+        if await self._faustus_url() == placed:
+            await self._faustus_registry(placed, startup=True)
 
     # ------------------------------------------------------------------
     # resolution
@@ -663,7 +693,7 @@ class Link:
         headers = _faustus.auth_headers(token)
         if faustus_url:
             with _chat_timing.stage("registry"):
-                status, data = await _faustus.get(self._client, f"{faustus_url}/api/models", headers=headers)
+                status, data = await self._faustus_registry(faustus_url)
         else:
             status, data = None, None
         fresh_catalogue = status == 200 and isinstance(data, dict) and isinstance(data.get("items"), list)

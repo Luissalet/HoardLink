@@ -197,6 +197,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     hub = Hub(cfg, fixture_jobs=fixture_jobs) if cfg.isolated else Hub(cfg)
+    if not cfg.isolated:
+        hub.link.warm_placed_registry()
     try:
         server = make_server(hub)
     except OSError as exc:

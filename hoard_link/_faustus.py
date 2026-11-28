@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+from itertools import groupby
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
@@ -21,6 +22,7 @@ from . import where
 
 TIMEOUT_S = 1.5
 REMOTE_TIMEOUT_S = 8.0
+LOCAL_CONNECT_TIMEOUT_S = 0.25
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 # Names that only resolve inside the person's own network (mDNS and the home/LAN conventions).
@@ -35,11 +37,13 @@ async def _request(
     json_body: Any = None,
     headers: Optional[dict[str, str]] = None,
     timeout: Optional[float] = None,
+    connect_timeout: Optional[float] = None,
 ) -> tuple[Optional[int], Any]:
     limit = TIMEOUT_S if timeout is None else timeout
+    request_timeout = limit if connect_timeout is None else httpx.Timeout(limit, connect=connect_timeout)
     try:
         resp = await asyncio.wait_for(
-            client.request(method, url, json=json_body, headers=headers, timeout=limit),
+            client.request(method, url, json=json_body, headers=headers, timeout=request_timeout),
             limit,
         )
     except Exception:
@@ -52,9 +56,10 @@ async def _request(
 
 
 async def get(
-    client: httpx.AsyncClient, url: str, headers: Optional[dict[str, str]] = None, timeout: Optional[float] = None
+    client: httpx.AsyncClient, url: str, headers: Optional[dict[str, str]] = None, timeout: Optional[float] = None,
+    *, connect_timeout: Optional[float] = None,
 ) -> tuple[Optional[int], Any]:
-    return await _request(client, "GET", url, headers=headers, timeout=timeout)
+    return await _request(client, "GET", url, headers=headers, timeout=timeout, connect_timeout=connect_timeout)
 
 
 async def post(
@@ -74,7 +79,9 @@ async def placement_urls(client: httpx.AsyncClient, hub_url: Optional[str] = Non
     """Where Faustus answers when the Hub moved it off this PC (its "Run on" control: Faustus, Hermes and Prometheus on a
     Spark so the PC can be switched off). Asks the Hub's ``/api/placement`` and reads it with ``where.placed`` (the one
     rule every Hoard shares); empty when the Hub does not answer or Faustus runs here."""
-    status, data = await get(client, f"{where.hub_url(hub_url)}/api/placement")
+    base = where.hub_url(hub_url)
+    status, data = await get(client, f"{base}/api/placement",
+                             connect_timeout=LOCAL_CONNECT_TIMEOUT_S if host_scope(base) == "loopback" else None)
     if status != 200 or not isinstance(data, dict):
         return ()
     url = where.placed("faustus", data)
@@ -84,14 +91,32 @@ async def placement_urls(client: httpx.AsyncClient, hub_url: Optional[str] = Non
 async def find_reachable(
     client: httpx.AsyncClient, candidate_urls: tuple[str, ...]
 ) -> Optional[str]:
-    """Return the first candidate whose /api/health reports healthy."""
-    for url in candidate_urls:
-        url = url.rstrip("/")
-        # A Faustus on another machine (a Spark over the tailnet: TLS and a relay) needs more than a local probe.
-        wait = TIMEOUT_S if host_scope(url) == "loopback" else REMOTE_TIMEOUT_S
-        status, data = await get(client, f"{url}/api/health", timeout=wait)
+    """Return the first healthy candidate in configured order."""
+    async def probe(url: str, local: bool) -> Optional[str]:
+        base = url.rstrip("/")
+        status, data = await get(client, f"{base}/api/health", timeout=TIMEOUT_S if local else REMOTE_TIMEOUT_S,
+                                 connect_timeout=LOCAL_CONNECT_TIMEOUT_S if local else None)
         if status == 200 and isinstance(data, dict) and data.get("status") == "healthy":
-            return url
+            return base
+        return None
+
+    for local, group in groupby(candidate_urls, key=lambda url: host_scope(url) == "loopback"):
+        if not local:
+            for url in group:
+                if found := await probe(url, local=False):
+                    return found
+            continue
+        # Coalesce the waits for adjacent local sockets while preserving their order. A slow HTTP response
+        # from an already connected preferred service still gets the original health deadline.
+        probes = [asyncio.create_task(probe(url, local=True)) for url in group]
+        try:
+            for task in probes:
+                if found := await task:
+                    return found
+        finally:
+            for task in probes:
+                task.cancel()
+            await asyncio.gather(*probes, return_exceptions=True)
     return None
 
 

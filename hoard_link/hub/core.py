@@ -125,7 +125,8 @@ class Hub:
                                  emit=lambda t, d: self.events.emit(t, d, source="hub"),
                                  lang_fn=lambda: self.config.language)
         # Models for every app (Hoard Link 0.6): chat/vision over HTTP through the hub's own Link.
-        self.link = LinkService(self.config, emit=lambda t, d: self.events.emit(t, d, source="hub"))
+        self.link = LinkService(self.config, emit=lambda t, d: self.events.emit(t, d, source="hub"),
+                                placement=self.placement.state)
         if not self.config.isolated:
             procs._protected_pids()  # warm the ancestor list once, off the request path
         self.rescan()

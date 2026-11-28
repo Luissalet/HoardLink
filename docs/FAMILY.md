@@ -202,6 +202,13 @@ still untouched. The script sends its token only to Writer's loopback API.
 ## 10. Models for every app
 
 Python apps reach the local models through the vendored `hoard_link.Link`.
+When the Hub has published a Faustus placement on a Spark, Link checks that
+address before its configured fallback addresses. Adjacent loopback health
+checks run concurrently in configured order with a 250 ms TCP connection
+budget and the original deadline for a connected service. At Hub startup the
+Link chat service begins fetching the placed Faustus registry in the
+background. The first lookup can share that read and still verifies the
+chosen model provider in registry order.
 Node apps cannot (Link is Python) and a small standard-library-only app may
 not want `httpx`. The hub is Python, always running and already has Link, so
 it serves the same thing over HTTP: the same model resolution, the same GPU
