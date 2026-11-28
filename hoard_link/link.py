@@ -516,6 +516,8 @@ class Link:
         token = self.config.faustus_token
 
         async def read():
+            if startup and await self._faustus_url() != url:
+                return None, None
             return await _faustus.get(self._client, f"{url}/api/models", headers=_faustus.auth_headers(token))
 
         key = ("faustus_registry", url, token)
@@ -533,8 +535,7 @@ class Link:
 
     async def warm_placed_registry(self, placed: str) -> None:
         """Read metadata during Hub startup using the same probes as the first request."""
-        if await self._faustus_url() == placed:
-            await self._faustus_registry(placed, startup=True)
+        await self._faustus_registry(placed, startup=True)
 
     # ------------------------------------------------------------------
     # resolution
