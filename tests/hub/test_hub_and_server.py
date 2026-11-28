@@ -87,6 +87,8 @@ def test_start_stop_launchable(hub, family):
 
 @pytest.mark.parametrize("app_id", ["launch-env", "writer"])
 def test_started_app_gets_hub_url_without_master_credentials(hub, family, tmp_path, monkeypatch, app_id):
+    from hoard_link.hub import registry
+
     from .conftest import free_port, write_manifest
 
     script = tmp_path / "capture_launch_env.py"
@@ -110,6 +112,11 @@ def test_started_app_gets_hub_url_without_master_credentials(hub, family, tmp_pa
     monkeypatch.setenv("HOARD_HUB_TOKEN", "synthetic-inherited-token")
     monkeypatch.setenv("HOARD_HUB_DATA_DIR", str(tmp_path / "inherited"))
     folder = family["root"] / app_id
+    if app_id == "writer":
+        # Use a disposable executable in place of the Writer source launcher.
+        monkeypatch.setattr(registry, "_writer_source", lambda app: Path(app.folder) == folder)
+        monkeypatch.delenv("WH_AIBRIDGE_PORT", raising=False)
+        monkeypatch.setenv("WH_USER_DATA_DIR", str(tmp_path / "writer-profile"))
     write_manifest(folder, app_id, free_port(), launch={
         "kind": "process", "executable": sys.executable,
         "argv": [str(script), str(captured)], "cwd": str(folder),
