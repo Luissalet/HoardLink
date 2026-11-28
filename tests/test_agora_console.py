@@ -1211,6 +1211,43 @@ def test_faustus_worker_mcp_loses_service_after_health_check(tmp_path, monkeypat
         assert not root.for_space("estudio").db.one("SELECT 1 FROM agents WHERE id='faustus-race'")
 
 
+@pytest.mark.parametrize("tools, catalogue, expected, message", [
+    (["app_project_update"], [], ["app_project_update"], "does not offer"),
+    (["app_project_update"], ["app_project_patch"], ["app_project_update", "app_project_patch"], None),
+    (["app_project_update", "app_project_patch"], ["app_project_patch"], ["app_project_update", "app_project_patch"], None),
+    (["app_project_patch"], [], [], "does not offer"),
+    (["app_project_update", "app_project_patch"], None, ["app_project_update"], "could not be read"),
+    (["app_project_get"], ["app_project_patch"], ["app_project_get"], None),
+    (["app_project_update", *[f"custom_{i}" for i in range(15)]], ["app_project_patch"], None, "Free a slot"),
+    pytest.param(
+        ["app_project_update", "app_project_edit_source", *[f"frontend_{i}" for i in range(14)]],
+        ["app_project_edit_source", "app_project_patch"], None, "Free a slot", id="full-with-source-edit",
+    ),
+])
+def test_frontend_patch_scope_preserves_explicit_grants(tools, catalogue, expected, message):
+    from hoard_link.hub import agora_faustus
+
+    probes = []
+
+    def app_tools(app):
+        probes.append(app)
+        return {"ok": False} if catalogue is None else {"ok": True, "tools": [{"name": name} for name in catalogue]}
+
+    declared = {"apps": {"vitruvius": tools, "writer": ["wh_document_open"]}}
+    before = json.dumps(declared)
+    hub = SimpleNamespace(app_tools=app_tools)
+    scope = agora_faustus.file_scope("fixture", declared)
+    resolved, warning = agora_faustus.frontend_patch_scope(hub, scope, studio=True)
+    assert resolved["apps"].get("vitruvius", []) == (tools if expected is None else expected)
+    assert resolved["apps"]["writer"] == declared["apps"]["writer"]
+    assert json.dumps(declared) == before
+    assert probes == ([] if tools == ["app_project_get"] else ["vitruvius"])
+    if message:
+        assert message in warning["en"] and "app_project_patch" in warning["es"]
+    else:
+        assert warning is None
+
+
 @pytest.mark.parametrize("with_related", [False, True], ids=["primary", "with-related"])
 def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_related):
     from hoard_link.hub import agora_console, agora_faustus
@@ -1229,6 +1266,14 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
         "reachable": True, "url": "http://placed.invalid", "body": {"service": "faustus"},
     }
     facet.hub.call_app = lambda *a, **kw: {"ok": True, "result": {"modules": [{"id": "data", "enabled": True}]}}
+    patch = "app_project_patch"
+    catalogue_reads = []
+
+    def app_tools(app):
+        catalogue_reads.append(app)
+        return {"ok": True, "tools": [{"name": patch}] if with_related else []}
+
+    facet.hub.app_tools = app_tools
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "faustus_run.py").write_text("# fixture", encoding="utf-8")
     catalog = {**facet._provider_cache, "faustus": {"state": "available", "current_model": "fixture", "catalog": [
@@ -1299,13 +1344,17 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
                         {"action": action, "space_id": "estudio", "actor": actor, **args})
 
         options = {"leader_id": "faustus", "task": "Synthetic production assignment."}
-        app_scope = {"apps": {"nightingale": ["data_ingest"], "writer": ["wh_document_new"],
-                              "vitruvius": ["app_project_create", "app_project_get",
-                                            "app_project_update", "app_project_preview"]}}
+        update = "app_project_update"
+        source_edit = "app_project_edit_source"
+        tool_count = 8 if with_related else 9
+        frontend = [update, "app_project_undo", source_edit, "app_project_archive",
+                    "app_project_create", "app_project_get", "app_project_preview",
+                    *[f"fixture_tool_{i}" for i in range(tool_count)]]
+        app_scope = {"apps": {"nightingale": ["data_ingest"], "writer": ["wh_document_new"], "vitruvius": frontend}}
         rejected = tool("create", **options, task_id=standalone["id"], file_scope=app_scope)
         assert not rejected["ok"] and rejected["code"] == "worker_order_job_required"
         assert "hub_agora_plan_set" in rejected["error_i18n"]["es"]
-        assert commands == scopes == bindings == []
+        assert commands == scopes == bindings == catalogue_reads == []
         console = facet.for_space("estudio")
         assert console._worker_rows() == []
 
@@ -1352,14 +1401,25 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
 
         related_args = {"related_task_ids": [related["id"]]} if with_related else {}
         declared_scope = {**app_scope, "read_budget": 0 if with_related else 7}
-        created = tool("create", **options, **related_args, task_id=task_id, file_scope=declared_scope)
+        created = tool("create", **options, **related_args, task_id=task_id, file_scope=declared_scope, lang="es")
         worker = created["worker"]
-        assert created["ok"] and worker["state"] == "running" and "warning" not in created and created["undo"]
+        assert created["ok"] and worker["state"] == "running" and created["undo"]
+        expected_apps = app_scope["apps"]
+        if with_related:
+            assert "warning" not in created
+            expected_apps = {**expected_apps, "vitruvius": [*frontend, patch]}
+        else:
+            assert created["warning"] == created["warning_i18n"]["es"]
+            assert "no ofrece app_project_patch" in created["warning"]
+            assert "does not offer app_project_patch" in created["warning_i18n"]["en"]
+        assert catalogue_reads == ["vitruvius"]
         assert scopes[1]["production"] == {
             "space_id": "estudio", "order_id": order["id"], "task_id": task_id, "agent": worker["agent_id"],
         }
-        assert scopes[1]["apps"] == app_scope["apps"]
         assert "vitruvius_receipt_agent" not in scopes[1]
+        assert scopes[1]["apps"] == expected_apps
+        assert len(scopes[1]["apps"]["vitruvius"]) == 16
+        assert frontend[2] == source_edit and patch not in frontend
         assert [Path(path).read_text(encoding="utf-8") for path in scopes[1]["read_files"]] == ["primary"]
         expected_threads = [console.thread_id, task["thread_id"]]
         if with_related:
@@ -1418,7 +1478,7 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
             new_worker = next(item for item in console._worker_rows() if item["id"] == replacement["worker_id"])
             assert new_worker["related_task_ids"] == [related["id"]] and new_worker["task_id"] == task_id
             assert bindings[-1]["thread_ids"] == expected_threads and bindings[-1]["actor"] == new_worker["agent_id"]
-            assert scopes[-1]["production"]["task_id"] == task_id and scopes[-1]["apps"] == app_scope["apps"]
+            assert scopes[-1]["production"]["task_id"] == task_id and scopes[-1]["apps"] == expected_apps
             assert scopes[-1]["read_budget"] == 0
             assert scopes[-1]["read_files"] == scopes[1]["read_files"]
             assert "vitruvius_receipt_agent" not in scopes[-1]
