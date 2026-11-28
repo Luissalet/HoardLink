@@ -220,6 +220,7 @@ def test_registered_model_selection_preserves_default_and_sse(model_catalogue):
             finish = events[-1]
             assert finish["type"] == terminal and finish["requested_model"] == model
             assert finish["resolved_model"] == (model if terminal == "finish" else None)
+            assert finish.get("resolved_endpoint") == ("127.0.0.1:18216" if terminal == "finish" else None)
             if terminal == "error":
                 assert finish["error"] == "invalid_model"
         finally:
@@ -227,12 +228,98 @@ def test_registered_model_selection_preserves_default_and_sse(model_catalogue):
     state["generation"] = 503
     code, failure = chat(model="other-text")
     assert code == 502 and failure["requested_model"] == failure["resolved_model"] == "other-text"
+    assert failure["resolved_endpoint"] == "127.0.0.1:18216"
 
 
 @pytest.mark.parametrize("value", ["", " ", "invalid\nID", 7, [], "m" * 257])
 def test_parse_request_rejects_invalid_model_id(value):
     with pytest.raises(BadRequest, match="model"):
         parse_request({"messages": _msgs(), "model": value})
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("preferred_status", [200, 401])
+def test_endpoint_receipt_preserves_preference_and_identifies_failover(
+    lhub, monkeypatch, tmp_path, preferred_status, stream,
+):
+    hub, url = lhub
+    ports = 18216, 18217
+    model = "same-model"
+    selected, verified = [], []
+    state = {"preferred_status": preferred_status, "now": 0.0}
+    real_client = httpx.AsyncClient
+
+    async def backend(req):
+        if req.url.port == 18215 and req.url.path == "/api/health":
+            return httpx.Response(200, json={"status": "healthy"})
+        if req.url.port == 18215 and req.url.path == "/api/models":
+            return httpx.Response(200, json={"items": [
+                {"model_type": "llm", "category": "local", "backend": "unknown", "models": [model],
+                 "url": f"http://fixture-user:fixture-secret@127.0.0.1:{port}/test-private-path/v1"}
+                for port in ports
+            ]})
+        if req.url.port in ports and req.url.path.endswith("/v1/models"):
+            verified.append(req.url.port)
+            if req.url.port == ports[0]:
+                await asyncio.sleep(0.4)
+                if state["preferred_status"] != 200:
+                    return httpx.Response(state["preferred_status"], json={"error": "catalogue unavailable"})
+            return httpx.Response(200, json={"data": [{"id": model}]})
+        if req.url.port in ports and req.url.path.endswith("/v1/chat/completions"):
+            selected.append(req.url.port)
+            if stream:
+                chunk = {"choices": [{"delta": {"content": "same"}, "finish_reason": "stop"}]}
+                return httpx.Response(200, text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n")
+            return httpx.Response(200, json={"choices": [{"message": {"content": "same"}, "finish_reason": "stop"}]})
+        return httpx.Response(404)
+
+    def client(**options):
+        return real_client(**{**options, "transport": httpx.MockTransport(backend)})
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    monkeypatch.setenv("HOARD_FAUSTUS_URL", "http://127.0.0.1:18215")
+    monkeypatch.delenv("HOARD_LLM_URL", raising=False)
+    monkeypatch.setenv("HOARD_ROUTES_FILE", str(tmp_path / "routes.json"))
+    hub.link.close()
+    hub.link = LinkService(hub.config)
+    link = hub.link._link("hub")
+    link._now = lambda: state["now"]
+
+    def chat():
+        body = {"messages": _msgs(), "model": model, "stream": stream}
+        if not stream:
+            status, receipt = _http(url + "/api/link/chat", body, _auth(hub))
+            assert status == 200
+            return receipt
+        conn = http.client.HTTPConnection("127.0.0.1", hub.config.port, timeout=5)
+        try:
+            conn.request("POST", "/api/link/chat", json.dumps(body),
+                         {"Content-Type": "application/json", **_auth(hub)})
+            with conn.getresponse() as reply:
+                assert reply.status == 200
+                events = [json.loads(line[6:]) for line in reply if line.startswith(b"data: ")]
+            assert events[-1]["type"] == "finish"
+            return events[-1]
+        finally:
+            conn.close()
+
+    async def wait_for_refresh():
+        pending = tuple(link._chat_routing._lookups.values())
+        if pending:
+            await asyncio.gather(*pending)
+
+    first = chat()
+    state.update(now=180 if preferred_status == 401 else 16, preferred_status=200)
+    second = chat()
+    asyncio.run_coroutine_threadsafe(wait_for_refresh(), hub.link._ensure_loop()).result(5)
+    third = chat()
+    expected = [ports[0]] * 3 if preferred_status == 200 else [ports[1], ports[1], ports[0]]
+    assert selected == expected
+    assert verified == ([ports[0]] * 2 if preferred_status == 200 else [*ports, ports[0]])
+    for receipt, port in zip((first, second, third), expected):
+        assert receipt["ok"] and receipt["text"] == "same" and receipt["provider"] == "unknown"
+        assert receipt["model"] == receipt["requested_model"] == receipt["resolved_model"] == model
+        assert receipt["resolved_endpoint"] == f"127.0.0.1:{port}"
 
 
 def test_verified_route_reuses_pool_and_invalidates_on_failure_and_placement(model_catalogue):
@@ -309,13 +396,14 @@ async def test_expired_chat_route_serves_while_revalidating_and_does_not_republi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [401, None])
-async def test_negative_chat_catalogue_backs_off_and_retries_without_waiting(failure):
+async def test_negative_chat_catalogue_backs_off_and_coalesces_expired_retries(failure):
     from hoard_link._chat_routing import ChatRouting
 
     routing = ChatRouting()
     url = "http://catalogue.test/v1/models"
     clock = 0.0
     calls = 0
+    started = asyncio.Event()
     release = asyncio.Event()
 
     async def probe():
@@ -323,6 +411,7 @@ async def test_negative_chat_catalogue_backs_off_and_retries_without_waiting(fai
         calls += 1
         if calls == 1:
             return failure, None
+        started.set()
         await release.wait()
         return 200, {"data": []}
 
@@ -332,14 +421,14 @@ async def test_negative_chat_catalogue_backs_off_and_retries_without_waiting(fai
     assert calls == 1
 
     clock = 180
-    assert await asyncio.wait_for(routing.catalogue(url, probe, lambda: clock), 1) == (failure, None)
-    pending = routing._catalogues[url]
-    assert await routing.catalogue(url, probe, lambda: clock) == (failure, None)
-    assert routing._catalogues[url] is pending
+    first = asyncio.create_task(routing.catalogue(url, probe, lambda: clock))
+    await asyncio.wait_for(started.wait(), 1)
+    second = asyncio.create_task(routing.catalogue(url, probe, lambda: clock))
+    await asyncio.sleep(0)
+    assert not first.done() and not second.done()
     release.set()
-    await pending
+    assert await asyncio.gather(first, second) == [(200, {"data": []})] * 2
     assert calls == 2
-    assert await routing.catalogue(url, probe, lambda: clock) == (200, {"data": []})
 
 
 @pytest.mark.parametrize(

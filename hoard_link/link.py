@@ -63,7 +63,6 @@ _CACHE_TTL_S = 30.0
 _BASE_PROBE_CACHE_TTL_S = 2.5
 # The last model registry Faustus returned, kept for when it is too busy to answer within the short timeout.
 _REGISTRY_MEMORY_TTL_S = 900.0
-_CATALOGUE_HEAD_START_S = 0.2
 _last_registry: Optional[tuple[dict, float]] = None
 
 
@@ -108,6 +107,24 @@ def _host(url: Optional[str]) -> str:
         return "?"
     parts = urlsplit(url)
     return parts.netloc or url
+
+
+def _receipt_endpoint(url: str) -> Optional[str]:
+    """Identify the contacted server without copying URL credentials or paths."""
+    try:
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not host:
+        return None
+    if not re.fullmatch(r"[\w.:-]+", host):
+        return None
+    if ":" in host:
+        host = f"[{host}]"
+    if port is None:
+        port = 443 if parts.scheme == "https" else 80
+    return f"{host}:{port}"
 
 
 def _strip_endpoint(url: str) -> str:
@@ -685,9 +702,11 @@ class Link:
                 )
             elif not matches:
                 reasons.append(f"Faustus registry has no server for capability '{capability}'")
-            res = await self._resolve_registry_items(capability, local, reasons, ctx)
-            if res is not None:
-                return res
+            for item in local:
+                with _chat_timing.stage("provider_catalogue"):
+                    res = await self._resolution_from_registry_item(capability, item, reasons, ctx)
+                if res is not None:
+                    return res
         elif status in (401, 403):
             if token:
                 reasons.append(
@@ -775,62 +794,6 @@ class Link:
             return None
         _image_probe_cache[key] = (answer, time.monotonic() + _IMAGE_PROBE_TTL_S)
         return answer
-
-    async def _resolve_registry_items(self, capability, items, reasons, ctx):
-        def metadata_only(item):
-            backend = str(item.get("backend") or "?").lower()
-            return backend not in _LLAMACPP_BACKENDS and backend != "ollama"
-
-        index = 0
-        while index < len(items):
-            item = items[index]
-            index += 1
-            with _chat_timing.stage("provider_catalogue"):
-                if (self._chat_routing is not None and capability == "llm" and index < len(items)
-                        and metadata_only(item) and metadata_only(items[index])):
-                    result = await self._resolve_catalogue_pair(capability, item, items[index], reasons, ctx)
-                    index += 1
-                else:
-                    result = await self._resolution_from_registry_item(capability, item, reasons, ctx)
-            if result is not None:
-                return result
-        return None
-
-    async def _resolve_catalogue_pair(self, capability, first, second, reasons, ctx):
-        """Give the preferred endpoint a head start, then accept a verified alternate."""
-        async def check(item):
-            notes = []
-            result = await self._resolution_from_registry_item(capability, item, notes, ctx)
-            return result, notes
-
-        first_check = asyncio.create_task(check(first))
-        checks = [first_check]
-        try:
-            done, _ = await asyncio.wait(checks, timeout=_CATALOGUE_HEAD_START_S)
-            if done:
-                result, notes = first_check.result()
-                reasons.extend(notes)
-                if result is not None:
-                    return result
-                return await self._resolution_from_registry_item(capability, second, reasons, ctx)
-
-            checks.append(asyncio.create_task(check(second)))
-            pending = set(checks)
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for check_task in checks:
-                    if check_task in done:
-                        result, notes = check_task.result()
-                        reasons.extend(notes)
-                        if result is not None:
-                            return result
-            return None
-        finally:
-            for check_task in checks:
-                check_task.cancel()
-            # Catalogue HTTP requests are shielded so the skipped check can
-            # still remember a slow 401 or timeout for the next lookup.
-            await asyncio.gather(*checks, return_exceptions=True)
 
     async def _resolution_from_registry_item(
         self, capability: str, item: dict, reasons: list[str], ctx: Optional[_RouteCtx] = None
@@ -1320,6 +1283,7 @@ class Link:
                 raise Unavailable(capability, [f"resolved provider '{res.provider}' has no URL to chat with"])
 
             start = self._now()
+            resolved_endpoint = _receipt_endpoint(res.url)
             controls_meta = None
             try:
                 async with AsyncExitStack() as stack:
@@ -1335,6 +1299,7 @@ class Link:
                         )
             except BackendError as exc:
                 exc.model = res.model
+                exc.resolved_endpoint = resolved_endpoint
                 self._chat_failure(capability, task, model, res, exc.status, getattr(exc, "body", ""))
                 raise
             elapsed_ms = (self._now() - start) * 1000.0
@@ -1350,6 +1315,7 @@ class Link:
                 reasoning=_join_reasoning(extra_reasoning, think),
                 effort=level,
                 reasoning_controls=controls_meta,
+                resolved_endpoint=resolved_endpoint,
                 finish_reason=(raw.get("done_reason") if res.api == "ollama" else
                                ((raw.get("choices") or [{}])[0].get("finish_reason"))),
             )
@@ -1400,6 +1366,7 @@ class Link:
         if not res.resolved or not res.url:
             raise Unavailable(capability, res.details.get("reasons", [res.reason]))
         meta = {"model": res.model, "provider": res.provider, "effort": level}
+        resolved_endpoint = _receipt_endpoint(res.url)
         controls = await bounded(self.reasoning_controls(res))
         payload = self._chat_payload(res, messages, images, max_tokens, temperature, response_format, level,
                                      controls, chat_template_kwargs)
@@ -1527,13 +1494,20 @@ class Link:
             raise TimeoutError("upstream inactivity timeout") from exc
         except httpx.HTTPError as exc:
             self._chat_failure(capability, task, model, res, 0)
-            raise BackendError(res.provider, 0, f"{type(exc).__name__}: {exc}"[:200]) from exc
+            error = BackendError(res.provider, 0, f"{type(exc).__name__}: {exc}"[:200])
+            error.resolved_endpoint = resolved_endpoint
+            raise error from exc
         except BackendError as exc:
+            exc.resolved_endpoint = resolved_endpoint
             self._chat_failure(capability, task, model, res, exc.status, getattr(exc, "body", ""))
             raise
         if finish_reason is None:
-            raise BackendError(res.provider, 200, "stream ended without a finish reason")
+            error = BackendError(res.provider, 200, "stream ended without a finish reason")
+            error.resolved_endpoint = resolved_endpoint
+            raise error
         remaining()
+        if resolved_endpoint is not None:
+            meta["resolved_endpoint"] = resolved_endpoint
         yield {"type": "finish", "ok": True, "text": "".join(text), "reasoning": "".join(reasoning),
                "tool_calls": list(calls.values()), "usage": usage, "finish_reason": finish_reason,
                "completed": finish_reason in ("stop", "tool_calls", "function_call"),

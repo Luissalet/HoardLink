@@ -250,6 +250,14 @@ Se mantienen las comprobaciones de residencia y visión. El recibo JSON o el
 evento final SSE incluye `requested_model` y `resolved_model`. Al omitir
 el campo se conserva la selección habitual.
 
+The JSON receipt and terminal SSE event include `resolved_endpoint` when
+known. It identifies the endpoint used for that call as `host:port`
+without URL credentials, paths or parameters.
+
+El recibo JSON y el evento final SSE incluyen `resolved_endpoint` cuando
+se conoce. Identifica el endpoint usado en esa llamada como `host:puerto`
+y omite credenciales, rutas y parámetros de la URL.
+
 **JSON.** `"json": true` asks for one JSON object. A schema object is passed
 to the server as its response format when it supports one (a server that
 rejects the field is asked again without it), and in both cases a system
@@ -282,12 +290,12 @@ that the route's model was removed, the Hub also discards that route. A
 temporary verification outage leaves the route available. Generation is
 never replayed because of a connection or routing failure.
 
-For compatible text providers, a preferred endpoint gets a 200 ms head
-start on catalogue verification. The Hub can select a verified alternate
-while the first catalogue probe finishes. An HTTP 401 or no response to
-`/v1/models` sets a two-minute backoff for that provider. After the backoff,
-the next lookup retries it in the background. The Hub still verifies model
-availability and returns `no_model` when it cannot find a usable route.
+The Hub verifies providers in catalogue preference order within the LAN
+and local groups. A slow successful verification keeps its priority.
+An HTTP 401 or no response to `/v1/models` sets a two-minute backoff
+for that provider. After the backoff, background verification can restore
+the preferred route. The Hub returns `no_model` when it cannot find a
+usable route.
 
 Set `HOARD_LINK_CHAT_TIMINGS=1` in the Hub process to include timing in the JSON
 receipt or final SSE event and log the final write. No request text, models'

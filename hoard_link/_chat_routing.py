@@ -143,7 +143,6 @@ class ChatRouting:
 
         task = self._catalogues.get(url)
         if task is None:
-            task = self._catalogues[url] = self._task(fetch(), background=failure is not None)
-        if failure is not None:
-            return failure[1], None
+            task = self._catalogues[url] = self._task(fetch())
+        # Route revalidation awaits the retry without delaying use of its cached route.
         return await asyncio.shield(task)

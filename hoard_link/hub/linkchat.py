@@ -255,6 +255,11 @@ def parse_request(body: Any) -> ChatRequest:
                        chat_template_kwargs=ctk, model=model)
 
 
+def _endpoint_receipt(value: Any) -> dict[str, str]:
+    endpoint = getattr(value, "resolved_endpoint", None)
+    return {"resolved_endpoint": endpoint} if endpoint is not None else {}
+
+
 def _model_receipt(req: ChatRequest, payload: dict[str, Any]) -> dict[str, Any]:
     if req.model is None:
         return payload
@@ -665,7 +670,7 @@ class LinkService:
                            "timeout_kind": ("inactivity" if "inactivity" in str(exc) else "total") if code == "timeout" else None,
                            "partial": bool(partial["text"] or partial["reasoning"] or tool_deltas),
                            "tool_call_deltas": tool_deltas, "backend_status": exc.status if isinstance(exc, BackendError) else None,
-                           **{k: "".join(v) for k, v in partial.items()}, **meta})
+                           **_endpoint_receipt(exc), **{k: "".join(v) for k, v in partial.items()}, **meta})
             finally:
                 release()
                 cleaned.set()
@@ -800,6 +805,7 @@ class LinkService:
             return 504, {"ok": False, "error": "timeout", "detail": f"no answer within {req.timeout_s:.0f}s"}
         except BackendError as exc:
             selection = {"resolved_model": exc.model} if req.model is not None else {}
+            selection.update(_endpoint_receipt(exc))
             if exc.status == 0 and "timeout" in str(exc).lower():
                 return 504, {"ok": False, "error": "timeout", "detail": str(exc)[:300], "provider": exc.provider,
                              **selection}
@@ -809,6 +815,7 @@ class LinkService:
             "ok": True, "text": res.text, "json": None, "model": res.model, "provider": res.provider,
             "ms": int(res.elapsed_ms), "queued_ms": queued_ms, "effort": res.effort,
             "usage": res.usage.to_dict() if hasattr(res.usage, "to_dict") else None,
+            **_endpoint_receipt(res),
         }
         if getattr(res, "finish_reason", None) is not None:
             payload.update(finish_reason=res.finish_reason, completed=res.completed)

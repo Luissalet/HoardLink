@@ -44,6 +44,7 @@ class BackendError(HoardLinkError):
         self.status = status
         self.body_excerpt = body_excerpt
         self.model: Optional[str] = None
+        self.resolved_endpoint: Optional[str] = None
         who = provider or "backend"
         if status == 0:
             message = f"{who} unreachable: {body_excerpt}"
