@@ -193,6 +193,9 @@ def _manifest(tmp_path, app_id, port, token, *, expose=None):
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
+    data = tmp_path / "boltagon" / "data"
+    monkeypatch.setenv("BOLTAGON_DATA_DIR", str(data))
+    monkeypatch.setenv("BOLTAGON_TOKEN_FILE", str(data / "mcp-token"))
     pairs = SocketPairServers()
     double = VoiceDouble(pairs)
     traces = []

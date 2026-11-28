@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from hoard_link.hub.registry import read_manifest, resolve_placeholders, scan
 
 from .conftest import write_manifest
@@ -81,6 +83,43 @@ def test_duplicate_ids_keep_first(tmp_path: Path):
     write_manifest(tmp_path / "B", "same", 5002)
     apps = scan([str(tmp_path)])
     assert len(apps) == 1 and apps[0].port == 5001
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_boltagon_uses_its_effective_data_and_token_in_launch_override(tmp_path, monkeypatch, inline):
+    folder = write_manifest(tmp_path / "Boltagon", "boltagon", 5253)
+    cwd = tmp_path / "working"
+    cwd.mkdir()
+    external = tmp_path / "external data"
+    external.mkdir()
+    monkeypatch.setenv("BOLTAGON_DATA_DIR", str(tmp_path / "inherited"))
+    monkeypatch.setenv("CYRANO_DATA_DIR", str(tmp_path / "legacy"))
+    monkeypatch.delenv("BOLTAGON_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("CYRANO_TOKEN_FILE", raising=False)
+
+    registered = read_manifest(folder / "faustus-plugin.json")
+    assert Path(registered.token_file) == tmp_path / "inherited" / "mcp-token"
+
+    data_args = [f"--data-dir={external}"] if inline else ["--data-dir", str(external)]
+    launch = {
+        "executable": sys.executable, "argv": ["-m", "boltagon_hoard", *data_args], "cwd": str(cwd),
+        "env": {"BOLTAGON_DATA_DIR": str(tmp_path / "override"), "BOLTAGON_TOKEN_FILE": "secrets/mcp-token"},
+    }
+    [registered] = scan([str(folder)], launch_overrides={"boltagon": launch})
+    assert Path(registered.data_dir) == external
+    assert Path(registered.token_file) == cwd / "secrets" / "mcp-token"
+    assert registered.launch.env["BOLTAGON_DATA_DIR"] == registered.data_dir
+    assert registered.launch.env["BOLTAGON_TOKEN_FILE"] == registered.token_file
+
+
+def test_boltagon_registration_accepts_a_legacy_external_directory(tmp_path, monkeypatch):
+    folder = write_manifest(tmp_path / "Boltagon", "boltagon", 5253)
+    for key in ("BOLTAGON_DATA_DIR", "BOLTAGON_TOKEN_FILE", "CYRANO_TOKEN_FILE"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("CYRANO_DATA_DIR", str(tmp_path / "legacy"))
+    [app] = scan([str(folder)])
+    assert Path(app.data_dir) == tmp_path / "legacy"
+    assert Path(app.token_file) == tmp_path / "legacy" / "mcp-token"
 
 
 def test_root_can_be_an_app_folder_itself(tmp_path: Path):

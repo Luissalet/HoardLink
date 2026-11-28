@@ -53,6 +53,36 @@ python -m hoard_link.hub --autostart-status
   and prints the command line to put in a systemd user unit or a launchd
   agent). Nothing is written.
 
+### Recovery during an application identity change
+
+Before stopping an app or the Hub, save the original launch settings,
+repository revisions, running states and the Hub configuration files that
+the migration can change. Record files that were absent. Prepare and verify
+the original-ID manual-stop state for a rollback boot, including the apps
+being taken down for maintenance. Have the original restart command
+available at this point.
+
+If a partial stop leaves the original Hub running, use that Hub to restore
+the affected apps. An explicit start also clears the manual stop recorded
+by a stop request that returned an error. Boot the original Hub only when
+its process is down. Confirm the identity of a replacement process before
+stopping it, and verify the rollback inputs before changing the running
+services or restoring a repository.
+
+Load the PowerShell recovery functions before beginning the inventory.
+The first rollback check can then tell whether maintenance started, even
+if inventory failed before writing a snapshot. Run
+`scripts/verify_migration_runbook.ps1 -Path <runbook.md>` to parse the
+document and verify that its functions are all available in block 0.
+
+When an installation has already advanced part of the stack, record the
+actual checkout revisions, launch overrides and active Python package
+versions before stopping services. Rebuild the active environment at its
+new absolute path. Keep any earlier environment backups and existing
+application caches intact. Restore the recorded revisions, environment and
+overrides on rollback. Check readiness with the PID of the actual launch
+and allow bounded warm-up for resident services.
+
 ## App windows
 
 Use `hoard_link.proc` for background commands that need the common UTF-8, process-tree and timeout behavior. Use `hoard_link._process` when a caller needs the standard `subprocess` arguments and streams. Both apply `CREATE_NO_WINDOW` on Windows, including when the installed Hub runs under `pythonw`. Opening a browser or folder on request uses the system's normal application.

@@ -458,6 +458,10 @@ app and its local stdio bridge. Discovery checks the tool catalogue without
 starting the app, the transcription owner, or a model. During the rename,
 the Hub accepts the previous `cyrano` ID for incoming app lookups and logs
 each fallback. Only the installed manifest appears in the app catalogue.
+The Hub registers Boltagon's effective data directory and bearer path,
+including the launch override. The CLI data directory takes precedence
+over the launch environment. When an MCP connection runs separately,
+give it the same data directory or the same explicit token file.
 
 - `dictation_understand` processes text. `dictation_audio` takes an absolute
   path on the shared machine and delegates raw recognition through the

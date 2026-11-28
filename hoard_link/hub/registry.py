@@ -233,6 +233,42 @@ def _writer_source(app: App) -> bool:
                 and entry.is_file())
 
 
+def _resolve_voice_storage(app: "App") -> None:
+    """Match Boltagon's process settings when locating its agent bearer."""
+    if app.id != "boltagon":
+        return
+    launch = app.launch
+    launch_env = launch.env if launch else {}
+    cwd = launch.cwd if launch else app.folder
+
+    def setting(name: str) -> str:
+        for key in (f"BOLTAGON_{name}", f"CYRANO_{name}"):
+            if key in launch_env:
+                return launch_env[key]
+            if key in os.environ:
+                return os.environ[key]
+        return ""
+
+    def absolute(path: str) -> str:
+        return os.path.abspath(os.path.join(cwd, os.path.expanduser(path)))
+
+    # The app's CLI takes precedence over the process environment.
+    argv = launch.argv if launch else []
+    cli_data = ""
+    for index, arg in enumerate(argv):
+        if arg == "--":
+            break
+        if arg.startswith("--data-dir="):
+            cli_data = arg.partition("=")[2]
+        elif arg == "--data-dir" and index + 1 < len(argv):
+            cli_data = argv[index + 1]
+
+    app.data_dir = absolute(cli_data or setting("DATA_DIR") or os.path.join(app.folder, "data"))
+    app.token_file = absolute(setting("TOKEN_FILE") or os.path.join(app.data_dir, "mcp-token"))
+    if launch is not None:
+        launch.env.update(BOLTAGON_DATA_DIR=app.data_dir, BOLTAGON_TOKEN_FILE=app.token_file)
+
+
 def apply_launch_override(app: "App", override: Any) -> "App":
     """Replace ``app.launch`` with a per-machine command from ``hub.json``.
 
@@ -257,6 +293,7 @@ def apply_launch_override(app: "App", override: Any) -> "App":
         timeout_s = 30.0
     env = {str(k): fill(v) for k, v in (override.get("env") or {}).items()}
     app.launch = LaunchSpec(executable, argv, cwd, readiness, timeout_s, env)
+    _resolve_voice_storage(app)
     app.launch_source = "override"
     app.kind = str(override.get("kind") or "app")
     app.launchable = False
@@ -434,6 +471,7 @@ def read_manifest(
     hint = app_block.get("launch_hint")
     if not isinstance(hint, dict) or hint.get("kind", "process") != "process":
         app.launch_reason = "the manifest has no process launch hint"
+        _resolve_voice_storage(app)
         return app
     missing.clear()
     cwd = expand_env(fill(hint.get("cwd") or folder)) or folder
@@ -449,6 +487,7 @@ def read_manifest(
     # here, since no shell sits between the hub and the process.
     env = {str(k): expand_env(fill(v)) for k, v in (hint.get("env") or {}).items()}
     app.launch = LaunchSpec(executable, argv, cwd, readiness_url, timeout_s, env)
+    _resolve_voice_storage(app)
     port_argument = str(hint.get("port_argument") or "")
     if re.fullmatch(r"--[a-z][a-z0-9-]*", port_argument):
         app.launch.port_argument = port_argument

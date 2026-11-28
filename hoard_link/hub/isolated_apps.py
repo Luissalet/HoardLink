@@ -5,9 +5,7 @@ import os
 import re
 import secrets
 import shutil
-import socket
 import sys
-from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import RLock
@@ -17,6 +15,7 @@ from ..atomic import write_json_atomic
 from . import contract, procs
 from .config import _configured_paths
 from .isolation import inside, passive_error
+from .loopback_ports import free_loopback_ports
 from .registry import MANIFEST_NAME, App, _writer_source, read_manifest
 
 # These shipped entry points accept the shared service flags. Older manifests
@@ -40,18 +39,6 @@ class RunningInstance:
     folder: Path
     ports: tuple[int, ...]
     process: object = None
-
-
-def _free_ports(count, *, exclude=()):
-    with ExitStack() as stack:
-        ports = []
-        while len(ports) < count:
-            sock = stack.enter_context(socket.socket())
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-            if port not in exclude:
-                ports.append(port)
-        return tuple(ports)
 
 
 def _failure(message, status=400):
@@ -298,7 +285,9 @@ class IsolatedApps:
         if not kind:
             return _failure(_isolation_reason(launcher), 409)
         folder.mkdir(parents=True)
-        ports = _free_ports(3 if kind == "writer" else 1)
+        owned_ports = (port for row in self._rows.values() for port in row.ports)
+        ports = free_loopback_ports(3 if kind == "writer" else 1,
+                                    exclude=(self.hub.config.port, *owned_ports))
         app = _headless_app(launcher, folder, ports, self.hub.config, kind)
         return self._launch(ident, RunningInstance(app, folder, ports))
 

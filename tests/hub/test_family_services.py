@@ -1,6 +1,52 @@
+import threading
 from types import SimpleNamespace
 from collections import defaultdict
+
+import pytest
+
+from hoard_link.hub.core import Hub
+from hoard_link.hub.registry import scan
+
+from .conftest import write_manifest
 from hoard_link.hub import services
+
+
+@pytest.mark.parametrize(("installed", "alias"), [("boltagon", "cyrano"), ("cyrano", "boltagon")])
+def test_voice_app_alias_uses_one_catalogue_entry_and_start_lock(tmp_path, monkeypatch, caplog, installed, alias):
+    write_manifest(tmp_path / "Voice", installed, 5253, name="Boltagon's Hoard")
+    hub = Hub.__new__(Hub)
+    hub._lock = threading.RLock()
+    hub._start_locks = {}
+    hub._stopping_all = threading.Event()
+    hub._manual_stops = {installed}
+    hub._apps = {app.id: app for app in scan([str(tmp_path)])}
+    hub.config = SimpleNamespace(isolated=False)
+    hub.placement = SimpleNamespace(local_block=lambda _: None)
+
+    [voice] = hub.apps
+    assert voice.id == installed and hub.get(alias) is voice
+    assert hub.get("unknown") is None
+    assert f"App ID {alias} resolved to {installed}" in caplog.text
+    assert hub.automation_blocked(alias)
+    assert hub.start(alias, automatic=True) == {
+        "ok": False, "app": installed, "error": "manually stopped; start it explicitly to resume",
+    }
+    assert list(hub._start_locks) == [installed]
+
+    stopped = []
+    monkeypatch.setattr(hub, "_manual_stop", lambda ids: stopped.extend(ids))
+    monkeypatch.setattr(hub, "_stop_app", lambda app: {"ok": True, "app": app.id})
+    assert hub.stop(alias) == {"ok": True, "app": installed}
+    assert stopped == [installed, installed] and list(hub._start_locks) == [installed]
+
+    monkeypatch.setattr(services.contract, "app_tools", lambda app: {"id": app.id})
+    assert hub.app_tools(alias) == {"id": installed}
+    proxy_calls = []
+    monkeypatch.setattr(services.contract, "call_app",
+                        lambda app, *args, **kwargs: {"ok": True, "app": app.id})
+    monkeypatch.setattr(hub, "_safe_emit", lambda _, data: proxy_calls.append(data))
+    assert hub.call_app(alias, "dictation_understand") == {"ok": True, "app": installed}
+    assert proxy_calls[0]["app"] == installed
 
 
 def test_owner_catalogues_and_missing_services_do_not_start_models(monkeypatch):
