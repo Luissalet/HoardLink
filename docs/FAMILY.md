@@ -277,8 +277,10 @@ route is keyed by capability and requested model. After 15 seconds the Hub
 can still serve it while one background lookup refreshes it. Backend
 configuration, placement and routing-file changes invalidate the selection.
 A failed model request can invalidate the route and trigger a foreground
-lookup on the next call. Generation is never replayed because of a
-connection or routing failure.
+lookup on the next call. If a fresh registry or provider catalogue confirms
+that the route's model was removed, the Hub also discards that route. A
+temporary verification outage leaves the route available. Generation is
+never replayed because of a connection or routing failure.
 
 For compatible text providers, a preferred endpoint gets a 200 ms head
 start on catalogue verification. The Hub can select a verified alternate

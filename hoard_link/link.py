@@ -535,8 +535,18 @@ class Link:
             if entry[1].result() is result:
                 del self._cache[key]
 
-    def _chat_failure(self, capability, task, model, result, status):
-        if self._chat_routing is not None and (status == 0 or status in (401, 403, 404, 410, 421, 429) or status >= 500):
+    def _chat_failure(self, capability, task, model, result, status, body=""):
+        if self._chat_routing is None:
+            return
+        missing_model = False
+        if status == 400 and body:
+            try:
+                payload = json.loads(body)
+            except ValueError:
+                payload = None
+            error = payload.get("error") if isinstance(payload, dict) else None
+            missing_model = isinstance(error, dict) and error.get("code") == "model_not_found"
+        if missing_model or status in (0, 401, 403, 404, 410, 421, 429) or status >= 500:
             self._chat_routing.invalidate((capability, task, model), result)
 
     def _known_registry(self):
@@ -658,6 +668,8 @@ class Link:
         if status == 200 and isinstance(data, dict):
             matches = _faustus.find_model_items(_faustus.model_items(data), capability)
             local = [i for i in matches if _faustus.is_local_item(i)]
+            if fresh_catalogue and self._chat_routing is not None:
+                self._chat_routing.observe_registry(local)
             if model is not None:
                 local = [{**item, "models": [model]} for item in local
                          if isinstance(item.get("models"), list) and model in item["models"]]
@@ -893,8 +905,11 @@ class Link:
                 )
             else:
                 status, served_data = await _faustus.get(self._client, models_url)
-            served = [m.get("id") for m in (served_data or {}).get("data", []) if isinstance(m, dict) and m.get("id")] \
-                if status == 200 and isinstance(served_data, dict) else []
+            rows = served_data.get("data") if status == 200 and isinstance(served_data, dict) else None
+            served = [row["id"] for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
+                      and row["id"]] if isinstance(rows, list) else []
+            if self._chat_routing is not None and isinstance(rows, list) and len(rows) == len(served):
+                self._chat_routing.observe_catalogue(url, served)
             if not served:
                 outcome = ("no HTTP response" if status is None else f"HTTP {status}" if status != 200
                            else "no model IDs returned")
@@ -1320,7 +1335,7 @@ class Link:
                         )
             except BackendError as exc:
                 exc.model = res.model
-                self._chat_failure(capability, task, model, res, exc.status)
+                self._chat_failure(capability, task, model, res, exc.status, getattr(exc, "body", ""))
                 raise
             elapsed_ms = (self._now() - start) * 1000.0
 
@@ -1411,8 +1426,10 @@ class Link:
                 response = await bounded(stack.enter_async_context(self._client.stream("POST", endpoint, json=payload,
                     timeout=httpx.Timeout(None, connect=min(idle_timeout, 15.0)), **_chat_timing.http_options())))
                 if response.status_code >= 400:
-                    raw = await bounded(response.aread())
-                    raise BackendError(res.provider, response.status_code, raw.decode("utf-8", "replace")[:300])
+                    raw = (await bounded(response.aread())).decode("utf-8", "replace")
+                    error = BackendError(res.provider, response.status_code, raw[:300])
+                    error.body = raw[:4000]
+                    raise error
                 data_lines = []
                 lines = response.aiter_lines()
                 last_activity = None
@@ -1512,7 +1529,7 @@ class Link:
             self._chat_failure(capability, task, model, res, 0)
             raise BackendError(res.provider, 0, f"{type(exc).__name__}: {exc}"[:200]) from exc
         except BackendError as exc:
-            self._chat_failure(capability, task, model, res, exc.status)
+            self._chat_failure(capability, task, model, res, exc.status, getattr(exc, "body", ""))
             raise
         if finish_reason is None:
             raise BackendError(res.provider, 200, "stream ended without a finish reason")

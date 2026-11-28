@@ -112,6 +112,8 @@ def model_catalogue(lhub, monkeypatch, tmp_path):
         if req.url.path == "/api/health":
             return httpx.Response(200, json={"status": "healthy"})
         if req.url.path == "/api/models":
+            if not state.get("registered", True):
+                return httpx.Response(200, json={"items": []})
             return httpx.Response(200, json={"items": [{
                 "model_type": "llm", "category": "local", "backend": "openai", "url": "http://127.0.0.1:18216/v1",
                 "models": ["default-text", "other-text", "with-vision"], "models_vision": ["with-vision"],
@@ -119,13 +121,13 @@ def model_catalogue(lhub, monkeypatch, tmp_path):
         if req.url.port == 18216 and req.url.path == "/v1/models":
             calls["provider_catalogue"] += 1
             return httpx.Response(state["catalogue"], json={"data": [
-                {"id": name} for name in ("default-text", "other-text", "with-vision")]})
+                {"id": name} for name in state.get("served", ("default-text", "other-text", "with-vision"))]})
         if req.url.path == "/v1/chat/completions":
             body = json.loads(req.content)
             chosen = body["model"]
             calls[chosen] += 1
             if state["generation"] != 200:
-                return httpx.Response(state["generation"], json={"error": "not ready"})
+                return httpx.Response(state["generation"], json={"error": state.get("generation_error", "not ready")})
             if body.get("stream"):
                 delta = json.dumps({"choices": [{"delta": {"content": chosen}, "finish_reason": "stop"}]})
                 return httpx.Response(200, text=f"data: {delta}\n\ndata: [DONE]\n\n")
@@ -340,6 +342,46 @@ async def test_negative_chat_catalogue_backs_off_and_retries_without_waiting(fai
     assert await routing.catalogue(url, probe, lambda: clock) == (200, {"data": []})
 
 
+@pytest.mark.parametrize(
+    "change,model,expected",
+    [("registry", None, 503), ("provider", "default-text", 503),
+     ("registry", "default-text", 400), ("temporary", "default-text", 200)],
+)
+def test_route_refresh_distinguishes_model_removal_from_temporary_verification_failure(
+    model_catalogue, change, model, expected,
+):
+    hub, url, calls, state = model_catalogue
+    body = {"messages": _msgs(), **({"model": model} if model else {})}
+    headers = _auth(hub)
+    assert _http(url + "/api/link/chat", body, headers)[0] == 200
+
+    if change == "registry":
+        state["registered"] = False
+    elif change == "provider":
+        state["served"] = []
+    else:
+        state["catalogue"] = 503
+    link = hub.link._link("hub")
+    link._now = lambda: time.monotonic() + 16
+
+    # The request that starts revalidation can still use its earlier route.
+    assert _http(url + "/api/link/chat", body, headers)[0] == 200
+
+    async def await_refresh():
+        pending = tuple(link._chat_routing._lookups.values())
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    asyncio.run_coroutine_threadsafe(await_refresh(), hub.link._ensure_loop()).result(5)
+    code, reply = _http(url + "/api/link/chat", body, headers)
+    assert code == expected, reply
+    if expected == 200:
+        assert calls[("POST", "/v1/chat/completions")] == 3
+    else:
+        assert reply["error"] == ("invalid_model" if expected == 400 else "no_model")
+        assert calls[("POST", "/v1/chat/completions")] == 2
+
+
 @pytest.mark.parametrize("explicit", [False, True])
 def test_no_model_verification_failure_is_not_cached(model_catalogue, explicit):
     hub, url, calls, state = model_catalogue
@@ -354,6 +396,20 @@ def test_no_model_verification_failure_is_not_cached(model_catalogue, explicit):
     code, recovered = _http(url + "/api/link/chat", body, _auth(hub))
     assert code == 200 and recovered["model"] == "default-text"
     assert calls["provider_catalogue"] == 2 and calls[("POST", "/v1/chat/completions")] == 1
+
+
+def test_backend_model_not_found_invalidates_the_route_without_replaying(model_catalogue):
+    hub, url, calls, state = model_catalogue
+    body = {"messages": _msgs(), "model": "default-text"}
+    headers = _auth(hub)
+    assert _http(url + "/api/link/chat", body, headers)[0] == 200
+    state.update(generation=400, generation_error={"code": "model_not_found"}, served=[])
+    code, failed = _http(url + "/api/link/chat", body, headers)
+    assert code == 502 and failed["error"] == "backend_error"
+    assert calls[("POST", "/v1/chat/completions")] == 2
+    code, missing = _http(url + "/api/link/chat", body, headers)
+    assert code == 503 and missing["error"] == "no_model"
+    assert calls[("POST", "/v1/chat/completions")] == 2
 
 
 def test_chat_timings_are_opt_in_and_cover_resolution(model_catalogue, monkeypatch):

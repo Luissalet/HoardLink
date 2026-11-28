@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Coroutine
-from contextvars import Context
+from contextvars import Context, ContextVar
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from .errors import InvalidModel
@@ -15,6 +16,12 @@ _CATALOGUE_BACKOFF_S = 120.0
 _MAX_ENTRIES = 256
 _T = TypeVar("_T")
 RouteKey = tuple[str, str | None, str | None]
+
+
+@dataclass
+class _Refresh:
+    route: Resolution
+    removed: bool = False
 
 
 class ChatRouting:
@@ -28,6 +35,7 @@ class ChatRouting:
         self._unavailable: OrderedDict[str, tuple[float, int | None]] = OrderedDict()
         self._catalogues: dict[str, asyncio.Task[tuple[int | None, Any]]] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._refreshing: ContextVar[_Refresh | None] = ContextVar("chat_route_refresh", default=None)
 
     def _task(self, work: Coroutine[Any, Any, _T], *, background: bool = False) -> asyncio.Task[_T]:
         task = asyncio.create_task(work, context=Context() if background else None)
@@ -59,13 +67,18 @@ class ChatRouting:
 
         async def refresh() -> Resolution:
             task = asyncio.current_task()
+            check = _Refresh(entry[1]) if entry is not None else None
+            token = self._refreshing.set(check)
             try:
                 result = await lookup()
                 if self._lookups.get(key) is task:
                     if result.resolved and result.url and result.details.get("resident") is not False:
                         self._remember(self.routes, key, (now(), result))
                     elif entry is not None and self.routes.get(key) is entry:
-                        self._remember(self.routes, key, (now(), entry[1]))
+                        if check is not None and check.removed:
+                            self.routes.pop(key, None)
+                        else:
+                            self._remember(self.routes, key, (now(), entry[1]))
                 return result
             except InvalidModel:
                 # A fresh registry can explicitly disallow a once valid model.
@@ -73,6 +86,7 @@ class ChatRouting:
                     self.routes.pop(key, None)
                 raise
             finally:
+                self._refreshing.reset(token)
                 if self._lookups.get(key) is task:
                     self._lookups.pop(key, None)
 
@@ -82,6 +96,22 @@ class ChatRouting:
         if entry is not None:
             return entry[1]
         return await asyncio.shield(task)
+
+    def observe_registry(self, items: list[dict]) -> None:
+        check = self._refreshing.get()
+        if check is None or check.route.details.get("source") != "faustus_registry":
+            return
+        for item in items:
+            listed = item.get("models")
+            if (item["url"].rstrip("/") == check.route.url.rstrip("/")
+                    and (not isinstance(listed, list) or not listed or check.route.model in listed)):
+                return
+        check.removed = True
+
+    def observe_catalogue(self, url: str, models: list[str]) -> None:
+        check = self._refreshing.get()
+        if check is not None and url.rstrip("/") == check.route.url.rstrip("/") and check.route.model not in models:
+            check.removed = True
 
     def invalidate(self, key: RouteKey, used: Resolution) -> None:
         entry = self.routes.get(key)
