@@ -947,7 +947,12 @@ class _FakeLlama(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def test_real_link_resolved_from_the_hubs_backend_json(tmp_path):
+def test_real_link_resolved_from_the_hubs_backend_json(tmp_path, monkeypatch):
+    # This test exercises the Hub's Faustus URLs and the models in backend.json.
+    monkeypatch.delenv("HOARD_FAUSTUS_URL", raising=False)
+    for capability in ("LLM", "VISION"):
+        monkeypatch.delenv(f"HOARD_{capability}_URL", raising=False)
+        monkeypatch.delenv(f"HOARD_{capability}_MODEL", raising=False)
     port = free_port()
     _FakeLlama.seen = []
     srv = HTTPServer(("127.0.0.1", port), _FakeLlama)
@@ -987,12 +992,16 @@ def test_real_link_resolved_from_the_hubs_backend_json(tmp_path):
         srv.shutdown()
 
 
-def test_real_link_with_nothing_available_is_503_no_model(tmp_path):
+def test_real_link_with_nothing_available_is_503_no_model(tmp_path, monkeypatch):
     """The real Link over a transport that refuses every connection (no server, no Faustus): the hub answers
     no_model with the reasons it collected, and the status says why each capability is unavailable."""
     from hoard_link.link import Link
 
     from ..conftest import make_client, refused
+
+    # A configured URL selects a provider before the refusing transport is used.
+    for capability in ("LLM", "VISION", "EMBEDDINGS", "TTS"):
+        monkeypatch.delenv(f"HOARD_{capability}_URL", raising=False)
 
     cfg = HubConfig(port=free_port(), data_dir=str(tmp_path / "data"), roots=[], icon_dirs=[], faustus_urls=["http://127.0.0.1:1"],
                     jobs_enabled=False)
