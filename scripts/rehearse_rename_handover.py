@@ -228,7 +228,11 @@ def registry(plan):
 
 
 def listener_port():
-    allocate = runpy.run_path(str(LOOPBACK_ALLOCATOR))["free_loopback_ports"]
+    sys.path.insert(0, str(LOOPBACK_ALLOCATOR.parents[2]))
+    try:
+        allocate = runpy.run_path(str(LOOPBACK_ALLOCATOR))["free_loopback_ports"]
+    finally:
+        sys.path.pop(0)
     port, = allocate(1, exclude=LIVE_PORTS)
     return port
 

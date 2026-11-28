@@ -53,7 +53,7 @@ def test_reports_a_permission_error_instead_of_trying_another_port(monkeypatch):
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows TCP range exclusions")
 def test_reads_inclusive_tcp_exclusion_ranges_without_modifying_them(monkeypatch):
     query = Mock(return_value=SimpleNamespace(stdout="Port exclusion ranges\n  50000  50059 *\n  59016  59022\n"))
-    monkeypatch.setattr(ports.subprocess, "run", query)
+    monkeypatch.setattr(ports, "run_hidden", query)
 
     assert ports._windows_tcp_exclusions() == (range(50000, 50060), range(59016, 59023))
     args, = query.call_args.args
@@ -67,7 +67,7 @@ def test_reads_only_local_tcp_ports_including_non_listening_bindings(monkeypatch
         "  TCP    127.0.0.1:50101 127.0.0.1:60100 ESTABLISHED 456\n"
         "  TCP    [::]:50102      [::]:0         LISTENING   789\n"
     )))
-    monkeypatch.setattr(ports.subprocess, "run", query)
+    monkeypatch.setattr(ports, "run_hidden", query)
     assert ports._windows_tcp_in_use() == {50100, 50101, 50102}
     args, = query.call_args.args
     assert args[1:] == ["-anoq", "-p", "tcp"]

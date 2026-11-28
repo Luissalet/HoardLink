@@ -10,6 +10,8 @@ import sys
 from contextlib import ExitStack
 from pathlib import Path
 
+from hoard_link._process import run_hidden
+
 
 TEMPORARY_PORTS = range(49152, 65536)
 RESERVED_PORTS = frozenset({5191, 5220, 5232, 5253, 8810, 8815, 59018})
@@ -19,10 +21,10 @@ def _windows_tcp_exclusions():
     if sys.platform != "win32":
         return ()
     netsh = Path(os.environ["SystemRoot"]) / "System32" / "netsh.exe"
-    result = subprocess.run(
+    result = run_hidden(
         [str(netsh), "interface", "ipv4", "show", "excludedportrange", "protocol=tcp"],
         capture_output=True, check=True, encoding="utf-8", errors="replace", timeout=10,
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS,
+        creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS,
     )
     rows = (re.fullmatch(r"\s*(\d+)\s+(\d+)\s*\*?\s*", line) for line in result.stdout.splitlines())
     return tuple(range(int(row[1]), int(row[2]) + 1) for row in rows if row)
@@ -32,10 +34,10 @@ def _windows_tcp_in_use():
     if sys.platform != "win32":
         return frozenset()
     netstat = Path(os.environ["SystemRoot"]) / "System32" / "netstat.exe"
-    result = subprocess.run(
+    result = run_hidden(
         [str(netstat), "-anoq", "-p", "tcp"],
         capture_output=True, check=True, encoding="utf-8", errors="replace", timeout=10,
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS,
+        creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS,
     )
     rows = (re.match(r"\s*TCP\s+\S+:(\d+)\s", line) for line in result.stdout.splitlines())
     return frozenset(int(row[1]) for row in rows if row)
