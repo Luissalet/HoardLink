@@ -8,6 +8,7 @@ from urllib.request import urlopen
 
 from hoard_link.hub import agora_auto_review, agora_capacity, agora_capacity_accounts
 from hoard_link.hub import agora_worker_profiles, dispatch_proxy
+from hoard_link.hub.config import HubConfig
 from hoard_link.hub.core import Hub
 from hoard_link.hub.instances import InstancesFacet
 from hoard_link.hub.server import _HubHandler, _client_disconnected, serve_in_thread
@@ -119,8 +120,6 @@ def test_abandoned_keepalive_read_closes_connection():
 
 
 def test_app_status_alias_and_native_shelf_proxy(tmp_path):
-    from hoard_link.hub.config import HubConfig
-
     roots = tmp_path / "apps"
     root = roots / "testapp"
     root.mkdir(parents=True)
@@ -163,8 +162,8 @@ def test_isolated_instances_create_own_data_use_own_token_and_undo(monkeypatch, 
             "launch_hint": {"kind": "process", "executable": "python", "argv": ["-V"], "cwd": "{SAMPLE_DIR}"}},
         "x-family": {"isolated_instance": {"data_env": "SAMPLE_DATA", "port_env": "SAMPLE_PORT"}},
     }), encoding="utf-8")
-    hub = SimpleNamespace(config=SimpleNamespace(data_dir=str(data), faustus_dir=None,
-                                                url="http://127.0.0.1:8888", isolated=False),
+    config = HubConfig(port=free_port(), data_dir=str(data), roots=[], icon_dirs=[], faustus_urls=[])
+    hub = SimpleNamespace(config=config,
                           get=lambda _: SimpleNamespace(folder=str(original), token_file=str(original / "mcp-token")))
     children = []
 
