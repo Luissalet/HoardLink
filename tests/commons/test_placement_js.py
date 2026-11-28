@@ -43,8 +43,7 @@ def test_the_copilot_relay_finds_faustus_on_the_spark():
     out = run(f"""
         import http from "node:http";
         import fs from "node:fs";
-        import os from "node:os";
-        import path from "node:path";
+        import {{ fileURLToPath }} from "node:url";
         import {{ buildCopilot }} from {json.dumps(COPILOT)};
 
         const listen = (handler) => new Promise((resolve) => {{
@@ -65,7 +64,9 @@ def test_the_copilot_relay_finds_faustus_on_the_spark():
         dead.close();                                              // a port nobody listens on: the PC's Faustus, switched off
         const faustusUrl = "http://127.0.0.1:" + faustus.address().port;
         const env = {{ HOARD_HUB_URL: "http://127.0.0.1:" + hub.address().port }};
-        const copilot = buildCopilot({{ appId: "qa", dataDir: fs.mkdtempSync(path.join(os.tmpdir(), "placement-")),
+        const dataDir = fileURLToPath(new URL("./placement", import.meta.url));
+        fs.mkdirSync(dataDir);
+        const copilot = buildCopilot({{ appId: "qa", dataDir,
           faustusUrls: ["http://127.0.0.1:" + deadPort], env }});
         const ask = async () => {{
           let body = null, status = 200;

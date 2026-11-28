@@ -14,6 +14,7 @@ import time
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import httpx
 import pytest
@@ -1081,8 +1082,8 @@ def test_python_client_never_raises_when_the_hub_is_down_or_slow(monkeypatch):
 JS_TEST = r"""
 import http from "node:http";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 const family = await import(process.argv[2]);
 const seen = [];
 let mode = "ok";
@@ -1104,7 +1105,7 @@ const srv = http.createServer((req, res) => {
 });
 await new Promise((r) => srv.listen(0, "127.0.0.1", r));
 const port = srv.address().port;
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hl-"));
+const dir = fileURLToPath(new URL(".", import.meta.url));
 fs.writeFileSync(path.join(dir, "mcp-token"), "app-token");
 family.configure({ app: "jsapp", dataDir: dir, hub: `http://127.0.0.1:${port}` });
 const out = {};
@@ -1131,10 +1132,11 @@ process.exit(0);
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-def test_node_client_chat_and_status(tmp_path):
-    script = tmp_path / "t.mjs"
-    script.write_text(JS_TEST, encoding="utf-8")
-    run = subprocess.run(["node", str(script), JS.as_uri()], capture_output=True, text=True, timeout=60)
+def test_node_client_chat_and_status():
+    with TemporaryDirectory() as tmp:
+        script = Path(tmp) / "t.mjs"
+        script.write_text(JS_TEST, encoding="utf-8")
+        run = subprocess.run(["node", str(script), JS.as_uri()], capture_output=True, text=True, timeout=60)
     assert run.returncode == 0, run.stderr
     out = json.loads(run.stdout.strip().splitlines()[-1])
     assert out["ok"] == {"ok": True, "text": "hola", "json": {"a": 1}, "model": "m", "provider": "p", "ms": 5,

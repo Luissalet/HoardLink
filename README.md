@@ -147,6 +147,7 @@ pytest -q
 ```
 
 The suite runs offline against mock transports and tiny local HTTP servers; it needs no GPU, network or downloaded model.
+Keep Node test data under the launching test's temporary directory so Python removes it even if the child process fails.
 
 ## Licence
 

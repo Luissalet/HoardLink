@@ -22,9 +22,11 @@ needs_real = pytest.mark.skipif(not REAL, reason="set HOARD_TEST_NODE_MODULES to
 
 PRELUDE = r"""
 import * as e from %(module)s;
-import fs from "node:fs"; import path from "node:path"; import http from "node:http"; import os from "node:os";
+import fs from "node:fs"; import path from "node:path"; import http from "node:http";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 const args = JSON.parse(process.argv[2]);
+const scratchDir = fileURLToPath(new URL(".", import.meta.url));
 
 // --- an express-like fake: routes by method + string/regexp, use(), error middleware, enough for the commons
 export class FakeApp {
@@ -202,8 +204,8 @@ def test_a_missing_token_never_authorises():
 # ------------------------------------------------------------------------------------------------ SPA and errors
 
 SPA = r"""
-const dist = fs.mkdtempSync(path.join(os.tmpdir(), "spa-"));
-fs.mkdirSync(path.join(dist, "assets"));
+const dist = path.join(scratchDir, "spa");
+fs.mkdirSync(path.join(dist, "assets"), { recursive: true });
 fs.writeFileSync(path.join(dist, "index.html"), "<html>app</html>");
 fs.writeFileSync(path.join(dist, "assets", "app-AbCd1234.js"), "x");
 const staticCalls = [];
@@ -333,7 +335,7 @@ class FakeMcpServer {
   async connect(t) { this.connected = t; }
 }
 class FakeTransport {}
-const tokenFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "br-")), "mcp-token"); fs.writeFileSync(tokenFile, "k".repeat(40));
+const tokenFile = path.join(scratchDir, "mcp-token"); fs.writeFileSync(tokenFile, "k".repeat(40));
 const hits = [];
 const fake = http.createServer((req, res) => {
   let data = ""; req.on("data", (c) => (data += c)); req.on("end", () => {
@@ -359,6 +361,21 @@ const body = (r) => JSON.parse(r.content[0].text);
 """
 
 
+@pytest.mark.parametrize(("fixture", "scratch"), [(SPA, "dist"), (BRIDGE, "path.dirname(tokenFile)")],
+                         ids=["spa", "bridge"])
+def test_node_fixture_directory_is_removed_after_failure(fixture, scratch):
+    with tempfile.TemporaryDirectory() as tmp:
+        marker = Path(tmp) / "scratch.txt"
+        # Even a regression must leave the child process's unmanaged temp files inside this test.
+        env = dict.fromkeys(("TMPDIR", "TEMP", "TMP"), tmp)
+        with pytest.raises(AssertionError, match="forced fixture failure"):
+            run_node(fixture + f"""
+                fs.writeFileSync(args[0], {scratch});
+                throw new Error("forced fixture failure");
+            """, str(marker), env=env)
+        assert not Path(marker.read_text(encoding="utf-8")).exists()
+
+
 def test_bridge_registers_tools_and_proxies_calls():
     out = run_node(BRIDGE + """
         const b = make();
@@ -374,7 +391,7 @@ def test_bridge_registers_tools_and_proxies_calls():
         results.viaCall = await b.call("echo", { z: 2 });
         const wrongToken = make({ tokenFile: "", token: "w".repeat(40) });
         results.refused = await wrongToken.call("echo", {});
-        const noToken = make({ tokenFile: path.join(os.tmpdir(), "does-not-exist-" + Date.now()) });
+        const noToken = make({ tokenFile: path.join(scratchDir, "missing-token") });
         results.noToken = await noToken.call("echo", {});
         const down = make({ baseUrl: "http://127.0.0.1:1" });
         results.down = await down.call("hang", {});
@@ -467,8 +484,8 @@ const express = req("express"); const zod = req("zod"); const z = zod.z ?? zod;
 @needs_real
 def test_real_express_end_to_end():
     out = run_node(REAL_PRELUDE % {"real": json.dumps(REAL)} + r"""
-        const dist = fs.mkdtempSync(path.join(os.tmpdir(), "real-"));
-        fs.mkdirSync(path.join(dist, "assets"));
+        const dist = path.join(scratchDir, "real");
+        fs.mkdirSync(path.join(dist, "assets"), { recursive: true });
         fs.writeFileSync(path.join(dist, "index.html"), "<html>real app</html>");
         fs.writeFileSync(path.join(dist, "assets", "app-AbCd1234.js"), "export {}");
         fs.writeFileSync(path.join(dist, ".hidden"), "nope");
