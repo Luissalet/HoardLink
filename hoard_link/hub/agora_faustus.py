@@ -207,11 +207,9 @@ def frontend_patch_scope(hub: Any, scope: dict, *, studio: bool) -> tuple[dict, 
     tools = apps.get("vitruvius", [])
     patch = "app_project_patch"
     update = "app_project_update"
-    source_edit = "app_project_edit_source"
     if patch not in tools and (not studio or update not in tools):
         return scope, None
 
-    tools = list(dict.fromkeys(tools))
     catalogue = hub.app_tools("vitruvius")  # Passive discovery, including when the app is closed.
     warning = None
     if not catalogue.get("ok"):
@@ -227,17 +225,14 @@ def frontend_patch_scope(hub: Any, scope: dict, *, studio: bool) -> tuple[dict, 
     if warning:
         tools = [tool for tool in tools if tool != patch]
     elif patch not in tools:
-        if len(tools) == MAX_APP_TOOLS and source_edit not in tools:
+        if len(tools) == MAX_APP_TOOLS:
             return scope, {
                 "es": f"Vitruvius ya tiene {MAX_APP_TOOLS} herramientas en esta alta. El trabajador se ha creado sin {patch}. "
                       "Libera un hueco en el ámbito y crea otro trabajador para usarla.",
                 "en": f"This launch already grants {MAX_APP_TOOLS} Vitruvius tools. The worker was created without {patch}. "
                       "Free a slot in the scope and create another worker to use it.",
             }
-        if len(tools) == MAX_APP_TOOLS:
-            tools = [patch if tool == source_edit else tool for tool in tools]
-        else:
-            tools = [*tools, patch]
+        tools = [*tools, patch]
 
     apps = {**apps, "vitruvius": tools} if tools else {app: grant for app, grant in apps.items() if app != "vitruvius"}
     scope = {key: value for key, value in scope.items() if key != "apps"}

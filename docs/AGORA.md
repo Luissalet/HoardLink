@@ -327,21 +327,21 @@ cannot be confirmed, the launch is rejected with a message in English and Spanis
 Open the app and enable Data there before launching a task that needs those tools.
 
 In `estudio`, a Vitruvius scope that grants `app_project_update` also gets
-`app_project_patch` when the app's catalogue lists it. Keep `app_project_undo`
-in the scope to undo edits. At the 16-tool limit, the patch takes the slot of
-`app_project_edit_source` because literal replacements can also edit HTML
-source. This leaves the grant for archiving the finished project in place.
-A full custom scope without that slot keeps its grants and gets a warning.
+`app_project_patch` when the app's catalogue lists it and the scope has an open
+slot. Keep `app_project_undo` in the scope to undo edits. A full 16-tool scope
+keeps every declared grant, including `app_project_edit_source` for edits by
+source position. If the patch needs a slot, the launch shows a warning. Free a
+slot in the scope and create a new worker to add the patch.
 If the catalogue is unavailable or lacks the patch, creation continues and
 shows a warning. Create a new worker once the catalogue lists the patch.
 
 En `estudio`, un ámbito de Vitruvius con `app_project_update` también recibe
-`app_project_patch` cuando figura en el catálogo. Conserva `app_project_undo`
-para deshacer ediciones. Al llegar a 16 herramientas, el parche ocupa el hueco
-de `app_project_edit_source` porque los reemplazos literales también permiten
-editar el HTML. Así se conserva el permiso para archivar el proyecto terminado.
-Un ámbito personalizado lleno sin ese hueco conserva sus permisos y muestra un
-aviso. Si el catálogo no está disponible o carece del parche, el alta continúa
+`app_project_patch` cuando figura en el catálogo y queda un hueco. Conserva
+`app_project_undo` para deshacer ediciones. Con 16 herramientas se conservan todos
+los permisos declarados, incluido `app_project_edit_source` para editar por
+posición. Si el parche necesita un hueco, el alta muestra un aviso. Libera un
+hueco en el ámbito y crea otro trabajador para añadirlo.
+Si el catálogo no está disponible o carece del parche, el alta continúa
 y muestra un aviso. Crea otro trabajador cuando el parche figure en el catálogo.
 
 For a reversible DOCX, declare `wh_document_new`, `wh_document_save_new`,

@@ -1219,6 +1219,10 @@ def test_faustus_worker_mcp_loses_service_after_health_check(tmp_path, monkeypat
     (["app_project_update", "app_project_patch"], None, ["app_project_update"], "could not be read"),
     (["app_project_get"], ["app_project_patch"], ["app_project_get"], None),
     (["app_project_update", *[f"custom_{i}" for i in range(15)]], ["app_project_patch"], None, "Free a slot"),
+    pytest.param(
+        ["app_project_update", "app_project_edit_source", *[f"frontend_{i}" for i in range(14)]],
+        ["app_project_edit_source", "app_project_patch"], None, "Free a slot", id="full-with-source-edit",
+    ),
 ])
 def test_frontend_patch_scope_preserves_explicit_grants(tools, catalogue, expected, message):
     from hoard_link.hub import agora_faustus
@@ -1342,7 +1346,9 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
         options = {"leader_id": "faustus", "task": "Synthetic production assignment."}
         update = "app_project_update"
         source_edit = "app_project_edit_source"
-        frontend = [update, "app_project_undo", source_edit, "app_project_archive", *[f"fixture_tool_{i}" for i in range(12)]]
+        tool_count = 11 if with_related else 12
+        frontend = [update, "app_project_undo", source_edit, "app_project_archive",
+                    *[f"fixture_tool_{i}" for i in range(tool_count)]]
         app_scope = {"apps": {"nightingale": ["data_ingest"], "writer": ["wh_document_new"], "vitruvius": frontend}}
         rejected = tool("create", **options, task_id=standalone["id"], file_scope=app_scope)
         assert not rejected["ok"] and rejected["code"] == "worker_order_job_required"
@@ -1399,7 +1405,7 @@ def test_faustus_worker_mcp_order_and_registration(tmp_path, monkeypatch, with_r
         expected_apps = app_scope["apps"]
         if with_related:
             assert "warning" not in created
-            expected_apps = {**expected_apps, "vitruvius": [patch if tool == source_edit else tool for tool in frontend]}
+            expected_apps = {**expected_apps, "vitruvius": [*frontend, patch]}
         else:
             assert created["warning"] == created["warning_i18n"]["es"]
             assert "no ofrece app_project_patch" in created["warning"]
