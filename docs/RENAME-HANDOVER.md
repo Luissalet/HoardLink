@@ -1,14 +1,14 @@
-# Cambio de identidad de la aplicación de voz · r27
+# Cambio de identidad de la aplicación de voz · r28
 
 El renombrado conserva las fichas, mueve la carpeta de voz con sus datos y reinicia el Hub una sola vez durante el avance. El mismo programa ejecuta la instalación y la vuelta atrás. La decisión de instalarlas corresponde a dirección. El ensayo usa el Hub real en modo aislado, con las dos aplicaciones sustituidas por servicios de prueba.
 
 | Repositorio | Partida y vuelta atrás | Candidato |
 | --- | --- | --- |
-| Hoard Hub | `11269464610b9df04edf1167fbd7f04ef16ae1b9` | `ab9828f83f913d4b713a0c7e21d25de2e09e5853` |
-| Cyrano's Hoard | `41f2fb3cf501c813cdbf2fab5da7797f6f42476a` | `0db97074830369dff633ca2da26247f44229543a` |
+| Hoard Hub | `084674f21d2be8502c969896b80e7d5b973f96f7` | `9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b` |
+| Cyrano's Hoard | `a0a63a3152fe5e63f081eef042968fa3a4078621` | `2d1c28f55161a10ef79065d0d079b36961429356` |
 | Vitruvius's Hoard | `274babd3a8ef83bb059f29d2fae011ee76086915` | `827e53e9c9ad2726b482d1f64bbed1efb0d1a878` |
 
-Dirección autoriza el dispositivo de la tanda. El recibo vincula su UUID al SHA de Boltagon y a las mediciones de la ejecución. El ensayo aislado comprueba la migración con la síntesis apagada. La comparación A–B–B–A aprobó el candidato a8092ec de r12. El instalador exige la medición del SHA exacto de la tabla. El banco de r14 pasó para el candidato actualizado. Quedan pendientes la repetición independiente y el previo coordinado por dirección.
+Dirección autoriza el dispositivo de la tanda. El recibo vincula su UUID al SHA de Boltagon y a las mediciones de la ejecución. El ensayo aislado comprueba la migración con la síntesis apagada. La comparación A–B–B–A aprobó el candidato a8092ec de r12. El instalador exige la medición del SHA exacto de la tabla. El banco de esta revisión pasó para el candidato actualizado. Quedan pendientes la repetición independiente y el previo coordinado por dirección.
 
 ## Ensayo aislado
 
@@ -29,8 +29,8 @@ $env:BOLTAGON_TTS_ENGINE = 'off'
 $env:CUDA_VISIBLE_DEVICES = '-1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $Worktree = Join-Path $Root ($Prefix + '-hub')
-$Before = '11269464610b9df04edf1167fbd7f04ef16ae1b9'
-$After = 'ab9828f83f913d4b713a0c7e21d25de2e09e5853'
+$Before = '084674f21d2be8502c969896b80e7d5b973f96f7'
+$After = '9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b'
 git worktree add -b ('rehearsal/' + (Split-Path -Leaf $Root) + '/hub') $Worktree $Before
 if ($LASTEXITCODE) { throw 'No se pudo abrir el worktree temporal del Hub' }
 & $ServicePython -B .\scripts\rehearse_rename_handover.py --worktree $Worktree --launcher (Join-Path $Qa 't24v\nw.ps1') --window-watch (Join-Path $Qa 'vigia-ventanas.log') --hub-before $Before --hub-after $After --websockets-wheel $WebsocketsWheel
@@ -71,23 +71,23 @@ El uso de CYRANO_URL es una compatibilidad de entrada. El asistente no reenvía 
 | Boltagon | El SHA de partida de la tabla, la carpeta Cyrano's Hoard y su ruta de trabajo, la ficha cyrano y el venv original guardado en voice-venv-original. Los datos y el intérprete auxiliar vuelven con la carpeta. Se aparta el venv candidato antes de recuperar el original. Se confirma la salud por el ID previo. |
 | Vitruvius | El SHA de partida de la tabla, la ficha vitruvius original con el lanzador y la ruta de caché completos, y el mismo estado de Git y las mismas huellas locales inventariadas. Se reabre solo si estaba activo al iniciar. |
 
-La acción rollback aplica esos tres estados desde el mismo plan y registro. Para la pareja de voz y registro hay una dependencia física. Restaurar solo la carpeta deja URLs, rutas de arranque o caché antiguas si el Hub conserva la ficha boltagon. Restaurar solo la ficha deja que el Hub apunte a la carpeta anterior mientras la voz sigue en la nueva.
+La acción rollback aplica esos tres estados desde el mismo plan y registro. Para la pareja de voz y registro hay una dependencia física. Si se restaura solo la carpeta, las rutas de arranque y de caché siguen apuntando a Boltagon's Hoard. Si se restaura solo la ficha, el Hub apunta a Cyrano's Hoard mientras la voz sigue en la carpeta nueva.
 
 En un ensayo donde solo hubiera avanzado Git y los servicios y ficheros siguieran en su estado original, la reparación de cada pieza se limita a su SHA de partida con git reset --keep y la comparación del estado local. Una vez que hay un registro de la migración, se usa la vuelta atrás coordinada descrita abajo. Para y valida los propietarios, recupera el venv, restaura los tres SHA, devuelve la carpeta de voz, verifica los ficheros locales y las copias, arranca el Hub y repone únicamente las aplicaciones activas en el inventario. Los reinicios y las restauraciones de estas rutas corresponden a dirección.
 
 ## Medición previa con el motor real
 
-Usar el banco de voz compartido en `E:\Development\IA\Research\_qa\capataz\banco-voz` con un worktree limpio del Ágora en el SHA completo de Boltagon de la tabla. La entrada de compatibilidad `cyrano_hoard.main.create_app` delega en la fábrica canónica del mismo worktree. La base `41f2fb3` incluye la guarda de duración, la admisión de voz por UUID y la detección temprana de `4c6daad`. El candidato conserva el WAV acotado en directo, los controles de calidad, el WebSocket de reconocimiento incremental y la verificación de procedencia del audio de perfil de la base instalada, y el ajuste de reconocimiento de secuencias de dígitos en español. La medición anterior de `f322812` queda como referencia histórica.
+Usar el banco de voz compartido en `E:\Development\IA\Research\_qa\capataz\banco-voz` con un worktree limpio del Ágora en el SHA completo de Boltagon de la tabla. La entrada de compatibilidad `cyrano_hoard.main.create_app` delega en la fábrica canónica del mismo worktree. La base `a0a63a3` incluye la guarda de duración, la admisión de voz por UUID y la detección temprana de `4c6daad`. El candidato conserva el WAV acotado en directo, los controles de calidad, el WebSocket de reconocimiento incremental y la verificación de procedencia del audio de perfil de la base instalada, y el ajuste de reconocimiento de secuencias de dígitos en español, también cuando el idioma se detecta en vez de indicarse. La medición anterior de `f322812` queda como referencia histórica.
 
 Antes de arrancar, revisar que la revisión del banco que se va a ejecutar excluye los puertos reservados antes de abrir el listener. El banco debe tomar `t24\gpu2.lock`, consultar por UUID la GPU autorizada y el índice que tiene en ese arranque, abrir el servicio con `t24v\nw.ps1` y cargar CAMINO CERRADO en el PowerShell hijo. Usar datos y cachés propios del banco. Tras detenerlo, conservar la comprobación del vigía, del listener, de los procesos y de la liberación del cerrojo.
 
-Pasar al banco `-Worktree` con ese worktree, `-Sha 0db97074830369dff633ca2da26247f44229543a`, `-Owner` con la identidad propia del Ágora, `-GpuUuid` con el UUID completo aprobado y `-ServicePython` con el intérprete de pruebas acordado. El banco imprime el directorio `run-*` que contiene `result.json`, la tabla Markdown y `gpu2-before.csv`.
+Pasar al banco `-Worktree` con ese worktree, `-Sha 2d1c28f55161a10ef79065d0d079b36961429356`, `-Owner` con la identidad propia del Ágora, `-GpuUuid` con el UUID completo aprobado y `-ServicePython` con el intérprete de pruebas acordado. El banco imprime el directorio `run-*` que contiene `result.json`, la tabla Markdown y `gpu2-before.csv`.
 
 - Medir 20 frases nuevas de al menos 15 palabras con importes, IBAN, fechas, cifras largas y pausas marcadas. Cronometrar desde `POST /api/voice/speak` con `wait:false` hasta el primer evento NDJSON de audio. Cada frase debe acabar con PCM válido y audible, primer audio en un máximo de 1.200 ms y el primer bloque y el búfer inicial por debajo del 20 % de los frames del WAV.
 - Cancelar otras 20 locuciones a mitad de flujo. Cada una debe terminar como cancelada. La frase posterior debe emitir audio y completarse en el mismo hijo de voz que inició la tanda. El revisor repite la medición con el mismo SHA.
 - Conservar `result.json` y `gpu2-before.csv` en el mismo directorio de evidencias. Fijar la huella SHA-256 de `result.json` y el UUID aprobado con el veredicto del revisor. El recibo registra `gpu_index` cuando la tarjeta usa un índice diferente del 2. La línea base y los recibos sintéticos quedan como evidencias de comparación y de la migración aislada.
 
-Para este SHA, el recibo del banco de r14 está en `E:\Development\IA\Research\_qa\capataz\t25\rename-4148\codex-worker-1ef72a32\r14\gpu\run-0db9707-20261128-093906-fe1accc0\result.json`, con SHA-256 `5d2892127155a4b79f2ccf081775c520f79bd31a1e249fe293146bbd1a81cf30` y UUID `GPU-15d17fee-8c0c-4be3-be46-35fb3e32f2aa`. El primer audio tardó como máximo 309,71 ms. Las veinte frases fueron audibles y las veinte cancelaciones conservaron el mismo hijo. El validador del instalador aceptó el recibo con esos tres valores.
+El recibo de esta revisión está en `E:\Development\IA\Research\_qa\capataz\t25\rename-4148\codex-worker-1ef72a32\t28-r16\gpu\run-2d1c28f-20261128-124224-c2d93987\result.json`, con SHA-256 `d9c1391e4377b717bfa37b7b4364f1795129914bbf7829de06277731fa441b25` y UUID `GPU-15d17fee-8c0c-4be3-be46-35fb3e32f2aa`. El primer audio tardó como máximo 400,69 ms. Las veinte frases fueron audibles y las veinte cancelaciones conservaron el mismo hijo. El validador del instalador aceptó el recibo.
 
 La comprobación focal del recibo está en `tests/hub/test_rename_handover_voice.py`. Con CAMINO CERRADO y BelowNormal, ejecutar ese focal para el SHA del Hub y repetir los diez casos del ensayo aislado. El focal cubre, entre otros rechazos, un SHA distinto, falta de integridad, GPU distinta, 1.201 ms, el límite exacto del 20 %, audio mudo y un PID cambiado. Si la guarda de duración termina el directo antes del WAV del reintento, el recibo debe llevar la marca `duration_guard`, acreditar la misma frecuencia y mantener los límites del banco.
 
@@ -109,9 +109,9 @@ $RunnerRoot = $env:RENAME_SOURCE_WORKTREE
 if (!$RunnerRoot -or ![IO.Path]::IsPathRooted($RunnerRoot)) { throw 'Indica el worktree aprobado del Hub' }
 $Runner = Join-Path $RunnerRoot 'scripts\rename_handover.py'
 if (!(Test-Path -LiteralPath $Runner -PathType Leaf)) { throw 'Falta el programa del renombrado' }
-git -C $RunnerRoot diff --quiet 'ab9828f83f913d4b713a0c7e21d25de2e09e5853' -- scripts/rename_handover.py scripts/rename_handover_voice.py scripts/rename_handover_windows.py
+git -C $RunnerRoot diff --quiet '9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b' -- scripts/rename_handover.py scripts/rename_handover_voice.py scripts/rename_handover_windows.py
 if ($LASTEXITCODE) { throw 'El programa debe coincidir con el candidato aprobado' }
-$Evidence = Join-Path $Qa ('t25\rename-r27-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$Evidence = Join-Path $Qa ('t25\rename-r28-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $VoiceResult = $env:RENAME_VOICE_RESULT
 $VoiceResultHash = $env:RENAME_VOICE_RESULT_SHA256
 $VoiceGpuUuid = $env:RENAME_VOICE_GPU_UUID
@@ -139,11 +139,11 @@ $Plan = [ordered]@{
     voice_extra_wheels = $env:RENAME_VOICE_EXTRA_WHEELS
     voice_benchmark = @{result=$VoiceResult; sha256=$VoiceResultHash; gpu_uuid=$VoiceGpuUuid}
     repos = [ordered]@{
-        hub   = @{path=$Hub;   before='11269464610b9df04edf1167fbd7f04ef16ae1b9'; after='ab9828f83f913d4b713a0c7e21d25de2e09e5853'}
-        voice = @{path=$Voice; before='41f2fb3cf501c813cdbf2fab5da7797f6f42476a'; after='0db97074830369dff633ca2da26247f44229543a'}
+        hub   = @{path=$Hub;   before='084674f21d2be8502c969896b80e7d5b973f96f7'; after='9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b'}
+        voice = @{path=$Voice; before='a0a63a3152fe5e63f081eef042968fa3a4078621'; after='2d1c28f55161a10ef79065d0d079b36961429356'}
         vit   = @{path=$Vit;   before='274babd3a8ef83bb059f29d2fae011ee76086915'; after='827e53e9c9ad2726b482d1f64bbed1efb0d1a878'}
     }
-    approved_commits = @('ab9828f83f913d4b713a0c7e21d25de2e09e5853','0db97074830369dff633ca2da26247f44229543a','827e53e9c9ad2726b482d1f64bbed1efb0d1a878')
+    approved_commits = @('9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b','2d1c28f55161a10ef79065d0d079b36961429356','827e53e9c9ad2726b482d1f64bbed1efb0d1a878')
 }
 [IO.File]::WriteAllText($PlanPath, ($Plan | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 $Invoke = Join-Path $Evidence 'ejecutar.ps1'
