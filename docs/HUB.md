@@ -62,7 +62,8 @@ opens the app's native window itself.
 
 Apps started by the Hub receive its active URL in `HOARD_HUB_URL`. Launch
 environments omit `HOARD_HUB_TOKEN_FILE` and `HOARD_HUB_TOKEN`. Apps authenticate
-with their own family credentials. Writer still receives `HOARD_HUB_DATA_DIR`.
+with their own family credentials. Writer also receives `HOARD_HUB_DATA_DIR`
+and the same URL in `WRITER_HUB_URL` for its publishing bridge.
 
 `POST /api/apps/<id>/open` (`hub_open_app`, the **Open window** button)
 opens the app's UI as a desktop window through one of two routes, picked by

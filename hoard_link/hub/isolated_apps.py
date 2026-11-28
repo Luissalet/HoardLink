@@ -175,7 +175,7 @@ def _headless_app(app, folder, ports, config, launcher):
     env = procs.app_launch_env(
         {**spec.env, "HOARD_TOKEN_FILE": None, **changes, "PORT_STRICT": "1", "HOARD_NO_BROWSER": "1",
          "HOARD_HUB_DATA_DIR": config.data_dir},
-        config.url,
+        config.url, app_id=app.id,
     )
     return replace(app, url=url, data_dir=str(data_path), token_file=str(token), kind="app",
                    runtime_url_file="", launch=replace(spec, argv=argv, env=env,

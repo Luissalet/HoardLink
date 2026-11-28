@@ -452,7 +452,7 @@ class Hub:
                     if app_id == "writer":
                         env["HOARD_HUB_DATA_DIR"] = self.config.data_dir
                     launch_app = replace(app, launch=replace(
-                        app.launch, env=procs.app_launch_env(env, self.config.url)))
+                        app.launch, env=procs.app_launch_env(env, self.config.url, app_id=app_id)))
                 res = procs.start_app(launch_app, self.config.logs_dir, wait=wait)
                 if allocation.get("previous_port"):
                     res.update(previous_port=allocation["previous_port"], port=allocation["port"])

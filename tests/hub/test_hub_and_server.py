@@ -99,6 +99,7 @@ def test_started_app_gets_hub_url_without_master_credentials(hub, family, tmp_pa
         "temp = destination.with_suffix('.tmp')\n"
         "temp.write_text(json.dumps({\n"
         "    'url': env.get('HOARD_HUB_URL'), 'hub_data': env.get('HOARD_HUB_DATA_DIR'),\n"
+        "    'writer_url': env.get('WRITER_HUB_URL'),\n"
         "    'master_file': 'HOARD_HUB_TOKEN_FILE' in env, 'master_value': 'HOARD_HUB_TOKEN' in env,\n"
         "    'app_token_file': env.get('QA_APP_TOKEN_FILE'),\n"
         "}), encoding='utf-8')\n"
@@ -108,6 +109,7 @@ def test_started_app_gets_hub_url_without_master_credentials(hub, family, tmp_pa
     captured = tmp_path / "env.json"
     own_token_file = str(tmp_path / "app-token")
     monkeypatch.setenv("HOARD_HUB_URL", "http://127.0.0.1:9")
+    monkeypatch.delenv("WRITER_HUB_URL", raising=False)
     monkeypatch.setenv("HOARD_HUB_TOKEN_FILE", hub.config.token_file)
     monkeypatch.setenv("HOARD_HUB_TOKEN", "synthetic-inherited-token")
     monkeypatch.setenv("HOARD_HUB_DATA_DIR", str(tmp_path / "inherited"))
@@ -132,6 +134,7 @@ def test_started_app_gets_hub_url_without_master_credentials(hub, family, tmp_pa
         time.sleep(0.05)
     assert json.loads(captured.read_text(encoding="utf-8")) == {
         "url": hub.config.url,
+        "writer_url": hub.config.url if app_id == "writer" else None,
         "hub_data": hub.config.data_dir if app_id == "writer" else str(tmp_path / "inherited"),
         "master_file": False,
         "master_value": False,
