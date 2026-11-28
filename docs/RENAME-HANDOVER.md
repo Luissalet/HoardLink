@@ -44,6 +44,10 @@ El directorio temporal conserva `receipts.json`, el registro de cada fase y sus 
 
 ## Orden de instalación
 
+Para adelantar las piezas de código, el orden recomendado es Hub, Boltagon y Vitruvius. Conserva hub.json y la carpeta de voz. Tras adelantar el Hub, comprueba el catálogo y el alias. Después comprueba el lanzamiento y la salud de voz con el perfil existente. Por último, reabre un formulario de prueba en Vitruvius cuando la voz esté disponible. Los otros órdenes conservan los llamantes anteriores según la tabla parcial.
+
+### Mudanza coordinada de la carpeta
+
 El procedimiento inventaría las bases, guarda el arranque del Hub y las fichas, comprueba las copias y para las dos aplicaciones antes de parar el Hub. Dentro de la misma parada, avanza los tres SHA en orden Hub, Boltagon y Vitruvius. El Hub prepara el registro del ID nuevo y el bearer de la ruta efectiva. El paquete de Boltagon aporta el manifiesto canónico y los alias de entrada. Vitruvius consume el catálogo resultante y puede dar servicio con cualquiera de los dos ID durante la transición.
 
 Después mueve una vez la carpeta de voz, reconstruye su venv en la ruta nueva y publica el registro completo. Arranca primero el Hub, vuelve a leer el catálogo y comprueba que reconoce Boltagon y Vitruvius. Después arranca Boltagon y luego Vitruvius. Así el asistente hace su primer descubrimiento cuando el proveedor ya está disponible con el puerto y el token definitivos. Comprueba salud, dictado y vista previa antes de aceptar.
@@ -69,28 +73,28 @@ El avance solo de código conserva hub.json y la carpeta de voz. Mover la carpet
 
 ## Referencias instaladas de cyrano en hub.json
 
-El inventario de solo lectura encontró estas 18 menciones. La tabla identifica claves y posiciones de valores mediante JSON Pointer sin reproducir sus contenidos. Todas permanecen durante el avance de código. La última columna describe el paso 7 de la mudanza coordinada en caso de ejecutarse.
+El inventario de solo lectura encontró estas 18 menciones. La tabla identifica claves y posiciones de valores mediante JSON Pointer sin reproducir sus contenidos. Todas permanecen durante el avance de código. La tabla describe el uso de cada entrada en ese estado y el paso 7 de una eventual mudanza coordinada autorizada.
 
-| JSON Pointer | Mención | En la mudanza coordinada |
-| --- | --- | --- |
-| /launch_overrides/cyrano | Clave | Se publica la ficha como boltagon. Ambos ID siguen aceptándose en la API. |
-| /launch_overrides/cyrano/executable | Valor | Se fija el Python del venv reconstruido bajo la carpeta nueva. |
-| /launch_overrides/cyrano/argv/1 | Valor | Se usa el módulo boltagon_hoard. El módulo antiguo sigue disponible como entrada. |
-| /launch_overrides/cyrano/cwd | Valor | Se usa la carpeta nueva. |
-| /launch_overrides/cyrano/env/CYRANO_PORT | Clave | Pasa a BOLTAGON_PORT con el mismo puerto. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_ENGINE | Clave | Se añade BOLTAGON_TTS_ENGINE y se conserva la clave antigua con el mismo motor. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_PYTHON | Clave | Se añade BOLTAGON_TTS_PYTHON y se conserva la clave antigua. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_PYTHON | Valor | Las dos claves apuntan al mismo intérprete auxiliar después de mover su ruta. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_EXPECTED_GPU_UUID | Clave | Se añade el nombre canónico con el mismo UUID y se conserva el antiguo. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_GPU | Clave | Se añade el nombre canónico con el mismo selector de GPU y se conserva el antiguo. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_VRAM_MB | Clave | Se añade el nombre canónico con la misma reserva y se conserva el antiguo. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_MODEL_DIR | Clave | Se añade el nombre canónico y se conserva el antiguo. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_MODEL_DIR | Valor | Se actualiza el prefijo de ambas rutas. Se conservan los mismos pesos. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_WAV | Clave | Se añade el nombre canónico y se conserva el antiguo. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_WAV | Valor | Se actualiza el prefijo de ambas rutas. Se conserva el mismo WAV. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_TEXT | Clave | Se añade el nombre canónico con el mismo texto de referencia y se conserva el antiguo. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_PREWARM | Clave | Se añade el nombre canónico con el mismo ajuste y se conserva el antiguo. |
-| /launch_overrides/cyrano/env/CYRANO_TTS_PRELOAD | Clave | Se añade el nombre canónico con el mismo ajuste y se conserva el antiguo. |
+| JSON Pointer | Mención | Con Hub nuevo y hub.json intacto | En la mudanza coordinada |
+| --- | --- | --- | --- |
+| /launch_overrides/cyrano | Clave | El Hub aplica esta ficha a cyrano y la usa como alias de boltagon al descubrir el manifiesto nuevo. | Se publica la ficha como boltagon. Ambos ID siguen aceptándose en la API. |
+| /launch_overrides/cyrano/executable | Valor | El Hub conserva y resuelve el ejecutable del venv existente. | Se fija el Python del venv reconstruido bajo la carpeta nueva. |
+| /launch_overrides/cyrano/argv/1 | Valor | El Hub pasa el argumento sin cambios. El módulo cyrano_hoard del paquete nuevo delega. | Se usa el módulo boltagon_hoard. El módulo antiguo sigue disponible como entrada. |
+| /launch_overrides/cyrano/cwd | Valor | El Hub conserva el directorio de trabajo de la carpeta existente. | Se usa la carpeta nueva. |
+| /launch_overrides/cyrano/env/CYRANO_PORT | Clave | El Hub pasa la variable antigua y Boltagon conserva el puerto. | Pasa a BOLTAGON_PORT con el mismo puerto. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_ENGINE | Clave | El Hub pasa la variable antigua y Boltagon la acepta para elegir el motor. | Se añade BOLTAGON_TTS_ENGINE y se conserva la clave antigua con el mismo motor. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_PYTHON | Clave | El Hub pasa la variable antigua y Boltagon la acepta para elegir el intérprete de voz. | Se añade BOLTAGON_TTS_PYTHON y se conserva la clave antigua. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_PYTHON | Valor | Se conserva la ruta al intérprete auxiliar existente. | Las dos claves apuntan al mismo intérprete auxiliar después de mover su ruta. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_EXPECTED_GPU_UUID | Clave | El Hub pasa la variable antigua y Boltagon conserva la verificación por UUID. | Se añade el nombre canónico con el mismo UUID y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_GPU | Clave | El Hub pasa la variable antigua y Boltagon la acepta como selector de GPU. | Se añade el nombre canónico con el mismo selector de GPU y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_VRAM_MB | Clave | El Hub pasa la variable antigua y Boltagon conserva la reserva de VRAM. | Se añade el nombre canónico con la misma reserva y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_MODEL_DIR | Clave | El Hub pasa la variable antigua y Boltagon la acepta para localizar los pesos. | Se añade el nombre canónico y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_MODEL_DIR | Valor | Se conserva la ruta a los mismos pesos. | Se actualiza el prefijo de ambas rutas. Se conservan los mismos pesos. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_WAV | Clave | El Hub pasa la variable antigua y Boltagon la acepta para localizar el WAV. | Se añade el nombre canónico y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_WAV | Valor | Se conserva la ruta al mismo WAV de referencia. | Se actualiza el prefijo de ambas rutas. Se conserva el mismo WAV. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_TEXT | Clave | El Hub pasa la variable antigua y Boltagon conserva el texto de referencia. | Se añade el nombre canónico con el mismo texto de referencia y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_PREWARM | Clave | El Hub pasa la variable antigua y Boltagon conserva el ajuste de precalentamiento. | Se añade el nombre canónico con el mismo ajuste y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_PRELOAD | Clave | El Hub pasa la variable antigua y Boltagon conserva el ajuste de precarga. | Se añade el nombre canónico con el mismo ajuste y se conserva el antiguo. |
 
 ## Estado que recupera cada pieza
 
