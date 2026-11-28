@@ -495,17 +495,27 @@ class Link:
 
     async def _faustus_url(self) -> Optional[str]:
         async def find() -> Optional[str]:
+            configured = self.config.faustus_urls
             if self._placement is not None:
-                placed = where.placed("faustus", self._placement())
-                moved = (placed,) if placed else ()
-            else:
+                with _chat_timing.stage("placement"):
+                    placed = where.placed("faustus", self._placement())
+                if placed:
+                    with _chat_timing.stage("discovery_health"):
+                        if url := await _faustus.find_reachable(self._client, (placed,)):
+                            return url
+                    configured = tuple(url for url in configured if url.rstrip("/") != placed)
+            with _chat_timing.stage("discovery_health"):
+                if url := await _faustus.find_reachable(self._client, configured):
+                    return url
+
+            if self._placement is None:
+                # Standalone clients retain their explicitly configured sources before asking their Hub.
                 with _chat_timing.stage("placement"):
                     moved = await _faustus.placement_urls(self._client, self.config.hub_url)
-            with _chat_timing.stage("discovery_health"):
-                if moved and (url := await _faustus.find_reachable(self._client, moved)):
-                    return url
-                configured = tuple(url for url in self.config.faustus_urls if url.rstrip("/") not in moved)
-                return await _faustus.find_reachable(self._client, configured)
+                if moved:
+                    with _chat_timing.stage("discovery_health"):
+                        return await _faustus.find_reachable(self._client, moved)
+            return None
 
         url = await self._cached("faustus_url", find)
         if self._chat_routing is not None and url is None:

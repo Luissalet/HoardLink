@@ -39,27 +39,26 @@ def _moved_to(url):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("spark_healthy", [True, False])
 async def test_faustus_probes_the_active_placement_before_configured_fallback(spark_healthy):
-    hub, spark = "http://hub.test", "https://spark.test"
-    config = LinkConfig(hub_url=hub)
+    spark = "https://spark.test"
+    config = LinkConfig()
     first_local = config.faustus_urls[0] + "/api/health"
     hits = []
 
     async def send(request):
         address = str(request.url)
         hits.append(address)
-        if address == hub + "/api/placement":
-            return httpx.Response(200, json=_moved_to(spark))
         if address == spark + "/api/health" and not spark_healthy:
             return httpx.Response(503)
         return httpx.Response(200, json={"status": "healthy"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
         link = Link(config, client=client)
+        link._placement = lambda: _moved_to(spark)
         assert await link._faustus_url() == (spark if spark_healthy else config.faustus_urls[0])
-    assert hits[:2] == [hub + "/api/placement", spark + "/api/health"]
+    assert hits[0] == spark + "/api/health"
     assert (first_local in hits) is not spark_healthy
     if spark_healthy:
-        assert len(hits) == 2
+        assert len(hits) == 1
 
 
 @pytest.mark.asyncio
