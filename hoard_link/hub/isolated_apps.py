@@ -16,6 +16,7 @@ from . import contract, procs
 from .config import _configured_paths
 from .isolation import inside, passive_error
 from .loopback_ports import free_loopback_ports
+from .voice_identity import equivalent_ids
 from .registry import MANIFEST_NAME, App, _writer_source, read_manifest
 
 # These shipped entry points accept the shared service flags. Older manifests
@@ -275,7 +276,7 @@ class IsolatedApps:
         elif root == registered_root or not (root / ".git").is_file():
             return _failure("Use a linked worktree separate from the registered installation")
         launcher = read_manifest(root / MANIFEST_NAME, faustus_dir=self.hub.config.faustus_dir)
-        if not launcher or launcher.id != app_id or not launcher.launch:
+        if not launcher or launcher.id not in equivalent_ids(registered.id) or not launcher.launch:
             return _failure("The worktree has no launch manifest for this app")
         ident = secrets.token_hex(12)
         folder = Path(self.hub.config.data_dir).resolve() / "isolated-apps" / ident

@@ -33,11 +33,11 @@ from .linkchat import LinkService
 from .repos import RepoMonitor, RepoSettings
 from .rules import RuleEngine
 from .faustus import FaustusRuntime
+from .voice_identity import VOICE_APP_ALIASES, equivalent_ids
 
 BACKENDS_CACHE_S = 8.0
 FAUSTUS_CACHE_S = 6.0
-# During the voice app rename, both installed IDs can address the same registration.
-_VOICE_APP_TRANSITION = {"cyrano": "boltagon", "boltagon": "cyrano"}
+
 log = logging.getLogger(__name__)
 
 
@@ -255,7 +255,7 @@ class Hub:
         app = apps.get(app_id)
         if app is not None:
             return app
-        alternate = _VOICE_APP_TRANSITION.get(app_id)
+        alternate = VOICE_APP_ALIASES.get(app_id)
         app = apps.get(alternate) if alternate else None
         if app is not None:
             log.warning("App ID %s resolved to %s during the voice app transition", app_id, app.id)
@@ -378,7 +378,7 @@ class Hub:
         keepalive = self.facet("keepalive")
         kept = set(keepalive.apps()) if sampled and keepalive is not None and not isolated else set()
         for a in apps:
-            a["keep_alive"] = a["id"] in kept
+            a["keep_alive"] = any(app_id in kept for app_id in equivalent_ids(a["id"]))
         return {
             "service": SERVICE,
             "version": HUB_VERSION,
@@ -402,16 +402,15 @@ class Hub:
     # -- actions --------------------------------------------------------------
     def automation_blocked(self, target: str) -> bool:
         with self._lock:
-            if target in _VOICE_APP_TRANSITION and (app := self.get(target)) is not None:
-                target = app.id
-            return self._stopping_all.is_set() or target in self._manual_stops
+            return self._stopping_all.is_set() or any(app_id in self._manual_stops
+                                                      for app_id in equivalent_ids(target))
 
     def _manual_stop(self, targets: list[str], stopped: bool = True) -> None:
         with self._lock:
             if stopped:
                 self._manual_stops.update(targets)
             else:
-                self._manual_stops.difference_update(targets)
+                self._manual_stops.difference_update(app_id for target in targets for app_id in equivalent_ids(target))
             path = os.path.join(self.config.data_dir, "manual-stops.json")
             tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
@@ -790,7 +789,7 @@ class Hub:
             return {"ok": True, "profiles": [], "problems": problems}
         if app_states is None:
             wanted = {a for p in profiles.values() for a in p.members}
-            apps = [a for a in self.apps if a.id in wanted]
+            apps = [a for a in self.apps if any(app_id in wanted for app_id in equivalent_ids(a.id))]
             with ThreadPoolExecutor(max_workers=max(2, len(apps))) as pool:
                 healths = list(pool.map(procs.health, apps))
             app_states = {a.id: ("running" if h.state == "healthy" else h.state) for a, h in zip(apps, healths)}
@@ -799,9 +798,12 @@ class Hub:
             cmd_status = dict(zip([c.id for c in cmds], pool.map(self.commands.status, cmds)))
         out = []
         for p in profiles.values():
-            members = [{"id": a, "kind": "app", "name": (self.get(a).name if self.get(a) else a),
-                        "state": app_states.get(a, "down") if self.get(a) else "unknown",
-                        "desktop": a in p.desktop} for a in p.members]
+            members = []
+            for app_id in p.members:
+                app = self.get(app_id)
+                state = app_states.get(app.id, app_states.get(app_id, "down")) if app else "unknown"
+                members.append({"id": app_id, "kind": "app", "name": app.name if app else app_id,
+                                "state": state, "desktop": app_id in p.desktop})
             members += [{"id": c.id, "kind": "command", "name": c.name, "state": cmd_status[c.id]["state"],
                          "pid": cmd_status[c.id]["pid"], "health": c.health} for c in p.commands]
             total = len(members)

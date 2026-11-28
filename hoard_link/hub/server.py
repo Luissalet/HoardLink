@@ -87,6 +87,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .. import _chat_timing
 from ..agent_journal import clean_identity
+from ..service_contracts import VOICE_ALIASES
 from . import HUB_VERSION, SERVICE
 from .core import Hub
 from .agora_http import AgoraBusy, AgoraHTTP
@@ -633,7 +634,11 @@ class _HubHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "service": SERVICE, "version": HUB_VERSION, "apps": hub.app_count,
                                    "url": hub.config.url})
             if path == "/api/apps":
-                return self._json(self.server.directory.list())
+                listing = self.server.directory.list()
+                by_id = {app["id"]: app for app in listing["apps"]}
+                aliases = [{**by_id[target], "id": alias, "alias_of": target}
+                           for alias, target in VOICE_ALIASES.items() if target in by_id and alias not in by_id]
+                return self._json({**listing, "apps": [*listing["apps"], *aliases]} if aliases else listing)
             parts = path.split("/")
             if parts[1:3] == ["api", "apps"] and (len(parts) == 4 or (len(parts) == 5 and parts[4] == "status")):
                 app = hub.get(parts[3])

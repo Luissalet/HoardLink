@@ -55,6 +55,8 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Optional
 
+from .voice_identity import canonical_voice_id
+
 log = logging.getLogger(__name__)
 
 DEFAULT_TTL_S = 1800
@@ -480,8 +482,9 @@ class LeaseArbiter:
                 if lease.state == "queued":
                     lease.expires_at = self._now() + QUEUE_KEEPALIVE_S
             else:
+                service = canonical_voice_id(service)
                 parent = next((l for l in self._leases.values()
-                               if service and l.process_bound and l.purpose == service), None)
+                               if service and l.process_bound and canonical_voice_id(l.purpose) == service), None)
                 if parent:
                     if parse_gpu_request(gpu) not in ("any", parent.gpu):
                         raise LeaseError("The requested GPU differs from the service GPU")
@@ -553,7 +556,7 @@ class LeaseArbiter:
             created = pid_create_time(pid_i)
         self._seq += 1
         now = self._now()
-        return Lease(id=secrets.token_hex(8), owner=str(owner or "unknown")[:80], purpose=str(purpose or "")[:160],
+        return Lease(id=secrets.token_hex(8), owner=canonical_voice_id(str(owner or "unknown"))[:80], purpose=str(purpose or "")[:160],
                      vram_mb=vram, gpu_request=gpu_req, priority=prio, ttl_s=ttl, state="queued",
                      created_at=now, expires_at=now + QUEUE_KEEPALIVE_S, seq=self._seq, pid=pid_i, pid_created=created)
 
@@ -589,7 +592,7 @@ class LeaseArbiter:
             lease.pid, lease.pid_created = pid, created
             lease.process_bound = True
             if service:
-                lease.owner, lease.purpose = "hub-service", service
+                lease.owner, lease.purpose = "hub-service", canonical_voice_id(service)
             self._save()
             return self._reply(lease)
 
@@ -598,8 +601,9 @@ class LeaseArbiter:
         with self._cond:
             gpus = self._tick()
             job = self._leases.get(job_id)
+            service = canonical_voice_id(service)
             if (not job or job.state != "granted" or job.gpu is None or job.service_lease
-                    or job.service_target != service or gpu not in ("any", job.gpu)):
+                    or canonical_voice_id(job.service_target) != service or gpu not in ("any", job.gpu)):
                 raise LeaseError("The job has no matching GPU reservation for this service")
             parent = self._new("hub-service", service, vram_mb, job.gpu, 0, 300, None, gpus)
             device = next((g for g in gpus if g.index == job.gpu), None)

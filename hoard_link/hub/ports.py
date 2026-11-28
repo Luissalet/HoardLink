@@ -9,6 +9,7 @@ import threading
 from urllib.parse import urlsplit, urlunsplit
 
 from . import procs
+from .voice_identity import equivalent_ids
 
 
 def _loopback(url):
@@ -58,7 +59,7 @@ class PortAssignments:
         with self.lock:
             for app in apps:
                 app._manifest_url = app.url
-                rec = self.records.get(app.id, {})
+                rec = next((self.records[app_id] for app_id in equivalent_ids(app.id) if app_id in self.records), {})
                 if (app.launch and app.launch.port_argument and isinstance(rec, dict)
                         and rec.get('manifest_url') == app.url and isinstance(rec.get('port'), int)
                         and 1024 <= rec['port'] <= 65535 and _loopback(app.url)):

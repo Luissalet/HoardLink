@@ -16,6 +16,7 @@ import time
 
 from ..atomic import write_json_atomic
 from .facets import Facet
+from .voice_identity import equivalent_ids
 
 
 def inventory():
@@ -93,6 +94,10 @@ class ResourcePool:
         return {"cpu_slots": cpu, "interactive_reserve": reserve, "io_slots": io_limit,
                 "ram_available_mb": machine.get("ram_available_mb"), "reserved": used}
 
+    def _claim_key(self, caller, uid):
+        keys = tuple(owner + ":" + uid for owner in equivalent_ids(caller))
+        return next((key for key in keys if key in self.claims), keys[0])
+
     def request(self, args, caller):
         with self.lock:
             mode = args.get("mode", "background")
@@ -107,7 +112,7 @@ class ResourcePool:
             uid = args.get("request_id") or secrets.token_hex(12)
             if not isinstance(uid, str) or not 1 <= len(uid) <= 128:
                 raise ValueError("invalid request_id")
-            key = caller + ":" + uid
+            key = self._claim_key(caller, uid)
             prior = self.claims.get(key)
             if prior:
                 if any(prior[k] != v for k, v in values.items()) or prior["mode"] != mode:
@@ -126,7 +131,7 @@ class ResourcePool:
 
     def release(self, uid, caller):
         with self.lock:
-            self.claims.pop(caller + ":" + str(uid), None)
+            self.claims.pop(self._claim_key(caller, str(uid)), None)
             self._tick()
             return {"ok": True}
 

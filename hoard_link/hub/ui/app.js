@@ -135,7 +135,7 @@
 
   // Retired identities stay in the API for family calls, not in the app launcher.
   function catalogApps(apps = snapshot?.apps || []) {
-    return apps.filter((app) => !(app.family?.absorbed_by && app.family?.standalone === false));
+    return apps.filter((app) => !app.alias_of && !(app.family?.absorbed_by && app.family?.standalone === false));
   }
 
   function render() {

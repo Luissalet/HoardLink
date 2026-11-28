@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import urlsplit
 
+from .voice_identity import canonical_voice_id, equivalent_ids
+
 MANIFEST_NAME = "faustus-plugin.json"
 ICON_NAMES = ("app-icon.png", "icon.png", "Icon.png", "app-icon.svg", "icon.svg")
 _PLACEHOLDER = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
@@ -395,6 +397,11 @@ def read_manifest(
     if not isinstance(raw, dict):
         return None
     app_id = str(raw.get("id") or "").strip()
+    family = raw.get("x-family") or raw.get("x_family") or {}
+    family = family if isinstance(family, dict) else {}
+    canonical = canonical_voice_id(app_id)
+    if canonical != app_id and family.get("canonical_id") == canonical:
+        app_id = canonical
     app_block = raw.get("app")
     if not app_id:
         return None
@@ -445,7 +452,7 @@ def read_manifest(
         icon_dirs=icon_dirs,
         manifest_path=path,
         notes=str(raw.get("notes") or ""),
-        family={str(k): v for k, v in (raw.get("x-family") or raw.get("x_family") or {}).items()} if isinstance(raw.get("x-family") or raw.get("x_family"), dict) else {},
+        family=family,
     )
     # The family contract: the agent bearer token lives in the app's data
     # folder. A manifest may say where (defaults.TOKEN_FILE); else data/mcp-token.
@@ -568,7 +575,10 @@ def scan(
                 continue
             if app.id in seen:
                 continue
-            if launch_overrides and app.id in launch_overrides:
-                apply_launch_override(app, launch_overrides[app.id])
+            if launch_overrides:
+                for app_id in equivalent_ids(app.id):
+                    if app_id in launch_overrides:
+                        apply_launch_override(app, launch_overrides[app_id])
+                        break
             seen[app.id] = app
     return sorted(seen.values(), key=lambda a: a.name.lower())
