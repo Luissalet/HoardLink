@@ -6,7 +6,7 @@ El renombrado conserva las fichas, mueve la carpeta de voz con sus datos y reini
 | --- | --- | --- |
 | Hoard Hub | `084674f21d2be8502c969896b80e7d5b973f96f7` | `8665faf24b740d1254f02420aa45bbed3b51eb16` |
 | Cyrano's Hoard | `a0a63a3152fe5e63f081eef042968fa3a4078621` | `49f1078503d4484a29e6110b6c8e3a655443a6dd` |
-| Vitruvius's Hoard | `47f708c2bbf40dec35e35846848372f3d86206ea` | `f92e1f50a0a3451e26a0c0c23b346ecf6d26018c` |
+| Vitruvius's Hoard | `9c73ad92f806d59ebb465178d38328620e0a81c0` | `4e58e4d7f832ce322b10dbce3ef57babd4f5314b` |
 
 Dirección autoriza el dispositivo de la tanda. El recibo vincula su UUID al SHA de Boltagon y a las mediciones de la ejecución. El ensayo aislado comprueba la migración con la síntesis apagada. La comparación A–B–B–A aprobó el candidato a8092ec de r12. El instalador exige la medición del SHA exacto de la tabla. El banco de esta revisión pasó para el candidato actualizado. Quedan pendientes la repetición independiente y el previo coordinado por dirección.
 
@@ -124,7 +124,7 @@ La comprobación focal del recibo está en `tests/hub/test_rename_handover_voice
 
 Esta sección es para dirección después de aprobar los candidatos y el ensayo. Usa la sesión normal con la misma cuenta que inició el Hub. Comprueba la admisión de la voz residente según la guía `t24\voz-interprete.md`. Usa el WAV de veinte euros verificado en el Plan B y su directorio de ruedas local. Guarda el plan y el registro en una carpeta nueva en el mismo volumen que los repositorios.
 
-El procedimiento parte de `t24\inst-planb\script-desviacion.ps1` y conserva las bases exactas, el control de aplicaciones por ID y las comprobaciones de salud. Captura la orden y el entorno del Hub propietario del puerto en un fichero protegido por DPAPI para esa cuenta. El mismo lanzador sin consola se usa en el ensayo. Vitruvius conserva el cliente de la base `47f708c`. Antes de parar, el programa comprueba que las fuentes de Vite y el lockfile coinciden. El inventario conserva las dos columnas de estado Git para reconocer el archivo de procedencia modificado sin preparar y el directorio de compilación sin rastrear. La migración preserva estos archivos locales y la caché de voz ya registrada.
+El procedimiento parte de `t24\inst-planb\script-desviacion.ps1` y conserva las bases exactas, el control de aplicaciones por ID y las comprobaciones de salud. Captura la orden y el entorno del Hub propietario del puerto en un fichero protegido por DPAPI para esa cuenta. El mismo lanzador sin consola se usa en el ensayo. Vitruvius conserva el cliente de la base `9c73ad9`. Antes de parar, el programa comprueba que las fuentes de Vite y el lockfile coinciden. El inventario conserva las dos columnas de estado Git para reconocer el archivo de procedencia modificado sin preparar y el directorio de compilación sin rastrear. La migración preserva estos archivos locales y la caché de voz ya registrada.
 
 ~~~powershell
 $ErrorActionPreference = 'Stop'
@@ -170,9 +170,9 @@ $Plan = [ordered]@{
     repos = [ordered]@{
         hub   = @{path=$Hub;   before='084674f21d2be8502c969896b80e7d5b973f96f7'; after='8665faf24b740d1254f02420aa45bbed3b51eb16'}
         voice = @{path=$Voice; before='a0a63a3152fe5e63f081eef042968fa3a4078621'; after='49f1078503d4484a29e6110b6c8e3a655443a6dd'}
-        vit   = @{path=$Vit;   before='47f708c2bbf40dec35e35846848372f3d86206ea'; after='f92e1f50a0a3451e26a0c0c23b346ecf6d26018c'}
+        vit   = @{path=$Vit;   before='9c73ad92f806d59ebb465178d38328620e0a81c0'; after='4e58e4d7f832ce322b10dbce3ef57babd4f5314b'}
     }
-    approved_commits = @('8665faf24b740d1254f02420aa45bbed3b51eb16','49f1078503d4484a29e6110b6c8e3a655443a6dd','f92e1f50a0a3451e26a0c0c23b346ecf6d26018c')
+    approved_commits = @('8665faf24b740d1254f02420aa45bbed3b51eb16','49f1078503d4484a29e6110b6c8e3a655443a6dd','4e58e4d7f832ce322b10dbce3ef57babd4f5314b')
 }
 [IO.File]::WriteAllText($PlanPath, ($Plan | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 $Invoke = Join-Path $Evidence 'ejecutar.ps1'
