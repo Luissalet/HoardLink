@@ -1,4 +1,4 @@
-# Cambio de identidad de la aplicación de voz · r26
+# Cambio de identidad de la aplicación de voz · r27
 
 El renombrado conserva las fichas, mueve la carpeta de voz con sus datos y reinicia el Hub una sola vez durante el avance. El mismo programa ejecuta la instalación y la vuelta atrás. La decisión de instalarlas corresponde a dirección. El ensayo usa el Hub real en modo aislado, con las dos aplicaciones sustituidas por servicios de prueba.
 
@@ -6,7 +6,7 @@ El renombrado conserva las fichas, mueve la carpeta de voz con sus datos y reini
 | --- | --- | --- |
 | Hoard Hub | `11269464610b9df04edf1167fbd7f04ef16ae1b9` | `4809e7fbd6427a321b87291e593ae129ee63a55a` |
 | Cyrano's Hoard | `41f2fb3cf501c813cdbf2fab5da7797f6f42476a` | `0db97074830369dff633ca2da26247f44229543a` |
-| Vitruvius's Hoard | `2331d567a2d91a441b68128a3552091fb9111e15` | `81d8aab86f1edb063540c3c9acb52cbea4d6a475` |
+| Vitruvius's Hoard | `274babd3a8ef83bb059f29d2fae011ee76086915` | `827e53e9c9ad2726b482d1f64bbed1efb0d1a878` |
 
 Dirección autoriza el dispositivo de la tanda. El recibo vincula su UUID al SHA de Boltagon y a las mediciones de la ejecución. El ensayo aislado comprueba la migración con la síntesis apagada. La comparación A–B–B–A aprobó el candidato a8092ec de r12. El instalador exige la medición del SHA exacto de la tabla. El banco de r14 pasó para el candidato actualizado. Quedan pendientes la repetición independiente y el previo coordinado por dirección.
 
@@ -62,7 +62,7 @@ La comprobación focal del recibo está en `tests/hub/test_rename_handover_voice
 
 Esta sección es para dirección después de aprobar los candidatos y el ensayo. Usa la sesión normal con la misma cuenta que inició el Hub. Comprueba la admisión de la voz residente según la guía `t24\voz-interprete.md`. Usa el WAV de veinte euros verificado en el Plan B y su directorio de ruedas local. Guarda el plan y el registro en una carpeta nueva en el mismo volumen que los repositorios.
 
-El procedimiento parte de `t24\inst-planb\script-desviacion.ps1` y conserva las bases exactas, el control de aplicaciones por ID y las comprobaciones de salud. Captura la orden y el entorno del Hub propietario del puerto en un fichero protegido por DPAPI para esa cuenta. El mismo lanzador sin consola se usa en el ensayo. Vitruvius conserva el cliente de la base `2331d56`. Antes de parar, el programa comprueba que las fuentes de Vite y el lockfile coinciden. El inventario conserva las dos columnas de estado Git para reconocer el archivo de procedencia modificado sin preparar y el directorio de compilación sin rastrear. La migración preserva estos archivos locales y la caché de voz ya registrada.
+El procedimiento parte de `t24\inst-planb\script-desviacion.ps1` y conserva las bases exactas, el control de aplicaciones por ID y las comprobaciones de salud. Captura la orden y el entorno del Hub propietario del puerto en un fichero protegido por DPAPI para esa cuenta. El mismo lanzador sin consola se usa en el ensayo. Vitruvius conserva el cliente de la base `274babd`. Antes de parar, el programa comprueba que las fuentes de Vite y el lockfile coinciden. El inventario conserva las dos columnas de estado Git para reconocer el archivo de procedencia modificado sin preparar y el directorio de compilación sin rastrear. La migración preserva estos archivos locales y la caché de voz ya registrada.
 
 ~~~powershell
 $ErrorActionPreference = 'Stop'
@@ -78,7 +78,7 @@ $Runner = Join-Path $RunnerRoot 'scripts\rename_handover.py'
 if (!(Test-Path -LiteralPath $Runner -PathType Leaf)) { throw 'Falta el programa del renombrado' }
 git -C $RunnerRoot diff --quiet '4809e7fbd6427a321b87291e593ae129ee63a55a' -- scripts/rename_handover.py scripts/rename_handover_voice.py scripts/rename_handover_windows.py
 if ($LASTEXITCODE) { throw 'El programa debe coincidir con el candidato aprobado' }
-$Evidence = Join-Path $Qa ('t25\rename-r26-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$Evidence = Join-Path $Qa ('t25\rename-r27-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $VoiceResult = $env:RENAME_VOICE_RESULT
 $VoiceResultHash = $env:RENAME_VOICE_RESULT_SHA256
 $VoiceGpuUuid = $env:RENAME_VOICE_GPU_UUID
@@ -108,9 +108,9 @@ $Plan = [ordered]@{
     repos = [ordered]@{
         hub   = @{path=$Hub;   before='11269464610b9df04edf1167fbd7f04ef16ae1b9'; after='4809e7fbd6427a321b87291e593ae129ee63a55a'}
         voice = @{path=$Voice; before='41f2fb3cf501c813cdbf2fab5da7797f6f42476a'; after='0db97074830369dff633ca2da26247f44229543a'}
-        vit   = @{path=$Vit;   before='2331d567a2d91a441b68128a3552091fb9111e15'; after='81d8aab86f1edb063540c3c9acb52cbea4d6a475'}
+        vit   = @{path=$Vit;   before='274babd3a8ef83bb059f29d2fae011ee76086915'; after='827e53e9c9ad2726b482d1f64bbed1efb0d1a878'}
     }
-    approved_commits = @('4809e7fbd6427a321b87291e593ae129ee63a55a','0db97074830369dff633ca2da26247f44229543a','81d8aab86f1edb063540c3c9acb52cbea4d6a475')
+    approved_commits = @('4809e7fbd6427a321b87291e593ae129ee63a55a','0db97074830369dff633ca2da26247f44229543a','827e53e9c9ad2726b482d1f64bbed1efb0d1a878')
 }
 [IO.File]::WriteAllText($PlanPath, ($Plan | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 $Invoke = Join-Path $Evidence 'ejecutar.ps1'
