@@ -401,7 +401,14 @@ class LinkService:
                 asyncio.set_event_loop(loop)
                 box["loop"] = loop
                 ready.set()
-                loop.run_forever()
+                try:
+                    loop.run_forever()
+                finally:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    loop.close()
 
             self._thread = threading.Thread(target=runner, name="hoard-hub-link", daemon=True)
             self._thread.start()

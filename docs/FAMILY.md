@@ -273,11 +273,19 @@ timeout selected for the reasoning effort.
 The Hub shares its backend connection pools across family callers while keeping
 the caller as the model lease owner. Certificate authorities load only when a
 backend uses HTTPS, which keeps normal certificate verification. A verified chat
-route can be reused for 15 seconds, keyed by capability and requested model. Backend configuration,
-placement and routing-file changes invalidate it. A failed backend request
-can invalidate the route for the next call. Generation is never replayed
-because of a connection or routing failure. A failure to find a route is
-checked again on the next request.
+route is keyed by capability and requested model. After 15 seconds the Hub
+can still serve it while one background lookup refreshes it. Backend
+configuration, placement and routing-file changes invalidate the selection.
+A failed model request can invalidate the route and trigger a foreground
+lookup on the next call. Generation is never replayed because of a
+connection or routing failure.
+
+For compatible text providers, a preferred endpoint gets a 200 ms head
+start on catalogue verification. The Hub can select a verified alternate
+while the first catalogue probe finishes. An HTTP 401 or no response to
+`/v1/models` sets a two-minute backoff for that provider. After the backoff,
+the next lookup retries it in the background. The Hub still verifies model
+availability and returns `no_model` when it cannot find a usable route.
 
 Set `HOARD_LINK_CHAT_TIMINGS=1` in the Hub process to include timing in the JSON
 receipt or final SSE event and log the final write. No request text, models'

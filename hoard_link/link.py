@@ -30,6 +30,7 @@ import httpx
 
 from ._process import run_hidden
 from . import _chat_timing, _faustus, _probes
+from ._chat_routing import ChatRouting
 from ._comfy import ComfyClient
 from ._sync import SyncFacade
 from .config import CapabilityConfig, LinkConfig
@@ -62,7 +63,7 @@ _CACHE_TTL_S = 30.0
 _BASE_PROBE_CACHE_TTL_S = 2.5
 # The last model registry Faustus returned, kept for when it is too busy to answer within the short timeout.
 _REGISTRY_MEMORY_TTL_S = 900.0
-_CHAT_ROUTE_TTL_S = 15.0
+_CATALOGUE_HEAD_START_S = 0.2
 _last_registry: Optional[tuple[dict, float]] = None
 
 
@@ -355,14 +356,6 @@ def _promoted(model: Optional[str], ranked: list[str], base: list[str]) -> bool:
     return model in ranked and model in base and ranked.index(model) < base.index(model)
 
 
-class ChatRouting:
-    """Shared discovery for Links with one Hub configuration."""
-
-    def __init__(self):
-        self.probes: dict[str | tuple, tuple[float, asyncio.Future[Any], Any]] = {}
-        self.registry: Optional[tuple[dict, float]] = None
-
-
 class Link:
     """Resolves and calls the shared model backend for one app."""
 
@@ -534,11 +527,7 @@ class Link:
         with _chat_timing.stage("resolution"):
             if self._chat_routing is None:
                 return await resolve()
-            key = ("chat", capability, task, model)
-            result = await self._cached(key, resolve, _CHAT_ROUTE_TTL_S)
-            if not result.resolved or not result.url or result.details.get("resident") is False:
-                self._drop_cached(key, result)
-            return result
+            return await self._chat_routing.resolve((capability, task, model), resolve, self._now)
 
     def _drop_cached(self, key, result):
         entry = self._cache.get(key)
@@ -548,7 +537,7 @@ class Link:
 
     def _chat_failure(self, capability, task, model, result, status):
         if self._chat_routing is not None and (status == 0 or status in (401, 403, 404, 410, 421, 429) or status >= 500):
-            self._drop_cached(("chat", capability, task, model), result)
+            self._chat_routing.invalidate((capability, task, model), result)
 
     def _known_registry(self):
         if self._chat_routing is None:
@@ -684,11 +673,9 @@ class Link:
                 )
             elif not matches:
                 reasons.append(f"Faustus registry has no server for capability '{capability}'")
-            for item in local:
-                with _chat_timing.stage("provider_catalogue"):
-                    res = await self._resolution_from_registry_item(capability, item, reasons, ctx)
-                if res is not None:
-                    return res
+            res = await self._resolve_registry_items(capability, local, reasons, ctx)
+            if res is not None:
+                return res
         elif status in (401, 403):
             if token:
                 reasons.append(
@@ -777,6 +764,62 @@ class Link:
         _image_probe_cache[key] = (answer, time.monotonic() + _IMAGE_PROBE_TTL_S)
         return answer
 
+    async def _resolve_registry_items(self, capability, items, reasons, ctx):
+        def metadata_only(item):
+            backend = str(item.get("backend") or "?").lower()
+            return backend not in _LLAMACPP_BACKENDS and backend != "ollama"
+
+        index = 0
+        while index < len(items):
+            item = items[index]
+            index += 1
+            with _chat_timing.stage("provider_catalogue"):
+                if (self._chat_routing is not None and capability == "llm" and index < len(items)
+                        and metadata_only(item) and metadata_only(items[index])):
+                    result = await self._resolve_catalogue_pair(capability, item, items[index], reasons, ctx)
+                    index += 1
+                else:
+                    result = await self._resolution_from_registry_item(capability, item, reasons, ctx)
+            if result is not None:
+                return result
+        return None
+
+    async def _resolve_catalogue_pair(self, capability, first, second, reasons, ctx):
+        """Give the preferred endpoint a head start, then accept a verified alternate."""
+        async def check(item):
+            notes = []
+            result = await self._resolution_from_registry_item(capability, item, notes, ctx)
+            return result, notes
+
+        first_check = asyncio.create_task(check(first))
+        checks = [first_check]
+        try:
+            done, _ = await asyncio.wait(checks, timeout=_CATALOGUE_HEAD_START_S)
+            if done:
+                result, notes = first_check.result()
+                reasons.extend(notes)
+                if result is not None:
+                    return result
+                return await self._resolution_from_registry_item(capability, second, reasons, ctx)
+
+            checks.append(asyncio.create_task(check(second)))
+            pending = set(checks)
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for check_task in checks:
+                    if check_task in done:
+                        result, notes = check_task.result()
+                        reasons.extend(notes)
+                        if result is not None:
+                            return result
+            return None
+        finally:
+            for check_task in checks:
+                check_task.cancel()
+            # Catalogue HTTP requests are shielded so the skipped check can
+            # still remember a slow 401 or timeout for the next lookup.
+            await asyncio.gather(*checks, return_exceptions=True)
+
     async def _resolution_from_registry_item(
         self, capability: str, item: dict, reasons: list[str], ctx: Optional[_RouteCtx] = None
     ) -> Optional[Resolution]:
@@ -843,7 +886,13 @@ class Link:
             # Any other OpenAI-compatible server (vLLM on the Sparks, a server on this PC Faustus only knows by URL): it is
             # only worth choosing while it answers and still serves the model Faustus lists, and then it is resident by
             # definition (nothing loads). A registry entry left behind by a stopped server is skipped instead of called.
-            status, served_data = await _faustus.get(self._client, _openai_endpoint(url, "/models"))
+            models_url = _openai_endpoint(url, "/models")
+            if self._chat_routing is not None and capability in ("llm", "vision"):
+                status, served_data = await self._chat_routing.catalogue(
+                    models_url, lambda: _faustus.get(self._client, models_url), self._now,
+                )
+            else:
+                status, served_data = await _faustus.get(self._client, models_url)
             served = [m.get("id") for m in (served_data or {}).get("data", []) if isinstance(m, dict) and m.get("id")] \
                 if status == 200 and isinstance(served_data, dict) else []
             if not served:

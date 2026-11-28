@@ -257,14 +257,87 @@ def test_verified_route_reuses_pool_and_invalidates_on_failure_and_placement(mod
     replacement = hub.link._link("hub")
     assert replacement is not link and replacement._client is link._client
 
-    replacement._now = lambda: time.monotonic() + 16
-    assert chat()[0] == 200 and calls["provider_catalogue"] == 4
     backend_file = Path(hub.config.backend_file)
     backend_file.write_text(json.dumps({"capabilities": {"llm": {
         "url": "http://127.0.0.1:18216/v1", "model": "other-text", "api": "openai",
     }}}), encoding="utf-8")
     code, changed = chat()
-    assert code == 200 and changed["model"] == "other-text" and calls["provider_catalogue"] == 4
+    assert code == 200 and changed["model"] == "other-text" and calls["provider_catalogue"] == 3
+
+
+@pytest.mark.asyncio
+async def test_expired_chat_route_serves_while_revalidating_and_does_not_republish_after_failure():
+    from hoard_link._chat_routing import ChatRouting
+
+    routing = ChatRouting()
+    key = ("llm", None, None)
+    current = Resolution(capability="llm", provider="fixture", url="http://old.test/v1", model="text",
+                         api="openai", state="resolved", reason="verified")
+    fallback = Resolution(capability="llm", provider="fixture", url="http://new.test/v1", model="text",
+                          api="openai", state="resolved", reason="verified")
+    clock = 0.0
+    fetching = asyncio.Event()
+    release = asyncio.Event()
+
+    async def initial():
+        return current
+
+    async def revalidate():
+        fetching.set()
+        await release.wait()
+        return current
+
+    async def recover():
+        return fallback
+
+    assert await routing.resolve(key, initial, lambda: clock) is current
+    clock = 180
+    assert await asyncio.wait_for(routing.resolve(key, revalidate, lambda: clock), 1) is current
+    await asyncio.wait_for(fetching.wait(), 1)
+    pending = routing._lookups[key]
+    assert await routing.resolve(key, recover, lambda: clock) is current
+    assert routing._lookups[key] is pending
+
+    routing.invalidate(key, current)
+    assert await routing.resolve(key, recover, lambda: clock) is fallback
+    release.set()
+    await pending
+    assert await routing.resolve(key, initial, lambda: clock) is fallback
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [401, None])
+async def test_negative_chat_catalogue_backs_off_and_retries_without_waiting(failure):
+    from hoard_link._chat_routing import ChatRouting
+
+    routing = ChatRouting()
+    url = "http://catalogue.test/v1/models"
+    clock = 0.0
+    calls = 0
+    release = asyncio.Event()
+
+    async def probe():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return failure, None
+        await release.wait()
+        return 200, {"data": []}
+
+    assert await routing.catalogue(url, probe, lambda: clock) == (failure, None)
+    clock = 20
+    assert await routing.catalogue(url, probe, lambda: clock) == (failure, None)
+    assert calls == 1
+
+    clock = 180
+    assert await asyncio.wait_for(routing.catalogue(url, probe, lambda: clock), 1) == (failure, None)
+    pending = routing._catalogues[url]
+    assert await routing.catalogue(url, probe, lambda: clock) == (failure, None)
+    assert routing._catalogues[url] is pending
+    release.set()
+    await pending
+    assert calls == 2
+    assert await routing.catalogue(url, probe, lambda: clock) == (200, {"data": []})
 
 
 @pytest.mark.parametrize("explicit", [False, True])
