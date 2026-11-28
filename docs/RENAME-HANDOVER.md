@@ -42,6 +42,39 @@ La API aislada relee el manifiesto al arrancar una app. Para los dos dobles, el 
 
 El directorio temporal conserva `receipts.json`, el registro de cada fase y sus logs. Añade `--phase 0` a la última orden para repetir el caso completo o `--phase N` para una interrupción concreta. El Hub y el ciclo de procesos son reales. La transcripción y el dictado usan datos sintéticos. El worktree de Vitruvius contiene un archivo de procedencia con un cambio local sin preparar y un directorio `obj/` sin rastrear. Se comprueban las dos columnas de estado Git y las huellas de ambos archivos antes del avance, después de mover los SHA y al restaurarlos. Cada fase guarda `protected-local-files.json`. El ensayo comprueba que no arranca ningún hijo de voz.
 
+## Orden de instalación
+
+El procedimiento inventaría las bases, guarda el arranque del Hub y las fichas, comprueba las copias y para las dos aplicaciones antes de parar el Hub. Dentro de la misma parada, avanza los tres SHA en orden Hub, Boltagon y Vitruvius. El Hub prepara el registro del ID nuevo y el bearer de la ruta efectiva. El paquete de Boltagon aporta el manifiesto canónico y los alias de entrada. Vitruvius consume el catálogo resultante y puede dar servicio con cualquiera de los dos ID durante la transición.
+
+Después mueve una vez la carpeta de voz, reconstruye su venv en la ruta nueva y publica el registro completo. Arranca primero el Hub, vuelve a leer el catálogo y comprueba que reconoce Boltagon y Vitruvius. Después arranca Boltagon y luego Vitruvius. Así el asistente hace su primer descubrimiento cuando el proveedor ya está disponible con el puerto y el token definitivos. Comprueba salud, dictado y vista previa antes de aceptar.
+
+## Instalación parcial
+
+La tabla describe qué ocurre al adelantar solo los repositorios indicados y releer sus manifiestos con el registro original. La columna de dictado supone que hay un servidor de voz utilizable. En ambas versiones del Hub, los dos ID se resuelven a la ficha que exista. La búsqueda de fichas de lanzamiento usa el ID exacto del manifiesto.
+
+| Piezas adelantadas | Qué funciona | Qué requiere completar la instalación |
+| --- | --- | --- |
+| Hub | El lanzamiento de Cyrano y el descubrimiento de voz del Vitruvius anterior conservan las rutas originales. | El catálogo sigue mostrando el ID cyrano. La mudanza, el lanzador y el venv de Boltagon quedan pendientes. |
+| Boltagon | Los dos ID de entrada del Hub resuelven el manifiesto nuevo. Los clientes que ya tengan una URL directa válida conservan el contrato HTTP si el servidor está escuchando. | La ficha de lanzamiento cyrano deja de aplicarse al manifiesto boltagon. El Vitruvius anterior pierde el descubrimiento automático cuando el catálogo solo publica boltagon. |
+| Vitruvius | El asistente descubre cyrano por compatibilidad, conserva el dictado y sigue aceptando CYRANO_URL. | La voz sigue registrada con el ID antiguo hasta completar la migración. |
+| Hub y Boltagon | Con el perfil de voz migrado, el Hub resuelve el bearer de la ruta efectiva y puede enrutar por los dos ID. | El perfil antiguo deja de aplicarse tras releer el manifiesto nuevo. El Vitruvius anterior solo conserva el acceso directo si ya tiene una CYRANO_URL válida. El descubrimiento automático necesita el candidato de Vitruvius. |
+| Hub y Vitruvius | El Hub conserva la ficha de Cyrano y el asistente la encuentra por el ID antiguo. | Siguen pendientes la ficha canónica, la mudanza y la reconstrucción del venv de voz. |
+| Boltagon y Vitruvius | Un catálogo con boltagon permite descubrir el proveedor y conservar el dictado directo si el servidor está disponible. | Hay que migrar la ficha y el venv. Aunque se adapte la ficha, el Hub de base toma el token por defecto del manifiesto y falla la autenticación de las herramientas que lo necesiten si el perfil usa otro fichero. |
+
+El uso de CYRANO_URL es una compatibilidad de entrada. El asistente no reenvía a esa URL un token descubierto para otra ficha. Los casos de registro y descubrimiento se pueden comprobar en local con manifiestos y respuestas sintéticas. El ensayo coordinado comprueba además el reinicio y la recuperación contra un Hub real aislado. El instalador valida los tres SHA de partida antes de parar nada. Una instalación manual parcial deja de satisfacer ese inventario.
+
+## Estado que recupera cada pieza
+
+| Pieza | Estado anterior exacto |
+| --- | --- |
+| Hub | El SHA de partida de la tabla, el lanzador original capturado en hub-launch.dpapi y las copias verificadas de hub.json, app-ports.json, manual-stops.json, rules.json y jobs.json que existían en el inventario. Se retiran los archivos de ese conjunto creados durante la migración. El catálogo recupera cyrano y vitruvius. |
+| Boltagon | El SHA de partida de la tabla, la carpeta Cyrano's Hoard y su ruta de trabajo, la ficha cyrano y el venv original guardado en voice-venv-original. Los datos y el intérprete auxiliar vuelven con la carpeta. Se aparta el venv candidato antes de recuperar el original. Se confirma la salud por el ID previo. |
+| Vitruvius | El SHA de partida de la tabla, la ficha vitruvius original con el lanzador y la ruta de caché completos, y el mismo estado de Git y las mismas huellas locales inventariadas. Se reabre solo si estaba activo al iniciar. |
+
+La acción rollback aplica esos tres estados desde el mismo plan y registro. Para la pareja de voz y registro hay una dependencia física. Restaurar solo la carpeta deja URLs, rutas de arranque o caché antiguas si el Hub conserva la ficha boltagon. Restaurar solo la ficha deja que el Hub apunte a la carpeta anterior mientras la voz sigue en la nueva.
+
+En un ensayo donde solo hubiera avanzado Git y los servicios y ficheros siguieran en su estado original, la reparación de cada pieza se limita a su SHA de partida con git reset --keep y la comparación del estado local. Una vez que hay un registro de la migración, se usa la vuelta atrás coordinada descrita abajo. Para y valida los propietarios, recupera el venv, restaura los tres SHA, devuelve la carpeta de voz, verifica los ficheros locales y las copias, arranca el Hub y repone únicamente las aplicaciones activas en el inventario. Los reinicios y las restauraciones de estas rutas corresponden a dirección.
+
 ## Medición previa con el motor real
 
 Usar el banco de voz compartido en `E:\Development\IA\Research\_qa\capataz\banco-voz` con un worktree limpio del Ágora en el SHA completo de Boltagon de la tabla. La entrada de compatibilidad `cyrano_hoard.main.create_app` delega en la fábrica canónica del mismo worktree. La base `41f2fb3` incluye la guarda de duración, la admisión de voz por UUID y la detección temprana de `4c6daad`. El candidato conserva el WAV acotado en directo, los controles de calidad, el WebSocket de reconocimiento incremental y la verificación de procedencia del audio de perfil de la base instalada, y el ajuste de reconocimiento de secuencias de dígitos en español. La medición anterior de `f322812` queda como referencia histórica.
