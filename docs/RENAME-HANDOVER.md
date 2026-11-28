@@ -4,8 +4,8 @@ El renombrado conserva las fichas, mueve la carpeta de voz con sus datos y reini
 
 | Repositorio | Partida y vuelta atrás | Candidato |
 | --- | --- | --- |
-| Hoard Hub | `084674f21d2be8502c969896b80e7d5b973f96f7` | `9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b` |
-| Cyrano's Hoard | `a0a63a3152fe5e63f081eef042968fa3a4078621` | `2d1c28f55161a10ef79065d0d079b36961429356` |
+| Hoard Hub | `084674f21d2be8502c969896b80e7d5b973f96f7` | `8665faf24b740d1254f02420aa45bbed3b51eb16` |
+| Cyrano's Hoard | `a0a63a3152fe5e63f081eef042968fa3a4078621` | `49f1078503d4484a29e6110b6c8e3a655443a6dd` |
 | Vitruvius's Hoard | `274babd3a8ef83bb059f29d2fae011ee76086915` | `827e53e9c9ad2726b482d1f64bbed1efb0d1a878` |
 
 Dirección autoriza el dispositivo de la tanda. El recibo vincula su UUID al SHA de Boltagon y a las mediciones de la ejecución. El ensayo aislado comprueba la migración con la síntesis apagada. La comparación A–B–B–A aprobó el candidato a8092ec de r12. El instalador exige la medición del SHA exacto de la tabla. El banco de esta revisión pasó para el candidato actualizado. Quedan pendientes la repetición independiente y el previo coordinado por dirección.
@@ -30,7 +30,7 @@ $env:CUDA_VISIBLE_DEVICES = '-1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $Worktree = Join-Path $Root ($Prefix + '-hub')
 $Before = '084674f21d2be8502c969896b80e7d5b973f96f7'
-$After = '9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b'
+$After = '8665faf24b740d1254f02420aa45bbed3b51eb16'
 git worktree add -b ('rehearsal/' + (Split-Path -Leaf $Root) + '/hub') $Worktree $Before
 if ($LASTEXITCODE) { throw 'No se pudo abrir el worktree temporal del Hub' }
 & $ServicePython -B .\scripts\rehearse_rename_handover.py --worktree $Worktree --launcher (Join-Path $Qa 't24v\nw.ps1') --window-watch (Join-Path $Qa 'vigia-ventanas.log') --hub-before $Before --hub-after $After --websockets-wheel $WebsocketsWheel
@@ -50,18 +50,45 @@ Después mueve una vez la carpeta de voz, reconstruye su venv en la ruta nueva y
 
 ## Instalación parcial
 
-La tabla describe qué ocurre al adelantar solo los repositorios indicados y releer sus manifiestos con el registro original. La columna de dictado supone que hay un servidor de voz utilizable. En ambas versiones del Hub, los dos ID se resuelven a la ficha que exista. La búsqueda de fichas de lanzamiento usa el ID exacto del manifiesto.
+Las tres piezas de código se pueden adelantar en cualquier orden, manteniendo la carpeta y el registro instalados. El manifiesto de voz conserva cyrano para el Hub anterior y declara boltagon como ID canónico para el Hub actualizado. El Hub actualizado acepta la clave cyrano del lanzador. Si están presentes las dos claves, usa la canónica para la ficha canónica. Mantiene una sola aplicación registrada y añade la entrada cyrano en /api/apps para clientes que buscan ese ID literal. La interfaz del Hub muestra una sola tarjeta.
 
-| Piezas adelantadas | Qué funciona | Qué requiere completar la instalación |
+| Piezas adelantadas | Qué sigue funcionando | Qué queda pendiente |
 | --- | --- | --- |
-| Hub | El lanzamiento de Cyrano y el descubrimiento de voz del Vitruvius anterior conservan las rutas originales. | El catálogo sigue mostrando el ID cyrano. La mudanza, el lanzador y el venv de Boltagon quedan pendientes. |
-| Boltagon | Los dos ID de entrada del Hub resuelven el manifiesto nuevo. Los clientes que ya tengan una URL directa válida conservan el contrato HTTP si el servidor está escuchando. | La ficha de lanzamiento cyrano deja de aplicarse al manifiesto boltagon. El Vitruvius anterior pierde el descubrimiento automático cuando el catálogo solo publica boltagon. |
-| Vitruvius | El asistente descubre cyrano por compatibilidad, conserva el dictado y sigue aceptando CYRANO_URL. | La voz sigue registrada con el ID antiguo hasta completar la migración. |
-| Hub y Boltagon | Con el perfil de voz migrado, el Hub resuelve el bearer de la ruta efectiva y puede enrutar por los dos ID. | El perfil antiguo deja de aplicarse tras releer el manifiesto nuevo. El Vitruvius anterior solo conserva el acceso directo si ya tiene una CYRANO_URL válida. El descubrimiento automático necesita el candidato de Vitruvius. |
-| Hub y Vitruvius | El Hub conserva la ficha de Cyrano y el asistente la encuentra por el ID antiguo. | Siguen pendientes la ficha canónica, la mudanza y la reconstrucción del venv de voz. |
-| Boltagon y Vitruvius | Un catálogo con boltagon permite descubrir el proveedor y conservar el dictado directo si el servidor está disponible. | Hay que migrar la ficha y el venv. Aunque se adapte la ficha, el Hub de base toma el token por defecto del manifiesto y falla la autenticación de las herramientas que lo necesiten si el perfil usa otro fichero. |
+| Hub | El lanzador y catálogo existentes conservan cyrano. Los perfiles, puertos y paradas guardados con ese ID siguen aplicándose. | El manifiesto canónico llega con Boltagon. |
+| Boltagon | El Hub anterior sigue leyendo el ID cyrano y usa su ficha. El módulo cyrano_hoard delega en Boltagon. Los clientes antiguos lo descubren por el catálogo. | La publicación canónica del ID llega con el Hub actualizado. |
+| Vitruvius | El asistente nuevo encuentra cyrano como alternativa y acepta CYRANO_URL. | La ruta canónica queda disponible al adelantar la voz y el Hub. |
+| Hub y Boltagon | Se publica boltagon con una entrada de compatibilidad cyrano. El Hub usa la ficha cyrano y su ruta de token efectiva. Vitruvius instalado encuentra la entrada anterior. | La versión nueva del asistente aún no está instalada. |
+| Hub y Vitruvius | El Hub conserva la ficha cyrano y el asistente nuevo la encuentra por compatibilidad. | Sigue pendiente el paquete de voz que declara el ID canónico. |
+| Boltagon y Vitruvius | El Hub anterior mantiene la ficha cyrano. El asistente nuevo descubre esa ficha y llega al contrato de voz. | Sigue pendiente la publicación del ID canónico. |
 
-El uso de CYRANO_URL es una compatibilidad de entrada. El asistente no reenvía a esa URL un token descubierto para otra ficha. Los casos de registro y descubrimiento se pueden comprobar en local con manifiestos y respuestas sintéticas. El ensayo coordinado comprueba además el reinicio y la recuperación contra un Hub real aislado. El instalador valida los tres SHA de partida antes de parar nada. Una instalación manual parcial deja de satisfacer ese inventario.
+Con un manifiesto que publicase solo boltagon, el Hub anterior perdería su launch_override cyrano al releer el catálogo y Vitruvius anterior dejaría de descubrir la voz. El manifiesto con los dos nombres y la entrada de catálogo anterior cubren esos dos casos. Hyde y los demás llamantes del proxy pueden seguir enviando el ID cyrano. El CLI mantiene el mismo argumento y el contrato HTTP conserva la ruta de dictado y su versión cyrano.dictation/v0. Los asistentes ya incrustados mantienen la ruta del proyecto hacia Vitruvius y pasan por el mismo descubrimiento de voz. Los permisos, los datos del proyecto y el disparo de acciones permanecen a cargo de sus componentes actuales.
+
+El avance solo de código conserva hub.json y la carpeta de voz. Mover la carpeta por separado dejaría rutas del lanzador, el intérprete auxiliar y los recursos de voz apuntando al nombre anterior. Para la mudanza, dirección ejecuta la operación coordinada desde las bases verificadas. El paso 7 publica el registro migrado después de la copia, la mudanza y la reconstrucción del venv. El instalador vuelve a comprobar los tres SHA antes de parar servicios. Los despliegues de código adelantados deben figurar en el inventario del plan de mudanza antes de usarlo.
+
+## Referencias instaladas de cyrano en hub.json
+
+El inventario de solo lectura encontró estas 18 menciones. La tabla identifica claves y posiciones de valores mediante JSON Pointer sin reproducir sus contenidos. Todas permanecen durante el avance de código. La última columna describe el paso 7 de la mudanza coordinada en caso de ejecutarse.
+
+| JSON Pointer | Mención | En la mudanza coordinada |
+| --- | --- | --- |
+| /launch_overrides/cyrano | Clave | Se publica la ficha como boltagon. Ambos ID siguen aceptándose en la API. |
+| /launch_overrides/cyrano/executable | Valor | Se fija el Python del venv reconstruido bajo la carpeta nueva. |
+| /launch_overrides/cyrano/argv/1 | Valor | Se usa el módulo boltagon_hoard. El módulo antiguo sigue disponible como entrada. |
+| /launch_overrides/cyrano/cwd | Valor | Se usa la carpeta nueva. |
+| /launch_overrides/cyrano/env/CYRANO_PORT | Clave | Pasa a BOLTAGON_PORT con el mismo puerto. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_ENGINE | Clave | Se añade BOLTAGON_TTS_ENGINE y se conserva la clave antigua con el mismo motor. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_PYTHON | Clave | Se añade BOLTAGON_TTS_PYTHON y se conserva la clave antigua. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_PYTHON | Valor | Las dos claves apuntan al mismo intérprete auxiliar después de mover su ruta. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_EXPECTED_GPU_UUID | Clave | Se añade el nombre canónico con el mismo UUID y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_GPU | Clave | Se añade el nombre canónico con el mismo selector de GPU y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_VRAM_MB | Clave | Se añade el nombre canónico con la misma reserva y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_MODEL_DIR | Clave | Se añade el nombre canónico y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_MODEL_DIR | Valor | Se actualiza el prefijo de ambas rutas. Se conservan los mismos pesos. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_WAV | Clave | Se añade el nombre canónico y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_WAV | Valor | Se actualiza el prefijo de ambas rutas. Se conserva el mismo WAV. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_QWEN_REFERENCE_TEXT | Clave | Se añade el nombre canónico con el mismo texto de referencia y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_PREWARM | Clave | Se añade el nombre canónico con el mismo ajuste y se conserva el antiguo. |
+| /launch_overrides/cyrano/env/CYRANO_TTS_PRELOAD | Clave | Se añade el nombre canónico con el mismo ajuste y se conserva el antiguo. |
 
 ## Estado que recupera cada pieza
 
@@ -81,13 +108,13 @@ Usar el banco de voz compartido en `E:\Development\IA\Research\_qa\capataz\banco
 
 Antes de arrancar, revisar que la revisión del banco que se va a ejecutar excluye los puertos reservados antes de abrir el listener. El banco debe tomar `t24\gpu2.lock`, consultar por UUID la GPU autorizada y el índice que tiene en ese arranque, abrir el servicio con `t24v\nw.ps1` y cargar CAMINO CERRADO en el PowerShell hijo. Usar datos y cachés propios del banco. Tras detenerlo, conservar la comprobación del vigía, del listener, de los procesos y de la liberación del cerrojo.
 
-Pasar al banco `-Worktree` con ese worktree, `-Sha 2d1c28f55161a10ef79065d0d079b36961429356`, `-Owner` con la identidad propia del Ágora, `-GpuUuid` con el UUID completo aprobado y `-ServicePython` con el intérprete de pruebas acordado. El banco imprime el directorio `run-*` que contiene `result.json`, la tabla Markdown y `gpu2-before.csv`.
+Pasar al banco `-Worktree` con ese worktree, `-Sha 49f1078503d4484a29e6110b6c8e3a655443a6dd`, `-Owner` con la identidad propia del Ágora, `-GpuUuid` con el UUID completo aprobado y `-ServicePython` con el intérprete de pruebas acordado. El banco imprime el directorio `run-*` que contiene `result.json`, la tabla Markdown y `gpu2-before.csv`.
 
 - Medir 20 frases nuevas de al menos 15 palabras con importes, IBAN, fechas, cifras largas y pausas marcadas. Cronometrar desde `POST /api/voice/speak` con `wait:false` hasta el primer evento NDJSON de audio. Cada frase debe acabar con PCM válido y audible, primer audio en un máximo de 1.200 ms y el primer bloque y el búfer inicial por debajo del 20 % de los frames del WAV.
 - Cancelar otras 20 locuciones a mitad de flujo. Cada una debe terminar como cancelada. La frase posterior debe emitir audio y completarse en el mismo hijo de voz que inició la tanda. El revisor repite la medición con el mismo SHA.
 - Conservar `result.json` y `gpu2-before.csv` en el mismo directorio de evidencias. Fijar la huella SHA-256 de `result.json` y el UUID aprobado con el veredicto del revisor. El recibo registra `gpu_index` cuando la tarjeta usa un índice diferente del 2. La línea base y los recibos sintéticos quedan como evidencias de comparación y de la migración aislada.
 
-El recibo de esta revisión está en `E:\Development\IA\Research\_qa\capataz\t25\rename-4148\codex-worker-1ef72a32\t28-r16\gpu\run-2d1c28f-20261128-124224-c2d93987\result.json`, con SHA-256 `d9c1391e4377b717bfa37b7b4364f1795129914bbf7829de06277731fa441b25` y UUID `GPU-15d17fee-8c0c-4be3-be46-35fb3e32f2aa`. El primer audio tardó como máximo 400,69 ms. Las veinte frases fueron audibles y las veinte cancelaciones conservaron el mismo hijo. El validador del instalador aceptó el recibo.
+El recibo de esta revisión está en `E:\Development\IA\Research\_qa\capataz\t25\rename-4148\codex-worker-1ef72a32\t28-r16\voice-compat\gpu\run-49f1078-20261128-125539-75f1db7e\result.json`, con SHA-256 `6821e82377cd8e509d307a189075ce55d770049184eaa3af07db99b88123f726` y UUID `GPU-15d17fee-8c0c-4be3-be46-35fb3e32f2aa`. El primer audio tardó como máximo 446,43 ms. Las veinte frases fueron audibles y las veinte cancelaciones conservaron el mismo hijo. El validador del instalador aceptó el recibo.
 
 La comprobación focal del recibo está en `tests/hub/test_rename_handover_voice.py`. Con CAMINO CERRADO y BelowNormal, ejecutar ese focal para el SHA del Hub y repetir los diez casos del ensayo aislado. El focal cubre, entre otros rechazos, un SHA distinto, falta de integridad, GPU distinta, 1.201 ms, el límite exacto del 20 %, audio mudo y un PID cambiado. Si la guarda de duración termina el directo antes del WAV del reintento, el recibo debe llevar la marca `duration_guard`, acreditar la misma frecuencia y mantener los límites del banco.
 
@@ -109,7 +136,7 @@ $RunnerRoot = $env:RENAME_SOURCE_WORKTREE
 if (!$RunnerRoot -or ![IO.Path]::IsPathRooted($RunnerRoot)) { throw 'Indica el worktree aprobado del Hub' }
 $Runner = Join-Path $RunnerRoot 'scripts\rename_handover.py'
 if (!(Test-Path -LiteralPath $Runner -PathType Leaf)) { throw 'Falta el programa del renombrado' }
-git -C $RunnerRoot diff --quiet '9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b' -- scripts/rename_handover.py scripts/rename_handover_voice.py scripts/rename_handover_windows.py
+git -C $RunnerRoot diff --quiet '8665faf24b740d1254f02420aa45bbed3b51eb16' -- scripts/rename_handover.py scripts/rename_handover_voice.py scripts/rename_handover_windows.py
 if ($LASTEXITCODE) { throw 'El programa debe coincidir con el candidato aprobado' }
 $Evidence = Join-Path $Qa ('t25\rename-r28-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $VoiceResult = $env:RENAME_VOICE_RESULT
@@ -139,11 +166,11 @@ $Plan = [ordered]@{
     voice_extra_wheels = $env:RENAME_VOICE_EXTRA_WHEELS
     voice_benchmark = @{result=$VoiceResult; sha256=$VoiceResultHash; gpu_uuid=$VoiceGpuUuid}
     repos = [ordered]@{
-        hub   = @{path=$Hub;   before='084674f21d2be8502c969896b80e7d5b973f96f7'; after='9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b'}
-        voice = @{path=$Voice; before='a0a63a3152fe5e63f081eef042968fa3a4078621'; after='2d1c28f55161a10ef79065d0d079b36961429356'}
+        hub   = @{path=$Hub;   before='084674f21d2be8502c969896b80e7d5b973f96f7'; after='8665faf24b740d1254f02420aa45bbed3b51eb16'}
+        voice = @{path=$Voice; before='a0a63a3152fe5e63f081eef042968fa3a4078621'; after='49f1078503d4484a29e6110b6c8e3a655443a6dd'}
         vit   = @{path=$Vit;   before='274babd3a8ef83bb059f29d2fae011ee76086915'; after='827e53e9c9ad2726b482d1f64bbed1efb0d1a878'}
     }
-    approved_commits = @('9bdf9bb36e9666c0a9fa33fcb45068ac32c2866b','2d1c28f55161a10ef79065d0d079b36961429356','827e53e9c9ad2726b482d1f64bbed1efb0d1a878')
+    approved_commits = @('8665faf24b740d1254f02420aa45bbed3b51eb16','49f1078503d4484a29e6110b6c8e3a655443a6dd','827e53e9c9ad2726b482d1f64bbed1efb0d1a878')
 }
 [IO.File]::WriteAllText($PlanPath, ($Plan | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 $Invoke = Join-Path $Evidence 'ejecutar.ps1'
