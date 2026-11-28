@@ -445,14 +445,13 @@ class LinkService:
     def _default_link(self, app: str) -> Any:
         import httpx
 
+        from .._chat_transport import ChatTransport
         from ..link import ChatRouting, Link
         from ..routes import routes_path
 
         if self._shared_client is None:
-            self._shared_client = httpx.AsyncClient(
-                trust_env=False, limits=httpx.Limits(max_connections=100, max_keepalive_connections=20,
-                                                    keepalive_expiry=30.0),
-            )
+            limits = httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=30.0)
+            self._shared_client = httpx.AsyncClient(transport=ChatTransport(limits), trust_env=False)
         if self._routing is None:
             self._routing = ChatRouting()
         config = self.link_config(app)

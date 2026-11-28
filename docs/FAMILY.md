@@ -270,9 +270,10 @@ Link's default backend read timeout. Native Python callers can also use
 `await link.chat(messages, timeout=900)`; omitting `timeout` retains the existing
 timeout selected for the reasoning effort.
 
-The Hub shares its HTTP connection pool across family callers while keeping the
-caller as the model lease owner. A verified chat route can be reused for 15
-seconds, keyed by capability and requested model. Backend configuration,
+The Hub shares its backend connection pools across family callers while keeping
+the caller as the model lease owner. Certificate authorities load only when a
+backend uses HTTPS, which keeps normal certificate verification. A verified chat
+route can be reused for 15 seconds, keyed by capability and requested model. Backend configuration,
 placement and routing-file changes invalidate it. A failed backend request
 can invalidate the route for the next call. Generation is never replayed
 because of a connection or routing failure. A failure to find a route is

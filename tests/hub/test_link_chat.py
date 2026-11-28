@@ -132,8 +132,10 @@ def model_catalogue(lhub, monkeypatch, tmp_path):
             return httpx.Response(200, json={"choices": [{"message": {"content": chosen}, "finish_reason": "stop"}]})
         return httpx.Response(404)
 
-    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: real_client(
-        *a, **kw, transport=httpx.MockTransport(backend)))
+    def client(*args, **kwargs):
+        return real_client(*args, **{**kwargs, "transport": httpx.MockTransport(backend)})
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
     monkeypatch.setenv("HOARD_FAUSTUS_URL", "http://127.0.0.1:18215")
     monkeypatch.delenv("HOARD_LLM_URL", raising=False)
     monkeypatch.delenv("HOARD_VISION_URL", raising=False)
@@ -141,6 +143,51 @@ def model_catalogue(lhub, monkeypatch, tmp_path):
     hub.link.close()
     hub.link = LinkService(hub.config)
     return hub, url, calls, state
+
+
+@pytest.mark.asyncio
+async def test_chat_transport_opens_one_pool_per_scheme_and_verifies_https(monkeypatch):
+    import ssl
+
+    from hoard_link._chat_transport import ChatTransport
+
+    pools = []
+
+    class Pool:
+        def __init__(self, *, verify=True, trust_env, limits):
+            self.verify = verify
+            self.trust_env = trust_env
+            self.limits = limits
+            self.requests = []
+            self.closed = False
+            pools.append(self)
+
+        async def handle_async_request(self, request):
+            self.requests.append(request.url.scheme)
+            return httpx.Response(200)
+
+        async def aclose(self):
+            self.closed = True
+
+    monkeypatch.setattr(httpx, "AsyncHTTPTransport", Pool)
+    limits = httpx.Limits(max_connections=5, max_keepalive_connections=2)
+    transport = ChatTransport(limits)
+
+    async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
+        assert pools == []
+        for _ in range(2):
+            assert (await client.get("http://backend.test/models")).status_code == 200
+        assert len(pools) == 1 and pools[0].requests == ["http", "http"]
+        assert pools[0].verify.verify_mode == ssl.CERT_REQUIRED
+        assert pools[0].verify.check_hostname
+        for _ in range(2):
+            assert (await client.get("https://backend.test/models")).status_code == 200
+        assert len(pools) == 2 and pools[1].requests == ["https", "https"]
+        assert pools[1].verify is True
+        with pytest.raises(httpx.UnsupportedProtocol):
+            await client.get("ftp://backend.test/models")
+
+    assert all(pool.closed and not pool.trust_env and pool.limits is limits for pool in pools)
 
 
 def test_registered_model_selection_preserves_default_and_sse(model_catalogue):
