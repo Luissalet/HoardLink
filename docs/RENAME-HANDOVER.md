@@ -4,7 +4,7 @@ El renombrado conserva las fichas, mueve la carpeta de voz con sus datos y reini
 
 | Repositorio | Partida y vuelta atrás | Candidato |
 | --- | --- | --- |
-| Hoard Hub | `11269464610b9df04edf1167fbd7f04ef16ae1b9` | `4809e7fbd6427a321b87291e593ae129ee63a55a` |
+| Hoard Hub | `11269464610b9df04edf1167fbd7f04ef16ae1b9` | `ab9828f83f913d4b713a0c7e21d25de2e09e5853` |
 | Cyrano's Hoard | `41f2fb3cf501c813cdbf2fab5da7797f6f42476a` | `0db97074830369dff633ca2da26247f44229543a` |
 | Vitruvius's Hoard | `274babd3a8ef83bb059f29d2fae011ee76086915` | `827e53e9c9ad2726b482d1f64bbed1efb0d1a878` |
 
@@ -30,7 +30,7 @@ $env:CUDA_VISIBLE_DEVICES = '-1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $Worktree = Join-Path $Root ($Prefix + '-hub')
 $Before = '11269464610b9df04edf1167fbd7f04ef16ae1b9'
-$After = '4809e7fbd6427a321b87291e593ae129ee63a55a'
+$After = 'ab9828f83f913d4b713a0c7e21d25de2e09e5853'
 git worktree add -b ('rehearsal/' + (Split-Path -Leaf $Root) + '/hub') $Worktree $Before
 if ($LASTEXITCODE) { throw 'No se pudo abrir el worktree temporal del Hub' }
 & $ServicePython -B .\scripts\rehearse_rename_handover.py --worktree $Worktree --launcher (Join-Path $Qa 't24v\nw.ps1') --window-watch (Join-Path $Qa 'vigia-ventanas.log') --hub-before $Before --hub-after $After --websockets-wheel $WebsocketsWheel
@@ -76,7 +76,7 @@ $RunnerRoot = $env:RENAME_SOURCE_WORKTREE
 if (!$RunnerRoot -or ![IO.Path]::IsPathRooted($RunnerRoot)) { throw 'Indica el worktree aprobado del Hub' }
 $Runner = Join-Path $RunnerRoot 'scripts\rename_handover.py'
 if (!(Test-Path -LiteralPath $Runner -PathType Leaf)) { throw 'Falta el programa del renombrado' }
-git -C $RunnerRoot diff --quiet '4809e7fbd6427a321b87291e593ae129ee63a55a' -- scripts/rename_handover.py scripts/rename_handover_voice.py scripts/rename_handover_windows.py
+git -C $RunnerRoot diff --quiet 'ab9828f83f913d4b713a0c7e21d25de2e09e5853' -- scripts/rename_handover.py scripts/rename_handover_voice.py scripts/rename_handover_windows.py
 if ($LASTEXITCODE) { throw 'El programa debe coincidir con el candidato aprobado' }
 $Evidence = Join-Path $Qa ('t25\rename-r27-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $VoiceResult = $env:RENAME_VOICE_RESULT
@@ -106,11 +106,11 @@ $Plan = [ordered]@{
     voice_extra_wheels = $env:RENAME_VOICE_EXTRA_WHEELS
     voice_benchmark = @{result=$VoiceResult; sha256=$VoiceResultHash; gpu_uuid=$VoiceGpuUuid}
     repos = [ordered]@{
-        hub   = @{path=$Hub;   before='11269464610b9df04edf1167fbd7f04ef16ae1b9'; after='4809e7fbd6427a321b87291e593ae129ee63a55a'}
+        hub   = @{path=$Hub;   before='11269464610b9df04edf1167fbd7f04ef16ae1b9'; after='ab9828f83f913d4b713a0c7e21d25de2e09e5853'}
         voice = @{path=$Voice; before='41f2fb3cf501c813cdbf2fab5da7797f6f42476a'; after='0db97074830369dff633ca2da26247f44229543a'}
         vit   = @{path=$Vit;   before='274babd3a8ef83bb059f29d2fae011ee76086915'; after='827e53e9c9ad2726b482d1f64bbed1efb0d1a878'}
     }
-    approved_commits = @('4809e7fbd6427a321b87291e593ae129ee63a55a','0db97074830369dff633ca2da26247f44229543a','827e53e9c9ad2726b482d1f64bbed1efb0d1a878')
+    approved_commits = @('ab9828f83f913d4b713a0c7e21d25de2e09e5853','0db97074830369dff633ca2da26247f44229543a','827e53e9c9ad2726b482d1f64bbed1efb0d1a878')
 }
 [IO.File]::WriteAllText($PlanPath, ($Plan | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 $Invoke = Join-Path $Evidence 'ejecutar.ps1'
